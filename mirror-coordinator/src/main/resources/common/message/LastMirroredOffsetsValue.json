@@ -32,7 +32,7 @@
         "about": "Each partition to record the last mirrored offsets.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0+",
           "about": "The partition index." },
-        { "name": "LastMirroredOffset", "type": "int64", "versions": "0+",
+        { "name": "LastMirroredOffset", "type": "int32", "versions": "0+",
           "about": "The last mirrored offset for this partition." }
       ]}
     ]}

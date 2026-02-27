@@ -33,7 +33,7 @@
         "about": "The results for the partitions.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0",
           "about": "The partition index." },
-        { "name": "LastMirroredOffset", "type": "int64", "versions": "0",
+        { "name": "LastMirroredOffset", "type": "int32", "versions": "0",
           "about": "The last mirrored offset." },
         { "name": "ErrorCode", "type": "int16", "versions": "0",
           "about": "The error code, or 0 if there was no error." }

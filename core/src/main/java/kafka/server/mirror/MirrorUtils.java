@@ -60,7 +60,7 @@ public final class MirrorUtils {
         return mirrorName;
     }
 
-    public record PartitionStateInfo(int partition, MirrorPartitionState state, Long offset) { }
+    public record PartitionStateInfo(int partition, MirrorPartitionState state, Integer leaderEpoch) { }
 
     public record PartitionStateLogEntry(String topic, int partition, MirrorPartitionState state) { }
 

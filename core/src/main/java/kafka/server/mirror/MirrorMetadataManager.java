@@ -173,7 +173,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     // local cache
     private Map<String, List<MirrorBlockingSender>> sourceSenders;
     private Map<String, Map<TopicPartition, Node>> sourceLeaders;
-    private Map<MirrorUtils.PartitionKey, Long> lastMirroredOffsets;
+    private Map<MirrorUtils.PartitionKey, Integer> lastMirroredOffsets;
     private Map<MirrorUtils.PartitionKey, MirrorPartitionState> partitionStates;
     private Map<MirrorPartitionState, AtomicLong> partitionStateCounts;
     private Map<MirrorRecordKey, Node> coordinatorNodes;
@@ -488,7 +488,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
                 WriteMirrorStatesRequestData.PartitionData partitionData = new WriteMirrorStatesRequestData.PartitionData();
                 partitionData.setState(m.state() == null ? MirrorPartitionState.UNKNOWN.value() : m.state().value());
-                partitionData.setLastMirroredOffset(m.offset());
+                partitionData.setLastMirroredOffset(m.leaderEpoch());
                 partitionData.setPartitionIndex(m.partition());
 
                 nodeToTopicPartitions
@@ -613,7 +613,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             parts.forEach(part -> {
                 ReadMirrorStatesResponseData.PartitionResult partitionResult = new ReadMirrorStatesResponseData.PartitionResult();
                 partitionResult.setPartitionIndex(part);
-                partitionResult.setLastMirroredOffset(lastMirroredOffsets.getOrDefault(new MirrorUtils.PartitionKey(mirrorName, tp, part), -1L));
+                partitionResult.setLastMirroredOffset(lastMirroredOffsets.getOrDefault(new MirrorUtils.PartitionKey(mirrorName, tp, part), -1));
                 partitionResult.setState(partitionStates.getOrDefault(
                         new MirrorUtils.PartitionKey(mirrorName, tp, part), MirrorPartitionState.UNKNOWN).value());
                 partitionResults.add(partitionResult);
@@ -763,17 +763,17 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-    long getLastMirroredOffset(String clusterName, TopicPartition topicPartition) {
+    int getLastMirroredOffset(String clusterName, TopicPartition topicPartition) {
         MirrorUtils.PartitionKey key = new MirrorUtils.PartitionKey(clusterName, topicPartition.topic(), topicPartition.partition());
         if (lastMirroredOffsets.containsKey(key)) {
             return lastMirroredOffsets.get(key);
         }
-        return 0L;
+        return 0;
     }
 
-    Map<MirrorUtils.PartitionKey, Long> updateLastMirroredOffsets(String clusterName,
-                                                                  Map<String, Map<Integer, Long>> addedOffsets,
-                                                                  Map<String, Map<Integer, Long>> removedOffsets) {
+    Map<MirrorUtils.PartitionKey, Integer> updateLastMirroredOffsets(String clusterName,
+                                                                  Map<String, Map<Integer, Integer>> addedOffsets,
+                                                                  Map<String, Map<Integer, Integer>> removedOffsets) {
         removedOffsets.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
                 lastMirroredOffsets.remove(new MirrorUtils.PartitionKey(clusterName, topic, partition));
@@ -801,9 +801,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         if (apiResponse.responseBody() instanceof ApiVersionsResponse apiVersionsResponse) {
             if (apiVersionsResponse.apiVersion(ApiKeys.LAST_MIRRORED_OFFSETS.id) == null) {
                 LOG.debug("The LastMirroredOffsets API is not supported in source cluster, truncating to offset 0");
-                Map<TopicPartition, Long> offsets = new HashMap<>();
-                topicPartitionSet.forEach(tp -> offsets.put(tp, 0L));
-                replicaManager.maybeTruncate(offsets, callback);
+                Map<TopicPartition, Integer> offsets = new HashMap<>();
+                topicPartitionSet.forEach(tp -> offsets.put(tp, 0));
+                replicaManager.maybeTruncateForLeaderEpoch(offsets, callback);
                 return;
             }
         }
@@ -828,14 +828,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         if (response.responseBody() instanceof LastMirroredOffsetsResponse lastMirroredOffsetResponse) {
             LOG.debug("Received last mirrored offset response: {}", lastMirroredOffsetResponse);
-            Map<TopicPartition, Long> offsets = new HashMap<>();
+            Map<TopicPartition, Integer> offsets = new HashMap<>();
             lastMirroredOffsetResponse.data().topics().forEach(topic -> {
                 String name = topic.name();
                 topic.partitions().forEach(partition -> {
                     offsets.put(new TopicPartition(name, partition.partitionIndex()), partition.lastMirroredOffset());
                 });
             });
-            replicaManager.maybeTruncate(offsets, callback);
+            replicaManager.maybeTruncateForLeaderEpoch(offsets, callback);
         }
     }
 

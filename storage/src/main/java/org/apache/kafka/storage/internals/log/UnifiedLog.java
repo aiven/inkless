@@ -1510,7 +1510,7 @@ public class UnifiedLog implements AutoCloseable {
              * response and the replica truncating and appending to the log. The replicating replica resolves this issue by only
              * persisting up to the current leader epoch used in the fetch request. See KAFKA-18723 for more details.
              */
-            skipRemainingBatches = skipRemainingBatches || hasHigherPartitionLeaderEpoch(batch, origin, leaderEpoch);
+            skipRemainingBatches = skipRemainingBatches;// || hasHigherPartitionLeaderEpoch(batch, origin, leaderEpoch);
             if (skipRemainingBatches) {
                 logger.info("Skipping batch {} from an origin of {} because its partition leader epoch {} is higher than the replica's current leader epoch {}",
                         batch, origin, batch.partitionLeaderEpoch(), leaderEpoch);

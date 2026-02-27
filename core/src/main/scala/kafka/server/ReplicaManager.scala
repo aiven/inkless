@@ -23,7 +23,7 @@ import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
-import kafka.server.mirror.{MirrorFetcherManager, LagInfo, MirrorMetadataManager, MirrorPartitionState}
+import kafka.server.mirror.{LagInfo, MirrorFetcherManager, MirrorMetadataManager, MirrorPartitionState}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
@@ -1668,6 +1668,19 @@ class ReplicaManager(val config: KafkaConfig,
     // create a list of (topic, partition) pairs to use as keys for this delayed fetch operation
     val delayedFetchKeys = remoteFetchPartitionStatus.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
     delayedRemoteFetchPurgatory.tryCompleteElseWatch(remoteFetch, delayedFetchKeys.asJava)
+  }
+
+  def maybeTruncateForLeaderEpoch(offsets: util.Map[TopicPartition, Integer], callback: Consumer[TopicPartition]): Unit = {
+    offsets.forEach((tp, leaderEpoch) => {
+      getLog(tp).map(log => {
+        val endOffsetForEpoch = log.endOffsetForEpoch(leaderEpoch)
+        val offsetToTruncate = if (endOffsetForEpoch.isPresent) endOffsetForEpoch.get().offset() else 0L
+        info(s"!!! truncating $tp to leader epoch $leaderEpoch to offset $offsetToTruncate, endOffsetForEpoch = $endOffsetForEpoch")
+        log.truncateTo(offsetToTruncate)
+        val partition = getPartitionOrException(tp)
+        partition.maybeCompleteIsrTruncation(log, onCompleteCallback = Optional.of(callback))
+      })
+    })
   }
 
   def maybeTruncate(offsets: util.Map[TopicPartition, JLong], callback: Consumer[TopicPartition]): Unit = {
