@@ -1067,13 +1067,13 @@ project(':core') {
   }
 
   dependencies {
-    releaseOnly log4jReleaseLibs
+    implementation log4jReleaseLibs
     // `core` is often used in users' tests, define the following dependencies as `api` for backwards compatibility
     // even though the `core` module doesn't expose any public API
     api project(':clients')
     api libs.scalaLibrary
 
-    compileOnly log4j2Libs
+    implementation log4j2Libs
 
     implementation project(':server-common')
     implementation project(':group-coordinator:group-coordinator-api')
