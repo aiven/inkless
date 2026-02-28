@@ -356,4 +356,90 @@ class S3StorageConfigTest {
         assertThat(config.credentialsProvider())
             .isInstanceOf(StaticCredentialsProvider.class);
     }
+
+    @Test
+    void crtEnabledDefaultsToFalse() {
+        final var configs = Map.of(
+            "s3.bucket.name", BUCKET_NAME,
+            "s3.region", TEST_REGION.id()
+        );
+        final S3StorageConfig config = new S3StorageConfig(configs);
+        assertThat(config.crtEnabled()).isFalse();
+    }
+
+    @Test
+    void crtEnabledCanBeSet() {
+        final var configs = Map.of(
+            "s3.bucket.name", BUCKET_NAME,
+            "s3.region", TEST_REGION.id(),
+            "crt.enabled", true
+        );
+        final S3StorageConfig config = new S3StorageConfig(configs);
+        assertThat(config.crtEnabled()).isTrue();
+    }
+
+    @Test
+    void crtEnabledPerPathInheritsFromMaster() {
+        // When master is enabled, all paths should inherit enabled
+        final var configsEnabled = Map.of(
+            "s3.bucket.name", BUCKET_NAME,
+            "s3.region", TEST_REGION.id(),
+            "crt.enabled", true
+        );
+        final S3StorageConfig configEnabled = new S3StorageConfig(configsEnabled);
+        assertThat(configEnabled.crtEnabledForProduce()).isTrue();
+        assertThat(configEnabled.crtEnabledForFetch()).isTrue();
+        assertThat(configEnabled.crtEnabledForDelete()).isTrue();
+        assertThat(configEnabled.crtEnabledForMerge()).isTrue();
+
+        // When master is disabled, all paths should inherit disabled
+        final var configsDisabled = Map.of(
+            "s3.bucket.name", BUCKET_NAME,
+            "s3.region", TEST_REGION.id(),
+            "crt.enabled", false
+        );
+        final S3StorageConfig configDisabled = new S3StorageConfig(configsDisabled);
+        assertThat(configDisabled.crtEnabledForProduce()).isFalse();
+        assertThat(configDisabled.crtEnabledForFetch()).isFalse();
+        assertThat(configDisabled.crtEnabledForDelete()).isFalse();
+        assertThat(configDisabled.crtEnabledForMerge()).isFalse();
+    }
+
+    @Test
+    void crtEnabledPerPathCanOverrideMaster() {
+        // Master enabled, but specific paths disabled
+        final var configs = Map.of(
+            "s3.bucket.name", BUCKET_NAME,
+            "s3.region", TEST_REGION.id(),
+            "crt.enabled", true,
+            "crt.enabled.produce", false,
+            "crt.enabled.fetch", false
+        );
+        final S3StorageConfig config = new S3StorageConfig(configs);
+        assertThat(config.crtEnabled()).isTrue();
+        assertThat(config.crtEnabledForProduce()).isFalse();
+        assertThat(config.crtEnabledForFetch()).isFalse();
+        // These inherit from master
+        assertThat(config.crtEnabledForDelete()).isTrue();
+        assertThat(config.crtEnabledForMerge()).isTrue();
+    }
+
+    @Test
+    void crtEnabledPerPathCanEnableWhenMasterDisabled() {
+        // Master disabled, but specific paths enabled
+        final var configs = Map.of(
+            "s3.bucket.name", BUCKET_NAME,
+            "s3.region", TEST_REGION.id(),
+            "crt.enabled", false,
+            "crt.enabled.produce", true,
+            "crt.enabled.delete", true
+        );
+        final S3StorageConfig config = new S3StorageConfig(configs);
+        assertThat(config.crtEnabled()).isFalse();
+        assertThat(config.crtEnabledForProduce()).isTrue();
+        assertThat(config.crtEnabledForDelete()).isTrue();
+        // These inherit from master
+        assertThat(config.crtEnabledForFetch()).isFalse();
+        assertThat(config.crtEnabledForMerge()).isFalse();
+    }
 }

@@ -2490,6 +2490,7 @@ project(':storage:inkless') {
     implementation libs.jooq
     compileOnly libs.jooqMeta  // mostly to suppress compiler warnings, we don't use this at run time
     implementation libs.awsSdkS3
+    implementation libs.awsSdkCrtClient
     runtimeOnly libs.awsSdkSts
     implementation platform(libs.azureSdkBom)
     implementation("com.azure:azure-identity") {
@@ -2545,6 +2546,20 @@ project(':storage:inkless') {
   System.setProperty("docker.api.version", "1.44")
   System.setProperty("docker.client.strategy",
     "org.testcontainers.dockerclient.EnvironmentAndSystemPropertyClientProviderStrategy")
+
+  // Repackage CRT JAR without ServiceLoader metadata to prevent classloader conflicts
+  // with tiered storage. The tiered storage S3 client uses ServiceLoader to discover
+  // HTTP clients, and when it finds CRT (loaded by a different classloader), it fails
+  // with "AwsCrtSdkHttpService not a subtype". Inkless uses CRT explicitly via
+  // AwsCrtAsyncHttpClient.builder(), so ServiceLoader discovery is not needed.
+  task repackageCrtJar(type: Zip) {
+    archiveFileName = 'aws-crt-client-repackaged.jar'
+    destinationDirectory = file("${buildDir}/repackaged")
+    from(configurations.runtimeClasspath.filter { it.name.contains('aws-crt-client') }.collect { zipTree(it) }) {
+      exclude 'META-INF/services/software.amazon.awssdk.http.SdkHttpService'
+      exclude 'META-INF/services/software.amazon.awssdk.http.async.SdkAsyncHttpService'
+    }
+  }
 
   task processMessages(type:JavaExec) {
     mainClass = "org.apache.kafka.message.MessageGenerator"

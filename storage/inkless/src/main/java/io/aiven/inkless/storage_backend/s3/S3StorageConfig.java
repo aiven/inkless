@@ -100,6 +100,36 @@ public class S3StorageConfig extends AbstractConfig {
             + "When set to \"false\", there will be no validation. "
             + "It is disabled by default as Kafka already validates integrity of the files.";
 
+    public static final String CRT_ENABLED_CONFIG = "crt.enabled";
+    private static final String CRT_ENABLED_DOC =
+        "Enable CRT (Common Runtime) for async S3 operations. "
+            + "When enabled, uses AwsCrtAsyncHttpClient for true non-blocking I/O. "
+            + "Note: CRT does not support disabling SSL certificate verification, "
+            + "so environments using self-signed certificates should keep this disabled. "
+            + "This is the master switch - per-path settings below allow fine-grained control. "
+            + "Default: false";
+    private static final boolean CRT_ENABLED_DEFAULT = false;
+
+    public static final String CRT_ENABLED_PRODUCE_CONFIG = "crt.enabled.produce";
+    private static final String CRT_ENABLED_PRODUCE_DOC =
+        "Enable CRT for produce (upload) operations. "
+            + "If not set, inherits from crt.enabled.";
+
+    public static final String CRT_ENABLED_FETCH_CONFIG = "crt.enabled.fetch";
+    private static final String CRT_ENABLED_FETCH_DOC =
+        "Enable CRT for fetch (download) operations. "
+            + "If not set, inherits from crt.enabled.";
+
+    public static final String CRT_ENABLED_DELETE_CONFIG = "crt.enabled.delete";
+    private static final String CRT_ENABLED_DELETE_DOC =
+        "Enable CRT for delete operations (file cleanup, error recovery). "
+            + "If not set, inherits from crt.enabled.";
+
+    public static final String CRT_ENABLED_MERGE_CONFIG = "crt.enabled.merge";
+    private static final String CRT_ENABLED_MERGE_DOC =
+        "Enable CRT for file merge operations (fetch + upload during compaction). "
+            + "If not set, inherits from crt.enabled.";
+
 
     public static ConfigDef configDef() {
         return new ConfigDef()
@@ -196,6 +226,36 @@ public class S3StorageConfig extends AbstractConfig {
                 false,
                 ConfigDef.Importance.MEDIUM,
                 AWS_CHECKSUM_CHECK_ENABLED_DOC
+            )
+            .define(CRT_ENABLED_CONFIG,
+                ConfigDef.Type.BOOLEAN,
+                CRT_ENABLED_DEFAULT,
+                ConfigDef.Importance.MEDIUM,
+                CRT_ENABLED_DOC
+            )
+            .define(CRT_ENABLED_PRODUCE_CONFIG,
+                ConfigDef.Type.BOOLEAN,
+                null,
+                ConfigDef.Importance.LOW,
+                CRT_ENABLED_PRODUCE_DOC
+            )
+            .define(CRT_ENABLED_FETCH_CONFIG,
+                ConfigDef.Type.BOOLEAN,
+                null,
+                ConfigDef.Importance.LOW,
+                CRT_ENABLED_FETCH_DOC
+            )
+            .define(CRT_ENABLED_DELETE_CONFIG,
+                ConfigDef.Type.BOOLEAN,
+                null,
+                ConfigDef.Importance.LOW,
+                CRT_ENABLED_DELETE_DOC
+            )
+            .define(CRT_ENABLED_MERGE_CONFIG,
+                ConfigDef.Type.BOOLEAN,
+                null,
+                ConfigDef.Importance.LOW,
+                CRT_ENABLED_MERGE_DOC
             );
     }
 
@@ -303,6 +363,46 @@ public class S3StorageConfig extends AbstractConfig {
 
     public Boolean checksumCheckEnabled() {
         return getBoolean(AWS_CHECKSUM_CHECK_ENABLED_CONFIG);
+    }
+
+    public boolean crtEnabled() {
+        return getBoolean(CRT_ENABLED_CONFIG);
+    }
+
+    /**
+     * Returns whether CRT is enabled for produce (upload) operations.
+     * Falls back to the master crtEnabled() if not explicitly set.
+     */
+    public boolean crtEnabledForProduce() {
+        final Boolean override = (Boolean) originals().get(CRT_ENABLED_PRODUCE_CONFIG);
+        return override != null ? override : crtEnabled();
+    }
+
+    /**
+     * Returns whether CRT is enabled for fetch (download) operations.
+     * Falls back to the master crtEnabled() if not explicitly set.
+     */
+    public boolean crtEnabledForFetch() {
+        final Boolean override = (Boolean) originals().get(CRT_ENABLED_FETCH_CONFIG);
+        return override != null ? override : crtEnabled();
+    }
+
+    /**
+     * Returns whether CRT is enabled for delete operations.
+     * Falls back to the master crtEnabled() if not explicitly set.
+     */
+    public boolean crtEnabledForDelete() {
+        final Boolean override = (Boolean) originals().get(CRT_ENABLED_DELETE_CONFIG);
+        return override != null ? override : crtEnabled();
+    }
+
+    /**
+     * Returns whether CRT is enabled for merge operations.
+     * Falls back to the master crtEnabled() if not explicitly set.
+     */
+    public boolean crtEnabledForMerge() {
+        final Boolean override = (Boolean) originals().get(CRT_ENABLED_MERGE_CONFIG);
+        return override != null ? override : crtEnabled();
     }
 
     public String bucketName() {
