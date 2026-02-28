@@ -50,7 +50,7 @@ import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.storage_backend.common.Storage;
 
 /**
  * The file committer.
@@ -67,7 +67,7 @@ class FileCommitter implements Closeable {
     private final int brokerId;
     private final ControlPlane controlPlane;
     private final ObjectKeyCreator objectKeyCreator;
-    private final StorageBackend storage;
+    private final Storage storage;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache objectCache;
     private final BatchCoordinateCache batchCoordinateCache;
@@ -92,7 +92,7 @@ class FileCommitter implements Closeable {
     FileCommitter(final int brokerId,
                   final ControlPlane controlPlane,
                   final ObjectKeyCreator objectKeyCreator,
-                  final StorageBackend storage,
+                  final Storage storage,
                   final KeyAlignmentStrategy keyAlignmentStrategy,
                   final ObjectCache objectCache,
                   final BatchCoordinateCache batchCoordinateCache,
@@ -116,7 +116,7 @@ class FileCommitter implements Closeable {
     FileCommitter(final int brokerId,
                   final ControlPlane controlPlane,
                   final ObjectKeyCreator objectKeyCreator,
-                  final StorageBackend storage,
+                  final Storage storage,
                   final KeyAlignmentStrategy keyAlignmentStrategy,
                   final ObjectCache objectCache,
                   final BatchCoordinateCache batchCoordinateCache,

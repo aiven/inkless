@@ -77,7 +77,7 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlane;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.storage_backend.common.Storage;
 import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
@@ -87,6 +87,7 @@ import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @Tag("integration")
 class WriterPropertyTest {
@@ -193,7 +194,9 @@ class WriterPropertyTest {
         Statistics.label("requestCount").collect(requestCount);
         final MockTime time = new MockTime(0, 0, 0);
 
-        final StorageBackend storage = mock(StorageBackend.class);
+        final Storage storage = mock(Storage.class);
+        when(storage.upload(any(ObjectKey.class), any(ByteBuffer.class)))
+            .thenReturn(CompletableFuture.completedFuture(null));
         final UploaderHandler uploaderHandler = new UploaderHandler(
             new MockExecutorServiceWithFutureSupport(),
             new Timer("upload",
@@ -248,7 +251,6 @@ class WriterPropertyTest {
                 Duration.ofMillis(commitIntervalMsAvg),  // it doesn't matter as the scheduling doesn't happen
                 maxBufferSize,
                 mock(ScheduledExecutorService.class),
-                storage,
                 fileCommitter,
                 mock(WriterMetrics.class),
                 new BrokerTopicStats()
