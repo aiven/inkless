@@ -50,7 +50,7 @@ import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.generated.FileExtent;
-import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.storage_backend.common.Storage;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 
@@ -75,21 +75,21 @@ public class Reader implements AutoCloseable {
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache cache;
     private final ControlPlane controlPlane;
-    private final ObjectFetcher objectFetcher;
+    private final Storage storage;
     private final int maxBatchesPerPartitionToFind;
     private final ExecutorService metadataExecutor;
     private final ExecutorService fetchDataExecutor;
     private final long laggingConsumerThresholdMs;
     private final ExecutorService laggingFetchDataExecutor;
     /**
-     * Separate ObjectFetcher for lagging consumer requests to provide resource isolation.
+     * Separate Storage for lagging consumer requests to provide resource isolation.
      *
      * <p>Prevents lagging consumer bursts from exhausting hot path resources (connection pools,
      * HTTP/2 streams, rate limits). Cold path failures don't propagate to hot path.
      *
      * <p>Trade-off: Doubles connection pools (~500KB) but prevents hot path degradation.
      */
-    private final ObjectFetcher laggingConsumerObjectFetcher;
+    private final Storage laggingStorage;
     private final InklessFetchMetrics fetchMetrics;
     private final BrokerTopicStats brokerTopicStats;
     private final Bucket rateLimiter;
@@ -103,11 +103,11 @@ public class Reader implements AutoCloseable {
         KeyAlignmentStrategy keyAlignmentStrategy,
         ObjectCache cache,
         ControlPlane controlPlane,
-        ObjectFetcher objectFetcher,
+        Storage storage,
         BrokerTopicStats brokerTopicStats,
         int fetchMetadataThreadPoolSize,
         int fetchDataThreadPoolSize,
-        ObjectFetcher laggingObjectFetcher,
+        Storage laggingStorage,
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
         int laggingConsumerThreadPoolSize,
@@ -119,18 +119,16 @@ public class Reader implements AutoCloseable {
             keyAlignmentStrategy,
             cache,
             controlPlane,
-            objectFetcher,
+            storage,
             maxBatchesPerPartitionToFind,
             Executors.newFixedThreadPool(fetchMetadataThreadPoolSize, new InklessThreadFactory("inkless-fetch-metadata-", false)),
             Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory("inkless-fetch-data-", false)),
-            // Only create lagging consumer fetcher when feature is enabled (pool size > 0).
-            // A pool size of 0 is a valid configuration that explicitly disables the feature (null fetcher and executor).
-            laggingConsumerThreadPoolSize > 0 ? laggingObjectFetcher : null,
+            // Only create lagging consumer storage when feature is enabled (pool size > 0).
+            // A pool size of 0 is a valid configuration that explicitly disables the feature.
+            laggingConsumerThreadPoolSize > 0 ? laggingStorage : null,
             laggingConsumerThresholdMs,
             laggingConsumerRequestRateLimit,
             // Only create lagging consumer resources when feature is enabled (pool size > 0).
-            // A pool size of 0 is a valid configuration that explicitly disables the feature
-            // by passing both a null executor and a null laggingObjectFetcher.
             laggingConsumerThreadPoolSize > 0
                 ? createBoundedThreadPool(laggingConsumerThreadPoolSize)
                 : null,
@@ -162,11 +160,11 @@ public class Reader implements AutoCloseable {
         KeyAlignmentStrategy keyAlignmentStrategy,
         ObjectCache cache,
         ControlPlane controlPlane,
-        ObjectFetcher objectFetcher,
+        Storage storage,
         int maxBatchesPerPartitionToFind,
         ExecutorService metadataExecutor,
         ExecutorService fetchDataExecutor,
-        ObjectFetcher laggingConsumerObjectFetcher,
+        Storage laggingStorage,
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
         ExecutorService laggingFetchDataExecutor,
@@ -178,23 +176,23 @@ public class Reader implements AutoCloseable {
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.cache = cache;
         this.controlPlane = controlPlane;
-        this.objectFetcher = objectFetcher;
+        this.storage = storage;
         this.maxBatchesPerPartitionToFind = maxBatchesPerPartitionToFind;
         this.metadataExecutor = metadataExecutor;
         this.fetchDataExecutor = fetchDataExecutor;
         this.laggingFetchDataExecutor = laggingFetchDataExecutor;
         this.laggingConsumerThresholdMs = laggingConsumerThresholdMs;
-        this.laggingConsumerObjectFetcher = laggingConsumerObjectFetcher;
+        this.laggingStorage = laggingStorage;
 
         // Validate that lagging consumer resources are consistently configured:
-        // both executor and fetcher must be null (feature disabled) or both must be non-null (feature enabled).
+        // both executor and storage must be null (feature disabled) or both must be non-null (feature enabled).
         // This ensures fail-fast behavior rather than silent runtime failure.
-        if ((laggingFetchDataExecutor == null) != (laggingConsumerObjectFetcher == null)) {
+        if ((laggingFetchDataExecutor == null) != (laggingStorage == null)) {
             throw new IllegalArgumentException(
-                "Lagging consumer feature requires both laggingFetchDataExecutor and laggingConsumerObjectFetcher "
+                "Lagging consumer feature requires both laggingFetchDataExecutor and laggingStorage "
                     + "to be non-null (feature enabled) or both to be null (feature disabled). "
                     + "Found: executor=" + (laggingFetchDataExecutor != null ? "non-null" : "null")
-                    + ", fetcher=" + (laggingConsumerObjectFetcher != null ? "non-null" : "null")
+                    + ", storage=" + (laggingStorage != null ? "non-null" : "null")
             );
         }
 
@@ -295,9 +293,9 @@ public class Reader implements AutoCloseable {
                     objectKeyCreator,
                     keyAlignmentStrategy,
                     cache,
-                    objectFetcher,
+                    storage,
                     fetchDataExecutor,
-                    laggingConsumerObjectFetcher,
+                    laggingStorage,
                     laggingConsumerThresholdMs,
                     rateLimiter,
                     laggingFetchDataExecutor,
@@ -423,8 +421,8 @@ public class Reader implements AutoCloseable {
         if (metadataThreadPoolMonitor != null) metadataThreadPoolMonitor.close();
         if (dataThreadPoolMonitor != null) dataThreadPoolMonitor.close();
         if (laggingConsumerThreadPoolMonitor != null) laggingConsumerThreadPoolMonitor.close();
-        objectFetcher.close();
-        if (laggingConsumerObjectFetcher != null) laggingConsumerObjectFetcher.close();
+        storage.close();
+        if (laggingStorage != null) laggingStorage.close();
         fetchMetrics.close();
     }
 }

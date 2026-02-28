@@ -65,7 +65,7 @@ import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
-import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.storage_backend.common.Storage;
 import io.github.bucket4j.Bucket;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -94,7 +94,7 @@ public class FetchPlannerTest {
     static final ObjectKey OBJECT_KEY_B = PlainObjectKey.create(OBJECT_KEY_PREFIX, OBJECT_KEY_B_MAIN_PART);
 
     @Mock
-    ObjectFetcher fetcher;
+    Storage storage;
     @Mock
     InklessFetchMetrics metrics;
 
@@ -350,18 +350,11 @@ public class FetchPlannerTest {
                 final byte[] dataA = "data-for-a".getBytes();
                 final byte[] dataB = "data-for-b".getBytes();
 
-                // Mock the fetcher's two-step process: fetch() is called first, then readToByteBuffer()
-                // For this test, we only care about the final data returned by readToByteBuffer()
-                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
-                    .thenReturn(null); // Return value doesn't matter, readToByteBuffer() is also mocked
-                when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class)))
-                    .thenReturn(null); // Return value doesn't matter, readToByteBuffer() is also mocked
-
-                // Mock readToByteBuffer to return the test data we want to verify
-                // Order matters: first call returns dataA, second call returns dataB
-                when(fetcher.readToByteBuffer(any()))
-                    .thenReturn(ByteBuffer.wrap(dataA))
-                    .thenReturn(ByteBuffer.wrap(dataB));
+                // Mock storage to return the test data we want to verify
+                when(storage.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                    .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(dataA)));
+                when(storage.fetch(eq(OBJECT_KEY_B), any(ByteRange.class)))
+                    .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(dataB)));
 
                 final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                     partition0, FindBatchResponse.success(List.of(
@@ -387,8 +380,8 @@ public class FetchPlannerTest {
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get();
 
                 // Verify both were fetched
-                verify(fetcher).fetch(eq(OBJECT_KEY_A), any(ByteRange.class));
-                verify(fetcher).fetch(eq(OBJECT_KEY_B), any(ByteRange.class));
+                verify(storage).fetch(eq(OBJECT_KEY_A), any(ByteRange.class));
+                verify(storage).fetch(eq(OBJECT_KEY_B), any(ByteRange.class));
 
                 // Verify correct data for each
                 final List<FileExtent> results = futures.stream()
@@ -417,13 +410,10 @@ public class FetchPlannerTest {
             // Setup: Cache miss scenario - data not in cache, must fetch from remote
             try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
                 final byte[] expectedData = "test-data".getBytes();
-                final ByteBuffer byteBuffer = ByteBuffer.wrap(expectedData);
 
-                // Mock the fetcher to return data via ByteBuffer
-                when(fetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
-                    .thenReturn(null); // channel not used directly
-                when(fetcher.readToByteBuffer(any()))
-                    .thenReturn(byteBuffer);
+                // Mock storage to return the expected data
+                when(storage.fetch(any(ObjectKey.class), any(ByteRange.class)))
+                    .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(expectedData)));
 
                 final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                     partition0, FindBatchResponse.success(List.of(
@@ -449,7 +439,7 @@ public class FetchPlannerTest {
                 assertThat(result.data()).isEqualTo(expectedData);
 
                 // Verify remote fetch was called (cache miss)
-                verify(fetcher).fetch(any(ObjectKey.class), any(ByteRange.class));
+                verify(storage).fetch(any(ObjectKey.class), any(ByteRange.class));
 
                 // Verify the result is now in cache
                 final ObjectFetchRequest request = new ObjectFetchRequest(
@@ -498,7 +488,7 @@ public class FetchPlannerTest {
                 assertThat(result.data()).isEqualTo(expectedData);
 
                 // Verify remote fetch was NOT called (cache hit)
-                verify(fetcher, never()).fetch(any(ObjectKey.class), any(ByteRange.class));
+                verify(storage, never()).fetch(any(ObjectKey.class), any(ByteRange.class));
             }
         }
 
@@ -507,9 +497,9 @@ public class FetchPlannerTest {
             // Test that fetch failures are properly wrapped and propagated
             try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
 
-                // Mock fetcher to throw exception
-                when(fetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
-                    .thenThrow(new RuntimeException("S3 unavailable"));
+                // Mock storage to return failed future
+                when(storage.fetch(any(ObjectKey.class), any(ByteRange.class)))
+                    .thenReturn(CompletableFuture.failedFuture(new RuntimeException("S3 unavailable")));
 
                 final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                     partition0, FindBatchResponse.success(List.of(
@@ -535,7 +525,7 @@ public class FetchPlannerTest {
                     .hasCauseInstanceOf(FileFetchException.class);
 
                 // Verify remote fetch was attempted
-                verify(fetcher).fetch(any(ObjectKey.class), any(ByteRange.class));
+                verify(storage).fetch(any(ObjectKey.class), any(ByteRange.class));
             }
         }
 
@@ -550,11 +540,9 @@ public class FetchPlannerTest {
                 final byte[] expectedData = "recovered-data".getBytes();
 
                 // First call fails, second call succeeds
-                when(fetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
-                    .thenThrow(new RuntimeException("Transient S3 error"))
-                    .thenReturn(null);
-                when(fetcher.readToByteBuffer(any()))
-                    .thenReturn(ByteBuffer.wrap(expectedData));
+                when(storage.fetch(any(ObjectKey.class), any(ByteRange.class)))
+                    .thenReturn(CompletableFuture.failedFuture(new RuntimeException("Transient S3 error")))
+                    .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(expectedData)));
 
                 final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                     partition0, FindBatchResponse.success(List.of(
@@ -587,7 +575,7 @@ public class FetchPlannerTest {
                 assertThat(result.data()).isEqualTo(expectedData);
 
                 // Verify fetch was called twice (once for failure, once for success)
-                verify(fetcher, times(2)).fetch(any(ObjectKey.class), any(ByteRange.class));
+                verify(storage, times(2)).fetch(any(ObjectKey.class), any(ByteRange.class));
             }
         }
 
@@ -603,11 +591,9 @@ public class FetchPlannerTest {
             try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
                 final byte[] expectedData = "shared-data".getBytes();
 
-                // Mock fetcher to return data
-                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
-                    .thenReturn(null);
-                when(fetcher.readToByteBuffer(any()))
-                    .thenReturn(ByteBuffer.wrap(expectedData));
+                // Mock storage to return data
+                when(storage.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                    .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(expectedData)));
 
                 // Create coordinates with TWO batches that map to the SAME cache key
                 // (same object, same byte range after alignment)
@@ -640,7 +626,7 @@ public class FetchPlannerTest {
                 assertThat(result.data()).isEqualTo(expectedData);
 
                 // Verify fetch was called **only once** despite multiple requests
-                verify(fetcher).fetch(eq(OBJECT_KEY_A), any(ByteRange.class));
+                verify(storage).fetch(eq(OBJECT_KEY_A), any(ByteRange.class));
             }
         }
 
@@ -653,11 +639,10 @@ public class FetchPlannerTest {
                 final byte[] dataA = "data-a".getBytes();
                 final byte[] dataB = "data-bb".getBytes();
 
-                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class))).thenReturn(null);
-                when(fetcher.readToByteBuffer(any()))
-                    .thenReturn(ByteBuffer.wrap(dataA))
-                    .thenReturn(ByteBuffer.wrap(dataB));
+                when(storage.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                    .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(dataA)));
+                when(storage.fetch(eq(OBJECT_KEY_B), any(ByteRange.class)))
+                    .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(dataB)));
 
                 final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                     partition0, FindBatchResponse.success(List.of(
@@ -700,8 +685,8 @@ public class FetchPlannerTest {
             try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
                 final byte[] expectedData = "old-data-but-hot-path".getBytes();
 
-                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                when(storage.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                    .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(expectedData)));
 
                 // Very old timestamp - would be "lagging" if feature was enabled
                 final long veryOldTimestamp = time.milliseconds() - 3600_000L; // 1 hour ago
@@ -730,7 +715,7 @@ public class FetchPlannerTest {
                 verify(metrics, never()).recordRateLimitWaitTime(any(Long.class));
 
                 // Verify data was fetched successfully
-                verify(fetcher).fetch(eq(OBJECT_KEY_A), any(ByteRange.class));
+                verify(storage).fetch(eq(OBJECT_KEY_A), any(ByteRange.class));
             }
         }
 
@@ -757,7 +742,7 @@ public class FetchPlannerTest {
                 assertThat(futures).isEmpty();
 
                 // Verify no fetch operations were attempted
-                verify(fetcher, never()).fetch(any(ObjectKey.class), any(ByteRange.class));
+                verify(storage, never()).fetch(any(ObjectKey.class), any(ByteRange.class));
 
                 // Verify metrics were still recorded (batch size = 0)
                 verify(metrics).recordFetchBatchSize(0);
@@ -782,8 +767,8 @@ public class FetchPlannerTest {
                         .addLimit(limit -> limit.capacity(1).refillGreedy(1, java.time.Duration.ofSeconds(1)))
                         .build();
 
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(storage.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                        .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(expectedData)));
 
                     final long recentTimestamp = time.milliseconds() - 30000L; // 30 seconds ago (recent)
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -822,8 +807,8 @@ public class FetchPlannerTest {
                     final byte[] expectedData = "boundary-data".getBytes();
                     final long threshold = 60 * 1000L;
 
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(storage.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                        .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(expectedData)));
 
                     final long exactThresholdTimestamp = time.milliseconds() - threshold;
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -864,8 +849,8 @@ public class FetchPlannerTest {
                         .addLimit(limit -> limit.capacity(10).refillGreedy(10, java.time.Duration.ofSeconds(1)))
                         .build();
 
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(storage.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                        .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(expectedData)));
 
                     final long oldTimestamp = time.milliseconds() - 120000L; // 2 minutes ago (old)
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -904,8 +889,8 @@ public class FetchPlannerTest {
                 try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
                     final byte[] expectedData = "old-data-no-limit".getBytes();
 
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(storage.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                        .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(expectedData)));
 
                     final long oldTimestamp = time.milliseconds() - 120000L;
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -941,9 +926,9 @@ public class FetchPlannerTest {
             public void fetchFailureInColdPathPropagatesException() throws Exception {
                 // Test that fetch failures in the cold path are properly wrapped and propagated
                 try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
-                    // Mock fetcher to throw exception
-                    when(fetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
-                        .thenThrow(new RuntimeException("S3 unavailable"));
+                    // Mock storage to return failed future
+                    when(storage.fetch(any(ObjectKey.class), any(ByteRange.class)))
+                        .thenReturn(CompletableFuture.failedFuture(new RuntimeException("S3 unavailable")));
 
                     final long oldTimestamp = time.milliseconds() - 120000L;
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -976,7 +961,7 @@ public class FetchPlannerTest {
                     verify(metrics, never()).recordRecentDataRequest();
 
                     // Verify remote fetch was attempted
-                    verify(fetcher).fetch(any(ObjectKey.class), any(ByteRange.class));
+                    verify(storage).fetch(any(ObjectKey.class), any(ByteRange.class));
                 }
             }
 
@@ -1039,9 +1024,9 @@ public class FetchPlannerTest {
                             OBJECT_KEY_CREATOR,
                             keyAlignmentStrategy,
                             caffeineCache,
-                            fetcher,
+                            storage,
                             fetchDataExecutor,
-                            fetcher, // laggingConsumerFetcher
+                            storage, // laggingStorage
                             threshold,
                             null, // No rate limiter
                             saturatedExecutor, // Saturated executor
@@ -1114,9 +1099,9 @@ public class FetchPlannerTest {
                         OBJECT_KEY_CREATOR,
                         keyAlignmentStrategy,
                         caffeineCache,
-                        fetcher,
+                        storage,
                         fetchDataExecutor,
-                        fetcher, // laggingConsumerFetcher
+                        storage, // laggingStorage
                         threshold,
                         null, // No rate limiter
                         shutdownExecutor, // Shutdown executor
@@ -1159,11 +1144,10 @@ public class FetchPlannerTest {
                     final byte[] oldData = "old".getBytes();
                     final long threshold = 60 * 1000L;
 
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any()))
-                        .thenReturn(ByteBuffer.wrap(recentData))
-                        .thenReturn(ByteBuffer.wrap(oldData));
+                    when(storage.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                        .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(recentData)));
+                    when(storage.fetch(eq(OBJECT_KEY_B), any(ByteRange.class)))
+                        .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(oldData)));
 
                     final long recentTimestamp = time.milliseconds() - 30000L; // 30s ago (recent)
                     final long oldTimestamp = time.milliseconds() - 120000L;  // 2min ago (old)
@@ -1210,11 +1194,10 @@ public class FetchPlannerTest {
                     final ExecutorService coldExecutor = Executors.newFixedThreadPool(2);
 
                     try {
-                        when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                        when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class))).thenReturn(null);
-                        when(fetcher.readToByteBuffer(any()))
-                            .thenReturn(ByteBuffer.wrap(recentData))
-                            .thenReturn(ByteBuffer.wrap(oldData));
+                        when(storage.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                            .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(recentData)));
+                        when(storage.fetch(eq(OBJECT_KEY_B), any(ByteRange.class)))
+                            .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(oldData)));
 
                         final long recentTimestamp = time.milliseconds() - 30000L; // 30s ago (recent)
                         final long oldTimestamp = time.milliseconds() - 120000L;  // 2min ago (old)
@@ -1233,9 +1216,9 @@ public class FetchPlannerTest {
                             OBJECT_KEY_CREATOR,
                             keyAlignmentStrategy,
                             caffeineCache,
-                            fetcher,
+                            storage,
                             hotExecutor, // Hot path executor
-                            fetcher, // laggingConsumerFetcher
+                            storage, // laggingStorage
                             threshold,
                             null, // No rate limiter
                             coldExecutor, // Cold path executor
@@ -1287,8 +1270,8 @@ public class FetchPlannerTest {
                 // Validates: laggingConsumerExecutor = null → feature disabled, all use hot path
                 try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
                     final byte[] expectedData = "all-recent".getBytes();
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(storage.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                        .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(expectedData)));
 
                     final long oldTimestamp = time.milliseconds() - 120000L; // Would be lagging if feature enabled
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -1320,8 +1303,8 @@ public class FetchPlannerTest {
                 // Validates: rateLimiter = null → cold path without rate limiting
                 try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
                     final byte[] expectedData = "cold-no-limit".getBytes();
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(storage.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                        .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(expectedData)));
 
                     final long oldTimestamp = time.milliseconds() - 120000L;
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -1357,8 +1340,8 @@ public class FetchPlannerTest {
                     final Bucket rateLimiter = Bucket.builder()
                         .addLimit(limit -> limit.capacity(10).refillGreedy(10, java.time.Duration.ofSeconds(1)))
                         .build();
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(storage.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                        .thenReturn(CompletableFuture.completedFuture(ByteBuffer.wrap(expectedData)));
 
                     final long oldTimestamp = time.milliseconds() - 120000L;
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -1405,9 +1388,9 @@ public class FetchPlannerTest {
             FetchPlannerTest.OBJECT_KEY_CREATOR,
             keyAlignmentStrategy,
             cache,
-            fetcher,
+            storage,
             fetchDataExecutor,
-            fetcher,
+            storage,
             thresholdMs,
             rateLimiter,
             laggingConsumerExecutor,

@@ -51,14 +51,13 @@ public class FetchHandler implements Closeable {
                 state.keyAlignmentStrategy(),
                 state.cache(),
                 state.controlPlane(),
-                state.buildStorage(),
+                state.buildStorageForFetch(),
                 state.brokerTopicStats(),
                 state.config().fetchMetadataThreadPoolSize(),
                 state.config().fetchDataThreadPoolSize(),
                 // Separate storage client for lagging consumers to:
                 // 1. Isolate connection pool usage (lagging consumers shouldn't exhaust connections for hot path)
                 // 2. Allow independent tuning of timeouts/retries for cold storage access patterns
-                //    (This requires some refactoring on how the storage client is built/configured)
                 // If thread pool size is 0, disabling lagging consumer support, don't create a separate client
                 //
                 // NOTE: The client for lagging consumers is created only when this FetchHandler (and Reader)
@@ -67,7 +66,7 @@ public class FetchHandler implements Closeable {
                 // of this instance, even if the configuration is later reloaded with a non-zero value.
                 // Enabling lagging consumer support therefore requires a broker restart (or reconstruction
                 // of the SharedState/FetchHandler) so that a new storage client can be created.
-                state.config().fetchLaggingConsumerThreadPoolSize() > 0 ? state.buildStorage() : null,
+                state.config().fetchLaggingConsumerThreadPoolSize() > 0 ? state.buildStorageForFetch() : null,
                 state.config().fetchLaggingConsumerThresholdMs(),
                 state.config().fetchLaggingConsumerRequestRateLimit(),
                 state.config().fetchLaggingConsumerThreadPoolSize(),

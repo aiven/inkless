@@ -44,7 +44,6 @@ import org.mockito.quality.Strictness;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.channels.ReadableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -70,7 +69,7 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.FileExtent;
-import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.storage_backend.common.Storage;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -109,7 +108,7 @@ public class ReaderTest {
     @Mock
     private ControlPlane controlPlane;
     @Mock
-    private ObjectFetcher objectFetcher;
+    private Storage storage;
     @Mock
     private FetchParams fetchParams;
     @Mock
@@ -574,9 +573,9 @@ public class ReaderTest {
             when(controlPlane.findBatches(any(), anyInt(), anyInt()))
                 .thenReturn(List.of(singleResponse));
 
-            // Simulate fetcher failing and throwing an exception
-            when(objectFetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
-                .thenThrow(new StorageBackendException("Storage backend error"));
+            // Simulate storage failing and returning a failed future
+            when(storage.fetch(any(ObjectKey.class), any(ByteRange.class)))
+                .thenReturn(CompletableFuture.failedFuture(new StorageBackendException("Storage backend error")));
 
             try (final var reader = getReader()) {
                 final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, fetchInfos);
@@ -615,12 +614,11 @@ public class ReaderTest {
             when(controlPlane.findBatches(any(), anyInt(), anyInt()))
                 .thenReturn(List.of(singleResponse));
 
-            // Simulate fetcher returning invalid/corrupted data that doesn't match expected size
-            final ReadableByteChannel file1Channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(), any())).thenReturn(file1Channel);
+            // Simulate storage returning invalid/corrupted data that doesn't match expected size
             // Corrupted data with size that doesn't match expected batch size
             final ByteBuffer corruptedRecords = ByteBuffer.wrap("invalid-batch-data".getBytes(StandardCharsets.UTF_8));
-            when(objectFetcher.readToByteBuffer(file1Channel)).thenReturn(corruptedRecords);
+            when(storage.fetch(any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(corruptedRecords));
 
             try (final var reader = getReader()) {
                 final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, fetchInfos);
@@ -652,10 +650,9 @@ public class ReaderTest {
             when(controlPlane.findBatches(any(), anyInt(), anyInt()))
                 .thenReturn(List.of(singleResponse));
 
-            // Simulate fetcher returning valid data
-            final ReadableByteChannel file1Channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(), any())).thenReturn(file1Channel);
-            when(objectFetcher.readToByteBuffer(file1Channel)).thenReturn(records.buffer());
+            // Simulate storage returning valid data
+            when(storage.fetch(any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(records.buffer()));
 
             try (final var reader = getReader()) {
                 final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, fetchInfos);
@@ -686,11 +683,11 @@ public class ReaderTest {
             KEY_ALIGNMENT_STRATEGY,
             OBJECT_CACHE,
             controlPlane,
-            objectFetcher,
+            storage,
             0,
             metadataExecutor,
             fetchDataExecutor,
-            objectFetcher,
+            storage,
             Long.MAX_VALUE,
             0,
             laggingFetchDataExecutor,
@@ -765,9 +762,8 @@ public class ReaderTest {
             when(controlPlane.findBatches(any(), anyInt(), anyInt()))
                 .thenReturn(List.of(oldResponse));
 
-            final ReadableByteChannel channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(), any())).thenReturn(channel);
-            when(objectFetcher.readToByteBuffer(channel)).thenReturn(records.buffer());
+            when(storage.fetch(any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(records.buffer()));
 
             try (final var reader = new Reader(
                 time,
@@ -775,11 +771,11 @@ public class ReaderTest {
                 KEY_ALIGNMENT_STRATEGY,
                 OBJECT_CACHE,
                 controlPlane,
-                objectFetcher,
+                storage,
                 0,
                 metadataExecutor,
                 fetchDataExecutor,
-                objectFetcher,
+                storage,
                 LAGGING_THRESHOLD_MS,
                 RATE_LIMIT_REQ_PER_SEC,
                 laggingFetchDataExecutor,
@@ -844,9 +840,8 @@ public class ReaderTest {
             when(controlPlane.findBatches(any(), anyInt(), anyInt()))
                 .thenReturn(List.of(oldResponse));
 
-            final ReadableByteChannel channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(), any())).thenReturn(channel);
-            when(objectFetcher.readToByteBuffer(channel)).thenReturn(records.buffer());
+            when(storage.fetch(any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(records.buffer()));
 
             try (final var reader = new Reader(
                 time,
@@ -854,11 +849,11 @@ public class ReaderTest {
                 KEY_ALIGNMENT_STRATEGY,
                 OBJECT_CACHE,
                 controlPlane,
-                objectFetcher,
+                storage,
                 0,
                 metadataExecutor,
                 fetchDataExecutor,
-                objectFetcher,
+                storage,
                 LAGGING_THRESHOLD_MS,
                 0, // Rate limiting disabled
                 laggingFetchDataExecutor,
@@ -969,16 +964,15 @@ public class ReaderTest {
                     return responses;
                 });
 
-            // Setup object fetcher to succeed for all requests (hot path will use this)
-            final ReadableByteChannel channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(ObjectKey.class), any(ByteRange.class))).thenReturn(channel);
+            // Setup storage to succeed for all requests (hot path will use this)
             // Return a fresh buffer each time to avoid buffer exhaustion issues
-            when(objectFetcher.readToByteBuffer(channel)).thenAnswer(invocation -> records.buffer().duplicate());
+            when(storage.fetch(any(ObjectKey.class), any(ByteRange.class)))
+                .thenAnswer(invocation -> CompletableFuture.completedFuture(records.buffer().duplicate()));
 
             // Create a lagging executor and immediately shut it down - will reject all tasks
             final ExecutorService saturatedLaggingExecutor = Executors.newSingleThreadExecutor();
             saturatedLaggingExecutor.shutdownNow(); // Force immediate rejection
-            
+
             // Use dedicated executors for this test to avoid interference
             final ExecutorService testMetadataExecutor = Executors.newSingleThreadExecutor();
             final ExecutorService testFetchDataExecutor = Executors.newSingleThreadExecutor();
@@ -989,11 +983,11 @@ public class ReaderTest {
                 KEY_ALIGNMENT_STRATEGY,
                 OBJECT_CACHE,
                 controlPlane,
-                objectFetcher,
+                storage,
                 0,
                 testMetadataExecutor,
                 testFetchDataExecutor,
-                objectFetcher, // Use same fetcher for lagging to simplify test
+                storage, // Use same storage for lagging to simplify test
                 LAGGING_THRESHOLD_MS,
                 RATE_LIMIT_REQ_PER_SEC,
                 saturatedLaggingExecutor, // Saturated executor for lagging path
@@ -1074,9 +1068,8 @@ public class ReaderTest {
             when(controlPlane.findBatches(any(), anyInt(), anyInt()))
                 .thenReturn(List.of(recentResponse));
 
-            final ReadableByteChannel channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(), any())).thenReturn(channel);
-            when(objectFetcher.readToByteBuffer(channel)).thenReturn(records.buffer());
+            when(storage.fetch(any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(records.buffer()));
 
             try (final var reader = new Reader(
                 time,
@@ -1084,11 +1077,11 @@ public class ReaderTest {
                 KEY_ALIGNMENT_STRATEGY,
                 OBJECT_CACHE,
                 controlPlane,
-                objectFetcher,
+                storage,
                 0,
                 metadataExecutor,
                 fetchDataExecutor,
-                objectFetcher,
+                storage,
                 LAGGING_THRESHOLD_MS,
                 RATE_LIMIT_REQ_PER_SEC,
                 laggingFetchDataExecutor,

@@ -41,7 +41,7 @@ import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
-import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.storage_backend.common.Storage;
 import io.github.bucket4j.Bucket;
 
 /**
@@ -65,12 +65,12 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
     private final ObjectKeyCreator objectKeyCreator;
     private final KeyAlignmentStrategy keyAlignment;
     private final ObjectCache cache;
-    private final ObjectFetcher objectFetcher;
+    private final Storage storage;
     // Executor for fetching data from remote storage.
     // Will only be used for recent data (hot path) if lagging consumer support feature is enabled.
     private final ExecutorService fetchDataExecutor;
     private final ExecutorService laggingFetchDataExecutor;
-    private final ObjectFetcher laggingObjectFetcher;
+    private final Storage laggingStorage;
     private final long laggingConsumerThresholdMs;
     private final Bucket laggingRateLimiter;
     private final Map<TopicIdPartition, FindBatchResponse> batchCoordinates;
@@ -81,9 +81,9 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         ObjectKeyCreator objectKeyCreator,
         KeyAlignmentStrategy keyAlignment,
         ObjectCache cache,
-        ObjectFetcher objectFetcher,
+        Storage storage,
         ExecutorService fetchDataExecutor,
-        ObjectFetcher laggingObjectFetcher,
+        Storage laggingStorage,
         long laggingConsumerThresholdMs,
         Bucket laggingRateLimiter,
         ExecutorService laggingFetchDataExecutor,
@@ -94,9 +94,9 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         this.objectKeyCreator = objectKeyCreator;
         this.keyAlignment = keyAlignment;
         this.cache = cache;
-        this.objectFetcher = objectFetcher;
+        this.storage = storage;
         this.fetchDataExecutor = fetchDataExecutor;
-        this.laggingObjectFetcher = laggingObjectFetcher;
+        this.laggingStorage = laggingStorage;
         this.laggingFetchDataExecutor = laggingFetchDataExecutor;
         this.laggingConsumerThresholdMs = laggingConsumerThresholdMs;
         this.laggingRateLimiter = laggingRateLimiter;
@@ -203,9 +203,9 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         // Math.max ensures dataAge is never negative, which would incorrectly route future timestamps
         final long dataAge = Math.max(0, currentTime - request.timestamp());
 
-        // Lagging consumer feature is enabled only when BOTH laggingFetchDataExecutor AND laggingObjectFetcher are non-null.
+        // Lagging consumer feature is enabled only when BOTH laggingFetchDataExecutor AND laggingStorage are non-null.
         // If either is null, the feature is disabled and all requests are treated as recent (hot path).
-        final boolean laggingFeatureEnabled = laggingFetchDataExecutor != null && laggingObjectFetcher != null;
+        final boolean laggingFeatureEnabled = laggingFetchDataExecutor != null && laggingStorage != null;
         final boolean isLagging = laggingFeatureEnabled && (dataAge > laggingConsumerThresholdMs);
 
         if (!isLagging) {
@@ -213,7 +213,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
             metrics.recordRecentDataRequest();
             return cache.computeIfAbsent(
                 request.toCacheKey(),
-                k -> fetchFileExtent(objectFetcher, request),
+                k -> fetchFileExtent(storage, request),
                 fetchDataExecutor
             );
         } else {
@@ -228,7 +228,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                         if (laggingRateLimiter != null) {
                             applyRateLimit(); // InterruptedException here is wrapped in FetchException
                         }
-                        return fetchFileExtent(laggingObjectFetcher, request);
+                        return fetchFileExtent(laggingStorage, request);
                     },
                     laggingFetchDataExecutor
                 ).whenComplete((result, throwable) -> {
@@ -283,22 +283,23 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
     }
 
     /**
-     * Fetches a file extent from remote storage.
+     * Fetches a file extent from remote storage using the unified Storage interface.
      *
+     * @param storageToUse the storage instance to use for the fetch
      * @param request the fetch request with object key and byte range
      * @return the fetched file extent
      * @throws FileFetchException if remote fetch fails
      */
-    private FileExtent fetchFileExtent(final ObjectFetcher fetcher, final ObjectFetchRequest request) {
+    private FileExtent fetchFileExtent(final Storage storageToUse, final ObjectFetchRequest request) {
         try {
-            final FileFetchJob job = new FileFetchJob(
+            final AsyncFileFetchJob job = new AsyncFileFetchJob(
                 time,
-                fetcher,
+                storageToUse,
                 request.objectKey(),
                 request.byteRange(),
                 metrics::fetchFileFinished
             );
-            final FileExtent fileExtent = job.call();
+            final FileExtent fileExtent = job.fetchAsync().join();
 
             // Record cache entry size for monitoring
             metrics.cacheEntrySize(fileExtent.data().length);
