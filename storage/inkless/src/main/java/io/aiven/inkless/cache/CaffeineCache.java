@@ -46,12 +46,16 @@ public final class CaffeineCache implements ObjectCache {
         final long lifespanSeconds,
         final int maxIdleSeconds
     ) {
-        cache = Caffeine.newBuilder()
-                .maximumSize(maxCacheSize)
-                .expireAfterWrite(Duration.ofSeconds(lifespanSeconds))
-                .expireAfterAccess(Duration.ofSeconds(maxIdleSeconds != -1 ? maxIdleSeconds: 180))
-                .recordStats()
-                .buildAsync();
+        final Caffeine<Object, Object> builder = Caffeine.newBuilder()
+            .maximumSize(maxCacheSize)
+            .expireAfterWrite(Duration.ofSeconds(lifespanSeconds));
+        // -1 means disabled (see InklessConfig.CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_CONFIG doc)
+        if (maxIdleSeconds != -1) {
+            builder.expireAfterAccess(Duration.ofSeconds(maxIdleSeconds));
+        }
+        cache = builder
+            .recordStats()
+            .buildAsync();
         metrics = new CaffeineCacheMetrics(cache.synchronous());
     }
 
