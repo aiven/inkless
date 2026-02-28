@@ -22,6 +22,9 @@ import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.metrics.Metrics;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -39,6 +42,8 @@ import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.storage_backend.s3.S3StorageConfig;
 
 public class InklessConfig extends AbstractConfig {
+    private static final Logger LOGGER = LoggerFactory.getLogger(InklessConfig.class);
+
     public static final String PREFIX = "inkless.";
 
     public static final String CONTROL_PLANE_PREFIX = "control.plane.";
@@ -584,7 +589,7 @@ public class InklessConfig extends AbstractConfig {
      * Returns CRT-backed async storage if enabled for this path, otherwise a sync adapter.
      */
     public Storage storageForProduce(final Metrics metrics) {
-        return storageForPath(metrics, S3StorageConfig::crtEnabledForProduce);
+        return storageForPath("produce", metrics, S3StorageConfig::crtEnabledForProduce);
     }
 
     /**
@@ -592,7 +597,7 @@ public class InklessConfig extends AbstractConfig {
      * Returns CRT-backed async storage if enabled for this path, otherwise a sync adapter.
      */
     public Storage storageForFetch(final Metrics metrics) {
-        return storageForPath(metrics, S3StorageConfig::crtEnabledForFetch);
+        return storageForPath("fetch", metrics, S3StorageConfig::crtEnabledForFetch);
     }
 
     /**
@@ -600,7 +605,7 @@ public class InklessConfig extends AbstractConfig {
      * Returns CRT-backed async storage if enabled for this path, otherwise a sync adapter.
      */
     public Storage storageForDelete(final Metrics metrics) {
-        return storageForPath(metrics, S3StorageConfig::crtEnabledForDelete);
+        return storageForPath("delete", metrics, S3StorageConfig::crtEnabledForDelete);
     }
 
     /**
@@ -608,10 +613,11 @@ public class InklessConfig extends AbstractConfig {
      * Returns CRT-backed async storage if enabled for this path, otherwise a sync adapter.
      */
     public Storage storageForMerge(final Metrics metrics) {
-        return storageForPath(metrics, S3StorageConfig::crtEnabledForMerge);
+        return storageForPath("merge", metrics, S3StorageConfig::crtEnabledForMerge);
     }
 
-    private Storage storageForPath(final Metrics metrics,
+    private Storage storageForPath(final String pathName,
+                                   final Metrics metrics,
                                    final java.util.function.Predicate<S3StorageConfig> crtEnabledCheck) {
         @SuppressWarnings("unchecked")
         final Class<? extends StorageBackend> storageClass = (Class<? extends StorageBackend>) getClass(STORAGE_BACKEND_CLASS_CONFIG);
@@ -624,11 +630,14 @@ public class InklessConfig extends AbstractConfig {
             if (crtEnabledCheck.test(s3Config)) {
                 final S3AsyncStorage asyncStorage = new S3AsyncStorage(metrics);
                 asyncStorage.configure(storageConfigs);
+                LOGGER.info("Storage for {} path: using async CRT backend (S3AsyncStorage)", pathName);
                 return asyncStorage;
             }
         }
 
         // Fall back to sync storage wrapped in adapter
+        LOGGER.info("Storage for {} path: using sync backend (SyncStorageAdapter wrapping {})",
+            pathName, storageClass.getSimpleName());
         return new SyncStorageAdapter(storage(metrics));
     }
 

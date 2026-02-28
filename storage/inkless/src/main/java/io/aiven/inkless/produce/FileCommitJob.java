@@ -138,11 +138,12 @@ class FileCommitJob {
 
         if (safeToDeleteFile) {
             LOGGER.error("Error commiting data, attempting to remove the uploaded file {}", objectKey, e);
-            try {
-                storage.delete(objectKey).join();
-            } catch (final Exception e2) {
-                LOGGER.error("Error removing the uploaded file {}", objectKey, e2);
-            }
+            // Fire-and-forget delete - don't block the error path waiting for S3
+            storage.delete(objectKey)
+                .exceptionally(e2 -> {
+                    LOGGER.error("Error removing the uploaded file {}", objectKey, e2);
+                    return null;
+                });
         } else {
             LOGGER.error("Error commiting data, but not removing the uploaded file {} as it is not safe", objectKey, e);
         }

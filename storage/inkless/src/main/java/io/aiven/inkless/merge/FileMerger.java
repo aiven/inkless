@@ -26,11 +26,14 @@ import org.slf4j.LoggerFactory;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
@@ -144,17 +147,28 @@ public class FileMerger implements Runnable, Closeable {
         var builder = new MergeBatchesInputStream.Builder();
         var paths = new ArrayList<Path>();
         try {
-            // Collect InputStream supplier for each file, to avoid opening all of them at once.
+            // Download all files in parallel for better throughput.
+            // This reduces download time from N * avg_latency to ~avg_latency.
+            final List<CompletableFuture<ByteBuffer>> downloadFutures = new ArrayList<>();
             for (final var file : workItem.files()) {
                 final ObjectKey objectKey = objectKeyCreator.from(file.objectKey());
+                downloadFutures.add(storage.fetch(objectKey, null));
+            }
+
+            // Wait for all downloads to complete in parallel
+            @SuppressWarnings("rawtypes")
+            CompletableFuture[] futuresArray = downloadFutures.toArray(new CompletableFuture[0]);
+            CompletableFuture.allOf(futuresArray).join();
+
+            // Process downloaded files - all futures are already resolved, no blocking
+            for (int i = 0; i < workItem.files().size(); i++) {
+                final var file = workItem.files().get(i);
+                final ByteBuffer fileContent = downloadFutures.get(i).join(); // Instant - already complete
 
                 // Download the file to a temporary location flat in the work directory.
                 final String tmpFileName = file.objectKey().replaceAll("/", "_");
                 final var target = workDir.resolve(tmpFileName);
                 paths.add(target);
-
-                // Fetch file content using unified storage interface
-                final java.nio.ByteBuffer fileContent = storage.fetch(objectKey, null).join();
 
                 try (final var out = Files.newByteChannel(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
                     out.write(fileContent);
@@ -235,11 +249,12 @@ public class FileMerger implements Runnable, Closeable {
 
         if (safeToDeleteFile) {
             LOGGER.error("Error committing merged file, attempting to remove the uploaded file {}", objectKey, e);
-            try {
-                storage.delete(objectKey).join();
-            } catch (final Exception e2) {
-                LOGGER.error("Error removing the uploaded file {}", objectKey, e2);
-            }
+            // Fire-and-forget delete - don't block the error path waiting for S3
+            storage.delete(objectKey)
+                .exceptionally(e2 -> {
+                    LOGGER.error("Error removing the uploaded file {}", objectKey, e2);
+                    return null;
+                });
         } else {
             LOGGER.error("Error committing merged file, but not safe to delete the uploaded file {} as it is not safe", objectKey, e);
         }

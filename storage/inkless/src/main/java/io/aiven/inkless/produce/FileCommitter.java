@@ -26,7 +26,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
@@ -37,8 +36,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.BatchCoordinateCache;
@@ -55,14 +52,18 @@ import io.aiven.inkless.storage_backend.common.Storage;
 /**
  * The file committer.
  *
- * <p>It uploads files concurrently, but commits them to the control plan sequentially.
+ * <p>It uploads files concurrently, but commits them to the control plane sequentially.
+ *
+ * <p><b>Threading:</b> This class is designed to be called from a single thread (the buffer-writer
+ * thread in {@link PipelinedWriter} or the lock-protected rotateFile in {@link Writer}).
+ * All internal operations use atomic/thread-safe primitives (AtomicInteger for counters,
+ * thread-safe ExecutorService for task submission, CompletableFuture for async chaining).
+ * The class does NOT support concurrent commit() calls - commits must be serialized by the caller.
  */
 class FileCommitter implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitter.class);
 
     private final FileCommitterMetrics metrics;
-
-    private final Lock lock = new ReentrantLock();
 
     private final int brokerId;
     private final ControlPlane controlPlane;
@@ -77,16 +78,10 @@ class FileCommitter implements Closeable {
     private final ExecutorService executorServiceUpload;
     private final ExecutorService executorServiceCommit;
     private final ExecutorService executorServiceCacheStore;
-    private final boolean asyncCommitPipeline;
     private ThreadPoolMonitor threadPoolMonitor;
 
     private final AtomicInteger totalFilesInProgress = new AtomicInteger(0);
     private final AtomicInteger totalBytesInProgress = new AtomicInteger(0);
-
-    // Tracks the previous commit to ensure commits happen in submission order, not upload completion order.
-    // Each new commit waits for both its upload AND the previous commit to complete before starting.
-    // Only used when asyncCommitPipeline is true.
-    private CompletableFuture<?> previousCommitFuture = CompletableFuture.completedFuture(null);
 
     @DoNotMutate
     FileCommitter(final int brokerId,
@@ -99,16 +94,17 @@ class FileCommitter implements Closeable {
                   final Time time,
                   final int maxFileUploadAttempts,
                   final Duration fileUploadRetryBackoff,
-                  final int fileUploaderThreadPoolSize,
-                  final boolean asyncCommitPipeline) {
+                  final int fileUploaderThreadPoolSize) {
         this(brokerId, controlPlane, objectKeyCreator, storage, keyAlignmentStrategy, objectCache, batchCoordinateCache, time, maxFileUploadAttempts, fileUploadRetryBackoff,
             Executors.newFixedThreadPool(fileUploaderThreadPoolSize, new InklessThreadFactory("inkless-file-uploader-", false)),
             // It must be single-thread to preserve the commit order.
             Executors.newSingleThreadExecutor(new InklessThreadFactory("inkless-file-committer-", false)),
-            // Reuse the same thread pool size as uploads, as there are no more concurrency expected to handle
+            // Cache store uses non-daemon threads to ensure proper buffer release during shutdown.
+            // While caching is optional for correctness, we want buffers to be cleanly released
+            // to avoid leaving the buffer pool in an inconsistent state. The close() method
+            // provides a graceful shutdown timeout for these tasks.
             Executors.newFixedThreadPool(fileUploaderThreadPoolSize, new InklessThreadFactory("inkless-file-cache-store-", false)),
-            new FileCommitterMetrics(time),
-            asyncCommitPipeline
+            new FileCommitterMetrics(time)
         );
     }
 
@@ -126,8 +122,7 @@ class FileCommitter implements Closeable {
                   final ExecutorService executorServiceUpload,
                   final ExecutorService executorServiceCommit,
                   final ExecutorService executorServiceCacheStore,
-                  final FileCommitterMetrics metrics,
-                  final boolean asyncCommitPipeline) {
+                  final FileCommitterMetrics metrics) {
         this.brokerId = brokerId;
         this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane cannot be null");
         this.objectKeyCreator = Objects.requireNonNull(objectKeyCreator, "objectKeyCreator cannot be null");
@@ -148,7 +143,6 @@ class FileCommitter implements Closeable {
             "executorServiceCommit cannot be null");
         this.executorServiceCacheStore = Objects.requireNonNull(executorServiceCacheStore,
                 "executorServiceCacheStore cannot be null");
-        this.asyncCommitPipeline = asyncCommitPipeline;
 
         this.metrics = Objects.requireNonNull(metrics, "metrics cannot be null");
         // Can't do this in the FileCommitterMetrics constructor, so initializing this way.
@@ -165,182 +159,96 @@ class FileCommitter implements Closeable {
     void commit(final ClosedFile file) throws InterruptedException {
         Objects.requireNonNull(file, "file cannot be null");
 
-        lock.lock();
-        try {
-            final Instant uploadAndCommitStart = TimeUtils.durationMeasurementNow(time);
-            final CompletableFuture<List<CommitBatchResponse>> commitFuture;
+        final Instant uploadAndCommitStart = TimeUtils.durationMeasurementNow(time);
+        CompletableFuture<List<CommitBatchResponse>> commitFuture;
 
-            if (file.isEmpty()) {
-                commitFuture = CompletableFuture.completedFuture(Collections.emptyList());
-            } else {
-                commitFuture = commitNonEmptyFile(file, uploadAndCommitStart);
+        if (file.isEmpty()) {
+            // If the file is empty, skip uploading and committing, but proceed with the later steps.
+            commitFuture = CompletableFuture.completedFuture(Collections.emptyList());
+        } else {
+            metrics.fileAdded(file.size());
+            metrics.batchesAdded(file.commitBatchRequests().size());
+            totalFilesInProgress.addAndGet(1);
+            totalBytesInProgress.addAndGet(file.size());
+
+            // Buffer refCount starts at 1. retain() increments for CacheStoreJob.
+            // FileUploadJob and CacheStoreJob each release; buffer returns to pool when both complete.
+            try {
+                file.data().retain();
+            } catch (final IllegalStateException e) {
+                LOGGER.error("Failed to retain buffer for file upload - buffer already released. "
+                    + "This indicates a bug in buffer lifecycle management.", e);
+                throw e;
             }
 
-            attachCompletionHandler(file, commitFuture);
-        } finally {
-            lock.unlock();
-        }
-    }
+            // Use AsyncFileUploadJob for true non-blocking uploads.
+            // When CRT is enabled, this allows the upload to proceed without blocking any thread,
+            // fully utilizing the async I/O capabilities.
+            final AsyncFileUploadJob uploadJob = AsyncFileUploadJob.createFromBatchBufferData(
+                objectKeyCreator,
+                storage,
+                time,
+                maxFileUploadAttempts,
+                fileUploadRetryBackoff,
+                file.data(),
+                metrics::fileUploadFinished
+            );
 
-    private CompletableFuture<List<CommitBatchResponse>> commitNonEmptyFile(
-            final ClosedFile file,
-            final Instant uploadAndCommitStart) {
+            // uploadAsync() returns a future that completes when upload is done.
+            // With CRT, this is truly non-blocking - no thread is held during S3 I/O.
+            final CompletableFuture<ObjectKey> uploadFuture = uploadJob.uploadAsync()
+                .exceptionally(e -> {
+                    // Wrap the exception for consistent error handling downstream
+                    throw new FileUploadException(e);
+                });
 
-        updateMetricsOnStart(file);
+            final FileCommitJob commitJob = new FileCommitJob(
+                brokerId,
+                file,
+                time,
+                controlPlane,
+                storage,
+                metrics::fileCommitFinished,
+                metrics::fileCommitWaitFinished
+            );
 
-        final CompletableFuture<ObjectKey> uploadFuture = startUpload(file);
-        final FileCommitJob commitJob = createCommitJob(file);
-        final CacheStoreJob cacheStoreJob = createCacheStoreJob(file);
-
-        if (asyncCommitPipeline) {
-            return commitAsync(file, uploadFuture, commitJob, cacheStoreJob, uploadAndCommitStart);
-        } else {
-            return commitSync(file, uploadFuture, commitJob, cacheStoreJob, uploadAndCommitStart);
-        }
-    }
-
-    private void updateMetricsOnStart(final ClosedFile file) {
-        metrics.fileAdded(file.size());
-        metrics.batchesAdded(file.commitBatchRequests().size());
-        totalFilesInProgress.addAndGet(1);
-        totalBytesInProgress.addAndGet(file.size());
-    }
-
-    private CompletableFuture<ObjectKey> startUpload(final ClosedFile file) {
-        final FileUploadJob uploadJob = FileUploadJob.createFromByteArray(
-                objectKeyCreator, storage, time,
-                maxFileUploadAttempts, fileUploadRetryBackoff,
-                file.data(), metrics::fileUploadFinished
-        );
-        return CompletableFuture.supplyAsync(
-                () -> {
-                    try {
-                        return uploadJob.call();
-                    } catch (final Exception e) {
-                        throw new FileUploadException(e);
+            // Chain the commit as a callback on upload completion.
+            // This eliminates the previous pattern where the commit thread would block
+            // on uploadFuture.get(), wasting thread resources waiting for S3 latency.
+            // The callback runs on executorServiceCommit (single-threaded) to maintain
+            // serialization of commits, but the thread only wakes when uploads complete.
+            commitFuture = uploadFuture.handleAsync(commitJob::onUploadComplete, executorServiceCommit)
+                .whenComplete((result, error) -> {
+                    totalFilesInProgress.addAndGet(-1);
+                    totalBytesInProgress.addAndGet(-file.size());
+                    if (error != null) {
+                        // at this point the commit has failed and need to check whether it failed on upload or commit
+                        LOGGER.error("Failed to commit diskless file {}", file, error);
+                        if (error.getCause() instanceof FileUploadException) {
+                            metrics.fileUploadFailed();
+                        } else {
+                            metrics.fileCommitFailed();
+                        }
+                    } else {
+                        // only mark as finished if everything succeeded
+                        metrics.fileFinished(file.start(), uploadAndCommitStart);
                     }
-                },
-                executorServiceUpload
-        );
-    }
+                });
 
-    private FileCommitJob createCommitJob(final ClosedFile file) {
-        return new FileCommitJob(
-                brokerId, file, time, controlPlane, storage,
-                metrics::fileCommitFinished, metrics::fileCommitWaitFinished
-        );
-    }
-
-    private CacheStoreJob createCacheStoreJob(final ClosedFile file) {
-        return new CacheStoreJob(
-                time, objectCache, keyAlignmentStrategy,
-                file.data(), metrics::cacheStoreFinished
-        );
-    }
-
-    /**
-     * Async commit pipeline: callbacks triggered when upload completes, no thread blocking.
-     * Commits are chained to ensure submission order is preserved.
-     */
-    private CompletableFuture<List<CommitBatchResponse>> commitAsync(
-            final ClosedFile file,
-            final CompletableFuture<ObjectKey> uploadFuture,
-            final FileCommitJob commitJob,
-            final CacheStoreJob cacheStoreJob,
-            final Instant uploadAndCommitStart) {
-
-        // Wait for previous commit to complete (success OR failure) before starting this one.
-        // Using handle() ensures we don't propagate previous failures - each commit is independent.
-        // We only use previousCommitFuture for ordering, not for error propagation.
-        final CompletableFuture<?> prevCommitBarrier = previousCommitFuture.handle((result, error) -> null);
-        final CompletableFuture<List<CommitBatchResponse>> commitFuture = uploadFuture
-                .thenCombine(prevCommitBarrier, (objectKey, ignored) -> {
-                    // Reset the submit time now that we're actually ready to commit.
-                    // This ensures FileCommitWaitTime measures only the executor queue wait,
-                    // not the time waiting for previous commits in the chain.
-                    commitJob.markReadyToCommit();
-                    return objectKey;
-                })
-                .handleAsync(commitJob, executorServiceCommit)
-                .whenComplete((result, error) -> handleCommitResult(file, uploadAndCommitStart, error));
-
-        // Cache store as non-blocking callback
-        uploadFuture.whenCompleteAsync(cacheStoreJob, executorServiceCacheStore);
-
-        // Update chain for next commit
-        previousCommitFuture = commitFuture;
-        return commitFuture;
-    }
-
-    /**
-     * Sync commit pipeline: threads block on uploadFuture.get() waiting for upload.
-     * This is the original behavior before the async pipeline was introduced.
-     */
-    private CompletableFuture<List<CommitBatchResponse>> commitSync(
-            final ClosedFile file,
-            final CompletableFuture<ObjectKey> uploadFuture,
-            final FileCommitJob commitJob,
-            final CacheStoreJob cacheStoreJob,
-            final Instant uploadAndCommitStart) {
-
-        final CompletableFuture<List<CommitBatchResponse>> commitFuture = CompletableFuture.supplyAsync(
-                () -> waitForUploadAndCommit(uploadFuture, commitJob),
-                executorServiceCommit
-        ).whenComplete((result, error) -> handleCommitResult(file, uploadAndCommitStart, error));
-
-        // Cache store with blocking wait
-        CompletableFuture.runAsync(
-                () -> waitForUploadAndCache(uploadFuture, cacheStoreJob),
-                executorServiceCacheStore
-        );
-
-        return commitFuture;
-    }
-
-    private List<CommitBatchResponse> waitForUploadAndCommit(
-            final CompletableFuture<ObjectKey> uploadFuture,
-            final FileCommitJob commitJob) {
-        ObjectKey objectKey = null;
-        Throwable error = null;
-        try {
-            objectKey = uploadFuture.get();
-        } catch (final Exception e) {
-            error = e;
+            // Chain cache store as a non-blocking callback on upload completion.
+            // This eliminates the previous pattern where cache store threads would block
+            // on uploadFuture.get(), wasting thread resources waiting for S3 latency.
+            // The callback runs on executorServiceCacheStore to maintain thread isolation.
+            final CacheStoreJob cacheStoreJob = new CacheStoreJob(
+                time,
+                objectCache,
+                keyAlignmentStrategy,
+                file.data(),
+                metrics::cacheStoreFinished
+            );
+            uploadFuture.whenCompleteAsync(cacheStoreJob::onUploadComplete, executorServiceCacheStore);
         }
-        return commitJob.onUploadComplete(objectKey, error);
-    }
 
-    private void waitForUploadAndCache(
-            final CompletableFuture<ObjectKey> uploadFuture,
-            final CacheStoreJob cacheStoreJob) {
-        ObjectKey objectKey = null;
-        Throwable error = null;
-        try {
-            objectKey = uploadFuture.get();
-        } catch (final Exception e) {
-            error = e;
-        }
-        cacheStoreJob.onUploadComplete(objectKey, error);
-    }
-
-    private void handleCommitResult(final ClosedFile file, final Instant uploadAndCommitStart, final Throwable error) {
-        totalFilesInProgress.addAndGet(-1);
-        totalBytesInProgress.addAndGet(-file.size());
-        if (error != null) {
-            LOGGER.error("Failed to commit diskless file {}", file, error);
-            if (error.getCause() instanceof FileUploadException) {
-                metrics.fileUploadFailed();
-            } else {
-                metrics.fileCommitFailed();
-            }
-        } else {
-            metrics.fileFinished(file.start(), uploadAndCommitStart);
-        }
-    }
-
-    private void attachCompletionHandler(
-            final ClosedFile file,
-            final CompletableFuture<List<CommitBatchResponse>> commitFuture) {
         commitFuture.whenComplete((commitBatchResponses, throwable) -> {
             final AppendCompleter completerJob = new AppendCompleter(file, batchCoordinateCache);
             if (commitBatchResponses != null) {
@@ -361,33 +269,25 @@ class FileCommitter implements Closeable {
         return totalBytesInProgress.get();
     }
 
-    private static final long SHUTDOWN_TIMEOUT_SECONDS = 30;
-
     @Override
     public void close() throws IOException {
         executorServiceUpload.shutdown();
         executorServiceCommit.shutdown();
         executorServiceCacheStore.shutdown();
+
+        // Wait for cache store to release buffers back to pool
         try {
-            if (!executorServiceUpload.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                LOGGER.warn("Upload executor did not terminate in time, forcing shutdown");
-                executorServiceUpload.shutdownNow();
-            }
-            if (!executorServiceCommit.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                LOGGER.warn("Commit executor did not terminate in time, forcing shutdown");
-                executorServiceCommit.shutdownNow();
-            }
-            if (!executorServiceCacheStore.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                LOGGER.warn("Cache store executor did not terminate in time, forcing shutdown");
+            if (!executorServiceCacheStore.awaitTermination(5, TimeUnit.SECONDS)) {
+                LOGGER.warn("Cache store executor did not terminate within timeout. "
+                    + "Some buffers may not be released cleanly.");
                 executorServiceCacheStore.shutdownNow();
             }
         } catch (final InterruptedException e) {
-            LOGGER.warn("Interrupted while waiting for executor shutdown", e);
-            executorServiceUpload.shutdownNow();
-            executorServiceCommit.shutdownNow();
+            LOGGER.warn("Interrupted while waiting for cache store shutdown", e);
             executorServiceCacheStore.shutdownNow();
             Thread.currentThread().interrupt();
         }
+
         metrics.close();
         if (threadPoolMonitor != null) threadPoolMonitor.close();
     }

@@ -112,8 +112,6 @@ class FileCommitterTest {
     FileCommitterMetrics metrics;
 
     @Captor
-    ArgumentCaptor<Runnable> uploadRunnableCaptor;
-    @Captor
     ArgumentCaptor<Runnable> commitRunnableCaptor;
 
     @Test
@@ -141,13 +139,8 @@ class FileCommitterTest {
         assertThat(committer.totalFilesInProgress()).isOne();
         assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().size());
 
-        // CompletableFuture.supplyAsync uses execute() instead of submit()
-        verify(executorServiceUpload).execute(uploadRunnableCaptor.capture());
-        final Runnable uploadRunnable = uploadRunnableCaptor.getValue();
-
-        // Run the upload task synchronously
-        uploadRunnable.run();
-
+        // AsyncFileUploadJob.uploadAsync() completes inline when storage returns completed future.
+        // The commit job is then submitted to executorServiceCommit via handleAsync().
         verify(executorServiceCommit).execute(commitRunnableCaptor.capture());
         final Runnable commitRunnable = commitRunnableCaptor.getValue();
 
@@ -187,13 +180,8 @@ class FileCommitterTest {
         assertThat(committer.totalFilesInProgress()).isOne();
         assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().size());
 
-        // CompletableFuture.supplyAsync uses execute() instead of submit()
-        verify(executorServiceUpload).execute(uploadRunnableCaptor.capture());
-        final Runnable uploadRunnable = uploadRunnableCaptor.getValue();
-
-        // Run the upload task synchronously
-        uploadRunnable.run();
-
+        // AsyncFileUploadJob.uploadAsync() completes inline when storage returns completed future.
+        // The commit job is then submitted to executorServiceCommit via handleAsync().
         verify(executorServiceCommit).execute(commitRunnableCaptor.capture());
         final Runnable commitRunnable = commitRunnableCaptor.getValue();
 
@@ -233,13 +221,8 @@ class FileCommitterTest {
         assertThat(committer.totalFilesInProgress()).isOne();
         assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().size());
 
-        // CompletableFuture.supplyAsync uses execute() instead of submit()
-        verify(executorServiceUpload).execute(uploadRunnableCaptor.capture());
-        final Runnable uploadRunnable = uploadRunnableCaptor.getValue();
-
-        // Run the upload task synchronously - it will fail and the CompletableFuture will complete exceptionally
-        uploadRunnable.run();
-
+        // AsyncFileUploadJob.uploadAsync() completes inline (with failure) when storage returns failed future.
+        // The commit job is still submitted to executorServiceCommit via handleAsync() to handle the error.
         verify(executorServiceCommit).execute(commitRunnableCaptor.capture());
         final Runnable commitRunnable = commitRunnableCaptor.getValue();
 
