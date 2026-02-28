@@ -41,6 +41,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.common.ObjectFormat;
@@ -225,5 +228,90 @@ class FileCommitJobTest {
         Assert.assertThrows(RuntimeException.class, () -> job.onUploadComplete(OBJECT_KEY, null));
 
         verify(storage, never()).delete(eq(OBJECT_KEY));
+    }
+
+    /**
+     * Test that delete is fire-and-forget: the method returns immediately without waiting for delete to complete.
+     * This verifies the async behavior regardless of whether the underlying storage is sync or async.
+     */
+    @Test
+    void deleteIsFireAndForget_asyncStorage() throws Exception {
+        final Map<Integer, CompletableFuture<Map<TopicIdPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+            0, new CompletableFuture<>(),
+            1, new CompletableFuture<>()
+        );
+
+        // Track when delete starts and completes
+        final CountDownLatch deleteStarted = new CountDownLatch(1);
+        final CountDownLatch deleteCanComplete = new CountDownLatch(1);
+        final AtomicBoolean deleteCompleted = new AtomicBoolean(false);
+
+        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
+            .thenThrow(new ControlPlaneException("test"));
+        when(controlPlane.isSafeToDeleteFile(eq(OBJECT_KEY_MAIN_PART))).thenReturn(true);
+
+        // Simulate an async storage where delete takes time to complete
+        final CompletableFuture<Void> slowDeleteFuture = new CompletableFuture<>();
+        when(storage.delete(eq(OBJECT_KEY))).thenAnswer(invocation -> {
+            deleteStarted.countDown();
+            // Complete the future asynchronously after the latch is released
+            CompletableFuture.runAsync(() -> {
+                try {
+                    deleteCanComplete.await(5, TimeUnit.SECONDS);
+                    deleteCompleted.set(true);
+                    slowDeleteFuture.complete(null);
+                } catch (InterruptedException e) {
+                    slowDeleteFuture.completeExceptionally(e);
+                }
+            });
+            return slowDeleteFuture;
+        });
+
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, time, controlPlane, storage, commitTimeDurationCallback, commitWaitTimeDurationCallback);
+
+        // Call onUploadComplete - should throw ControlPlaneException but NOT block on delete
+        Assert.assertThrows(ControlPlaneException.class, () -> job.onUploadComplete(OBJECT_KEY, null));
+
+        // Verify delete was initiated
+        Assert.assertTrue("Delete should have started", deleteStarted.await(1, TimeUnit.SECONDS));
+
+        // Verify the method returned before delete completed (fire-and-forget)
+        Assert.assertFalse("Delete should not have completed yet", deleteCompleted.get());
+
+        // Allow delete to complete
+        deleteCanComplete.countDown();
+
+        // Wait for delete to complete
+        slowDeleteFuture.get(1, TimeUnit.SECONDS);
+        Assert.assertTrue("Delete should have completed", deleteCompleted.get());
+    }
+
+    /**
+     * Test that delete errors are logged but don't cause exceptions (fire-and-forget error handling).
+     */
+    @Test
+    void deleteErrorIsLoggedButNotThrown() throws Exception {
+        final Map<Integer, CompletableFuture<Map<TopicIdPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+            0, new CompletableFuture<>(),
+            1, new CompletableFuture<>()
+        );
+
+        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
+            .thenThrow(new ControlPlaneException("test"));
+        when(controlPlane.isSafeToDeleteFile(eq(OBJECT_KEY_MAIN_PART))).thenReturn(true);
+
+        // Simulate delete failure - returns a failed future
+        when(storage.delete(eq(OBJECT_KEY)))
+            .thenReturn(CompletableFuture.failedFuture(new StorageBackendException("delete failed")));
+
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, time, controlPlane, storage, commitTimeDurationCallback, commitWaitTimeDurationCallback);
+
+        // Call should throw ControlPlaneException (from commit), not StorageBackendException (from delete)
+        final Exception thrown = Assert.assertThrows(ControlPlaneException.class, () -> job.onUploadComplete(OBJECT_KEY, null));
+        Assert.assertEquals("test", thrown.getMessage());
+
+        verify(storage).delete(eq(OBJECT_KEY));
     }
 }
