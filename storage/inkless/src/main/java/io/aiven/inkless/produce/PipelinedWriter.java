@@ -19,7 +19,6 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.errors.CorruptRecordException;
 import org.apache.kafka.common.errors.InvalidProducerEpochException;
 import org.apache.kafka.common.errors.KafkaStorageException;
@@ -33,6 +32,7 @@ import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.PrimitiveRef;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.server.record.BrokerCompressionType;
 import org.apache.kafka.storage.internals.log.LogAppendInfo;
@@ -46,6 +46,7 @@ import com.groupcdg.pitest.annotations.DoNotMutate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
@@ -71,8 +72,10 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.produce.buffer.BufferPool;
+import io.aiven.inkless.storage_backend.common.Storage;
 
+import org.apache.kafka.common.compress.Compression;
 import static org.apache.kafka.storage.internals.log.UnifiedLog.newValidatorMetricsRecorder;
 
 /**
@@ -144,10 +147,12 @@ class PipelinedWriter implements ProduceWriter {
     private final Time time;
     private final Duration commitInterval;
     private final int maxBufferSize;
-    private final StorageBackend storage;
+    private final Storage storage;
     private final FileCommitter fileCommitter;
     private final WriterMetrics writerMetrics;
     private final BrokerTopicStats brokerTopicStats;
+    private final BufferPool bufferPool;
+    private final int bufferPoolMinSizeBytes;
 
     // Shared state
     private final AtomicBoolean closed = new AtomicBoolean(false);
@@ -169,7 +174,7 @@ class PipelinedWriter implements ProduceWriter {
         final Time time,
         final int brokerId,
         final ObjectKeyCreator objectKeyCreator,
-        final StorageBackend storage,
+        final Storage storage,
         final KeyAlignmentStrategy keyAlignmentStrategy,
         final ObjectCache objectCache,
         final BatchCoordinateCache batchCoordinateCache,
@@ -180,6 +185,8 @@ class PipelinedWriter implements ProduceWriter {
         final Duration fileUploadRetryBackoff,
         final int fileUploaderThreadPoolSize,
         final BrokerTopicStats brokerTopicStats,
+        final BufferPool bufferPool,
+        final int bufferPoolMinSizeBytes,
         final int validationWorkerCount
     ) {
         this(
@@ -195,6 +202,8 @@ class PipelinedWriter implements ProduceWriter {
                 fileUploaderThreadPoolSize),
             new WriterMetrics(time),
             brokerTopicStats,
+            bufferPool,
+            bufferPoolMinSizeBytes,
             validationWorkerCount
         );
     }
@@ -205,10 +214,12 @@ class PipelinedWriter implements ProduceWriter {
         final Duration commitInterval,
         final int maxBufferSize,
         final ScheduledExecutorService tickScheduler,
-        final StorageBackend storage,
+        final Storage storage,
         final FileCommitter fileCommitter,
         final WriterMetrics writerMetrics,
         final BrokerTopicStats brokerTopicStats,
+        final BufferPool bufferPool,
+        final int bufferPoolMinSizeBytes,
         final int validationWorkerCount
     ) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -223,6 +234,8 @@ class PipelinedWriter implements ProduceWriter {
         this.writerMetrics = Objects.requireNonNull(writerMetrics, "writerMetrics cannot be null");
         // Use provided BrokerTopicStats or create default - never null
         this.brokerTopicStats = brokerTopicStats != null ? brokerTopicStats : new BrokerTopicStats();
+        this.bufferPool = bufferPool;  // nullable
+        this.bufferPoolMinSizeBytes = bufferPoolMinSizeBytes;
         this.validationWorkerCount = validationWorkerCount > 0 ? validationWorkerCount : Runtime.getRuntime().availableProcessors();
 
         // Initialize validation worker pool
@@ -240,7 +253,7 @@ class PipelinedWriter implements ProduceWriter {
         );
 
         // Initialize ActiveFile on buffer writer thread
-        this.activeFile = new ActiveFile(time, this.brokerTopicStats);
+        this.activeFile = new ActiveFile(time, this.brokerTopicStats, bufferPool, bufferPoolMinSizeBytes);
 
         // Metrics recorder (thread-safe)
         this.validatorMetricsRecorder = newValidatorMetricsRecorder(this.brokerTopicStats.allTopicsStats());
@@ -637,7 +650,7 @@ class PipelinedWriter implements ProduceWriter {
     private void rotateFile(boolean swallowInterrupted) {
         LOGGER.debug("Rotating active file");
         ActiveFile prevActiveFile = activeFile;
-        activeFile = new ActiveFile(time, brokerTopicStats);
+        activeFile = new ActiveFile(time, brokerTopicStats, bufferPool, bufferPoolMinSizeBytes);
         scheduledTick = null;
 
         try {

@@ -55,6 +55,7 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
+import io.aiven.inkless.storage_backend.common.SyncStorageAdapter;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.test_utils.MinioContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
@@ -133,7 +134,7 @@ class WriterIntegrationTest {
 
         try (
             final Writer writer = new Writer(
-                time, 11, ObjectKey.creator("", false), storage,
+                time, 11, ObjectKey.creator("", false), new SyncStorageAdapter(storage),
                 KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE,
                 controlPlane, Duration.ofMillis(10),
                 10 * 1024,

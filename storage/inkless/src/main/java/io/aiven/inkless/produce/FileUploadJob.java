@@ -37,6 +37,7 @@ import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
+import io.aiven.inkless.storage_backend.common.Storage;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
 
@@ -153,6 +154,90 @@ public class FileUploadJob implements Callable<ObjectKey> {
             data,
             durationCallback
         );
+    }
+
+    /**
+     * Creates a FileUploadJob using the unified Storage interface.
+     *
+     * <p>This method wraps the async Storage interface to work with the sync FileUploadJob.
+     * The async upload is converted to sync by blocking on the CompletableFuture.
+     *
+     * @param objectKeyCreator creator for generating object keys
+     * @param storage unified storage interface (async-first)
+     * @param time time source for metrics
+     * @param attempts maximum number of upload attempts
+     * @param retryBackoff duration to wait between retry attempts
+     * @param data batch buffer data to upload
+     * @param durationCallback callback for recording upload duration
+     * @return a FileUploadJob configured to use the Storage interface
+     */
+    public static FileUploadJob createFromBatchBufferData(final ObjectKeyCreator objectKeyCreator,
+                                       final Storage storage,
+                                       final Time time,
+                                       final int attempts,
+                                       final Duration retryBackoff,
+                                       final BatchBufferData data,
+                                       final Consumer<Long> durationCallback) {
+        Objects.requireNonNull(storage, "storage cannot be null");
+        Objects.requireNonNull(data, "data cannot be null");
+
+        // Adapter that converts async Storage to sync ObjectUploader interface
+        final ObjectUploader adapter = new StorageObjectUploaderAdapter(storage);
+
+        return new FileUploadJob(
+            objectKeyCreator,
+            adapter,
+            time,
+            attempts,
+            retryBackoff,
+            data.asInputStreamSupplier(),
+            data.size(),
+            durationCallback,
+            data
+        );
+    }
+
+    /**
+     * Adapter that wraps the async Storage interface as a sync ObjectUploader.
+     *
+     * <p>This adapter blocks on CompletableFuture to convert async operations to sync.
+     * Used to integrate Storage interface with the existing sync FileUploadJob.
+     */
+    private static final class StorageObjectUploaderAdapter implements ObjectUploader {
+        private final Storage storage;
+
+        StorageObjectUploaderAdapter(Storage storage) {
+            this.storage = storage;
+        }
+
+        @Override
+        public void upload(ObjectKey key, InputStream inputStream, long length) throws StorageBackendException {
+            // Convert InputStream to ByteBuffer
+            try {
+                final byte[] bytes = inputStream.readAllBytes();
+                upload(key, ByteBuffer.wrap(bytes));
+            } catch (IOException e) {
+                throw new StorageBackendException("Failed to read input stream", e);
+            }
+        }
+
+        @Override
+        public void upload(ObjectKey key, ByteBuffer byteBuffer) throws StorageBackendException {
+            try {
+                storage.upload(key, byteBuffer).join();
+            } catch (java.util.concurrent.CompletionException e) {
+                final Throwable cause = e.getCause();
+                if (cause instanceof StorageBackendException) {
+                    throw (StorageBackendException) cause;
+                }
+                throw new StorageBackendException("Upload failed", cause != null ? cause : e);
+            }
+        }
+
+        @Override
+        public void close() {
+            // Don't close storage here - it's managed externally
+        }
     }
 
     @Override

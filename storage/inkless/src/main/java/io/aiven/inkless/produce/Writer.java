@@ -31,6 +31,7 @@ import com.groupcdg.pitest.annotations.DoNotMutate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
@@ -51,7 +52,8 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.produce.buffer.BufferPool;
+import io.aiven.inkless.storage_backend.common.Storage;
 
 /**
  * The entry point for diskless writing.
@@ -69,7 +71,6 @@ class Writer implements ProduceWriter {
 
     private final Lock lock = new ReentrantLock();
     private ActiveFile activeFile;
-    private final StorageBackend storage;
     private final FileCommitter fileCommitter;
     private final Time time;
     private final Duration commitInterval;
@@ -78,6 +79,8 @@ class Writer implements ProduceWriter {
     private boolean closed = false;
     private final WriterMetrics writerMetrics;
     private final BrokerTopicStats brokerTopicStats;
+    private final BufferPool bufferPool;  // nullable
+    private final int bufferPoolMinSizeBytes;
     private Instant openedAt;
     private ScheduledFuture<?> scheduledTick;
 
@@ -85,7 +88,7 @@ class Writer implements ProduceWriter {
     Writer(final Time time,
            final int brokerId,
            final ObjectKeyCreator objectKeyCreator,
-           final StorageBackend storage,
+           final Storage storage,
            final KeyAlignmentStrategy keyAlignmentStrategy,
            final ObjectCache objectCache,
            final BatchCoordinateCache batchCoordinateCache,
@@ -94,23 +97,25 @@ class Writer implements ProduceWriter {
            final int maxBufferSize,
            final int maxFileUploadAttempts,
            final Duration fileUploadRetryBackoff,
-           final int fileUploaderThreadPoolSize,
+           final int cacheStoreThreadPoolSize,
            final BrokerTopicStats brokerTopicStats,
-           final boolean asyncCommitPipeline
+           final BufferPool bufferPool,
+           final int bufferPoolMinSizeBytes
     ) {
         this(
             time,
             commitInterval,
             maxBufferSize,
             Executors.newScheduledThreadPool(1, new InklessThreadFactory("inkless-file-commit-ticker-", true)),
-            storage,
             new FileCommitter(
                 brokerId, controlPlane, objectKeyCreator, storage,
                 keyAlignmentStrategy, objectCache, batchCoordinateCache, time,
                 maxFileUploadAttempts, fileUploadRetryBackoff,
-                fileUploaderThreadPoolSize, asyncCommitPipeline),
+                cacheStoreThreadPoolSize),
             new WriterMetrics(time),
-            brokerTopicStats
+            brokerTopicStats,
+            bufferPool,
+            bufferPoolMinSizeBytes
         );
     }
 
@@ -119,10 +124,11 @@ class Writer implements ProduceWriter {
            final Duration commitInterval,
            final int maxBufferSize,
            final ScheduledExecutorService commitTickScheduler,
-           final StorageBackend storage,
            final FileCommitter fileCommitter,
            final WriterMetrics writerMetrics,
-           final BrokerTopicStats brokerTopicStats) {
+           final BrokerTopicStats brokerTopicStats,
+           final BufferPool bufferPool,
+           final int bufferPoolMinSizeBytes) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
         this.commitInterval = Objects.requireNonNull(commitInterval, "commitInterval cannot be null");
         if (maxBufferSize <= 0) {
@@ -130,11 +136,12 @@ class Writer implements ProduceWriter {
         }
         this.maxBufferSize = maxBufferSize;
         this.commitTickScheduler = Objects.requireNonNull(commitTickScheduler, "commitTickScheduler cannot be null");
-        this.storage = Objects.requireNonNull(storage, "storage cannot be null");
         this.fileCommitter = Objects.requireNonNull(fileCommitter, "fileCommitter cannot be null");
         this.writerMetrics = Objects.requireNonNull(writerMetrics, "writerMetrics cannot be null");
-        this.brokerTopicStats = brokerTopicStats;
-        this.activeFile = new ActiveFile(time, brokerTopicStats);
+        this.brokerTopicStats = brokerTopicStats;  // nullable
+        this.bufferPool = bufferPool;  // nullable
+        this.bufferPoolMinSizeBytes = bufferPoolMinSizeBytes;
+        this.activeFile = new ActiveFile(time, brokerTopicStats, bufferPool, bufferPoolMinSizeBytes);
     }
 
     @Override
@@ -228,7 +235,6 @@ class Writer implements ProduceWriter {
             // Rotate file before closing the uploader so the file gets into the queue first.
             rotateFile(true);
             fileCommitter.close();
-            storage.close();
             writerMetrics.close();
         } finally {
             lock.unlock();
@@ -238,7 +244,7 @@ class Writer implements ProduceWriter {
     private void rotateFile(final boolean swallowInterrupted) {
         LOGGER.debug("Rotating active file");
         final ActiveFile prevActiveFile = this.activeFile;
-        this.activeFile = new ActiveFile(time, brokerTopicStats);
+        this.activeFile = new ActiveFile(time, brokerTopicStats, bufferPool, bufferPoolMinSizeBytes);
 
         try {
             this.fileCommitter.commit(prevActiveFile.close());

@@ -49,7 +49,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.storage_backend.common.Storage;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -88,7 +88,7 @@ class PipelinedWriterTest {
     WriterTestUtils.RecordCreator recordCreator;
 
     @Mock
-    StorageBackend storage;
+    Storage storage;
     @Mock
     FileCommitter fileCommitter;
     @Mock
