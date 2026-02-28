@@ -43,9 +43,9 @@ import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FileMergeWorkItem;
-import io.aiven.inkless.produce.FileUploadJob;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
-import io.aiven.inkless.storage_backend.common.StorageBackendException;
+import io.aiven.inkless.produce.AsyncFileUploadJob;
+import io.aiven.inkless.produce.buffer.HeapBatchBufferData;
+import io.aiven.inkless.storage_backend.common.Storage;
 
 public class FileMerger implements Runnable, Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileMerger.class);
@@ -55,7 +55,7 @@ public class FileMerger implements Runnable, Closeable {
     private final Time time;
     private final InklessConfig config;
     private final ControlPlane controlPlane;
-    private final StorageBackend storage;
+    private final Storage storage;
     private final ObjectKeyCreator objectKeyCreator;
     private final ExponentialBackoff errorBackoff = new ExponentialBackoff(100, 2, 60 * 1000, 0.2);
     private final Supplier<Long> noWorkBackoffSupplier;
@@ -71,7 +71,7 @@ public class FileMerger implements Runnable, Closeable {
         this.time = sharedState.time();
         this.config = sharedState.config();
         this.controlPlane = sharedState.controlPlane();
-        this.storage = sharedState.buildStorage();
+        this.storage = sharedState.buildStorageForMerge();
         this.objectKeyCreator = sharedState.objectKeyCreator();
         this.metrics = new FileMergerMetrics();
 
@@ -153,11 +153,11 @@ public class FileMerger implements Runnable, Closeable {
                 final var target = workDir.resolve(tmpFileName);
                 paths.add(target);
 
-                final var in = storage.fetch(objectKey, null);
+                // Fetch file content using unified storage interface
+                final java.nio.ByteBuffer fileContent = storage.fetch(objectKey, null).join();
+
                 try (final var out = Files.newByteChannel(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
-                    out.write(storage.readToByteBuffer(in));
-                } catch (Exception e) {
-                    e.printStackTrace();
+                    out.write(fileContent);
                 }
 
                 final Supplier<InputStream> inputStream = () -> {
@@ -177,14 +177,22 @@ public class FileMerger implements Runnable, Closeable {
 
             var mergeMetadata = builder.mergeMetadata();
 
-            final ObjectKey objectKey = new FileUploadJob(
-                objectKeyCreator, storage, time,
+            // Read merged data into byte array for upload
+            final byte[] mergedData;
+            try (final var mergeStream = builder.build()) {
+                mergedData = mergeStream.readAllBytes();
+            }
+
+            final AsyncFileUploadJob uploadJob = AsyncFileUploadJob.createFromBatchBufferData(
+                objectKeyCreator,
+                storage,
+                time,
                 config.produceMaxUploadAttempts(),
                 config.produceUploadBackoff(),
-                builder::build,
-                mergeMetadata.mergedFileSize(),
+                new HeapBatchBufferData(mergedData),
                 metrics::recordFileUploadTime
-            ).call();
+            );
+            final ObjectKey objectKey = uploadJob.uploadAsync().join();
 
             try {
                 controlPlane.commitFileMergeWorkItem(
@@ -228,8 +236,8 @@ public class FileMerger implements Runnable, Closeable {
         if (safeToDeleteFile) {
             LOGGER.error("Error committing merged file, attempting to remove the uploaded file {}", objectKey, e);
             try {
-                storage.delete(objectKey);
-            } catch (final StorageBackendException e2) {
+                storage.delete(objectKey).join();
+            } catch (final Exception e2) {
                 LOGGER.error("Error removing the uploaded file {}", objectKey, e2);
             }
         } else {
