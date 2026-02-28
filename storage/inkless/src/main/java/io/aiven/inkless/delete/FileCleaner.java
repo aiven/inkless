@@ -39,7 +39,7 @@ import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.FileToDelete;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.storage_backend.common.Storage;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 public class FileCleaner implements Runnable, Closeable {
@@ -47,7 +47,7 @@ public class FileCleaner implements Runnable, Closeable {
 
     final Time time;
     final ControlPlane controlPlane;
-    final StorageBackend storage;
+    final Storage storage;
     final ObjectKeyCreator objectKeyCreator;
     final Duration retentionPeriod;
     final FileCleanerMetrics metrics;
@@ -63,7 +63,7 @@ public class FileCleaner implements Runnable, Closeable {
         this(
             sharedState.time(),
             sharedState.controlPlane(),
-            sharedState.buildStorage(),
+            sharedState.buildStorageForDelete(),
             sharedState.objectKeyCreator(),
             sharedState.config().fileCleanerRetentionPeriod()
         );
@@ -72,7 +72,7 @@ public class FileCleaner implements Runnable, Closeable {
     // package-private constructor for testing
     FileCleaner(Time time,
                 ControlPlane controlPlane,
-                StorageBackend storage,
+                Storage storage,
                 ObjectKeyCreator objectKeyCreator,
                 Duration retentionPeriod) {
         this.time = time;
@@ -132,8 +132,15 @@ public class FileCleaner implements Runnable, Closeable {
         final Set<ObjectKey> objectKeys = objectKeyPaths.stream()
             .map(objectKeyCreator::from)
             .collect(Collectors.toSet());
-        // delete files from storage backend
-        storage.delete(objectKeys);
+        // delete files from storage backend using unified interface
+        try {
+            storage.delete(objectKeys).join();
+        } catch (final Exception e) {
+            if (e.getCause() instanceof StorageBackendException) {
+                throw (StorageBackendException) e.getCause();
+            }
+            throw new StorageBackendException("Delete failed", e);
+        }
         // update control plane
         final DeleteFilesRequest request = new DeleteFilesRequest(objectKeyPaths);
         controlPlane.deleteFiles(request);
