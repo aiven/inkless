@@ -31,7 +31,15 @@ public class KeyNotFoundException extends StorageBackendException {
         super(getMessage(storage, key), e);
     }
 
+    public KeyNotFoundException(final Object storage, final ObjectKey key, final Exception e) {
+        super(getMessage(storage, key), e);
+    }
+
     private static String getMessage(final StorageBackend storage, final ObjectKey key) {
+        return "Key " + key + " does not exists in storage " + storage;
+    }
+
+    private static String getMessage(final Object storage, final ObjectKey key) {
         return "Key " + key + " does not exists in storage " + storage;
     }
 }
