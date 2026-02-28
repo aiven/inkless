@@ -374,8 +374,10 @@ public class S3StorageConfig extends AbstractConfig {
      * Falls back to the master crtEnabled() if not explicitly set.
      */
     public boolean crtEnabledForProduce() {
-        final Boolean override = (Boolean) originals().get(CRT_ENABLED_PRODUCE_CONFIG);
-        return override != null ? override : crtEnabled();
+        if (originals().containsKey(CRT_ENABLED_PRODUCE_CONFIG)) {
+            return getBoolean(CRT_ENABLED_PRODUCE_CONFIG);
+        }
+        return crtEnabled();
     }
 
     /**
@@ -383,8 +385,10 @@ public class S3StorageConfig extends AbstractConfig {
      * Falls back to the master crtEnabled() if not explicitly set.
      */
     public boolean crtEnabledForFetch() {
-        final Boolean override = (Boolean) originals().get(CRT_ENABLED_FETCH_CONFIG);
-        return override != null ? override : crtEnabled();
+        if (originals().containsKey(CRT_ENABLED_FETCH_CONFIG)) {
+            return getBoolean(CRT_ENABLED_FETCH_CONFIG);
+        }
+        return crtEnabled();
     }
 
     /**
@@ -392,8 +396,10 @@ public class S3StorageConfig extends AbstractConfig {
      * Falls back to the master crtEnabled() if not explicitly set.
      */
     public boolean crtEnabledForDelete() {
-        final Boolean override = (Boolean) originals().get(CRT_ENABLED_DELETE_CONFIG);
-        return override != null ? override : crtEnabled();
+        if (originals().containsKey(CRT_ENABLED_DELETE_CONFIG)) {
+            return getBoolean(CRT_ENABLED_DELETE_CONFIG);
+        }
+        return crtEnabled();
     }
 
     /**
@@ -401,8 +407,10 @@ public class S3StorageConfig extends AbstractConfig {
      * Falls back to the master crtEnabled() if not explicitly set.
      */
     public boolean crtEnabledForMerge() {
-        final Boolean override = (Boolean) originals().get(CRT_ENABLED_MERGE_CONFIG);
-        return override != null ? override : crtEnabled();
+        if (originals().containsKey(CRT_ENABLED_MERGE_CONFIG)) {
+            return getBoolean(CRT_ENABLED_MERGE_CONFIG);
+        }
+        return crtEnabled();
     }
 
     public String bucketName() {
