@@ -42,6 +42,10 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.produce.buffer.BufferPool;
+import io.aiven.inkless.produce.buffer.BufferPoolMetrics;
+import io.aiven.inkless.produce.buffer.ElasticBufferPool;
+import io.aiven.inkless.storage_backend.common.Storage;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 public final class SharedState implements Closeable {
@@ -185,7 +189,62 @@ public final class SharedState implements Closeable {
         return defaultTopicConfigs;
     }
 
+    /**
+     * Builds a raw StorageBackend instance.
+     * Prefer using the path-specific Storage methods for unified async/sync handling.
+     */
     public StorageBackend buildStorage() {
         return config.storage(storageMetrics);
+    }
+
+    /**
+     * Returns the buffer pool for produce buffers, or null if disabled.
+     *
+     * @return the buffer pool, or null if {@code produce.buffer.pool.enabled} is false
+     */
+    public BufferPool bufferPool() {
+        return bufferPool;
+    }
+
+    /**
+     * Returns the minimum buffer size in bytes to use the pool.
+     * Smaller buffers use heap allocation directly.
+     *
+     * @return min pool size threshold in bytes, or 0 if pool is disabled
+     */
+    public int bufferPoolMinSizeBytes() {
+        return bufferPoolMinSizeBytes;
+    }
+
+    /**
+     * Builds a unified Storage instance for produce (upload) operations.
+     * Returns CRT-backed async storage if enabled, otherwise sync adapter.
+     */
+    public Storage buildStorageForProduce() {
+        return config.storageForProduce(storageMetrics);
+    }
+
+    /**
+     * Builds a unified Storage instance for fetch (download) operations.
+     * Returns CRT-backed async storage if enabled, otherwise sync adapter.
+     */
+    public Storage buildStorageForFetch() {
+        return config.storageForFetch(storageMetrics);
+    }
+
+    /**
+     * Builds a unified Storage instance for delete operations.
+     * Returns CRT-backed async storage if enabled, otherwise sync adapter.
+     */
+    public Storage buildStorageForDelete() {
+        return config.storageForDelete(storageMetrics);
+    }
+
+    /**
+     * Builds a unified Storage instance for merge operations.
+     * Returns CRT-backed async storage if enabled, otherwise sync adapter.
+     */
+    public Storage buildStorageForMerge() {
+        return config.storageForMerge(storageMetrics);
     }
 }

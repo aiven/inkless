@@ -30,8 +30,13 @@ import java.util.Map;
 import io.aiven.inkless.common.config.validators.Subclass;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
+import io.aiven.inkless.storage_backend.common.Storage;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.storage_backend.common.SyncStorageAdapter;
 import io.aiven.inkless.storage_backend.in_memory.InMemoryStorage;
+import io.aiven.inkless.storage_backend.s3.S3AsyncStorage;
+import io.aiven.inkless.storage_backend.s3.S3Storage;
+import io.aiven.inkless.storage_backend.s3.S3StorageConfig;
 
 public class InklessConfig extends AbstractConfig {
     public static final String PREFIX = "inkless.";
@@ -572,6 +577,59 @@ public class InklessConfig extends AbstractConfig {
                  IllegalAccessException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /**
+     * Creates a unified Storage instance for produce (upload) operations.
+     * Returns CRT-backed async storage if enabled for this path, otherwise a sync adapter.
+     */
+    public Storage storageForProduce(final Metrics metrics) {
+        return storageForPath(metrics, S3StorageConfig::crtEnabledForProduce);
+    }
+
+    /**
+     * Creates a unified Storage instance for fetch (download) operations.
+     * Returns CRT-backed async storage if enabled for this path, otherwise a sync adapter.
+     */
+    public Storage storageForFetch(final Metrics metrics) {
+        return storageForPath(metrics, S3StorageConfig::crtEnabledForFetch);
+    }
+
+    /**
+     * Creates a unified Storage instance for delete operations.
+     * Returns CRT-backed async storage if enabled for this path, otherwise a sync adapter.
+     */
+    public Storage storageForDelete(final Metrics metrics) {
+        return storageForPath(metrics, S3StorageConfig::crtEnabledForDelete);
+    }
+
+    /**
+     * Creates a unified Storage instance for merge operations.
+     * Returns CRT-backed async storage if enabled for this path, otherwise a sync adapter.
+     */
+    public Storage storageForMerge(final Metrics metrics) {
+        return storageForPath(metrics, S3StorageConfig::crtEnabledForMerge);
+    }
+
+    private Storage storageForPath(final Metrics metrics,
+                                   final java.util.function.Predicate<S3StorageConfig> crtEnabledCheck) {
+        @SuppressWarnings("unchecked")
+        final Class<? extends StorageBackend> storageClass = (Class<? extends StorageBackend>) getClass(STORAGE_BACKEND_CLASS_CONFIG);
+
+        // Check if S3 with CRT enabled
+        if (S3Storage.class.isAssignableFrom(storageClass)) {
+            final Map<String, Object> storageConfigs = this.originalsWithPrefix(STORAGE_PREFIX);
+            final S3StorageConfig s3Config = new S3StorageConfig(storageConfigs);
+
+            if (crtEnabledCheck.test(s3Config)) {
+                final S3AsyncStorage asyncStorage = new S3AsyncStorage(metrics);
+                asyncStorage.configure(storageConfigs);
+                return asyncStorage;
+            }
+        }
+
+        // Fall back to sync storage wrapped in adapter
+        return new SyncStorageAdapter(storage(metrics));
     }
 
     public Duration commitInterval() {
