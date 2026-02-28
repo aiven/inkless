@@ -22,7 +22,6 @@ import org.apache.kafka.common.utils.ByteBufferInputStream;
 import java.io.Closeable;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
-import java.util.Objects;
 
 import io.aiven.inkless.common.ObjectKey;
 
@@ -41,17 +40,18 @@ public interface ObjectUploader extends Closeable {
 
     /**
      * Uploads an object to object storage from a ByteBuffer.
-     * The buffer's position will not be modified (uses duplicate internally).
-     * @param key                      key of the object to upload.
-     * @param byteBuffer               data of the object that will be uploaded.
+     *
+     * <p>Default implementation converts to InputStream using a duplicate of the buffer
+     * to preserve the original buffer's position. Implementations may override to use
+     * ByteBuffer directly (e.g., S3 RequestBody.fromByteBuffer()).
+     *
+     * @param key        key of the object to upload.
+     * @param byteBuffer data to upload. Position and limit indicate the data range.
+     *                   The buffer's position is not modified by this method.
      * @throws StorageBackendException if there are errors during the upload.
      */
     default void upload(ObjectKey key, ByteBuffer byteBuffer) throws StorageBackendException {
-        Objects.requireNonNull(key, "key cannot be null");
-        Objects.requireNonNull(byteBuffer, "byteBuffer cannot be null");
-        if (byteBuffer.remaining() <= 0) {
-            throw new IllegalArgumentException("byteBuffer must have remaining bytes");
-        }
+        // Use duplicate() to preserve the original buffer's position
         final ByteBuffer duplicate = byteBuffer.duplicate();
         upload(key, new ByteBufferInputStream(duplicate), duplicate.remaining());
     }
