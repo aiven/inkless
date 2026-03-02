@@ -23,6 +23,7 @@ import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.MutableRecordBatch;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse;
@@ -36,6 +37,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
@@ -207,5 +209,171 @@ class ActiveFileTest {
         assertThat(result.invalidResponseByRequest().get(0))
             .containsExactly(Map.entry(T0P1, new ProduceResponse.PartitionResponse(Errors.INVALID_RECORD)));
         assertThat(result.data()).hasSize(312 - 78); // 78 bytes of the invalid batch
+    }
+
+    // ========== Tests for PipelinedWriter support methods ==========
+
+    /**
+     * Test addBatchDirect adds pre-validated batches to the buffer.
+     * This method is used by PipelinedWriter where validation is done in a separate stage.
+     *
+     * <p>Note: addBatchDirect only adds batches to the buffer but doesn't update the
+     * requestId counter. The full pipelined flow requires calling addAwaitingFuture
+     * to register the request and update isEmpty() status.
+     */
+    @Test
+    void addBatchDirect() {
+        final Instant start = Instant.ofEpochMilli(10);
+        final ActiveFile file = new ActiveFile(Time.SYSTEM, start);
+
+        // Create a record and extract the batch
+        final MemoryRecords records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(1000, new byte[10]));
+        final MutableRecordBatch batch = records.batches().iterator().next();
+
+        // Initially empty and zero size
+        assertThat(file.size()).isZero();
+
+        // Add batch directly (bypassing validation)
+        file.addBatchDirect(T0P0, batch, 0);
+
+        // Size is updated, but isEmpty() requires addAwaitingFuture to be called
+        assertThat(file.size()).isEqualTo(78);
+
+        // Register the request to complete the pipelined flow
+        final CompletableFuture<Map<TopicIdPartition, ProduceResponse.PartitionResponse>> future = new CompletableFuture<>();
+        file.addAwaitingFuture(0, future, Map.of(T0P0, records), Map.of());
+
+        // Now isEmpty() returns false because a request was registered
+        assertThat(file.isEmpty()).isFalse();
+    }
+
+    /**
+     * Test addBatchDirect with multiple batches to different partitions.
+     */
+    @Test
+    void addBatchDirectMultiplePartitions() {
+        final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
+
+        final MemoryRecords records1 = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(1000, new byte[10]));
+        final MemoryRecords records2 = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(2000, new byte[10]));
+
+        file.addBatchDirect(T0P0, records1.batches().iterator().next(), 0);
+        file.addBatchDirect(T0P1, records2.batches().iterator().next(), 0);
+
+        assertThat(file.size()).isEqualTo(156);  // 78 * 2
+
+        final ClosedFile closed = file.close();
+        assertThat(closed.commitBatchRequests()).hasSize(2);
+    }
+
+    /**
+     * Test addAwaitingFuture registers futures for completion.
+     * This method is used by PipelinedWriter to store futures after validation.
+     */
+    @Test
+    void addAwaitingFuture() {
+        final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
+
+        // Add some batches first
+        final MemoryRecords records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(1000, new byte[10]));
+        file.addBatchDirect(T0P0, records.batches().iterator().next(), 0);
+
+        // Create and register a future
+        final CompletableFuture<Map<TopicIdPartition, ProduceResponse.PartitionResponse>> resultFuture = new CompletableFuture<>();
+        final Map<TopicIdPartition, MemoryRecords> originalRecords = Map.of(T0P0, records);
+        final Map<TopicIdPartition, ProduceResponse.PartitionResponse> invalidBatches = Map.of();
+
+        file.addAwaitingFuture(0, resultFuture, originalRecords, invalidBatches);
+
+        // Close and verify the future is tracked
+        final ClosedFile closed = file.close();
+        assertThat(closed.awaitingFuturesByRequest()).hasSize(1);
+        assertThat(closed.awaitingFuturesByRequest().get(0)).isSameAs(resultFuture);
+        assertThat(closed.originalRequests().get(0)).isEqualTo(originalRecords);
+    }
+
+    /**
+     * Test addAwaitingFuture with invalid batches.
+     */
+    @Test
+    void addAwaitingFutureWithInvalidBatches() {
+        final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
+
+        // Add some batches
+        final MemoryRecords records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(1000, new byte[10]));
+        file.addBatchDirect(T0P0, records.batches().iterator().next(), 0);
+
+        // Create future with some invalid batches
+        final CompletableFuture<Map<TopicIdPartition, ProduceResponse.PartitionResponse>> resultFuture = new CompletableFuture<>();
+        final Map<TopicIdPartition, MemoryRecords> originalRecords = Map.of(
+            T0P0, records,
+            T0P1, records  // This one will be "invalid"
+        );
+        final Map<TopicIdPartition, ProduceResponse.PartitionResponse> invalidBatches = Map.of(
+            T0P1, new ProduceResponse.PartitionResponse(Errors.INVALID_RECORD)
+        );
+
+        file.addAwaitingFuture(0, resultFuture, originalRecords, invalidBatches);
+
+        final ClosedFile closed = file.close();
+        assertThat(closed.invalidResponseByRequest().get(0)).containsKey(T0P1);
+        assertThat(closed.invalidResponseByRequest().get(0).get(T0P1).error).isEqualTo(Errors.INVALID_RECORD);
+    }
+
+    /**
+     * Test multiple requests using addBatchDirect and addAwaitingFuture.
+     */
+    @Test
+    void multiplePipelinedRequests() {
+        final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
+
+        // Request 0
+        final MemoryRecords records0 = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(1000, new byte[10]));
+        file.addBatchDirect(T0P0, records0.batches().iterator().next(), 0);
+        final CompletableFuture<Map<TopicIdPartition, ProduceResponse.PartitionResponse>> future0 = new CompletableFuture<>();
+        file.addAwaitingFuture(0, future0, Map.of(T0P0, records0), Map.of());
+
+        // Request 1
+        final MemoryRecords records1 = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(2000, new byte[10]));
+        file.addBatchDirect(T0P1, records1.batches().iterator().next(), 1);
+        final CompletableFuture<Map<TopicIdPartition, ProduceResponse.PartitionResponse>> future1 = new CompletableFuture<>();
+        file.addAwaitingFuture(1, future1, Map.of(T0P1, records1), Map.of());
+
+        // Request 2
+        final MemoryRecords records2 = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(3000, new byte[10]));
+        file.addBatchDirect(T1P0, records2.batches().iterator().next(), 2);
+        final CompletableFuture<Map<TopicIdPartition, ProduceResponse.PartitionResponse>> future2 = new CompletableFuture<>();
+        file.addAwaitingFuture(2, future2, Map.of(T1P0, records2), Map.of());
+
+        final ClosedFile closed = file.close();
+
+        // Verify all requests are tracked
+        assertThat(closed.awaitingFuturesByRequest()).hasSize(3);
+        assertThat(closed.originalRequests()).hasSize(3);
+        assertThat(closed.commitBatchRequests()).hasSize(3);
+
+        // Verify futures are not yet completed
+        assertThat(future0).isNotCompleted();
+        assertThat(future1).isNotCompleted();
+        assertThat(future2).isNotCompleted();
+    }
+
+    /**
+     * Test that addBatchDirect initializes start time on first call.
+     */
+    @Test
+    void addBatchDirectInitializesStartTime() {
+        final Time time = new MockTime();
+        final ActiveFile file = new ActiveFile(time, (Instant) null);
+
+        // start is null initially
+        assertThat(file.isEmpty()).isTrue();
+
+        final MemoryRecords records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(1000, new byte[10]));
+        file.addBatchDirect(T0P0, records.batches().iterator().next(), 0);
+
+        // After addBatchDirect, the file should have a start time
+        final ClosedFile closed = file.close();
+        assertThat(closed.start()).isNotNull();
     }
 }
