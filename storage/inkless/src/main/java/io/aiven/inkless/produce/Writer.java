@@ -96,7 +96,8 @@ class Writer implements Closeable {
            final int maxFileUploadAttempts,
            final Duration fileUploadRetryBackoff,
            final int fileUploaderThreadPoolSize,
-           final BrokerTopicStats brokerTopicStats
+           final BrokerTopicStats brokerTopicStats,
+           final boolean asyncCommitPipeline
     ) {
         this(
             time,
@@ -108,7 +109,7 @@ class Writer implements Closeable {
                 brokerId, controlPlane, objectKeyCreator, storage,
                 keyAlignmentStrategy, objectCache, batchCoordinateCache, time,
                 maxFileUploadAttempts, fileUploadRetryBackoff,
-                fileUploaderThreadPoolSize),
+                fileUploaderThreadPoolSize, asyncCommitPipeline),
             new WriterMetrics(time),
             brokerTopicStats
         );

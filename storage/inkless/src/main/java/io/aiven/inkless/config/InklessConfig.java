@@ -132,6 +132,12 @@ public class InklessConfig extends AbstractConfig {
     // to avoid starting an upload if 8 commits are executing sequentially
     private static final int PRODUCE_UPLOAD_THREAD_POOL_SIZE_DEFAULT = 8;
 
+    public static final String PRODUCE_ASYNC_COMMIT_PIPELINE_CONFIG = PRODUCE_PREFIX + "async.commit.pipeline.enabled";
+    private static final String PRODUCE_ASYNC_COMMIT_PIPELINE_DOC = "When enabled, commit and cache store operations " +
+        "use non-blocking callbacks instead of blocking on upload completion. This eliminates thread blocking " +
+        "during S3 latency, improving thread pool efficiency.";
+    private static final boolean PRODUCE_ASYNC_COMMIT_PIPELINE_DEFAULT = false;
+
     public static final String FETCH_DATA_THREAD_POOL_SIZE_CONFIG = "fetch.data.thread.pool.size";
     public static final String FETCH_DATA_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently fetch data files from remote storage";
     private static final int FETCH_DATA_THREAD_POOL_SIZE_DEFAULT = 32;
@@ -351,6 +357,13 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(1),
             ConfigDef.Importance.LOW,
             PRODUCE_UPLOAD_THREAD_POOL_SIZE_DOC
+        );
+        configDef.define(
+            PRODUCE_ASYNC_COMMIT_PIPELINE_CONFIG,
+            ConfigDef.Type.BOOLEAN,
+            PRODUCE_ASYNC_COMMIT_PIPELINE_DEFAULT,
+            ConfigDef.Importance.LOW,
+            PRODUCE_ASYNC_COMMIT_PIPELINE_DOC
         );
         configDef.define(
             FETCH_DATA_THREAD_POOL_SIZE_CONFIG,
@@ -583,6 +596,10 @@ public class InklessConfig extends AbstractConfig {
 
     public int produceUploadThreadPoolSize() {
         return getInt(PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    public boolean asyncCommitPipelineEnabled() {
+        return getBoolean(PRODUCE_ASYNC_COMMIT_PIPELINE_CONFIG);
     }
 
     public int fetchDataThreadPoolSize() {

@@ -23,10 +23,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectFormat;
@@ -40,24 +37,27 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
 /**
  * The job of committing the already uploaded file to the control plane.
  *
+ * <p>This class implements {@link UploadCompletionHandler} for use with {@code CompletableFuture.handleAsync()}.
+ * When the upload completes, {@link #onUploadComplete} is invoked to perform the actual commit to the control plane.
+ * This eliminates blocking wait on upload completion, allowing the commit executor to
+ * only do actual commit work instead of waiting for S3 latency.
+ *
  * <p>If the file was uploaded successfully, commit to the control plane happens. Otherwise, it doesn't.
  */
-class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
+class FileCommitJob implements UploadCompletionHandler<List<CommitBatchResponse>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitJob.class);
 
     private final int brokerId;
     private final ClosedFile file;
-    private final Future<ObjectKey> uploadFuture;
     private final Time time;
     private final ControlPlane controlPlane;
     private final ObjectDeleter objectDeleter;
-    private final long commitSubmitTimeMs;
+    private volatile long commitSubmitTimeMs;
     private final Consumer<Long> durationCallback;
     private final Consumer<Long> commitWaitDurationCallback;
 
     FileCommitJob(final int brokerId,
                   final ClosedFile file,
-                  final Future<ObjectKey> uploadFuture,
                   final Time time,
                   final ControlPlane controlPlane,
                   final ObjectDeleter objectDeleter,
@@ -65,7 +65,6 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
                   final Consumer<Long> commitWaitDurationCallback) {
         this.brokerId = brokerId;
         this.file = file;
-        this.uploadFuture = uploadFuture;
         this.controlPlane = controlPlane;
         this.time = time;
         this.objectDeleter = objectDeleter;
@@ -75,28 +74,36 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
         this.commitWaitDurationCallback = commitWaitDurationCallback;
     }
 
-    @Override
-    public List<CommitBatchResponse> get() {
-        // The wait for upload is already measured, and should take the upload time or less if it was already completed.
-        final UploadResult uploadResult = waitForUpload();
-        // Measure the duration from the commit job submission to the moment we start committing.
-        // and should account for the wait time to execute the commit job on a single-threaded executor.
-        commitWaitDurationCallback.accept(time.milliseconds() - commitSubmitTimeMs);
-        return TimeUtils.measureDurationMsSupplier(time, () -> doCommit(uploadResult), durationCallback);
+    /**
+     * Resets the submit time to now. Call this when the commit is actually ready to be executed
+     * (e.g., after upload completes in async mode) to measure only the executor queue wait time,
+     * not the time waiting for previous commits in the chain.
+     */
+    void markReadyToCommit() {
+        this.commitSubmitTimeMs = time.milliseconds();
     }
 
-    private UploadResult waitForUpload() {
-        try {
-            final ObjectKey objectKey = uploadFuture.get();
-            return new UploadResult(objectKey, null);
-        } catch (final ExecutionException e) {
-            LOGGER.error("Failed upload", e);
-            return new UploadResult(null, e.getCause());
-        } catch (final InterruptedException e) {
-            // This is not expected as we try to shut down the executor gracefully.
-            LOGGER.error("Interrupted", e);
-            throw new RuntimeException(e);
+    /**
+     * {@inheritDoc}
+     *
+     * <p>If the upload succeeded, commits the file to the control plane.
+     * If the upload failed, throws a {@link FileUploadException}.
+     */
+    @Override
+    public List<CommitBatchResponse> onUploadComplete(ObjectKey objectKey, Throwable error) {
+        // Measure the duration from the commit job submission to the moment we start committing.
+        // This now measures the time waiting for upload to complete (async) plus any queue wait.
+        commitWaitDurationCallback.accept(time.milliseconds() - commitSubmitTimeMs);
+
+        final UploadResult uploadResult;
+        if (error != null) {
+            LOGGER.error("Failed upload", error);
+            uploadResult = new UploadResult(null, error);
+        } else {
+            uploadResult = new UploadResult(objectKey, null);
         }
+
+        return TimeUtils.measureDurationMsSupplier(time, () -> doCommit(uploadResult), durationCallback);
     }
 
     private List<CommitBatchResponse> doCommit(final UploadResult result) {

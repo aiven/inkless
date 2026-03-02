@@ -127,10 +127,10 @@ class FileCommitJobTest {
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
-        final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
-        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
-        job.get();
+        // Simulate successful upload completion via callback
+        job.onUploadComplete(OBJECT_KEY, null);
 
         verify(commitWaitTimeDurationCallback).accept(eq(200L));
         verify(commitTimeDurationCallback).accept(eq(10L));
@@ -153,10 +153,10 @@ class FileCommitJobTest {
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
-        final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
-        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
-        job.get();
+        // Simulate successful upload completion via callback
+        job.onUploadComplete(OBJECT_KEY, null);
 
         verify(commitWaitTimeDurationCallback).accept(eq(200L));
         verify(commitTimeDurationCallback).accept(eq(10L));
@@ -173,10 +173,10 @@ class FileCommitJobTest {
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
-        final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.failedFuture(new StorageBackendException("test"));
-        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
-        Assert.assertThrows(RuntimeException.class, job::get);
+        // Simulate failed upload completion via callback
+        Assert.assertThrows(FileUploadException.class, () -> job.onUploadComplete(null, new StorageBackendException("test")));
 
         verify(commitWaitTimeDurationCallback).accept(eq(200L));
         verify(commitTimeDurationCallback).accept(eq(10L));
@@ -195,10 +195,10 @@ class FileCommitJobTest {
         when(controlPlane.isSafeToDeleteFile(eq(OBJECT_KEY_MAIN_PART))).thenReturn(isSafeToDelete);
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
-        final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
-        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
-        Assert.assertThrows(RuntimeException.class, job::get);
+        // Simulate successful upload but control plane commit failure
+        Assert.assertThrows(ControlPlaneException.class, () -> job.onUploadComplete(OBJECT_KEY, null));
 
         verify(objectDeleter, times(isSafeToDelete ? 1 : 0)).delete(eq(OBJECT_KEY));
     }
@@ -214,11 +214,44 @@ class FileCommitJobTest {
             .thenThrow(new RuntimeException("test"));
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
-        final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
-        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
-        Assert.assertThrows(RuntimeException.class, job::get);
+        // Simulate successful upload but commit failure (non-control-plane error)
+        Assert.assertThrows(RuntimeException.class, () -> job.onUploadComplete(OBJECT_KEY, null));
 
         verify(objectDeleter, never()).delete(eq(OBJECT_KEY));
+    }
+
+    @Test
+    void markReadyToCommitResetsWaitTime() {
+        final Map<Integer, CompletableFuture<Map<TopicIdPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+            0, new CompletableFuture<>(),
+            1, new CompletableFuture<>()
+        );
+
+        final List<CommitBatchResponse> commitBatchResponses = List.of(
+            CommitBatchResponse.success(0, 10, 0, "objectKey", COMMIT_BATCH_REQUESTS.get(0)),
+            CommitBatchResponse.of(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1),
+            CommitBatchResponse.success(20, 10, 0, "objectKey", COMMIT_BATCH_REQUESTS.get(2)),
+            CommitBatchResponse.success(30, 10, 0, "objectKey", COMMIT_BATCH_REQUESTS.get(3))
+        );
+
+        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
+            .thenReturn(commitBatchResponses);
+        // Job created at T=10000, markReadyToCommit at T=15000, onUploadComplete at T=15050
+        when(time.milliseconds()).thenReturn(10_000L, 15_000L, 15_050L);
+        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
+
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
+
+        // Simulate async pipeline: reset submit time when actually ready to commit
+        job.markReadyToCommit();
+
+        // Simulate successful upload completion via callback
+        job.onUploadComplete(OBJECT_KEY, null);
+
+        // Wait time should be 50ms (from markReadyToCommit to onUploadComplete), not 5050ms (from constructor)
+        verify(commitWaitTimeDurationCallback).accept(eq(50L));
     }
 }

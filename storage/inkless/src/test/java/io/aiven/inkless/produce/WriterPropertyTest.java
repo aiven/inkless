@@ -240,7 +240,8 @@ class WriterPropertyTest {
             uploaderHandler.executorService,
             committerHandler.executorService,
             cacheStoreHandler.executorService,
-            mock(FileCommitterMetrics.class)
+            mock(FileCommitterMetrics.class),
+            false  // Use sync mode for property testing
         )) {
 
             final Writer writer = new Writer(
