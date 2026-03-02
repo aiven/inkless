@@ -367,7 +367,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         stateTransitioner.ifPresent(t -> {
             if (stopRequested && curState != MirrorPartitionState.STOPPED) {
                 t.transitionTo(mirrorName, tp, MirrorPartitionState.STOPPING);
-            } else if (curState == MirrorPartitionState.UNKNOWN || curState == MirrorPartitionState.STOPPED) {
+            } else if (!stopRequested && (curState == MirrorPartitionState.UNKNOWN || curState == MirrorPartitionState.STOPPED)) {
                 t.transitionTo(mirrorName, tp, MirrorPartitionState.PREPARING);
             } else {
                 t.transitionTo(mirrorName, tp, fetchedState != null ? fetchedState : curState);

@@ -715,8 +715,8 @@ public class ReplicationControlManager {
             String topicName = info.name;
             leaderEpochs.forEach((partitionId, leaderEpoch) -> {
                 PartitionRegistration partition = info.parts.get(partitionId);
-                // only bump the leader epoch when local leader epoch is less than required min leader epoch
-                if (partition.leaderEpoch < leaderEpoch) {
+                // only bump the leader epoch when local leader epoch is <= required min leader epoch
+                if (partition.leaderEpoch <= leaderEpoch) {
                     PartitionChangeBuilder builder = new PartitionChangeBuilder(
                             partition,
                             info.topicId(),
@@ -730,7 +730,7 @@ public class ReplicationControlManager {
                             .setDefaultDirProvider(clusterDescriber);
 
                     builder.build().ifPresent(records::add);
-                    log.info("!!! update partition {} for topic {} from {} to {}", partitionId, topicName, records, partition.leaderEpoch, leaderEpoch);
+                    log.info("!!! update partition {} for topic {} from {} to {}: {}", partitionId, topicName, partition.leaderEpoch, leaderEpoch, records);
                 } else {
                     log.info("!!! do not update partition {} for topic {} from {} to {}", partitionId, topicName, partition.leaderEpoch, leaderEpoch);
                 }

@@ -125,16 +125,16 @@ public class MirrorCoordinator {
     private void handleStateTransition(String mirrorName, Set<TopicPartition> topicPartitions, MirrorPartitionState newState) {
         switch (newState) {
             case PREPARING:
-                LOG.debug("PREPARING for topics {}.", topicPartitions);
+                LOG.info("PREPARING for topics {}.", topicPartitions);
                 scheduleTruncation(mirrorName, topicPartitions);
                 break;
             case MIRRORING:
-                LOG.debug("MIRRORING topics {}.", topicPartitions);
+                LOG.info("MIRRORING topics {}.", topicPartitions);
                 // start mirroring
                 replicaManager.maybeCreateMirrorFetchers(mirrorName, topicPartitions);
                 break;
             case STOPPING:
-                LOG.debug("STOPPING for topics {}.", topicPartitions);
+                LOG.info("STOPPING for topics {}.", topicPartitions);
                 // 1. remove mirror fetcher for partitions
                 // 2. truncating the log into LSO
                 // 3. register the last mirrored offsets for each partition in internal topic
@@ -143,7 +143,7 @@ public class MirrorCoordinator {
                 truncateToLastStableOffset(topicPartitions, tp -> updateLastMirroredOffsets(mirrorName, Set.of(tp)));
                 break;
             case STOPPED:
-                LOG.debug("STOPPED for topics {}.", topicPartitions);
+                LOG.info("STOPPED for topics {}.", topicPartitions);
                 // topic becomes writable
                 break;
             case FAILED:
