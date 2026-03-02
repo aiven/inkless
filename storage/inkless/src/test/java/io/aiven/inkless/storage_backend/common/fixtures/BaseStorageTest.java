@@ -140,6 +140,46 @@ public abstract class BaseStorageTest {
     }
 
     @Test
+    void testUploadFromByteBuffer() throws Exception {
+        try (StorageBackend storage = storage()) {
+            final byte[] content = "ByteBuffer upload test content".getBytes();
+            final ByteBuffer buffer = ByteBuffer.wrap(content);
+
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, buffer);
+
+            // Verify buffer position was not modified (uses duplicate internally)
+            assertThat(buffer.position()).isEqualTo(0);
+
+            // Verify data was uploaded correctly
+            final ByteBuffer fetch = storage.readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, content.length)));
+            assertThat(fetch.array()).isEqualTo(content);
+        }
+    }
+
+    @Test
+    void testUploadFromByteBufferWithOffset() throws Exception {
+        try (StorageBackend storage = storage()) {
+            // Create a buffer with data starting at an offset to test sliced buffer upload
+            // Full string: "PREFIX_actual content to upload_SUFFIX" (38 bytes)
+            // We want to upload only: "actual content to upload" (24 bytes, positions 7-30)
+            final byte[] fullContent = "PREFIX_actual content to upload_SUFFIX".getBytes();
+            final ByteBuffer buffer = ByteBuffer.wrap(fullContent);
+            buffer.position(7);   // Skip "PREFIX_" (7 bytes)
+            buffer.limit(31);     // End before "_SUFFIX" (positions 31-37)
+
+            final byte[] expectedContent = "actual content to upload".getBytes();
+
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, buffer);
+
+            // Verify data was uploaded correctly (only the slice)
+            final ByteBuffer fetch = storage.readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, expectedContent.length)));
+            assertThat(fetch.array()).isEqualTo(expectedContent);
+        }
+    }
+
+    @Test
     void testFetchFailWhenNonExistingKey() throws Exception {
         try (StorageBackend storage = storage()) {
             assertThatThrownBy(() -> storage.fetch(new TestObjectKey("non-existing"), ByteRange.maxRange()))

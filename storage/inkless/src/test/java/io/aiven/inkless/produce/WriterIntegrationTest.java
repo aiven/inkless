@@ -139,6 +139,7 @@ class WriterIntegrationTest {
                 10 * 1024,
                 1,
                 Duration.ofMillis(10),
+                false,
                 8,
                 new BrokerTopicStats()
             )

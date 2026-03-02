@@ -29,6 +29,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.function.Consumer;
@@ -183,5 +184,140 @@ class FileUploadJobTest {
             OBJECT_KEY_CREATOR, objectUploader, time, 2, Duration.ofMillis(100), new byte[1], null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("durationCallback cannot be null");
+    }
+
+    // ByteBuffer upload tests
+
+    @Test
+    void byteBufferSuccessAtFirstAttempt() throws Exception {
+        final ByteBuffer data = ByteBuffer.wrap(new byte[] {1, 2, 3});
+        final int originalPosition = data.position();
+
+        doNothing().when(objectUploader).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
+        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
+
+        final FileUploadJob fileUploadJob = FileUploadJob.createFromByteBuffer(
+            OBJECT_KEY_CREATOR, objectUploader, time, 1, Duration.ofMillis(100), data, uploadTimeDurationCallback);
+
+        final ObjectKey objectKey = fileUploadJob.call();
+
+        assertThat(objectKey).isEqualTo(OBJECT_KEY);
+        verify(objectUploader).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
+        verify(time, never()).sleep(anyLong());
+        verify(uploadTimeDurationCallback).accept(eq(10L));
+        // Buffer position should not be modified
+        assertThat(data.position()).isEqualTo(originalPosition);
+    }
+
+    @Test
+    void byteBufferSuccessAfterRetry() throws Exception {
+        final ByteBuffer data = ByteBuffer.wrap(new byte[] {1, 2, 3});
+
+        doThrow(new StorageBackendException("Test"))
+            .doThrow(new StorageBackendException("Test"))
+            .doNothing()
+            .when(objectUploader).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
+        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
+
+        final FileUploadJob fileUploadJob = FileUploadJob.createFromByteBuffer(
+            OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100), data, uploadTimeDurationCallback);
+        final ObjectKey objectKey = fileUploadJob.call();
+
+        assertThat(objectKey).isEqualTo(OBJECT_KEY);
+        verify(objectUploader, times(3)).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
+        // We don't sleep at the last attempt.
+        verify(time, times(2)).sleep(eq(100L));
+        verify(uploadTimeDurationCallback).accept(eq(10L));
+    }
+
+    @Test
+    void byteBufferUploadStorageFailure() throws Exception {
+        final ByteBuffer data = ByteBuffer.wrap(new byte[] {1, 2, 3});
+        final StorageBackendException exception = new StorageBackendException("Test");
+
+        doThrow(exception).when(objectUploader).upload(any(), any(ByteBuffer.class));
+        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
+
+        final FileUploadJob fileUploadJob = FileUploadJob.createFromByteBuffer(
+            OBJECT_KEY_CREATOR, objectUploader, time, 2, Duration.ofMillis(100), data, uploadTimeDurationCallback);
+
+        assertThatThrownBy(fileUploadJob::call).isSameAs(exception);
+        verify(objectUploader, times(2)).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
+        // We don't sleep at the last attempt.
+        verify(time, times(1)).sleep(eq(100L));
+        verify(uploadTimeDurationCallback).accept(eq(10L));
+    }
+
+    @Test
+    void byteBufferConstructorInvalidArguments() {
+        final ByteBuffer validBuffer = ByteBuffer.wrap(new byte[] {1, 2, 3});
+
+        assertThatThrownBy(() -> FileUploadJob.createFromByteBuffer(
+            null, objectUploader, time, 2, Duration.ofMillis(100), validBuffer, uploadTimeDurationCallback))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("objectKeyCreator cannot be null");
+        assertThatThrownBy(() -> FileUploadJob.createFromByteBuffer(
+            OBJECT_KEY_CREATOR, null, time, 2, Duration.ofMillis(100), validBuffer, uploadTimeDurationCallback))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("objectUploader cannot be null");
+        assertThatThrownBy(() -> FileUploadJob.createFromByteBuffer(
+            OBJECT_KEY_CREATOR, objectUploader, null, 2, Duration.ofMillis(100), validBuffer, uploadTimeDurationCallback))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("time cannot be null");
+        assertThatThrownBy(() -> FileUploadJob.createFromByteBuffer(
+            OBJECT_KEY_CREATOR, objectUploader, time, 0, Duration.ofMillis(100), validBuffer, uploadTimeDurationCallback))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("attempts must be positive");
+        assertThatThrownBy(() -> FileUploadJob.createFromByteBuffer(
+            OBJECT_KEY_CREATOR, objectUploader, time, 2, null, validBuffer, uploadTimeDurationCallback))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("retryBackoff cannot be null");
+        assertThatThrownBy(() -> FileUploadJob.createFromByteBuffer(
+            OBJECT_KEY_CREATOR, objectUploader, time, 2, Duration.ofMillis(100), null, uploadTimeDurationCallback))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("data cannot be null");
+        assertThatThrownBy(() -> FileUploadJob.createFromByteBuffer(
+            OBJECT_KEY_CREATOR, objectUploader, time, 2, Duration.ofMillis(100), validBuffer, null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("durationCallback cannot be null");
+
+        // Empty buffer should be rejected
+        final ByteBuffer emptyBuffer = ByteBuffer.allocate(0);
+        assertThatThrownBy(() -> FileUploadJob.createFromByteBuffer(
+            OBJECT_KEY_CREATOR, objectUploader, time, 2, Duration.ofMillis(100), emptyBuffer, uploadTimeDurationCallback))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("data must have remaining bytes");
+
+        // Buffer with no remaining bytes should be rejected
+        final ByteBuffer exhaustedBuffer = ByteBuffer.wrap(new byte[] {1, 2, 3});
+        exhaustedBuffer.position(exhaustedBuffer.limit());
+        assertThatThrownBy(() -> FileUploadJob.createFromByteBuffer(
+            OBJECT_KEY_CREATOR, objectUploader, time, 2, Duration.ofMillis(100), exhaustedBuffer, uploadTimeDurationCallback))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("data must have remaining bytes");
+    }
+
+    @Test
+    void byteBufferWithOffsetPreservesPosition() throws Exception {
+        // Create a buffer with offset (simulates a sliced buffer)
+        final byte[] fullData = new byte[] {0, 0, 0, 1, 2, 3, 0, 0};
+        final ByteBuffer data = ByteBuffer.wrap(fullData);
+        data.position(3);
+        data.limit(6);  // Now buffer represents bytes [1, 2, 3]
+
+        final int originalPosition = data.position();
+        final int originalLimit = data.limit();
+
+        doNothing().when(objectUploader).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
+        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
+
+        final FileUploadJob fileUploadJob = FileUploadJob.createFromByteBuffer(
+            OBJECT_KEY_CREATOR, objectUploader, time, 1, Duration.ofMillis(100), data, uploadTimeDurationCallback);
+
+        fileUploadJob.call();
+
+        // Buffer position and limit should not be modified
+        assertThat(data.position()).isEqualTo(originalPosition);
+        assertThat(data.limit()).isEqualTo(originalLimit);
     }
 }

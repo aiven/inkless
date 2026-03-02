@@ -237,6 +237,7 @@ class WriterPropertyTest {
             time,
             1,
             Duration.ZERO,
+            false,
             uploaderHandler.executorService,
             committerHandler.executorService,
             cacheStoreHandler.executorService,
