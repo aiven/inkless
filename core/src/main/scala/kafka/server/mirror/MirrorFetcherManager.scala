@@ -133,7 +133,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
       val mirrorProperties = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName))
       info(s"Using mirror properties for $mirrorName: ${mirrorProperties.keySet()}")
       val mirrorConfig = MirrorConfig.fromProperties(mirrorProperties)
-      new MirrorBlockingSender(sourceBroker, mirrorConfig, metrics, time, fetcherId,
+      new MirrorBlockingSender(sourceBroker, mirrorConfig, brokerConfig, metrics, time, fetcherId,
         s"broker-${brokerConfig.brokerId}-fetcher-$fetcherId-mirror-$mirrorName", logContext)
     } else {
       throw new IllegalArgumentException("Mirror name must be provided for remote fetchers")
@@ -204,6 +204,21 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
       lagInfo.collect {
         case (key, lagInfo) if key.mirrorName == mirrorName => key.topicPartition -> lagInfo
       }.toMap
+    }
+  }
+
+  def removeFetchersForMirror(mirrorName: String): Unit = {
+    this.synchronized {
+      val affectedPartitions = mirrorFetcherThreadMap
+        .filter(_._1.mirrorName == mirrorName)
+        .values
+        .flatMap(_.partitions)
+        .toSet
+      if (affectedPartitions.nonEmpty) {
+        info(s"Restarting fetcher threads for mirror '$mirrorName' " +
+          s"affecting ${affectedPartitions.size} partitions")
+        removeFetcherForPartitions(affectedPartitions)
+      }
     }
   }
 

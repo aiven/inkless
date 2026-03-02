@@ -27,7 +27,7 @@ public enum ConfigType {
     IP("ips"),
     CLIENT_METRICS("client-metrics"),
     GROUP("groups"),
-    MIRROR("mirror");
+    MIRROR("mirrors");
 
     private final String value;
 

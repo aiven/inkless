@@ -345,7 +345,8 @@ class BrokerServer(
         time,
         metadataCache,
         clientToControllerChannelManager,
-        () => groupCoordinator
+        () => groupCoordinator,
+        () => _replicaManager.mirrorFetcherManager
       )
 
       this._replicaManager = new ReplicaManager(
