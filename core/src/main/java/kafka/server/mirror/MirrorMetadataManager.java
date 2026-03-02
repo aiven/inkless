@@ -256,7 +256,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // caching the image for query purpose
         this.metadataImage = newImage;
 
-        // detect mirror config changes and close stale connections to trigger reconnection
+        // detect config changes and close stale connections and fetchers to trigger reconnection
         if (delta.configsDelta() != null) {
             delta.configsDelta().changes().entrySet().stream()
                 .filter(e -> e.getKey().type() == ConfigResource.Type.MIRROR)
@@ -268,7 +268,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                             + "to trigger reconnection with updated configuration.", mirrorName);
                         senders.forEach(MirrorBlockingSender::close);
                     }
-                    mirrorFetcherManagerSupplier.get().restartFetchersForMirror(mirrorName);
+                    mirrorFetcherManagerSupplier.get().removeFetchersForMirror(mirrorName);
                 });
         }
 

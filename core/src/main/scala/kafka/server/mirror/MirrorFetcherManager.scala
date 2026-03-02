@@ -207,7 +207,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     }
   }
 
-  def restartFetchersForMirror(mirrorName: String): Unit = {
+  def removeFetchersForMirror(mirrorName: String): Unit = {
     this.synchronized {
       val affectedPartitions = mirrorFetcherThreadMap
         .filter(_._1.mirrorName == mirrorName)
