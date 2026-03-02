@@ -396,4 +396,39 @@ class FileCommitterTest {
             .isInstanceOf(NullPointerException.class)
             .hasMessage("file cannot be null");
     }
+
+    @Test
+    void commitEmptyFile() throws Exception {
+        final ClosedFile emptyFile = new ClosedFile(
+            null,  // start time can be null for empty file
+            Map.of(),
+            Map.of(),
+            List.of(),
+            Map.of(),
+            new byte[0]
+        );
+
+        final FileCommitter committer = new FileCommitter(
+                BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, storage,
+                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE,
+                time, 3, Duration.ofMillis(100),
+                executorServiceUpload, executorServiceCommit, executorServiceCacheStore, metrics);
+
+        // Empty file should not trigger any upload or commit operations
+        committer.commit(emptyFile);
+
+        // Verify no upload was submitted
+        verify(executorServiceUpload, times(0)).submit(any(Callable.class));
+        // Verify no commit was submitted
+        verify(executorServiceCommit, times(0)).execute(any(Runnable.class));
+        // Verify no cache store was submitted
+        verify(executorServiceCacheStore, times(0)).submit(any(Runnable.class));
+
+        // Counters should remain at zero
+        assertThat(committer.totalFilesInProgress()).isZero();
+        assertThat(committer.totalBytesInProgress()).isZero();
+
+        // Metrics for file operations should not be called
+        verify(metrics, times(0)).fileAdded(anyInt());
+    }
 }

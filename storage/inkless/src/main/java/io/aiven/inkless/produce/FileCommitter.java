@@ -36,8 +36,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.BatchCoordinateCache;
@@ -54,14 +52,18 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
 /**
  * The file committer.
  *
- * <p>It uploads files concurrently, but commits them to the control plan sequentially.
+ * <p>It uploads files concurrently, but commits them to the control plane sequentially.
+ *
+ * <p><b>Threading:</b> This class is designed to be called from a single thread (the buffer-writer
+ * thread in {@link PipelinedWriter} or the lock-protected rotateFile in {@link Writer}).
+ * All internal operations use atomic/thread-safe primitives (AtomicInteger for counters,
+ * thread-safe ExecutorService for task submission, CompletableFuture for async chaining).
+ * The class does NOT support concurrent commit() calls - commits must be serialized by the caller.
  */
 class FileCommitter implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitter.class);
 
     private final FileCommitterMetrics metrics;
-
-    private final Lock lock = new ReentrantLock();
 
     private final int brokerId;
     private final ControlPlane controlPlane;
@@ -154,84 +156,79 @@ class FileCommitter implements Closeable {
     void commit(final ClosedFile file) throws InterruptedException {
         Objects.requireNonNull(file, "file cannot be null");
 
-        lock.lock();
-        try {
-            final Instant uploadAndCommitStart = TimeUtils.durationMeasurementNow(time);
-            CompletableFuture<List<CommitBatchResponse>> commitFuture;
-            if (file.isEmpty()) {
-                // If the file is empty, skip uploading and committing, but proceed with the later steps.
-                commitFuture = CompletableFuture.completedFuture(Collections.emptyList());
-            } else {
-                metrics.fileAdded(file.size());
-                metrics.batchesAdded(file.commitBatchRequests().size());
-                totalFilesInProgress.addAndGet(1);
-                totalBytesInProgress.addAndGet(file.size());
+        final Instant uploadAndCommitStart = TimeUtils.durationMeasurementNow(time);
+        CompletableFuture<List<CommitBatchResponse>> commitFuture;
+        if (file.isEmpty()) {
+            // If the file is empty, skip uploading and committing, but proceed with the later steps.
+            commitFuture = CompletableFuture.completedFuture(Collections.emptyList());
+        } else {
+            metrics.fileAdded(file.size());
+            metrics.batchesAdded(file.commitBatchRequests().size());
+            totalFilesInProgress.addAndGet(1);
+            totalBytesInProgress.addAndGet(file.size());
 
-                // Start uploading and add to the commit queue (as Runnable).
-                // This ensures files are uploaded in concurrently, but committed to the control plane sequentially,
-                // because `executorServiceCommit` is single-threaded.
-                final FileUploadJob uploadJob = FileUploadJob.createFromByteArray(
-                        objectKeyCreator,
-                        storage,
-                        time,
-                        maxFileUploadAttempts,
-                        fileUploadRetryBackoff,
-                        file.data(),
-                        metrics::fileUploadFinished
-                );
-                final Future<ObjectKey> uploadFuture = executorServiceUpload.submit(uploadJob);
+            // Start uploading and add to the commit queue (as Runnable).
+            // This ensures files are uploaded in concurrently, but committed to the control plane sequentially,
+            // because `executorServiceCommit` is single-threaded.
+            final FileUploadJob uploadJob = FileUploadJob.createFromByteArray(
+                    objectKeyCreator,
+                    storage,
+                    time,
+                    maxFileUploadAttempts,
+                    fileUploadRetryBackoff,
+                    file.data(),
+                    metrics::fileUploadFinished
+            );
+            final Future<ObjectKey> uploadFuture = executorServiceUpload.submit(uploadJob);
 
-                final FileCommitJob commitJob = new FileCommitJob(
-                        brokerId,
-                        file,
-                        uploadFuture,
-                        time,
-                        controlPlane,
-                        storage,
-                        metrics::fileCommitFinished,
-                        metrics::fileCommitWaitFinished
-                );
-                commitFuture = CompletableFuture.supplyAsync(commitJob, executorServiceCommit)
-                        .whenComplete((result, error) -> {
-                            totalFilesInProgress.addAndGet(-1);
-                            totalBytesInProgress.addAndGet(-file.size());
-                            if (error != null) {
-                                // at this point the commit has failed and need to check whether it failed on upload or commit
-                                LOGGER.error("Failed to commit diskless file {}", file, error);
-                                if (error.getCause() instanceof FileUploadException) {
-                                    metrics.fileUploadFailed();
-                                } else {
-                                    metrics.fileCommitFailed();
-                                }
+            final FileCommitJob commitJob = new FileCommitJob(
+                    brokerId,
+                    file,
+                    uploadFuture,
+                    time,
+                    controlPlane,
+                    storage,
+                    metrics::fileCommitFinished,
+                    metrics::fileCommitWaitFinished
+            );
+            commitFuture = CompletableFuture.supplyAsync(commitJob, executorServiceCommit)
+                    .whenComplete((result, error) -> {
+                        totalFilesInProgress.addAndGet(-1);
+                        totalBytesInProgress.addAndGet(-file.size());
+                        if (error != null) {
+                            // at this point the commit has failed and need to check whether it failed on upload or commit
+                            LOGGER.error("Failed to commit diskless file {}", file, error);
+                            if (error.getCause() instanceof FileUploadException) {
+                                metrics.fileUploadFailed();
                             } else {
-                                // only mark as finished if everything succeeded
-                                metrics.fileFinished(file.start(), uploadAndCommitStart);
+                                metrics.fileCommitFailed();
                             }
-                        });
+                        } else {
+                            // only mark as finished if everything succeeded
+                            metrics.fileFinished(file.start(), uploadAndCommitStart);
+                        }
+                    });
 
-                final CacheStoreJob cacheStoreJob = new CacheStoreJob(
-                        time,
-                        objectCache,
-                        keyAlignmentStrategy,
-                        file.data(),
-                        uploadFuture,
-                        metrics::cacheStoreFinished
-                );
-                executorServiceCacheStore.submit(cacheStoreJob);
-            }
-            commitFuture.whenComplete((commitBatchResponses, throwable) -> {
-                final AppendCompleter completerJob = new AppendCompleter(file, batchCoordinateCache);
-                if (commitBatchResponses != null) {
-                    completerJob.finishCommitSuccessfully(commitBatchResponses);
-                    metrics.writeCompleted();
-                } else {
-                    completerJob.finishCommitWithError();
-                    metrics.writeFailed();
-                }
-            });
-        } finally {
-            lock.unlock();
+            final CacheStoreJob cacheStoreJob = new CacheStoreJob(
+                    time,
+                    objectCache,
+                    keyAlignmentStrategy,
+                    file.data(),
+                    uploadFuture,
+                    metrics::cacheStoreFinished
+            );
+            executorServiceCacheStore.submit(cacheStoreJob);
         }
+        commitFuture.whenComplete((commitBatchResponses, throwable) -> {
+            final AppendCompleter completerJob = new AppendCompleter(file, batchCoordinateCache);
+            if (commitBatchResponses != null) {
+                completerJob.finishCommitSuccessfully(commitBatchResponses);
+                metrics.writeCompleted();
+            } else {
+                completerJob.finishCommitWithError();
+                metrics.writeFailed();
+            }
+        });
     }
 
     int totalFilesInProgress() {
