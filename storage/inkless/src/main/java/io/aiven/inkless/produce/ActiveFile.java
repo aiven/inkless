@@ -25,6 +25,7 @@ import org.apache.kafka.common.errors.KafkaStorageException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.MutableRecordBatch;
 import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
@@ -187,6 +188,55 @@ class ActiveFile {
 
     int size() {
         return buffer.totalSize();
+    }
+
+    /**
+     * Adds a pre-validated batch directly to the buffer.
+     *
+     * <p>This method is used by {@link PipelinedWriter} where validation is done
+     * in a separate stage (validation workers) before reaching the buffer writer.
+     * The batch is assumed to be already validated, so this method only adds it
+     * to the buffer without re-validation.
+     *
+     * @param topicIdPartition the partition for the batch
+     * @param recordBatch the pre-validated record batch
+     * @param requestId the request ID for tracking
+     */
+    void addBatchDirect(
+        final TopicIdPartition topicIdPartition,
+        final MutableRecordBatch recordBatch,
+        final int requestId
+    ) {
+        if (start == null) {
+            start = TimeUtils.durationMeasurementNow(time);
+        }
+        buffer.addBatch(topicIdPartition, recordBatch, requestId);
+    }
+
+    /**
+     * Registers a future to be completed when the file is committed.
+     *
+     * <p>This method is used by {@link PipelinedWriter} to store the result future
+     * along with the original request data. The future will be completed by
+     * {@link AppendCompleter} when the file commit succeeds or fails.
+     *
+     * @param requestId the request ID
+     * @param resultFuture the future to complete with the partition responses
+     * @param originalRecords the original records from the produce request
+     * @param invalidBatches the batches that failed validation (already completed with errors)
+     */
+    void addAwaitingFuture(
+        final int requestId,
+        final CompletableFuture<Map<TopicIdPartition, PartitionResponse>> resultFuture,
+        final Map<TopicIdPartition, MemoryRecords> originalRecords,
+        final Map<TopicIdPartition, PartitionResponse> invalidBatches
+    ) {
+        this.requestId = Math.max(this.requestId, requestId);
+        originalRequests.put(requestId, originalRecords);
+        awaitingFuturesByRequest.put(requestId, resultFuture);
+        if (!invalidBatches.isEmpty()) {
+            invalidBatchesByRequest.put(requestId, invalidBatches);
+        }
     }
 
     ClosedFile close() {

@@ -45,14 +45,42 @@ public class AppendHandler implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(AppendHandler.class);
 
     private final SharedState state;
-    private final Writer writer;
+    private final ProduceWriter writer;
 
     @DoNotMutate
     @CoverageIgnore
     public AppendHandler(final SharedState state) {
-        this(
-            state,
-            new Writer(
+        this(state, createWriter(state));
+    }
+
+    @DoNotMutate
+    @CoverageIgnore
+    private static ProduceWriter createWriter(final SharedState state) {
+        if (state.config().producePipelinedEnabled()) {
+            LOGGER.info("Using PipelinedWriter with {} validation workers",
+                state.config().producePipelinedValidationThreads() > 0
+                    ? state.config().producePipelinedValidationThreads()
+                    : "auto-detected");
+            return new PipelinedWriter(
+                state.time(),
+                state.brokerId(),
+                state.objectKeyCreator(),
+                state.buildStorage(),
+                state.keyAlignmentStrategy(),
+                state.cache(),
+                state.batchCoordinateCache(),
+                state.controlPlane(),
+                state.config().commitInterval(),
+                state.config().produceBufferMaxBytes(),
+                state.config().produceMaxUploadAttempts(),
+                state.config().produceUploadBackoff(),
+                state.config().produceUploadThreadPoolSize(),
+                state.brokerTopicStats(),
+                state.config().producePipelinedValidationThreads()
+            );
+        } else {
+            LOGGER.info("Using lock-based Writer");
+            return new Writer(
                 state.time(),
                 state.brokerId(),
                 state.objectKeyCreator(),
@@ -67,13 +95,13 @@ public class AppendHandler implements Closeable {
                 state.config().produceUploadBackoff(),
                 state.config().produceUploadThreadPoolSize(),
                 state.brokerTopicStats()
-            )
-        );
+            );
+        }
     }
 
     // Visible for tests
     AppendHandler(final SharedState state,
-                  final Writer writer) {
+                  final ProduceWriter writer) {
         this.state = state;
         this.writer = writer;
     }
