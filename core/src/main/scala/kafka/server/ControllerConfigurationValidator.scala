@@ -119,7 +119,8 @@ class ControllerConfigurationValidator(kafkaConfig: KafkaConfig) extends Configu
         }
         LogConfig.validate(oldConfigs, properties, kafkaConfig.extractLogConfigMap,
           kafkaConfig.remoteLogManagerConfig.isRemoteStorageSystemEnabled(),
-          kafkaConfig.disklessAllowFromClassicEnabled)
+          kafkaConfig.disklessAllowFromClassicEnabled,
+          kafkaConfig.disklessStorageSystemEnabled)
       case BROKER => validateBrokerName(resource.name())
       case CLIENT_METRICS =>
         val properties = new Properties()

@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Test
 import java.util
 import java.util.{Collections, Properties}
 import org.apache.kafka.server.config.ServerLogConfigs
+import org.apache.kafka.server.config.ServerConfigs
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
 import org.apache.kafka.storage.internals.log.{LogConfig, ThrottledReplicaListValidator}
 import org.junit.jupiter.params.ParameterizedTest
@@ -488,6 +489,26 @@ class LogConfigTest {
       TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true"),
       mutualExclusionError,
       kafkaConfig)
+  }
+
+  @ParameterizedTest(name = "testDisklessExplicitConfigRejectedWhenSystemDisabled with value: {0}")
+  @ValueSource(booleans = Array(true, false))
+  def testDisklessExplicitConfigRejectedWhenSystemDisabled(disklessEnableValue: Boolean): Unit = {
+    val kafkaProps = TestUtils.createDummyBrokerConfig()
+    kafkaProps.put(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "false")
+    val kafkaConfig = KafkaConfig.fromProps(kafkaProps)
+
+    val ex = assertThrows(classOf[InvalidConfigurationException],
+      () => LogConfig.validate(
+        util.Map.of[String, String](),
+        topicProps(TopicConfig.DISKLESS_ENABLE_CONFIG -> disklessEnableValue.toString),
+        kafkaConfig.extractLogConfigMap,
+        kafkaConfig.remoteLogManagerConfig.isRemoteStorageSystemEnabled,
+        kafkaConfig.disklessAllowFromClassicEnabled,
+        kafkaConfig.disklessStorageSystemEnabled
+      ))
+    assertEquals("It is invalid to set diskless.enable if diskless storage system is not enabled.",
+      ex.getMessage)
   }
 
   @Test
