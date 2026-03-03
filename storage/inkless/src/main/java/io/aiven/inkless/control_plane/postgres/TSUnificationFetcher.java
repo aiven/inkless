@@ -1,0 +1,198 @@
+package io.aiven.inkless.control_plane.postgres;
+
+import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.ObjectKeyCreator;
+import io.aiven.inkless.consume.FetchCompleter;
+import io.aiven.inkless.control_plane.BatchInfo;
+import io.aiven.inkless.control_plane.BatchMetadata;
+import io.aiven.inkless.control_plane.WALSplitter;
+import io.aiven.inkless.generated.FileExtent;
+import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.storage_backend.common.StorageBackendException;
+import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.record.MemoryRecords;
+import org.jooq.DSLContext;
+import org.jooq.Record;
+import org.jooq.generated.enums.FileStateT;
+import org.jspecify.annotations.NonNull;
+
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static org.jooq.generated.Tables.BATCHES;
+import static org.jooq.generated.Tables.FILES;
+
+public class TSUnificationFetcher implements WALSplitter {
+
+    private final ObjectFetcher objectFetcher;
+    private final ObjectKeyCreator objectKeyCreator;
+    private final int maxObjectAmount = 10; // limit the max amount of objects to fetch
+    private final DSLContext jooqCtx;
+    private Comparator<TopicIdPartition> topicIdPartitionComparator = Comparator
+            .comparing(TopicIdPartition::topicId)
+            .thenComparing(TopicIdPartition::partition);
+    private Map<TopicIdPartition, Long> lastOffsets;
+    private long nextFileIdToFetch = -1;
+
+    public TSUnificationFetcher(ObjectFetcher objectFetcher, ObjectKeyCreator objectKeyCreator, DSLContext jooqCtx) {
+        this.objectFetcher = objectFetcher;
+        this.objectKeyCreator = objectKeyCreator;
+        this.jooqCtx = jooqCtx;
+    }
+
+    @Override
+    public Map<TopicIdPartition, TreeMap<BatchInfo, MemoryRecords>> get() {
+        // fetch the earliest next X object keys that aren't yet deleted
+        var fileRows = new HashSet<>(jooqCtx
+            .select(FILES.FILE_ID, FILES.OBJECT_KEY)
+            .from(FILES)
+            .where(FILES.STATE.ne(FileStateT.deleting)
+            .and(FILES.FILE_ID.ge(nextFileIdToFetch)))
+            .orderBy(FILES.FILE_ID.asc())
+            .limit(maxObjectAmount)
+            .fetch());
+
+        if (!fileRows.isEmpty()) {
+            long maxId = fileRows.stream()
+                    .mapToLong(r -> r.get(FILES.FILE_ID))
+                    .max()
+                    .orElse(nextFileIdToFetch);
+            nextFileIdToFetch = maxId + 1;
+        }
+
+        // fetch the files from object storage
+        var recordsMap = fileRows.stream()
+            .map(obr -> {
+                var objectKey = obr.get(FILES.OBJECT_KEY);
+                var bis = batchInfos(obr);
+                var batchMap = toBatchRecordMap(bis, objectKey);
+                return byPartition(batchMap);
+            });
+        return combineBatchMaps(recordsMap);
+        // TODO: discard batches that have been moved to object storage already
+    }
+
+    private @NonNull TreeMap<TopicIdPartition, TreeMap<BatchInfo, MemoryRecords>> combineBatchMaps(Stream<TreeMap<TopicIdPartition, TreeMap<BatchInfo, MemoryRecords>>> recordsMap) {
+        return recordsMap
+                .flatMap(m -> m.entrySet().stream())
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> new TreeMap<>(e.getValue()),
+                        (a, b) -> {
+                            TreeMap<BatchInfo, MemoryRecords> combined = new TreeMap<>(a);
+                            combined.putAll(b);
+                            return combined;
+                        },
+                        () -> new TreeMap<>(topicIdPartitionComparator)
+                ));
+    }
+
+    private Set<BatchInfo> batchInfos(Record fileRow) {
+        var bros = new HashSet<>(jooqCtx.select(BATCHES.asterisk())
+            .from(BATCHES)
+            .where(BATCHES.FILE_ID.eq(fileRow.get(FILES.FILE_ID)))
+            .fetch());
+        return bros.stream()
+            .map(bro -> {
+                var batchMetadata = BatchMetadata.of(
+                    new TopicIdPartition(bro.get(BATCHES.TOPIC_ID), bro.get(BATCHES.PARTITION), null),
+                    bro.get(BATCHES.BYTE_OFFSET),
+                    bro.get(BATCHES.BYTE_SIZE),
+                    bro.get(BATCHES.BASE_OFFSET),
+                    bro.get(BATCHES.LAST_OFFSET),
+                    bro.get(BATCHES.LOG_APPEND_TIMESTAMP),
+                    bro.get(BATCHES.BATCH_MAX_TIMESTAMP),
+                    bro.get(BATCHES.TIMESTAMP_TYPE)
+                );
+                return new BatchInfo(bro.get(BATCHES.BATCH_ID), fileRow.get(FILES.OBJECT_KEY), batchMetadata);})
+            .filter(bi -> {
+                var lastOffset = lastOffsets.get(bi.metadata().topicIdPartition());
+                return bi.metadata().baseOffset() >= lastOffset;})
+            .collect(Collectors.toSet());
+    }
+
+    private Map<BatchInfo, MemoryRecords> toBatchRecordMap(Set<BatchInfo> bis, String objectKey) {
+        return bis.stream()
+            .collect(Collectors.toMap(
+                bi -> bi,
+                bi -> {
+                    try {
+                        var fileExtent = createFileExtent(objectKeyCreator.from(objectKey), bi.metadata().range());
+                        return FetchCompleter.constructRecordsFromFile(bi, Collections.singletonList(fileExtent));
+                    } catch (IOException | StorageBackendException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            ));
+    }
+
+    private TreeMap<TopicIdPartition, TreeMap<BatchInfo, MemoryRecords>> byPartition(Map<BatchInfo, MemoryRecords> batchMap) {
+        return batchMap
+            .entrySet()
+            .stream()
+            .collect(Collectors.groupingBy(
+                e -> e.getKey().metadata().topicIdPartition(),
+                () -> new TreeMap<>(topicIdPartitionComparator),
+                Collectors.toMap(
+                    Map.Entry::getKey,
+                    Map.Entry::getValue,
+                    (a, b) -> a,
+                    () -> new TreeMap<>(Comparator.comparingLong(bi -> bi.metadata().baseOffset()))
+                )
+            ));
+    }
+
+    // visible for testing
+    private FileExtent createFileExtent(ObjectKey object, ByteRange byteRange)
+            throws IOException, StorageBackendException {
+        final ByteBuffer byteBuffer = objectFetcher.readToByteBuffer(objectFetcher.fetch(object, byteRange));
+        return new FileExtent()
+            .setObject(object.value())
+            .setRange(new FileExtent.ByteRange()
+                .setOffset(byteRange.offset())
+                .setLength(byteBuffer.limit()))
+            .setData(byteBuffer.array());
+    }
+
+    @Override
+    public void updateLastOffsets(Map<TopicIdPartition, Long> lastOffsets) {
+        this.lastOffsets = lastOffsets.entrySet().stream()
+            .collect(Collectors.toMap(
+                entry -> new TopicIdPartition(entry.getKey().topicId(), entry.getKey().partition(), null),
+                Map.Entry::getValue
+            ));
+        // fetch the earliest file not fully transformed
+        if (lastOffsets != null) {
+            // TODO: optimize this query
+            var tpToFileMap = lastOffsets.entrySet().stream().collect(Collectors.toMap(
+                    Map.Entry::getKey,
+                    entry -> {
+                        var result = jooqCtx.select(BATCHES.FILE_ID)
+                                .from(BATCHES)
+                                .where(BATCHES.BASE_OFFSET.ge(entry.getValue()))
+                                .and(BATCHES.TOPIC_ID.eq(entry.getKey().topicId()))
+                                .and(BATCHES.PARTITION.eq(entry.getKey().partition()))
+                                .orderBy(BATCHES.FILE_ID.asc())
+                                .limit(1)
+                                .fetch();
+                        var record = result.stream().findFirst();
+                        if (record.isPresent()) {
+                            return record.get().component1();
+                        } else {
+                            return 0L;
+                        }
+                    }
+            ));
+            nextFileIdToFetch = tpToFileMap.values().stream().min(Long::compareTo).orElse(0L);
+        }
+    }
+}

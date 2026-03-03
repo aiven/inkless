@@ -19,3 +19,6 @@ Configuration:
       level: INFO
       AppenderRef:
         - ref: STDOUT
+    Logger:
+    - name: org.apache.kafka.server.log.remote.storage
+      level: DEBUG

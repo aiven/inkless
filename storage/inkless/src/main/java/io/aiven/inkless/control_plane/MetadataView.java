@@ -24,6 +24,7 @@ import org.apache.kafka.common.network.ListenerName;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 
@@ -43,4 +44,6 @@ public interface MetadataView {
     Properties getTopicConfig(String topicName);
 
     Set<TopicIdPartition> getDisklessTopicPartitions();
+
+    Optional<String> getTopicName(Uuid topicId);
 }

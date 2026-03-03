@@ -244,7 +244,7 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
      * @param files the list of file extents (should be contiguous from groupFileData)
      * @return MemoryRecords if batch is complete, null if incomplete (missing extents or gaps)
      */
-    private static MemoryRecords constructRecordsFromFile(
+    public static MemoryRecords constructRecordsFromFile(
         final BatchInfo batch,
         final List<FileExtent> files
     ) {
