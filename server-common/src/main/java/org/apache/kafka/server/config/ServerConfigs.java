@@ -205,24 +205,21 @@ public class ServerConfigs {
                 CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG, LIST, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DEFAULT,
                 ConfigDef.LambdaValidator.with(
-                    ServerConfigs::ensureNonDuplicateListValues,
+                    (name, value) -> {
+                        @SuppressWarnings("unchecked")
+                        List<String> values = (List<String>) value;
+                        if (values == null) {
+                            return;
+                        }
+                        HashSet<String> uniqueValues = new HashSet<>(values);
+                        if (uniqueValues.size() != values.size()) {
+                            throw new ConfigException(name, value, "List values must not contain duplicates");
+                        }
+                    },
                     () -> "non-duplicate list"), LOW, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DOC)
             /** Internal Configurations **/
             // This indicates whether unreleased APIs should be advertised by this node.
             .defineInternal(UNSTABLE_API_VERSIONS_ENABLE_CONFIG, BOOLEAN, false, HIGH)
             // This indicates whether unreleased MetadataVersions should be enabled on this node.
             .defineInternal(UNSTABLE_FEATURE_VERSIONS_ENABLE_CONFIG, BOOLEAN, false, HIGH);
-
-    @SuppressWarnings("unchecked")
-    private static void ensureNonDuplicateListValues(String name, Object value) {
-        List<String> values = (List<String>) value;
-        if (values == null) {
-            return;
-        }
-
-        HashSet<String> uniqueValues = new HashSet<>(values);
-        if (uniqueValues.size() != values.size()) {
-            throw new ConfigException(name, value, "List values must not contain duplicates");
-        }
-    }
 }
