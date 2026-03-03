@@ -47,7 +47,7 @@ import org.junit.jupiter.api.Tag;
 import org.mockito.invocation.Invocation;
 import org.testcontainers.junit.jupiter.Container;
 
-import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -83,7 +83,6 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockingDetails;
@@ -237,7 +236,6 @@ class WriterPropertyTest {
             time,
             1,
             Duration.ZERO,
-            false,
             uploaderHandler.executorService,
             committerHandler.executorService,
             cacheStoreHandler.executorService,
@@ -291,13 +289,13 @@ class WriterPropertyTest {
             requester.checkResponses();
 
             if (requestCount > 0) {
-                verify(storage, atLeast(1)).upload(any(ObjectKey.class), any(InputStream.class), anyLong());
+                verify(storage, atLeast(1)).upload(any(ObjectKey.class), any(ByteBuffer.class));
             }
             final Collection<Invocation> uploadInvocations = mockingDetails(storage).getInvocations();
             Statistics.label("files").collect(uploadInvocations.size());
             for (final Invocation invocation : uploadInvocations) {
-                final long uploadedBytesLength = invocation.getArgument(2);
-                Statistics.label("file-size").collect(uploadedBytesLength);
+                final ByteBuffer uploadedBuffer = invocation.getArgument(1);
+                Statistics.label("file-size").collect(uploadedBuffer.remaining());
             }
         }
     }

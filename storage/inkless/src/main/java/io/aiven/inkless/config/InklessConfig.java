@@ -67,12 +67,6 @@ public class InklessConfig extends AbstractConfig {
     private static final String PRODUCE_UPLOAD_BACKOFF_MS_DOC = "The number of millisecond to back off for before the next upload attempt.";
     private static final int PRODUCE_UPLOAD_BACKOFF_MS_DEFAULT = 10;
 
-    public static final String PRODUCE_UPLOAD_ZERO_COPY_ENABLED_CONFIG = PRODUCE_PREFIX + "upload.zero.copy.enabled";
-    private static final String PRODUCE_UPLOAD_ZERO_COPY_ENABLED_DOC = "If true, use ByteBuffer-based zero-copy upload path "
-        + "which avoids internal byte array copies during S3 uploads. When enabled, the underlying byte array is referenced "
-        + "directly until the upload completes. Default is false for backward compatibility.";
-    private static final boolean PRODUCE_UPLOAD_ZERO_COPY_ENABLED_DEFAULT = false;
-
     public static final String STORAGE_PREFIX = "storage.";
 
     public static final String STORAGE_BACKEND_CLASS_CONFIG = STORAGE_PREFIX + "backend.class";
@@ -265,14 +259,6 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(0),
             ConfigDef.Importance.MEDIUM,
             PRODUCE_UPLOAD_BACKOFF_MS_DOC
-        );
-
-        configDef.define(
-            PRODUCE_UPLOAD_ZERO_COPY_ENABLED_CONFIG,
-            ConfigDef.Type.BOOLEAN,
-            PRODUCE_UPLOAD_ZERO_COPY_ENABLED_DEFAULT,
-            ConfigDef.Importance.LOW,
-            PRODUCE_UPLOAD_ZERO_COPY_ENABLED_DOC
         );
 
         configDef.define(
@@ -556,10 +542,6 @@ public class InklessConfig extends AbstractConfig {
     }
     public Duration produceUploadBackoff() {
         return Duration.ofMillis(getInt(PRODUCE_UPLOAD_BACKOFF_MS_CONFIG));
-    }
-
-    public boolean produceUploadZeroCopyEnabled() {
-        return getBoolean(PRODUCE_UPLOAD_ZERO_COPY_ENABLED_CONFIG);
     }
 
     public int fetchCacheBlockBytes() {

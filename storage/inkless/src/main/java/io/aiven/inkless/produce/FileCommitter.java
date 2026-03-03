@@ -74,7 +74,6 @@ class FileCommitter implements Closeable {
     private final Time time;
     private final int maxFileUploadAttempts;
     private final Duration fileUploadRetryBackoff;
-    private final boolean zeroCopyUploadEnabled;
     private final ExecutorService executorServiceUpload;
     private final ExecutorService executorServiceCommit;
     private final ExecutorService executorServiceCacheStore;
@@ -94,10 +93,8 @@ class FileCommitter implements Closeable {
                   final Time time,
                   final int maxFileUploadAttempts,
                   final Duration fileUploadRetryBackoff,
-                  final boolean zeroCopyUploadEnabled,
                   final int fileUploaderThreadPoolSize) {
         this(brokerId, controlPlane, objectKeyCreator, storage, keyAlignmentStrategy, objectCache, batchCoordinateCache, time, maxFileUploadAttempts, fileUploadRetryBackoff,
-            zeroCopyUploadEnabled,
             Executors.newFixedThreadPool(fileUploaderThreadPoolSize, new InklessThreadFactory("inkless-file-uploader-", false)),
             // It must be single-thread to preserve the commit order.
             Executors.newSingleThreadExecutor(new InklessThreadFactory("inkless-file-committer-", false)),
@@ -118,7 +115,6 @@ class FileCommitter implements Closeable {
                   final Time time,
                   final int maxFileUploadAttempts,
                   final Duration fileUploadRetryBackoff,
-                  final boolean zeroCopyUploadEnabled,
                   final ExecutorService executorServiceUpload,
                   final ExecutorService executorServiceCommit,
                   final ExecutorService executorServiceCacheStore,
@@ -137,7 +133,6 @@ class FileCommitter implements Closeable {
         this.maxFileUploadAttempts = maxFileUploadAttempts;
         this.fileUploadRetryBackoff = Objects.requireNonNull(fileUploadRetryBackoff,
             "fileUploadRetryBackoff cannot be null");
-        this.zeroCopyUploadEnabled = zeroCopyUploadEnabled;
         this.executorServiceUpload = Objects.requireNonNull(executorServiceUpload,
             "executorServiceUpload cannot be null");
         this.executorServiceCommit = Objects.requireNonNull(executorServiceCommit,
@@ -176,31 +171,18 @@ class FileCommitter implements Closeable {
                 // Start uploading and add to the commit queue (as Runnable).
                 // This ensures files are uploaded concurrently, but committed to the control plane sequentially,
                 // because `executorServiceCommit` is single-threaded.
-                final FileUploadJob uploadJob;
-                if (zeroCopyUploadEnabled) {
-                    // Use ByteBuffer upload path for zero-copy S3 uploads (avoids internal byte[] copy).
-                    // asReadOnlyBuffer() provides defense against accidental modification while
-                    // preserving zero-copy semantics (no memory allocation beyond the view).
-                    uploadJob = FileUploadJob.createFromByteBuffer(
-                            objectKeyCreator,
-                            storage,
-                            time,
-                            maxFileUploadAttempts,
-                            fileUploadRetryBackoff,
-                            ByteBuffer.wrap(file.data()).asReadOnlyBuffer(),
-                            metrics::fileUploadFinished
-                    );
-                } else {
-                    uploadJob = FileUploadJob.createFromByteArray(
-                            objectKeyCreator,
-                            storage,
-                            time,
-                            maxFileUploadAttempts,
-                            fileUploadRetryBackoff,
-                            file.data(),
-                            metrics::fileUploadFinished
-                    );
-                }
+                // Use ByteBuffer upload path for zero-copy S3 uploads (avoids internal byte[] copy).
+                // asReadOnlyBuffer() provides defense against accidental modification while
+                // preserving zero-copy semantics (no memory allocation beyond the view).
+                final FileUploadJob uploadJob = FileUploadJob.createFromByteBuffer(
+                        objectKeyCreator,
+                        storage,
+                        time,
+                        maxFileUploadAttempts,
+                        fileUploadRetryBackoff,
+                        ByteBuffer.wrap(file.data()).asReadOnlyBuffer(),
+                        metrics::fileUploadFinished
+                );
                 final Future<ObjectKey> uploadFuture = executorServiceUpload.submit(uploadJob);
 
                 final FileCommitJob commitJob = new FileCommitJob(

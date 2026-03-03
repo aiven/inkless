@@ -95,7 +95,6 @@ class Writer implements Closeable {
            final int maxBufferSize,
            final int maxFileUploadAttempts,
            final Duration fileUploadRetryBackoff,
-           final boolean zeroCopyUploadEnabled,
            final int fileUploaderThreadPoolSize,
            final BrokerTopicStats brokerTopicStats
     ) {
@@ -109,7 +108,6 @@ class Writer implements Closeable {
                 brokerId, controlPlane, objectKeyCreator, storage,
                 keyAlignmentStrategy, objectCache, batchCoordinateCache, time,
                 maxFileUploadAttempts, fileUploadRetryBackoff,
-                zeroCopyUploadEnabled,
                 fileUploaderThreadPoolSize),
             new WriterMetrics(time),
             brokerTopicStats
