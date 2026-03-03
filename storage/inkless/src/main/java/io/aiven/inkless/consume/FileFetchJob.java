@@ -70,7 +70,8 @@ public class FileFetchJob implements Callable<FileExtent> {
     }
 
     private FileExtent doWork() throws IOException, StorageBackendException {
-        final ByteBuffer byteBuffer = objectFetcher.readToByteBuffer(objectFetcher.fetch(key, range));
+        // Use fetchToByteBuffer for direct ByteBuffer access (avoids channel/stream overhead)
+        final ByteBuffer byteBuffer = objectFetcher.fetchToByteBuffer(key, range);
         return createFileExtent(key, range, byteBuffer);
     }
 

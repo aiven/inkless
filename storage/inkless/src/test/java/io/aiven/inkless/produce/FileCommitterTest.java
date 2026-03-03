@@ -33,7 +33,8 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.io.IOException;
-import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.ReadOnlyBufferException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -116,12 +117,14 @@ class FileCommitterTest {
     ArgumentCaptor<Callable<ObjectKey>> uploadCallableCaptor;
     @Captor
     ArgumentCaptor<Runnable> commitRunnableCaptor;
+    @Captor
+    ArgumentCaptor<ByteBuffer> byteBufferCaptor;
 
     @Test
     @SuppressWarnings("unchecked")
     void success() throws Exception {
         doNothing()
-            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().length));
+            .when(storage).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
 
         when(time.nanoseconds()).thenReturn(10_000_000L);
 
@@ -170,7 +173,7 @@ class FileCommitterTest {
     @SuppressWarnings("unchecked")
     void commitFailed() throws Exception {
         doNothing()
-            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().length));
+            .when(storage).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
 
         when(time.nanoseconds()).thenReturn(10_000_000L);
 
@@ -221,7 +224,7 @@ class FileCommitterTest {
     @SuppressWarnings("unchecked")
     void uploadFailed() throws Exception {
         doNothing()
-            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().length));
+            .when(storage).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
 
         when(time.nanoseconds()).thenReturn(10_000_000L);
 
@@ -395,5 +398,70 @@ class FileCommitterTest {
         assertThatThrownBy(() -> committer.commit(null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("file cannot be null");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void usesByteBufferUpload() throws Exception {
+        doNothing()
+            .when(storage).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
+
+        when(time.nanoseconds()).thenReturn(10_000_000L);
+
+        final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
+        when(executorServiceUpload.submit(any(Callable.class)))
+            .thenReturn(uploadFuture);
+
+        final FileCommitter committer = new FileCommitter(
+                BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, storage,
+                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, time,
+                3, Duration.ofMillis(100),
+                executorServiceUpload, executorServiceCommit, executorServiceCacheStore,
+                metrics);
+
+        committer.commit(FILE);
+
+        verify(executorServiceUpload).submit(uploadCallableCaptor.capture());
+        final Callable<ObjectKey> uploadCallable = uploadCallableCaptor.getValue();
+
+        uploadCallable.call();
+
+        // Verify ByteBuffer-based upload was used
+        verify(storage).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void passesReadOnlyBufferToStorage() throws Exception {
+        doNothing()
+            .when(storage).upload(eq(OBJECT_KEY), byteBufferCaptor.capture());
+
+        when(time.nanoseconds()).thenReturn(10_000_000L);
+
+        final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
+        when(executorServiceUpload.submit(any(Callable.class)))
+            .thenReturn(uploadFuture);
+
+        final FileCommitter committer = new FileCommitter(
+                BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, storage,
+                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, time,
+                3, Duration.ofMillis(100),
+                executorServiceUpload, executorServiceCommit, executorServiceCacheStore,
+                metrics);
+
+        committer.commit(FILE);
+
+        verify(executorServiceUpload).submit(uploadCallableCaptor.capture());
+        final Callable<ObjectKey> uploadCallable = uploadCallableCaptor.getValue();
+
+        uploadCallable.call();
+
+        // Verify the ByteBuffer passed to storage is read-only
+        final ByteBuffer capturedBuffer = byteBufferCaptor.getValue();
+        assertThat(capturedBuffer.isReadOnly()).isTrue();
+
+        // Verify that attempting to write throws ReadOnlyBufferException
+        assertThatThrownBy(() -> capturedBuffer.put((byte) 0))
+            .isInstanceOf(ReadOnlyBufferException.class);
     }
 }

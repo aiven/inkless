@@ -24,6 +24,7 @@ import com.groupcdg.pitest.annotations.CoverageIgnore;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
@@ -104,6 +105,35 @@ public final class S3Storage extends StorageBackend {
     }
 
     @Override
+    public void upload(final ObjectKey key, final ByteBuffer byteBuffer) throws StorageBackendException {
+        Objects.requireNonNull(key, "key cannot be null");
+        Objects.requireNonNull(byteBuffer, "byteBuffer cannot be null");
+        if (byteBuffer.remaining() <= 0) {
+            throw new IllegalArgumentException("byteBuffer must have remaining bytes");
+        }
+        final PutObjectRequest putObjectRequest = PutObjectRequest.builder()
+            .bucket(bucketName)
+            .key(key.value())
+            .build();
+        // Use ByteBufferInputStream with duplicate() to avoid:
+        // 1. The byte[] copy in RequestBody.fromByteBuffer() -> BinaryUtils.copyAllBytesFrom()
+        // 2. Modifying the original buffer's position (preserves retry support in FileUploadJob)
+        final ByteBuffer duplicate = byteBuffer.duplicate();
+        final long length = duplicate.remaining();
+        final RequestBody requestBody = RequestBody.fromInputStream(
+            new ByteBufferInputStream(duplicate),
+            length
+        );
+        try {
+            s3Client.putObject(putObjectRequest, requestBody);
+        } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
+            throw new StorageBackendTimeoutException("Failed to upload " + key, e);
+        } catch (final SdkException e) {
+            throw new StorageBackendException("Failed to upload " + key, e);
+        }
+    }
+
+    @Override
     public ReadableByteChannel fetch(final ObjectKey key, final ByteRange range) throws StorageBackendException, IOException {
         try {
             if (range != null && range.empty()) {
@@ -122,6 +152,42 @@ public final class S3Storage extends StorageBackend {
             // and does not play well with the buffering done in ObjectFetcher.readToByteBuffer()
             final var buffer = s3Client.getObjectAsBytes(getRequest).asByteBuffer();
             return Channels.newChannel(new ByteBufferInputStream(buffer));
+        } catch (final AwsServiceException e) {
+            if (e.statusCode() == 404) {
+                throw new KeyNotFoundException(this, key, e);
+            }
+            if (e.statusCode() == 416) {
+                throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range, e);
+            }
+
+            throw new StorageBackendException("Failed to fetch " + key, e);
+        } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
+            throw new StorageBackendTimeoutException("Failed to fetch " + key, e);
+        } catch (final SdkClientException e) {
+            throw new StorageBackendException("Failed to fetch " + key, e);
+        }
+    }
+
+    /**
+     * Optimized fetch that returns ByteBuffer directly without intermediate channel/stream copies.
+     * S3 SDK already provides the data as a ByteBuffer via getObjectAsBytes(), so we return it directly.
+     */
+    @Override
+    public ByteBuffer fetchToByteBuffer(final ObjectKey key, final ByteRange range) throws StorageBackendException {
+        try {
+            if (range != null && range.empty()) {
+                return ByteBuffer.allocate(0);
+            }
+
+            var builder = GetObjectRequest.builder()
+                .bucket(bucketName)
+                .key(key.value());
+            if (range != null) {
+                builder = builder.range(formatRange(range));
+            }
+            final GetObjectRequest getRequest = builder.build();
+            // Direct return - no channel wrapping, no chunk reading, no consolidation
+            return s3Client.getObjectAsBytes(getRequest).asByteBuffer();
         } catch (final AwsServiceException e) {
             if (e.statusCode() == 404) {
                 throw new KeyNotFoundException(this, key, e);
