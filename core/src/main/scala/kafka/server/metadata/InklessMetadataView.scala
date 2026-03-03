@@ -24,7 +24,7 @@ import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.{Node, TopicIdPartition, Uuid}
 
 import java.util
-import java.util.Properties
+import java.util.{Optional, Properties}
 import java.util.function.Supplier
 import java.util.stream.{Collectors, IntStream}
 import scala.jdk.CollectionConverters._
@@ -69,5 +69,9 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
       .flatMap(t => IntStream.range(0, metadataCache.numPartitions(t).get())
         .mapToObj(p => new TopicIdPartition(metadataCache.getTopicId(t), p, t)))
       .collect(Collectors.toSet[TopicIdPartition]())
+  }
+
+  override def getTopicName(topicId: Uuid): Optional[String] = {
+    metadataCache.getTopicName(topicId)
   }
 }

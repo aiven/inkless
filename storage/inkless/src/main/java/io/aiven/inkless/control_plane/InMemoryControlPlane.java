@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.control_plane;
 
+import io.aiven.inkless.common.ObjectKeyCreator;
+import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
@@ -723,6 +725,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             }
         }
         return result;
+    }
+
+    @Override
+    public WALSplitter getWALSplitter(ObjectFetcher fetcher, ObjectKeyCreator keyCreator) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

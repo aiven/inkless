@@ -7,6 +7,7 @@ import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.consume.FetchCompleter;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
+import io.aiven.inkless.control_plane.WALSplitter;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
@@ -26,17 +27,14 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.jooq.generated.Tables.BATCHES;
 import static org.jooq.generated.Tables.FILES;
 
-public class TSUnificationFetcher implements Supplier<Map<TopicIdPartition, TreeMap<BatchInfo, MemoryRecords>>> {
+public class TSUnificationFetcher implements WALSplitter {
 
-    private final Time time;
-    private final ObjectCache cache;
     private final ObjectFetcher objectFetcher;
     private final ObjectKeyCreator objectKeyCreator;
     private final int maxObjectAmount = 10; // limit the max amount of objects to fetch
@@ -45,9 +43,7 @@ public class TSUnificationFetcher implements Supplier<Map<TopicIdPartition, Tree
             .comparing(TopicIdPartition::topicId)
             .thenComparing(TopicIdPartition::partition);
 
-    public TSUnificationFetcher(Time time, ObjectCache cache, ObjectFetcher objectFetcher, ObjectKeyCreator objectKeyCreator, DSLContext jooqCtx) {
-        this.time = time;
-        this.cache = cache;
+    public TSUnificationFetcher(ObjectFetcher objectFetcher, ObjectKeyCreator objectKeyCreator, DSLContext jooqCtx) {
         this.objectFetcher = objectFetcher;
         this.objectKeyCreator = objectKeyCreator;
         this.jooqCtx = jooqCtx;
@@ -125,13 +121,13 @@ public class TSUnificationFetcher implements Supplier<Map<TopicIdPartition, Tree
             ));
     }
 
-    private static TreeMap<TopicIdPartition, TreeMap<BatchInfo, MemoryRecords>> byPartition(Map<BatchInfo, MemoryRecords> batchMap) {
+    private TreeMap<TopicIdPartition, TreeMap<BatchInfo, MemoryRecords>> byPartition(Map<BatchInfo, MemoryRecords> batchMap) {
         return batchMap
             .entrySet()
             .stream()
             .collect(Collectors.groupingBy(
                 e -> e.getKey().metadata().topicIdPartition(),
-                TreeMap::new,
+                () -> new TreeMap<>(topicIdPartitionComparator),
                 Collectors.toMap(
                     Map.Entry::getKey,
                     Map.Entry::getValue,

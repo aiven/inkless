@@ -31,6 +31,7 @@ import kafka.server.ReplicaManager._
 import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
+import org.apache.kafka.common._
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
 import org.apache.kafka.common.message.DeleteRecordsResponseData.DeleteRecordsPartitionResult
@@ -51,7 +52,6 @@ import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.utils.{Exit, Time, Utils}
-import org.apache.kafka.common._
 import org.apache.kafka.coordinator.transaction.{AddPartitionsToTxnConfig, TransactionLogConfig}
 import org.apache.kafka.image.{LocalReplicaChanges, MetadataImage, TopicsDelta}
 import org.apache.kafka.logger.StateChangeLogger
@@ -80,8 +80,8 @@ import java.io.File
 import java.lang.{Long => JLong}
 import java.nio.file.{Files, Paths}
 import java.util
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent._
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.function.Consumer
 import java.util.stream.Collectors
 import java.util.{Collections, Optional, OptionalInt, OptionalLong}
@@ -280,7 +280,9 @@ class ReplicaManager(val config: KafkaConfig,
   private val replicaStateChangeLock = new Object
   val replicaFetcherManager = createReplicaFetcherManager(metrics, time, quotaManagers.follower)
   private[server] val replicaAlterLogDirsManager = createReplicaAlterLogDirsManager(quotaManagers.alterLogDirs, brokerTopicStats)
-  private[server] val walUnificationFetcherManager: Option[WalUnificationFetcherManager] = createWalUnificationFetcherManager()
+  private[server] val walUnifierManager: Option[WalUnifierManager] = createWalUnifierManager()
+  private val walUnifierManagerRunner = Executors.newSingleThreadExecutor()
+  walUnifierManager.foreach(walUnifierManagerRunner.execute(_))
   private val highWatermarkCheckPointThreadStarted = new AtomicBoolean(false)
   @volatile private[server] var highWatermarkCheckpoints: Map[String, OffsetCheckpointFile] = logManager.liveLogDirs.map(dir =>
     (dir.getAbsolutePath, new OffsetCheckpointFile(new File(dir, ReplicaManager.HighWatermarkFilename), logDirFailureChannel))).toMap
@@ -2468,7 +2470,8 @@ class ReplicaManager(val config: KafkaConfig,
       logDirFailureHandler.shutdown()
     replicaFetcherManager.shutdown()
     replicaAlterLogDirsManager.shutdown()
-    walUnificationFetcherManager.foreach(_.shutdown())
+    walUnifierManager.foreach(_.shutdown())
+    walUnifierManagerRunner.shutdown()
     delayedFetchPurgatory.shutdown()
     delayedRemoteFetchPurgatory.shutdown()
     delayedRemoteListOffsetsPurgatory.shutdown()
@@ -2505,24 +2508,11 @@ class ReplicaManager(val config: KafkaConfig,
     new ReplicaAlterLogDirsManager(config, this, quotaManager, brokerTopicStats, directoryEventHandler)
   }
 
-  protected def createWalUnificationFetcherManager(): Option[WalUnificationFetcherManager] = {
-    if (config.disklessTsUnificationEnable && inklessSharedState.isDefined) {
+  private def createWalUnifierManager(): Option[WalUnifierManager] = {
+    if (config.disklessTsUnificationEnable && inklessSharedState.isDefined && inklessMetadataView.isDefined) {
       val sharedState = inklessSharedState.get
-      val maxBytes = config.replicaFetchResponseMaxBytes
-      val fetchTimeoutMs = config.replicaFetchWaitMaxMs.toLong
-      val helper = new WalUnificationFetchHelper(sharedState, maxBytes, fetchTimeoutMs)
-      Some(new WalUnificationFetcherManager(config, this, helper))
-    } else {
-      None
-    }
-  }
-
-  private def createWalFetcherManager(): Option[WALFetcherManager] = {
-    if (config.disklessTsUnificationEnable && inklessSharedState.isDefined) {
-      val sharedState = inklessSharedState.get
-      val maxBytes = config.replicaFetchResponseMaxBytes
-      val fetchTimeoutMs = config.replicaFetchWaitMaxMs.toLong
-      Some(new WALFetcherManager(config, this, metrics, time, () => metadataCache.metadataVersion(), brokerEpochSupplier))
+      val walSplitter = sharedState.controlPlane().getWALSplitter(sharedState.buildStorage(), sharedState.objectKeyCreator())
+      Some(new WalUnifierManager("WalUnifierManager", this, walSplitter, inklessMetadataView.get, config.disklessTsUnificationFetchers))
     } else {
       None
     }
@@ -2738,7 +2728,6 @@ class ReplicaManager(val config: KafkaConfig,
 
         replicaFetcherManager.shutdownIdleFetcherThreads()
         replicaAlterLogDirsManager.shutdownIdleFetcherThreads()
-        walUnificationFetcherManager.foreach(_.shutdownIdleFetcherThreads())
 
         remoteLogManager.foreach(rlm => rlm.onLeadershipChange((leaderChangedPartitions.toSet: Set[TopicPartitionLog]).asJava, (followerChangedPartitions.toSet: Set[TopicPartitionLog]).asJava, localChanges.topicIds()))
       }
@@ -2762,20 +2751,21 @@ class ReplicaManager(val config: KafkaConfig,
     replicaFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
     localLeaders.foreachEntry { (tp, info) =>
       if (_inklessMetadataView.isDisklessTopic(tp.topic)) {
-        walUnificationFetcherManager.foreach { m =>
+        walUnifierManager.foreach { m =>
           getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, _) =>
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
             partition.createLogIfNotExists(isNew = true, isFutureReplica = false, offsetCheckpoints = offsetCheckpoints, topicId = partition.topicId, targetLogDirectoryId = partitionAssignedDirectoryId)
-            partition.log.foreach { log =>
-              // TODO: optimize GET cost by storing some metadata in kraft or local FS as cache?
-              val maxRemoteOffset = remoteLogManager.map(rlm => {
-                val tip = new TopicIdPartition(info.topicId, tp.partition, tp.topic)
-                val segments = rlm.remoteLogMetadataManager().listRemoteLogSegments(tip)
-                segments.asScala.map(_.endOffset()).max
-              }).getOrElse(0L)
-              val initOffset = math.max(log.logEndOffset, maxRemoteOffset)
-              m.addFetcherForPartitions(tp, InitialFetchState(partition.topicId, m.syntheticBrokerEndPoint, partition.getLeaderEpoch, initOffset))
-            }
+//            partition.log.foreach { log =>
+//              // TODO: optimize GET cost by storing some metadata in kraft or local FS as cache?
+//              val maxRemoteOffset = remoteLogManager.map(rlm => {
+//                val tip = new TopicIdPartition(info.topicId, tp.partition, tp.topic)
+//                val segments = rlm.remoteLogMetadataManager().listRemoteLogSegments(tip)
+//                segments.asScala.map(_.endOffset()).max
+//              }).getOrElse(0L)
+//              val initOffset = math.max(log.logEndOffset, maxRemoteOffset)
+//              println(initOffset)
+//              m.addFetcherForPartitions(tp, InitialFetchState(partition.topicId, m.syntheticBrokerEndPoint, partition.getLeaderEpoch, initOffset))
+//            }
           }
         }
       } else {
@@ -2863,7 +2853,6 @@ class ReplicaManager(val config: KafkaConfig,
       // Stopping the fetchers must be done first in order to initialize the fetch
       // position correctly.
       replicaFetcherManager.removeFetcherForPartitions(partitionsToStartFetching.keySet)
-      walUnificationFetcherManager.foreach(_.removeFetcherForPartitions(partitionsToStartFetching.keySet.toSet))
       stateChangeLogger.info(s"Stopped fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
       val listenerName = config.interBrokerListenerName.value

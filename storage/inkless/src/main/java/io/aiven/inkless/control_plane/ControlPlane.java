@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.control_plane;
 
+import io.aiven.inkless.common.ObjectKeyCreator;
+import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import org.apache.kafka.common.Configurable;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
@@ -125,4 +127,10 @@ public interface ControlPlane extends Closeable, Configurable {
 
     // used for testing purposes only
     List<GetLogInfoResponse> getLogInfo(List<GetLogInfoRequest> requests);
+
+    /**
+     * Used for Tiered Storage unification to get and split WAL segments
+     * @return
+     */
+    WALSplitter getWALSplitter(ObjectFetcher fetcher, ObjectKeyCreator keyCreator);
 }

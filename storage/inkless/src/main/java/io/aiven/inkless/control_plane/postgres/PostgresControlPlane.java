@@ -17,6 +17,9 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import io.aiven.inkless.common.ObjectKeyCreator;
+import io.aiven.inkless.control_plane.WALSplitter;
+import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
@@ -372,6 +375,11 @@ public class PostgresControlPlane extends AbstractControlPlane {
                 throw new ControlPlaneException("Failed to get log info", e);
             }
         }
+    }
+
+    @Override
+    public WALSplitter getWALSplitter(ObjectFetcher fetcher, ObjectKeyCreator keyCreator) {
+        return new TSUnificationFetcher(fetcher, keyCreator, readJooqCtx);
     }
 
     @Override
