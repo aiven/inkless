@@ -24,6 +24,7 @@ import kafka.utils.Implicits._
 import kafka.utils.Logging
 import org.apache.kafka.common.utils.{Exit, Java, LoggingSignalHandler, OperatingSystem, Time, Utils}
 import org.apache.kafka.server.util.CommandLineUtils
+import io.aiven.inkless.security.AccpInstaller
 
 object Kafka extends Logging {
 
@@ -71,6 +72,12 @@ object Kafka extends Logging {
 
   def main(args: Array[String]): Unit = {
     try {
+      // Install ACCP early, before any SSL/crypto operations
+      // Enable with -Dinkless.accp.enabled=true
+      // Supports both x86_64 and ARM64 (aarch64) Linux
+      AccpInstaller.installIfEnabled()
+      AccpInstaller.logCryptoStatus()
+
       val serverProps = getPropsFromArgs(args)
       val server = buildServer(serverProps)
 
