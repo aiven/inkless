@@ -339,4 +339,32 @@ public abstract class BaseStorageTest {
             }
         }
     }
+
+    @Test
+    void testFetchToByteBuffer() throws Exception {
+        try (StorageBackend storage = storage()) {
+            final byte[] data = "fetchToByteBuffer test content".getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
+
+            // Fetch entire content
+            ByteBuffer result = storage.fetchToByteBuffer(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, data.length));
+            byte[] resultBytes = new byte[result.remaining()];
+            result.get(resultBytes);
+            assertThat(resultBytes).isEqualTo(data);
+        }
+    }
+
+    @Test
+    void testFetchToByteBufferWithRange() throws Exception {
+        try (StorageBackend storage = storage()) {
+            final byte[] data = "AABBBBAA".getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
+
+            // Fetch partial content
+            ByteBuffer result = storage.fetchToByteBuffer(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 4));
+            byte[] resultBytes = new byte[result.remaining()];
+            result.get(resultBytes);
+            assertThat(new String(resultBytes)).isEqualTo("BBBB");
+        }
+    }
 }

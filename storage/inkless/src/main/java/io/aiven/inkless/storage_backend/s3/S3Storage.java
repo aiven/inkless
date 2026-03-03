@@ -168,6 +168,42 @@ public final class S3Storage extends StorageBackend {
         }
     }
 
+    /**
+     * Optimized fetch that returns ByteBuffer directly without intermediate channel/stream copies.
+     * S3 SDK already provides the data as a ByteBuffer via getObjectAsBytes(), so we return it directly.
+     */
+    @Override
+    public ByteBuffer fetchToByteBuffer(final ObjectKey key, final ByteRange range) throws StorageBackendException {
+        try {
+            if (range != null && range.empty()) {
+                return ByteBuffer.allocate(0);
+            }
+
+            var builder = GetObjectRequest.builder()
+                .bucket(bucketName)
+                .key(key.value());
+            if (range != null) {
+                builder = builder.range(formatRange(range));
+            }
+            final GetObjectRequest getRequest = builder.build();
+            // Direct return - no channel wrapping, no chunk reading, no consolidation
+            return s3Client.getObjectAsBytes(getRequest).asByteBuffer();
+        } catch (final AwsServiceException e) {
+            if (e.statusCode() == 404) {
+                throw new KeyNotFoundException(this, key, e);
+            }
+            if (e.statusCode() == 416) {
+                throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range, e);
+            }
+
+            throw new StorageBackendException("Failed to fetch " + key, e);
+        } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
+            throw new StorageBackendTimeoutException("Failed to fetch " + key, e);
+        } catch (final SdkClientException e) {
+            throw new StorageBackendException("Failed to fetch " + key, e);
+        }
+    }
+
     private String formatRange(final ByteRange range) {
         return "bytes=" + range.offset() + "-" + range.endOffset();
     }
