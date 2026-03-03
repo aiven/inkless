@@ -2517,6 +2517,17 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
+  private def createWalFetcherManager(): Option[WALFetcherManager] = {
+    if (config.disklessTsUnificationEnable && inklessSharedState.isDefined) {
+      val sharedState = inklessSharedState.get
+      val maxBytes = config.replicaFetchResponseMaxBytes
+      val fetchTimeoutMs = config.replicaFetchWaitMaxMs.toLong
+      Some(new WALFetcherManager(config, this, metrics, time, () => metadataCache.metadataVersion(), brokerEpochSupplier))
+    } else {
+      None
+    }
+  }
+
   private def createReplicaSelector(metrics: Metrics): Option[Plugin[ReplicaSelector]] = {
     config.replicaSelectorClassName.map { className =>
       val tmpReplicaSelector: ReplicaSelector = Utils.newInstance(className, classOf[ReplicaSelector])
@@ -2753,10 +2764,16 @@ class ReplicaManager(val config: KafkaConfig,
       if (_inklessMetadataView.isDisklessTopic(tp.topic)) {
         walUnificationFetcherManager.foreach { m =>
           getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, _) =>
-            val  partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+            val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
             partition.createLogIfNotExists(isNew = true, isFutureReplica = false, offsetCheckpoints = offsetCheckpoints, topicId = partition.topicId, targetLogDirectoryId = partitionAssignedDirectoryId)
             partition.log.foreach { log =>
-              val initOffset = math.max(log.logEndOffset, 0L)
+              // TODO: optimize GET cost by storing some metadata in kraft or local FS as cache?
+              val maxRemoteOffset = remoteLogManager.map(rlm => {
+                val tip = new TopicIdPartition(info.topicId, tp.partition, tp.topic)
+                val segments = rlm.remoteLogMetadataManager().listRemoteLogSegments(tip)
+                segments.asScala.map(_.endOffset()).max
+              }).getOrElse(0L)
+              val initOffset = math.max(log.logEndOffset, maxRemoteOffset)
               m.addFetcherForPartitions(tp, InitialFetchState(partition.topicId, m.syntheticBrokerEndPoint, partition.getLeaderEpoch, initOffset))
             }
           }
