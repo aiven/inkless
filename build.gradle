@@ -1106,6 +1106,10 @@ project(':core') {
     implementation libs.slf4jApi
     implementation libs.re2j
 
+    // ACCP for hardware-accelerated crypto (supports x86_64 and ARM64 Linux)
+    // Enable with -Dinkless.accp.enabled=true
+    runtimeOnly libs.accp
+
     testImplementation project(':clients').sourceSets.test.output
     testImplementation project(':group-coordinator').sourceSets.test.output
     testImplementation project(':share-coordinator').sourceSets.test.output
@@ -2522,6 +2526,9 @@ project(':storage:inkless') {
     testImplementation libs.testcontainersLocalstack
     testImplementation libs.wiremock
     testImplementation libs.jqwik
+
+    // ACCP for benchmark tests
+    testRuntimeOnly libs.accp
 
     testRuntimeOnly runtimeTestLibs
 
