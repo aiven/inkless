@@ -155,17 +155,6 @@ public class ServerConfigs {
         "When disabled, diskless topics use legacy RF=1 behavior. " +
         "This config only affects topic creation.";
 
-    /** WAL-to-tiered-storage unification: fetch from WAL and append to local log. */
-    public static final String DISKLESS_TS_UNIFICATION_ENABLE_CONFIG = "diskless.ts.unification.enable";
-    public static final boolean DISKLESS_TS_UNIFICATION_ENABLE_DEFAULT = false;
-    public static final String DISKLESS_TS_UNIFICATION_ENABLE_DOC = "When enabled, the broker runs a unification fetcher " +
-        "that fetches from WAL (diskless object storage) and appends to the local log for diskless partitions, " +
-        "so that segments can be rolled and copied to tiered storage.";
-
-    public static final String DISKLESS_TS_UNIFICATION_FETCHERS_CONFIG = "diskless.ts.unification.fetchers";
-    public static final int DISKLESS_TS_UNIFICATION_FETCHERS_DEFAULT = 4;
-    public static final String DISKLESS_TS_UNIFICATION_FETCHERS_DOC = "Number of fetcher threads for WAL unification.";
-
 
     /************* Authorizer Configuration ***********/
     public static final String AUTHORIZER_CLASS_NAME_CONFIG = "authorizer.class.name";
@@ -217,8 +206,6 @@ public class ServerConfigs {
             .define(DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, BOOLEAN, DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DEFAULT, LOW,
                 DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DOC)
             .define(DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, BOOLEAN, DISKLESS_MANAGED_REPLICAS_ENABLE_DEFAULT, MEDIUM, DISKLESS_MANAGED_REPLICAS_ENABLE_DOC)
-            .define(DISKLESS_TS_UNIFICATION_ENABLE_CONFIG, BOOLEAN, DISKLESS_TS_UNIFICATION_ENABLE_DEFAULT, LOW, DISKLESS_TS_UNIFICATION_ENABLE_DOC)
-            .define(DISKLESS_TS_UNIFICATION_FETCHERS_CONFIG, INT, DISKLESS_TS_UNIFICATION_FETCHERS_DEFAULT, atLeast(1), LOW, DISKLESS_TS_UNIFICATION_FETCHERS_DOC)
             /** Internal Configurations **/
             // This indicates whether unreleased APIs should be advertised by this node.
             .defineInternal(UNSTABLE_API_VERSIONS_ENABLE_CONFIG, BOOLEAN, false, HIGH)

@@ -408,9 +408,6 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   val disklessFetchMinBytes = getInt(ServerConfigs.DISKLESS_FETCH_MIN_BYTES_CONFIG)
   val disklessFetchMaxWaitMs = getInt(ServerConfigs.DISKLESS_FETCH_MAX_WAIT_MS_CONFIG)
 
-  val disklessTsUnificationEnable = getBoolean(ServerConfigs.DISKLESS_TS_UNIFICATION_ENABLE_CONFIG)
-  val disklessTsUnificationFetchers = getInt(ServerConfigs.DISKLESS_TS_UNIFICATION_FETCHERS_CONFIG)
-
   /** ********* Request Limit Configuration ***********/
   val maxRequestPartitionSizeLimit = getInt(ServerConfigs.MAX_REQUEST_PARTITION_SIZE_LIMIT_CONFIG)
 
