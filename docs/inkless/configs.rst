@@ -196,6 +196,13 @@ Under ``inkless.``
   * Default: false
   * Importance: low
 
+``produce.async.commit.pipeline.enabled``
+  When enabled, commit and cache store operations use non-blocking callbacks instead of blocking on upload completion. This eliminates thread blocking during S3 latency, improving thread pool efficiency.
+
+  * Type: boolean
+  * Default: false
+  * Importance: low
+
 ``produce.upload.thread.pool.size``
   Thread pool size to concurrently upload files to remote storage
 

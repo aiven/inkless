@@ -21,7 +21,6 @@ import org.apache.kafka.common.utils.Time;
 
 import java.util.Collections;
 import java.util.Set;
-import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
@@ -32,32 +31,48 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 
-public class CacheStoreJob implements Runnable {
+/**
+ * Handles caching of uploaded file data to the object cache.
+ *
+ * <p>This class implements {@link UploadCompletionConsumer} for use with {@code CompletableFuture.whenCompleteAsync()}.
+ * When the upload completes (successfully or with error), the callback is invoked on the
+ * provided executor to either store the data to cache or release resources.
+ *
+ * <p><b>Thread Safety:</b> The {@link #onUploadComplete} method is safe to call from any thread.
+ * The actual cache store work is executed on the provided executor.
+ */
+public class CacheStoreJob implements UploadCompletionConsumer {
 
     private final Time time;
     private final ObjectCache cache;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final byte[] data;
-    private final Future<ObjectKey> uploadFuture;
     private final Consumer<Long> cacheStoreDurationCallback;
 
-    public CacheStoreJob(Time time, ObjectCache cache, KeyAlignmentStrategy keyAlignmentStrategy, byte[] data, Future<ObjectKey> uploadFuture, Consumer<Long> cacheStoreDurationCallback) {
+    public CacheStoreJob(Time time,
+                         ObjectCache cache,
+                         KeyAlignmentStrategy keyAlignmentStrategy,
+                         byte[] data,
+                         Consumer<Long> cacheStoreDurationCallback) {
         this.time = time;
         this.cache = cache;
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.data = data;
-        this.uploadFuture = uploadFuture;
         this.cacheStoreDurationCallback = cacheStoreDurationCallback;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>If the upload succeeded (objectKey is non-null and error is null), the data is stored
+     * to cache. If the upload failed, this is a no-op since there's nothing to cache.
+     */
     @Override
-    public void run() {
-        try {
-            ObjectKey objectKey = uploadFuture.get();
+    public void onUploadComplete(ObjectKey objectKey, Throwable error) {
+        if (objectKey != null && error == null) {
             storeToCache(objectKey);
-        } catch (final Throwable e) {
-            // If the upload failed there's nothing to cache and we succeed vacuously.
         }
+        // If the upload failed there's nothing to cache and we succeed vacuously.
     }
 
     private void storeToCache(ObjectKey objectKey) {
