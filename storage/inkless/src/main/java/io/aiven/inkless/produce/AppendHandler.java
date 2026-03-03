@@ -33,7 +33,6 @@ import org.slf4j.LoggerFactory;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -46,6 +45,7 @@ public class AppendHandler implements Closeable {
 
     private final SharedState state;
     private final Writer writer;
+    private final LogConfigCache logConfigCache;
 
     @DoNotMutate
     @CoverageIgnore
@@ -67,15 +67,24 @@ public class AppendHandler implements Closeable {
                 state.config().produceUploadBackoff(),
                 state.config().produceUploadThreadPoolSize(),
                 state.brokerTopicStats()
-            )
+            ),
+            new LogConfigCache(state.metadata(), state.defaultTopicConfigs())
         );
     }
 
     // Visible for tests
     AppendHandler(final SharedState state,
                   final Writer writer) {
+        this(state, writer, new LogConfigCache(state.metadata(), state.defaultTopicConfigs()));
+    }
+
+    // Visible for tests
+    AppendHandler(final SharedState state,
+                  final Writer writer,
+                  final LogConfigCache logConfigCache) {
         this.state = state;
         this.writer = writer;
+        this.logConfigCache = logConfigCache;
     }
 
     /**
@@ -113,13 +122,10 @@ public class AppendHandler implements Closeable {
     }
 
     private Map<String, LogConfig> getLogConfigs(final Set<TopicIdPartition> topicIdPartitions) {
-        final Map<String, Object> defaultTopicConfigs = state.defaultTopicConfigs().get().originals();
-        final Map<String, LogConfig> result = new HashMap<>();
-        for (final TopicIdPartition tp : topicIdPartitions) {
-            final var overrides = state.metadata().getTopicConfig(tp.topic());
-            result.put(tp.topic(), LogConfig.fromProps(defaultTopicConfigs, overrides));
-        }
-        return result;
+        final Set<String> topics = topicIdPartitions.stream()
+            .map(TopicIdPartition::topic)
+            .collect(Collectors.toSet());
+        return logConfigCache.getAll(topics);
     }
 
     @Override
