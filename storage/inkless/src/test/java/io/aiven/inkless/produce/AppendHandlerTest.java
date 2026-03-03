@@ -43,6 +43,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
@@ -63,7 +64,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -90,6 +93,8 @@ public class AppendHandlerTest {
     Writer writer;
     @Mock
     BrokerTopicStats brokerTopicStats;
+    @Mock
+    LogConfigCache logConfigCache;
 
     private static final MemoryRecords TRANSACTIONAL_RECORDS = MemoryRecords.withTransactionalRecords(
         Compression.NONE,
@@ -204,5 +209,61 @@ public class AppendHandlerTest {
         interceptor.close();
 
         verify(writer).close();
+    }
+
+    @Test
+    public void usesLogConfigCache() throws Exception {
+        final TopicIdPartition topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "test-topic");
+        final Map<TopicIdPartition, MemoryRecords> entriesPerPartition = Map.of(
+            topicIdPartition, RECORDS_WITHOUT_PRODUCER_ID
+        );
+
+        final LogConfig logConfig = new LogConfig(Map.of());
+        when(logConfigCache.getAll(Set.of("test-topic"))).thenReturn(Map.of("test-topic", logConfig));
+
+        final var writeResult = Map.of(topicIdPartition, new PartitionResponse(Errors.NONE));
+        when(writer.write(eq(entriesPerPartition), eq(Map.of("test-topic", logConfig)), any()))
+            .thenReturn(CompletableFuture.completedFuture(writeResult));
+
+        try (final AppendHandler handler = new AppendHandler(
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
+                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
+            writer, logConfigCache)) {
+
+            final var result = handler.handle(entriesPerPartition, requestLocal).get();
+            assertThat(result).isEqualTo(writeResult);
+
+            verify(logConfigCache).getAll(Set.of("test-topic"));
+        }
+    }
+
+    @Test
+    public void logConfigCacheCalledWithAllTopics() throws Exception {
+        final TopicIdPartition tp1 = new TopicIdPartition(Uuid.randomUuid(), 0, "topic1");
+        final TopicIdPartition tp2 = new TopicIdPartition(Uuid.randomUuid(), 1, "topic2");
+        final TopicIdPartition tp3 = new TopicIdPartition(Uuid.randomUuid(), 0, "topic1"); // same topic, different partition
+        final Map<TopicIdPartition, MemoryRecords> entriesPerPartition = Map.of(
+            tp1, RECORDS_WITHOUT_PRODUCER_ID,
+            tp2, RECORDS_WITHOUT_PRODUCER_ID,
+            tp3, RECORDS_WITHOUT_PRODUCER_ID
+        );
+
+        final LogConfig logConfig = new LogConfig(Map.of());
+        when(logConfigCache.getAll(Set.of("topic1", "topic2")))
+            .thenReturn(Map.of("topic1", logConfig, "topic2", logConfig));
+
+        when(writer.write(any(), anyMap(), any()))
+            .thenReturn(CompletableFuture.completedFuture(Map.of()));
+
+        try (final AppendHandler handler = new AppendHandler(
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
+                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
+            writer, logConfigCache)) {
+
+            handler.handle(entriesPerPartition, requestLocal).get();
+
+            // Verify cache is called with unique topic names only
+            verify(logConfigCache, times(1)).getAll(Set.of("topic1", "topic2"));
+        }
     }
 }
