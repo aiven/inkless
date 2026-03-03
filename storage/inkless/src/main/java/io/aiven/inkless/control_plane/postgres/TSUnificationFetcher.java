@@ -42,6 +42,7 @@ public class TSUnificationFetcher implements WALSplitter {
     private Comparator<TopicIdPartition> topicIdPartitionComparator = Comparator
             .comparing(TopicIdPartition::topicId)
             .thenComparing(TopicIdPartition::partition);
+    private long lastFetchedFileId = -1;
 
     public TSUnificationFetcher(ObjectFetcher objectFetcher, ObjectKeyCreator objectKeyCreator, DSLContext jooqCtx) {
         this.objectFetcher = objectFetcher;
@@ -56,9 +57,19 @@ public class TSUnificationFetcher implements WALSplitter {
             .select(FILES.FILE_ID, FILES.OBJECT_KEY)
             .from(FILES)
             .where(FILES.STATE.ne(FileStateT.deleting))
+            .and(FILES.FILE_ID.gt(lastFetchedFileId))
             .orderBy(FILES.FILE_ID.asc())
             .limit(maxObjectAmount)
             .fetch());
+
+        if (!fileRows.isEmpty()) {
+            long maxId = fileRows.stream()
+                    .mapToLong(r -> r.get(FILES.FILE_ID))
+                    .max()
+                    .orElse(lastFetchedFileId);
+            lastFetchedFileId = maxId;
+        }
+
         // 2. fetch the files from object storage
         var recordsMap = fileRows.stream()
             .map(obr -> {
