@@ -67,6 +67,21 @@ public class InklessConfig extends AbstractConfig {
     private static final String PRODUCE_UPLOAD_BACKOFF_MS_DOC = "The number of millisecond to back off for before the next upload attempt.";
     private static final int PRODUCE_UPLOAD_BACKOFF_MS_DEFAULT = 10;
 
+    public static final String PRODUCE_PIPELINED_PREFIX = PRODUCE_PREFIX + "pipelined.";
+
+    public static final String PRODUCE_PIPELINED_ENABLED_CONFIG = PRODUCE_PIPELINED_PREFIX + "enabled";
+    private static final String PRODUCE_PIPELINED_ENABLED_DOC = "Whether to use the pipelined writer instead of the lock-based writer. "
+        + "The pipelined writer uses a SEDA architecture to eliminate lock contention: "
+        + "validation is parallelized across N worker threads, and buffer writing is handled by a single dedicated thread. "
+        + "This eliminates the global writer lock bottleneck.";
+    private static final boolean PRODUCE_PIPELINED_ENABLED_DEFAULT = false;
+
+    public static final String PRODUCE_PIPELINED_VALIDATION_THREADS_CONFIG = PRODUCE_PIPELINED_PREFIX + "validation.threads";
+    private static final String PRODUCE_PIPELINED_VALIDATION_THREADS_DOC = "Number of validation worker threads for the pipelined writer. "
+        + "These threads perform CPU-intensive validation work (CRC validation, size checks, offset assignment) in parallel. "
+        + "A value of 0 means auto-detect (uses available processors).";
+    private static final int PRODUCE_PIPELINED_VALIDATION_THREADS_DEFAULT = 0;
+
     public static final String STORAGE_PREFIX = "storage.";
 
     public static final String STORAGE_BACKEND_CLASS_CONFIG = STORAGE_PREFIX + "backend.class";
@@ -265,6 +280,23 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(0),
             ConfigDef.Importance.MEDIUM,
             PRODUCE_UPLOAD_BACKOFF_MS_DOC
+        );
+
+        configDef.define(
+            PRODUCE_PIPELINED_ENABLED_CONFIG,
+            ConfigDef.Type.BOOLEAN,
+            PRODUCE_PIPELINED_ENABLED_DEFAULT,
+            ConfigDef.Importance.MEDIUM,
+            PRODUCE_PIPELINED_ENABLED_DOC
+        );
+
+        configDef.define(
+            PRODUCE_PIPELINED_VALIDATION_THREADS_CONFIG,
+            ConfigDef.Type.INT,
+            PRODUCE_PIPELINED_VALIDATION_THREADS_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.MEDIUM,
+            PRODUCE_PIPELINED_VALIDATION_THREADS_DOC
         );
 
         configDef.define(
@@ -555,6 +587,14 @@ public class InklessConfig extends AbstractConfig {
     }
     public Duration produceUploadBackoff() {
         return Duration.ofMillis(getInt(PRODUCE_UPLOAD_BACKOFF_MS_CONFIG));
+    }
+
+    public boolean producePipelinedEnabled() {
+        return getBoolean(PRODUCE_PIPELINED_ENABLED_CONFIG);
+    }
+
+    public int producePipelinedValidationThreads() {
+        return getInt(PRODUCE_PIPELINED_VALIDATION_THREADS_CONFIG);
     }
 
     public int fetchCacheBlockBytes() {

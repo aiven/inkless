@@ -31,7 +31,6 @@ import com.groupcdg.pitest.annotations.DoNotMutate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
@@ -65,7 +64,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
  *
  * <p>The class is thread-safe: all the event entry points are protected with the lock.</p>
  */
-class Writer implements Closeable {
+class Writer implements ProduceWriter {
     private static final Logger LOGGER = LoggerFactory.getLogger(Writer.class);
 
     private final Lock lock = new ReentrantLock();
@@ -138,7 +137,8 @@ class Writer implements Closeable {
         this.activeFile = new ActiveFile(time, brokerTopicStats);
     }
 
-    CompletableFuture<Map<TopicIdPartition, PartitionResponse>> write(
+    @Override
+    public CompletableFuture<Map<TopicIdPartition, PartitionResponse>> write(
         final Map<TopicIdPartition, MemoryRecords> entriesPerPartition,
         final Map<String, LogConfig> topicConfigs,
         final RequestLocal requestLocal
