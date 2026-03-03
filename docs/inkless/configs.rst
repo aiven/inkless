@@ -295,6 +295,94 @@ Under ``inkless.control.plane.``
   * Valid Values: [1,...]
   * Importance: medium
 
+``jdbc.binary.transfer``
+  Enable binary transfer for better serialization performance
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jdbc.default.row.fetch.size``
+  Number of rows to fetch at once from the database
+
+  * Type: int
+  * Default: 100
+  * Valid Values: [0,...]
+  * Importance: low
+
+``jdbc.prepare.threshold``
+  Number of executions before a statement is server-prepared
+
+  * Type: int
+  * Default: 5
+  * Valid Values: [0,...]
+  * Importance: low
+
+``jdbc.prepared.statement.cache.queries``
+  Maximum number of queries to cache per connection
+
+  * Type: int
+  * Default: 256
+  * Valid Values: [0,...]
+  * Importance: low
+
+``jdbc.prepared.statement.cache.size.mib``
+  Maximum size of the prepared statement cache in MiB
+
+  * Type: int
+  * Default: 5
+  * Valid Values: [0,...]
+  * Importance: low
+
+``jdbc.tcp.keep.alive``
+  Enable TCP keepalive for long-lived connections
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jooq.cache.record.mappers``
+  Cache record mappers for faster result mapping
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jooq.execute.logging``
+  Enable JOOQ query logging
+
+  * Type: boolean
+  * Default: false
+  * Importance: low
+
+``jooq.in.list.padding``
+  Pad IN lists to powers of 2 for better query plan cache reuse
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jooq.reflection.caching``
+  Cache reflection operations for faster record mapping
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jooq.render.catalog``
+  Render catalog prefix in SQL
+
+  * Type: boolean
+  * Default: false
+  * Importance: low
+
+``jooq.render.schema``
+  Render schema prefix in SQL
+
+  * Type: boolean
+  * Default: false
+  * Importance: low
+
 
 
 -----------------
@@ -347,6 +435,94 @@ Under ``inkless.control.plane.read.``
   * Valid Values: [1,...]
   * Importance: medium
 
+``jdbc.binary.transfer``
+  Enable binary transfer for better serialization performance
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jdbc.default.row.fetch.size``
+  Number of rows to fetch at once from the database
+
+  * Type: int
+  * Default: 100
+  * Valid Values: [0,...]
+  * Importance: low
+
+``jdbc.prepare.threshold``
+  Number of executions before a statement is server-prepared
+
+  * Type: int
+  * Default: 5
+  * Valid Values: [0,...]
+  * Importance: low
+
+``jdbc.prepared.statement.cache.queries``
+  Maximum number of queries to cache per connection
+
+  * Type: int
+  * Default: 256
+  * Valid Values: [0,...]
+  * Importance: low
+
+``jdbc.prepared.statement.cache.size.mib``
+  Maximum size of the prepared statement cache in MiB
+
+  * Type: int
+  * Default: 5
+  * Valid Values: [0,...]
+  * Importance: low
+
+``jdbc.tcp.keep.alive``
+  Enable TCP keepalive for long-lived connections
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jooq.cache.record.mappers``
+  Cache record mappers for faster result mapping
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jooq.execute.logging``
+  Enable JOOQ query logging
+
+  * Type: boolean
+  * Default: false
+  * Importance: low
+
+``jooq.in.list.padding``
+  Pad IN lists to powers of 2 for better query plan cache reuse
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jooq.reflection.caching``
+  Cache reflection operations for faster record mapping
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jooq.render.catalog``
+  Render catalog prefix in SQL
+
+  * Type: boolean
+  * Default: false
+  * Importance: low
+
+``jooq.render.schema``
+  Render schema prefix in SQL
+
+  * Type: boolean
+  * Default: false
+  * Importance: low
+
 
 
 -----------------
@@ -398,6 +574,94 @@ Under ``inkless.control.plane.write.``
   * Default: 10
   * Valid Values: [1,...]
   * Importance: medium
+
+``jdbc.binary.transfer``
+  Enable binary transfer for better serialization performance
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jdbc.default.row.fetch.size``
+  Number of rows to fetch at once from the database
+
+  * Type: int
+  * Default: 100
+  * Valid Values: [0,...]
+  * Importance: low
+
+``jdbc.prepare.threshold``
+  Number of executions before a statement is server-prepared
+
+  * Type: int
+  * Default: 5
+  * Valid Values: [0,...]
+  * Importance: low
+
+``jdbc.prepared.statement.cache.queries``
+  Maximum number of queries to cache per connection
+
+  * Type: int
+  * Default: 256
+  * Valid Values: [0,...]
+  * Importance: low
+
+``jdbc.prepared.statement.cache.size.mib``
+  Maximum size of the prepared statement cache in MiB
+
+  * Type: int
+  * Default: 5
+  * Valid Values: [0,...]
+  * Importance: low
+
+``jdbc.tcp.keep.alive``
+  Enable TCP keepalive for long-lived connections
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jooq.cache.record.mappers``
+  Cache record mappers for faster result mapping
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jooq.execute.logging``
+  Enable JOOQ query logging
+
+  * Type: boolean
+  * Default: false
+  * Importance: low
+
+``jooq.in.list.padding``
+  Pad IN lists to powers of 2 for better query plan cache reuse
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jooq.reflection.caching``
+  Cache reflection operations for faster record mapping
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``jooq.render.catalog``
+  Render catalog prefix in SQL
+
+  * Type: boolean
+  * Default: false
+  * Importance: low
+
+``jooq.render.schema``
+  Render schema prefix in SQL
+
+  * Type: boolean
+  * Default: false
+  * Importance: low
 
 
 

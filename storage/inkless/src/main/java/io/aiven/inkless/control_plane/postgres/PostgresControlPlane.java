@@ -28,6 +28,7 @@ import com.zaxxer.hikari.util.IsolationLevel;
 
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.conf.Settings;
 import org.jooq.generated.udt.records.CommitFileMergeWorkItemBatchV1Record;
 import org.jooq.generated.udt.records.CommitFileMergeWorkItemResponseV1Record;
 import org.jooq.impl.DSL;
@@ -107,13 +108,14 @@ public class PostgresControlPlane extends AbstractControlPlane {
             throw new RuntimeException(e);
         }
 
-        jobsJooqCtx = DSL.using(jobsDataSource, SQLDialect.POSTGRES);
+        final Settings jooqSettings = jooqSettings(controlPlaneConfig);
+        jobsJooqCtx = DSL.using(jobsDataSource, SQLDialect.POSTGRES, jooqSettings);
 
         // Set up read and write contexts if configured
         if (controlPlaneConfig.writeConfig() != null) {
             LOGGER.info("Using separate write configuration");
             writeDataSource = new HikariDataSource(dataSourceConfig(metrics, POOL_NAME + "-write", controlPlaneConfig.writeConfig()));
-            writeJooqCtx = DSL.using(writeDataSource, SQLDialect.POSTGRES);
+            writeJooqCtx = DSL.using(writeDataSource, SQLDialect.POSTGRES, jooqSettings);
         } else {
             LOGGER.info("No separate write configuration found, using jobs context for writes");
             writeJooqCtx = jobsJooqCtx;
@@ -121,11 +123,24 @@ public class PostgresControlPlane extends AbstractControlPlane {
         if (controlPlaneConfig.readConfig() != null) {
             LOGGER.info("Using separate read configuration");
             readDataSource = new HikariDataSource(dataSourceConfig(metrics, POOL_NAME + "-read", controlPlaneConfig.readConfig()));
-            readJooqCtx = DSL.using(readDataSource, SQLDialect.POSTGRES);
+            readJooqCtx = DSL.using(readDataSource, SQLDialect.POSTGRES, jooqSettings);
         } else {
             LOGGER.info("No separate write configuration found, using jobs context for reads");
             readJooqCtx = jobsJooqCtx;
         }
+    }
+
+    /**
+     * Creates JOOQ Settings from configuration.
+     */
+    private static Settings jooqSettings(final PostgresConnectionConfig config) {
+        return new Settings()
+            .withExecuteLogging(config.jooqExecuteLogging())
+            .withRenderCatalog(config.jooqRenderCatalog())
+            .withRenderSchema(config.jooqRenderSchema())
+            .withReflectionCaching(config.jooqReflectionCaching())
+            .withCacheRecordMappers(config.jooqCacheRecordMappers())
+            .withInListPadding(config.jooqInListPadding());
     }
 
     private static HikariConfig dataSourceConfig(final KafkaMetricsGroup metrics, final String name, final PostgresConnectionConfig connectionConfig) {
@@ -136,11 +151,17 @@ public class PostgresControlPlane extends AbstractControlPlane {
         config.setPassword(connectionConfig.password());
         config.setMetricsTrackerFactory((poolName, poolStats) -> new PostgresConnectionPoolMetrics(metrics, poolName, poolStats));
         config.setTransactionIsolation(IsolationLevel.TRANSACTION_READ_COMMITTED.name());
-
         config.setMaximumPoolSize(connectionConfig.maxConnections());
-
-        // We're doing interactive transactions.
         config.setAutoCommit(false);
+
+        // PostgreSQL JDBC driver tuning
+        config.addDataSourceProperty("prepareThreshold", connectionConfig.jdbcPrepareThreshold());
+        config.addDataSourceProperty("preparedStatementCacheQueries", connectionConfig.jdbcPreparedStatementCacheQueries());
+        config.addDataSourceProperty("preparedStatementCacheSizeMiB", connectionConfig.jdbcPreparedStatementCacheSizeMib());
+        config.addDataSourceProperty("defaultRowFetchSize", connectionConfig.jdbcDefaultRowFetchSize());
+        config.addDataSourceProperty("tcpKeepAlive", connectionConfig.jdbcTcpKeepAlive());
+        config.addDataSourceProperty("binaryTransfer", connectionConfig.jdbcBinaryTransfer());
+
         return config;
     }
 
