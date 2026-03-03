@@ -21,7 +21,8 @@ import com.yammer.metrics.core.{Gauge, Meter, Timer}
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.consume.FetchHandler
-import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, MetadataView}
+import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse}
+import kafka.server.metadata.InklessMetadataView
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.PartitionTest.MockPartitionListener
 import kafka.cluster.Partition
@@ -6887,7 +6888,7 @@ class ReplicaManagerTest {
       when(sharedState.time()).thenReturn(Time.SYSTEM)
       when(sharedState.config()).thenReturn(new InklessConfig(new util.HashMap[String, Object]()))
       when(sharedState.controlPlane()).thenReturn(controlPlane.getOrElse(mock(classOf[ControlPlane])))
-      val inklessMetadata = mock(classOf[MetadataView])
+      val inklessMetadata = mock(classOf[InklessMetadataView])
       when(inklessMetadata.isDisklessTopic(any())).thenReturn(false)
       when(inklessMetadata.getTopicId(anyString())).thenAnswer{ invocation =>
         val topicName = invocation.getArgument(0, classOf[String])

@@ -212,6 +212,10 @@ class BrokerMetadataPublisher(
           case t: Throwable => metadataPublishingFaultHandler.handleFault("Error updating share " +
             s"coordinator with deleted partitions in $deltaName", t)
         }
+        // Evict cached LogConfig for deleted diskless topics.
+        topicsDelta.deletedTopicIds().forEach { id =>
+          replicaManager.inklessMetadataView().removeTopicConfig(topicsDelta.image().getTopic(id).name())
+        }
       }
 
       // Apply configuration deltas.

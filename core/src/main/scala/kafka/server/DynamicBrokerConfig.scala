@@ -23,6 +23,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kafka.log.LogManager
 import kafka.network.{DataPlaneAcceptor, SocketServer}
+import kafka.server.metadata.InklessMetadataView
 import kafka.raft.KafkaRaftManager
 import kafka.server.DynamicBrokerConfig._
 import kafka.utils.{CoreUtils, Logging}
@@ -303,6 +304,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
 
     addBrokerReconfigurable(new BrokerDynamicThreadPool(kafkaServer))
     addBrokerReconfigurable(new DynamicLogConfig(kafkaServer.logManager))
+    addBrokerReconfigurable(new DynamicInklessLogConfig(kafkaServer.replicaManager.inklessMetadataView()))
     addBrokerReconfigurable(new DynamicListenerConfig(kafkaServer))
     addBrokerReconfigurable(kafkaServer.socketServer)
     addBrokerReconfigurable(new DynamicProducerStateManagerConfig(kafkaServer.logManager.producerStateManagerConfig))
@@ -718,6 +720,17 @@ class DynamicLogConfig(logManager: LogManager) extends BrokerReconfigurable with
     logManager.reconfigureDefaultLogConfig(new LogConfig(newBrokerDefaults))
 
     updateLogsConfig(newBrokerDefaults.asScala)
+  }
+}
+
+class DynamicInklessLogConfig(inklessMetadataView: InklessMetadataView) extends BrokerReconfigurable {
+
+  override def reconfigurableConfigs: Set[String] = DynamicLogConfig.ReconfigurableConfigs
+
+  override def validateReconfiguration(newConfig: KafkaConfig): Unit = {}
+
+  override def reconfigure(oldConfig: KafkaConfig, newConfig: KafkaConfig): Unit = {
+    inklessMetadataView.reconfigureDefaultLogConfig()
   }
 }
 
