@@ -524,12 +524,12 @@ public class LogConfig extends AbstractConfig {
         }
 
         // Only one between diskless.enable and remote.storage.enable can be set, no matter the value.
-        final boolean hasExplicitDiskless = isDisklessExplicitlySet || wasDisklessExplicitlySet;
-        final boolean hasExplicitRemoteStorage = isRemoteStorageExplicitlySet || wasRemoteStorageExplicitlySet;
-        if ((isDisklessExplicitlySet && hasExplicitRemoteStorage) ||
-            (isRemoteStorageExplicitlySet && hasExplicitDiskless)) {
-            throw new InvalidConfigurationException("remote.storage.enable cannot be set if diskless.enable is set to true.");
-        }
+//        final boolean hasExplicitDiskless = isDisklessExplicitlySet || wasDisklessExplicitlySet;
+//        final boolean hasExplicitRemoteStorage = isRemoteStorageExplicitlySet || wasRemoteStorageExplicitlySet;
+//        if ((isDisklessExplicitlySet && hasExplicitRemoteStorage) ||
+//            (isRemoteStorageExplicitlySet && hasExplicitDiskless)) {
+//            throw new InvalidConfigurationException("remote.storage.enable cannot be set if diskless.enable is set to true.");
+//        }
     }
 
 

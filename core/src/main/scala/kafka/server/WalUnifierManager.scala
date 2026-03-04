@@ -37,6 +37,7 @@ class WalUnifierManager(name: String,
     walSplitter.updateLastOffsets(offsetMap.asJava)
 
     workers.foreach(workerThreadPool.execute)
+
     super.start()
   }
 
