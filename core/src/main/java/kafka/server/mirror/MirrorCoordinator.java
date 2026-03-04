@@ -249,7 +249,12 @@ public class MirrorCoordinator {
         MirrorUtils.groupPartitionsByTopic(topicPartitions).forEach((topic, parts) -> {
             Map<Integer, Integer> offsets = new HashMap<>();
             parts.forEach(i -> replicaManager.getPartitionOrException(
-                    new TopicPartition(topic, i)).log().foreach(log -> offsets.put(i, log.latestEpoch().orElse(0))));
+                    new TopicPartition(topic, i)).log().foreach(log -> {
+                        LOG.info("!!! latstepoch for partition {} is {} ", i, log.latestEpoch());
+                        // don't need to store anything if latest epoch is empty
+                        log.latestEpoch().ifPresent(epoch -> offsets.put(i, epoch));
+                return null;
+            }));
             partitionOffsets.put(topic, offsets);
         });
 

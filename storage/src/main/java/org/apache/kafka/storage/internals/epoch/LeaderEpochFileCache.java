@@ -103,7 +103,7 @@ public final class LeaderEpochFileCache {
     public void assign(int epoch, long startOffset) {
         EpochEntry entry = new EpochEntry(epoch, startOffset);
         if (assign(entry)) {
-            log.debug("Appended new epoch entry {}. Cache now contains {} entries.", entry, epochs.size());
+            log.info("!!! Appended new epoch entry {}. Cache now contains {} entries.", entry, epochs.size());
             writeToFile();
         }
     }
@@ -284,6 +284,7 @@ public final class LeaderEpochFileCache {
     public Map.Entry<Integer, Long> endOffsetFor(int requestedEpoch, long logEndOffset) {
         lock.readLock().lock();
         try {
+            log.info("!!! endOffsetFor:" + requestedEpoch + " " + logEndOffset + ";;" + latestEpoch() + epochs.higherEntry(requestedEpoch) + ";;" + epochs.floorEntry(requestedEpoch) + ";;" + epochs);
             Map.Entry<Integer, Long> epochAndOffset;
             if (requestedEpoch == UNDEFINED_EPOCH) {
                 // This may happen if a bootstrapping follower sends a request with undefined epoch or

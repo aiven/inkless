@@ -257,7 +257,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
 
         LOG.info("onMetadataUpdate: {}", mirrorLeaders);
-
         // Collect remote coordinator partitions grouped by mirrorName for batched reads
         Map<String, Map<String, Set<Integer>>> remotePartitionsByMirror = new HashMap<>();
         Map<String, Map<TopicPartition, Boolean>> remoteStopFlags = new HashMap<>();
@@ -367,7 +366,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         stateTransitioner.ifPresent(t -> {
             if (stopRequested && curState != MirrorPartitionState.STOPPED) {
                 t.transitionTo(mirrorName, tp, MirrorPartitionState.STOPPING);
-            } else if (!stopRequested && (curState == MirrorPartitionState.UNKNOWN || curState == MirrorPartitionState.STOPPED)) {
+            } else if (!stopRequested && (curState == MirrorPartitionState.UNKNOWN || curState == MirrorPartitionState.STOPPED) /*isUnclean is true and it's in MIRRORING*/) {
                 t.transitionTo(mirrorName, tp, MirrorPartitionState.PREPARING);
             } else {
                 t.transitionTo(mirrorName, tp, fetchedState != null ? fetchedState : curState);
@@ -768,7 +767,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         if (lastMirroredOffsets.containsKey(key)) {
             return lastMirroredOffsets.get(key);
         }
-        return 0;
+        return -1;
     }
 
     Map<MirrorUtils.PartitionKey, Integer> updateLastMirroredOffsets(String clusterName,
