@@ -1,6 +1,5 @@
 package io.aiven.inkless.control_plane.postgres;
 
-import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
@@ -13,7 +12,6 @@ import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.record.MemoryRecords;
-import org.apache.kafka.common.utils.Time;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.generated.enums.FileStateT;
@@ -42,7 +40,8 @@ public class TSUnificationFetcher implements WALSplitter {
     private Comparator<TopicIdPartition> topicIdPartitionComparator = Comparator
             .comparing(TopicIdPartition::topicId)
             .thenComparing(TopicIdPartition::partition);
-    private long lastFetchedFileId = -1;
+    private Map<TopicIdPartition, Long> lastOffsets;
+    private long nextFileIdToFetch = -1;
 
     public TSUnificationFetcher(ObjectFetcher objectFetcher, ObjectKeyCreator objectKeyCreator, DSLContext jooqCtx) {
         this.objectFetcher = objectFetcher;
@@ -52,12 +51,12 @@ public class TSUnificationFetcher implements WALSplitter {
 
     @Override
     public Map<TopicIdPartition, TreeMap<BatchInfo, MemoryRecords>> get() {
-        // 1. fetch the earliest next X object keys that aren't yet deleted
+        // fetch the earliest next X object keys that aren't yet deleted
         var fileRows = new HashSet<>(jooqCtx
             .select(FILES.FILE_ID, FILES.OBJECT_KEY)
             .from(FILES)
-            .where(FILES.STATE.ne(FileStateT.deleting))
-            .and(FILES.FILE_ID.gt(lastFetchedFileId))
+            .where(FILES.STATE.ne(FileStateT.deleting)
+            .and(FILES.FILE_ID.ge(nextFileIdToFetch)))
             .orderBy(FILES.FILE_ID.asc())
             .limit(maxObjectAmount)
             .fetch());
@@ -66,11 +65,11 @@ public class TSUnificationFetcher implements WALSplitter {
             long maxId = fileRows.stream()
                     .mapToLong(r -> r.get(FILES.FILE_ID))
                     .max()
-                    .orElse(lastFetchedFileId);
-            lastFetchedFileId = maxId;
+                    .orElse(nextFileIdToFetch);
+            nextFileIdToFetch = maxId + 1;
         }
 
-        // 2. fetch the files from object storage
+        // fetch the files from object storage
         var recordsMap = fileRows.stream()
             .map(obr -> {
                 var objectKey = obr.get(FILES.OBJECT_KEY);
@@ -102,19 +101,23 @@ public class TSUnificationFetcher implements WALSplitter {
             .from(BATCHES)
             .where(BATCHES.FILE_ID.eq(fileRow.get(FILES.FILE_ID)))
             .fetch());
-        return bros.stream().map(bro -> {
-            var batchMetadata = BatchMetadata.of(
-                new TopicIdPartition(bro.get(BATCHES.TOPIC_ID), bro.get(BATCHES.PARTITION), null),
-                bro.get(BATCHES.BYTE_OFFSET),
-                bro.get(BATCHES.BYTE_SIZE),
-                bro.get(BATCHES.BASE_OFFSET),
-                bro.get(BATCHES.LAST_OFFSET),
-                bro.get(BATCHES.LOG_APPEND_TIMESTAMP),
-                bro.get(BATCHES.BATCH_MAX_TIMESTAMP),
-                bro.get(BATCHES.TIMESTAMP_TYPE)
-            );
-            return new BatchInfo(bro.get(BATCHES.BATCH_ID), fileRow.get(FILES.OBJECT_KEY), batchMetadata);
-        }).collect(Collectors.toSet());
+        return bros.stream()
+            .map(bro -> {
+                var batchMetadata = BatchMetadata.of(
+                    new TopicIdPartition(bro.get(BATCHES.TOPIC_ID), bro.get(BATCHES.PARTITION), null),
+                    bro.get(BATCHES.BYTE_OFFSET),
+                    bro.get(BATCHES.BYTE_SIZE),
+                    bro.get(BATCHES.BASE_OFFSET),
+                    bro.get(BATCHES.LAST_OFFSET),
+                    bro.get(BATCHES.LOG_APPEND_TIMESTAMP),
+                    bro.get(BATCHES.BATCH_MAX_TIMESTAMP),
+                    bro.get(BATCHES.TIMESTAMP_TYPE)
+                );
+                return new BatchInfo(bro.get(BATCHES.BATCH_ID), fileRow.get(FILES.OBJECT_KEY), batchMetadata);})
+            .filter(bi -> {
+                var lastOffset = lastOffsets.get(bi.metadata().topicIdPartition());
+                return bi.metadata().baseOffset() >= lastOffset;})
+            .collect(Collectors.toSet());
     }
 
     private Map<BatchInfo, MemoryRecords> toBatchRecordMap(Set<BatchInfo> bis, String objectKey) {
@@ -158,5 +161,38 @@ public class TSUnificationFetcher implements WALSplitter {
                 .setOffset(byteRange.offset())
                 .setLength(byteBuffer.limit()))
             .setData(byteBuffer.array());
+    }
+
+    @Override
+    public void updateLastOffsets(Map<TopicIdPartition, Long> lastOffsets) {
+        this.lastOffsets = lastOffsets.entrySet().stream()
+            .collect(Collectors.toMap(
+                entry -> new TopicIdPartition(entry.getKey().topicId(), entry.getKey().partition(), null),
+                Map.Entry::getValue
+            ));
+        // fetch the earliest file not fully transformed
+        if (lastOffsets != null) {
+            // TODO: optimize this query
+            var tpToFileMap = lastOffsets.entrySet().stream().collect(Collectors.toMap(
+                    Map.Entry::getKey,
+                    entry -> {
+                        var result = jooqCtx.select(BATCHES.FILE_ID)
+                                .from(BATCHES)
+                                .where(BATCHES.BASE_OFFSET.ge(entry.getValue()))
+                                .and(BATCHES.TOPIC_ID.eq(entry.getKey().topicId()))
+                                .and(BATCHES.PARTITION.eq(entry.getKey().partition()))
+                                .orderBy(BATCHES.FILE_ID.asc())
+                                .limit(1)
+                                .fetch();
+                        var record = result.stream().findFirst();
+                        if (record.isPresent()) {
+                            return record.get().component1();
+                        } else {
+                            return 0L;
+                        }
+                    }
+            ));
+            nextFileIdToFetch = tpToFileMap.values().stream().min(Long::compareTo).orElse(0L);
+        }
     }
 }

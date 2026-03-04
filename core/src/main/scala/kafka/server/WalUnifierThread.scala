@@ -34,7 +34,11 @@ class WalUnifierThread(name: String,
         val partition = replicaManager.getPartitionOrException(tp)
         // cheat the system
         val logAppendInfo = partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, 0)
-        logAppendInfo.foreach(println(_))
+        logAppendInfo.foreach { li =>
+          partition.log.foreach{ l =>
+            l.updateHighWatermark(li.lastOffset)
+          }
+        }
       }
     })
   }

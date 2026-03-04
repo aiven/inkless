@@ -281,8 +281,6 @@ class ReplicaManager(val config: KafkaConfig,
   val replicaFetcherManager = createReplicaFetcherManager(metrics, time, quotaManagers.follower)
   private[server] val replicaAlterLogDirsManager = createReplicaAlterLogDirsManager(quotaManagers.alterLogDirs, brokerTopicStats)
   private[server] val walUnifierManager: Option[WalUnifierManager] = createWalUnifierManager()
-  private val walUnifierManagerRunner = Executors.newSingleThreadExecutor()
-  walUnifierManager.foreach(walUnifierManagerRunner.execute(_))
   private val highWatermarkCheckPointThreadStarted = new AtomicBoolean(false)
   @volatile private[server] var highWatermarkCheckpoints: Map[String, OffsetCheckpointFile] = logManager.liveLogDirs.map(dir =>
     (dir.getAbsolutePath, new OffsetCheckpointFile(new File(dir, ReplicaManager.HighWatermarkFilename), logDirFailureChannel))).toMap
@@ -368,6 +366,7 @@ class ReplicaManager(val config: KafkaConfig,
 
       // There are internal delays in case of errors or absence of work items, no need for extra delays here.
       scheduler.schedule("inkless-file-merger", () => inklessFileMerger.foreach(_.run()), sharedState.config().fileMergerInterval().toMillis, sharedState.config().fileMergerInterval().toMillis)
+      walUnifierManager.foreach(_.start())
     }
   }
 
@@ -2471,7 +2470,6 @@ class ReplicaManager(val config: KafkaConfig,
     replicaFetcherManager.shutdown()
     replicaAlterLogDirsManager.shutdown()
     walUnifierManager.foreach(_.shutdown())
-    walUnifierManagerRunner.shutdown()
     delayedFetchPurgatory.shutdown()
     delayedRemoteFetchPurgatory.shutdown()
     delayedRemoteListOffsetsPurgatory.shutdown()
@@ -2752,8 +2750,10 @@ class ReplicaManager(val config: KafkaConfig,
     localLeaders.foreachEntry { (tp, info) =>
       if (_inklessMetadataView.isDisklessTopic(tp.topic)) {
         walUnifierManager.foreach { m =>
-          getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, _) =>
-            val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+          getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
+            val  partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+            partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+            changedPartitions.add(partition)
             partition.createLogIfNotExists(isNew = true, isFutureReplica = false, offsetCheckpoints = offsetCheckpoints, topicId = partition.topicId, targetLogDirectoryId = partitionAssignedDirectoryId)
 //            partition.log.foreach { log =>
 //              // TODO: optimize GET cost by storing some metadata in kraft or local FS as cache?
@@ -2804,7 +2804,12 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
-      if (!_inklessMetadataView.isDisklessTopic(tp.topic()))
+      if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
+        getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
+          val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+          partition.makeFollower(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+        }
+      } else {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             followerTopicSet.add(tp.topic)
@@ -2847,6 +2852,7 @@ class ReplicaManager(val config: KafkaConfig,
               replicaFetcherManager.addFailedPartition(tp)
           }
         }
+      }
     }
 
     if (partitionsToStartFetching.nonEmpty) {

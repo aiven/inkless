@@ -8,4 +8,6 @@ import java.util.TreeMap;
 import java.util.function.Supplier;
 
 public interface WALSplitter extends Supplier<Map<TopicIdPartition, TreeMap<BatchInfo, MemoryRecords>>> {
+
+    public void updateLastOffsets(Map<TopicIdPartition, Long> lastOffsets);
 }
