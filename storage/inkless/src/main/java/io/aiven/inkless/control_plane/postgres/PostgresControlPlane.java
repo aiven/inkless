@@ -108,14 +108,15 @@ public class PostgresControlPlane extends AbstractControlPlane {
             throw new RuntimeException(e);
         }
 
-        final Settings jooqSettings = jooqSettings(controlPlaneConfig);
-        jobsJooqCtx = DSL.using(jobsDataSource, SQLDialect.POSTGRES, jooqSettings);
+        final Settings jobsJooqSettings = jooqSettings(controlPlaneConfig);
+        jobsJooqCtx = DSL.using(jobsDataSource, SQLDialect.POSTGRES, jobsJooqSettings);
 
         // Set up read and write contexts if configured
+        // Each context uses its own jooqSettings to respect per-context overrides
         if (controlPlaneConfig.writeConfig() != null) {
             LOGGER.info("Using separate write configuration");
             writeDataSource = new HikariDataSource(dataSourceConfig(metrics, POOL_NAME + "-write", controlPlaneConfig.writeConfig()));
-            writeJooqCtx = DSL.using(writeDataSource, SQLDialect.POSTGRES, jooqSettings);
+            writeJooqCtx = DSL.using(writeDataSource, SQLDialect.POSTGRES, jooqSettings(controlPlaneConfig.writeConfig()));
         } else {
             LOGGER.info("No separate write configuration found, using jobs context for writes");
             writeJooqCtx = jobsJooqCtx;
@@ -123,9 +124,9 @@ public class PostgresControlPlane extends AbstractControlPlane {
         if (controlPlaneConfig.readConfig() != null) {
             LOGGER.info("Using separate read configuration");
             readDataSource = new HikariDataSource(dataSourceConfig(metrics, POOL_NAME + "-read", controlPlaneConfig.readConfig()));
-            readJooqCtx = DSL.using(readDataSource, SQLDialect.POSTGRES, jooqSettings);
+            readJooqCtx = DSL.using(readDataSource, SQLDialect.POSTGRES, jooqSettings(controlPlaneConfig.readConfig()));
         } else {
-            LOGGER.info("No separate write configuration found, using jobs context for reads");
+            LOGGER.info("No separate read configuration found, using jobs context for reads");
             readJooqCtx = jobsJooqCtx;
         }
     }
