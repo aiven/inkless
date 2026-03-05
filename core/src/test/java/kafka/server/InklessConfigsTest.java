@@ -62,6 +62,7 @@ import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_COMPACT;
 import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_DELETE;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -332,6 +333,58 @@ public class InklessConfigsTest {
                     Map.of(CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_COMPACT)
                 ));
                 assertEquals("false", getTopicConfig(admin, compactedSchemasTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+            } finally {
+                cluster.close();
+            }
+        }
+
+        @Test
+        void changingCleanupPolicyFromCompactToDeleteRequiresRemoteStorageEnable() throws Exception {
+            final KafkaClusterTestKit cluster = initWithClassicRemoteStorageForceEnabled();
+            final Map<String, Object> clientConfigs = new HashMap<>();
+            clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+            try (final Admin admin = AdminClient.create(clientConfigs)) {
+                final String compactedTopic = "compacted-to-delete-rejected";
+                createTopic(admin, compactedTopic, Map.of(
+                    CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_COMPACT,
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"
+                ));
+
+                final ExecutionException exception = assertThrows(
+                    ExecutionException.class,
+                    () -> alterTopicConfig(admin, compactedTopic, Map.of(CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_DELETE))
+                );
+                assertEquals(
+                    "It is invalid to change cleanup.policy from compact to delete without enabling remote.storage.enable " +
+                        "when classic.remote.storage.force.enable is enabled.",
+                    exception.getCause().getMessage()
+                );
+            } finally {
+                cluster.close();
+            }
+        }
+
+        @Test
+        void changingCleanupPolicyFromCompactToDeleteWithRemoteStorageEnableIsAllowed() throws Exception {
+            final KafkaClusterTestKit cluster = initWithClassicRemoteStorageForceEnabled();
+            final Map<String, Object> clientConfigs = new HashMap<>();
+            clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+            try (final Admin admin = AdminClient.create(clientConfigs)) {
+                final String compactedTopic = "compacted-to-delete-allowed";
+                createTopic(admin, compactedTopic, Map.of(
+                    CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_COMPACT,
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"
+                ));
+                alterTopicConfig(admin, compactedTopic, Map.of(
+                    CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_DELETE,
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"
+                ));
+
+                final Map<String, String> alteredTopicConfig = getTopicConfig(admin, compactedTopic);
+                assertEquals(CLEANUP_POLICY_DELETE, alteredTopicConfig.get(CLEANUP_POLICY_CONFIG));
+                assertEquals("true", alteredTopicConfig.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
             } finally {
                 cluster.close();
             }

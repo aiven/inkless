@@ -220,6 +220,34 @@ public class ConfigurationControlManagerTest {
     }
 
     @Test
+    public void testCleanupPolicyCompactToDeleteRejectedWhenClassicRemoteStorageForceEnabled() {
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(createFeatureControlManager()).
+            setKafkaConfigSchema(SCHEMA).
+            setClassicRemoteStorageForceEnabled(true).
+            build();
+
+        RecordTestUtils.replayAll(manager, List.of(
+            new ApiMessageAndVersion(new ConfigRecord().setResourceType(TOPIC.id()).setResourceName("mytopic")
+                .setName(TopicConfig.CLEANUP_POLICY_CONFIG).setValue(TopicConfig.CLEANUP_POLICY_COMPACT), (short) 0),
+            new ApiMessageAndVersion(new ConfigRecord().setResourceType(TOPIC.id()).setResourceName("mytopic")
+                .setName(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG).setValue("false"), (short) 0)
+        ));
+
+        ControllerResult<ApiError> result = manager.incrementalAlterConfig(
+            MYTOPIC,
+            Map.of(TopicConfig.CLEANUP_POLICY_CONFIG, entry(SET, TopicConfig.CLEANUP_POLICY_DELETE)),
+            false
+        );
+        assertEquals(Errors.INVALID_CONFIG, result.response().error());
+        assertEquals(
+            "It is invalid to change cleanup.policy from compact to delete without enabling remote.storage.enable " +
+                "when classic.remote.storage.force.enable is enabled.",
+            result.response().message()
+        );
+    }
+
+    @Test
     public void testIncrementalAlterMultipleConfigValues() {
         ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
             setFeatureControl(createFeatureControlManager()).
