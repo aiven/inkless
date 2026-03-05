@@ -287,23 +287,9 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
             return null; // Doesn't cover entire batch range - incomplete batch
         }
 
-        // Optimization: If batch fits entirely in a single file extent, use zero-copy slice.
-        // This is the common case for sequential reads where batches don't span multiple S3 objects.
-        if (files.size() == 1) {
-            final FileExtent file = files.get(0);
-            final ByteRange fileRange = new ByteRange(file.range().offset(), file.range().length());
-            // Check if batch is fully contained within this extent
-            if (fileRange.offset() <= batchRange.offset()
-                && fileRange.offset() + fileRange.size() >= batchRange.offset() + batchRange.size()) {
-                // Zero-copy: create a slice view of the existing byte array
-                final int offset = Math.toIntExact(batchRange.offset() - fileRange.offset());
-                final int length = batchRange.bufferSize();
-                final ByteBuffer slice = ByteBuffer.wrap(file.data(), offset, length).slice();
-                return createMemoryRecords(slice, batch);
-            }
-        }
-
-        // Fall back to copy for multi-extent batches (batch spans multiple S3 objects)
+        // All extents cover the batch range, allocate buffer and copy data.
+        // Note: We always copy because createMemoryRecords mutates the buffer (setLastOffset,
+        // setMaxTimestamp), and FileExtent data is cached/shared across concurrent fetches.
         final byte[] buffer = new byte[Math.toIntExact(batchRange.bufferSize())];
 
         for (FileExtent file : files) {
