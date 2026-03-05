@@ -108,6 +108,9 @@ class InklessConfigTest {
         assertThat(config.fetchDataThreadPoolSize()).isEqualTo(32);
         assertThat(config.fetchMetadataThreadPoolSize()).isEqualTo(8);
         assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(0);
+        // Pipelined writer defaults
+        assertThat(config.producePipelinedEnabled()).isFalse();
+        assertThat(config.producePipelinedValidationThreads()).isEqualTo(0);
     }
 
     @Test
@@ -134,6 +137,8 @@ class InklessConfigTest {
         configs.put("fetch.lagging.consumer.threshold.ms", "240000");  // 4 minutes
         configs.put("fetch.lagging.consumer.request.rate.limit", "250");
         configs.put("retention.enforcement.max.batches.per.request", "10");
+        configs.put("produce.pipelined.enabled", "true");
+        configs.put("produce.pipelined.validation.threads", "8");
         final var config = new InklessConfig(
             configs
         );
@@ -158,6 +163,8 @@ class InklessConfigTest {
         assertThat(config.fetchLaggingConsumerThresholdMs()).isEqualTo(240_000L);
         assertThat(config.fetchLaggingConsumerRequestRateLimit()).isEqualTo(250);
         assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(10);
+        assertThat(config.producePipelinedEnabled()).isTrue();
+        assertThat(config.producePipelinedValidationThreads()).isEqualTo(8);
     }
 
     @Test
@@ -498,6 +505,19 @@ class InklessConfigTest {
 
         final var inklessConfig = new InklessConfig(config);
         assertThat(inklessConfig.fetchLaggingConsumerThresholdMs()).isEqualTo(60_000L);
+    }
+
+    @Test
+    void producePipelinedValidationThreadsNegativeInvalid() {
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "produce.pipelined.validation.threads", "-1"
+        );
+
+        assertThatThrownBy(() -> new InklessConfig(config))
+            .isInstanceOf(ConfigException.class)
+            .hasMessage("Invalid value -1 for configuration produce.pipelined.validation.threads: Value must be at least 0");
     }
 
     @Test

@@ -73,6 +73,7 @@ import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
+import static org.apache.kafka.storage.internals.log.UnifiedLog.UNKNOWN_OFFSET;
 import static org.apache.kafka.storage.internals.log.UnifiedLog.newValidatorMetricsRecorder;
 
 /**
@@ -164,6 +165,15 @@ class PipelinedWriter implements ProduceWriter {
     // Metrics recorder for validation
     private final LogValidator.MetricsRecorder validatorMetricsRecorder;
 
+    /**
+     * Holds the result of validation, used to transfer between validateRequest() and write().
+     * This avoids creating a throwaway CompletableFuture in validateRequest().
+     */
+    private record ValidationResult(
+        Map<TopicIdPartition, ValidatedRequest.ValidatedBatch> validatedBatches,
+        Map<TopicIdPartition, PartitionResponse> invalidBatches
+    ) {}
+
     @DoNotMutate
     PipelinedWriter(
         final Time time,
@@ -221,8 +231,7 @@ class PipelinedWriter implements ProduceWriter {
         this.storage = Objects.requireNonNull(storage, "storage cannot be null");
         this.fileCommitter = Objects.requireNonNull(fileCommitter, "fileCommitter cannot be null");
         this.writerMetrics = Objects.requireNonNull(writerMetrics, "writerMetrics cannot be null");
-        // Use provided BrokerTopicStats or create default - never null
-        this.brokerTopicStats = brokerTopicStats != null ? brokerTopicStats : new BrokerTopicStats();
+        this.brokerTopicStats = Objects.requireNonNull(brokerTopicStats, "brokerTopicStats cannot be null");
         this.validationWorkerCount = validationWorkerCount > 0 ? validationWorkerCount : Runtime.getRuntime().availableProcessors();
 
         // Initialize validation worker pool
@@ -282,15 +291,21 @@ class PipelinedWriter implements ProduceWriter {
         CompletableFuture<Map<TopicIdPartition, PartitionResponse>> resultFuture = new CompletableFuture<>();
 
         // Submit to validation stage (async, non-blocking for caller)
+        // The exceptionally handler ensures resultFuture is completed even if runAsync submission fails
+        // (e.g., RejectedExecutionException if executor is shutting down)
         CompletableFuture.runAsync(() -> {
             try {
+                // Each validation worker must use its own RequestLocal instance to
+                // avoid sharing thread-confined state from the request handler thread.
+                RequestLocal validationRequestLocal = RequestLocal.withThreadConfinedCaching();
+
                 // ══════════════════════════════════════════════════════════════
                 // STAGE 1: Validation (runs in parallel on validation workers)
                 // ══════════════════════════════════════════════════════════════
-                ValidatedRequest validated = validateRequest(
+                ValidationResult validated = validateRequest(
                     entriesPerPartition,
                     topicConfigs,
-                    requestLocal
+                    validationRequestLocal
                 );
 
                 // Create the validated request with the future
@@ -314,7 +329,11 @@ class PipelinedWriter implements ProduceWriter {
                 LOGGER.error("Validation failed", e);
                 resultFuture.completeExceptionally(e);
             }
-        }, validationExecutor);
+        }, validationExecutor).exceptionally(e -> {
+            // Handle case where runAsync itself fails (e.g., executor shutdown)
+            resultFuture.completeExceptionally(e);
+            return null;
+        });
 
         return resultFuture;
     }
@@ -331,8 +350,10 @@ class PipelinedWriter implements ProduceWriter {
      * </ul>
      *
      * <p>This runs on validation worker threads, NOT under any lock.
+     *
+     * @return a ValidationResult containing validated and invalid batches
      */
-    private ValidatedRequest validateRequest(
+    private ValidationResult validateRequest(
         Map<TopicIdPartition, MemoryRecords> entriesPerPartition,
         Map<String, LogConfig> topicConfigs,
         RequestLocal requestLocal
@@ -361,7 +382,7 @@ class PipelinedWriter implements ProduceWriter {
                     topicIdPartition.topicPartition(),
                     config,
                     records,
-                    -1L,  // logStartOffset - set on control-plane
+                    UNKNOWN_OFFSET,  // logStartOffset - set on control-plane, use unknown to fulfill validation
                     UnifiedLog.APPEND_ORIGIN,
                     false,  // ignoreRecordSize
                     true,   // requireOffsetsMonotonic
@@ -461,8 +482,7 @@ class PipelinedWriter implements ProduceWriter {
             }
         }
 
-        // Return a temporary ValidatedRequest (the real one with future is created in write())
-        return new ValidatedRequest(entriesPerPartition, validatedBatches, invalidBatches, new CompletableFuture<>());
+        return new ValidationResult(validatedBatches, invalidBatches);
     }
 
     private void processFailedRecords(TopicPartition topicPartition, Throwable t) {
@@ -580,8 +600,11 @@ class PipelinedWriter implements ProduceWriter {
     }
 
     private void maybeTickRotate() {
-        // This is called when no requests were processed in this iteration
-        // The actual rotation is scheduled via scheduledTick
+        // Called when no requests were processed in this iteration.
+        // Ensure rotation is scheduled if there's buffered data but no scheduled tick.
+        if (!activeFile.isEmpty() && scheduledTick == null) {
+            scheduleTickRotation();
+        }
     }
 
     private void scheduleTickRotation() {
@@ -602,15 +625,16 @@ class PipelinedWriter implements ProduceWriter {
     /**
      * Called by tick scheduler to trigger rotation.
      * Submits a rotation command to the buffer queue.
+     *
+     * <p>Note: This method runs on the tick scheduler thread, not the buffer writer thread.
+     * We only check the closed flag here (which is thread-safe via AtomicBoolean).
+     * The buffer writer thread will decide whether to actually rotate based on activeFile state.
      */
     private void tickRotate() {
-        // We need to rotate on the buffer writer thread, so we signal via a special mechanism
-        // For simplicity, we'll use a flag that the buffer writer checks
-        if (!closed.get() && !activeFile.isEmpty()) {
-            // Submit a "rotation request" as a null-bodied validated request
-            // Actually, let's handle this differently - we'll check in the poll timeout
+        if (!closed.get()) {
             try {
-                // Create a special rotation trigger
+                // Submit a rotation trigger to the buffer queue.
+                // The buffer writer thread will check if rotation is needed.
                 bufferQueue.offer(createRotationTrigger(), 1, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -666,6 +690,17 @@ class PipelinedWriter implements ProduceWriter {
 
         // Stop accepting new validation work
         validationExecutor.shutdown();
+
+        // Wait for validation tasks to complete and enqueue their results
+        try {
+            if (!validationExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+                LOGGER.warn("Validation executor did not terminate gracefully");
+                validationExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            validationExecutor.shutdownNow();
+        }
 
         // Cancel tick scheduler
         tickScheduler.shutdownNow();
