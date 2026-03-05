@@ -176,4 +176,132 @@ class PostgresControlPlaneConfigTest {
         assertThat(config.writeConfig().username()).isEqualTo("username-w");
         assertThat(config.writeConfig().password()).isEqualTo("password-w");
     }
+
+    @Test
+    void jdbcTuningDefaults() {
+        // Verify JDBC tuning config defaults
+        final var config = new PostgresControlPlaneConfig(
+            Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "password", "password"
+            )
+        );
+
+        // JDBC driver tuning defaults
+        assertThat(config.jdbcPrepareThreshold()).isEqualTo(5);
+        assertThat(config.jdbcPreparedStatementCacheQueries()).isEqualTo(256);
+        assertThat(config.jdbcPreparedStatementCacheSizeMib()).isEqualTo(5);
+        assertThat(config.jdbcDefaultRowFetchSize()).isEqualTo(100);
+        assertThat(config.jdbcTcpKeepAlive()).isTrue();
+        assertThat(config.jdbcBinaryTransfer()).isTrue();
+    }
+
+    @Test
+    void jooqSettingsDefaults() {
+        // Verify JOOQ settings defaults
+        final var config = new PostgresControlPlaneConfig(
+            Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "password", "password"
+            )
+        );
+
+        // JOOQ settings defaults
+        assertThat(config.jooqExecuteLogging()).isFalse();
+        assertThat(config.jooqRenderCatalog()).isFalse();
+        assertThat(config.jooqRenderSchema()).isFalse();
+        assertThat(config.jooqReflectionCaching()).isTrue();
+        assertThat(config.jooqCacheRecordMappers()).isTrue();
+        assertThat(config.jooqInListPadding()).isTrue();
+    }
+
+    @Test
+    void jdbcTuningOverrides() {
+        // Verify JDBC tuning configs can be overridden
+        final var config = new PostgresControlPlaneConfig(
+            Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "password", "password",
+                "jdbc.prepare.threshold", "10",
+                "jdbc.prepared.statement.cache.queries", "512",
+                "jdbc.prepared.statement.cache.size.mib", "10",
+                "jdbc.default.row.fetch.size", "500",
+                "jdbc.tcp.keep.alive", "false",
+                "jdbc.binary.transfer", "false"
+            )
+        );
+
+        assertThat(config.jdbcPrepareThreshold()).isEqualTo(10);
+        assertThat(config.jdbcPreparedStatementCacheQueries()).isEqualTo(512);
+        assertThat(config.jdbcPreparedStatementCacheSizeMib()).isEqualTo(10);
+        assertThat(config.jdbcDefaultRowFetchSize()).isEqualTo(500);
+        assertThat(config.jdbcTcpKeepAlive()).isFalse();
+        assertThat(config.jdbcBinaryTransfer()).isFalse();
+    }
+
+    @Test
+    void jooqSettingsOverrides() {
+        // Verify JOOQ settings can be overridden
+        final var config = new PostgresControlPlaneConfig(
+            Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "password", "password",
+                "jooq.execute.logging", "true",
+                "jooq.render.catalog", "true",
+                "jooq.render.schema", "true",
+                "jooq.reflection.caching", "false",
+                "jooq.cache.record.mappers", "false",
+                "jooq.in.list.padding", "false"
+            )
+        );
+
+        assertThat(config.jooqExecuteLogging()).isTrue();
+        assertThat(config.jooqRenderCatalog()).isTrue();
+        assertThat(config.jooqRenderSchema()).isTrue();
+        assertThat(config.jooqReflectionCaching()).isFalse();
+        assertThat(config.jooqCacheRecordMappers()).isFalse();
+        assertThat(config.jooqInListPadding()).isFalse();
+    }
+
+    @Test
+    void readWritePrefixedJdbcJooqOverrides() {
+        // Verify read/write prefixed JDBC/JOOQ configs are properly parsed
+        final Map<String, String> configs = new HashMap<>();
+        configs.put("connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless");
+        configs.put("username", "username");
+        configs.put("password", "password");
+        // Read-prefixed overrides
+        configs.put("read.connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless-read");
+        configs.put("read.username", "username-r");
+        configs.put("read.password", "password-r");
+        configs.put("read.jdbc.default.row.fetch.size", "1000");  // Higher for read replicas
+        configs.put("read.jooq.execute.logging", "true");
+        // Write-prefixed overrides
+        configs.put("write.connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless-write");
+        configs.put("write.username", "username-w");
+        configs.put("write.password", "password-w");
+        configs.put("write.jdbc.default.row.fetch.size", "50");  // Lower for write primary
+        configs.put("write.jooq.execute.logging", "false");
+
+        final var config = new PostgresControlPlaneConfig(configs);
+        config.initializeReadWriteConfigs();
+
+        // Base config has defaults
+        assertThat(config.jdbcDefaultRowFetchSize()).isEqualTo(100);
+        assertThat(config.jooqExecuteLogging()).isFalse();
+
+        // Read config has overrides
+        assertThat(config.readConfig()).isNotNull();
+        assertThat(config.readConfig().jdbcDefaultRowFetchSize()).isEqualTo(1000);
+        assertThat(config.readConfig().jooqExecuteLogging()).isTrue();
+
+        // Write config has overrides
+        assertThat(config.writeConfig()).isNotNull();
+        assertThat(config.writeConfig().jdbcDefaultRowFetchSize()).isEqualTo(50);
+        assertThat(config.writeConfig().jooqExecuteLogging()).isFalse();
+    }
 }
