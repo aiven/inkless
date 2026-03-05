@@ -291,7 +291,10 @@ class WriterPropertyTest {
             if (requestCount > 0) {
                 verify(storage, atLeast(1)).upload(any(ObjectKey.class), any(ByteBuffer.class));
             }
-            final Collection<Invocation> uploadInvocations = mockingDetails(storage).getInvocations();
+            // Filter to only upload(ObjectKey, ByteBuffer) invocations to avoid counting other mock interactions
+            final List<Invocation> uploadInvocations = mockingDetails(storage).getInvocations().stream()
+                .filter(inv -> inv.getMethod().getName().equals("upload") && inv.getArguments().length == 2)
+                .toList();
             Statistics.label("files").collect(uploadInvocations.size());
             for (final Invocation invocation : uploadInvocations) {
                 final ByteBuffer uploadedBuffer = invocation.getArgument(1);

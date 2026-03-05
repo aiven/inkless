@@ -135,37 +135,11 @@ public final class S3Storage extends StorageBackend {
 
     @Override
     public ReadableByteChannel fetch(final ObjectKey key, final ByteRange range) throws StorageBackendException, IOException {
-        try {
-            if (range != null && range.empty()) {
-                return Channels.newChannel(InputStream.nullInputStream());
-            }
-
-            var builder = GetObjectRequest.builder()
-                .bucket(bucketName)
-                .key(key.value());
-            if (range != null) {
-                builder = builder.range(formatRange(range));
-            }
-            final GetObjectRequest getRequest = builder.build();
-            // for the small 4-8MiB blobs expected here, reading the whole object into memory is more efficient
-            // than streaming it via S3ObjectInputStream which has significant overhead per read call
-            // and does not play well with the buffering done in ObjectFetcher.readToByteBuffer()
-            final var buffer = s3Client.getObjectAsBytes(getRequest).asByteBuffer();
-            return Channels.newChannel(new ByteBufferInputStream(buffer));
-        } catch (final AwsServiceException e) {
-            if (e.statusCode() == 404) {
-                throw new KeyNotFoundException(this, key, e);
-            }
-            if (e.statusCode() == 416) {
-                throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range, e);
-            }
-
-            throw new StorageBackendException("Failed to fetch " + key, e);
-        } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
-            throw new StorageBackendTimeoutException("Failed to fetch " + key, e);
-        } catch (final SdkClientException e) {
-            throw new StorageBackendException("Failed to fetch " + key, e);
+        if (range != null && range.empty()) {
+            return Channels.newChannel(InputStream.nullInputStream());
         }
+        final var buffer = doFetch(key, range);
+        return Channels.newChannel(new ByteBufferInputStream(buffer));
     }
 
     /**
@@ -174,12 +148,20 @@ public final class S3Storage extends StorageBackend {
      */
     @Override
     public ByteBuffer fetchToByteBuffer(final ObjectKey key, final ByteRange range) throws StorageBackendException {
+        if (range != null && range.empty()) {
+            return ByteBuffer.allocate(0);
+        }
+        return doFetch(key, range);
+    }
+
+    /**
+     * Shared fetch implementation that retrieves object data as ByteBuffer.
+     * For the small 4-8MiB blobs expected here, reading the whole object into memory is more efficient
+     * than streaming it via S3ObjectInputStream which has significant overhead per read call.
+     */
+    private ByteBuffer doFetch(final ObjectKey key, final ByteRange range) throws StorageBackendException {
         Objects.requireNonNull(key, "key cannot be null");
         try {
-            if (range != null && range.empty()) {
-                return ByteBuffer.allocate(0);
-            }
-
             var builder = GetObjectRequest.builder()
                 .bucket(bucketName)
                 .key(key.value());
@@ -187,7 +169,6 @@ public final class S3Storage extends StorageBackend {
                 builder = builder.range(formatRange(range));
             }
             final GetObjectRequest getRequest = builder.build();
-            // Direct return - no channel wrapping, no chunk reading, no consolidation
             return s3Client.getObjectAsBytes(getRequest).asByteBuffer();
         } catch (final AwsServiceException e) {
             if (e.statusCode() == 404) {
@@ -196,7 +177,6 @@ public final class S3Storage extends StorageBackend {
             if (e.statusCode() == 416) {
                 throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range, e);
             }
-
             throw new StorageBackendException("Failed to fetch " + key, e);
         } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
             throw new StorageBackendTimeoutException("Failed to fetch " + key, e);
