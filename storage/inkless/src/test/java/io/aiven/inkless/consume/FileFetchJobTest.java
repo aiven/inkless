@@ -147,4 +147,36 @@ public class FileFetchJobTest {
         assertThat(fileRanges).containsExactlyInAnyOrderElementsOf(expectedRanges);
     }
 
+    @Test
+    public void testCreateFileExtentWithDirectByteBuffer() {
+        // Direct ByteBuffers don't support .array() - this test verifies the fix handles them correctly
+        byte[] expectedData = {1, 2, 3, 4, 5};
+        ByteBuffer directBuffer = ByteBuffer.allocateDirect(expectedData.length);
+        directBuffer.put(expectedData);
+        directBuffer.flip();
+
+        ByteRange range = new ByteRange(100, expectedData.length);
+        FileExtent extent = FileFetchJob.createFileExtent(objectA, range, directBuffer);
+
+        assertThat(extent.object()).isEqualTo(objectA.value());
+        assertThat(extent.range().offset()).isEqualTo(100);
+        assertThat(extent.range().length()).isEqualTo(expectedData.length);
+        assertThat(extent.data()).isEqualTo(expectedData);
+    }
+
+    @Test
+    public void testCreateFileExtentWithReadOnlyByteBuffer() {
+        // Read-only ByteBuffers also don't support .array()
+        byte[] expectedData = {10, 20, 30, 40};
+        ByteBuffer readOnlyBuffer = ByteBuffer.wrap(expectedData).asReadOnlyBuffer();
+
+        ByteRange range = new ByteRange(50, expectedData.length);
+        FileExtent extent = FileFetchJob.createFileExtent(objectA, range, readOnlyBuffer);
+
+        assertThat(extent.object()).isEqualTo(objectA.value());
+        assertThat(extent.range().offset()).isEqualTo(50);
+        assertThat(extent.range().length()).isEqualTo(expectedData.length);
+        assertThat(extent.data()).isEqualTo(expectedData);
+    }
+
 }
