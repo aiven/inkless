@@ -16,9 +16,11 @@ Configuration:
   # See: https://logging.apache.org/log4j/2.x/manual/configuration.html#configuring-loggers
   Loggers:
     Root:
-      level: INFO
+      level: ERROR
       AppenderRef:
         - ref: STDOUT
     Logger:
     - name: org.apache.kafka.server.log.remote.storage
-      level: DEBUG
+      level: ERROR
+    - name: io.aiven.inkless.control_plane.postgres.TSUnificationFetcher
+      level: TRACE

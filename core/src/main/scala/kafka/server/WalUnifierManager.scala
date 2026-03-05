@@ -27,6 +27,14 @@ class WalUnifierManager(name: String,
   }
 
   override def start(): Unit = {
+    updateLatestOffsets()
+
+    workers.foreach(workerThreadPool.execute)
+
+    super.start()
+  }
+
+  def updateLatestOffsets(): Unit = {
     val offsetMap = inklessMetadataView.getDisklessTopicPartitions.asScala.map { tp =>
       val lastOffset = replicaManager.getLog(tp.topicPartition()) match {
         case Some(l) => l.logEndOffset()
@@ -35,10 +43,6 @@ class WalUnifierManager(name: String,
       (tp -> Long.box(lastOffset))
     }.toMap
     walSplitter.updateLastOffsets(offsetMap.asJava)
-
-    workers.foreach(workerThreadPool.execute)
-
-    super.start()
   }
 
   /**
