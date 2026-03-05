@@ -371,12 +371,10 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleRemoveTopicsFromMirror(request: RequestChannel.Request): Unit = {
-    if (isClusterMirroringEnabled) {
-      val removeTopicsFromMirrorRequest = request.body[RemoveTopicsFromMirrorRequest]
-      // TODO: might need to have a better way to pass the cluster mirror
-      val topicNames: util.Set[String] = removeTopicsFromMirrorRequest.data.topics.stream().map(t => t.topicName()).collect(Collectors.toSet())
-    } else {
+    if (!isClusterMirroringEnabled) {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring remove topics from mirror request")
+      requestHelper.sendMaybeThrottle(request, new RemoveTopicsFromMirrorResponse(new RemoveTopicsFromMirrorResponseData().setErrorCode(Errors.INVALID_REQUEST.code)))
+      return
     }
     forwardToController(request)
   }
