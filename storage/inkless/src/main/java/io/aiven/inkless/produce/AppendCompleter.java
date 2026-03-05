@@ -53,7 +53,7 @@ class AppendCompleter {
     public void finishCommitSuccessfully(List<CommitBatchResponse> commitBatchResponses) {
         LOGGER.debug("Committed successfully");
 
-        // Each request must have a response.
+        // Step 1: Build all partition responses (fast - just object creation)
         final Map<Integer, Map<TopicIdPartition, ProduceResponse.PartitionResponse>> resultsPerRequest = file
                 .awaitingFuturesByRequest()
                 .entrySet().stream()
@@ -63,15 +63,6 @@ class AppendCompleter {
             final var commitBatchRequest = file.commitBatchRequests().get(i);
             final var result = resultsPerRequest.computeIfAbsent(commitBatchRequest.requestId(), ignore -> new HashMap<>());
             final var commitBatchResponse = commitBatchResponses.get(i);
-
-            final CacheBatchCoordinate cacheBatchCoordinate = commitBatchResponse.cacheBatchCoordinate();
-            if (cacheBatchCoordinate != null) {
-                try {
-                    batchCoordinateCache.put(commitBatchRequest.topicIdPartition(), cacheBatchCoordinate);
-                } catch (final Exception e) {
-                    LOGGER.error("Failed to put batch coordinate into cache", e);
-                }
-            }
 
             result.put(
                     commitBatchRequest.topicIdPartition(),
@@ -83,9 +74,25 @@ class AppendCompleter {
             resultsPerRequest.computeIfAbsent(invalidResponses.getKey(), ignore -> new HashMap<>()).putAll(invalidResponses.getValue());
         }
 
+        // Step 2: Complete futures IMMEDIATELY (critical path for producer latency)
         for (final var entry : file.awaitingFuturesByRequest().entrySet()) {
             final var result = resultsPerRequest.get(entry.getKey());
             entry.getValue().complete(result);
+        }
+
+        // Step 3: Populate batch coordinate cache (not on critical path - benefits fetch, not produce)
+        for (int i = 0; i < commitBatchResponses.size(); i++) {
+            final var commitBatchRequest = file.commitBatchRequests().get(i);
+            final var commitBatchResponse = commitBatchResponses.get(i);
+
+            final CacheBatchCoordinate cacheBatchCoordinate = commitBatchResponse.cacheBatchCoordinate();
+            if (cacheBatchCoordinate != null) {
+                try {
+                    batchCoordinateCache.put(commitBatchRequest.topicIdPartition(), cacheBatchCoordinate);
+                } catch (final Exception e) {
+                    LOGGER.error("Failed to put batch coordinate into cache", e);
+                }
+            }
         }
     }
 
