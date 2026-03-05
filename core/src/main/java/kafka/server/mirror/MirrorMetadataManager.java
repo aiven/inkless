@@ -387,17 +387,37 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return mirrorLeaderPartitions;
     }
 
-    // Applies the appropriate state transition based on current state and stop flag
+    /**
+     * Applies the appropriate state transition based on current state and stop flag.
+     *
+     * Possible cases:
+     * stopRequested: it means the partition should head to STOPPED state. When it is true (i.e. users removeTopicsFromMirror):
+     *   1. if it's already in STOPPED state, then keep the state
+     *   2. else, move the state to STOPPING state
+     * pauseRequested: it means the partition should head to PAUSED state. When it is true (i.e. users pause it):
+     *   1. if it's already in PAUSED state, then keep the state
+     *   2. else, move the state to PAUSING state
+     * When stopRequested=false and pauseRequested=false:
+     *   1. if it's in PAUSED state, we should move it to MIRRORING state. It will happen when users resume mirroring
+     *   2. if it's in UNKNOWN or STOPPED state, we should move it to PREPARING state. It will happen when users addTopicsToMirror.
+     *   3. else, keep the same state as is. This could happen like leadership change, and the new leader should continue to complete the process in previous leader.
+     */
     private void applyMirrorStateTransition(String mirrorName, TopicPartition tp,
                                             MirrorPartitionState curState, MirrorPartitionState fetchedState,
                                             boolean stopRequested, boolean pauseRequested) {
         stateTransitioner.ifPresent(t -> {
-            if (stopRequested && curState != MirrorPartitionState.STOPPED) {
-                t.transitionTo(mirrorName, tp, MirrorPartitionState.STOPPING);
-            } else if (pauseRequested
-                    && curState != MirrorPartitionState.PAUSED
-                    && curState != MirrorPartitionState.PAUSING) {
-                t.transitionTo(mirrorName, tp, MirrorPartitionState.PAUSING);
+            if (stopRequested) {
+              if (curState != MirrorPartitionState.STOPPED) {
+                  t.transitionTo(mirrorName, tp, MirrorPartitionState.STOPPING);
+              } else {
+                  t.transitionTo(mirrorName, tp, MirrorPartitionState.STOPPED);
+              }
+            } else if (pauseRequested) {
+                if (curState != MirrorPartitionState.PAUSED) {
+                    t.transitionTo(mirrorName, tp, MirrorPartitionState.PAUSING);
+                } else {
+                    t.transitionTo(mirrorName, tp, MirrorPartitionState.PAUSED);
+                }
             } else if (curState == MirrorPartitionState.PAUSED) {
                 t.transitionTo(mirrorName, tp, MirrorPartitionState.MIRRORING);
             } else if (curState == MirrorPartitionState.UNKNOWN
