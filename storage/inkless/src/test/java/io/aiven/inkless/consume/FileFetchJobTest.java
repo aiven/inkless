@@ -179,4 +179,49 @@ public class FileFetchJobTest {
         assertThat(extent.data()).isEqualTo(expectedData);
     }
 
+    @Test
+    public void testCreateFileExtentWithNonZeroPosition() {
+        // ByteBuffer with non-zero position should only return remaining bytes
+        byte[] backingArray = {0, 0, 1, 2, 3, 4, 5};
+        ByteBuffer buffer = ByteBuffer.wrap(backingArray);
+        buffer.position(2); // Skip first 2 bytes
+
+        byte[] expectedData = {1, 2, 3, 4, 5};
+        ByteRange range = new ByteRange(0, expectedData.length);
+        FileExtent extent = FileFetchJob.createFileExtent(objectA, range, buffer);
+
+        assertThat(extent.range().length()).isEqualTo(expectedData.length);
+        assertThat(extent.data()).isEqualTo(expectedData);
+    }
+
+    @Test
+    public void testCreateFileExtentWithSlicedBuffer() {
+        // Sliced buffers have non-zero arrayOffset - this tests the arrayOffset handling
+        byte[] backingArray = {0, 0, 10, 20, 30, 0, 0};
+        ByteBuffer original = ByteBuffer.wrap(backingArray);
+        original.position(2);
+        original.limit(5);
+        ByteBuffer sliced = original.slice(); // Creates buffer with arrayOffset=2
+
+        byte[] expectedData = {10, 20, 30};
+        ByteRange range = new ByteRange(0, expectedData.length);
+        FileExtent extent = FileFetchJob.createFileExtent(objectA, range, sliced);
+
+        assertThat(extent.range().length()).isEqualTo(expectedData.length);
+        assertThat(extent.data()).isEqualTo(expectedData);
+    }
+
+    @Test
+    public void testCreateFileExtentWithHeapBufferSpanningEntireArray() {
+        // When buffer spans entire backing array, we can use array() directly (zero-copy)
+        byte[] expectedData = {1, 2, 3, 4, 5};
+        ByteBuffer buffer = ByteBuffer.wrap(expectedData);
+
+        ByteRange range = new ByteRange(0, expectedData.length);
+        FileExtent extent = FileFetchJob.createFileExtent(objectA, range, buffer);
+
+        assertThat(extent.range().length()).isEqualTo(expectedData.length);
+        assertThat(extent.data()).isSameAs(expectedData); // Same reference - no copy
+    }
+
 }

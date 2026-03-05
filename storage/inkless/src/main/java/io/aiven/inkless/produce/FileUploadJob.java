@@ -85,7 +85,8 @@ public class FileUploadJob implements Callable<ObjectKey> {
      * Constructor for ByteBuffer-based uploads (zero-copy path).
      * Note: The buffer is stored by reference, not copied. The caller must ensure the buffer
      * is not modified between construction and when call() completes. The buffer's position
-     * and limit are captured at construction time via duplicate() during upload.
+     * and limit are captured at upload time via duplicate() in the ObjectUploader implementation,
+     * which preserves retry support without modifying the original buffer.
      */
     private FileUploadJob(final ObjectKeyCreator objectKeyCreator,
                           final ObjectUploader objectUploader,

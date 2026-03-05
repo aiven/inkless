@@ -174,6 +174,7 @@ public final class S3Storage extends StorageBackend {
      */
     @Override
     public ByteBuffer fetchToByteBuffer(final ObjectKey key, final ByteRange range) throws StorageBackendException {
+        Objects.requireNonNull(key, "key cannot be null");
         try {
             if (range != null && range.empty()) {
                 return ByteBuffer.allocate(0);

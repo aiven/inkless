@@ -57,11 +57,17 @@ public class FileFetchJob implements Callable<FileExtent> {
     // visible for testing
     static FileExtent createFileExtent(ObjectKey object, ByteRange byteRange, ByteBuffer buffer) {
         // Handle both heap and direct/read-only ByteBuffers
+        // buffer.array() returns the entire backing array and ignores position/limit/arrayOffset,
+        // so we can only use it directly when the buffer spans the entire array.
         byte[] data;
-        if (buffer.hasArray()) {
+        if (buffer.hasArray()
+                && buffer.arrayOffset() == 0
+                && buffer.position() == 0
+                && buffer.remaining() == buffer.array().length) {
+            // Buffer spans the entire backing array - use directly without copy
             data = buffer.array();
         } else {
-            // Copy from direct/read-only buffer
+            // Copy from direct/read-only buffer or buffer with non-zero position/arrayOffset
             data = new byte[buffer.remaining()];
             buffer.get(data);
         }

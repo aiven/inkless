@@ -575,7 +575,7 @@ public class ReaderTest {
                 .thenReturn(List.of(singleResponse));
 
             // Simulate fetcher failing and throwing an exception
-            when(objectFetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
+            when(objectFetcher.fetchToByteBuffer(any(ObjectKey.class), any(ByteRange.class)))
                 .thenThrow(new StorageBackendException("Storage backend error"));
 
             try (final var reader = getReader()) {
@@ -616,11 +616,9 @@ public class ReaderTest {
                 .thenReturn(List.of(singleResponse));
 
             // Simulate fetcher returning invalid/corrupted data that doesn't match expected size
-            final ReadableByteChannel file1Channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(), any())).thenReturn(file1Channel);
             // Corrupted data with size that doesn't match expected batch size
             final ByteBuffer corruptedRecords = ByteBuffer.wrap("invalid-batch-data".getBytes(StandardCharsets.UTF_8));
-            when(objectFetcher.readToByteBuffer(file1Channel)).thenReturn(corruptedRecords);
+            when(objectFetcher.fetchToByteBuffer(any(), any())).thenReturn(corruptedRecords);
 
             try (final var reader = getReader()) {
                 final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, fetchInfos);
@@ -653,9 +651,7 @@ public class ReaderTest {
                 .thenReturn(List.of(singleResponse));
 
             // Simulate fetcher returning valid data
-            final ReadableByteChannel file1Channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(), any())).thenReturn(file1Channel);
-            when(objectFetcher.readToByteBuffer(file1Channel)).thenReturn(records.buffer());
+            when(objectFetcher.fetchToByteBuffer(any(), any())).thenReturn(records.buffer());
 
             try (final var reader = getReader()) {
                 final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, fetchInfos);
@@ -765,9 +761,7 @@ public class ReaderTest {
             when(controlPlane.findBatches(any(), anyInt(), anyInt()))
                 .thenReturn(List.of(oldResponse));
 
-            final ReadableByteChannel channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(), any())).thenReturn(channel);
-            when(objectFetcher.readToByteBuffer(channel)).thenReturn(records.buffer());
+            when(objectFetcher.fetchToByteBuffer(any(), any())).thenReturn(records.buffer());
 
             try (final var reader = new Reader(
                 time,
@@ -844,9 +838,7 @@ public class ReaderTest {
             when(controlPlane.findBatches(any(), anyInt(), anyInt()))
                 .thenReturn(List.of(oldResponse));
 
-            final ReadableByteChannel channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(), any())).thenReturn(channel);
-            when(objectFetcher.readToByteBuffer(channel)).thenReturn(records.buffer());
+            when(objectFetcher.fetchToByteBuffer(any(), any())).thenReturn(records.buffer());
 
             try (final var reader = new Reader(
                 time,
@@ -970,10 +962,9 @@ public class ReaderTest {
                 });
 
             // Setup object fetcher to succeed for all requests (hot path will use this)
-            final ReadableByteChannel channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(ObjectKey.class), any(ByteRange.class))).thenReturn(channel);
             // Return a fresh buffer each time to avoid buffer exhaustion issues
-            when(objectFetcher.readToByteBuffer(channel)).thenAnswer(invocation -> records.buffer().duplicate());
+            when(objectFetcher.fetchToByteBuffer(any(ObjectKey.class), any(ByteRange.class)))
+                .thenAnswer(invocation -> records.buffer().duplicate());
 
             // Create a lagging executor and immediately shut it down - will reject all tasks
             final ExecutorService saturatedLaggingExecutor = Executors.newSingleThreadExecutor();
@@ -1074,9 +1065,7 @@ public class ReaderTest {
             when(controlPlane.findBatches(any(), anyInt(), anyInt()))
                 .thenReturn(List.of(recentResponse));
 
-            final ReadableByteChannel channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(), any())).thenReturn(channel);
-            when(objectFetcher.readToByteBuffer(channel)).thenReturn(records.buffer());
+            when(objectFetcher.fetchToByteBuffer(any(), any())).thenReturn(records.buffer());
 
             try (final var reader = new Reader(
                 time,
