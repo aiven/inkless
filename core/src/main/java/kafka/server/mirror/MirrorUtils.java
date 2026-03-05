@@ -39,14 +39,14 @@ import static org.apache.kafka.controller.ConfigurationControlManager.REMOVED_TO
 public final class MirrorUtils {
     private MirrorUtils() {}
 
-    public static MirrorBlockingSender createSender(BrokerEndPoint brokerEndpoint,
-                                                    MirrorConfig mirrorConfig,
-                                                    KafkaConfig brokerConfig,
-                                                    Metrics metrics,
-                                                    Time time,
-                                                    String clientId,
-                                                    LogContext logContext) {
-        return new MirrorBlockingSender(brokerEndpoint, mirrorConfig, brokerConfig,
+    public static MirrorSourceSender createSender(BrokerEndPoint brokerEndpoint,
+                                                  MirrorConfig mirrorConfig,
+                                                  KafkaConfig brokerConfig,
+                                                  Metrics metrics,
+                                                  Time time,
+                                                  String clientId,
+                                                  LogContext logContext) {
+        return new MirrorSourceSender(brokerEndpoint, mirrorConfig, brokerConfig,
                 metrics, time, brokerEndpoint.id(), clientId, logContext);
     }
 

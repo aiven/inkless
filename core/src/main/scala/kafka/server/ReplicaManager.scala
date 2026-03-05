@@ -2583,10 +2583,6 @@ class ReplicaManager(val config: KafkaConfig,
   /**
    * Creates and starts MirrorFetcherThreads for partitions that became read-only leaders.
    *
-   * This method is called during partition leadership changes when the local broker becomes
-   * a read-only leader for mirrored partitions. Read-only leaders replicate data from a
-   * source cluster partition rather than accepting local writes.
-   *
    * TODO: we should handle the error cases like in applyLocalFollowersDelta
    *
    * @param mirrorLeaders Map of partitions to their metadata for partitions that became
@@ -2631,7 +2627,7 @@ class ReplicaManager(val config: KafkaConfig,
             }
           } catch {
             case e: Exception =>
-              stateChangeLogger.error(s"Error setting up mirror fetcher for partition $tp", e)
+              stateChangeLogger.error(s"Error setting up mirror fetcher for partition $tp: ${e.getMessage}")
           }
         case _ =>
           stateChangeLogger.warn(s"Skipping mirror fetcher setup for offline partition $tp")
@@ -2639,8 +2635,13 @@ class ReplicaManager(val config: KafkaConfig,
     }
 
     if (partitionAndOffsets.nonEmpty) {
-      mirrorFetcherManager.addFetcherForPartitions(partitionAndOffsets)
-      stateChangeLogger.info(s"Started mirror fetchers for ${partitionAndOffsets.size} read-only leader partitions")
+      try {
+        mirrorFetcherManager.addFetcherForPartitions(partitionAndOffsets)
+        stateChangeLogger.info(s"Started mirror fetchers for ${partitionAndOffsets.size} read-only leader partitions")
+      } catch {
+        case e: Exception =>
+          stateChangeLogger.error(s"Error adding mirror fetcher for partitions ${partitionAndOffsets.keySet}", e)
+      }
     }
   }
 

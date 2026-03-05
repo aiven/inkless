@@ -43,10 +43,10 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
                            brokerEpochSupplier: () => Long,
                            metadataCache: MetadataCache)
     extends AbstractFetcherManager[MirrorFetcherThread](
-      name = "MirrorFetcherManager on broker " + brokerConfig.brokerId,
+      name = "MirrorFetcherManager id=" + brokerConfig.brokerId,
       clientId = "MirrorReplica",
       numFetchers = brokerConfig.mirrorConfig.numReplicaFetchers) {
-  private val mirrorFetcherThreadMap = new mutable.HashMap[FetcherThreadKey, MirrorFetcherThread]
+  private val mirrorFetcherThreadMap = new mutable.HashMap[FetcherKey, MirrorFetcherThread]
   private val lagInfo = new mutable.HashMap[PartitionLagKey, LagInfo]
 
   override def deadThreadCount: Int = lock synchronized { mirrorFetcherThreadMap.values.count(_.isThreadFailed) }
@@ -75,15 +75,15 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     // Ensures partitions with different cluster mirrors get separate fetcher threads.
     // This is crucial because different cluster mirrors may require different authentication credentials.
     val partitionsPerFetcher = partitionAndOffsets.groupBy { case (topicPartition, brokerAndInitialFetchOffset) =>
-      FetcherThreadKey(
-        brokerAndInitialFetchOffset.leader,
+      FetcherKey(
         getFetcherId(topicPartition),
+        brokerAndInitialFetchOffset.leader,
         brokerAndInitialFetchOffset.mirrorName
       )
     }
 
     this.synchronized {
-      def addAndStartFetcherThread(fetcherKey: FetcherThreadKey): MirrorFetcherThread = {
+      def addAndStartFetcherThread(fetcherKey: FetcherKey): MirrorFetcherThread = {
         val fetcherThread = createFetcherThread(fetcherKey.fetcherId, fetcherKey.mirrorName, fetcherKey.sourceBroker)
         mirrorFetcherThreadMap.put(fetcherKey, fetcherThread)
         fetcherThread.start()
@@ -124,8 +124,8 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
 
   private def createFetcherThread(fetcherId: Int, mirrorName: String, srcEndpoint: BrokerEndPoint): MirrorFetcherThread = {
     info(s"Creating mirror fetcher thread: fetcherId = $fetcherId, mirrorName = $mirrorName, srcEndpoint = $srcEndpoint")
-    val threadName = s"MirrorFetcherThread nodeId=${brokerConfig.brokerId} fetcherId=$fetcherId mirrorName=$mirrorName srcNodeId=${srcEndpoint.id}"
-    val logContext = new LogContext(s"[" + threadName + "] ")
+    val threadName = s"MirrorFetcherThread-$fetcherId-${srcEndpoint.id}-$mirrorName"
+    val logContext = new LogContext(s"[MirrorFetcher id=${brokerConfig.brokerId}, fetcherId=$fetcherId, leaderId=${srcEndpoint.id}, mirrorName=$mirrorName] ")
 
     val sender = if (mirrorName.nonEmpty) {
       val mirrorProperties = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName))
@@ -163,30 +163,32 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     fetchStates
   }
 
+  // collect idle fetchers under lock, shut down outside to avoid deadlock
   override def shutdownIdleFetcherThreads(): Unit = {
-    this.synchronized {
-      val keysToBeRemoved = new mutable.HashSet[FetcherThreadKey]
+    val idleFetchers = this.synchronized {
+      val keysToBeRemoved = new mutable.HashSet[FetcherKey]
+      val fetchersToShutdown = new mutable.ArrayBuffer[MirrorFetcherThread]
       for ((key, fetcher) <- mirrorFetcherThreadMap) {
         if (fetcher.partitionCount <= 0) {
-          fetcher.shutdown()
+          fetchersToShutdown += fetcher
           keysToBeRemoved += key
         }
       }
       mirrorFetcherThreadMap --= keysToBeRemoved
+      fetchersToShutdown
     }
+    idleFetchers.foreach(_.shutdown())
   }
 
+  // initiate shutdown under lock, await termination outside to avoid deadlock
   override def closeAllFetchers(): Unit = {
-    this.synchronized {
-      for ((_, fetcher) <- mirrorFetcherThreadMap) {
-        fetcher.initiateShutdown()
-      }
-
-      for ((_, fetcher) <- mirrorFetcherThreadMap) {
-        fetcher.shutdown()
-      }
+    val fetchers = this.synchronized {
+      val all = mirrorFetcherThreadMap.values.toSeq
+      all.foreach(_.initiateShutdown())
       mirrorFetcherThreadMap.clear()
+      all
     }
+    fetchers.foreach(_.shutdown())
   }
 
   def updatePartitionLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long): Unit = {
@@ -221,10 +223,10 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   }
 
   def shutdown(): Unit = {
-    info("Shutting down MirrorFetcherManager")
+    info("shutting down")
     closeAllFetchers()
     lagInfo.clear()
-    info("MirrorFetcherManager shutdown completed")
+    info("shutdown completed")
   }
 }
 
@@ -232,32 +234,20 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
  * Three-dimensional key for grouping mirror fetcher threads.
  *
  * Multiple partitions share the same fetcher thread when they have identical keys
- * (source broker, fetcher ID, and mirror name). This key determines thread reuse.
- *
- * Thread creation rules:
- * - Same source broker + same fetcher ID + same mirror -> REUSE thread
- * - Different source broker -> NEW thread (source leader changed)
- * - Different mirror name -> NEW thread (different auth credentials)
- * - Different fetcher ID -> NEW thread (load balancing)
+ * (fetcher ID, source broker, and mirror name). This key determines thread reuse.
  *
  * Example with num.mirror.replica.fetchers = 2:
  *
- * | Partition  | Source Leader | Fetcher ID | Mirror Name | Key                      | Thread Reused? |
- * |------------|---------------|------------|-------------|--------------------------|----------------|
- * | topic1-p0  | broker-1      | 0          | cluster-A   | (broker-1, 0, cluster-A) | New thread     |
- * | topic1-p1  | broker-1      | 1          | cluster-A   | (broker-1, 1, cluster-A) | New thread     |
- * | topic2-p0  | broker-1      | 0          | cluster-A   | (broker-1, 0, cluster-A) | Reuse          |
- * | topic2-p1  | broker-1      | 1          | cluster-A   | (broker-1, 1, cluster-A) | Reuse          |
- * | topic3-p0  | broker-2      | 0          | cluster-A   | (broker-2, 0, cluster-A) | New thread     |
- * | topic4-p0  | broker-1      | 0          | cluster-B   | (broker-1, 0, cluster-B) | New thread     |
- *
- * Result: 4 fetcher threads created, each serving multiple partitions:
- * - MirrorFetcherThread-0-1-cluster-A: [topic1-p0, topic2-p0] --- Same key
- * - MirrorFetcherThread-1-1-cluster-A: [topic1-p1, topic2-p1] --- Same key
- * - MirrorFetcherThread-0-2-cluster-A: [topic3-p0]
- * - MirrorFetcherThread-0-1-cluster-B: [topic4-p0]
+ * | Partition  | Fetcher ID | Source Leader | Mirror Name | Key                 | Thread Reused? |
+ * |------------|------------|---------------|-------------|---------------------|----------------|
+ * | topic1-p0  | 0          | broker-1      | A2B         | (0, broker-1, A2B)  | New thread     |
+ * | topic1-p1  | 1          | broker-1      | A2B         | (1, broker-1, A2B)  | New thread     |
+ * | topic2-p0  | 0          | broker-1      | A2B         | (0, broker-1, A2B)  | Reuse          |
+ * | topic2-p1  | 1          | broker-1      | A2B         | (1, broker-1, A2B)  | Reuse          |
+ * | topic3-p0  | 0          | broker-2      | A2B         | (0, broker-2, A2B)  | New thread     |
+ * | topic4-p0  | 0          | broker-1      | A2C         | (0, broker-1, A2C)  | New thread     |
  */
-case class FetcherThreadKey(sourceBroker: BrokerEndPoint, fetcherId: Int, mirrorName: String)
+case class FetcherKey(fetcherId: Int, sourceBroker: BrokerEndPoint, mirrorName: String)
 
 case class PartitionLagKey(mirrorName: String, topicPartition: TopicPartition)
 

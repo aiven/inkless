@@ -56,8 +56,10 @@ class MirrorFetcherThread(name: String,
     replicaMgr.mirrorFetcherManager.removeFetcherForPartitions(partitions)
   }
 
+  // invalidate stale source leaders before creating new fetchers
   override protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
-    replicaMgr.mirrorFetcherManager.addFetcherForPartitions(partitionAndOffsets)
+    replicaMgr.mirrorMetadataManager.foreach(_.invalidateSourceLeader(mirrorName))
+    replicaMgr.maybeCreateMirrorFetchers(mirrorName, partitionAndOffsets.keySet.asJava)
   }
 
   override protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {
