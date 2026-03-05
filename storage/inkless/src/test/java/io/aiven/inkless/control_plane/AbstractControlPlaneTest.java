@@ -2254,6 +2254,130 @@ public abstract class AbstractControlPlaneTest {
         }
     }
 
+    @Nested
+    class InitDisklessLog {
+        private static final String NEW_TOPIC = "topic-new";
+        private static final Uuid NEW_TOPIC_ID = new Uuid(30, 30);
+
+        @Test
+        void initNewPartition() {
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 100, 100, List.of())
+            ));
+            assertThat(responses).containsExactly(InitDisklessLogResponse.success());
+
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(100, 100, 0));
+        }
+
+        @Test
+        void alreadyInitialized() {
+            controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 50, 50, List.of())
+            ));
+
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 50, 50, List.of())
+            ));
+            assertThat(responses).containsExactly(InitDisklessLogResponse.alreadyInitialized());
+
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(50, 50, 0));
+        }
+
+        @Test
+        void existingTopicReturnAlreadyInitialized() {
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, 0, 0, 0, List.of())
+            ));
+            assertThat(responses).containsExactly(InitDisklessLogResponse.alreadyInitialized());
+        }
+
+        @Test
+        void withProducerStates() {
+            final long producerId = 42L;
+            final short producerEpoch = 1;
+            final int baseSequence = 5;
+            final int lastSequence = 9;
+            final long assignedOffset = 95;
+            final long batchMaxTimestamp = 5000;
+
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 100, 100,
+                    List.of(new InitDisklessLogProducerState(
+                        producerId, producerEpoch, baseSequence, lastSequence, assignedOffset, batchMaxTimestamp)))
+            ));
+            assertThat(responses).containsExactly(InitDisklessLogResponse.success());
+
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(100, 100, 0));
+        }
+
+        @Test
+        void withProducerStatesThenProduceIdempotentBatch() {
+            final long producerId = 42L;
+            final short producerEpoch = 1;
+            final int lastSequence = 4;
+            final long assignedOffset = 95;
+
+            controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 100, 100,
+                    List.of(new InitDisklessLogProducerState(
+                        producerId, producerEpoch, 0, lastSequence, assignedOffset, 5000)))
+            ));
+
+            final TopicIdPartition tidp = new TopicIdPartition(NEW_TOPIC_ID, 0, NEW_TOPIC);
+
+            final CommitBatchRequest request = CommitBatchRequest.idempotent(
+                0, tidp, 0, 10, 1, 10, 6000,
+                TimestampType.CREATE_TIME, producerId, producerEpoch, 5, 5);
+            final var commitResponses = controlPlane.commitFile(
+                "obj1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request));
+            assertThat(commitResponses).hasSize(1);
+            assertThat(commitResponses.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(commitResponses.get(0).assignedBaseOffset()).isEqualTo(100);
+        }
+
+        @Test
+        void rejectsDisklessStartOffsetLessThanLogStartOffset() {
+            assertThatThrownBy(() ->
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 200, 100, List.of())
+            ).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("disklessStartOffset (100) must be >= logStartOffset (200)");
+        }
+
+        @Test
+        void initWithDisklessStartOffsetGreaterThanLogStartOffset() {
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 50, 100, List.of())
+            ));
+            assertThat(responses).containsExactly(InitDisklessLogResponse.success());
+
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(50, 100, 0));
+        }
+
+        @Test
+        void multiplePartitions() {
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 100, 100, List.of()),
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 1, 200, 200, List.of())
+            ));
+            assertThat(responses).containsExactly(
+                InitDisklessLogResponse.success(),
+                InitDisklessLogResponse.success()
+            );
+
+            assertThat(controlPlane.getLogInfo(List.of(
+                new GetLogInfoRequest(NEW_TOPIC_ID, 0),
+                new GetLogInfoRequest(NEW_TOPIC_ID, 1)
+            ))).containsExactly(
+                GetLogInfoResponse.success(100, 100, 0),
+                GetLogInfoResponse.success(200, 200, 0)
+            );
+        }
+    }
+
     public record ControlPlaneAndConfigs(ControlPlane controlPlane, Map<String, ?> configs) {
     }
 }

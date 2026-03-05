@@ -59,6 +59,8 @@ import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.control_plane.GetLogInfoRequest;
 import io.aiven.inkless.control_plane.GetLogInfoResponse;
+import io.aiven.inkless.control_plane.InitDisklessLogRequest;
+import io.aiven.inkless.control_plane.InitDisklessLogResponse;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MergedFileBatch;
@@ -148,6 +150,12 @@ public class PostgresControlPlane extends AbstractControlPlane {
     public void createTopicAndPartitions(final Set<CreateTopicAndPartitionsRequest> requests) {
         // Expected to be performed synchronously
         new TopicsAndPartitionsCreateJob(time, jobsJooqCtx, requests, pgMetrics::onTopicCreateCompleted).run();
+    }
+
+    @Override
+    public List<InitDisklessLogResponse> initDisklessLog(final List<InitDisklessLogRequest> requests) {
+        final InitDisklessLogJob job = new InitDisklessLogJob(time, jobsJooqCtx, requests, pgMetrics::onInitDisklessLogCompleted);
+        return job.call();
     }
 
     @Override
