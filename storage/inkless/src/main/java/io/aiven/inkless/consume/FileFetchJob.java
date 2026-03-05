@@ -56,12 +56,21 @@ public class FileFetchJob implements Callable<FileExtent> {
 
     // visible for testing
     static FileExtent createFileExtent(ObjectKey object, ByteRange byteRange, ByteBuffer buffer) {
+        // Handle both heap and direct/read-only ByteBuffers
+        byte[] data;
+        if (buffer.hasArray()) {
+            data = buffer.array();
+        } else {
+            // Copy from direct/read-only buffer
+            data = new byte[buffer.remaining()];
+            buffer.get(data);
+        }
         return new FileExtent()
                 .setObject(object.value())
                 .setRange(new FileExtent.ByteRange()
                         .setOffset(byteRange.offset())
-                        .setLength(buffer.limit()))
-                .setData(buffer.array());
+                        .setLength(data.length))
+                .setData(data);
     }
 
     @Override
