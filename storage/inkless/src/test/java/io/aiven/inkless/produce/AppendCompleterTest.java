@@ -43,6 +43,7 @@ import io.aiven.inkless.control_plane.CommitBatchResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -199,5 +200,46 @@ class AppendCompleterTest {
             T1P0, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
         ));
         verify(cache, never()).put(any(), any());
+    }
+
+    @Test
+    void futuresAreCompletedBeforeCachePopulation() {
+        // This test verifies the optimization: futures must be completed BEFORE cache operations.
+        // This minimizes producer latency since cache population only benefits fetch operations.
+
+        final Map<Integer, CompletableFuture<Map<TopicIdPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+            0, new CompletableFuture<>(),
+            1, new CompletableFuture<>()
+        );
+
+        final List<CommitBatchResponse> commitBatchResponses = List.of(
+            CommitBatchResponse.success(0, 10, 0, "objectKey", COMMIT_BATCH_REQUESTS.get(0)),
+            CommitBatchResponse.success(10, 10, 0, "objectKey", COMMIT_BATCH_REQUESTS.get(1)),
+            CommitBatchResponse.success(20, 10, 0, "objectKey", COMMIT_BATCH_REQUESTS.get(2)),
+            CommitBatchResponse.success(30, 10, 0, "objectKey", COMMIT_BATCH_REQUESTS.get(3))
+        );
+
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
+        final BatchCoordinateCache cache = mock(BatchCoordinateCache.class);
+
+        // When cache.put() is called, verify that all futures are already completed
+        doAnswer(invocation -> {
+            assertThat(awaitingFuturesByRequest.get(0).isDone())
+                .as("Future for request 0 should be completed before cache population")
+                .isTrue();
+            assertThat(awaitingFuturesByRequest.get(1).isDone())
+                .as("Future for request 1 should be completed before cache population")
+                .isTrue();
+            return null;
+        }).when(cache).put(any(), any());
+
+        final AppendCompleter job = new AppendCompleter(file, cache);
+        job.finishCommitSuccessfully(commitBatchResponses);
+
+        // Verify cache was actually called (so our assertions ran)
+        verify(cache).put(T0P0, commitBatchResponses.get(0).cacheBatchCoordinate());
+        verify(cache).put(T0P1, commitBatchResponses.get(1).cacheBatchCoordinate());
+        verify(cache).put(T0P1, commitBatchResponses.get(2).cacheBatchCoordinate());
+        verify(cache).put(T1P0, commitBatchResponses.get(3).cacheBatchCoordinate());
     }
 }
