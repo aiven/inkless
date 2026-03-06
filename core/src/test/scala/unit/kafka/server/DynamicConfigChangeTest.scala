@@ -588,4 +588,61 @@ class DynamicConfigChangeUnitTest {
     configHandler.maybeUpdateRemoteLogComponents(topic, Seq(log0), isRemoteLogEnabledBeforeUpdate, false)
     verify(rlm, never()).onLeadershipChange(any(), any(), any())
   }
+
+  @Test
+  def testDisklessTopicConfigUpdateCallsInklessMetadataView(): Unit = {
+    val topic = "diskless-topic"
+    val logManager = mock(classOf[kafka.log.LogManager])
+    val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
+    val inklessMetadataView = mock(classOf[kafka.server.metadata.InklessMetadataView])
+    when(replicaManager.logManager).thenReturn(logManager)
+    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    // No local logs — simulates a diskless topic
+    when(logManager.logsByTopic(topic)).thenReturn(Seq.empty)
+
+    val quotas = mock(classOf[QuotaFactory.QuotaManagers])
+    when(quotas.leader).thenReturn(mock(classOf[ReplicationQuotaManager]))
+    when(quotas.follower).thenReturn(mock(classOf[ReplicationQuotaManager]))
+
+    val topicConfig = new Properties()
+    topicConfig.put(TopicConfig.RETENTION_MS_CONFIG, "3600000")
+
+    val kafkaConfig = KafkaConfig.fromProps(TestUtils.createBrokerConfig(0, port = 9092))
+    val configHandler = new TopicConfigHandler(replicaManager, kafkaConfig, quotas)
+    configHandler.processConfigChanges(topic, topicConfig)
+
+    verify(inklessMetadataView).updateTopicConfig(topic, topicConfig)
+  }
+
+  @Test
+  def testClassicTopicConfigUpdateDoesNotCallInklessMetadataView(): Unit = {
+    val topic = "classic-topic"
+    val logManager = mock(classOf[kafka.log.LogManager])
+    val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
+    val inklessMetadataView = mock(classOf[kafka.server.metadata.InklessMetadataView])
+    when(replicaManager.logManager).thenReturn(logManager)
+    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    when(replicaManager.remoteLogManager).thenReturn(None)
+    // Has local logs — classic topic
+    val tp0 = new TopicPartition(topic, 0)
+    val log = mock(classOf[UnifiedLog])
+    when(log.topicPartition).thenReturn(tp0)
+    when(log.remoteLogEnabled()).thenReturn(false)
+    when(log.config).thenReturn(new LogConfig(Collections.emptyMap()))
+    when(logManager.logsByTopic(topic)).thenReturn(Seq(log))
+    when(replicaManager.onlinePartition(tp0)).thenReturn(None)
+
+    val quotas = mock(classOf[QuotaFactory.QuotaManagers])
+    when(quotas.leader).thenReturn(mock(classOf[ReplicationQuotaManager]))
+    when(quotas.follower).thenReturn(mock(classOf[ReplicationQuotaManager]))
+
+    val topicConfig = new Properties()
+    topicConfig.put(TopicConfig.RETENTION_MS_CONFIG, "3600000")
+
+    val kafkaConfig = KafkaConfig.fromProps(TestUtils.createBrokerConfig(0, port = 9092))
+    val configHandler = new TopicConfigHandler(replicaManager, kafkaConfig, quotas)
+    configHandler.processConfigChanges(topic, topicConfig)
+
+    verify(inklessMetadataView, never()).updateTopicConfig(any(), any())
+  }
 }

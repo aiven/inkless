@@ -57,6 +57,11 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
     logManager.updateTopicConfig(topic, topicConfig, kafkaConfig.remoteLogManagerConfig.isRemoteStorageSystemEnabled,
       wasRemoteLogEnabled)
     maybeUpdateRemoteLogComponents(topic, logs, wasRemoteLogEnabled, wasCopyDisabled)
+
+    if (logs.isEmpty) {
+      // Update cached LogConfig only for diskless topics (topics without local logs) to preserve lazy population.
+      replicaManager.inklessMetadataView().updateTopicConfig(topic, topicConfig)
+    }
   }
 
   private[server] def maybeUpdateRemoteLogComponents(topic: String,
