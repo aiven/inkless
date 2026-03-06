@@ -19,7 +19,7 @@ package kafka.server
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, MetadataView}
+import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendHandler
@@ -229,7 +229,7 @@ class ReplicaManager(val config: KafkaConfig,
                      val directoryEventHandler: DirectoryEventHandler = DirectoryEventHandler.NOOP,
                      val defaultActionQueue: ActionQueue = new DelayedActionQueue,
                      inklessSharedState: Option[SharedState] = None,
-                     inklessMetadataView: Option[MetadataView] = None
+                     inklessMetadataView: Option[InklessMetadataView] = None
                      ) extends Logging {
   // Changing the package or class name may cause incompatibility with existing code and metrics configuration
   private val metricsPackage = "kafka.server"
@@ -265,7 +265,7 @@ class ReplicaManager(val config: KafkaConfig,
       shareFetchPurgatoryName, delayedShareFetchTimer, config.brokerId,
       config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
 
-  private val _inklessMetadataView: MetadataView = inklessMetadataView.getOrElse(new InklessMetadataView(metadataCache.asInstanceOf[KRaftMetadataCache], () => config.extractLogConfigMap))
+  private val _inklessMetadataView: InklessMetadataView = inklessMetadataView.getOrElse(new InklessMetadataView(metadataCache.asInstanceOf[KRaftMetadataCache], () => config.extractLogConfigMap))
   private val inklessAppendHandler: Option[AppendHandler] = inklessSharedState.map(new AppendHandler(_))
   private val inklessFetchHandler: Option[FetchHandler] = inklessSharedState.map(new FetchHandler(_))
   private val inklessFetchOffsetHandler: Option[FetchOffsetHandler] = inklessSharedState.map(new FetchOffsetHandler(_))
@@ -2873,4 +2873,6 @@ class ReplicaManager(val config: KafkaConfig,
       () => ()
     )
   }
+
+  def inklessMetadataView(): InklessMetadataView = _inklessMetadataView
 }
