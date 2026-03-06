@@ -64,7 +64,7 @@ public class InklessConfig extends AbstractConfig {
     private static final int PRODUCE_MAX_UPLOAD_ATTEMPTS_DEFAULT = 3;
 
     public static final String PRODUCE_UPLOAD_BACKOFF_MS_CONFIG = PRODUCE_PREFIX + "upload.backoff.ms";
-    private static final String PRODUCE_UPLOAD_BACKOFF_MS_DOC = "The number of millisecond to back off for before the next upload attempt.";
+    private static final String PRODUCE_UPLOAD_BACKOFF_MS_DOC = "The number of milliseconds to back off for before the next upload attempt.";
     private static final int PRODUCE_UPLOAD_BACKOFF_MS_DEFAULT = 10;
 
     public static final String PRODUCE_PIPELINED_PREFIX = PRODUCE_PREFIX + "pipelined.";
