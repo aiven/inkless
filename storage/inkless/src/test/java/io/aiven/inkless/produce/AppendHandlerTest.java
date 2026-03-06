@@ -25,47 +25,25 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
-import org.apache.kafka.common.utils.MockTime;
-import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.storage.internals.log.LogConfig;
-import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.io.IOException;
-import java.time.Duration;
 import java.util.Map;
-import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Supplier;
-
-import io.aiven.inkless.cache.BatchCoordinateCache;
-import io.aiven.inkless.cache.CaffeineBatchCoordinateCache;
-import io.aiven.inkless.cache.FixedBlockAlignment;
-import io.aiven.inkless.cache.KeyAlignmentStrategy;
-import io.aiven.inkless.cache.NullCache;
-import io.aiven.inkless.cache.ObjectCache;
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.common.ObjectKeyCreator;
-import io.aiven.inkless.common.SharedState;
-import io.aiven.inkless.common.TopicIdEnricher;
-import io.aiven.inkless.config.InklessConfig;
-import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.control_plane.MetadataView;
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -73,42 +51,13 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class AppendHandlerTest {
-    static final int BROKER_ID = 11;
-    static final ObjectKeyCreator OBJECT_KEY_CREATOR = ObjectKey.creator("", false);
-    private static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
-    private static final ObjectCache OBJECT_CACHE = new NullCache();
-    private static final BatchCoordinateCache BATCH_COORDINATE_CACHE = new CaffeineBatchCoordinateCache(Duration.ofSeconds(30));
+    static final Function<String, LogConfig> GET_LOG_CONFIG = (topicName) -> new LogConfig(Map.of());
+    static final Function<String, Uuid> GET_TOPIC_ID = (topicName) -> Uuid.randomUuid();
 
-    static final Supplier<LogConfig> DEFAULT_TOPIC_CONFIGS = () -> new LogConfig(Map.of());
-
-    Time time = new MockTime();
     RequestLocal requestLocal = RequestLocal.noCaching();
     @Mock
-    InklessConfig inklessConfig;
-    @Mock
-    MetadataView metadataView;
-    @Mock
-    ControlPlane controlPlane;
-    @Mock
     Writer writer;
-    @Mock
-    BrokerTopicStats brokerTopicStats;
 
-    @Captor
-    ArgumentCaptor<Map<TopicPartition, PartitionResponse>> resultCaptor;
-
-    private static final MemoryRecords RECORDS_WITH_PRODUCER_ID = MemoryRecords.withRecords(
-        (byte) 2,
-        0L,
-        Compression.NONE,
-        TimestampType.CREATE_TIME,
-        123L,
-        (short) 0,
-        0,
-        0,
-        false,
-        new SimpleRecord(0, "hello".getBytes())
-    );
     private static final MemoryRecords TRANSACTIONAL_RECORDS = MemoryRecords.withTransactionalRecords(
         Compression.NONE,
         123,
@@ -131,9 +80,7 @@ public class AppendHandlerTest {
 
     @Test
     public void rejectTransactionalProduce() throws Exception {
-        try (final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer)) {
+        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG, GET_TOPIC_ID)) {
 
             final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
                 new TopicPartition("diskless1", 0), RECORDS_WITHOUT_PRODUCER_ID,
@@ -153,9 +100,7 @@ public class AppendHandlerTest {
 
     @Test
     public void emptyRequests() throws Exception {
-        try (final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer)) {
+        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG, GET_TOPIC_ID)) {
 
             final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of();
 
@@ -179,38 +124,10 @@ public class AppendHandlerTest {
             CompletableFuture.completedFuture(writeResult)
         );
 
-        when(metadataView.getTopicId(eq("diskless"))).thenReturn(new Uuid(123, 456));
-        when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
-        try (final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer)) {
-
+        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG, GET_TOPIC_ID)) {
             final var result = interceptor.handle(entriesPerPartition, requestLocal).get();
             assertThat(result).isEqualTo(writeResult);
         }
-    }
-
-    @Test
-    public void topicIdNotFound() {
-        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
-            new TopicPartition("diskless", 0),
-            RECORDS_WITHOUT_PRODUCER_ID
-        );
-
-        when(metadataView.getTopicId(eq("diskless"))).thenAnswer(invocation -> {
-            throw new TopicIdEnricher.TopicIdNotFoundException("diskless");
-        });
-        final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
-
-        interceptor.handle(entriesPerPartition, requestLocal)
-            .whenComplete((r, ex) -> assertThat(r).isEqualTo(
-                Map.of(
-                    new TopicPartition("diskless", 0), new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)
-                )
-            ));
-        verify(writer, never()).write(any(), anyMap(), any());
     }
 
     @Test
@@ -225,20 +142,14 @@ public class AppendHandlerTest {
             CompletableFuture.failedFuture(exception)
         );
 
-        when(metadataView.getTopicId(eq("diskless"))).thenReturn(new Uuid(123, 456));
-        when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
-        try (final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer)) {
+        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG, GET_TOPIC_ID)) {
             assertThatThrownBy(() -> interceptor.handle(entriesPerPartition, requestLocal).get()).hasCause(exception);
         }
     }
 
     @Test
     public void close() throws IOException {
-        final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
+        final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG, GET_TOPIC_ID);
 
         interceptor.close();
 

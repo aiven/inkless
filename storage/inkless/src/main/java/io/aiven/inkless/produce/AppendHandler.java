@@ -19,6 +19,7 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
@@ -37,6 +38,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.SharedState;
@@ -45,14 +47,14 @@ import io.aiven.inkless.common.TopicIdEnricher;
 public class AppendHandler implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(AppendHandler.class);
 
-    private final SharedState state;
+    private final Function<String, LogConfig> getLogConfig;
+    private final Function<String, Uuid> getTopicId;
     private final Writer writer;
 
     @DoNotMutate
     @CoverageIgnore
     public AppendHandler(final SharedState state) {
         this(
-            state,
             new Writer(
                 state.time(),
                 state.brokerId(),
@@ -68,14 +70,16 @@ public class AppendHandler implements Closeable {
                 state.config().produceUploadBackoff(),
                 state.config().produceUploadThreadPoolSize(),
                 state.brokerTopicStats()
-            )
+            ),
+            state.metadata()::getTopicConfig,
+            state.metadata()::getTopicId
         );
     }
 
     // Visible for tests
-    AppendHandler(final SharedState state,
-                  final Writer writer) {
-        this.state = state;
+    AppendHandler(final Writer writer, final Function<String, LogConfig> getLogConfig, final Function<String, Uuid> getTopicId) {
+        this.getTopicId = getTopicId;
+        this.getLogConfig = getLogConfig;
         this.writer = writer;
     }
 
@@ -101,7 +105,7 @@ public class AppendHandler implements Closeable {
 
         final Map<TopicIdPartition, MemoryRecords> entriesPerPartitionEnriched;
         try {
-            entriesPerPartitionEnriched = TopicIdEnricher.enrich(state.metadata(), entriesPerPartition);
+            entriesPerPartitionEnriched = TopicIdEnricher.enrich(getTopicId, entriesPerPartition);
         } catch (final TopicIdEnricher.TopicIdNotFoundException e) {
             LOGGER.error("Cannot find UUID for topic {}", e.topicName);
             return CompletableFuture.completedFuture(entriesPerPartition.entrySet().stream().collect(
@@ -123,11 +127,9 @@ public class AppendHandler implements Closeable {
     }
 
     private Map<String, LogConfig> getLogConfigs(final Map<TopicPartition, MemoryRecords> entriesPerPartition) {
-        final Map<String, Object> defaultTopicConfigs = state.defaultTopicConfigs().get().originals();
         final Map<String, LogConfig> result = new HashMap<>();
         for (final TopicPartition tp : entriesPerPartition.keySet()) {
-            final var overrides = state.metadata().getTopicConfig(tp.topic());
-            result.put(tp.topic(), LogConfig.fromProps(defaultTopicConfigs, overrides));
+            result.computeIfAbsent(tp.topic(), getLogConfig::apply);
         }
         return result;
     }

@@ -20,14 +20,11 @@ package io.aiven.inkless.control_plane;
 import org.apache.kafka.admin.BrokerMetadata;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.storage.internals.log.LogConfig;
 
-import java.util.Map;
-import java.util.Properties;
 import java.util.Set;
 
 public interface MetadataView {
-    Map<String, Object> getDefaultConfig();
-
     Iterable<BrokerMetadata> getAliveBrokers();
 
     Integer getBrokerCount();
@@ -36,7 +33,7 @@ public interface MetadataView {
 
     boolean isDisklessTopic(String topicName);
 
-    Properties getTopicConfig(String topicName);
+    LogConfig getTopicConfig(String topicName);
 
     Set<TopicIdPartition> getDisklessTopicPartitions();
 }

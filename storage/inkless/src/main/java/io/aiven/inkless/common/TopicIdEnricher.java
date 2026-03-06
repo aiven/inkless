@@ -23,6 +23,7 @@ import org.apache.kafka.common.Uuid;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Function;
 
 import io.aiven.inkless.control_plane.MetadataView;
 
@@ -35,10 +36,16 @@ public class TopicIdEnricher {
     public static <T> Map<TopicIdPartition, T> enrich(final MetadataView metadata,
                                                       final Map<TopicPartition, T> input
     ) throws TopicIdNotFoundException {
+        return enrich(metadata::getTopicId, input);
+    }
+
+    public static <T> Map<TopicIdPartition, T> enrich(final Function<String, Uuid> topicIdSupplier,
+                                                      final Map<TopicPartition, T> input
+    ) throws TopicIdNotFoundException {
         final Map<TopicIdPartition, T> result = new HashMap<>();
         for (final var entry : input.entrySet()) {
             final String topicName = entry.getKey().topic();
-            final Uuid topicId = metadata.getTopicId(topicName);
+            final Uuid topicId = topicIdSupplier.apply(topicName);
             // This should not happen as the upstream code should check the topic exists.
             if (topicId.equals(Uuid.ZERO_UUID)) {
                 throw new TopicIdNotFoundException(topicName);

@@ -477,6 +477,10 @@ class DynamicBrokerConfigTest {
     val producerStateManagerConfig: ProducerStateManagerConfig = mock(classOf[ProducerStateManagerConfig])
     when(logManager.producerStateManagerConfig).thenReturn(producerStateManagerConfig)
     when(kafkaServer.logManager).thenReturn(logManager)
+    val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
+    val inklessMetadataView = mock(classOf[metadata.InklessMetadataView])
+    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    when(kafkaServer.replicaManager).thenReturn(replicaManager)
 
     val authorizer = new TestAuthorizer
     when(kafkaServer.authorizer).thenReturn(Some(authorizer))

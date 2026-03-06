@@ -21,6 +21,7 @@ import kafka.coordinator.transaction.TransactionCoordinator
 
 import kafka.log.LogManager
 import kafka.server.{BrokerServer, KafkaConfig, ReplicaManager}
+import kafka.server.metadata.InklessMetadataView
 import kafka.utils.TestUtils
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET
 import org.apache.kafka.clients.admin.{Admin, AlterConfigOp, ConfigEntry, NewTopic}
@@ -43,7 +44,7 @@ import org.junit.jupiter.api.Assertions.{assertEquals, assertNotNull, assertTrue
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito
-import org.mockito.Mockito.{doThrow, mock, verify}
+import org.mockito.Mockito.{doThrow, mock, verify, when}
 import org.mockito.invocation.InvocationOnMock
 import org.mockito.stubbing.Answer
 
@@ -188,6 +189,8 @@ class BrokerMetadataPublisherTest {
     val metadataCache = new KRaftMetadataCache(0, () => KRaftVersion.KRAFT_VERSION_1)
     val logManager = mock(classOf[LogManager])
     val replicaManager = mock(classOf[ReplicaManager])
+    val inklessMetadataView = mock(classOf[InklessMetadataView])
+    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
     val groupCoordinator = mock(classOf[GroupCoordinator])
     val faultHandler = mock(classOf[FaultHandler])
 
@@ -243,6 +246,7 @@ class BrokerMetadataPublisherTest {
 
     verify(groupCoordinator).onResignation(0, OptionalInt.empty())
     verify(groupCoordinator).onResignation(1, OptionalInt.empty())
+    verify(inklessMetadataView).removeTopicConfig(Topic.GROUP_METADATA_TOPIC_NAME)
   }
 
   @Test

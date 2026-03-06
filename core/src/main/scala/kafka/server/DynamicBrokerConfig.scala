@@ -25,6 +25,7 @@ import kafka.cluster.EndPoint
 import kafka.log.{LogCleaner, LogManager}
 import kafka.network.{DataPlaneAcceptor, SocketServer}
 import kafka.server.DynamicBrokerConfig._
+import kafka.server.metadata.InklessMetadataView
 import kafka.utils.{CoreUtils, Logging}
 import org.apache.kafka.common.Reconfigurable
 import org.apache.kafka.common.config.internals.BrokerSecurityConfigs
@@ -50,9 +51,9 @@ import scala.jdk.CollectionConverters._
 /**
   * Dynamic broker configurations may be defined at two levels:
   * <ul>
-  *   <li>Per-broker configurations are persisted at the controller and can be described 
+  *   <li>Per-broker configurations are persisted at the controller and can be described
   *         or altered using AdminClient with the resource name brokerId.</li>
-  *   <li>Cluster-wide default configurations are persisted at the cluster level and can be 
+  *   <li>Cluster-wide default configurations are persisted at the cluster level and can be
   *         described or altered using AdminClient with an empty resource name.</li>
   * </ul>
   * The order of precedence for broker configs is:
@@ -251,6 +252,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
 
     addBrokerReconfigurable(new BrokerDynamicThreadPool(kafkaServer))
     addBrokerReconfigurable(new DynamicLogConfig(kafkaServer.logManager))
+    addBrokerReconfigurable(new DynamicInklessLogConfig(kafkaServer.replicaManager.inklessMetadataView()))
     addBrokerReconfigurable(new DynamicListenerConfig(kafkaServer))
     addBrokerReconfigurable(kafkaServer.socketServer)
     addBrokerReconfigurable(new DynamicProducerStateManagerConfig(kafkaServer.logManager.producerStateManagerConfig))
@@ -687,6 +689,17 @@ class DynamicLogConfig(logManager: LogManager) extends BrokerReconfigurable with
     logManager.reconfigureDefaultLogConfig(new LogConfig(newBrokerDefaults))
 
     updateLogsConfig(newBrokerDefaults.asScala)
+  }
+}
+
+class DynamicInklessLogConfig(inklessMetadataView: InklessMetadataView) extends BrokerReconfigurable {
+
+  override def reconfigurableConfigs: Set[String] = DynamicLogConfig.ReconfigurableConfigs
+
+  override def validateReconfiguration(newConfig: KafkaConfig): Unit = {}
+
+  override def reconfigure(oldConfig: KafkaConfig, newConfig: KafkaConfig): Unit = {
+    inklessMetadataView.reconfigureDefaultLogConfig()
   }
 }
 
