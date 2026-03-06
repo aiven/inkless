@@ -231,7 +231,11 @@ class ActiveFile {
         final Map<TopicIdPartition, MemoryRecords> originalRecords,
         final Map<TopicIdPartition, PartitionResponse> invalidBatches
     ) {
-        this.requestId = Math.max(this.requestId, requestId);
+        // Request IDs are monotonically increasing from the single-threaded buffer writer
+        if (requestId <= this.requestId) {
+            LOGGER.warn("Unexpected request ID order: received {} but current is {}", requestId, this.requestId);
+        }
+        this.requestId = requestId;
         originalRequests.put(requestId, originalRecords);
         awaitingFuturesByRequest.put(requestId, resultFuture);
         if (!invalidBatches.isEmpty()) {

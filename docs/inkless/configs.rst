@@ -87,7 +87,7 @@ Under ``inkless.``
   * Importance: medium
 
 ``produce.upload.backoff.ms``
-  The number of millisecond to back off for before the next upload attempt.
+  The number of milliseconds to back off for before the next upload attempt.
 
   * Type: int
   * Default: 10

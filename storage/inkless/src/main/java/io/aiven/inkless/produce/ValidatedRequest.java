@@ -56,6 +56,7 @@ class ValidatedRequest {
     private final Map<TopicIdPartition, ValidatedBatch> validatedBatches;
     private final Map<TopicIdPartition, PartitionResponse> invalidBatches;
     private final CompletableFuture<Map<TopicIdPartition, PartitionResponse>> resultFuture;
+    private final boolean rotationTrigger;
 
     ValidatedRequest(
         Map<TopicIdPartition, MemoryRecords> originalRecords,
@@ -63,10 +64,33 @@ class ValidatedRequest {
         Map<TopicIdPartition, PartitionResponse> invalidBatches,
         CompletableFuture<Map<TopicIdPartition, PartitionResponse>> resultFuture
     ) {
+        this(originalRecords, validatedBatches, invalidBatches, resultFuture, false);
+    }
+
+    private ValidatedRequest(
+        Map<TopicIdPartition, MemoryRecords> originalRecords,
+        Map<TopicIdPartition, ValidatedBatch> validatedBatches,
+        Map<TopicIdPartition, PartitionResponse> invalidBatches,
+        CompletableFuture<Map<TopicIdPartition, PartitionResponse>> resultFuture,
+        boolean rotationTrigger
+    ) {
         this.originalRecords = Objects.requireNonNull(originalRecords, "originalRecords cannot be null");
         this.validatedBatches = Objects.requireNonNull(validatedBatches, "validatedBatches cannot be null");
         this.invalidBatches = Objects.requireNonNull(invalidBatches, "invalidBatches cannot be null");
         this.resultFuture = Objects.requireNonNull(resultFuture, "resultFuture cannot be null");
+        this.rotationTrigger = rotationTrigger;
+    }
+
+    /**
+     * Creates a special rotation trigger request.
+     * This is used to signal the buffer writer to rotate the active file.
+     */
+    static ValidatedRequest rotationTrigger() {
+        return new ValidatedRequest(
+            Map.of(), Map.of(), Map.of(),
+            CompletableFuture.completedFuture(Map.of()),
+            true
+        );
     }
 
     Map<TopicIdPartition, MemoryRecords> originalRecords() {
@@ -83,6 +107,13 @@ class ValidatedRequest {
 
     CompletableFuture<Map<TopicIdPartition, PartitionResponse>> resultFuture() {
         return resultFuture;
+    }
+
+    /**
+     * Returns true if this is a rotation trigger signal, not a real request.
+     */
+    boolean isRotationTrigger() {
+        return rotationTrigger;
     }
 
     /**

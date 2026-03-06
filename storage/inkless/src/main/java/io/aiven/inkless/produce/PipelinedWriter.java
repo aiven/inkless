@@ -280,7 +280,8 @@ class PipelinedWriter implements ProduceWriter {
             throw new IllegalArgumentException("entriesPerPartition cannot be empty");
         }
 
-        if (entriesPerPartition.keySet().stream().map(TopicIdPartition::topic).distinct().noneMatch(topicConfigs::containsKey)) {
+        // Verify ALL requested topics have configs (fail if ANY is missing)
+        if (!entriesPerPartition.keySet().stream().map(TopicIdPartition::topic).distinct().allMatch(topicConfigs::containsKey)) {
             throw new IllegalArgumentException("Configs are not including all the topics requested");
         }
 
@@ -489,9 +490,11 @@ class PipelinedWriter implements ProduceWriter {
         brokerTopicStats.topicStats(topicPartition.topic()).failedProduceRequestRate().mark();
         brokerTopicStats.allTopicsStats().failedProduceRequestRate().mark();
         if (t instanceof InvalidProducerEpochException) {
+            // InvalidProducerEpochException is expected during producer fencing, log at INFO
             LOGGER.info("Error processing append operation on partition {}", topicPartition, t);
+        } else {
+            LOGGER.error("Error processing append operation on partition {}", topicPartition, t);
         }
-        LOGGER.error("Error processing append operation on partition {}", topicPartition, t);
     }
 
     /**
@@ -643,19 +646,11 @@ class PipelinedWriter implements ProduceWriter {
     }
 
     private ValidatedRequest createRotationTrigger() {
-        // A special ValidatedRequest with empty batches that signals rotation
-        return new ValidatedRequest(
-            Map.of(),
-            Map.of(),
-            Map.of(),
-            CompletableFuture.completedFuture(Map.of())
-        );
+        return ValidatedRequest.rotationTrigger();
     }
 
     private boolean isRotationTrigger(ValidatedRequest request) {
-        return request.originalRecords().isEmpty() &&
-               request.validatedBatches().isEmpty() &&
-               request.invalidBatches().isEmpty();
+        return request.isRotationTrigger();
     }
 
     private void rotateFile(boolean swallowInterrupted) {
