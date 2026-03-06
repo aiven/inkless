@@ -71,8 +71,23 @@ Under ``inkless.``
   * Valid Values: [1,...]
   * Importance: medium
 
+``produce.pipelined.enabled``
+  Whether to use the pipelined writer instead of the lock-based writer. The pipelined writer uses a SEDA architecture to eliminate lock contention: validation is parallelized across N worker threads, and buffer writing is handled by a single dedicated thread. This eliminates the global writer lock bottleneck.
+
+  * Type: boolean
+  * Default: false
+  * Importance: medium
+
+``produce.pipelined.validation.threads``
+  Number of validation worker threads for the pipelined writer. These threads perform CPU-intensive validation work (CRC validation, size checks, offset assignment) in parallel. A value of 0 means auto-detect (uses available processors).
+
+  * Type: int
+  * Default: 0
+  * Valid Values: [0,...]
+  * Importance: medium
+
 ``produce.upload.backoff.ms``
-  The number of millisecond to back off for before the next upload attempt.
+  The number of milliseconds to back off for before the next upload attempt.
 
   * Type: int
   * Default: 10
