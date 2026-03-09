@@ -142,16 +142,16 @@ public class ServerConfigs {
         "This should only be enabled in non-production environments for testing or migration purposes. " +
         "When enabled, topics can have their diskless.enable config changed from false to true.";
 
-    // When enabled, diskless topics are created with RF = rack_count (one replica per rack).
-    // If brokers are registered but none have a rack configured, RF defaults to 1.
-    // If no brokers are registered, topic creation fails with BROKER_NOT_AVAILABLE.
-    // When disabled (default), diskless topics use legacy RF=1 behavior.
+    // When enabled, diskless topics are created with user-defined replication factor.
+    // RF=-1 resolves to default.replication.factor. Explicit RF values (1, 2, 3, ...) are accepted.
+    // Placement uses standard rack-aware assignment.
+    // When disabled (default), diskless topics use legacy RF=1 behavior (RF=-1 resolves to 1, RF > 1 rejected).
     // This config only affects topic creation.
     public static final String DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG = "diskless.managed.rf.enable";
     public static final boolean DISKLESS_MANAGED_REPLICAS_ENABLE_DEFAULT = false;
     public static final String DISKLESS_MANAGED_REPLICAS_ENABLE_DOC = "When enabled, new diskless topics are created " +
-        "with replication factor equal to the number of racks (one replica per rack). " +
-        "If brokers are registered but none have a rack configured, RF defaults to 1. " +
+        "with user-defined replication factor. RF=-1 resolves to default.replication.factor. " +
+        "Explicit RF values are accepted. Placement uses standard rack-aware assignment. " +
         "When disabled, diskless topics use legacy RF=1 behavior. " +
         "This config only affects topic creation.";
 
