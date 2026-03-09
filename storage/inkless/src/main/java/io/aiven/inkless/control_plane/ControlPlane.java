@@ -55,6 +55,18 @@ public interface ControlPlane extends Closeable, Configurable {
 
     void createTopicAndPartitions(Set<CreateTopicAndPartitionsRequest> requests);
 
+    /**
+     * Initialize diskless logs for classic-to-diskless migration.
+     * <p>
+     * An error is returned if the diskless log is already initialized.
+     * This method should only be called by the leader of the partition after the disklessStartOffset
+     * has been successfully stored in the KRaft metadata.
+     *
+     * @param requests the list of initialization requests
+     * @return list of responses, one per request, in the same order as the requests.
+     */
+    List<InitDisklessLogResponse> initDisklessLog(List<InitDisklessLogRequest> requests);
+
     List<DeleteRecordsResponse> deleteRecords(List<DeleteRecordsRequest> requests);
 
     void deleteTopics(Set<Uuid> topicIds);

@@ -91,6 +91,41 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized List<InitDisklessLogResponse> initDisklessLog(final List<InitDisklessLogRequest> requests) {
+        final List<InitDisklessLogResponse> responses = new ArrayList<>();
+        for (final InitDisklessLogRequest request : requests) {
+            final TopicIdPartition topicIdPartition = new TopicIdPartition(
+                request.topicId(), request.partition(), request.topicName());
+
+            final LogInfo existingLog = logs.get(topicIdPartition);
+            if (existingLog != null) {
+                responses.add(InitDisklessLogResponse.alreadyInitialized());
+                continue;
+            }
+
+            final LogInfo logInfo = new LogInfo();
+            logInfo.logStartOffset = request.logStartOffset();
+            logInfo.highWatermark = request.disklessStartOffset();
+            logInfo.disklessStartOffset = request.disklessStartOffset();
+            logs.put(topicIdPartition, logInfo);
+            batches.putIfAbsent(topicIdPartition, new TreeMap<>());
+
+            if (request.producerStates() != null) {
+                final TreeMap<Long, LatestProducerState> partitionProducers =
+                    producers.computeIfAbsent(topicIdPartition, k -> new TreeMap<>());
+                for (final InitDisklessLogProducerState ps : request.producerStates()) {
+                    partitionProducers
+                        .computeIfAbsent(ps.producerId(), k -> LatestProducerState.empty(ps.producerEpoch()))
+                        .addElement(ps.baseSequence(), ps.lastSequence(), ps.assignedOffset(), ps.batchMaxTimestamp());
+                }
+            }
+
+            responses.add(InitDisklessLogResponse.success());
+        }
+        return responses;
+    }
+
+    @Override
     protected synchronized Iterator<CommitBatchResponse> commitFileForValidRequests(
             final String objectKey,
             final ObjectFormat format,
@@ -656,6 +691,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 result.add(GetLogInfoResponse.success(
                     logInfo.logStartOffset,
                     logInfo.highWatermark,
+                    logInfo.disklessStartOffset,
                     logInfo.byteSize
                 ));
             }
@@ -679,6 +715,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         long logStartOffset = 0;
         long highWatermark = 0;
         long byteSize = 0;
+        long disklessStartOffset = 0;
     }
 
     private static class FileInfo {

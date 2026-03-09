@@ -120,9 +120,9 @@ public abstract class AbstractControlPlaneTest {
             new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 1),
             new GetLogInfoRequest(EXISTING_TOPIC_2_ID, 0)
         ))).containsExactly(
-            GetLogInfoResponse.success(0, 0, 0),
-            GetLogInfoResponse.success(0, 0, 0),
-            GetLogInfoResponse.success(0, 0, 0)
+            GetLogInfoResponse.success(0, 0, 0, 0),
+            GetLogInfoResponse.success(0, 0, 0, 0),
+            GetLogInfoResponse.success(0, 0, 0, 0)
         );
     }
 
@@ -149,7 +149,7 @@ public abstract class AbstractControlPlaneTest {
             CommitBatchResponse.of(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
         );
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 10, 10));
+            .containsExactly(GetLogInfoResponse.success(0, 10, 0, 10));
 
         final CommitBatchRequest successfulRequest2 = CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 100, 10, 1, 10, 1000, TimestampType.CREATE_TIME);
         final List<CommitBatchResponse> commitResponse2 = controlPlane.commitFile(
@@ -167,7 +167,7 @@ public abstract class AbstractControlPlaneTest {
             CommitBatchResponse.of(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
         );
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 20, 20));
+            .containsExactly(GetLogInfoResponse.success(0, 20, 0, 20));
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(
@@ -323,7 +323,7 @@ public abstract class AbstractControlPlaneTest {
             new CreateTopicAndPartitionsRequest(newTopic1Id, newTopic1Name, 1)
         ));
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(newTopic1Id, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 0, 0));
+            .containsExactly(GetLogInfoResponse.success(0, 0, 0, 0));
 
         // Produce some data to be sure it's not affected later.
         final String objectKey = "a1";
@@ -347,10 +347,10 @@ public abstract class AbstractControlPlaneTest {
             new GetLogInfoRequest(newTopic2Id, 0),
             new GetLogInfoRequest(newTopic2Id, 1)
         ))).containsExactly(
-            GetLogInfoResponse.success(0, 1, FILE_SIZE),
-            GetLogInfoResponse.success(0, 0, 0),
-            GetLogInfoResponse.success(0, 0, 0),
-            GetLogInfoResponse.success(0, 0, 0)
+            GetLogInfoResponse.success(0, 1, 0, FILE_SIZE),
+            GetLogInfoResponse.success(0, 0, 0, 0),
+            GetLogInfoResponse.success(0, 0, 0, 0),
+            GetLogInfoResponse.success(0, 0, 0, 0)
         );
 
         final List<FindBatchResponse> findBatchResponsesAfterDelete = controlPlane.findBatches(findBatchRequests, Integer.MAX_VALUE, 0
@@ -368,10 +368,10 @@ public abstract class AbstractControlPlaneTest {
             new GetLogInfoRequest(newTopic2Id, 0),
             new GetLogInfoRequest(newTopic2Id, 1)
         ))).containsExactly(
-            GetLogInfoResponse.success(0, 1, FILE_SIZE),
-            GetLogInfoResponse.success(0, 0, 0),
-            GetLogInfoResponse.success(0, 0, 0),
-            GetLogInfoResponse.success(0, 0, 0)
+            GetLogInfoResponse.success(0, 1, 0, FILE_SIZE),
+            GetLogInfoResponse.success(0, 0, 0, 0),
+            GetLogInfoResponse.success(0, 0, 0, 0),
+            GetLogInfoResponse.success(0, 0, 0, 0)
         );
 
         final List<FindBatchResponse> findBatchResponsesAfterDelete2 = controlPlane.findBatches(findBatchRequests, Integer.MAX_VALUE, 0
@@ -433,7 +433,7 @@ public abstract class AbstractControlPlaneTest {
             )
         );
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 10, FILE_SIZE));
+            .containsExactly(GetLogInfoResponse.success(0, 10, 0, FILE_SIZE));
 
         final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)),
@@ -459,7 +459,7 @@ public abstract class AbstractControlPlaneTest {
         );
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(3, 10, FILE_SIZE));
+            .containsExactly(GetLogInfoResponse.success(3, 10, 0, FILE_SIZE));
     }
 
     @Test
@@ -475,7 +475,7 @@ public abstract class AbstractControlPlaneTest {
             )
         );
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 10, FILE_SIZE));
+            .containsExactly(GetLogInfoResponse.success(0, 10, 0, FILE_SIZE));
 
         controlPlane.commitFile(
             objectKey2, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
@@ -484,7 +484,7 @@ public abstract class AbstractControlPlaneTest {
             )
         );
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 20, FILE_SIZE * 2));
+            .containsExactly(GetLogInfoResponse.success(0, 20, 0, FILE_SIZE * 2));
 
         controlPlane.commitFile(
             objectKey3, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
@@ -493,7 +493,7 @@ public abstract class AbstractControlPlaneTest {
             )
         );
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 30, FILE_SIZE * 3));
+            .containsExactly(GetLogInfoResponse.success(0, 30, 0, FILE_SIZE * 3));
 
         final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)),
@@ -524,7 +524,7 @@ public abstract class AbstractControlPlaneTest {
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(19, 30, FILE_SIZE * 2));
+            .containsExactly(GetLogInfoResponse.success(19, 30, 0, FILE_SIZE * 2));
     }
 
     @Test
@@ -538,7 +538,7 @@ public abstract class AbstractControlPlaneTest {
             )
         );
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 10, FILE_SIZE));
+            .containsExactly(GetLogInfoResponse.success(0, 10, 0, FILE_SIZE));
 
         final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)),
@@ -562,7 +562,7 @@ public abstract class AbstractControlPlaneTest {
 
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 10, FILE_SIZE));
+            .containsExactly(GetLogInfoResponse.success(0, 10, 0, FILE_SIZE));
     }
 
     @Test
@@ -576,7 +576,7 @@ public abstract class AbstractControlPlaneTest {
             )
         );
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 10, FILE_SIZE));
+            .containsExactly(GetLogInfoResponse.success(0, 10, 0, FILE_SIZE));
 
         final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
             new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, org.apache.kafka.common.requests.DeleteRecordsRequest.HIGH_WATERMARK)
@@ -595,7 +595,7 @@ public abstract class AbstractControlPlaneTest {
 
         assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(new FileToDelete(objectKey1, TimeUtils.now(time)));
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(10, 10, 0));
+            .containsExactly(GetLogInfoResponse.success(10, 10, 0, 0));
     }
 
     @ParameterizedTest
@@ -630,7 +630,7 @@ public abstract class AbstractControlPlaneTest {
 
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 10, FILE_SIZE));
+            .containsExactly(GetLogInfoResponse.success(0, 10, 0, FILE_SIZE));
     }
 
     @Test
@@ -705,7 +705,7 @@ public abstract class AbstractControlPlaneTest {
                     EnforceRetentionResponse.success(0, 0, 0)
                 );
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(0, 0, 0));
+                    .containsExactly(GetLogInfoResponse.success(0, 0, 0, 0));
             }
 
             @Test
@@ -726,7 +726,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getLogStartOffset()).isEqualTo(0);
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
+                    .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, 0, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
             }
 
             @ParameterizedTest
@@ -750,7 +750,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, BATCH_3_SIZE));
+                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, 0, BATCH_3_SIZE));
             }
 
             @Test
@@ -759,7 +759,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getLogStartOffset()).isEqualTo(0L);
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
+                    .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, 0, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
 
                 final var responses1 = controlPlane.enforceRetention(
                     List.of(
@@ -774,7 +774,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
 
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(BATCH_1_RECORDS, EXPECTED_HIGH_WATERMARK, BATCH_2_SIZE + BATCH_3_SIZE));
+                    .containsExactly(GetLogInfoResponse.success(BATCH_1_RECORDS, EXPECTED_HIGH_WATERMARK, 0, BATCH_2_SIZE + BATCH_3_SIZE));
                 assertThat(controlPlane.getFilesToDelete()).isEmpty();
 
                 final var responses2 = controlPlane.enforceRetention(
@@ -790,7 +790,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
 
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(BATCH_3_RECORDS, EXPECTED_HIGH_WATERMARK, BATCH_3_SIZE));
+                    .containsExactly(GetLogInfoResponse.success(BATCH_3_RECORDS, EXPECTED_HIGH_WATERMARK, 0, BATCH_3_SIZE));
                 assertThat(controlPlane.getFilesToDelete()).isEmpty();
 
                 final var responses3 = controlPlane.enforceRetention(
@@ -806,7 +806,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
 
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(EXPECTED_HIGH_WATERMARK, EXPECTED_HIGH_WATERMARK, 0));
+                    .containsExactly(GetLogInfoResponse.success(EXPECTED_HIGH_WATERMARK, EXPECTED_HIGH_WATERMARK, 0, 0));
                 assertThat(controlPlane.getFilesToDelete()).containsExactly(
                     new FileToDelete(FILE_NAME, TimeUtils.now(time))
                 );
@@ -831,7 +831,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, 0));
+                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, 0, 0));
                 assertThat(controlPlane.getFilesToDelete()).containsExactly(
                     new FileToDelete(FILE_NAME, TimeUtils.now(time))
                 );
@@ -852,7 +852,7 @@ public abstract class AbstractControlPlaneTest {
                     0, 0, 0
                 ));
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(0, 0, 0));
+                    .containsExactly(GetLogInfoResponse.success(0, 0, 0, 0));
             }
 
             @Test
@@ -874,7 +874,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getLogStartOffset()).isEqualTo(0);
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
+                    .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, 0, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
             }
 
             @Test
@@ -897,7 +897,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, BATCH_2_SIZE + BATCH_3_SIZE));
+                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, 0, BATCH_2_SIZE + BATCH_3_SIZE));
             }
 
 
@@ -907,7 +907,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getLogStartOffset()).isEqualTo(0L);
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
+                    .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, 0, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
 
                 time.setCurrentTimeMs(BATCH_3_MAX_TIMESTAMP + 1);
                 final var responses1 = controlPlane.enforceRetention(
@@ -923,7 +923,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
 
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(BATCH_1_RECORDS, EXPECTED_HIGH_WATERMARK, BATCH_2_SIZE + BATCH_3_SIZE));
+                    .containsExactly(GetLogInfoResponse.success(BATCH_1_RECORDS, EXPECTED_HIGH_WATERMARK, 0, BATCH_2_SIZE + BATCH_3_SIZE));
                 assertThat(controlPlane.getFilesToDelete()).isEmpty();
 
                 final var responses2 = controlPlane.enforceRetention(
@@ -939,7 +939,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
 
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(BATCH_3_RECORDS, EXPECTED_HIGH_WATERMARK, BATCH_3_SIZE));
+                    .containsExactly(GetLogInfoResponse.success(BATCH_3_RECORDS, EXPECTED_HIGH_WATERMARK, 0, BATCH_3_SIZE));
                 assertThat(controlPlane.getFilesToDelete()).isEmpty();
 
                 final var responses3 = controlPlane.enforceRetention(
@@ -955,7 +955,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
 
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(EXPECTED_HIGH_WATERMARK, EXPECTED_HIGH_WATERMARK, 0));
+                    .containsExactly(GetLogInfoResponse.success(EXPECTED_HIGH_WATERMARK, EXPECTED_HIGH_WATERMARK, 0, 0));
                 assertThat(controlPlane.getFilesToDelete()).containsExactly(
                     new FileToDelete(FILE_NAME, TimeUtils.now(time))
                 );
@@ -981,7 +981,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, 0));
+                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, 0, 0));
                 assertThat(controlPlane.getFilesToDelete()).containsExactly(
                     new FileToDelete(FILE_NAME, TimeUtils.now(time))
                 );
@@ -1010,7 +1010,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getLogStartOffset()).isEqualTo(0L);
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
+                    .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, 0, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
             }
 
             /**
@@ -1060,7 +1060,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
                 assertThat(getHighWatermark()).isEqualTo(expectedHighWatermark);
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, expectedHighWatermark, batch4Size + batch5Size + batch6Size + batch7Size));
+                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, expectedHighWatermark, 0, batch4Size + batch5Size + batch6Size + batch7Size));
             }
 
             /**
@@ -1104,7 +1104,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, BATCH_2_SIZE + BATCH_3_SIZE));
+                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, 0, BATCH_2_SIZE + BATCH_3_SIZE));
             }
         }
 
@@ -1133,7 +1133,7 @@ public abstract class AbstractControlPlaneTest {
             assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
             assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
             assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, BATCH_3_SIZE));
+                .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, 0, BATCH_3_SIZE));
         }
 
         @Test
@@ -1155,7 +1155,7 @@ public abstract class AbstractControlPlaneTest {
             assertThat(getLogStartOffset()).isEqualTo(0L);
             assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
             assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
+                .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, 0, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
         }
 
         @Test
@@ -1690,7 +1690,7 @@ public abstract class AbstractControlPlaneTest {
             CommitBatchResponse.success(40, time.milliseconds(), 0, "a", requests.get(4))
         );
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 50, batchSize * 5));
+            .containsExactly(GetLogInfoResponse.success(0, 50, 0, batchSize * 5));
 
         // Try to produce a duplicate.
         final String duplicateFile1Key = "b";
@@ -1720,7 +1720,7 @@ public abstract class AbstractControlPlaneTest {
         // The file must be deleted as it doesn't contain alive batches after rejecting its only batch.
         assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(duplicateFile1Key);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 50, batchSize * 5));
+            .containsExactly(GetLogInfoResponse.success(0, 50, 0, batchSize * 5));
 
         // Make the control plane to forget the original.
         final List<CommitBatchRequest> requests2 = List.of(
@@ -1732,7 +1732,7 @@ public abstract class AbstractControlPlaneTest {
             CommitBatchResponse.success(50, time.milliseconds(), 0, "c", requests2.get(0))
         );
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 60, batchSize * 6));
+            .containsExactly(GetLogInfoResponse.success(0, 60, 0, batchSize * 6));
 
         // Try to produce a duplicate again.
         final String duplicateFile2Key = "d";
@@ -1744,7 +1744,7 @@ public abstract class AbstractControlPlaneTest {
         // The file must also be deleted.
         assertThat(controlPlane.getFilesToDelete()).map(FileToDelete::objectKey).containsExactly(duplicateFile1Key, duplicateFile2Key);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 60, batchSize * 6));
+            .containsExactly(GetLogInfoResponse.success(0, 60, 0, batchSize * 6));
     }
 
     @Test
@@ -1760,7 +1760,7 @@ public abstract class AbstractControlPlaneTest {
         // The second file must be deleted as it doesn't contain alive batches after rejecting its only batch.
         assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(fileKey);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 0, 0));
+            .containsExactly(GetLogInfoResponse.success(0, 0, 0, 0));
     }
 
     @ParameterizedTest
@@ -1781,7 +1781,7 @@ public abstract class AbstractControlPlaneTest {
             .extracting(CommitBatchResponse::errors)
             .containsExactly(Errors.NONE, Errors.OUT_OF_ORDER_SEQUENCE_NUMBER);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 11, batchSize));  // only one batch
+            .containsExactly(GetLogInfoResponse.success(0, 11, 0, batchSize));  // only one batch
     }
 
     @ParameterizedTest
@@ -1801,7 +1801,7 @@ public abstract class AbstractControlPlaneTest {
             .extracting(CommitBatchResponse::errors)
             .containsExactly(Errors.NONE);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 11, batchSize));
+            .containsExactly(GetLogInfoResponse.success(0, 11, 0, batchSize));
 
         final var file1Size = 100;
         final String file1Key = "b";
@@ -1815,7 +1815,7 @@ public abstract class AbstractControlPlaneTest {
         // The second file must be deleted as it doesn't contain alive batches after rejecting its only batch.
         assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(file1Key);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 11, batchSize));
+            .containsExactly(GetLogInfoResponse.success(0, 11, 0, batchSize));
     }
 
     @Test
@@ -1829,7 +1829,7 @@ public abstract class AbstractControlPlaneTest {
             .extracting(CommitBatchResponse::errors)
             .containsExactly(Errors.NONE, Errors.INVALID_PRODUCER_EPOCH);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 15, batchSize));  // only one batch
+            .containsExactly(GetLogInfoResponse.success(0, 15, 0, batchSize));  // only one batch
     }
 
     @Test
@@ -1842,7 +1842,7 @@ public abstract class AbstractControlPlaneTest {
             .extracting(CommitBatchResponse::errors)
             .containsExactly(Errors.NONE);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 15, batchSize));
+            .containsExactly(GetLogInfoResponse.success(0, 15, 0, batchSize));
 
         final var file1Size = 100;
         final String file1Key = "b";
@@ -1856,7 +1856,7 @@ public abstract class AbstractControlPlaneTest {
         // The second file must be deleted as it doesn't contain alive batches after rejecting its only batch.
         assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(file1Key);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-            .containsExactly(GetLogInfoResponse.success(0, 15, batchSize));
+            .containsExactly(GetLogInfoResponse.success(0, 15, 0, batchSize));
     }
 
     @Nested
@@ -1979,8 +1979,8 @@ public abstract class AbstractControlPlaneTest {
                 new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0),
                 new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 1)
             ))).containsExactly(
-                GetLogInfoResponse.success(0, 226, partition0LogSize),
-                GetLogInfoResponse.success(0, 252, partition1LogSize)
+                GetLogInfoResponse.success(0, 226, 0, partition0LogSize),
+                GetLogInfoResponse.success(0, 252, 0, partition1LogSize)
             );
 
             time.sleep(1);
@@ -2003,8 +2003,8 @@ public abstract class AbstractControlPlaneTest {
                 new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0),
                 new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 1)
             ))).containsExactly(
-                GetLogInfoResponse.success(0, 226, partition0LogSize),
-                GetLogInfoResponse.success(0, 252, partition1LogSize)
+                GetLogInfoResponse.success(0, 226, 0, partition0LogSize),
+                GetLogInfoResponse.success(0, 252, 0, partition1LogSize)
             );
 
             final var findBatchResult = controlPlane.findBatches(
@@ -2070,7 +2070,7 @@ public abstract class AbstractControlPlaneTest {
                 ));
             final int expectedTopic2Partition0LogSize = file2Batch2Size + file3Batch1Size;
             assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_2_ID, 0))))
-                .containsExactly(GetLogInfoResponse.success(0, 252, expectedTopic2Partition0LogSize));
+                .containsExactly(GetLogInfoResponse.success(0, 252, 0, expectedTopic2Partition0LogSize));
 
             final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
 
@@ -2090,7 +2090,7 @@ public abstract class AbstractControlPlaneTest {
                 new MergedFileBatch(BatchMetadata.of(EXISTING_TOPIC_2_ID_PARTITION_0, fileSize1 + fileSize2, file3Batch1Size, 50, 250, committedAt, 4000, TimestampType.CREATE_TIME), List.of(4L))
             ));
             assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_2_ID, 0))))
-                .containsExactly(GetLogInfoResponse.success(0, 252, expectedTopic2Partition0LogSize));
+                .containsExactly(GetLogInfoResponse.success(0, 252, 0, expectedTopic2Partition0LogSize));
 
             // Obviously, the deleted topic should not be there, but the other one should be fully retrievable.
             final var findBatchResult = controlPlane.findBatches(
@@ -2127,7 +2127,7 @@ public abstract class AbstractControlPlaneTest {
             controlPlane.commitFile("obj2", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, 3, fileSize,
                     List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 0, 200, 2000, TimestampType.LOG_APPEND_TIME)));
             assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                .containsExactly(GetLogInfoResponse.success(0, 302, batchSize * 2));
+                .containsExactly(GetLogInfoResponse.success(0, 302, 0, batchSize * 2));
 
             final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
 
@@ -2162,7 +2162,7 @@ public abstract class AbstractControlPlaneTest {
             expectedFilesToDelete.add(new FileToDelete("obj2", deletedAt));
             assertThat(controlPlane.getFilesToDelete()).hasSameElementsAs(expectedFilesToDelete);
             assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                .containsExactly(GetLogInfoResponse.success(110, 302, batchSize));
+                .containsExactly(GetLogInfoResponse.success(110, 302, 0, batchSize));
         }
 
         @ParameterizedTest
@@ -2176,7 +2176,7 @@ public abstract class AbstractControlPlaneTest {
             controlPlane.commitFile("obj2", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, 2, fileSize,
                     List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
             assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
-                .containsExactly(GetLogInfoResponse.success(0, 202, batchSize * 2));
+                .containsExactly(GetLogInfoResponse.success(0, 202, 0, batchSize * 2));
 
             time.sleep(1);
             final Instant deletedAt = TimeUtils.now(time);
@@ -2251,6 +2251,130 @@ public abstract class AbstractControlPlaneTest {
             time.sleep(10);
             assertThat(controlPlane.getFileMergeWorkItem())
                 .isEqualTo(new FileMergeWorkItem(2L, TimeUtils.now(time), expectedFiles));
+        }
+    }
+
+    @Nested
+    class InitDisklessLog {
+        private static final String NEW_TOPIC = "topic-new";
+        private static final Uuid NEW_TOPIC_ID = new Uuid(30, 30);
+
+        @Test
+        void initNewPartition() {
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 100, 100, List.of())
+            ));
+            assertThat(responses).containsExactly(InitDisklessLogResponse.success());
+
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(100, 100, 100, 0));
+        }
+
+        @Test
+        void alreadyInitialized() {
+            controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 50, 50, List.of())
+            ));
+
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 50, 50, List.of())
+            ));
+            assertThat(responses).containsExactly(InitDisklessLogResponse.alreadyInitialized());
+
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(50, 50, 50, 0));
+        }
+
+        @Test
+        void existingTopicReturnAlreadyInitialized() {
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, 0, 0, 0, List.of())
+            ));
+            assertThat(responses).containsExactly(InitDisklessLogResponse.alreadyInitialized());
+        }
+
+        @Test
+        void withProducerStates() {
+            final long producerId = 42L;
+            final short producerEpoch = 1;
+            final int baseSequence = 5;
+            final int lastSequence = 9;
+            final long assignedOffset = 95;
+            final long batchMaxTimestamp = 5000;
+
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 100, 100,
+                    List.of(new InitDisklessLogProducerState(
+                        producerId, producerEpoch, baseSequence, lastSequence, assignedOffset, batchMaxTimestamp)))
+            ));
+            assertThat(responses).containsExactly(InitDisklessLogResponse.success());
+
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(100, 100, 100, 0));
+        }
+
+        @Test
+        void withProducerStatesThenProduceIdempotentBatch() {
+            final long producerId = 42L;
+            final short producerEpoch = 1;
+            final int lastSequence = 4;
+            final long assignedOffset = 95;
+
+            controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 100, 100,
+                    List.of(new InitDisklessLogProducerState(
+                        producerId, producerEpoch, 0, lastSequence, assignedOffset, 5000)))
+            ));
+
+            final TopicIdPartition tidp = new TopicIdPartition(NEW_TOPIC_ID, 0, NEW_TOPIC);
+
+            final CommitBatchRequest request = CommitBatchRequest.idempotent(
+                0, tidp, 0, 10, 1, 10, 6000,
+                TimestampType.CREATE_TIME, producerId, producerEpoch, 5, 5);
+            final var commitResponses = controlPlane.commitFile(
+                "obj1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request));
+            assertThat(commitResponses).hasSize(1);
+            assertThat(commitResponses.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(commitResponses.get(0).assignedBaseOffset()).isEqualTo(100);
+        }
+
+        @Test
+        void rejectsDisklessStartOffsetLessThanLogStartOffset() {
+            assertThatThrownBy(() ->
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 200, 100, List.of())
+            ).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("disklessStartOffset (100) must be >= logStartOffset (200)");
+        }
+
+        @Test
+        void initWithDisklessStartOffsetGreaterThanLogStartOffset() {
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 50, 100, List.of())
+            ));
+            assertThat(responses).containsExactly(InitDisklessLogResponse.success());
+
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(50, 100, 100, 0));
+        }
+
+        @Test
+        void multiplePartitions() {
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 100, 100, List.of()),
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 1, 200, 200, List.of())
+            ));
+            assertThat(responses).containsExactly(
+                InitDisklessLogResponse.success(),
+                InitDisklessLogResponse.success()
+            );
+
+            assertThat(controlPlane.getLogInfo(List.of(
+                new GetLogInfoRequest(NEW_TOPIC_ID, 0),
+                new GetLogInfoRequest(NEW_TOPIC_ID, 1)
+            ))).containsExactly(
+                GetLogInfoResponse.success(100, 100, 100, 0),
+                GetLogInfoResponse.success(200, 200, 200, 0)
+            );
         }
     }
 
