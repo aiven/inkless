@@ -25,7 +25,6 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.errors.BrokerIdNotRegisteredException;
-import org.apache.kafka.common.errors.BrokerNotAvailableException;
 import org.apache.kafka.common.errors.InvalidPartitionsException;
 import org.apache.kafka.common.errors.InvalidReplicaAssignmentException;
 import org.apache.kafka.common.errors.InvalidReplicationFactorException;
@@ -825,13 +824,12 @@ public class ReplicationControlManager {
                         "when the diskless storage system is disabled. " +
                         "Please enable the diskless storage system to create diskless topics.");
             }
-            // Diskless RF validation: accept -1 (auto) or 1 (backward compat) only.
-            // Explicit RF > 1 rejected: users shouldn't need to know rack topology.
-            // Note: RF=1 is accepted for API backward compatibility, but when managed replicas
-            // are enabled, the actual RF is always computed from rack topology (rackCardinality).
-            if (Math.abs(topic.replicationFactor()) != 1) {
+            // Diskless RF validation:
+            // When managed replicas enabled: any valid RF accepted (standard Kafka validation applies later).
+            // When managed replicas disabled (legacy): only RF=1 or RF=-1 (resolves to 1).
+            if (!isDisklessManagedReplicasEnabled && Math.abs(topic.replicationFactor()) != 1) {
                 return new ApiError(Errors.INVALID_REPLICATION_FACTOR,
-                    "Replication factor for diskless topics must be 1 or -1 (system-computed from rack topology).");
+                    "Replication factor for diskless topics must be 1 or -1 when managed replicas are disabled.");
             }
         }
 
@@ -895,17 +893,15 @@ public class ReplicationControlManager {
             int numPartitions = topic.numPartitions() == -1 ?
                 defaultNumPartitions : topic.numPartitions();
             short classicReplicationFactor = topic.replicationFactor() == -1 ? defaultReplicationFactor : topic.replicationFactor();
-            // For managed diskless: always use rackCardinality() regardless of requested RF.
-            // RF=1 in the request is accepted for backward compat but overridden here.
-            // Throws BrokerNotAvailableException or InvalidReplicationFactorException on failure,
-            // which are caught by the caller and converted to ApiError.
-            short disklessReplicationFactor = disklessEnabled && isDisklessManagedReplicasEnabled ? rackCardinality() : 1;
+            // For managed diskless: use same resolution as classic (RF=-1 → defaultReplicationFactor, else user value).
+            // For unmanaged diskless (legacy): always RF=1.
+            short disklessReplicationFactor = isDisklessManagedReplicasEnabled ? classicReplicationFactor : 1;
             short replicationFactor = disklessEnabled ? disklessReplicationFactor : classicReplicationFactor;
             try {
                 TopicAssignment topicAssignment;
                 Predicate<Integer> brokerFilter;
-                // Diskless managed-replicas is equivalent to classic topic assignment,
-                // but RF is defined by number of racks
+                // Diskless managed-replicas uses standard rack-aware assignment
+                // with user-defined RF (or defaultReplicationFactor if RF=-1)
                 if (!disklessEnabled || isDisklessManagedReplicasEnabled) {
                     topicAssignment = clusterControl.replicaPlacer().place(new PlacementSpec(
                         0,
@@ -974,32 +970,6 @@ public class ReplicationControlManager {
                 build()));
         }
         return ApiError.NONE;
-    }
-
-    /**
-     * Computes the replication factor for diskless topics based on rack topology.
-     * Returns the number of distinct racks in the cluster, ensuring one replica per rack.
-     * Brokers with no rack configured are all treated as belonging to a single logical rack,
-     * so if at least one broker is registered but none have a rack configured, the result is RF=1.
-     *
-     * @return the number of distinct racks as a short
-     * @throws BrokerNotAvailableException if no brokers are registered
-     * @throws InvalidReplicationFactorException if rack count exceeds Short.MAX_VALUE
-     */
-    private short rackCardinality() {
-        final Collection<BrokerRegistration> brokerRegistrations = clusterControl.brokerRegistrations().values();
-        final long racks = brokerRegistrations.stream()
-            .map(BrokerRegistration::rack)
-            .distinct()
-            .count();
-        if (racks > Short.MAX_VALUE) {
-            // Unfeasible but technically possible scenario.
-            // Would require more than 32,768 brokers and each with a different rack
-            throw new InvalidReplicationFactorException("Unexpected scenario: rack cardinality is not within short range (" + racks + "). Failing topic creation.");
-        }
-        if (racks == 0)
-            throw new BrokerNotAvailableException("No brokers available to create diskless topic.");
-        return (short) racks;
     }
 
     private boolean disklessEnabledOnTopicCreation(final Map<String, String> creationConfigs) {

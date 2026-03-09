@@ -4596,12 +4596,10 @@ public class ReplicationControlManagerTest {
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
             ControllerResult<CreateTopicsResponseData> result =
                 replicationControl.createTopics(requestContext, request, Set.of("foo"));
-            // Then the topic creation should fail with BROKER_NOT_AVAILABLE error
-            CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
-            expectedResponse.topics().add(new CreatableTopicResult().setName("foo").
-                setErrorCode(Errors.BROKER_NOT_AVAILABLE.code()).
-                setErrorMessage("No brokers available to create diskless topic."));
-            assertEquals(expectedResponse, withoutConfigs(result.response()));
+            // Then the topic creation should fail with INVALID_REPLICATION_FACTOR
+            // (standard Kafka behavior when no brokers can satisfy the requested RF)
+            assertEquals(Errors.INVALID_REPLICATION_FACTOR.code(),
+                result.response().topics().find("foo").errorCode());
 
             // Given brokers are registered
             ctx.registerBrokers(0, 1, 2);
@@ -4610,10 +4608,11 @@ public class ReplicationControlManagerTest {
             // When creating a topic with diskless enabled
             ControllerResult<CreateTopicsResponseData> result2 =
                 replicationControl.createTopics(requestContext, request, Set.of("foo"));
-            // Then the topic creation should succeed, regardless of fenced brokers
+            // Then the topic creation should succeed with RF=3 (default.replication.factor),
+            // regardless of fenced brokers
             CreateTopicsResponseData expectedResponse2 = new CreateTopicsResponseData();
             expectedResponse2.topics().add(new CreatableTopicResult().setName("foo").
-                setNumPartitions(1).setReplicationFactor((short) 1).
+                setNumPartitions(1).setReplicationFactor((short) 3).
                 setErrorMessage(null).setErrorCode((short) 0).
                 setTopicId(result2.response().topics().find("foo").topicId()));
             CreateTopicsResponseData response = result2.response();
@@ -4626,10 +4625,10 @@ public class ReplicationControlManagerTest {
             // When creating a topic with diskless enabled
             ControllerResult<CreateTopicsResponseData> result3 =
                 replicationControl.createTopics(requestContext, request, Set.of("foo"));
-            // Then the topic creation should succeed, regardless of the RF
+            // Then the topic creation should succeed with RF=3 (default.replication.factor)
             CreateTopicsResponseData expectedResponse3 = new CreateTopicsResponseData();
             expectedResponse3.topics().add(new CreatableTopicResult().setName("foo").
-                setNumPartitions(1).setReplicationFactor((short) 1).
+                setNumPartitions(1).setReplicationFactor((short) 3).
                 setErrorMessage(null).setErrorCode((short) 0).
                 setTopicId(result3.response().topics().find("foo").topicId()));
             assertEquals(expectedResponse3, withoutConfigs(result3.response()));
@@ -4644,18 +4643,11 @@ public class ReplicationControlManagerTest {
 
             // Given the topic is registered
             ctx.replay(result3.records());
-            assertEquals(
-                new PartitionRegistration.Builder().setReplicas(new int[] {1}).
-                    setDirectories(new Uuid[] {
-                        Uuid.fromString("TESTBROKER00001DIRAAAA"),
-                    }).
-                    setIsr(new int[] {1})
-                    .setLeader(1)
-                    .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
-                    .setLeaderEpoch(0)
-                    .setPartitionEpoch(0)
-                    .build(),
-                replicationControl.getPartition(((TopicRecord) result3.records().get(0).message()).topicId(), 0));
+            PartitionRegistration partition = replicationControl.getPartition(
+                ((TopicRecord) result3.records().get(0).message()).topicId(), 0);
+            assertEquals(3, partition.replicas.length, "RF should be 3 (default.replication.factor)");
+            assertEquals(3, partition.isr.length, "All brokers are active so ISR should equal replicas");
+            assertTrue(partition.leader >= 0, "Leader should be elected");
 
             // When creating a topic with diskless enabled and already exists
             ControllerResult<CreateTopicsResponseData> result4 =
@@ -4697,12 +4689,10 @@ public class ReplicationControlManagerTest {
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
             ControllerResult<CreateTopicsResponseData> result =
                 replicationControl.createTopics(requestContext, request, Set.of("foo"));
-            // Then the topic creation should fail with BROKER_NOT_AVAILABLE error
-            CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
-            expectedResponse.topics().add(new CreatableTopicResult().setName("foo").
-                setErrorCode(Errors.BROKER_NOT_AVAILABLE.code()).
-                setErrorMessage("No brokers available to create diskless topic."));
-            assertEquals(expectedResponse, withoutConfigs(result.response()));
+            // Then the topic creation should fail with INVALID_REPLICATION_FACTOR
+            // (standard Kafka behavior when no brokers can satisfy the requested RF)
+            assertEquals(Errors.INVALID_REPLICATION_FACTOR.code(),
+                result.response().topics().find("foo").errorCode());
 
             // Given brokers are registered
             ctx.registerBrokersWithRacks(0, "a", 1, "b", 2, "c");
@@ -4775,7 +4765,6 @@ public class ReplicationControlManagerTest {
         @CsvSource({
             "1, -2, INVALID_REPLICATION_FACTOR",
             "1, 0, INVALID_REPLICATION_FACTOR",
-            "1, 2, INVALID_REPLICATION_FACTOR",
             "-2, 1, INVALID_PARTITIONS",
             "0, 1, INVALID_PARTITIONS",
         })
@@ -5049,7 +5038,7 @@ public class ReplicationControlManagerTest {
             CreatableTopicResult createResult = ctx.createTestTopic(
                 "foo",
                 1,
-                (short) 1,
+                (short) 3,
                 Map.of(DISKLESS_ENABLE_CONFIG, "true"),
                 NONE.code()
             );
@@ -5117,7 +5106,7 @@ public class ReplicationControlManagerTest {
             CreatableTopicResult createResult = ctx.createTestTopic(
                 "foo",
                 1,
-                (short) 1,
+                (short) 3,
                 Map.of(DISKLESS_ENABLE_CONFIG, "true"),
                 NONE.code()
             );
@@ -5196,7 +5185,7 @@ public class ReplicationControlManagerTest {
             CreatableTopicResult createResult = ctx.createTestTopic(
                 "foo",
                 numPartitions,
-                (short) 1,
+                (short) 3,
                 Map.of(DISKLESS_ENABLE_CONFIG, "true"),
                 NONE.code()
             );
@@ -5233,6 +5222,94 @@ public class ReplicationControlManagerTest {
                 Map.of(DISKLESS_ENABLE_CONFIG, "true"),
                 NONE.code()
             );
+        }
+
+        @Test
+        void testCreateDisklessTopicWithExplicitRF() {
+            // Verify that explicit RF=2 is honored (not overridden to rack count or rejected).
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokersWithRacks(0, "a", 1, "b", 2, "c");
+            ctx.unfenceBrokers(0, 1, 2);
+
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+            CreateTopicsRequestData request = new CreateTopicsRequestData();
+            request.topics().add(new CreatableTopic().setName("foo")
+                .setNumPartitions(2).setReplicationFactor((short) 2)
+                .setConfigs(new CreateTopicsRequestData.CreatableTopicConfigCollection(List.of(
+                    new CreateTopicsRequestData.CreatableTopicConfig()
+                        .setName(DISKLESS_ENABLE_CONFIG)
+                        .setValue("true")
+                ).iterator())));
+
+            ControllerResult<CreateTopicsResponseData> result =
+                replication.createTopics(requestContext, request, Set.of("foo"));
+            assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+            assertEquals(2, result.response().topics().find("foo").replicationFactor());
+            assertEquals(2, result.response().topics().find("foo").numPartitions());
+
+            ctx.replay(result.records());
+            PartitionRegistration partition = replication.getPartition(
+                ((TopicRecord) result.records().get(0).message()).topicId(), 0);
+            assertEquals(2, partition.replicas.length, "RF=2 should be honored");
+            assertEquals(2, partition.isr.length, "All replicas should be in ISR");
+        }
+
+        @Test
+        void testCreateDisklessTopicWithRFExceedingBrokerCount() {
+            // Verify that RF > broker count fails with standard Kafka error.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+            CreateTopicsRequestData request = new CreateTopicsRequestData();
+            request.topics().add(new CreatableTopic().setName("foo")
+                .setNumPartitions(1).setReplicationFactor((short) 5)
+                .setConfigs(new CreateTopicsRequestData.CreatableTopicConfigCollection(List.of(
+                    new CreateTopicsRequestData.CreatableTopicConfig()
+                        .setName(DISKLESS_ENABLE_CONFIG)
+                        .setValue("true")
+                ).iterator())));
+
+            ControllerResult<CreateTopicsResponseData> result =
+                replication.createTopics(requestContext, request, Set.of("foo"));
+            assertEquals(Errors.INVALID_REPLICATION_FACTOR.code(),
+                result.response().topics().find("foo").errorCode());
+        }
+
+        @Test
+        void testCreateDisklessTopicWithRFGreaterThanOneRejectedWhenManagedDisabled() {
+            // When managed replicas is disabled, RF > 1 should be rejected.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(false)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+            CreateTopicsRequestData request = new CreateTopicsRequestData();
+            request.topics().add(new CreatableTopic().setName("foo")
+                .setNumPartitions(1).setReplicationFactor((short) 2)
+                .setConfigs(new CreateTopicsRequestData.CreatableTopicConfigCollection(List.of(
+                    new CreateTopicsRequestData.CreatableTopicConfig()
+                        .setName(DISKLESS_ENABLE_CONFIG)
+                        .setValue("true")
+                ).iterator())));
+
+            ControllerResult<CreateTopicsResponseData> result =
+                replication.createTopics(requestContext, request, Set.of("foo"));
+            assertEquals(Errors.INVALID_REPLICATION_FACTOR.code(),
+                result.response().topics().find("foo").errorCode());
         }
     }
 }
