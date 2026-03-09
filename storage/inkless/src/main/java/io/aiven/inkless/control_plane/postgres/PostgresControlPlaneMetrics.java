@@ -46,6 +46,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
     private final QueryMetrics releaseFileMergeWorkItemMetrics = new QueryMetrics("ReleaseFileMergeWorkItem");
     private final QueryMetrics safeDeleteFileCheckMetrics = new QueryMetrics("SafeDeleteFileCheck");
     private final QueryMetrics getLogInfoMetrics = new QueryMetrics("GetLogInfo");
+    private final QueryMetrics initDisklessLogMetrics = new QueryMetrics("InitDisklessLog");
 
     public PostgresControlPlaneMetrics(Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -111,6 +112,10 @@ public class PostgresControlPlaneMetrics implements Closeable {
         getLogInfoMetrics.record(duration);
     }
 
+    public void onInitDisklessLogCompleted(Long duration) {
+        initDisklessLogMetrics.record(duration);
+    }
+
     @Override
     public void close() {
         findBatchesMetrics.remove();
@@ -128,6 +133,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
         releaseFileMergeWorkItemMetrics.remove();
         safeDeleteFileCheckMetrics.remove();
         getLogInfoMetrics.remove();
+        initDisklessLogMetrics.remove();
     }
 
     private class QueryMetrics {
