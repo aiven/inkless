@@ -106,6 +106,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             final LogInfo logInfo = new LogInfo();
             logInfo.logStartOffset = request.logStartOffset();
             logInfo.highWatermark = request.disklessStartOffset();
+            logInfo.disklessStartOffset = request.disklessStartOffset();
             logs.put(topicIdPartition, logInfo);
             batches.putIfAbsent(topicIdPartition, new TreeMap<>());
 
@@ -690,6 +691,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 result.add(GetLogInfoResponse.success(
                     logInfo.logStartOffset,
                     logInfo.highWatermark,
+                    logInfo.disklessStartOffset,
                     logInfo.byteSize
                 ));
             }
@@ -713,6 +715,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         long logStartOffset = 0;
         long highWatermark = 0;
         long byteSize = 0;
+        long disklessStartOffset = 0;
     }
 
     private static class FileInfo {
