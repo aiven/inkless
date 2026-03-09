@@ -108,4 +108,7 @@ public interface ControlPlane extends Closeable, Configurable {
 
     // used for testing purposes only
     List<GetLogInfoResponse> getLogInfo(List<GetLogInfoRequest> requests);
+
+    // used for testing purposes only
+    List<GetProducerStateResponse> getProducerState(List<GetProducerStateRequest> requests);
 }
