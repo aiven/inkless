@@ -2509,8 +2509,8 @@ class ReplicaManager(val config: KafkaConfig,
   private def createWalUnifierManager(): Option[WalUnifierManager] = {
     if (config.disklessTsUnificationEnable && inklessSharedState.isDefined && inklessMetadataView.isDefined) {
       val sharedState = inklessSharedState.get
-      val walSplitter = sharedState.controlPlane().getWALSplitter(sharedState.buildStorage(), sharedState.objectKeyCreator())
-      Some(new WalUnifierManager("WalUnifierManager", this, walSplitter, inklessMetadataView.get, config.disklessTsUnificationFetchers))
+      val walUnificationHandler = sharedState.controlPlane().createWalUnificationHandler(sharedState.buildStorage(), sharedState.objectKeyCreator())
+      Some(new WalUnifierManager("WalUnifierManager", this, walUnificationHandler, inklessMetadataView.get, config.disklessTsUnificationFetchers))
     } else {
       None
     }

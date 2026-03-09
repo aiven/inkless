@@ -6,14 +6,17 @@ import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.consume.FetchCompleter;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
-import io.aiven.inkless.control_plane.WALSplitter;
+import io.aiven.inkless.control_plane.WalUnificationHandler;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.record.MemoryRecords;
+import org.jooq.Configuration;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.Result;
+import org.jooq.generated.Routines;
 import org.jooq.generated.enums.FileStateT;
 import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
@@ -21,11 +24,11 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.time.Instant;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
@@ -34,32 +37,37 @@ import java.util.stream.Stream;
 import static org.jooq.generated.Tables.BATCHES;
 import static org.jooq.generated.Tables.FILES;
 
-public class TSUnificationFetcher implements WALSplitter {
+public class PostgresWalUnificationHandler implements WalUnificationHandler {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(TSUnificationFetcher.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(PostgresWalUnificationHandler.class);
 
     private final ObjectFetcher objectFetcher;
     private final ObjectKeyCreator objectKeyCreator;
     private final int maxObjectAmount = 10; // limit the max amount of objects to fetch
-    private final DSLContext jooqCtx;
+    private final DSLContext readJooqContext;
+    private final DSLContext writeJooqContext;
     private Comparator<TopicIdPartition> topicIdPartitionComparator = Comparator
             .comparing(TopicIdPartition::topicId)
             .thenComparing(TopicIdPartition::partition);
     private Map<TopicIdPartition, Long> lastOffsets;
     private long nextFileIdToFetch = -1;
     private boolean initialized = false;
+    private Map<TopicIdPartition, Long> remoteLogEndOffsets;
 
-    public TSUnificationFetcher(ObjectFetcher objectFetcher, ObjectKeyCreator objectKeyCreator, DSLContext jooqCtx) {
+    public PostgresWalUnificationHandler(ObjectFetcher objectFetcher, ObjectKeyCreator objectKeyCreator,
+                                         DSLContext readJooqContext, DSLContext writeJooqContext) {
         this.objectFetcher = objectFetcher;
         this.objectKeyCreator = objectKeyCreator;
-        this.jooqCtx = jooqCtx;
+        this.readJooqContext = readJooqContext;
+        this.writeJooqContext = writeJooqContext;
     }
 
     @Override
     public Map<TopicIdPartition, TreeMap<BatchInfo, MemoryRecords>> get() {
+        markWalFilesToDelete();
         // fetch the earliest next X object keys that aren't yet deleted
         LOGGER.trace("Current file to fetch: {} (amount: {})", nextFileIdToFetch, maxObjectAmount);
-        var fileRows = new HashSet<>(jooqCtx
+        var fileRows = new HashSet<>(readJooqContext
             .select(FILES.FILE_ID, FILES.OBJECT_KEY)
             .from(FILES)
             .where(FILES.STATE.ne(FileStateT.deleting)
@@ -98,7 +106,7 @@ public class TSUnificationFetcher implements WALSplitter {
             var tpToFileMap = lastOffsets.entrySet().stream().collect(Collectors.toMap(
                     Map.Entry::getKey,
                     entry -> {
-                        var result = jooqCtx.select(BATCHES.FILE_ID)
+                        var result = readJooqContext.select(BATCHES.FILE_ID)
                                 .from(BATCHES)
                                 .where(BATCHES.BASE_OFFSET.ge(entry.getValue()))
                                 .and(BATCHES.TOPIC_ID.eq(entry.getKey().topicId()))
@@ -123,6 +131,37 @@ public class TSUnificationFetcher implements WALSplitter {
         }
     }
 
+    private void markWalFilesToDelete() {
+        if (remoteLogEndOffsets == null) {
+            return;
+        }
+        var filesAsc = readJooqContext.select(FILES.FILE_ID)
+            .from(FILES)
+            .where(FILES.STATE.ne(FileStateT.deleting))
+            .orderBy(FILES.FILE_ID.asc())
+            .fetch();
+        writeJooqContext.transaction((final Configuration conf) -> {
+            filesAsc.stream().filter(fr -> {
+                var batchesInFile = readJooqContext.select(BATCHES.asterisk())
+                        .from(BATCHES)
+                        .where(BATCHES.FILE_ID.eq(fr.get(FILES.FILE_ID)))
+                        .fetch();
+                return canDeleteAllBatches(batchesInFile);
+            }).forEach(fr -> {
+                Routines.markFileToDeleteV1(conf, Instant.now(), fr.get(FILES.FILE_ID));
+                LOGGER.debug("Marking WAL file with ID {} as deleting", fr.get(FILES.FILE_ID));
+            });
+        });
+    }
+
+    private boolean canDeleteAllBatches(Result<Record> batchesQueryResult) {
+        return batchesQueryResult.stream().allMatch(r -> {
+            var tip = new TopicIdPartition(r.get(BATCHES.TOPIC_ID), r.get(BATCHES.PARTITION), null);
+            var endOffsetForTip = r.get(BATCHES.LAST_OFFSET); // TODO: off by 1?
+            return remoteLogEndOffsets.get(tip) >= endOffsetForTip;
+        });
+    }
+
     private @NonNull TreeMap<TopicIdPartition, TreeMap<BatchInfo, MemoryRecords>> combineBatchMaps(Stream<TreeMap<TopicIdPartition, TreeMap<BatchInfo, MemoryRecords>>> recordsMap) {
         return recordsMap
                 .flatMap(m -> m.entrySet().stream())
@@ -139,7 +178,7 @@ public class TSUnificationFetcher implements WALSplitter {
     }
 
     private Set<BatchInfo> batchInfos(Record fileRow) {
-        var bros = new HashSet<>(jooqCtx.select(BATCHES.asterisk())
+        var bros = new HashSet<>(readJooqContext.select(BATCHES.asterisk())
             .from(BATCHES)
             .where(BATCHES.FILE_ID.eq(fileRow.get(FILES.FILE_ID)))
             .fetch());
@@ -206,7 +245,16 @@ public class TSUnificationFetcher implements WALSplitter {
     }
 
     @Override
-    public void updateLastOffsets(Map<TopicIdPartition, Long> lastOffsets) {
+    public void setRemoteLogEndOffsets(Map<TopicIdPartition, Long> lastOffsets) {
+        this.remoteLogEndOffsets = lastOffsets.entrySet().stream()
+            .collect(Collectors.toMap(
+                entry -> new TopicIdPartition(entry.getKey().topicId(), entry.getKey().partition(), null),
+                Map.Entry::getValue
+            ));
+    }
+
+    @Override
+    public void setLastOffsets(Map<TopicIdPartition, Long> lastOffsets) {
         this.lastOffsets = lastOffsets.entrySet().stream()
             .collect(Collectors.toMap(
                 entry -> new TopicIdPartition(entry.getKey().topicId(), entry.getKey().partition(), null),

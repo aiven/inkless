@@ -18,7 +18,7 @@
 package io.aiven.inkless.control_plane.postgres;
 
 import io.aiven.inkless.common.ObjectKeyCreator;
-import io.aiven.inkless.control_plane.WALSplitter;
+import io.aiven.inkless.control_plane.WalUnificationHandler;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
@@ -353,8 +353,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    public WALSplitter getWALSplitter(ObjectFetcher fetcher, ObjectKeyCreator keyCreator) {
-        return new TSUnificationFetcher(fetcher, keyCreator, readJooqCtx);
+    public WalUnificationHandler createWalUnificationHandler(ObjectFetcher fetcher, ObjectKeyCreator keyCreator) {
+        return new PostgresWalUnificationHandler(fetcher, keyCreator, readJooqCtx, writeJooqCtx);
     }
 
     @Override

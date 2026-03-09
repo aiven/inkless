@@ -666,7 +666,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    public WALSplitter getWALSplitter(ObjectFetcher fetcher, ObjectKeyCreator keyCreator) {
+    public WalUnificationHandler createWalUnificationHandler(ObjectFetcher fetcher, ObjectKeyCreator keyCreator) {
         throw new UnsupportedOperationException();
     }
 

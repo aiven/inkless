@@ -103,5 +103,5 @@ public interface ControlPlane extends Closeable, Configurable {
      * Used for Tiered Storage unification to get and split WAL segments
      * @return
      */
-    WALSplitter getWALSplitter(ObjectFetcher fetcher, ObjectKeyCreator keyCreator);
+    WalUnificationHandler createWalUnificationHandler(ObjectFetcher fetcher, ObjectKeyCreator keyCreator);
 }

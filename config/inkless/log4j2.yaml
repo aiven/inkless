@@ -22,5 +22,5 @@ Configuration:
     Logger:
     - name: org.apache.kafka.server.log.remote.storage
       level: ERROR
-    - name: io.aiven.inkless.control_plane.postgres.TSUnificationFetcher
-      level: TRACE
+    - name: io.aiven.inkless.control_plane.postgres.PostgresWalUnificationHandler
+      level: DEBUG
