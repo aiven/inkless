@@ -18,6 +18,9 @@
 package org.apache.kafka.controller.metrics;
 
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.ConfigResource;
+import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.image.ConfigurationsImage;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.image.TopicDelta;
@@ -28,9 +31,9 @@ import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.fault.FaultHandler;
 
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
-import java.util.function.Function;
 
 
 /**
@@ -45,16 +48,13 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
     private final ControllerMetadataMetrics metrics;
     private final FaultHandler faultHandler;
     private MetadataImage prevImage = MetadataImage.EMPTY;
-    private Function<String, Boolean> isDisklessTopic;
 
     public ControllerMetadataMetricsPublisher(
         ControllerMetadataMetrics metrics,
-        FaultHandler faultHandler,
-        Function<String, Boolean> isDisklessTopic
+        FaultHandler faultHandler
     ) {
         this.metrics = metrics;
         this.faultHandler = faultHandler;
-        this.isDisklessTopic = isDisklessTopic;
     }
 
     @Override
@@ -71,7 +71,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         switch (manifest.type()) {
             case LOG_DELTA:
                 try {
-                    publishDelta(delta);
+                    publishDelta(delta, newImage);
                 } catch (Throwable e) {
                     faultHandler.handleFault("Failed to publish controller metrics from log delta " +
                             " ending at offset " + manifest.provenance().lastContainedOffset(), e);
@@ -92,8 +92,14 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         }
     }
 
-    private void publishDelta(MetadataDelta delta) {
-        ControllerMetricsChanges changes = new ControllerMetricsChanges(isDisklessTopic);
+    private void publishDelta(MetadataDelta delta, MetadataImage newImage) {
+        // Use newImage configs to check if topic is diskless, as the metadata cache
+        // may not have the config yet when processing deltas for newly created topics.
+        // Known limitation: config-only changes (e.g. diskless.enable toggled without a
+        // corresponding TopicDelta) are not processed here. Currently diskless.enable is
+        // immutable after creation; if that changes, handle configsDelta or recompute
+        // diskless counts when configs change.
+        ControllerMetricsChanges changes = new ControllerMetricsChanges();
         if (delta.clusterDelta() != null) {
             for (Entry<Integer, Optional<BrokerRegistration>> entry :
                     delta.clusterDelta().changedBrokers().entrySet()) {
@@ -111,10 +117,14 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
                     throw new RuntimeException("Unable to find deleted topic id " + topicId +
                             " in previous topics image.");
                 }
-                changes.handleDeletedTopic(prevTopic);
+                // For deleted topics, check isDiskless from prevImage since config is already removed from newImage
+                changes.handleDeletedTopic(prevTopic, isDisklessTopic(prevImage.configs(), prevTopic.name()));
             }
             for (Entry<Uuid, TopicDelta> entry : delta.topicsDelta().changedTopics().entrySet()) {
-                changes.handleTopicChange(prevImage.topics().getTopic(entry.getKey()), entry.getValue());
+                changes.handleTopicChange(
+                    prevImage.topics().getTopic(entry.getKey()),
+                    entry.getValue(),
+                    isDisklessTopic(newImage.configs(), entry.getValue().name()));
             }
         }
         changes.apply(metrics);
@@ -142,10 +152,23 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         int totalPartitions = 0;
         int offlinePartitions = 0;
         int partitionsWithoutPreferredLeader = 0;
+        int disklessTopics = 0;
+        int disklessPartitions = 0;
+        int disklessOfflinePartitions = 0;
         for (TopicImage topicImage : newImage.topics().topicsById().values()) {
-            boolean isDiskless = isDisklessTopic.apply(topicImage.name());
+            // Check diskless from newImage configs directly for consistency with delta path
+            final boolean isDiskless = isDisklessTopic(newImage.configs(), topicImage.name());
+            if (isDiskless) {
+                disklessTopics++;
+            }
             for (PartitionRegistration partition : topicImage.partitions().values()) {
-                if (!isDiskless) {
+                totalPartitions++;
+                if (isDiskless) {
+                    disklessPartitions++;
+                    if (!partition.hasLeader()) {
+                        disklessOfflinePartitions++;
+                    }
+                } else {
                     if (!partition.hasLeader()) {
                         offlinePartitions++;
                     }
@@ -153,12 +176,20 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
                         partitionsWithoutPreferredLeader++;
                     }
                 }
-                totalPartitions++;
             }
         }
         metrics.setGlobalPartitionCount(totalPartitions);
         metrics.setOfflinePartitionCount(offlinePartitions);
         metrics.setPreferredReplicaImbalanceCount(partitionsWithoutPreferredLeader);
+        metrics.setDisklessTopicCount(disklessTopics);
+        metrics.setDisklessPartitionCount(disklessPartitions);
+        metrics.setDisklessOfflinePartitionCount(disklessOfflinePartitions);
+    }
+
+    private static boolean isDisklessTopic(ConfigurationsImage configsImage, String topicName) {
+        ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
+        Map<String, String> configMap = configsImage.configMapForResource(resource);
+        return Boolean.parseBoolean(configMap.getOrDefault(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
     }
 
     @Override

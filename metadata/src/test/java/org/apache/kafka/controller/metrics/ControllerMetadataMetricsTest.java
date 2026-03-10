@@ -63,6 +63,9 @@ public class ControllerMetadataMetricsTest {
                         "kafka.controller:type=KafkaController,name=OfflinePartitionsCount",
                         "kafka.controller:type=KafkaController,name=PreferredReplicaImbalanceCount",
                         "kafka.controller:type=KafkaController,name=IgnoredStaticVoters",
+                        "kafka.controller:type=KafkaController,name=DisklessTopicCount",
+                        "kafka.controller:type=KafkaController,name=DisklessPartitionCount",
+                        "kafka.controller:type=KafkaController,name=DisklessOfflinePartitionCount",
                         "kafka.controller:type=ControllerStats,name=UncleanLeaderElectionsPerSec",
                         "kafka.controller:type=ControllerStats,name=ElectionFromEligibleLeaderReplicasPerSec"
                     ));
@@ -291,5 +294,41 @@ public class ControllerMetadataMetricsTest {
         } finally {
             registry.shutdown();
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testDisklessTopicCountMetric() {
+        testIntGaugeMetric(
+            m -> m.disklessTopicCount(),
+            registry -> ((Gauge<Integer>) registry.allMetrics().
+                    get(metricName("KafkaController", "DisklessTopicCount"))).value(),
+            (m, v) -> m.setDisklessTopicCount(v),
+            (m, v) -> m.addToDisklessTopicCount(v)
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testDisklessPartitionCountMetric() {
+        testIntGaugeMetric(
+            m -> m.disklessPartitionCount(),
+            registry -> ((Gauge<Integer>) registry.allMetrics().
+                    get(metricName("KafkaController", "DisklessPartitionCount"))).value(),
+            (m, v) -> m.setDisklessPartitionCount(v),
+            (m, v) -> m.addToDisklessPartitionCount(v)
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testDisklessOfflinePartitionCountMetric() {
+        testIntGaugeMetric(
+            m -> m.disklessOfflinePartitionCount(),
+            registry -> ((Gauge<Integer>) registry.allMetrics().
+                    get(metricName("KafkaController", "DisklessOfflinePartitionCount"))).value(),
+            (m, v) -> m.setDisklessOfflinePartitionCount(v),
+            (m, v) -> m.addToDisklessOfflinePartitionCount(v)
+        );
     }
 }

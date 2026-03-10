@@ -175,7 +175,7 @@ public class ControllerMetricsChangesTest {
         TopicImage topicImage = new TopicImage("foo",
                 Uuid.fromString("wXtW6pQbTS2CL6PjdRCqVw"),
                 partitions);
-        changes.handleDeletedTopic(topicImage);
+        changes.handleDeletedTopic(topicImage, false);
         assertEquals(-1, changes.globalTopicsChange());
         assertEquals(-5, changes.globalPartitionsChange());
         assertEquals(-1, changes.offlinePartitionsChange());
@@ -215,7 +215,7 @@ public class ControllerMetricsChangesTest {
     @Test
     public void testHandleNewTopic() {
         ControllerMetricsChanges changes = new ControllerMetricsChanges();
-        changes.handleTopicChange(null, TOPIC_DELTA1);
+        changes.handleTopicChange(null, TOPIC_DELTA1, false);
         assertEquals(1, changes.globalTopicsChange());
         assertEquals(5, changes.globalPartitionsChange());
         assertEquals(0, changes.offlinePartitionsChange());
@@ -225,7 +225,7 @@ public class ControllerMetricsChangesTest {
     @Test
     public void testTopicChange() {
         ControllerMetricsChanges changes = new ControllerMetricsChanges();
-        changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2);
+        changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2, false);
         assertEquals(0, changes.globalTopicsChange());
         assertEquals(1, changes.globalPartitionsChange());
         assertEquals(1, changes.offlinePartitionsChange());
@@ -233,11 +233,13 @@ public class ControllerMetricsChangesTest {
     }
 
     @Test
-    public void testNoPartitionChangesReportedOnDisklessTopics() {
-        ControllerMetricsChanges changes = new ControllerMetricsChanges(s -> true);
-        changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2);
+    public void testDisklessTopicsExcludedFromOfflineAndImbalanceMetrics() {
+        ControllerMetricsChanges changes = new ControllerMetricsChanges();
+        changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2, true);
         assertEquals(0, changes.globalTopicsChange());
-        assertEquals(0, changes.globalPartitionsChange());
+        // Diskless partitions are included in global partition count
+        assertEquals(1, changes.globalPartitionsChange());
+        // Diskless partitions are excluded from standard offline/imbalance metrics
         assertEquals(0, changes.offlinePartitionsChange());
         assertEquals(0, changes.partitionsWithoutPreferredLeaderChange());
     }
@@ -252,7 +254,7 @@ public class ControllerMetricsChangesTest {
 
         delta.replay(new PartitionRecord().setPartitionId(1).setLeader(-1).setIsr(List.of()).setEligibleLeaderReplicas(List.of(0, 1)).setReplicas(List.of(0, 1, 2)));
         delta.replay(new PartitionChangeRecord().setPartitionId(1).setLeader(1).setIsr(List.of(1)).setEligibleLeaderReplicas(List.of(0, 1)));
-        changes.handleTopicChange(image, delta);
+        changes.handleTopicChange(image, delta, false);
         assertEquals(1, changes.uncleanLeaderElection());
         assertEquals(1, changes.electionFromElr());
     }
@@ -260,7 +262,7 @@ public class ControllerMetricsChangesTest {
     @Test
     public void testIgnoreElectionResultForDisklessTopics() {
         // Given the topic is diskless
-        ControllerMetricsChanges changes = new ControllerMetricsChanges(s -> true);
+        ControllerMetricsChanges changes = new ControllerMetricsChanges();
         TopicImage image = new TopicImage("foo", FOO_ID, Map.of());
         TopicDelta delta = new TopicDelta(image);
         delta.replay(new PartitionRecord().setPartitionId(0).setLeader(0).setIsr(List.of(0, 1)).setReplicas(List.of(0, 1, 2)));
@@ -268,7 +270,7 @@ public class ControllerMetricsChangesTest {
 
         delta.replay(new PartitionRecord().setPartitionId(1).setLeader(-1).setIsr(List.of()).setEligibleLeaderReplicas(List.of(0, 1)).setReplicas(List.of(0, 1, 2)));
         delta.replay(new PartitionChangeRecord().setPartitionId(1).setLeader(1).setIsr(List.of(1)).setEligibleLeaderReplicas(List.of(0, 1)));
-        changes.handleTopicChange(image, delta);
+        changes.handleTopicChange(image, delta, true);
         // Then no changes should be reported
         assertEquals(0, changes.uncleanLeaderElection());
         assertEquals(0, changes.electionFromElr());

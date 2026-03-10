@@ -70,6 +70,12 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
         "ControllerStats", "ElectionFromEligibleLeaderReplicasPerSec");
     private static final MetricName IGNORED_STATIC_VOTERS = getMetricName(
         "KafkaController", "IgnoredStaticVoters");
+    private static final MetricName DISKLESS_TOPIC_COUNT = getMetricName(
+        "KafkaController", "DisklessTopicCount");
+    private static final MetricName DISKLESS_PARTITION_COUNT = getMetricName(
+        "KafkaController", "DisklessPartitionCount");
+    private static final MetricName DISKLESS_OFFLINE_PARTITION_COUNT = getMetricName(
+        "KafkaController", "DisklessOfflinePartitionCount");
 
     private final Optional<MetricsRegistry> registry;
     private final AtomicInteger fencedBrokerCount = new AtomicInteger(0);
@@ -84,6 +90,9 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
     private Optional<Meter> uncleanLeaderElectionMeter = Optional.empty();
     private Optional<Meter> electionFromEligibleLeaderReplicasMeter = Optional.empty();
     private final AtomicBoolean ignoredStaticVoters = new AtomicBoolean(false);
+    private final AtomicInteger disklessTopicCount = new AtomicInteger(0);
+    private final AtomicInteger disklessPartitionCount = new AtomicInteger(0);
+    private final AtomicInteger disklessOfflinePartitionCount = new AtomicInteger(0);
 
     /**
      * Create a new ControllerMetadataMetrics object.
@@ -149,6 +158,24 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
             @Override
             public Integer value() {
                 return ignoredStaticVoters() ? 1 : 0;
+            }
+        }));
+        registry.ifPresent(r -> r.newGauge(DISKLESS_TOPIC_COUNT, new Gauge<Integer>() {
+            @Override
+            public Integer value() {
+                return disklessTopicCount();
+            }
+        }));
+        registry.ifPresent(r -> r.newGauge(DISKLESS_PARTITION_COUNT, new Gauge<Integer>() {
+            @Override
+            public Integer value() {
+                return disklessPartitionCount();
+            }
+        }));
+        registry.ifPresent(r -> r.newGauge(DISKLESS_OFFLINE_PARTITION_COUNT, new Gauge<Integer>() {
+            @Override
+            public Integer value() {
+                return disklessOfflinePartitionCount();
             }
         }));
     }
@@ -309,6 +336,42 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
         return ignoredStaticVoters.get();
     }
 
+    public void setDisklessTopicCount(int count) {
+        this.disklessTopicCount.set(count);
+    }
+
+    public void addToDisklessTopicCount(int delta) {
+        this.disklessTopicCount.addAndGet(delta);
+    }
+
+    public int disklessTopicCount() {
+        return this.disklessTopicCount.get();
+    }
+
+    public void setDisklessPartitionCount(int count) {
+        this.disklessPartitionCount.set(count);
+    }
+
+    public void addToDisklessPartitionCount(int delta) {
+        this.disklessPartitionCount.addAndGet(delta);
+    }
+
+    public int disklessPartitionCount() {
+        return this.disklessPartitionCount.get();
+    }
+
+    public void setDisklessOfflinePartitionCount(int count) {
+        this.disklessOfflinePartitionCount.set(count);
+    }
+
+    public void addToDisklessOfflinePartitionCount(int delta) {
+        this.disklessOfflinePartitionCount.addAndGet(delta);
+    }
+
+    public int disklessOfflinePartitionCount() {
+        return this.disklessOfflinePartitionCount.get();
+    }
+
     @Override
     public void close() {
         registry.ifPresent(r -> List.of(
@@ -322,7 +385,10 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
             METADATA_ERROR_COUNT,
             UNCLEAN_LEADER_ELECTIONS_PER_SEC,
             ELECTION_FROM_ELIGIBLE_LEADER_REPLICAS_PER_SEC,
-            IGNORED_STATIC_VOTERS
+            IGNORED_STATIC_VOTERS,
+            DISKLESS_TOPIC_COUNT,
+            DISKLESS_PARTITION_COUNT,
+            DISKLESS_OFFLINE_PARTITION_COUNT
         ).forEach(r::removeMetric));
         for (int brokerId : brokerRegistrationStates.keySet()) {
             removeBrokerRegistrationStateMetric(brokerId);

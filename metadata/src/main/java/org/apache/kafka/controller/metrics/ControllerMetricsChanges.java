@@ -23,7 +23,6 @@ import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.PartitionRegistration;
 
 import java.util.Map.Entry;
-import java.util.function.Function;
 
 
 /**
@@ -32,16 +31,6 @@ import java.util.function.Function;
  */
 @SuppressWarnings("NPathComplexity")
 class ControllerMetricsChanges {
-
-    private final Function<String, Boolean> isDisklessTopic;
-
-    ControllerMetricsChanges() {
-        this.isDisklessTopic = topicName -> false; // Default implementation, can be overridden
-    }
-
-    ControllerMetricsChanges(Function<String, Boolean> isDisklessTopic) {
-        this.isDisklessTopic = isDisklessTopic;
-    }
 
     /**
      * Calculates the change between two boolean values, expressed as an integer.
@@ -63,6 +52,9 @@ class ControllerMetricsChanges {
     private int partitionsWithoutPreferredLeaderChange = 0;
     private int uncleanLeaderElection = 0;
     private int electionFromElr = 0;
+    private int disklessTopicsChange = 0;
+    private int disklessPartitionsChange = 0;
+    private int disklessOfflinePartitionsChange = 0;
 
     public int fencedBrokersChange() {
         return fencedBrokersChange;
@@ -129,15 +121,20 @@ class ControllerMetricsChanges {
         controlledShutdownBrokersChange += delta(wasInControlledShutdown, isInControlledShutdown);
     }
 
-    void handleDeletedTopic(TopicImage deletedTopic) {
-        deletedTopic.partitions().values().forEach(prev -> handlePartitionChange(prev, null, isDisklessTopic.apply(deletedTopic.name())));
+    void handleDeletedTopic(TopicImage deletedTopic, boolean isDiskless) {
+        deletedTopic.partitions().values().forEach(prev -> handlePartitionChange(prev, null, isDiskless));
         globalTopicsChange--;
+        if (isDiskless) {
+            disklessTopicsChange--;
+        }
     }
 
-    void handleTopicChange(TopicImage prev, TopicDelta topicDelta) {
-        final Boolean isDiskless = isDisklessTopic.apply(topicDelta.name());
+    void handleTopicChange(TopicImage prev, TopicDelta topicDelta, boolean isDiskless) {
         if (prev == null) {
             globalTopicsChange++;
+            if (isDiskless) {
+                disklessTopicsChange++;
+            }
             for (PartitionRegistration nextPartition : topicDelta.partitionChanges().values()) {
                 handlePartitionChange(null, nextPartition, isDiskless);
             }
@@ -156,35 +153,27 @@ class ControllerMetricsChanges {
     }
 
     void handlePartitionChange(PartitionRegistration prev, PartitionRegistration next, boolean isDiskless) {
-        boolean wasPresent = false;
-        boolean wasOffline = false;
-        boolean wasWithoutPreferredLeader = false;
-        if (prev != null) {
-            wasPresent = true;
-            wasOffline = !prev.hasLeader();
-            wasWithoutPreferredLeader = !prev.hasPreferredLeader();
-        }
+        boolean wasPresent = prev != null;
+        boolean isPresent = next != null;
+
         if (isDiskless) {
-            wasPresent = true;
-            wasOffline = false; // Diskless partitions are always considered online
-            wasWithoutPreferredLeader = false; // Diskless partitions are always considered to have a preferred leader
+            // Track diskless partition counts separately
+            disklessPartitionsChange += delta(wasPresent, isPresent);
+            boolean wasDisklessOffline = wasPresent && !prev.hasLeader();
+            boolean isDisklessOffline = isPresent && !next.hasLeader();
+            disklessOfflinePartitionsChange += delta(wasDisklessOffline, isDisklessOffline);
+            // Diskless partitions are excluded from standard offline/imbalance metrics
+            // (transformer handles availability), but included in global partition count
+            globalPartitionsChange += delta(wasPresent, isPresent);
+        } else {
+            boolean wasOffline = wasPresent && !prev.hasLeader();
+            boolean isOffline = isPresent && !next.hasLeader();
+            boolean wasWithoutPreferredLeader = wasPresent && !prev.hasPreferredLeader();
+            boolean isWithoutPreferredLeader = isPresent && !next.hasPreferredLeader();
+            globalPartitionsChange += delta(wasPresent, isPresent);
+            offlinePartitionsChange += delta(wasOffline, isOffline);
+            partitionsWithoutPreferredLeaderChange += delta(wasWithoutPreferredLeader, isWithoutPreferredLeader);
         }
-        boolean isPresent = false;
-        boolean isOffline = false;
-        boolean isWithoutPreferredLeader = false;
-        if (next != null) {
-            isPresent = true;
-            isOffline = !next.hasLeader();
-            isWithoutPreferredLeader = !next.hasPreferredLeader();
-        }
-        if (isDiskless) {
-            isPresent = true;
-            isOffline = false; // Diskless partitions are always considered online
-            isWithoutPreferredLeader = false; // Diskless partitions are always considered to have a preferred leader
-        }
-        globalPartitionsChange += delta(wasPresent, isPresent);
-        offlinePartitionsChange += delta(wasOffline, isOffline);
-        partitionsWithoutPreferredLeaderChange += delta(wasWithoutPreferredLeader, isWithoutPreferredLeader);
     }
 
     /**
@@ -219,6 +208,15 @@ class ControllerMetricsChanges {
         if (electionFromElr > 0) {
             metrics.updateElectionFromEligibleLeaderReplicasCount(electionFromElr);
             electionFromElr = 0;
+        }
+        if (disklessTopicsChange != 0) {
+            metrics.addToDisklessTopicCount(disklessTopicsChange);
+        }
+        if (disklessPartitionsChange != 0) {
+            metrics.addToDisklessPartitionCount(disklessPartitionsChange);
+        }
+        if (disklessOfflinePartitionsChange != 0) {
+            metrics.addToDisklessOfflinePartitionCount(disklessOfflinePartitionsChange);
         }
     }
 }

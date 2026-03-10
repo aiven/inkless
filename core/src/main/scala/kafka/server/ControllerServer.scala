@@ -22,7 +22,7 @@ import kafka.raft.KafkaRaftManager
 import kafka.server.QuotaFactory.QuotaManagers
 
 import scala.collection.immutable
-import kafka.server.metadata.{ClientQuotaMetadataManager, DynamicConfigPublisher, DynamicTopicClusterQuotaPublisher, InklessMetadataView, KRaftMetadataCache, KRaftMetadataCachePublisher}
+import kafka.server.metadata.{ClientQuotaMetadataManager, DynamicConfigPublisher, DynamicTopicClusterQuotaPublisher, KRaftMetadataCache, KRaftMetadataCachePublisher}
 import kafka.utils.{CoreUtils, Logging}
 import org.apache.kafka.common.internals.Plugin
 import org.apache.kafka.common.message.ApiMessageType.ListenerType
@@ -377,13 +377,10 @@ class ControllerServer(
           new DelegationTokenManager(delegationTokenManagerConfigs, tokenCache)
       ))
 
-      // Inkless metadata view needed to filter out Diskless topics from offline/leadership metrics
-      val inklessMetadataView = new InklessMetadataView(metadataCache, () => config.extractLogConfigMap)
       // Set up the metrics publisher.
       metadataPublishers.add(new ControllerMetadataMetricsPublisher(
         sharedServer.controllerServerMetrics,
-        sharedServer.metadataPublishingFaultHandler,
-        t => inklessMetadataView.isDisklessTopic(t)
+        sharedServer.metadataPublishingFaultHandler
       ))
 
       // Set up the ACL publisher.
