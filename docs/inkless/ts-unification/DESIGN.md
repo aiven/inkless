@@ -17,7 +17,7 @@ This document outlines the design for enabling seamless migration from Apache Ka
 
 1. **Migration from Tiered to Diskless** — Enable tiered topics to switch to diskless writes
 2. **Hybrid read path** — Read new data from diskless, old data from tiered storage
-3. **RF=rack_count** — KRaft-managed replicas with rack-aware placement (see [DISKLESS_MANAGED_RF.md](DISKLESS_MANAGED_RF.md))
+3. **Managed RF (user-defined, RF=-1 → default)** — KRaft-managed replicas with rack-aware placement (see [DISKLESS_MANAGED_RF.md](DISKLESS_MANAGED_RF.md))
 4. **Sealing mechanism** — KRaft-based topic sealing for safe migration
 5. **MetaStore** — S3-based log chain metadata for offset boundaries
 6. **Tiering pipeline (diskless → tiered)** — Converting aged diskless batches to tiered format for PG scalability
@@ -29,7 +29,7 @@ This document outlines the design for enabling seamless migration from Apache Ka
 
 ### Team Decision (Dec 16, 2025)
 
-The team agreed to focus on **migration safety and effectiveness**. The tiering pipeline is necessary for PG scalability and is included in scope. RF=rack_count has been decided (see [DISKLESS_MANAGED_RF.md](DISKLESS_MANAGED_RF.md)).
+The team agreed to focus on **migration safety and effectiveness**. The tiering pipeline is necessary for PG scalability and is included in scope. Managed RF approach has been decided (see [DISKLESS_MANAGED_RF.md](DISKLESS_MANAGED_RF.md)).
 
 ---
 
@@ -365,8 +365,8 @@ A new `DisklessMigrationHandler` on each broker executes the migration steps:
 
 **Objective:** Enable diskless topics to use real KRaft-managed replicas while preserving write-to-any semantics.
 
-**Decision:** RF=rack_count with transformer-first availability. Controlled by `diskless.managed.rf.enable` controller config
-(default: `false`). When enabled, new diskless topics get RF=rack_count; existing topics are unaffected.
+**Decision:** User-defined RF with transformer-first availability. Controlled by `diskless.managed.rf.enable` controller config
+(default: `false`). When enabled, new diskless topics accept user-defined RF (RF=-1 → `default.replication.factor`); existing topics are unaffected.
 
 #### 4.4.1 Current vs. Proposed Model
 
@@ -739,7 +739,7 @@ For detailed implementation timeline, task breakdown, and team assignments, see 
 | **P2: Read Path** | Three-tier read routing via UnifiedLog | P1 | |
 | **P2b: Batch Splitting** | WAL file splitting (parallel with P2/P3) | P1 | |
 | **P3: Switch Mechanism** | Tiered → Hybrid migration | P2 | |
-| **P4: Multi-Replica** | RF=rack_count for diskless topics ([design](DISKLESS_MANAGED_RF.md)) | P3 | In progress |
+| **P4: Multi-Replica** | Managed RF for diskless topics ([design](DISKLESS_MANAGED_RF.md)) | P3 | In progress |
 | **P5: RLM Integration** | Hybrid topic support in RLM | P3 | |
 | **P6: Segment Merging** | Split files → Tiered segments | P2b | |
 | **P7: E2E Integration** | Full pipeline validation | P5, P6 | |
@@ -755,7 +755,7 @@ P1 (Foundation) → P2 (Read Path) → P3 (Switch) → P5 (RLM) → P7 (E2E)
 
 ### Parallelizable Work
 
-- **P4** (Multi-Replica / RF=rack_count) — In progress, can land independently
+- **P4** (Multi-Replica / Managed RF) — In progress, can land independently
 - **P2b + P6** (Tiering pipeline) — Can run in parallel with the migration path
 - **P8** (Full observability) can be reduced for initial release
 

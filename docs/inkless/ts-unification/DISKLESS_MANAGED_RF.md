@@ -19,11 +19,12 @@ the tiering pipeline.
 | **Operational clarity** | Tooling (`describe topic`) should reflect reality; deterministic job ownership |
 | **Implementation cost** | Minimize weeks-to-value while avoiding technical debt |
 
-### Proposed Approach: RF=rack_count with Transformer-First Availability
+### Proposed Approach: User-Defined RF with Transformer-First Availability
 
 **At topic creation:**
-- Controller assigns **RF = rack_count** (one replica per rack/AZ)
+- Controller accepts user-defined RF. RF=-1 resolves to `default.replication.factor` (standard Kafka behavior). Explicit RF values (1, 2, 3, ...) are accepted when managed RF is enabled.
 - Real KRaft-managed replicas with rack-aware placement
+- This aligns diskless topic creation with classic Kafka — operators configure `default.replication.factor` (e.g., to rack count) and have the same control over RF as for any other topic.
 
 **At runtime (routing):**
 - **Hybrid/tiered partitions (`DISKLESS_TIERED`)**: metadata returns replica brokers only (tiered reads require `UnifiedLog`); prefers same-AZ replica, falls back to cross-AZ replica
@@ -110,7 +111,7 @@ We evaluate three approaches (A, B, C) below, starting with reverse migration re
 We evaluate three approaches:
 - **Approach A: Shrink to RF=1** — Reduce RF during migration, use current diskless model
 - **Approach B: Keep RF=3, fake metadata** — Keep classic RF, but transformer ignores it
-- **Approach C: RF=rack_count with real replicas** — Proposed design with KRaft-managed replicas
+- **Approach C: User-defined RF with real replicas** — Proposed design with KRaft-managed replicas
 
 **Key decision (affects this whole design): do we require tiered reads to be served only by replica brokers?**
 
@@ -146,9 +147,9 @@ The following terminology helps distinguish the key differences:
 #### Summary Table
 
 ```
-Aspect                 | A: Shrink RF=1      | B: Keep RF=3 fake   | C: RF=rack_count ✓
+Aspect                 | A: Shrink RF=1      | B: Keep RF=3 fake   | C: RF=user-defined ✓
 -----------------------|---------------------|---------------------|---------------------
-KRaft RF after migrate | 1                   | 3 (unchanged)       | 3 (rack-aware)
+KRaft RF after migrate | 1                   | 3 (unchanged)       | user-defined (rack-aware)
 Transformer behavior   | Hash to any broker  | Hash to any broker  | Filter by AZ
 Hybrid/tiered reads    | Custom / risky      | Custom / risky      | Replicas only (safe)
 Replica objects        | None (offline)      | Ghost (no Partition)| Real (metadata-only)
@@ -161,7 +162,7 @@ Reverse migration      | No (must expand RF) | No (must fix ghosts)| Yes
 
 #### Migration RF Normalization (Classic → Diskless)
 
-Another key decision: **if a classic topic’s RF is not aligned with `rack_count`, when do we “normalize” it?**
+Another key decision: **if a classic topic’s RF differs from the desired RF after migration, when do we “normalize” it?**
 
 This matters because diskless-managed RF assumes replicas are meaningful for **leadership/job ownership** and for
 **tiered/hybrid correctness** (replica brokers host `UnifiedLog` state used by RLM).
@@ -187,7 +188,7 @@ normalize RF/placement (background task) but does not block availability or corr
 
 **Recommendation:** Prefer **post-switch normalization**, but treat it as **eventual / best-effort**, not a forced prerequisite.
 
-After the switch to `DISKLESS_ONLY`, correctness is not dependent on having `RF=rack_count` immediately:
+After the switch to `DISKLESS_ONLY`, correctness is not dependent on having the desired RF immediately:
 - Metadata (and thus preferred routing) may temporarily return **fewer replicas**, and they may not be rack-aware.
 - This can reduce locality and concentrate “leader/job ownership” on fewer brokers.
 - However, diskless serving remains correct (data is in object storage), and availability can still be preserved via the
@@ -236,13 +237,13 @@ What "ghost replica" means:
 - Misleading tooling output (`describe topic` shows healthy replicas that aren't real) — operational burden on operators
 - See [Ghost Replicas Problem](#ghost-replicas-problem)
 
-#### Approach C: RF=rack_count with Real Replicas (Proposed)
+#### Approach C: User-Defined RF with Real Replicas (Proposed)
 
 ```
 Classic:  Replicas=[1,2,3], Leader=1, data on all brokers
           ↓ migration starts
 Diskless: Replicas=[1,3,5], Leader=1, data in object storage
-          ↑ rack-aware placement, real metadata-only replicas
+          ↑ RF=3 (user-defined or via RF=-1 default), rack-aware placement, real metadata-only replicas
           Leader coordinates migration, RLM tasks, background jobs
 ```
 
@@ -262,7 +263,7 @@ What "real (metadata-only) replica" means:
 ### Diskless → Classic Migration Readiness
 
 ```
-Aspect           | A: RF=1             | B: RF=3 faked          | C: RF=rack_count ✓
+Aspect           | A: RF=1             | B: RF=3 faked          | C: RF=user-defined ✓
 -----------------|---------------------|------------------------|--------------------
 Starting RF      | 1                   | 3 (ghost replicas)     | 3 (real replicas)
 Before migration | Must expand RF=1→3  | Must "un-ghost"        | Ready as-is
@@ -323,7 +324,7 @@ The table below shows the deferred cost for RLM integration:
 | Expiration tasks          | Custom expiration outside RLM     | ~2 weeks  |
 | **Total custom work**     |                                   | **~11 weeks** |
 
-#### Cost of Proposed Design (Approach C: RF=rack_count)
+#### Cost of Proposed Design (Approach C: User-defined RF)
 
 | Aspect                    | Standard Solution                 | Effort    |
 |---------------------------|-----------------------------------|-----------|
@@ -353,7 +354,7 @@ The same problems exist, but Approach C solves them via **standard Kafka pattern
 #### Decision Framework
 
 ```
-Factor                | A: Shrink RF=1       | B: Keep RF=3 fake    | C: RF=rack_count ✓
+Factor                | A: Shrink RF=1       | B: Keep RF=3 fake    | C: RF=user-defined ✓
 ----------------------|----------------------|----------------------|---------------------
 Short-term cost       | ~7 wks (local + TS)  | ~7 wks (local + TS)  | ~6-8 wks (w/ buffer)
 Local state risk      | High (must cleanup)  | High (must cleanup)  | Low (std handoff)
@@ -388,13 +389,13 @@ Plus, deferring creates technical debt:
 
 ### Recommendation
 
-**Implement the proposed design (Approach C: RF=rack_count)** because:
+**Implement the proposed design (Approach C: User-defined RF)** because:
 1. Topic migration (both directions) benefits from real replicas
 2. RLM integration becomes standard rather than custom
 3. One-time 6-8 week investment vs. 18+ weeks with A/B
 4. Avoids local state cleanup risks (data corruption, offset drift)
 5. Avoids accumulating technical debt
-6. Aligns diskless with Kafka's replica model
+6. Uses standard Kafka RF semantics — operators specify RF explicitly or use RF=-1 for `default.replication.factor`
 
 ### Open Questions for Review
 
@@ -422,16 +423,16 @@ Plus, deferring creates technical debt:
 
 ---
 
-*The following sections detail the proposed design (Approach C: RF=rack_count with real replicas).*
+*The following sections detail the proposed design (Approach C: User-defined RF with real replicas).*
 
 ## Objectives
 
 Enable **rack-aware, stable KRaft-managed replicas** for diskless topics:
 
-- **KRaft-managed replicas**: Diskless topics will have actual KRaft-managed replicas (RF = rack count)
-- **Rack-aware at creation**: Topics are created with one replica per rack
+- **KRaft-managed replicas**: Diskless topics will have actual KRaft-managed replicas with user-defined RF
+- **Rack-aware at creation**: Placement uses standard `ReplicaPlacer` for rack-aware assignment
 - **Standard operations after creation**: Once created, standard Kafka replica management applies
-- **Controller-managed RF**: Users don't specify RF; controller computes from rack topology
+- **User-defined RF**: Operators specify RF explicitly, or use RF=-1 to resolve to `default.replication.factor`
 - **Leader-agnostic produce and consume**: Any replica can accept writes and serve reads
 - **Always available via transformer**: Transformer ensures availability by routing to alive brokers
 
@@ -478,8 +479,8 @@ Unlike classic topics where data lives on specific brokers (making KRaft metadat
 - Partition is always available
 - KRaft metadata is ignored for routing
 
-**Proposed behavior (RF=rack_count, real replicas):**
-- KRaft stores RF=rack_count with real broker IDs
+**Proposed behavior (user-defined RF, real replicas):**
+- KRaft stores user-defined RF with real broker IDs (RF=-1 resolves to `default.replication.factor`)
 - Transformer filters by client AZ from KRaft replicas
 - **`DISKLESS_TIERED`**: same-AZ replica preferred, cross-AZ replica as fallback (replicas only)
 - **`DISKLESS_ONLY`**: same-AZ replica preferred, same-AZ any broker next, then cross-AZ
@@ -526,11 +527,12 @@ server config.
 | Aspect | What controls it |
 |--------|------------------|
 | Topic creation (RF assignment) | `diskless.managed.rf.enable` server config |
+| Topic creation (RF value) | User-specified RF, or RF=-1 → `default.replication.factor` |
 | Routing mode (`DISKLESS_TIERED` vs `DISKLESS_ONLY`) | Topic config (`remote.storage.enable` + `diskless.enable`) |
 | Routing logic | KRaft metadata — always prefers assigned replicas first; hash fallback only when replicas offline |
 
 When `diskless.managed.rf.enable=true`:
-- New diskless topics get RF=rack_count with one replica per AZ
+- New diskless topics accept any valid RF. RF=-1 resolves to `default.replication.factor` (operator-configured). Explicit RF values (1, 2, 3, ...) are accepted. Placement uses standard `ReplicaPlacer`.
 
 When `diskless.managed.rf.enable=false` (default):
 - New diskless topics get RF=1 (legacy behavior)
@@ -541,7 +543,7 @@ The following limitations apply until subsequent phases are completed:
 
 | Limitation | Impact | Planned Phase |
 |------------|--------|---------------|
-| **Add Partitions uses legacy RF** | New partitions added via `kafka-topics.sh --alter --partitions` will get RF=1 (legacy behavior), not RF=rack_count | Phase 3 |
+| **Add Partitions uses legacy RF** | New partitions added via `kafka-topics.sh --alter --partitions` will get RF=1 (legacy behavior), not the managed default | Phase 3 |
 | **Transformer not updated** | Metadata transformation still uses legacy routing; real KRaft placement exists but transformer may override | Phase 2 |
 | **Observability metrics not implemented** | Placement quality metrics (`non_rack_aware_partitions_total`, etc.) not yet available | Phase 2 |
 | **Integration tests deferred** | End-to-end integration tests require transformer changes to validate correct behavior | Phase 2 |
@@ -589,7 +591,7 @@ Existing diskless topics (RF=1) continue to work:
 
 **Note on RF=1 as valid managed state:**
 
-RF=1 is a valid outcome of managed RF when brokers have no rack configuration (rack_count=1). In this case:
+RF=1 is a valid state — the user chose it explicitly or it's the legacy default. In this case:
 - The single replica is still a "real" KRaft-managed replica
 - Routing **prefers** this replica when online
 - Hash fallback only triggers when the replica is offline
@@ -604,7 +606,7 @@ The same fallback logic applies to any RF < rack_count (including RF=1). This is
 | Aspect | Design Decision | Rationale |
 |--------|-----------------|-----------|
 | RF=1 valid? | **Yes** | Fewer replicas = fewer brokers with jobs, but still available |
-| Target RF | rack_count at creation | Default, not enforced after creation |
+| Target RF | user-defined at creation (RF=-1 → `default.replication.factor`) | Not enforced after creation |
 | RF < racks after ops | **Allowed** | Operator can reassign; transformer handles availability |
 | Future configurability | Possible | Could allow `min.insync.replicas` style config later |
 
@@ -663,7 +665,7 @@ Therefore the transformer must be conservative **per partition state**:
 
 **Eventual modernization (optional):**
 - Controller can lazily detect RF=1 diskless topics
-- Background task expands to RF=rack_count when convenient
+- Background task expands RF (via reassignment tooling or controller background task) when convenient
 - Not urgent — availability is already handled by transformer
 
 **But important for future tiering / migration work:**
@@ -674,7 +676,7 @@ modernize placement so that at least one **real replica broker** has the `Unifie
 
 In practice this means the “eventual modernization” step becomes a **prerequisite** for tiering-related work:
 - migrate/replace an orphan single replica (broker id not present) to an alive broker
-- and typically expand to RF=rack_count to align with Approach C and avoid re-introducing one-off tiered-read fixes
+- and typically expand RF to align with Approach C and avoid re-introducing one-off tiered-read fixes
 
 **Manual modernization (alternative):**
 - Operator uses `kafka-reassign-partitions.sh` to expand RF
@@ -687,10 +689,9 @@ In practice this means the “eventual modernization” step becomes a **prerequ
 ### Rack-Aware Placement at Creation
 
 When a diskless topic is created:
-- Controller determines current rack count from registered brokers
-- RF is set to rack count (e.g., 3 racks → RF=3)
-- One broker is selected per rack for each partition
-- Broker selection within a rack uses load balancing (least loaded broker)
+- RF is user-specified (or `default.replication.factor` when RF=-1)
+- Placement uses standard `ReplicaPlacer`, which provides rack-aware assignment (one broker per rack when possible, given the RF)
+- Standard broker selection within a rack uses load balancing (least loaded broker)
 
 ### Placement Is Static After Creation
 
@@ -705,13 +706,17 @@ Once a topic is created:
 
 ### Topic Creation
 
-When creating diskless topics (`diskless.enable=true`):
-- Controller counts distinct racks from registered brokers
-- RF = rack count
-- One replica assigned per rack
-- Accept `replicationFactor=-1` (recommended) or `replicationFactor=1` (for compatibility)
-- Reject `replicationFactor > 1` (RF is system-managed)
-- **Allow manual replica assignments** (for operational flexibility)
+When creating diskless topics (`diskless.enable=true`) with `diskless.managed.rf.enable=true`:
+- **RF=-1 (recommended)**: resolves to `default.replication.factor` (operator sets this to match rack count or desired RF)
+- **RF=1**: accepted (explicit single replica)
+- **RF=N (N > 1)**: accepted (user chooses their RF)
+- **Manual replica assignments**: accepted (as today)
+- Placement uses standard `ReplicaPlacer` for rack-aware assignment
+
+When `diskless.managed.rf.enable=false` (default):
+- **RF=-1**: resolves to 1 (legacy behavior)
+- **RF=1**: accepted
+- **RF > 1**: rejected (legacy restriction)
 
 #### Manual Replica Assignments
 
@@ -755,7 +760,7 @@ zone affinity, gradual rollout). Metrics and alerts provide visibility into non-
 
 ### Add Partitions
 
-New partitions use same one-per-rack logic as creation.
+New partitions use same RF and standard placement logic as creation.
 
 ### Standard Operations (After Creation)
 
@@ -908,35 +913,64 @@ FOR each diskless partition:
 
 ### Metrics
 
-**Controller metrics (implemented):**
-- `kafka.controller:type=KafkaController,name=DisklessTopicCount` - Total diskless topics
-- `kafka.controller:type=KafkaController,name=DisklessManagedReplicasTopicCount` - RF>1 diskless topics
-- `kafka.controller:type=KafkaController,name=DisklessUnmanagedReplicasTopicCount` - RF=1 diskless topics (legacy)
+#### Design principle: leverage existing Kafka metrics
+
+Diskless topics with managed replicas behave like standard Kafka topics from a placement perspective. Rather than
+inventing new categorizations (e.g., "managed" vs "unmanaged"), we reuse existing Kafka metric semantics and add a
+minimal set of diskless-scoped metrics for separate alerting.
+
+**Why separate diskless metrics instead of including in existing ones:**
+- `OfflinePartitionCount` triggers critical alerts in standard Kafka dashboards. For `DISKLESS_ONLY` topics, the
+  transformer preserves availability even when KRaft shows leader=-1, so including them would cause false critical alerts.
+- Diskless-scoped metrics allow operators to set **different alert thresholds** (e.g., warning vs critical) for
+  diskless partition health.
+
+#### Existing Kafka controller metrics (unchanged)
+
+| Metric | Includes diskless? | Notes |
+|--------|--------------------|-------|
+| `GlobalTopicCount` | Yes | Total topics (classic + diskless) |
+| `GlobalPartitionCount` | Yes | Total partitions (classic + diskless) |
+| `OfflinePartitionCount` | No (suppressed) | Classic partitions only — diskless excluded to avoid false critical alerts |
+| `PreferredReplicaImbalanceCount` | No (suppressed) | Classic partitions only |
+
+#### New diskless controller metrics
+
+| Metric | Description |
+|--------|-------------|
+| `DisklessTopicCount` | Total diskless topics |
+| `DisklessPartitionCount` | Total diskless partitions |
+| `DisklessOfflinePartitionCount` | Diskless partitions with leader=-1 (replica on dead/fenced/unregistered broker) |
+
+#### Derived values for operator dashboards
+
+| Value | Formula |
+|-------|---------|
+| Classic topics | `GlobalTopicCount - DisklessTopicCount` |
+| Classic partitions | `GlobalPartitionCount - DisklessPartitionCount` |
+| Diskless online partitions | `DisklessPartitionCount - DisklessOfflinePartitionCount` |
+
+#### What these metrics surface
+
+| Scenario | Signal |
+|----------|--------|
+| Topic with replica on dead broker | `DisklessOfflinePartitionCount > 0` |
+| Orphan replica (broker unregistered) | `DisklessOfflinePartitionCount > 0` (leader=-1) |
+| Overall diskless health | Ratio of offline to total diskless partitions |
+| Classic vs diskless split | Derivable from global minus diskless |
 
 > **Note:** Per-topic metrics like `effective_rf{topic}` and per-partition metrics like `rack_aware{topic,partition}`
-> were considered but deferred due to high cardinality concerns. Instead, topic creation details are logged at INFO level,
-> and aggregate counts are exposed as metrics. This provides operational visibility without metric explosion.
+> were considered but deferred due to high cardinality concerns. Topic creation details are logged at INFO level for
+> operational visibility without metric explosion.
 
-**Placement quality (logging-based approach):**
+#### Transformer metrics
 
-Rather than high-cardinality metrics, placement quality is monitored via logging:
-- Topic creation logs RF and replica assignment
-- Snapshot load logs summary of managed vs unmanaged topics
-- Unmanaged (RF=1) topic names are logged for operator review
-
-This approach avoids metric cardinality issues while still enabling alerting via log aggregation.
-
-**Transformer metrics (implemented):**
 - `io.aiven.inkless.metadata:type=ClientAzAwarenessMetrics,name=fallback-total` - Count of fallbacks to non-replica brokers
 - `io.aiven.inkless.metadata:type=ClientAzAwarenessMetrics,name=offline-replicas-routed-around` - Routing decisions when some replicas offline
 - `io.aiven.inkless.metadata:type=ClientAzAwarenessMetrics,name=cross-az-routing-total` - Requests routed to different AZ than client
 - `io.aiven.inkless.metadata:type=ClientAzAwarenessMetrics,name=client-az-hit-rate` - Requests where broker found in client AZ
 - `io.aiven.inkless.metadata:type=ClientAzAwarenessMetrics,name=client-az-miss-rate` - Requests where no broker in client AZ
 - `io.aiven.inkless.metadata:type=ClientAzAwarenessMetrics,name=client-az-unaware-rate` - Requests without client AZ info
-
-**Standard Kafka metrics:**
-- `UnderReplicatedPartitions` - Will show diskless partitions with offline brokers
-- Note: For diskless, "under-replicated" is informational, not critical
 
 ### Logs
 
@@ -1027,9 +1061,9 @@ on synthetic hashing.
 
 1. Add `diskless.managed.rf.enable` controller config (default: `false`)
 2. Modify `ReplicationControlManager` to detect diskless topics when config enabled
-3. Compute RF = rack count at creation
-4. Implement one-per-rack broker selection
-5. Reject `replicationFactor > 1` (RF is system-managed for auto-assignment)
+3. Accept user-defined RF; resolve RF=-1 to `default.replication.factor`
+4. Use standard `ReplicaPlacer` for placement
+5. Accept any valid RF when managed RF enabled; reject RF > 1 when disabled
 6. Allow manual replica assignments (standard Kafka tooling support)
 
 ### Phase 2: Transformer Changes (2 weeks)
@@ -1041,8 +1075,7 @@ on synthetic hashing.
 
 ### Phase 3: Add Partitions Support (1 week)
 
-1. Apply same one-per-rack logic when adding partitions
-2. Handle case where rack count changed since topic creation
+1. Apply same RF and standard placement logic when adding partitions
 
 ### Summary
 
@@ -1215,7 +1248,7 @@ broker to advertise as "leader" — currently this selection is not explicitly l
 
 **Why defer:**
 - The current algorithm is correct and handles multi-replica scenarios
-- RF = rack_count (one replica per AZ) is the expected default for new diskless topics
+- RF via RF=-1 (`default.replication.factor`, typically one replica per AZ) is the expected default for new diskless topics
 - Multi-replica per AZ scenarios primarily arise from manual assignments or legacy configurations
 - Round-robin adds state management complexity (per-partition counters)
 
