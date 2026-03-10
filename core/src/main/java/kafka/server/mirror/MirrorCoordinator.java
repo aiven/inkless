@@ -606,10 +606,6 @@ public class MirrorCoordinator {
             int partitionIndex,
             OptionalInt partitionLeaderEpoch
     ) {
-        clear();
-    }
-
-    private void clear() {
         sourceSenders.clear();
         metadataManager.clear();
     }

@@ -174,7 +174,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Optional<Function<String, Integer>> coordinatorPartitionByNameFinder = Optional.empty();
 
     // cache
-    private final Map<MirrorRecordKey, Node> coordinatorNodes = new ConcurrentHashMap<>();
     private final Map<String, List<MirrorSourceSender>> sourceSenders = new ConcurrentHashMap<>();
     private final Map<String, Map<TopicPartition, Node>> sourceLeaders = new ConcurrentHashMap<>();
     private final Map<MirrorUtils.PartitionKey, MirrorPartitionState> partitionStates = new ConcurrentHashMap<>();
@@ -253,14 +252,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         // caching the image for query purpose
         this.metadataImage = newImage;
-
-        // evict stale coordinator node cache when __mirror_state topic leadership changes
-        if (delta.topicsDelta() != null) {
-            TopicImage mirrorStateTopic = newImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME);
-            if (mirrorStateTopic != null && delta.topicsDelta().changedTopic(mirrorStateTopic.id()) != null) {
-                coordinatorNodes.clear();
-            }
-        }
 
         // detect config changes and close stale connections and fetchers to trigger reconnection
         if (delta.configsDelta() != null) {
@@ -540,10 +531,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         topicMetadata.forEach((topic, metadata) -> {
             metadata.forEach(m -> {
                 MirrorRecordKey key = new MirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), m.partition());
-                // computeIfAbsent to avoid duplicate coordinator lookups from concurrent threads
-                Node coordinatorNode = coordinatorNodes.computeIfAbsent(key, this::findCoordinatorNode);
+                Node coordinatorNode = findCoordinatorNode(key);
                 if (coordinatorNode.equals(Node.noNode())) {
-                    coordinatorNodes.remove(key);
                     log.error("Coordinator is not available for mirror {} partition {}-{}", mirrorName, topic, m.partition());
                     return;
                 }
@@ -602,10 +591,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         partitions.forEach((topic, parts) -> {
             parts.forEach(part -> {
                 MirrorRecordKey key = new MirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), part);
-                // computeIfAbsent to avoid duplicate coordinator lookups from concurrent threads
-                Node coordinatorNode = coordinatorNodes.computeIfAbsent(key, this::findCoordinatorNode);
+                Node coordinatorNode = findCoordinatorNode(key);
                 if (coordinatorNode.equals(Node.noNode())) {
-                    coordinatorNodes.remove(key);
                     log.warn("Coordinator is not available for mirror {} partition {}-{}", mirrorName, topic, part);
                     return;
                 }
@@ -1409,7 +1396,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         partitionStates.clear();
         partitionStateCounts.clear();
         lastMirroredOffsets.clear();
-        coordinatorNodes.clear();
         closeSourceSenders();
         sourceLeaders.clear();
     }
