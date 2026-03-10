@@ -229,6 +229,7 @@ public final class QuorumController implements Controller {
         private String interBrokerListenerName = "PLAINTEXT";
         private boolean defaultDisklessEnable = false;
         private boolean disklessStorageSystemEnabled = false;
+        private boolean disklessManagedReplicasEnabled = false;
         private boolean classicRemoteStorageForceEnabled = false;
         private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
 
@@ -298,6 +299,11 @@ public final class QuorumController implements Controller {
 
         public Builder setDisklessStorageSystemEnabled(boolean disklessStorageSystemEnabled) {
             this.disklessStorageSystemEnabled = disklessStorageSystemEnabled;
+            return this;
+        }
+
+        public Builder setDisklessManagedReplicasEnabled(boolean disklessManagedReplicasEnabled) {
+            this.disklessManagedReplicasEnabled = disklessManagedReplicasEnabled;
             return this;
         }
 
@@ -457,6 +463,7 @@ public final class QuorumController implements Controller {
                     defaultNumPartitions,
                     defaultDisklessEnable,
                     disklessStorageSystemEnabled,
+                    disklessManagedReplicasEnabled,
                     classicRemoteStorageForceEnabled,
                     classicRemoteStorageForceExcludeTopicRegexes,
                     replicaPlacer,
@@ -1519,6 +1526,7 @@ public final class QuorumController implements Controller {
         int defaultNumPartitions,
         boolean defaultDisklessEnable,
         boolean disklessStorageSystemEnabled,
+        boolean disklessManagedReplicasEnabled,
         boolean classicRemoteStorageForceEnabled,
         List<String> classicRemoteStorageForceExcludeTopicRegexes,
         ReplicaPlacer replicaPlacer,
@@ -1605,6 +1613,7 @@ public final class QuorumController implements Controller {
             setDefaultNumPartitions(defaultNumPartitions).
             setDefaultDisklessEnable(defaultDisklessEnable).
             setDisklessStorageSystemEnabled(disklessStorageSystemEnabled).
+            setDisklessManagedReplicasEnabled(disklessManagedReplicasEnabled).
             setClassicRemoteStorageForceEnabled(classicRemoteStorageForceEnabled).
             setClassicRemoteStorageForceExcludeTopicRegexes(classicRemoteStorageForceExcludeTopicRegexes).
             setMaxElectionsPerImbalance(ReplicationControlManager.MAX_ELECTIONS_PER_IMBALANCE).
