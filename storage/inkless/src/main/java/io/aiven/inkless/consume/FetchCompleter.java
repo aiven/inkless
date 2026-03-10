@@ -287,7 +287,9 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
             return null; // Doesn't cover entire batch range - incomplete batch
         }
 
-        // All extents cover the batch range, safe to allocate full buffer
+        // All extents cover the batch range, allocate buffer and copy data.
+        // Note: We always copy because createMemoryRecords mutates the buffer (setLastOffset,
+        // setMaxTimestamp), and FileExtent data is cached/shared across concurrent fetches.
         final byte[] buffer = new byte[Math.toIntExact(batchRange.bufferSize())];
 
         for (FileExtent file : files) {

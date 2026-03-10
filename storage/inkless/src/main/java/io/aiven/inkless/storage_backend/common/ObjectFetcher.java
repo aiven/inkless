@@ -38,6 +38,23 @@ public interface ObjectFetcher extends Closeable {
 
     ReadableByteChannel fetch(ObjectKey key, ByteRange range) throws StorageBackendException, IOException;
 
+    /**
+     * Fetches object data directly into a ByteBuffer, avoiding intermediate channel/stream copies.
+     * Implementations that can provide direct ByteBuffer access (e.g., S3 getObjectAsBytes) should
+     * override this method for better performance.
+     *
+     * <p>The default implementation falls back to fetch() + readToByteBuffer() for compatibility.
+     *
+     * @param key the object key to fetch
+     * @param range the byte range to fetch, or null for entire object
+     * @return ByteBuffer containing the fetched data with position at 0 and limit at data length
+     */
+    default ByteBuffer fetchToByteBuffer(ObjectKey key, ByteRange range) throws StorageBackendException, IOException {
+        try (ReadableByteChannel channel = fetch(key, range)) {
+            return readToByteBuffer(channel);
+        }
+    }
+
     default ByteBuffer readToByteBuffer(final ReadableByteChannel readableByteChannel) throws IOException {
         final ByteBuffer byteBuffer;
         final List<ByteBuffer> buffers = new ArrayList<>(5);

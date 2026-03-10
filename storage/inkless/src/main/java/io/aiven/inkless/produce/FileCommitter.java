@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
@@ -168,15 +169,18 @@ class FileCommitter implements Closeable {
                 totalBytesInProgress.addAndGet(file.size());
 
                 // Start uploading and add to the commit queue (as Runnable).
-                // This ensures files are uploaded in concurrently, but committed to the control plane sequentially,
+                // This ensures files are uploaded concurrently, but committed to the control plane sequentially,
                 // because `executorServiceCommit` is single-threaded.
-                final FileUploadJob uploadJob = FileUploadJob.createFromByteArray(
+                // Use ByteBuffer upload path for zero-copy S3 uploads (avoids internal byte[] copy).
+                // asReadOnlyBuffer() provides defense against accidental modification while
+                // preserving zero-copy semantics (no memory allocation beyond the view).
+                final FileUploadJob uploadJob = FileUploadJob.createFromByteBuffer(
                         objectKeyCreator,
                         storage,
                         time,
                         maxFileUploadAttempts,
                         fileUploadRetryBackoff,
-                        file.data(),
+                        ByteBuffer.wrap(file.data()).asReadOnlyBuffer(),
                         metrics::fileUploadFinished
                 );
                 final Future<ObjectKey> uploadFuture = executorServiceUpload.submit(uploadJob);

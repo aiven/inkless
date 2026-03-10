@@ -24,6 +24,7 @@ import com.groupcdg.pitest.annotations.CoverageIgnore;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
@@ -104,12 +105,63 @@ public final class S3Storage extends StorageBackend {
     }
 
     @Override
-    public ReadableByteChannel fetch(final ObjectKey key, final ByteRange range) throws StorageBackendException, IOException {
+    public void upload(final ObjectKey key, final ByteBuffer byteBuffer) throws StorageBackendException {
+        Objects.requireNonNull(key, "key cannot be null");
+        Objects.requireNonNull(byteBuffer, "byteBuffer cannot be null");
+        if (byteBuffer.remaining() <= 0) {
+            throw new IllegalArgumentException("byteBuffer must have remaining bytes");
+        }
+        final PutObjectRequest putObjectRequest = PutObjectRequest.builder()
+            .bucket(bucketName)
+            .key(key.value())
+            .build();
+        // Use ByteBufferInputStream with duplicate() to avoid:
+        // 1. The byte[] copy in RequestBody.fromByteBuffer() -> BinaryUtils.copyAllBytesFrom()
+        // 2. Modifying the original buffer's position (preserves retry support in FileUploadJob)
+        final ByteBuffer duplicate = byteBuffer.duplicate();
+        final long length = duplicate.remaining();
+        final RequestBody requestBody = RequestBody.fromInputStream(
+            new ByteBufferInputStream(duplicate),
+            length
+        );
         try {
-            if (range != null && range.empty()) {
-                return Channels.newChannel(InputStream.nullInputStream());
-            }
+            s3Client.putObject(putObjectRequest, requestBody);
+        } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
+            throw new StorageBackendTimeoutException("Failed to upload " + key, e);
+        } catch (final SdkException e) {
+            throw new StorageBackendException("Failed to upload " + key, e);
+        }
+    }
 
+    @Override
+    public ReadableByteChannel fetch(final ObjectKey key, final ByteRange range) throws StorageBackendException, IOException {
+        if (range != null && range.empty()) {
+            return Channels.newChannel(InputStream.nullInputStream());
+        }
+        final var buffer = doFetch(key, range);
+        return Channels.newChannel(new ByteBufferInputStream(buffer));
+    }
+
+    /**
+     * Optimized fetch that returns ByteBuffer directly without intermediate channel/stream copies.
+     * S3 SDK already provides the data as a ByteBuffer via getObjectAsBytes(), so we return it directly.
+     */
+    @Override
+    public ByteBuffer fetchToByteBuffer(final ObjectKey key, final ByteRange range) throws StorageBackendException {
+        if (range != null && range.empty()) {
+            return ByteBuffer.allocate(0);
+        }
+        return doFetch(key, range);
+    }
+
+    /**
+     * Shared fetch implementation that retrieves object data as ByteBuffer.
+     * For the small 4-8MiB blobs expected here, reading the whole object into memory is more efficient
+     * than streaming it via S3ObjectInputStream which has significant overhead per read call.
+     */
+    private ByteBuffer doFetch(final ObjectKey key, final ByteRange range) throws StorageBackendException {
+        Objects.requireNonNull(key, "key cannot be null");
+        try {
             var builder = GetObjectRequest.builder()
                 .bucket(bucketName)
                 .key(key.value());
@@ -117,11 +169,7 @@ public final class S3Storage extends StorageBackend {
                 builder = builder.range(formatRange(range));
             }
             final GetObjectRequest getRequest = builder.build();
-            // for the small 4-8MiB blobs expected here, reading the whole object into memory is more efficient
-            // than streaming it via S3ObjectInputStream which has significant overhead per read call
-            // and does not play well with the buffering done in ObjectFetcher.readToByteBuffer()
-            final var buffer = s3Client.getObjectAsBytes(getRequest).asByteBuffer();
-            return Channels.newChannel(new ByteBufferInputStream(buffer));
+            return s3Client.getObjectAsBytes(getRequest).asByteBuffer();
         } catch (final AwsServiceException e) {
             if (e.statusCode() == 404) {
                 throw new KeyNotFoundException(this, key, e);
@@ -129,7 +177,6 @@ public final class S3Storage extends StorageBackend {
             if (e.statusCode() == 416) {
                 throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range, e);
             }
-
             throw new StorageBackendException("Failed to fetch " + key, e);
         } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
             throw new StorageBackendTimeoutException("Failed to fetch " + key, e);
