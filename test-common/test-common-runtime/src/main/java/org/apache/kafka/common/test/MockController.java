@@ -61,6 +61,8 @@ import org.apache.kafka.common.quota.ClientQuotaEntity;
 import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.controller.Controller;
 import org.apache.kafka.controller.ControllerRequestContext;
+import org.apache.kafka.controller.InitDisklessLogRequestData;
+import org.apache.kafka.controller.InitDisklessLogResponseData;
 import org.apache.kafka.controller.ResultOrError;
 import org.apache.kafka.metadata.BrokerHeartbeatReply;
 import org.apache.kafka.metadata.BrokerRegistrationReply;
@@ -523,6 +525,13 @@ public class MockController implements Controller {
     }
 
     @Override
+    public CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
+        ControllerRequestContext context,
+        InitDisklessLogRequestData request
+    ) {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
     public void beginShutdown() {
         this.active = false;
     }

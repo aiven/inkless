@@ -420,6 +420,20 @@ public interface Controller extends AclMutator, AutoCloseable {
     );
 
     /**
+     * Initialize diskless logs for classic-to-diskless migration. Validates the leader
+     * and persists disklessStartOffset and producer states in a PartitionChangeRecord.
+     *
+     * @param context       The controller request context.
+     * @param request       The InitDisklessLog request data.
+     *
+     * @return              A future yielding the response with per-partition error codes.
+     */
+    CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
+        ControllerRequestContext context,
+        InitDisklessLogRequestData request
+    );
+
+    /**
      * Begin shutting down, but don't block.  You must still call close to clean up all
      * resources.
      */

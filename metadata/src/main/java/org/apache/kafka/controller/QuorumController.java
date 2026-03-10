@@ -1767,6 +1767,18 @@ public final class QuorumController implements Controller {
     }
 
     @Override
+    public CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
+        ControllerRequestContext context,
+        InitDisklessLogRequestData request
+    ) {
+        if (request.topics().isEmpty()) {
+            return CompletableFuture.completedFuture(new InitDisklessLogResponseData(List.of()));
+        }
+        return appendWriteEvent("initDisklessLog", context.deadlineNs(),
+            () -> replicationControl.initDisklessLog(context, request));
+    }
+
+    @Override
     public CompletableFuture<AlterUserScramCredentialsResponseData> alterUserScramCredentials(
         ControllerRequestContext context,
         AlterUserScramCredentialsRequestData request
