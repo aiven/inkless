@@ -162,6 +162,7 @@ public class ReplicationControlManager {
         private int defaultNumPartitions = 1;
         private boolean defaultDisklessEnable = false;
         private boolean isDisklessStorageSystemEnabled = false;
+        private boolean isDisklessManagedReplicasEnabled = false;
         private boolean classicRemoteStorageForceEnabled = false;
         private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
 
@@ -198,6 +199,11 @@ public class ReplicationControlManager {
 
         public Builder setDisklessStorageSystemEnabled(boolean isDisklessStorageSystemEnabled) {
             this.isDisklessStorageSystemEnabled = isDisklessStorageSystemEnabled;
+            return this;
+        }
+
+        public Builder setDisklessManagedReplicasEnabled(boolean isDisklessManagedReplicasEnabled) {
+            this.isDisklessManagedReplicasEnabled = isDisklessManagedReplicasEnabled;
             return this;
         }
 
@@ -253,6 +259,7 @@ public class ReplicationControlManager {
                 defaultNumPartitions,
                 defaultDisklessEnable,
                 isDisklessStorageSystemEnabled,
+                isDisklessManagedReplicasEnabled,
                 classicRemoteStorageForceEnabled,
                 classicRemoteStorageForceExcludeTopicRegexes,
                 maxElectionsPerImbalance,
@@ -332,8 +339,20 @@ public class ReplicationControlManager {
      */
     private final boolean defaultDisklessEnable;
 
+    /**
+     * When true, the diskless storage system is enabled, allowing diskless topics to be created.
+     */
     private final boolean isDisklessStorageSystemEnabled;
     private final ClassicTopicRemoteStorageForcePolicy classicTopicRemoteStorageForcePolicy;
+
+    /**
+     * When true, diskless topics use managed replicas with RF = rack_count (one replica per rack).
+     * When false, diskless topics use legacy RF=1 behavior.
+     *
+     * <p>Phase 1 limitation: This config only affects topic creation. Add Partitions inherits
+     * RF from existing partitions (correct behavior - maintains consistency within the topic).
+     */
+    private final boolean isDisklessManagedReplicasEnabled;
 
     /**
      * Maximum number of leader elections to perform during one partition leader balancing operation.
@@ -425,6 +444,7 @@ public class ReplicationControlManager {
         int defaultNumPartitions,
         boolean defaultDisklessEnable,
         boolean isDisklessStorageSystemEnabled,
+        boolean isDisklessManagedReplicasEnabled,
         boolean classicRemoteStorageForceEnabled,
         List<String> classicRemoteStorageForceExcludeTopicRegexes,
         int maxElectionsPerImbalance,
@@ -439,6 +459,7 @@ public class ReplicationControlManager {
         this.defaultNumPartitions = defaultNumPartitions;
         this.defaultDisklessEnable = defaultDisklessEnable;
         this.isDisklessStorageSystemEnabled = isDisklessStorageSystemEnabled;
+        this.isDisklessManagedReplicasEnabled = isDisklessManagedReplicasEnabled;
         this.classicTopicRemoteStorageForcePolicy = new ClassicTopicRemoteStorageForcePolicy(
             classicRemoteStorageForceEnabled,
             classicRemoteStorageForceExcludeTopicRegexes
@@ -803,9 +824,12 @@ public class ReplicationControlManager {
                         "when the diskless storage system is disabled. " +
                         "Please enable the diskless storage system to create diskless topics.");
             }
-            if (Math.abs(topic.replicationFactor()) != 1) {
+            // Diskless RF validation:
+            // When managed replicas enabled: any valid RF accepted (standard Kafka validation applies later).
+            // When managed replicas disabled (legacy): only RF=1 or RF=-1 (resolves to 1).
+            if (!isDisklessManagedReplicasEnabled && Math.abs(topic.replicationFactor()) != 1) {
                 return new ApiError(Errors.INVALID_REPLICATION_FACTOR,
-                    "Replication factor for diskless topics must be 1 or -1 to use the default value (1).");
+                    "Replication factor for diskless topics must be 1 or -1 when managed replicas are disabled.");
             }
         }
 
@@ -820,7 +844,7 @@ public class ReplicationControlManager {
                     "A manual partition assignment was specified, but numPartitions " +
                         "was not set to -1.");
             }
-            if (disklessEnabled) {
+            if (disklessEnabled && !isDisklessManagedReplicasEnabled) {
                 return new ApiError(INVALID_REQUEST,
                     "A manual partition assignment cannot be specified for diskless topics.");
             }
@@ -868,12 +892,17 @@ public class ReplicationControlManager {
         } else {
             int numPartitions = topic.numPartitions() == -1 ?
                 defaultNumPartitions : topic.numPartitions();
-            short replicationFactor = topic.replicationFactor() == -1 ?
-                defaultReplicationFactor : topic.replicationFactor();
+            short classicReplicationFactor = topic.replicationFactor() == -1 ? defaultReplicationFactor : topic.replicationFactor();
+            // For managed diskless: use same resolution as classic (RF=-1 → defaultReplicationFactor, else user value).
+            // For unmanaged diskless (legacy): always RF=1.
+            short disklessReplicationFactor = isDisklessManagedReplicasEnabled ? classicReplicationFactor : 1;
+            short replicationFactor = disklessEnabled ? disklessReplicationFactor : classicReplicationFactor;
             try {
                 TopicAssignment topicAssignment;
                 Predicate<Integer> brokerFilter;
-                if (!disklessEnabled) {
+                // Diskless managed-replicas uses standard rack-aware assignment
+                // with user-defined RF (or defaultReplicationFactor if RF=-1)
+                if (!disklessEnabled || isDisklessManagedReplicasEnabled) {
                     topicAssignment = clusterControl.replicaPlacer().place(new PlacementSpec(
                         0,
                         numPartitions,
