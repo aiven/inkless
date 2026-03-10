@@ -142,6 +142,19 @@ public class ServerConfigs {
         "This should only be enabled in non-production environments for testing or migration purposes. " +
         "When enabled, topics can have their diskless.enable config changed from false to true.";
 
+    // When enabled, diskless topics are created with user-defined replication factor.
+    // RF=-1 resolves to default.replication.factor. Explicit RF values (1, 2, 3, ...) are accepted.
+    // Placement uses standard rack-aware assignment.
+    // When disabled (default), diskless topics use legacy RF=1 behavior (RF=-1 resolves to 1, RF > 1 rejected).
+    // This config only affects topic creation.
+    public static final String DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG = "diskless.managed.rf.enable";
+    public static final boolean DISKLESS_MANAGED_REPLICAS_ENABLE_DEFAULT = false;
+    public static final String DISKLESS_MANAGED_REPLICAS_ENABLE_DOC = "When enabled, new diskless topics are created " +
+        "with user-defined replication factor. RF=-1 resolves to default.replication.factor. " +
+        "Explicit RF values are accepted. Placement uses standard rack-aware assignment. " +
+        "When disabled, diskless topics use legacy RF=1 behavior. " +
+        "This config only affects topic creation.";
+
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG = "classic.remote.storage.force.enable";
     public static final boolean CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT = false;
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC = "Force classic topics to be created with remote.storage.enable=true, " +
@@ -202,6 +215,7 @@ public class ServerConfigs {
                 DISKLESS_STORAGE_SYSTEM_ENABLE_DOC)
             .define(DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, BOOLEAN, DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DEFAULT, LOW,
                 DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DOC)
+            .define(DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, BOOLEAN, DISKLESS_MANAGED_REPLICAS_ENABLE_DEFAULT, MEDIUM, DISKLESS_MANAGED_REPLICAS_ENABLE_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG, BOOLEAN, CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT, LOW,
                 CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG, LIST, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DEFAULT,

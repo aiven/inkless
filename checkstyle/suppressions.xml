@@ -86,6 +86,9 @@
               files="MemoryRecordsBuilder.java"/>
     <suppress checks="ParameterNumber"
               files="ClientUtils.java"/>
+    <!-- ReplicationControlManager is at the edge of crossing this limit; adding it to include params for diskless logic -->
+    <suppress checks="ParameterNumber"
+              files="ReplicationControlManager.java"/>
 
     <suppress checks="ClassDataAbstractionCoupling"
               files="(KafkaConsumer|ConsumerCoordinator|AbstractFetch|KafkaProducer|AbstractRequest|AbstractResponse|TransactionManager|Admin|KafkaAdminClient|MockAdminClient|KafkaNetworkChannelTest|ClientTelemetryReporterTest).java"/>
@@ -318,6 +321,9 @@
               files="(ClientQuotasImage|KafkaEventQueue|MetadataDelta|QuorumController|ReplicationControlManager|KRaftMigrationDriver|ClusterControlManager|MetaPropertiesEnsemble).java"/>
     <suppress checks="NPathComplexity"
               files="(ClientQuotasImage|KafkaEventQueue|ReplicationControlManager|FeatureControlManager|KRaftMigrationDriver|ScramControlManager|ClusterControlManager|MetadataDelta|MetaPropertiesEnsemble).java"/>
+    <!-- ReplicationControlManager has multiple long methods; suppression needed for diskless managed replicas logic -->
+    <suppress checks="MethodLength"
+              files="ReplicationControlManager.java"/>
     <suppress checks="BooleanExpressionComplexity"
               files="(MetadataImage).java"/>
     <suppress checks="ImportControl"
