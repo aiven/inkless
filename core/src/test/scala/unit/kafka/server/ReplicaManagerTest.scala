@@ -93,7 +93,7 @@ import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
 import org.mockito.invocation.InvocationOnMock
 import org.mockito.stubbing.Answer
-import org.mockito.{Answers, ArgumentCaptor, ArgumentMatchers, MockedConstruction}
+import org.mockito.{ArgumentCaptor, ArgumentMatchers, MockedConstruction}
 
 import java.io.{ByteArrayInputStream, File}
 import java.net.InetAddress
@@ -6243,7 +6243,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testAppendWithInvalidDisklessAndValidCLassic(): Unit = {
+    def testAppendWithInvalidDisklessAndValidClassic(): Unit = {
       val entriesPerPartition = Map(
         disklessTopicPartition -> RECORDS,
         classicTopicPartition -> RECORDS,
@@ -6391,7 +6391,7 @@ class ReplicaManagerTest {
       val replicaManager = try {
         createReplicaManager(
           List(disklessTopicPartition.topic(), disklessTopicPartition2.topic()),
-          controlPlane = Some(cp),
+          controlPlaneOption = Some(cp),
           topicIdMapping = Map(disklessTopicPartition2.topic() -> disklessTopicPartition2.topicId())
         )
       } finally {
@@ -6454,7 +6454,7 @@ class ReplicaManagerTest {
       val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(disklessResponse)
 
       val replicaManager = try {
-        createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp))
+        createReplicaManager(List(disklessTopicPartition.topic()), controlPlaneOption = Some(cp))
       } finally {
         fetchHandlerCtor.close()
       }
@@ -6513,7 +6513,7 @@ class ReplicaManagerTest {
 
       val replicaManager = try {
         // spy to inject readFromLog mock
-        spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlaneOption = Some(cp)))
       } finally {
         fetchHandlerCtor.close()
       }
@@ -6593,7 +6593,7 @@ class ReplicaManagerTest {
 
       val replicaManager = try {
         // spy to inject readFromLog mock
-        spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlaneOption = Some(cp)))
       } finally {
         fetchHandlerCtor.close()
       }
@@ -6667,7 +6667,7 @@ class ReplicaManagerTest {
       val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(disklessResponse)
 
       val replicaManager = try {
-        createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp))
+        createReplicaManager(List(disklessTopicPartition.topic()), controlPlaneOption = Some(cp))
       } finally {
         fetchHandlerCtor.close()
       }
@@ -6730,7 +6730,7 @@ class ReplicaManagerTest {
       val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(disklessResponse)
 
       val replicaManager = try {
-        spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlaneOption = Some(cp)))
       } finally {
         fetchHandlerCtor.close()
       }
@@ -6805,7 +6805,7 @@ class ReplicaManagerTest {
       val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(disklessResponse)
 
       val replicaManager = try {
-        spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlaneOption = Some(cp)))
       } finally {
         fetchHandlerCtor.close()
       }
@@ -6878,10 +6878,11 @@ class ReplicaManagerTest {
 
     private def createReplicaManager(
       disklessTopics: Seq[String],
-      controlPlane: Option[ControlPlane] = None,
+      controlPlaneOption: Option[ControlPlane] = None,
       topicIdMapping: Map[String, Uuid] = Map.empty
     ): ReplicaManager = {
-      val props = TestUtils.createBrokerConfig(1, logDirCount = 2)
+      val brokerId = 1
+      val props = TestUtils.createBrokerConfig(brokerId, logDirCount = 2)
       val config = KafkaConfig.fromProps(props)
       val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
       val sharedState = mock(classOf[SharedState], Answers.RETURNS_DEEP_STUBS)
@@ -6895,7 +6896,7 @@ class ReplicaManagerTest {
         topicIdMapping.getOrElse(topicName, Uuid.ZERO_UUID)
       }
       disklessTopics.foreach(t => when(inklessMetadata.isDisklessTopic(t)).thenReturn(true))
-      when(sharedState.metadata()).thenReturn(inklessMetadata)
+      val sharedState = SharedState.initialize(time, brokerId, inklessConfig, inklessMetadata, controlPlane, new BrokerTopicStats(), () => new LogConfig(new Properties()))
 
       val logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size)
 
