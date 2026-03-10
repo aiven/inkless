@@ -138,8 +138,7 @@ public class MirrorCoordinator {
             case PAUSING:
                 log.info("PAUSING mirroring for topics {}.", topicPartitions);
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
-                topicPartitions.forEach(tp ->
-                        transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED));
+                topicPartitions.forEach(tp -> transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED));
                 break;
             case PAUSED:
                 log.info("PAUSED mirroring for topics {}.", topicPartitions);
@@ -349,29 +348,35 @@ public class MirrorCoordinator {
 
         // periodically query source cluster to get the metadata
         long metadataRefreshIntervalMs = brokerConfig.mirrorConfig().metadataRefreshIntervalMs();
-        scheduler.schedule("MirrorMetadataRefresh",
-                () -> {
-                    metadataManager.syncTopicMetadata();
-                    metadataManager.syncMirrorMetadata();
-                },
-                metadataRefreshIntervalMs,
-                metadataRefreshIntervalMs
-        );
+        scheduler.schedule("MirrorMetadataRefresh", metadataManager::syncMetadata, metadataRefreshIntervalMs, metadataRefreshIntervalMs);
 
         log.info("Startup complete.");
     }
 
-    // Schedules truncation to align replicas with last mirrored offsets before resuming.
+    /** Schedules truncation to align replicas with last mirrored offsets before resuming. */
     private void scheduleTruncation(String mirrorName, Set<TopicPartition> topicPartitions) {
+        scheduleTruncation(mirrorName, topicPartitions, 0);
+    }
+
+    /** Schedules truncation with retry on failure, using mirror.truncation.backoff.ms as retry delay. */
+    private void scheduleTruncation(String mirrorName, Set<TopicPartition> topicPartitions, long delayMs) {
+        long retryDelayMs = brokerConfig.mirrorConfig().truncationBackoffMs();
         scheduler.scheduleOnce("LastMirroredOffsetTruncation",
-            () -> metadataManager.truncateToLastMirroredOffsets(replicaManager, mirrorName, topicPartitions,
-                    partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING)));
+            () -> {
+                try {
+                    metadataManager.truncateToLastMirroredOffsets(replicaManager, mirrorName, topicPartitions,
+                            partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING));
+                } catch (Exception e) {
+                    log.warn("Failed to truncate to last mirrored offsets for mirror {}, retrying in {} ms", mirrorName, retryDelayMs, e);
+                    scheduleTruncation(mirrorName, topicPartitions, retryDelayMs);
+                }
+            }, delayMs);
     }
 
     private Map<String, Map<Integer, Long>> lastMirroredOffsetsToCoordinatorRecords(Map<MirrorUtils.PartitionKey, Long> offsets) {
         Map<String, Map<Integer, Long>> results = new HashMap<>();
         offsets.forEach((key, value) -> {
-            Map<Integer, Long> partitionOffsets = results.getOrDefault(key.topic(), new HashMap<Integer, Long>());
+            Map<Integer, Long> partitionOffsets = results.getOrDefault(key.topic(), new HashMap<>());
             partitionOffsets.put(key.partition(), value);
             results.put(key.topic(), partitionOffsets);
         });

@@ -259,9 +259,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 .filter(e -> e.getKey().type() == ConfigResource.Type.MIRROR)
                 .forEach(e -> {
                     String mirrorName = e.getKey().name();
-                    List<MirrorSourceSender> senders = sourceSenders.remove(mirrorName);
-                    // also clear cached source leaders to force re-resolution with new config
                     sourceLeaders.remove(mirrorName);
+                    List<MirrorSourceSender> senders = sourceSenders.remove(mirrorName);
                     if (senders != null) {
                         log.info("Mirror config changed for '{}'. Closing existing connections "
                             + "to trigger reconnection with updated configuration.", mirrorName);
@@ -342,7 +341,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         closeSourceSenders();
     }
 
-    // Returns mirror partitions led by this broker, detecting both leadership and config changes
+    /** Returns mirror partitions led by this broker, detecting both leadership and config changes */
     private Set<TopicPartition> getMirrorLeaders(MetadataDelta delta, MetadataImage image) {
         Set<TopicPartition> mirrorLeaderPartitions = new HashSet<>();
 
@@ -672,6 +671,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         responseCallback.accept(new ReadMirrorStatesResponse(data));
     }
 
+    /** Creates initial source senders from bootstrap addresses if not already connected. */
     private void ensureConnection(String mirrorName) {
         if (sourceSenders.containsKey(mirrorName)) {
             return;
@@ -714,6 +714,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
+    /** Sends a request to the source cluster, iterating available senders with fallback on failure. */
     private ClientResponse trySendRequest(String mirrorName, AbstractRequest.Builder<?> requestBuilder) {
         // snapshot sender list to avoid concurrent modification during iteration
         List<MirrorSourceSender> senders = List.copyOf(sourceSenders.getOrDefault(mirrorName, List.of()));
@@ -924,11 +925,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    /**
-     * Syncs topic metadata (partition leaders, partition counts) from all source clusters.
-     * Runs on every broker so that all brokers can route mirror fetch requests to the correct partition leaders.
-     */
-    void syncTopicMetadata() {
+    /** Syncs metadata from all source clusters. */
+    void syncMetadata() {
         Set<String> mirrors = getConfiguredMirrors();
         if (!mirrors.isEmpty()) {
             log.debug("Refreshing mirror metadata for mirrors: {}", mirrors);
@@ -938,9 +936,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // snapshot keyset to avoid ConcurrentModificationException
         for (String mirrorName : Set.copyOf(sourceSenders.keySet())) {
             try {
+                discoverSourceBrokers(mirrorName);
                 syncTopicMetadata(mirrorName);
+                syncMirrorMetadata(mirrorName);
             } catch (Exception e) {
-                log.error("Failed to refresh topic metadata for mirror {}", mirrorName, e);
+                log.error("Failed to refresh metadata for mirror {}", mirrorName, e);
             }
         }
 
@@ -948,6 +948,65 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         metadataRefreshError.incrementAndGet();
     }
 
+    /**
+     * Discovers source cluster brokers via metadata and adds senders for any newly found brokers.
+     * Sender cleanup only happens via {@link #onMetadataUpdate} or{@link #clear}.
+     */
+    private void discoverSourceBrokers(String mirrorName) {
+        var response = trySendRequest(mirrorName, MetadataRequest.Builder.allTopics());
+        if (!(response.responseBody() instanceof MetadataResponse metadataResponse)) {
+            return;
+        }
+
+        Collection<Node> discoveredBrokers = metadataResponse.brokers();
+        if (discoveredBrokers.isEmpty()) {
+            return;
+        }
+        List<MirrorSourceSender> currentSenders = sourceSenders.get(mirrorName);
+        if (currentSenders == null) {
+            return;
+        }
+
+        Set<String> currentEndpoints = currentSenders.stream()
+                .map(s -> s.brokerEndPoint().host() + ":" + s.brokerEndPoint().port())
+                .collect(Collectors.toSet());
+
+        List<Node> newBrokers = discoveredBrokers.stream()
+                .filter(n -> !currentEndpoints.contains(n.host() + ":" + n.port()))
+                .toList();
+
+        if (newBrokers.isEmpty()) {
+            return;
+        }
+
+        Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName));
+        MirrorConfig mirrorConfig = MirrorConfig.fromProperties(props);
+
+        List<MirrorSourceSender> addedSenders = new ArrayList<>();
+        for (Node broker : newBrokers) {
+            try {
+                BrokerEndPoint endpoint = new BrokerEndPoint(broker.id(), broker.host(), broker.port());
+                String clientId = "nodeId-" + nodeId + "-" + mirrorName + "-" + broker.host() + "-" + broker.port();
+                LogContext logContext = new LogContext("[" + MirrorMetadataManager.class.getSimpleName() + "Sender id=" + nodeId + " clientId=" + clientId + "] ");
+                addedSenders.add(MirrorUtils.createSender(endpoint, mirrorConfig, brokerConfig, metrics, time, clientId, logContext));
+            } catch (Exception e) {
+                log.warn("Failed to create sender for broker {} in mirror {}", broker, mirrorName, e);
+            }
+        }
+
+        if (addedSenders.isEmpty()) {
+            return;
+        }
+
+        List<MirrorSourceSender> merged = new ArrayList<>(currentSenders);
+        merged.addAll(addedSenders);
+        log.info("Adding {} discovered broker(s) to source senders for mirror {}: {}",
+                addedSenders.size(), mirrorName,
+                addedSenders.stream().map(s -> s.brokerEndPoint().toString()).collect(Collectors.joining(", ")));
+        sourceSenders.put(mirrorName, merged);
+    }
+
+    /** Fetches topic metadata from the source cluster and updates partition leaders, counts, and deletions. */
     private void syncTopicMetadata(String mirrorName) {
         Set<String> topics = getConfiguredTopics(mirrorName);
         if (topics.isEmpty()) {
@@ -967,7 +1026,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    // Processes topic metadata and returns topics that need partition scaling
+    /** Processes topic metadata and returns topics that need partition scaling */
     private CreatePartitionsRequestData.CreatePartitionsTopicCollection processTopicMetadata(
             String mirrorName, Collection<MetadataResponse.TopicMetadata> topicMetadata, Map<Integer, Node> brokerNodes) {
         var createPartitionsTopics = new CreatePartitionsRequestData.CreatePartitionsTopicCollection();
@@ -1002,7 +1061,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return createPartitionsTopics;
     }
 
-    // Handles partition scaling by sending create partitions requests
+    /** Handles partition scaling by sending create partitions requests */
     private void handlePartitionScaling(CreatePartitionsRequestData.CreatePartitionsTopicCollection createPartitionsTopics) {
         if (!createPartitionsTopics.isEmpty()) {
             log.debug("Detected partition count change, sending CreatePartitionsRequest: {}", createPartitionsTopics);
@@ -1015,7 +1074,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    // Transitions mirror partitions to STOPPING when the topic is deleted on the source cluster.
+    /** Transitions mirror partitions to STOPPING when the topic is deleted on the source cluster. */
     private void maybeStopDeletedTopics(String mirrorName, Collection<MetadataResponse.TopicMetadata> topicMetadata) {
         List<String> deletedSourceTopicNames = topicMetadata.stream()
                 .filter(tm -> tm.error() == Errors.UNKNOWN_TOPIC_OR_PARTITION)
@@ -1036,21 +1095,19 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * Syncs mirror metadata (configurations, consumer group offsets, ACLs) from source clusters.
      * Only the coordinator for each mirror name handles this, distributing load across brokers.
      */
-    void syncMirrorMetadata() {
-        getConfiguredMirrors().forEach(mirrorName -> {
-            if (isLocalCoordinator(mirrorName)) {
-                ensureConnection(mirrorName);
-                try {
-                    MirrorConfig mirrorConfig = MirrorConfig.fromProperties(
-                            metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName)));
-                    syncTopicConfigurations(mirrorName, mirrorConfig);
-                    syncConsumerGroupOffsets(mirrorName, mirrorConfig);
-                    syncAccessControlLists(mirrorName, mirrorConfig);
-                } catch (Exception e) {
-                    log.error("Failed to sync mirror metadata for mirror {}", mirrorName, e);
-                }
+    void syncMirrorMetadata(String mirrorName) {
+        if (isLocalCoordinator(mirrorName)) {
+            ensureConnection(mirrorName);
+            try {
+                MirrorConfig mirrorConfig = MirrorConfig.fromProperties(
+                        metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName)));
+                syncTopicConfigurations(mirrorName, mirrorConfig);
+                syncConsumerGroupOffsets(mirrorName, mirrorConfig);
+                syncAccessControlLists(mirrorName, mirrorConfig);
+            } catch (Exception e) {
+                log.error("Failed to sync mirror metadata for mirror {}", mirrorName, e);
             }
-        });
+        }
     }
 
     private void syncTopicConfigurations(String mirrorName, MirrorConfig mirrorConfig) {
@@ -1360,10 +1417,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 .collect(Collectors.toSet());
     }
 
+    /** Returns the set of topic names configured for the given mirror, excluding paused topics. */
     Set<String> getConfiguredTopics(String mirrorName) {
         return getConfiguredTopics(mirrorName, false);
     }
 
+    /** Returns the set of topic names configured for the given mirror, optionally including paused topics. */
     Set<String> getConfiguredTopics(String mirrorName, boolean includePaused) {
         return metadataCache.getAllTopics().stream()
                 .filter(topic -> {
