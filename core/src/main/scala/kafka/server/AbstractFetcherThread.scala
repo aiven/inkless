@@ -43,6 +43,7 @@ import org.apache.kafka.server.util.ShutdownableThread
 import org.apache.kafka.storage.internals.log.LogAppendInfo
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.util
 import java.util.Optional
@@ -393,12 +394,14 @@ abstract class AbstractFetcherThread(name: String,
     val mirrorPartitionsWithNewEpoch = mutable.Map.empty[TopicPartition, PartitionData]
     val mirrorPartitionsWithNewLeader = mutable.Map.empty[TopicPartition, PartitionData]
     var responseData: Map[TopicPartition, FetchData] = Map.empty
+    var fetchException: Option[Throwable] = None
 
     try {
       debug(s"!!! Sending fetch request $fetchRequest")
       responseData = leader.fetch(fetchRequest).asScala
     } catch {
       case t: Throwable =>
+        fetchException = Some(t)
         if (isRunning) {
           warn(s"Error in response for fetch request $fetchRequest", t)
           inLock(partitionMapLock) {
@@ -566,8 +569,7 @@ abstract class AbstractFetcherThread(name: String,
       updateMirrorFetchEpoch(mirrorPartitionsWithNewEpoch)
     if (mirrorPartitionsWithNewLeader.nonEmpty)
       maybeCreateMirrorFetchers(mirrorPartitionsWithNewLeader)
-    if (responseData.isEmpty && partitionsWithError.nonEmpty && mirrorName.nonEmpty) {
-      // Handle TCP connection failures (IOException)
+    if (fetchException.exists(_.isInstanceOf[IOException]) && partitionsWithError.nonEmpty && mirrorName.nonEmpty) {
       consecutiveFetchErrors += 1
       if (consecutiveFetchErrors >= 3) {
         consecutiveFetchErrors = 0

@@ -173,7 +173,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Optional<Function<MirrorRecordKey, Integer>> coordinatorPartitionFinder = Optional.empty();
     private Optional<Function<String, Integer>> coordinatorPartitionByNameFinder = Optional.empty();
 
-    // cache (thread-safe maps for concurrent access from metadata, scheduler, and fetcher threads)
+    // cache
     private final Map<MirrorRecordKey, Node> coordinatorNodes = new ConcurrentHashMap<>();
     private final Map<String, List<MirrorSourceSender>> sourceSenders = new ConcurrentHashMap<>();
     private final Map<String, Map<TopicPartition, Node>> sourceLeaders = new ConcurrentHashMap<>();
