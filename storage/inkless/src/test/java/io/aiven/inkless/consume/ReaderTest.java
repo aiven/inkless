@@ -166,15 +166,15 @@ public class ReaderTest {
             // Create requests with futures: A, B, C
             final List<FetchPlanner.FetchRequestWithFuture> orderedRequests = List.of(
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(objectKeyA, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(objectKeyA, range, 0L, false),
                     futureA
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(objectKeyB, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(objectKeyB, range, 0L, false),
                     futureB
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(objectKeyC, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(objectKeyC, range, 0L, false),
                     futureC
                 )
             );
@@ -203,7 +203,7 @@ public class ReaderTest {
 
             final List<FetchPlanner.FetchRequestWithFuture> requests = List.of(
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(testObjectKey, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(testObjectKey, range, 0L, false),
                     incompleteFuture
                 )
             );
@@ -252,15 +252,15 @@ public class ReaderTest {
 
             final List<FetchPlanner.FetchRequestWithFuture> mixedRequests = List.of(
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(hotKey1, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(hotKey1, range, 0L, false),
                     successFuture1
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(hotKey2, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(hotKey2, range, 0L, false),
                     failedFuture
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(hotKey2, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(hotKey2, range, 0L, false),
                     successFuture2
                 )
             );
@@ -318,15 +318,15 @@ public class ReaderTest {
 
             final List<FetchPlanner.FetchRequestWithFuture> allFailedRequests = List.of(
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(key1, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(key1, range, 0L, false),
                     failedFuture1
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(key2, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(key2, range, 0L, false),
                     failedFuture2
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(key3, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(key3, range, 0L, false),
                     failedFuture3
                 )
             );
@@ -377,19 +377,19 @@ public class ReaderTest {
 
             final List<FetchPlanner.FetchRequestWithFuture> mixedRequests = List.of(
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(successKey, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(successKey, range, 0L, false),
                     successFuture
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(failKey1, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(failKey1, range, 0L, false),
                     rejectedExecutionFuture
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(failKey2, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(failKey2, range, 0L, false),
                     storageBackendFuture
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(failKey3, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(failKey3, range, 0L, false),
                     genericFuture
                 )
             );
@@ -441,19 +441,19 @@ public class ReaderTest {
 
             final List<FetchPlanner.FetchRequestWithFuture> orderedRequests = List.of(
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(key1, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(key1, range, 0L, false),
                     future1
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(key2, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(key2, range, 0L, false),
                     future2
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(key3, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(key3, range, 0L, false),
                     future3
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
-                    new FetchPlanner.ObjectFetchRequest(key4, range, 0L),
+                    new FetchPlanner.ObjectFetchRequest(key4, range, 0L, false),
                     future4
                 )
             );

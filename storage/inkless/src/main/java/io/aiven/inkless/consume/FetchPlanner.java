@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.cache.BoundingRangeAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
@@ -60,6 +61,8 @@ import io.github.bucket4j.Bucket;
  * CompletableFuture immediately, and actual fetches run on the provided executor.
  */
 public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWithFuture>> {
+
+    private static final KeyAlignmentStrategy COLD_PATH_ALIGNMENT = new BoundingRangeAlignment();
 
     private final Time time;
     private final ObjectKeyCreator objectKeyCreator;
@@ -156,7 +159,9 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
 
     /**
      * Creates fetch requests for a single object with multiple batches.
-     * Aligns byte ranges and aggregates metadata (timestamp for hot/cold path decision).
+     * Aggregates metadata and selects range strategy based on data recency:
+     * - Hot path (recent data): aligns ranges for cache efficiency
+     * - Cold path (lagging consumers): single bounding range to minimize HTTP requests
      */
     private Stream<ObjectFetchRequest> createFetchRequests(
         final String objectKey,
@@ -179,16 +184,39 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
             .map(b -> b.metadata().range())
             .collect(Collectors.toList());
 
-        // Align byte ranges for efficient fetching
-        final Set<ByteRange> alignedRanges = keyAlignment.align(byteRanges);
+        // Compute the lagging decision once during planning so range strategy and execution path stay consistent.
+        final boolean lagging = isLagging(timestamp);
 
-        // Create a fetch request for each aligned range with aggregated metadata
-        return alignedRanges.stream()
+        // Select range strategy based on data recency:
+        // - Hot path: align to fixed blocks for cache hit rate
+        // - Cold path: single bounding range to minimize HTTP requests (cache is bypassed anyway)
+        final Set<ByteRange> fetchRanges = lagging
+            ? COLD_PATH_ALIGNMENT.align(byteRanges)
+            : keyAlignment.align(byteRanges);
+
+        // Create a fetch request for each range with aggregated metadata
+        return fetchRanges.stream()
             .map(byteRange -> new ObjectFetchRequest(
                 objectKeyCreator.from(objectKey),
                 byteRange,
-                timestamp
+                timestamp,
+                lagging
             ));
+    }
+
+    /**
+     * Determines if data with the given timestamp should use the cold (lagging) path.
+     * This decision is computed once during planning and carried through via {@link ObjectFetchRequest#lagging()}
+     * to ensure range strategy (aligned vs bounding) and execution path (cache vs bypass) stay consistent.
+     */
+    private boolean isLagging(final long timestamp) {
+        final boolean laggingFeatureEnabled = laggingFetchDataExecutor != null && laggingObjectFetcher != null;
+        if (!laggingFeatureEnabled) {
+            return false;
+        }
+        final long currentTime = time.milliseconds();
+        final long dataAge = Math.max(0, currentTime - timestamp);
+        return dataAge > laggingConsumerThresholdMs;
     }
 
     private List<FetchRequestWithFuture> submitAllRequests(final List<ObjectFetchRequest> requests) {
@@ -198,17 +226,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
     }
 
     private CompletableFuture<FileExtent> submitSingleRequest(final ObjectFetchRequest request) {
-        final long currentTime = time.milliseconds();
-        // If timestamp is in the future (clock skew), treat as recent data (hot path)
-        // Math.max ensures dataAge is never negative, which would incorrectly route future timestamps
-        final long dataAge = Math.max(0, currentTime - request.timestamp());
-
-        // Lagging consumer feature is enabled only when BOTH laggingFetchDataExecutor AND laggingObjectFetcher are non-null.
-        // If either is null, the feature is disabled and all requests are treated as recent (hot path).
-        final boolean laggingFeatureEnabled = laggingFetchDataExecutor != null && laggingObjectFetcher != null;
-        final boolean isLagging = laggingFeatureEnabled && (dataAge > laggingConsumerThresholdMs);
-
-        if (!isLagging) {
+        if (!request.lagging()) {
             // Hot path: up-to-date consumers use cache + recentDataExecutor
             metrics.recordRecentDataRequest();
             return cache.computeIfAbsent(
@@ -315,14 +333,17 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
      *
      * @param objectKey the storage object key
      * @param byteRange the range of bytes to fetch
-     * @param timestamp the maximum timestamp from batches (for hot/cold path decision).
+     * @param timestamp the maximum timestamp from batches.
      *                  Using max instead of min because if ANY batch in the object is recent,
      *                  we treat the entire fetch as hot path to prioritize recent data access.
+     * @param lagging   pre-computed lagging decision from planning phase, ensuring range strategy
+     *                  (aligned vs bounding) and execution path (cache vs bypass) stay consistent.
      */
     record ObjectFetchRequest(
         ObjectKey objectKey,
         ByteRange byteRange,
-        long timestamp
+        long timestamp,
+        boolean lagging
     ) {
         /**
          * Converts to cache key for deduplication.
