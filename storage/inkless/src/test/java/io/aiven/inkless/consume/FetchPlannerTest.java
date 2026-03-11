@@ -155,7 +155,7 @@ public class FetchPlannerTest {
                     ), 0, 1)
                 ),
                 Set.of(
-                    new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 20)
+                    new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 20, false)
                 )
             );
         }
@@ -170,8 +170,8 @@ public class FetchPlannerTest {
                     ), 0, 2)
                 ),
                 Set.of(
-                    new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 20),
-                    new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21)
+                    new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 20, false),
+                    new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, false)
                 )
             );
         }
@@ -188,8 +188,8 @@ public class FetchPlannerTest {
                     ), 0, 1)
                 ),
                 Set.of(
-                    new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 20),
-                    new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21)
+                    new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 20, false),
+                    new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, false)
                 )
             );
         }
@@ -207,7 +207,7 @@ public class FetchPlannerTest {
                 ),
                 Set.of(
                     // When batches for same object are merged, timestamp is max(20, 21) = 21
-                    new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 21)
+                    new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 21, false)
                 )
             );
         }
@@ -222,7 +222,7 @@ public class FetchPlannerTest {
                     ), 0, 1)
                 ),
                 Set.of(
-                    new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21)
+                    new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, false)
                 )
             );
         }
@@ -237,7 +237,7 @@ public class FetchPlannerTest {
                     ), 0, 1)
                 ),
                 Set.of(
-                    new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21)
+                    new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, false)
                 )
             );
         }
@@ -252,7 +252,7 @@ public class FetchPlannerTest {
                     ), 0, 1)
                 ),
                 Set.of(
-                    new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21)
+                    new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, false)
                 )
             );
         }
@@ -453,7 +453,7 @@ public class FetchPlannerTest {
 
                 // Verify the result is now in cache
                 final ObjectFetchRequest request = new ObjectFetchRequest(
-                    OBJECT_KEY_A, requestRange, 20
+                    OBJECT_KEY_A, requestRange, 20, false
                 );
                 final CacheKey cacheKey = request.toCacheKey();
                 assertThat(caffeineCache.get(cacheKey)).isNotNull();
@@ -469,7 +469,7 @@ public class FetchPlannerTest {
 
                 // Pre-populate the cache
                 final ObjectFetchRequest request = new ObjectFetchRequest(
-                    OBJECT_KEY_A, requestRange, 20
+                    OBJECT_KEY_A, requestRange, 20, false
                 );
                 final CacheKey cacheKey = request.toCacheKey();
                 caffeineCache.put(cacheKey, cachedFileExtent);
@@ -1385,6 +1385,182 @@ public class FetchPlannerTest {
                     verify(metrics).recordRateLimitWaitTime(any(Long.class));
                 }
             }
+        }
+    }
+
+    // Cold-path planning tests: verify range strategy selection (alignment vs coalescing)
+    @Nested
+    class ColdPathPlanningTests {
+
+        final long threshold = 60 * 1000L;
+
+        @Test
+        public void coldPathUsesExactRangesInsteadOfAlignedBlocks() {
+            // A small batch (offset=100, size=50) on the cold path should produce
+            // an exact range [100, 150) instead of a 1024-byte aligned block [0, 1024).
+            final KeyAlignmentStrategy alignment = new FixedBlockAlignment(1024);
+            final long oldTimestamp = time.milliseconds() - 120_000L; // 2 min ago
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 100, 50, 0, 0, 10, oldTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final FetchPlanner planner = createFetchPlannerWithCustomThreshold(
+                alignment, cache, coordinates, threshold, laggingFetchDataExecutor, null
+            );
+
+            final List<ObjectFetchRequest> result = planner.planJobs(coordinates);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.get(0).byteRange()).isEqualTo(new ByteRange(100, 50));
+            assertThat(result.get(0).lagging()).isTrue();
+        }
+
+        @Test
+        public void hotPathStillUsesAlignedRanges() {
+            // A recent batch should still be aligned to block boundaries.
+            final KeyAlignmentStrategy alignment = new FixedBlockAlignment(1024);
+            final long recentTimestamp = time.milliseconds() - 10_000L; // 10s ago
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 100, 50, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final FetchPlanner planner = createFetchPlannerWithCustomThreshold(
+                alignment, cache, coordinates, threshold, laggingFetchDataExecutor, null
+            );
+
+            final List<ObjectFetchRequest> result = planner.planJobs(coordinates);
+
+            assertThat(result).hasSize(1);
+            // Aligned to 1024-byte block: offset=100 falls in block 0 → [0, 1024)
+            assertThat(result.get(0).byteRange()).isEqualTo(new ByteRange(0, 1024));
+            assertThat(result.get(0).lagging()).isFalse();
+        }
+
+        @Test
+        public void coldPathCoalescesAdjacentBatchesFromSameObject() {
+            // Two adjacent batches [100, 50) and [150, 50) on cold path should merge to [100, 100).
+            final KeyAlignmentStrategy alignment = new FixedBlockAlignment(1024);
+            final long oldTimestamp = time.milliseconds() - 120_000L;
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 100, 50, 0, 0, 10, oldTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1),
+                partition1, FindBatchResponse.success(List.of(
+                    new BatchInfo(2L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition1, 150, 50, 0, 0, 11, oldTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final FetchPlanner planner = createFetchPlannerWithCustomThreshold(
+                alignment, cache, coordinates, threshold, laggingFetchDataExecutor, null
+            );
+
+            final List<ObjectFetchRequest> result = planner.planJobs(coordinates);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.get(0).byteRange()).isEqualTo(new ByteRange(100, 100));
+        }
+
+        @Test
+        public void coldPathMergesNonAdjacentBatchesIntoBoundingRange() {
+            // Two batches with a gap: [100, 50) and [500, 50) should merge into bounding range [100, 450).
+            final KeyAlignmentStrategy alignment = new FixedBlockAlignment(1024);
+            final long oldTimestamp = time.milliseconds() - 120_000L;
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 100, 50, 0, 0, 10, oldTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1),
+                partition1, FindBatchResponse.success(List.of(
+                    new BatchInfo(2L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition1, 500, 50, 0, 0, 11, oldTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final FetchPlanner planner = createFetchPlannerWithCustomThreshold(
+                alignment, cache, coordinates, threshold, laggingFetchDataExecutor, null
+            );
+
+            final List<ObjectFetchRequest> result = planner.planJobs(coordinates);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.get(0).byteRange()).isEqualTo(new ByteRange(100, 450));
+        }
+
+        @Test
+        public void featureDisabledAlwaysUsesAlignmentEvenForOldData() {
+            // With null executor (feature disabled), old data should still use alignment.
+            final KeyAlignmentStrategy alignment = new FixedBlockAlignment(1024);
+            final long oldTimestamp = time.milliseconds() - 120_000L;
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 100, 50, 0, 0, 10, oldTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            // Feature disabled: null executor
+            final FetchPlanner planner = createFetchPlannerHotPathOnly(alignment, cache, coordinates);
+
+            final List<ObjectFetchRequest> result = planner.planJobs(coordinates);
+
+            assertThat(result).hasSize(1);
+            // Should be aligned to block boundary, not exact range
+            assertThat(result.get(0).byteRange()).isEqualTo(new ByteRange(0, 1024));
+            // Feature disabled → always hot path
+            assertThat(result.get(0).lagging()).isFalse();
+        }
+
+        @Test
+        public void mixedObjectsHotGetAlignedColdGetExact() {
+            // Object A is recent (hot) → aligned ranges.
+            // Object B is old (cold) → bounding range.
+            final KeyAlignmentStrategy alignment = new FixedBlockAlignment(1024);
+            final long recentTimestamp = time.milliseconds() - 10_000L;
+            final long oldTimestamp = time.milliseconds() - 120_000L;
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 100, 50, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME)),
+                    new BatchInfo(2L, OBJECT_KEY_B.value(),
+                        BatchMetadata.of(partition0, 200, 30, 1, 1, 11, oldTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 2)
+            );
+
+            final FetchPlanner planner = createFetchPlannerWithCustomThreshold(
+                alignment, cache, coordinates, threshold, laggingFetchDataExecutor, null
+            );
+
+            final List<ObjectFetchRequest> result = planner.planJobs(coordinates);
+
+            assertThat(result).hasSize(2);
+
+            final ObjectFetchRequest hotRequest = result.stream()
+                .filter(r -> r.objectKey().equals(OBJECT_KEY_A))
+                .findFirst().orElseThrow();
+            final ObjectFetchRequest coldRequest = result.stream()
+                .filter(r -> r.objectKey().equals(OBJECT_KEY_B))
+                .findFirst().orElseThrow();
+
+            // Hot: aligned to 1024-byte block, routed to hot path
+            assertThat(hotRequest.byteRange()).isEqualTo(new ByteRange(0, 1024));
+            assertThat(hotRequest.lagging()).isFalse();
+            // Cold: exact range, routed to cold path
+            assertThat(coldRequest.byteRange()).isEqualTo(new ByteRange(200, 30));
+            assertThat(coldRequest.lagging()).isTrue();
         }
     }
 
