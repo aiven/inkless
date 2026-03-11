@@ -63,9 +63,9 @@ class MirrorFetcherThread(name: String,
     replicaMgr.maybeCreateMirrorFetchers(mirrorName, partitionAndOffsets.keySet.asJava)
   }
 
-  // invalidates cached source leaders and re-resolves them on IOException from the source cluster
+  // invalidates cached source leaders for affected partitions on IOException from the source cluster
   override protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {
-    replicaMgr.mirrorMetadataManager.foreach(_.invalidateSourceLeader(mirrorName))
+    replicaMgr.mirrorMetadataManager.foreach(_.invalidateSourceLeader(mirrorName, mirrorPartitions.asJava))
     replicaMgr.maybeCreateMirrorFetchers(mirrorName, mirrorPartitions.asJava)
   }
 
