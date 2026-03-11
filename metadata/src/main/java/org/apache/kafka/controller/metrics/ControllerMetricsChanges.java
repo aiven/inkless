@@ -152,6 +152,39 @@ class ControllerMetricsChanges {
         }
     }
 
+    /**
+     * Handles a topic whose diskless.enable config changed without a corresponding TopicDelta.
+     * Recategorizes all existing partitions between classic and diskless metric buckets.
+     * Global counts (topics, partitions) are unaffected since the topic already exists.
+     */
+    void handleDisklessConfigChange(TopicImage topic, boolean nowDiskless) {
+        if (nowDiskless) {
+            disklessTopicsChange++;
+            for (PartitionRegistration partition : topic.partitions().values()) {
+                disklessPartitionsChange++;
+                if (!partition.hasLeader()) {
+                    disklessOfflinePartitionsChange++;
+                    offlinePartitionsChange--;
+                }
+                if (!partition.hasPreferredLeader()) {
+                    partitionsWithoutPreferredLeaderChange--;
+                }
+            }
+        } else {
+            disklessTopicsChange--;
+            for (PartitionRegistration partition : topic.partitions().values()) {
+                disklessPartitionsChange--;
+                if (!partition.hasLeader()) {
+                    disklessOfflinePartitionsChange--;
+                    offlinePartitionsChange++;
+                }
+                if (!partition.hasPreferredLeader()) {
+                    partitionsWithoutPreferredLeaderChange++;
+                }
+            }
+        }
+    }
+
     void handlePartitionChange(PartitionRegistration prev, PartitionRegistration next, boolean isDiskless) {
         boolean wasPresent = prev != null;
         boolean isPresent = next != null;

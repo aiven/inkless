@@ -245,6 +245,41 @@ public class ControllerMetricsChangesTest {
     }
 
     @Test
+    public void testDisklessConfigChangeClassicToDiskless() {
+        ControllerMetricsChanges changes = new ControllerMetricsChanges();
+        Map<Integer, PartitionRegistration> partitions = new HashMap<>();
+        partitions.put(0, fakePartitionRegistration(NORMAL));
+        partitions.put(1, fakePartitionRegistration(NON_PREFERRED_LEADER));
+        partitions.put(2, fakePartitionRegistration(OFFLINE));
+        TopicImage topic = new TopicImage("foo", FOO_ID, partitions);
+        changes.handleDisklessConfigChange(topic, true);
+        // Global counts unchanged — topic/partitions already existed
+        assertEquals(0, changes.globalTopicsChange());
+        assertEquals(0, changes.globalPartitionsChange());
+        // Classic offline/imbalance decremented
+        assertEquals(-1, changes.offlinePartitionsChange());
+        // offline partition also counts as without preferred leader
+        assertEquals(-2, changes.partitionsWithoutPreferredLeaderChange());
+    }
+
+    @Test
+    public void testDisklessConfigChangeDisklessToClassic() {
+        ControllerMetricsChanges changes = new ControllerMetricsChanges();
+        Map<Integer, PartitionRegistration> partitions = new HashMap<>();
+        partitions.put(0, fakePartitionRegistration(NORMAL));
+        partitions.put(1, fakePartitionRegistration(NON_PREFERRED_LEADER));
+        partitions.put(2, fakePartitionRegistration(OFFLINE));
+        TopicImage topic = new TopicImage("foo", FOO_ID, partitions);
+        changes.handleDisklessConfigChange(topic, false);
+        // Global counts unchanged
+        assertEquals(0, changes.globalTopicsChange());
+        assertEquals(0, changes.globalPartitionsChange());
+        // Classic offline/imbalance incremented
+        assertEquals(1, changes.offlinePartitionsChange());
+        assertEquals(2, changes.partitionsWithoutPreferredLeaderChange());
+    }
+
+    @Test
     public void testTopicElectionResult() {
         ControllerMetricsChanges changes = new ControllerMetricsChanges();
         TopicImage image = new TopicImage("foo", FOO_ID, Map.of());

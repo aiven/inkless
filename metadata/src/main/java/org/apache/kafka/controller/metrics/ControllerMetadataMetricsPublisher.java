@@ -93,12 +93,6 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
     }
 
     private void publishDelta(MetadataDelta delta, MetadataImage newImage) {
-        // Use newImage configs to check if topic is diskless, as the metadata cache
-        // may not have the config yet when processing deltas for newly created topics.
-        // Known limitation: config-only changes (e.g. diskless.enable toggled without a
-        // corresponding TopicDelta) are not processed here. Currently diskless.enable is
-        // immutable after creation; if that changes, handle configsDelta or recompute
-        // diskless counts when configs change.
         ControllerMetricsChanges changes = new ControllerMetricsChanges();
         if (delta.clusterDelta() != null) {
             for (Entry<Integer, Optional<BrokerRegistration>> entry :
@@ -125,6 +119,21 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
                     prevImage.topics().getTopic(entry.getKey()),
                     entry.getValue(),
                     isDisklessTopic(newImage.configs(), entry.getValue().name()));
+            }
+        }
+        // Handle diskless.enable config changes on existing topics (no TopicDelta required).
+        // Recategorizes partitions between classic and diskless metric buckets.
+        if (delta.configsDelta() != null) {
+            for (ConfigResource resource : delta.configsDelta().changes().keySet()) {
+                if (resource.type() != ConfigResource.Type.TOPIC) continue;
+                boolean wasDiskless = isDisklessTopic(prevImage.configs(), resource.name());
+                boolean isDiskless = isDisklessTopic(newImage.configs(), resource.name());
+                if (wasDiskless != isDiskless) {
+                    TopicImage topic = newImage.topics().getTopic(resource.name());
+                    if (topic != null) {
+                        changes.handleDisklessConfigChange(topic, isDiskless);
+                    }
+                }
             }
         }
         changes.apply(metrics);
