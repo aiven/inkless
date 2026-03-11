@@ -4156,6 +4156,7 @@ public class ReplicationControlManagerTest {
             ctx.unfenceBrokers(0, 1, 2);
 
             CreatableTopicResult createResult = ctx.createTestTopic(
+                Uuid.randomUuid(),
                 "foo",
                 1,
                 (short) 1,
@@ -4225,6 +4226,7 @@ public class ReplicationControlManagerTest {
             ctx.unfenceBrokers(0, 1, 2);
 
             CreatableTopicResult createResult = ctx.createTestTopic(
+                Uuid.randomUuid(),
                 "foo",
                 1,
                 (short) 1,
@@ -4907,6 +4909,7 @@ public class ReplicationControlManagerTest {
             ctx.unfenceBrokers(0, 1, 2);
 
             CreatableTopicResult createResult = ctx.createTestTopic(
+                Uuid.randomUuid(),
                 "foo",
                 1,
                 (short) 3,
@@ -4975,6 +4978,7 @@ public class ReplicationControlManagerTest {
             ctx.unfenceBrokers(0, 1, 2);
 
             CreatableTopicResult createResult = ctx.createTestTopic(
+                Uuid.randomUuid(),
                 "foo",
                 1,
                 (short) 3,
@@ -5011,6 +5015,7 @@ public class ReplicationControlManagerTest {
 
             final int numPartitions = 6;
             CreatableTopicResult createResult = ctx.createTestTopic(
+                Uuid.randomUuid(),
                 "foo",
                 numPartitions,
                 (short) 1,
@@ -5054,6 +5059,7 @@ public class ReplicationControlManagerTest {
 
             final int numPartitions = 6;
             CreatableTopicResult createResult = ctx.createTestTopic(
+                Uuid.randomUuid(),
                 "foo",
                 numPartitions,
                 (short) 3,

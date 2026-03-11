@@ -115,7 +115,7 @@ public class ControllerMetricsChangesTest {
         TopicImage topicImage = new TopicImage("foo",
                 Uuid.fromString("wXtW6pQbTS2CL6PjdRCqVw"),
                 partitions);
-        changes.handleDeletedTopic(topicImage);
+        changes.handleDeletedTopic(topicImage, false);
         assertEquals(-1, changes.globalTopicsChange());
         assertEquals(-5, changes.globalPartitionsChange());
         assertEquals(-1, changes.offlinePartitionsChange());
@@ -155,7 +155,7 @@ public class ControllerMetricsChangesTest {
     @Test
     public void testHandleNewTopic() {
         ControllerMetricsChanges changes = new ControllerMetricsChanges();
-        changes.handleTopicChange(null, TOPIC_DELTA1);
+        changes.handleTopicChange(null, TOPIC_DELTA1, false);
         assertEquals(1, changes.globalTopicsChange());
         assertEquals(5, changes.globalPartitionsChange());
         assertEquals(0, changes.offlinePartitionsChange());
@@ -165,7 +165,7 @@ public class ControllerMetricsChangesTest {
     @Test
     public void testTopicChange() {
         ControllerMetricsChanges changes = new ControllerMetricsChanges();
-        changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2);
+        changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2, false);
         assertEquals(0, changes.globalTopicsChange());
         assertEquals(1, changes.globalPartitionsChange());
         assertEquals(1, changes.offlinePartitionsChange());
@@ -173,12 +173,49 @@ public class ControllerMetricsChangesTest {
     }
 
     @Test
-    public void testNoPartitionChangesReportedOnDisklessTopics() {
-        ControllerMetricsChanges changes = new ControllerMetricsChanges(s -> true);
-        changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2);
+    public void testDisklessTopicsExcludedFromOfflineAndImbalanceMetrics() {
+        ControllerMetricsChanges changes = new ControllerMetricsChanges();
+        changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2, true);
         assertEquals(0, changes.globalTopicsChange());
-        assertEquals(0, changes.globalPartitionsChange());
+        // Diskless partitions are included in global partition count
+        assertEquals(1, changes.globalPartitionsChange());
+        // Diskless partitions are excluded from standard offline/imbalance metrics
         assertEquals(0, changes.offlinePartitionsChange());
         assertEquals(0, changes.partitionsWithoutPreferredLeaderChange());
+    }
+
+    @Test
+    public void testDisklessConfigChangeClassicToDiskless() {
+        ControllerMetricsChanges changes = new ControllerMetricsChanges();
+        Map<Integer, PartitionRegistration> partitions = new HashMap<>();
+        partitions.put(0, fakePartitionRegistration(NORMAL));
+        partitions.put(1, fakePartitionRegistration(NON_PREFERRED_LEADER));
+        partitions.put(2, fakePartitionRegistration(OFFLINE));
+        TopicImage topic = new TopicImage("foo", FOO_ID, partitions);
+        changes.handleDisklessConfigChange(topic, true);
+        // Global counts unchanged — topic/partitions already existed
+        assertEquals(0, changes.globalTopicsChange());
+        assertEquals(0, changes.globalPartitionsChange());
+        // Classic offline/imbalance decremented
+        assertEquals(-1, changes.offlinePartitionsChange());
+        // offline partition also counts as without preferred leader
+        assertEquals(-2, changes.partitionsWithoutPreferredLeaderChange());
+    }
+
+    @Test
+    public void testDisklessConfigChangeDisklessToClassic() {
+        ControllerMetricsChanges changes = new ControllerMetricsChanges();
+        Map<Integer, PartitionRegistration> partitions = new HashMap<>();
+        partitions.put(0, fakePartitionRegistration(NORMAL));
+        partitions.put(1, fakePartitionRegistration(NON_PREFERRED_LEADER));
+        partitions.put(2, fakePartitionRegistration(OFFLINE));
+        TopicImage topic = new TopicImage("foo", FOO_ID, partitions);
+        changes.handleDisklessConfigChange(topic, false);
+        // Global counts unchanged
+        assertEquals(0, changes.globalTopicsChange());
+        assertEquals(0, changes.globalPartitionsChange());
+        // Classic offline/imbalance incremented
+        assertEquals(1, changes.offlinePartitionsChange());
+        assertEquals(2, changes.partitionsWithoutPreferredLeaderChange());
     }
 }
