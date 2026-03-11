@@ -733,9 +733,17 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         throw new KafkaException("Failed to send request to any source server for mirror " + mirrorName, lastException);
     }
 
-    /** Invalidates cached source leaders, forcing a metadata refresh on next resolution. */
+    /** Invalidates all cached source leaders for a mirror, forcing a full metadata refresh on next resolution. */
     public void invalidateSourceLeader(String mirrorName) {
         sourceLeaders.remove(mirrorName);
+    }
+
+    /** Invalidates cached source leaders for specific partitions, leaving other partitions' cached leaders intact. */
+    public void invalidateSourceLeader(String mirrorName, java.util.Set<TopicPartition> partitions) {
+        var partitionLeaders = sourceLeaders.get(mirrorName);
+        if (partitionLeaders != null) {
+            partitions.forEach(partitionLeaders::remove);
+        }
     }
 
     /** Resolves source partition leader from cache, refreshing metadata synchronously if needed. */
