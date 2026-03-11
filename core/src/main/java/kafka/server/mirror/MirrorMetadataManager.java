@@ -174,6 +174,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Optional<Function<String, Integer>> coordinatorPartitionByNameFinder = Optional.empty();
 
     // cache
+    // thread-safe maps for concurrent access from metadata, scheduler, and fetcher threads
     private final Map<String, List<MirrorSourceSender>> sourceSenders = new ConcurrentHashMap<>();
     private final Map<String, Map<TopicPartition, Node>> sourceLeaders = new ConcurrentHashMap<>();
     private final Map<MirrorUtils.PartitionKey, MirrorPartitionState> partitionStates = new ConcurrentHashMap<>();

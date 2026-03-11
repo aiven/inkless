@@ -49,7 +49,7 @@ import scala.collection.mutable
  * Key Differences from LocalLeaderEndPoint:
  * - Takes a BlockingSend parameter for network communication (enables testing with mocks)
  * - Supports both replica fetch (intra-cluster) and consumer fetch (cross-cluster) modes
- * - Can use cluster-specific credentials via MirrorBlockingSender for cross-cluster scenarios
+ * - Can use cluster-specific credentials via MirrorSourceSender for cross-cluster scenarios
  *
  * This is not thread-safe. Each instance is used by a single ReplicaFetcherThread or MirrorFetcherThread.
  *
