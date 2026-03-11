@@ -713,12 +713,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         if (senders.isEmpty()) {
             throw new IllegalStateException("No source senders available for mirror " + mirrorName);
         }
-        MirrorSourceSender sender = senders.get(random.nextInt(senders.size()));
-        try {
-            return sender.sendRequest(requestBuilder);
-        } catch (Exception e) {
-            throw new KafkaException("Failed to send request to " + sender.brokerEndPoint() + " for mirror " + mirrorName + ": " + e.getMessage());
+        Exception lastException = null;
+        for (MirrorSourceSender sender : senders) {
+            try {
+                return sender.sendRequest(requestBuilder);
+            } catch (Exception e) {
+                lastException = e;
+                log.warn("Failed to send request to {} for mirror {}: {}", sender.brokerEndPoint(), mirrorName, e.getMessage());
+            }
         }
+        throw new KafkaException("Failed to send request to any source server for mirror " + mirrorName, lastException);
     }
 
 
