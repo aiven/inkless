@@ -691,7 +691,26 @@ abstract class AbstractFetcherThread(name: String,
 
   /**
    * Called from ReplicaFetcherThread and ReplicaAlterLogDirsThread maybeTruncate for each topic
-   * partition. Returns truncation offset and whether this is the final offset to truncate to.
+   * partition. Returns truncation offset and whether this is the final offset to truncate to
+   *
+   * For each topic partition, the offset to truncate to is calculated based on leader's returned
+   * epoch and offset:
+   *  -- If the leader replied with undefined epoch offset, we must use the high watermark. This can
+   *  happen if 1) the leader is still using message format older than IBP_0_11_0; 2) the follower
+   *  requested leader epoch < the first leader epoch known to the leader.
+   *  -- If the leader replied with the valid offset but undefined leader epoch, we truncate to
+   *  leader's offset if it is lower than follower's Log End Offset. This may happen if the
+   *  leader is on the inter-broker protocol version < IBP_2_0_IV0
+   *  -- If the leader replied with leader epoch not known to the follower, we truncate to the
+   *  end offset of the largest epoch that is smaller than the epoch the leader replied with, and
+   *  send OffsetsForLeaderEpochRequest with that leader epoch. In a more rare case, where the
+   *  follower was not tracking epochs smaller than the epoch the leader replied with, we
+   *  truncate the leader's offset (and do not send any more leader epoch requests).
+   *  -- Otherwise, truncate to min(leader's offset, end offset on the follower for epoch that
+   *  leader replied with, follower's Log End Offset).
+   *
+   * @param tp                Topic partition
+   * @param leaderEpochOffset Epoch end offset received from the leader for this topic partition
    */
   private def getOffsetTruncationState(tp: TopicPartition,
                                        leaderEpochOffset: EpochEndOffset): OffsetTruncationState = inLock(partitionMapLock) {
