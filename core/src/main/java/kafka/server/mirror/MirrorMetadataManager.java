@@ -254,14 +254,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // caching the image for query purpose
         this.metadataImage = newImage;
 
-        // evict stale coordinator node cache when __mirror_state topic leadership changes
-        if (delta.topicsDelta() != null) {
-            TopicImage mirrorStateTopic = newImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME);
-            if (mirrorStateTopic != null && delta.topicsDelta().changedTopic(mirrorStateTopic.id()) != null) {
-                coordinatorNodes.clear();
-            }
-        }
-
         // detect config changes and close stale connections and fetchers to trigger reconnection
         if (delta.configsDelta() != null) {
             delta.configsDelta().changes().entrySet().stream()
@@ -692,39 +684,27 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName));
         String bootstrapServers = Optional.ofNullable(props.get(BOOTSTRAP_SERVERS_CONFIG))
                 .map(Object::toString)
-                .orElseThrow(() -> new IllegalArgumentException("Source bootstrap server not found in Cluster Mirror config: " + mirrorName));
-        log.info("Bootstrap servers config for mirror {}: '{}'", mirrorName, bootstrapServers);
+                .orElseThrow(() -> new IllegalArgumentException("Remote bootstrap server not found in Cluster Mirror config: " + mirrorName));
 
-        List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(
-                Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
-        Collections.shuffle(addresses, random);
+        log.info("Mirror config for '{}': {}", mirrorName, props);
 
-        MirrorConfig mirrorConfig = MirrorConfig.fromProperties(props);
+        var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
+        // Use random node id here because we don't know node id of remote brokers
+        int rand = random.nextInt(addresses.size());
+        var brokerEndpoint = new BrokerEndPoint(random.nextInt(), addresses.get(rand).getHostString(), addresses.get(rand).getPort());
+        var logContext = new LogContext("[" + MirrorMetadataManager.class.getName() + " replicaId=" + nodeId + ", mirrorName=" + mirrorName + "] ");
 
-        List<MirrorSourceSender> senders = new ArrayList<>();
-        for (InetSocketAddress address : addresses) {
-            try {
-                // deterministic sender ID to avoid collisions
-                int senderId = Objects.hash(address.getHostString(), address.getPort()) & Integer.MAX_VALUE;
-                BrokerEndPoint endpoint = new BrokerEndPoint(senderId, address.getHostString(), address.getPort());
-                String clientId = "nodeId-" + nodeId + "-" + mirrorName + "-" + address.getHostString() + "-" + address.getPort();
-                LogContext logContext = new LogContext("[" + MirrorMetadataManager.class.getSimpleName() + "Sender id=" + nodeId + " clientId=" + clientId + "] ");
-                senders.add(MirrorUtils.createSender(endpoint, mirrorConfig, brokerConfig, metrics, time, clientId, logContext));
-            } catch (Exception e) {
-                log.warn("Failed to create sender for {} in mirror {}", address, mirrorName, e);
-            }
-        }
-
-        if (senders.isEmpty()) {
-            throw new IllegalStateException("Failed to create any source senders for mirror " + mirrorName);
-        }
-
-        log.info("Created {} source sender(s) for mirror {} from {} configured address(es)", senders.size(), mirrorName, addresses.size());
-        // putIfAbsent to avoid overwriting senders created by a concurrent thread
-        List<MirrorSourceSender> existing = sourceSenders.putIfAbsent(mirrorName, senders);
-        if (existing != null) {
-            senders.forEach(MirrorSourceSender::close);
-        }
+        MirrorSourceSender sender = new MirrorSourceSender(
+                brokerEndpoint,
+                MirrorConfig.fromProperties(props),
+                brokerConfig,
+                metrics,
+                time,
+                brokerEndpoint.id(),
+                "broker-" + nodeId + "-mirror-metadata-manager-" + mirrorName,
+                logContext
+        );
+        sourceSenders.put(mirrorName, List.of(sender));
     }
 
     private ClientResponse trySendRequest(String mirrorName, AbstractRequest.Builder<?> requestBuilder) {
@@ -733,22 +713,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         if (senders.isEmpty()) {
             throw new IllegalStateException("No source senders available for mirror " + mirrorName);
         }
-        Exception lastException = null;
-        for (MirrorSourceSender sender : senders) {
-            try {
-                return sender.sendRequest(requestBuilder);
-            } catch (Exception e) {
-                lastException = e;
-                log.warn("Failed to send request to {} for mirror {}: {}", sender.brokerEndPoint(), mirrorName, e.getMessage());
-            }
+        MirrorSourceSender sender = senders.get(random.nextInt(senders.size()));
+        try {
+            return sender.sendRequest(requestBuilder);
+        } catch (Exception e) {
+            throw new KafkaException("Failed to send request to " + sender.brokerEndPoint() + " for mirror " + mirrorName + ": " + e.getMessage());
         }
-        throw new KafkaException("Failed to send request to any source server for mirror " + mirrorName, lastException);
     }
 
-    /** Invalidates cached source leaders, forcing a metadata refresh on next resolution. */
-    public void invalidateSourceLeader(String mirrorName) {
-        sourceLeaders.remove(mirrorName);
-    }
 
     /** Resolves source partition leader from cache, refreshing metadata synchronously if needed. */
     public Node resolveSourceLeader(String mirrorName, TopicPartition tp) {

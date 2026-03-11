@@ -205,32 +205,30 @@ abstract class AbstractFetcherManager[T <: AbstractFetcherThread](val name: Stri
     fetchStates
   }
 
-  // collect idle fetchers under lock, shut down outside to avoid deadlock
   def shutdownIdleFetcherThreads(): Unit = {
-    val idleFetchers = lock synchronized {
+    lock synchronized {
       val keysToBeRemoved = new mutable.HashSet[BrokerIdAndFetcherId]
-      val fetchersToShutdown = new mutable.ArrayBuffer[AbstractFetcherThread]
       for ((key, fetcher) <- fetcherThreadMap) {
         if (fetcher.partitionCount <= 0) {
-          fetchersToShutdown += fetcher
+          fetcher.shutdown()
           keysToBeRemoved += key
         }
       }
       fetcherThreadMap --= keysToBeRemoved
-      fetchersToShutdown
     }
-    idleFetchers.foreach(_.shutdown())
   }
 
-  // initiate shutdown under lock, await termination outside to avoid deadlock
   def closeAllFetchers(): Unit = {
-    val fetchers = lock synchronized {
-      val all = fetcherThreadMap.values.toSeq
-      all.foreach(_.initiateShutdown())
+    lock synchronized {
+      for ((_, fetcher) <- fetcherThreadMap) {
+        fetcher.initiateShutdown()
+      }
+
+      for ((_, fetcher) <- fetcherThreadMap) {
+        fetcher.shutdown()
+      }
       fetcherThreadMap.clear()
-      all
     }
-    fetchers.foreach(_.shutdown())
   }
 }
 

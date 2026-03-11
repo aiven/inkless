@@ -26,7 +26,6 @@ import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogStartOffsetIncr
 
 import java.util.Optional
 import scala.collection.{Map, Set}
-import scala.jdk.CollectionConverters._
 
 /**
  * Fetcher thread for cross-cluster mirroring. Unlike ReplicaFetcherThread, this rewrites
@@ -56,15 +55,8 @@ class MirrorFetcherThread(name: String,
     replicaMgr.mirrorFetcherManager.removeFetcherForPartitions(partitions)
   }
 
-  // invalidate stale source leaders before creating new fetchers
   override protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
-    replicaMgr.mirrorMetadataManager.foreach(_.invalidateSourceLeader(mirrorName))
-    replicaMgr.maybeCreateMirrorFetchers(mirrorName, partitionAndOffsets.keySet.asJava)
-  }
-
-  override protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {
-    replicaMgr.mirrorMetadataManager.foreach(_.invalidateSourceLeader(mirrorName))
-    replicaMgr.maybeCreateMirrorFetchers(mirrorName, mirrorPartitions.asJava)
+    replicaMgr.mirrorFetcherManager.addFetcherForPartitions(partitionAndOffsets)
   }
 
   // process fetched data

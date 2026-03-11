@@ -163,32 +163,30 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     fetchStates
   }
 
-  // collect idle fetchers under lock, shut down outside to avoid deadlock
   override def shutdownIdleFetcherThreads(): Unit = {
-    val idleFetchers = this.synchronized {
+    this.synchronized {
       val keysToBeRemoved = new mutable.HashSet[FetcherKey]
-      val fetchersToShutdown = new mutable.ArrayBuffer[MirrorFetcherThread]
       for ((key, fetcher) <- mirrorFetcherThreadMap) {
         if (fetcher.partitionCount <= 0) {
-          fetchersToShutdown += fetcher
+          fetcher.shutdown()
           keysToBeRemoved += key
         }
       }
       mirrorFetcherThreadMap --= keysToBeRemoved
-      fetchersToShutdown
     }
-    idleFetchers.foreach(_.shutdown())
   }
 
-  // initiate shutdown under lock, await termination outside to avoid deadlock
   override def closeAllFetchers(): Unit = {
-    val fetchers = this.synchronized {
-      val all = mirrorFetcherThreadMap.values.toSeq
-      all.foreach(_.initiateShutdown())
+    this.synchronized {
+      for ((_, fetcher) <- mirrorFetcherThreadMap) {
+        fetcher.initiateShutdown()
+      }
+
+      for ((_, fetcher) <- mirrorFetcherThreadMap) {
+        fetcher.shutdown()
+      }
       mirrorFetcherThreadMap.clear()
-      all
     }
-    fetchers.foreach(_.shutdown())
   }
 
   def updatePartitionLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long): Unit = {

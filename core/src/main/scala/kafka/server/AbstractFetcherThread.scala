@@ -81,8 +81,6 @@ abstract class AbstractFetcherThread(name: String,
   val fetcherStats = new FetcherStats(metricId)
   val fetcherLagStats = new FetcherLagStats(metricId)
 
-  @volatile private var consecutiveFetchErrors: Int = 0
-
   /* callbacks to be defined in subclass */
 
   // process fetched data
@@ -113,8 +111,6 @@ abstract class AbstractFetcherThread(name: String,
   }
 
   protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {}
-
-  protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {}
 
   override def shutdown(): Unit = {
     initiateShutdown()
@@ -365,7 +361,11 @@ abstract class AbstractFetcherThread(name: String,
     new ResultWithPartitions(fetchOffsets, partitionsWithError.asJava)
   }
 
-  /** Remove the partition if the partition state is NOT updated. Otherwise, keep the partition active. */
+  /**
+   * remove the partition if the partition state is NOT updated. Otherwise, keep the partition active.
+   *
+   * @return true if the epoch in this thread is updated. otherwise, false
+   */
   private def onPartitionFenced(tp: TopicPartition, requestEpoch: Optional[Integer]): Boolean = inLock(partitionMapLock) {
     Option(partitionStates.stateValue(tp)).exists { currentFetchState =>
       val currentLeaderEpoch = currentFetchState.currentLeaderEpoch
@@ -409,7 +409,6 @@ abstract class AbstractFetcherThread(name: String,
     fetcherStats.requestRate.mark()
 
     if (responseData.nonEmpty) {
-      consecutiveFetchErrors = 0
       // process fetched data
       inLock(partitionMapLock) {
         responseData.foreachEntry { (topicPartition, partitionData) =>
@@ -566,27 +565,14 @@ abstract class AbstractFetcherThread(name: String,
       updateMirrorFetchEpoch(mirrorPartitionsWithNewEpoch)
     if (mirrorPartitionsWithNewLeader.nonEmpty)
       maybeCreateMirrorFetchers(mirrorPartitionsWithNewLeader)
-    if (responseData.isEmpty && partitionsWithError.nonEmpty && mirrorName.nonEmpty) {
-      // Handle TCP connection failures (IOException)
-      consecutiveFetchErrors += 1
-      if (consecutiveFetchErrors >= 3) {
-        consecutiveFetchErrors = 0
-        try {
-          handleMirrorFetchConnectionFailure(partitionsWithError.toSet)
-        } catch {
-          case t: Throwable =>
-            warn(s"Failed to re-resolve source leader for mirror $mirrorName", t)
-        }
-      }
-    }
     if (partitionsWithError.nonEmpty) {
       handlePartitionsWithErrors(partitionsWithError, "processFetchRequest")
     }
   }
 
   /**
-   * This is used to mark partitions for truncation in ReplicaAlterLogDirsThread
-   * after leader offsets are known.
+   * This is used to mark partitions for truncation in ReplicaAlterLogDirsThread after leader
+   * offsets are known.
    */
   def markPartitionsForTruncation(topicPartition: TopicPartition, truncationOffset: Long): Unit = {
     partitionMapLock.lockInterruptibly()
@@ -695,7 +681,26 @@ abstract class AbstractFetcherThread(name: String,
 
   /**
    * Called from ReplicaFetcherThread and ReplicaAlterLogDirsThread maybeTruncate for each topic
-   * partition. Returns truncation offset and whether this is the final offset to truncate to.
+   * partition. Returns truncation offset and whether this is the final offset to truncate to
+   *
+   * For each topic partition, the offset to truncate to is calculated based on leader's returned
+   * epoch and offset:
+   *  -- If the leader replied with undefined epoch offset, we must use the high watermark. This can
+   *  happen if 1) the leader is still using message format older than IBP_0_11_0; 2) the follower
+   *  requested leader epoch < the first leader epoch known to the leader.
+   *  -- If the leader replied with the valid offset but undefined leader epoch, we truncate to
+   *  leader's offset if it is lower than follower's Log End Offset. This may happen if the
+   *  leader is on the inter-broker protocol version < IBP_2_0_IV0
+   *  -- If the leader replied with leader epoch not known to the follower, we truncate to the
+   *  end offset of the largest epoch that is smaller than the epoch the leader replied with, and
+   *  send OffsetsForLeaderEpochRequest with that leader epoch. In a more rare case, where the
+   *  follower was not tracking epochs smaller than the epoch the leader replied with, we
+   *  truncate the leader's offset (and do not send any more leader epoch requests).
+   *  -- Otherwise, truncate to min(leader's offset, end offset on the follower for epoch that
+   *  leader replied with, follower's Log End Offset).
+   *
+   * @param tp                Topic partition
+   * @param leaderEpochOffset Epoch end offset received from the leader for this topic partition
    */
   private def getOffsetTruncationState(tp: TopicPartition,
                                        leaderEpochOffset: EpochEndOffset): OffsetTruncationState = inLock(partitionMapLock) {
@@ -750,7 +755,9 @@ abstract class AbstractFetcherThread(name: String,
     }
   }
 
-  /** Handle a partition whose offset is out of range and return a new fetch offset. */
+  /**
+   * Handle a partition whose offset is out of range and return a new fetch offset.
+   */
   private def fetchOffsetAndTruncate(topicPartition: TopicPartition, topicId: Option[Uuid], currentLeaderEpoch: Int, mirrorName: String): PartitionFetchState = {
     val replicaEndOffset = logEndOffset(topicPartition)
 
@@ -817,7 +824,20 @@ abstract class AbstractFetcherThread(name: String,
     }
   }
 
-  /** Handles the out of range error for the given topic partition. */
+  /**
+   * Handles the out of range error for the given topic partition.
+   *
+   * Returns true if
+   *    - the request succeeded or
+   *    - it was fenced and this thread hasn't received new epoch, which means we need not backoff and retry as the
+   *    partition is moved to failed state.
+   *
+   * Returns false if there was a retriable error.
+   *
+   * @param topicPartition topic partition
+   * @param fetchState current fetch state
+   * @param leaderEpochInRequest current leader epoch sent in the fetch request.
+   */
   private def handleOutOfRangeError(topicPartition: TopicPartition,
                                     fetchState: PartitionFetchState,
                                     leaderEpochInRequest: Optional[Integer]): Boolean = {
@@ -843,7 +863,21 @@ abstract class AbstractFetcherThread(name: String,
     }
   }
 
-  /** Handles the offset moved to tiered storage error for the given topic partition. */
+  /**
+   * Handles the offset moved to tiered storage error for the given topic partition.
+   *
+   * Returns true if
+   *    - the request succeeded or
+   *    - it was fenced and this thread haven't received new epoch, which means we need not backoff and retry as the
+   *    partition is moved to failed state.
+   *
+   * Returns false if there was a retriable error.
+   *
+   * @param topicPartition topic partition
+   * @param fetchState current partition fetch state
+   * @param leaderEpochInRequest current leader epoch sent in the fetch request
+   * @param fetchPartitionData the fetch response data for this topic partition
+   */
   private def handleOffsetsMovedToTieredStorage(topicPartition: TopicPartition,
                                                 fetchState: PartitionFetchState,
                                                 leaderEpochInRequest: Optional[Integer],
