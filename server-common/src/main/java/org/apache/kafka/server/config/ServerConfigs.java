@@ -160,7 +160,7 @@ public class ServerConfigs {
         "that fetches from WAL (diskless object storage) and appends to the local log for diskless partitions, " +
         "so that segments can be rolled and copied to tiered storage.";
     public static final String DISKLESS_TS_UNIFICATION_FETCHERS_CONFIG = "diskless.ts.unification.fetchers";
-    public static final int DISKLESS_TS_UNIFICATION_FETCHERS_DEFAULT = 4;
+    public static final int DISKLESS_TS_UNIFICATION_FETCHERS_DEFAULT = 1;
     public static final String DISKLESS_TS_UNIFICATION_FETCHERS_DOC = "Number of fetcher threads for WAL unification.";
 
     /************* Authorizer Configuration ***********/

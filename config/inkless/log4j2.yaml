@@ -23,4 +23,6 @@ Configuration:
     - name: org.apache.kafka.server.log.remote.storage
       level: ERROR
     - name: io.aiven.inkless.control_plane.postgres.PostgresWalUnificationHandler
-      level: DEBUG
+      level: TRACE
+    - name: org.apache.kafka.server.util.ShutdownableThread
+      level: TRACE

@@ -2507,10 +2507,18 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   private def createWalUnifierManager(): Option[WalUnifierManager] = {
+    def allPartitionsIterator: Iterator[Partition] = {
+      allPartitions.values.asScala.iterator.flatMap {
+        case HostedPartition.Online(partition) => Some(partition)
+        case HostedPartition.Offline(partition) => partition
+        case _ => None
+      }
+    }
     if (config.disklessTsUnificationEnable && inklessSharedState.isDefined && inklessMetadataView.isDefined) {
       val sharedState = inklessSharedState.get
       val walUnificationHandler = sharedState.controlPlane().createWalUnificationHandler(sharedState.buildStorage(), sharedState.objectKeyCreator())
-      Some(new WalUnifierManager("WalUnifierManager", this, walUnificationHandler, inklessMetadataView.get, config.disklessTsUnificationFetchers))
+      Some(new WalUnifierManager("WalUnifierManager", this, walUnificationHandler,
+        inklessMetadataView.get, config.disklessTsUnificationFetchers, allPartitionsIterator))
     } else {
       None
     }

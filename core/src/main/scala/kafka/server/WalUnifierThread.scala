@@ -24,23 +24,30 @@ class WalUnifierThread(name: String,
    * This method is repeatedly invoked until the thread shuts down or this method throws an exception
    */
   override def doWork(): Unit = {
-    val nextBatch = queue.take()
-    // transforming it to a Scala map is complicated
-    nextBatch.forEach((batchInfo: BatchInfo, records: MemoryRecords) => {
-      val topicName = inklessMetadataView.getTopicName(batchInfo.metadata.topicIdPartition.topicId)
-      val partitionNum = batchInfo.metadata.topicIdPartition.partition
-      topicName.toScala.foreach { tn =>
-        val tp = new TopicPartition(tn, partitionNum)
-        val partition = replicaManager.getPartitionOrException(tp)
-        // cheat the system
-        val logAppendInfo = partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, 0)
-        logAppendInfo.foreach { li =>
-          partition.log.foreach{ l =>
-            l.updateHighWatermark(li.lastOffset)
+    try {
+      val nextBatch = queue.take()
+      // transforming it to a Scala map is complicated
+      nextBatch.forEach((batchInfo: BatchInfo, records: MemoryRecords) => {
+        val topicName = inklessMetadataView.getTopicName(batchInfo.metadata.topicIdPartition.topicId)
+        val partitionNum = batchInfo.metadata.topicIdPartition.partition
+        topicName.toScala.foreach { tn =>
+          val tp = new TopicPartition(tn, partitionNum)
+          val partition = replicaManager.getPartitionOrException(tp)
+          try {
+            val logAppendInfo = partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, 0)
+            logAppendInfo.foreach { li =>
+              partition.log.foreach{ l =>
+                l.updateHighWatermark(li.lastOffset)
+              }
+            }
+          } catch {
+            case e: Exception => e.printStackTrace()
           }
         }
-      }
-    })
+      })
+    } catch {
+      case e: Exception => e.printStackTrace()
+    }
   }
 
   override def shutdown(): Unit = {
