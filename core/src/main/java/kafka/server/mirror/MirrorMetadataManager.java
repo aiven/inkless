@@ -727,9 +727,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    /** Resolves source partition leader from cache, refreshing metadata synchronously if needed. */
+    /** Updates cached source leader for a specific partition. */
+    public void updateSourceLeader(String mirrorName, TopicPartition tp, Node leader) {
+        sourceLeaders.computeIfAbsent(mirrorName, k -> new ConcurrentHashMap<>()).put(tp, leader);
+    }
+
+    /** Resolves source partition leader from cache, falling back to bootstrap server if not cached. */
     public Node resolveSourceLeader(String mirrorName, TopicPartition tp) {
-        // Try to use cached metadata.
         var partitionLeaders = sourceLeaders.get(mirrorName);
         if (partitionLeaders != null) {
             Node leader = partitionLeaders.get(tp);
@@ -738,30 +742,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             }
         }
 
-        // No cached metadata. Refresh synchronously before creating fetcher threads.
-        log.info("No cached metadata for mirror {} partition {}. Refreshing metadata from remote cluster.", mirrorName, tp);
+        // No cached metadata. Fall back to the bootstrap server instead of blocking on a
+        // synchronous metadata refresh, which can stall the metadata event queue thread when
+        // the source broker is down. The periodic metadata refresh will populate the cache,
+        // and the fetcher thread will handle leader rediscovery via maybeCreateMirrorFetchers.
         ensureConnection(mirrorName);
-        try {
-            syncTopicMetadata(mirrorName);
-        } catch (Exception e) {
-            log.error("Failed to refresh topic metadata for mirror {}", mirrorName, e);
-        }
-
-        // Try to resolve source leader broker.
-        partitionLeaders = sourceLeaders.get(mirrorName);
-        if (partitionLeaders != null) {
-            Node leader = partitionLeaders.get(tp);
-            if (leader != null) {
-                log.debug("Successfully fetched leader for {} from mirror {}: broker {}", tp, mirrorName, leader.id());
-                return leader;
-            }
-        }
-
-        // Metadata refresh failed or partition not found. Fall back to first bootstrap server.
-        // This should rarely happen and indicates a configuration or connectivity issue.
-        log.warn("Unable to resolve source leader for mirror {} partition {} after refresh. Falling back to bootstrap server.", mirrorName, tp);
         List<MirrorSourceSender> senders = sourceSenders.get(mirrorName);
         if (senders != null && !senders.isEmpty()) {
+            log.info("No cached leader for mirror {} partition {}. Using bootstrap server as initial target.", mirrorName, tp);
             BrokerEndPoint ep = senders.get(0).brokerEndPoint();
             return new Node(ep.id(), ep.host(), ep.port());
         }

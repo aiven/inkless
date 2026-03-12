@@ -286,8 +286,8 @@ abstract class AbstractFetcherThread(name: String,
   /** Reassigns mirrored partitions to new fetcher threads after source leader change. */
   private def maybeCreateMirrorFetchers(partitionToData: Map[TopicPartition, PartitionData]): Unit = {
     var newStates: Map[TopicPartition, InitialFetchState] = scala.collection.mutable.Map.empty[TopicPartition, InitialFetchState]
-      // snapshot to avoid ConcurrentModificationException from concurrent addFetcherForPartitions
-      partitionStates.partitionStateMap.asScala.toMap
+      // snapshot under lock to avoid ConcurrentModificationException from concurrent addFetcherForPartitions
+      inLock(partitionMapLock) { partitionStates.partitionStateMap.asScala.toMap }
       .foreach { case (topicPartition, currentFetchState) =>
         partitionToData.get(topicPartition) match {
           case Some(partitionData) =>
@@ -569,9 +569,9 @@ abstract class AbstractFetcherThread(name: String,
       truncateOnFetchResponse(divergingEndOffsets)
     if (mirrorPartitionsWithNewEpoch.nonEmpty)
       updateMirrorFetchEpoch(mirrorPartitionsWithNewEpoch)
-    if (mirrorPartitionsWithNewLeader.nonEmpty)
+    if (mirrorPartitionsWithNewLeader.nonEmpty && isRunning)
       maybeCreateMirrorFetchers(mirrorPartitionsWithNewLeader)
-    if (fetchException.exists(_.isInstanceOf[IOException]) && partitionsWithError.nonEmpty && mirrorName.nonEmpty) {
+    if (fetchException.exists(_.isInstanceOf[IOException]) && partitionsWithError.nonEmpty && mirrorName.nonEmpty && isRunning) {
       try {
         handleMirrorFetchConnectionFailure(partitionsWithError.toSet)
       } catch {
