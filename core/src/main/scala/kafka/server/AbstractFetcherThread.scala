@@ -113,8 +113,6 @@ abstract class AbstractFetcherThread(name: String,
 
   protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {}
 
-  protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {}
-
   override def shutdown(): Unit = {
     initiateShutdown()
     inLock(partitionMapLock) {
@@ -365,7 +363,11 @@ abstract class AbstractFetcherThread(name: String,
     new ResultWithPartitions(fetchOffsets, partitionsWithError.asJava)
   }
 
-  /** Remove the partition if the partition state is NOT updated. Otherwise, keep the partition active. */
+  /**
+   * remove the partition if the partition state is NOT updated. Otherwise, keep the partition active.
+   *
+   * @return true if the epoch in this thread is updated. otherwise, false
+   */
   private def onPartitionFenced(tp: TopicPartition, requestEpoch: Optional[Integer]): Boolean = inLock(partitionMapLock) {
     Option(partitionStates.stateValue(tp)).exists { currentFetchState =>
       val currentLeaderEpoch = currentFetchState.currentLeaderEpoch
@@ -581,8 +583,8 @@ abstract class AbstractFetcherThread(name: String,
   }
 
   /**
-   * This is used to mark partitions for truncation in ReplicaAlterLogDirsThread
-   * after leader offsets are known.
+   * This is used to mark partitions for truncation in ReplicaAlterLogDirsThread after leader
+   * offsets are known.
    */
   def markPartitionsForTruncation(topicPartition: TopicPartition, truncationOffset: Long): Unit = {
     partitionMapLock.lockInterruptibly()
@@ -765,7 +767,9 @@ abstract class AbstractFetcherThread(name: String,
     }
   }
 
-  /** Handle a partition whose offset is out of range and return a new fetch offset. */
+  /**
+   * Handle a partition whose offset is out of range and return a new fetch offset.
+   */
   private def fetchOffsetAndTruncate(topicPartition: TopicPartition, topicId: Option[Uuid], currentLeaderEpoch: Int, mirrorName: String): PartitionFetchState = {
     val replicaEndOffset = logEndOffset(topicPartition)
 
@@ -832,7 +836,20 @@ abstract class AbstractFetcherThread(name: String,
     }
   }
 
-  /** Handles the out of range error for the given topic partition. */
+  /**
+   * Handles the out of range error for the given topic partition.
+   *
+   * Returns true if
+   *    - the request succeeded or
+   *    - it was fenced and this thread hasn't received new epoch, which means we need not backoff and retry as the
+   *    partition is moved to failed state.
+   *
+   * Returns false if there was a retriable error.
+   *
+   * @param topicPartition topic partition
+   * @param fetchState current fetch state
+   * @param leaderEpochInRequest current leader epoch sent in the fetch request.
+   */
   private def handleOutOfRangeError(topicPartition: TopicPartition,
                                     fetchState: PartitionFetchState,
                                     leaderEpochInRequest: Optional[Integer]): Boolean = {
@@ -858,7 +875,21 @@ abstract class AbstractFetcherThread(name: String,
     }
   }
 
-  /** Handles the offset moved to tiered storage error for the given topic partition. */
+  /**
+   * Handles the offset moved to tiered storage error for the given topic partition.
+   *
+   * Returns true if
+   *    - the request succeeded or
+   *    - it was fenced and this thread haven't received new epoch, which means we need not backoff and retry as the
+   *    partition is moved to failed state.
+   *
+   * Returns false if there was a retriable error.
+   *
+   * @param topicPartition topic partition
+   * @param fetchState current partition fetch state
+   * @param leaderEpochInRequest current leader epoch sent in the fetch request
+   * @param fetchPartitionData the fetch response data for this topic partition
+   */
   private def handleOffsetsMovedToTieredStorage(topicPartition: TopicPartition,
                                                 fetchState: PartitionFetchState,
                                                 leaderEpochInRequest: Optional[Integer],

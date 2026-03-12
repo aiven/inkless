@@ -71,6 +71,10 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   }
 
   override def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
+    if (isClosed) {
+      return
+    }
+
     logger.debug("Adding fetcher for partitions, existing fetchers: {}", mirrorFetcherThreadMap.keys)
     // Ensures partitions with different cluster mirrors get separate fetcher threads.
     // This is crucial because different cluster mirrors may require different authentication credentials.
@@ -83,6 +87,10 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     }
 
     this.synchronized {
+      if (isClosed) {
+        return
+      }
+
       def addAndStartFetcherThread(fetcherKey: FetcherKey): MirrorFetcherThread = {
         val fetcherThread = createFetcherThread(fetcherKey.fetcherId, fetcherKey.mirrorName, fetcherKey.sourceBroker)
         mirrorFetcherThreadMap.put(fetcherKey, fetcherThread)
@@ -181,9 +189,9 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     idleFetchers.foreach(_.shutdown())
   }
 
-  // initiate shutdown under lock, await termination outside to avoid deadlock
   override def closeAllFetchers(): Unit = {
     val fetchers = this.synchronized {
+      isClosed = true
       val all = mirrorFetcherThreadMap.values.toSeq
       all.foreach(_.initiateShutdown())
       mirrorFetcherThreadMap.clear()

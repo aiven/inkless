@@ -39,6 +39,7 @@ abstract class AbstractFetcherManager[T <: AbstractFetcherThread](val name: Stri
   private var numFetchersPerBroker = numFetchers
   val failedPartitions = new FailedPartitions
   this.logIdent = "[" + name + "] "
+  @volatile var isClosed = false
 
   private val tags = Map("clientId" -> clientId).asJava
 
@@ -130,7 +131,14 @@ abstract class AbstractFetcherManager[T <: AbstractFetcherThread](val name: Stri
   def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): T
 
   def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
+    if (isClosed) {
+      return
+    }
+
     lock synchronized {
+      if (isClosed) {
+        return
+      }
       val partitionsPerFetcher = partitionAndOffsets.groupBy { case (topicPartition, brokerAndInitialFetchOffset) =>
         BrokerAndFetcherId(brokerAndInitialFetchOffset.leader, getFetcherId(topicPartition))
       }
@@ -225,6 +233,7 @@ abstract class AbstractFetcherManager[T <: AbstractFetcherThread](val name: Stri
   // initiate shutdown under lock, await termination outside to avoid deadlock
   def closeAllFetchers(): Unit = {
     val fetchers = lock synchronized {
+      isClosed = true
       val all = fetcherThreadMap.values.toSeq
       all.foreach(_.initiateShutdown())
       fetcherThreadMap.clear()
