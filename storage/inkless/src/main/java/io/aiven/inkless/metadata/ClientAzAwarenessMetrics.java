@@ -35,6 +35,8 @@ public class ClientAzAwarenessMetrics implements Closeable {
     private static final String FALLBACK_TOTAL = "fallback-total";
     private static final String OFFLINE_REPLICAS_ROUTED_AROUND = "offline-replicas-routed-around";
     private static final String CROSS_AZ_ROUTING_TOTAL = "cross-az-routing-total";
+    // Tags
+    public static final String CLIENT_AZ_TAG = "client-az";
 
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
         ClientAzAwarenessMetrics.class.getPackageName(), ClientAzAwarenessMetrics.class.getSimpleName());
@@ -70,7 +72,7 @@ public class ClientAzAwarenessMetrics implements Closeable {
             CLIENT_AZ_HIT_RATE,
             "requests",
             TimeUnit.SECONDS,
-            Map.of("client-az", clientAZ)
+            Map.of(CLIENT_AZ_TAG, clientAZ)
         )).mark();
     }
 
@@ -105,6 +107,6 @@ public class ClientAzAwarenessMetrics implements Closeable {
         metricsGroup.removeMetric(FALLBACK_TOTAL);
         metricsGroup.removeMetric(OFFLINE_REPLICAS_ROUTED_AROUND);
         metricsGroup.removeMetric(CROSS_AZ_ROUTING_TOTAL);
-        clientAzHitRatesPerAz.keySet().forEach(az -> metricsGroup.removeMetric(CLIENT_AZ_HIT_RATE, Map.of("client-az", az)));
+        clientAzHitRatesPerAz.keySet().forEach(az -> metricsGroup.removeMetric(CLIENT_AZ_HIT_RATE, Map.of(CLIENT_AZ_TAG, az)));
     }
 }
