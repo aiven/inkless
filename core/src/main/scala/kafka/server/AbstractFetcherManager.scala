@@ -39,6 +39,7 @@ abstract class AbstractFetcherManager[T <: AbstractFetcherThread](val name: Stri
   private var numFetchersPerBroker = numFetchers
   val failedPartitions = new FailedPartitions
   this.logIdent = "[" + name + "] "
+  @volatile var isClosed = false
 
   private val tags = Map("clientId" -> clientId).asJava
 
@@ -130,7 +131,14 @@ abstract class AbstractFetcherManager[T <: AbstractFetcherThread](val name: Stri
   def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): T
 
   def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
+    if (isClosed) {
+      return
+    }
+
     lock synchronized {
+      if (isClosed) {
+        return
+      }
       val partitionsPerFetcher = partitionAndOffsets.groupBy { case (topicPartition, brokerAndInitialFetchOffset) =>
         BrokerAndFetcherId(brokerAndInitialFetchOffset.leader, getFetcherId(topicPartition))
       }
@@ -205,30 +213,33 @@ abstract class AbstractFetcherManager[T <: AbstractFetcherThread](val name: Stri
     fetchStates
   }
 
+  // collect idle fetchers under lock, shut down outside to avoid deadlock
   def shutdownIdleFetcherThreads(): Unit = {
-    lock synchronized {
+    val idleFetchers = lock synchronized {
       val keysToBeRemoved = new mutable.HashSet[BrokerIdAndFetcherId]
+      val fetchersToShutdown = new mutable.ArrayBuffer[AbstractFetcherThread]
       for ((key, fetcher) <- fetcherThreadMap) {
         if (fetcher.partitionCount <= 0) {
-          fetcher.shutdown()
+          fetchersToShutdown += fetcher
           keysToBeRemoved += key
         }
       }
       fetcherThreadMap --= keysToBeRemoved
+      fetchersToShutdown
     }
+    idleFetchers.foreach(_.shutdown())
   }
 
+  // initiate shutdown under lock, await termination outside to avoid deadlock
   def closeAllFetchers(): Unit = {
-    lock synchronized {
-      for ((_, fetcher) <- fetcherThreadMap) {
-        fetcher.initiateShutdown()
-      }
-
-      for ((_, fetcher) <- fetcherThreadMap) {
-        fetcher.shutdown()
-      }
+    val fetchers = lock synchronized {
+      isClosed = true
+      val all = fetcherThreadMap.values.toSeq
+      all.foreach(_.initiateShutdown())
       fetcherThreadMap.clear()
+      all
     }
+    fetchers.foreach(_.shutdown())
   }
 }
 
