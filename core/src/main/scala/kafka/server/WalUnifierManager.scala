@@ -75,7 +75,6 @@ class WalUnifierManager(name: String,
   override def doWork(): Unit = {
     try {
       val op = allPartitions()
-      println("Online partitions: " + op)
       updateRemoteLogEndOffsets(op);
       updateLatestOffsets()
       val nextWalSegmentData = walUnificationHandler.apply(op.asJava)

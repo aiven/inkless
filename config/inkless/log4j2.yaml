@@ -16,13 +16,13 @@ Configuration:
   # See: https://logging.apache.org/log4j/2.x/manual/configuration.html#configuring-loggers
   Loggers:
     Root:
-      level: ERROR
+      level: INFO
       AppenderRef:
         - ref: STDOUT
     Logger:
     - name: org.apache.kafka.server.log.remote.storage
-      level: ERROR
+      level: INFO
     - name: io.aiven.inkless.control_plane.postgres.PostgresWalUnificationHandler
-      level: TRACE
+      level: INFO
     - name: org.apache.kafka.server.util.ShutdownableThread
-      level: TRACE
+      level: INFO

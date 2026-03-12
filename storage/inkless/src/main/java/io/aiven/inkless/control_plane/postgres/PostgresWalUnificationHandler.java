@@ -41,6 +41,7 @@ import static org.jooq.impl.DSL.row;
 public class PostgresWalUnificationHandler implements WalUnificationHandler {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(PostgresWalUnificationHandler.class);
+    private static final long NEXT_ID_SENTINEL = -1L;
 
     private final ObjectFetcher objectFetcher;
     private final ObjectKeyCreator objectKeyCreator;
@@ -136,7 +137,8 @@ public class PostgresWalUnificationHandler implements WalUnificationHandler {
                     }
                 }
             ));
-            nextFileIdToFetch = tpToFileMap.values().stream().min(Long::compareTo).orElse(0L);
+            var nextId = tpToFileMap.values().stream().min(Long::compareTo);
+            nextId.map(id -> nextFileIdToFetch = Math.max(nextFileIdToFetch, id));
             LOGGER.debug("Updated next file to fetch: {}", nextFileIdToFetch);
             var logString = lastOffsets.entrySet().stream()
                 .map(entry -> "[" + entry.getKey() + " -> " + entry.getValue() + "]")
