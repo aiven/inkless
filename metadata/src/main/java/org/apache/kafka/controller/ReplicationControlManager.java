@@ -1511,6 +1511,16 @@ public class ReplicationControlManager {
                     continue;
                 }
 
+                if (partition.disklessStartOffset != PartitionRegistration.NO_DISKLESS_START_OFFSET) {
+                    log.info("Rejecting InitDisklessLog request from node {} for {}-{} because " +
+                            "the partition is already initialized with disklessStartOffset={}.",
+                        request.brokerId(), topic.name, partitionId, partition.disklessStartOffset);
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(INVALID_REQUEST.code()));
+                    continue;
+                }
+
                 List<InitDisklessLogFields.ProducerStateEntry> producerStates =
                     partitionData.producerStates().stream()
                         .map(ps -> new InitDisklessLogFields.ProducerStateEntry(
