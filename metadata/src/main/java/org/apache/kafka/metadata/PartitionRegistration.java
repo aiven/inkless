@@ -54,6 +54,8 @@ public class PartitionRegistration {
         private LeaderRecoveryState leaderRecoveryState;
         private Integer leaderEpoch;
         private Integer partitionEpoch;
+        private long disklessStartOffset = -1L;
+        private List<InitDisklessLogFields.ProducerStateEntry> disklessProducerStates = List.of();
 
         public Builder setReplicas(int[] replicas) {
             this.replicas = replicas;
@@ -110,6 +112,16 @@ public class PartitionRegistration {
             return this;
         }
 
+        public Builder setDisklessStartOffset(long disklessStartOffset) {
+            this.disklessStartOffset = disklessStartOffset;
+            return this;
+        }
+
+        public Builder setDisklessProducerStates(List<InitDisklessLogFields.ProducerStateEntry> disklessProducerStates) {
+            this.disklessProducerStates = disklessProducerStates;
+            return this;
+        }
+
         public PartitionRegistration build() {
             if (replicas == null) {
                 throw new IllegalStateException("You must set replicas.");
@@ -148,10 +160,14 @@ public class PartitionRegistration {
                 leaderEpoch,
                 partitionEpoch,
                 elr,
-                lastKnownElr
+                lastKnownElr,
+                disklessStartOffset,
+                disklessProducerStates
             );
         }
     }
+
+    public static final long NO_DISKLESS_START_OFFSET = -1L;
 
     public final int[] replicas;
     public final Uuid[] directories;
@@ -164,6 +180,8 @@ public class PartitionRegistration {
     public final LeaderRecoveryState leaderRecoveryState;
     public final int leaderEpoch;
     public final int partitionEpoch;
+    public final long disklessStartOffset;
+    public final List<InitDisklessLogFields.ProducerStateEntry> disklessProducerStates;
 
     public static boolean electionWasClean(int newLeader, int[] isr, int[] elr) {
         return newLeader == NO_LEADER || Replicas.contains(isr, newLeader) || Replicas.contains(elr, newLeader);
@@ -213,12 +231,16 @@ public class PartitionRegistration {
             record.leaderEpoch(),
             record.partitionEpoch(),
             Replicas.toArray(record.eligibleLeaderReplicas()),
-            Replicas.toArray(record.lastKnownElr()));
+            Replicas.toArray(record.lastKnownElr()),
+            InitDisklessLogFields.decodeDisklessStartOffset(record.unknownTaggedFields()),
+            InitDisklessLogFields.decodeProducerStates(record.unknownTaggedFields()));
     }
 
     private PartitionRegistration(int[] replicas, Uuid[] directories, int[] isr, int[] removingReplicas,
                                  int[] addingReplicas, int leader, LeaderRecoveryState leaderRecoveryState,
-                                 int leaderEpoch, int partitionEpoch, int[] elr, int[] lastKnownElr) {
+                                 int leaderEpoch, int partitionEpoch, int[] elr, int[] lastKnownElr,
+                                  long disklessStartOffset,
+                                  List<InitDisklessLogFields.ProducerStateEntry> disklessProducerStates) {
         Objects.requireNonNull(directories);
         if (directories.length > 0 && directories.length != replicas.length) {
             throw new IllegalArgumentException("The lengths for replicas and directories do not match.");
@@ -232,6 +254,8 @@ public class PartitionRegistration {
         this.leaderRecoveryState = leaderRecoveryState;
         this.leaderEpoch = leaderEpoch;
         this.partitionEpoch = partitionEpoch;
+        this.disklessStartOffset = disklessStartOffset;
+        this.disklessProducerStates = disklessProducerStates != null ? disklessProducerStates : List.of();
 
         // We could parse a lower version record without elr/lastKnownElr.
         this.elr = elr == null ? new int[0] : elr;
@@ -266,6 +290,13 @@ public class PartitionRegistration {
 
         int[] newElr = (record.eligibleLeaderReplicas() == null) ? elr : Replicas.toArray(record.eligibleLeaderReplicas());
         int[] newLastKnownElr = (record.lastKnownElr() == null) ? lastKnownElr : Replicas.toArray(record.lastKnownElr());
+        long newDisklessStartOffset = InitDisklessLogFields.decodeDisklessStartOffset(record.unknownTaggedFields());
+        List<InitDisklessLogFields.ProducerStateEntry> newDisklessProducerStates =
+            InitDisklessLogFields.decodeProducerStates(record.unknownTaggedFields());
+        if (newDisklessStartOffset == NO_DISKLESS_START_OFFSET) {
+            newDisklessStartOffset = disklessStartOffset;
+            newDisklessProducerStates = disklessProducerStates;
+        }
         return new PartitionRegistration(newReplicas,
             newDirectories,
             newIsr,
@@ -276,7 +307,15 @@ public class PartitionRegistration {
             newLeaderEpoch,
             partitionEpoch + 1,
             newElr,
-            newLastKnownElr);
+            newLastKnownElr,
+            newDisklessStartOffset,
+            newDisklessProducerStates);
+    }
+
+    public PartitionRegistration withDisklessStartOffset(long disklessStartOffset) {
+        return new PartitionRegistration(replicas, directories, isr, removingReplicas,
+            addingReplicas, leader, leaderRecoveryState, leaderEpoch, partitionEpoch,
+            elr, lastKnownElr, disklessStartOffset, disklessProducerStates);
     }
 
     public String diff(PartitionRegistration prev) {
@@ -342,6 +381,17 @@ public class PartitionRegistration {
         if (partitionEpoch != prev.partitionEpoch) {
             builder.append(prefix).append("partitionEpoch: ").
                 append(prev.partitionEpoch).append(" -> ").append(partitionEpoch);
+            prefix = ", ";
+        }
+        if (disklessStartOffset != prev.disklessStartOffset) {
+            builder.append(prefix).append("disklessStartOffset: ").
+                append(prev.disklessStartOffset).append(" -> ").append(disklessStartOffset);
+            prefix = ", ";
+        }
+        if (!Objects.equals(disklessProducerStates, prev.disklessProducerStates)) {
+            builder.append(prefix).append("disklessProducerStates: ").
+                append(prev.disklessProducerStates.size()).append(" entries -> ").
+                append(disklessProducerStates.size()).append(" entries");
         }
         return builder.toString();
     }
@@ -393,6 +443,14 @@ public class PartitionRegistration {
             if (elr.length > 0) record.setEligibleLeaderReplicas(Replicas.toList(elr));
             if (lastKnownElr.length > 0) record.setLastKnownElr(Replicas.toList(lastKnownElr));
         }
+        if (disklessStartOffset != NO_DISKLESS_START_OFFSET) {
+            record.unknownTaggedFields().add(
+                InitDisklessLogFields.encodeDisklessStartOffset(disklessStartOffset));
+            if (!disklessProducerStates.isEmpty()) {
+                record.unknownTaggedFields().add(
+                    InitDisklessLogFields.encodeProducerStates(disklessProducerStates));
+            }
+        }
 
         if (options.metadataVersion() == null) {
             options.handleLoss("the metadata version");
@@ -432,7 +490,8 @@ public class PartitionRegistration {
     public int hashCode() {
         return Objects.hash(Arrays.hashCode(replicas), Arrays.hashCode(isr), Arrays.hashCode(removingReplicas),
             Arrays.hashCode(directories), Arrays.hashCode(elr), Arrays.hashCode(lastKnownElr),
-            Arrays.hashCode(addingReplicas), leader, leaderRecoveryState, leaderEpoch, partitionEpoch);
+            Arrays.hashCode(addingReplicas), leader, leaderRecoveryState, leaderEpoch, partitionEpoch,
+            disklessStartOffset, disklessProducerStates);
     }
 
     @Override
@@ -449,7 +508,9 @@ public class PartitionRegistration {
             leader == other.leader &&
             leaderRecoveryState == other.leaderRecoveryState &&
             leaderEpoch == other.leaderEpoch &&
-            partitionEpoch == other.partitionEpoch;
+            partitionEpoch == other.partitionEpoch &&
+            disklessStartOffset == other.disklessStartOffset &&
+            Objects.equals(disklessProducerStates, other.disklessProducerStates);
     }
 
     @Override
@@ -465,6 +526,8 @@ public class PartitionRegistration {
                 ", leaderRecoveryState=" + leaderRecoveryState +
                 ", leaderEpoch=" + leaderEpoch +
                 ", partitionEpoch=" + partitionEpoch +
+                ", disklessStartOffset=" + disklessStartOffset +
+                ", disklessProducerStates=" + disklessProducerStates +
                 ")";
     }
 

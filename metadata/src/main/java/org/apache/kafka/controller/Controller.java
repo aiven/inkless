@@ -49,6 +49,8 @@ import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData;
+import org.apache.kafka.common.metadata.InitDisklessLogRequestData;
+import org.apache.kafka.common.metadata.InitDisklessLogResponseData;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaEntity;
 import org.apache.kafka.common.requests.ApiError;
@@ -417,6 +419,20 @@ public interface Controller extends AclMutator, AutoCloseable {
     CompletableFuture<AssignReplicasToDirsResponseData> assignReplicasToDirs(
         ControllerRequestContext context,
         AssignReplicasToDirsRequestData request
+    );
+
+    /**
+     * Initialize diskless logs for classic-to-diskless migration. Validates the leader
+     * and persists disklessStartOffset and producer states in a PartitionChangeRecord.
+     *
+     * @param context       The controller request context.
+     * @param request       The InitDisklessLog request data.
+     *
+     * @return              A future yielding the response with per-partition error codes.
+     */
+    CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
+        ControllerRequestContext context,
+        InitDisklessLogRequestData request
     );
 
     /**
