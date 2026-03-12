@@ -74,11 +74,8 @@ public class InklessTopicMetadataTransformer implements Closeable {
 
         final String clientAZ = normalizeAZ(ClientAZExtractor.getClientAZ(clientId));
 
-        // Lazy-init alive broker snapshot: computed on first diskless topic, reused across all.
-        // Depends only on listenerName so it is stable across topics within a single request.
-        List<Node> aliveNodes = null;
-        Set<Integer> aliveBrokerIds = null;
-        Map<Integer, String> brokerRacks = null;
+        // Lazy-init: computed on first diskless topic, reused across all topics in the response.
+        AliveBrokerSnapshot snapshot = null;
 
         for (final var topic : topicMetadata) {
             final String topicName = topic.name();
@@ -86,13 +83,8 @@ public class InklessTopicMetadataTransformer implements Closeable {
                 continue;
             }
 
-            if (aliveNodes == null) {
-                aliveNodes = metadataView.getAliveBrokerNodes(listenerName);
-                aliveBrokerIds = aliveNodes.stream()
-                    .map(Node::id)
-                    .collect(Collectors.toSet());
-                brokerRacks = aliveNodes.stream()
-                    .collect(Collectors.toMap(Node::id, n -> n.rack() != null ? n.rack() : ""));
+            if (snapshot == null) {
+                snapshot = AliveBrokerSnapshot.create(metadataView, listenerName);
             }
 
             // Check if remote storage is enabled (affects routing constraints)
@@ -106,11 +98,11 @@ public class InklessTopicMetadataTransformer implements Closeable {
                     transformManagedReplicasPartitionMetadata(
                         clientAZ, topic.topicId(), partition,
                         assignedReplicas, isRemoteStorageEnabled,
-                        aliveBrokerIds, brokerRacks
+                        snapshot.ids(), snapshot.racks()
                     );
                 } else {
                     // RF=1 (unmanaged): use legacy behavior
-                    transformUnmanagedPartitionMetadata(clientAZ, topic.topicId(), partition, aliveNodes);
+                    transformUnmanagedPartitionMetadata(clientAZ, topic.topicId(), partition, snapshot.nodes());
                 }
             }
         }
@@ -130,11 +122,8 @@ public class InklessTopicMetadataTransformer implements Closeable {
 
         final String clientAZ = normalizeAZ(ClientAZExtractor.getClientAZ(clientId));
 
-        // Lazy-init alive broker snapshot: computed on first diskless topic, reused across all.
-        // Depends only on listenerName so it is stable across topics within a single request.
-        List<Node> aliveNodes = null;
-        Set<Integer> aliveBrokerIds = null;
-        Map<Integer, String> brokerRacks = null;
+        // Lazy-init: computed on first diskless topic, reused across all topics in the response.
+        AliveBrokerSnapshot snapshot = null;
 
         for (final var topic : responseData.topics()) {
             final String topicName = topic.name();
@@ -142,13 +131,8 @@ public class InklessTopicMetadataTransformer implements Closeable {
                 continue;
             }
 
-            if (aliveNodes == null) {
-                aliveNodes = metadataView.getAliveBrokerNodes(listenerName);
-                aliveBrokerIds = aliveNodes.stream()
-                    .map(Node::id)
-                    .collect(Collectors.toSet());
-                brokerRacks = aliveNodes.stream()
-                    .collect(Collectors.toMap(Node::id, n -> n.rack() != null ? n.rack() : ""));
+            if (snapshot == null) {
+                snapshot = AliveBrokerSnapshot.create(metadataView, listenerName);
             }
 
             // Check if remote storage is enabled (affects routing constraints)
@@ -162,11 +146,11 @@ public class InklessTopicMetadataTransformer implements Closeable {
                     transformManagedReplicasPartitionDescribe(
                         clientAZ, topic.topicId(), partition,
                         assignedReplicas, isRemoteStorageEnabled,
-                        aliveBrokerIds, brokerRacks
+                        snapshot.ids(), snapshot.racks()
                     );
                 } else {
                     // RF=1 (unmanaged): use legacy behavior
-                    transformUnmanagedPartitionDescribe(clientAZ, topic.topicId(), partition, aliveNodes);
+                    transformUnmanagedPartitionDescribe(clientAZ, topic.topicId(), partition, snapshot.nodes());
                 }
             }
         }
@@ -466,6 +450,21 @@ public class InklessTopicMetadataTransformer implements Closeable {
     @Override
     public void close() throws IOException {
         metrics.close();
+    }
+
+    /**
+     * Snapshot of alive broker state, computed once per request and reused across all topics.
+     */
+    private record AliveBrokerSnapshot(List<Node> nodes, Set<Integer> ids, Map<Integer, String> racks) {
+        static AliveBrokerSnapshot create(final MetadataView metadataView, final ListenerName listenerName) {
+            final List<Node> nodes = metadataView.getAliveBrokerNodes(listenerName);
+            final Set<Integer> ids = nodes.stream()
+                .map(Node::id)
+                .collect(Collectors.toSet());
+            final Map<Integer, String> racks = nodes.stream()
+                .collect(Collectors.toMap(Node::id, n -> n.rack() != null ? n.rack() : ""));
+            return new AliveBrokerSnapshot(nodes, ids, racks);
+        }
     }
 
     /**
