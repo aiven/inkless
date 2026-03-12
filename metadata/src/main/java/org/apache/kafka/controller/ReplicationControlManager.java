@@ -71,6 +71,8 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.On
 import org.apache.kafka.common.metadata.BrokerRegistrationChangeRecord;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
+import org.apache.kafka.common.metadata.InitDisklessLogRequestData;
+import org.apache.kafka.common.metadata.InitDisklessLogResponseData;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
@@ -86,6 +88,7 @@ import org.apache.kafka.metadata.BrokerHeartbeatReply;
 import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.BrokerRegistrationFencingChange;
 import org.apache.kafka.metadata.BrokerRegistrationInControlledShutdownChange;
+import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.KafkaConfigSchema;
 import org.apache.kafka.metadata.LeaderRecoveryState;
 import org.apache.kafka.metadata.PartitionRegistration;
@@ -1421,6 +1424,155 @@ public class ReplicationControlManager {
         }
 
         return ControllerResult.of(records, response);
+    }
+
+    ControllerResult<InitDisklessLogResponseData> initDisklessLog(
+        ControllerRequestContext context,
+        InitDisklessLogRequestData request
+    ) {
+        clusterControl.checkBrokerEpoch(request.brokerId(), request.brokerEpoch());
+        List<ApiMessageAndVersion> records = new ArrayList<>();
+        List<InitDisklessLogResponseData.TopicResponse> topicResponses = new ArrayList<>();
+
+        for (InitDisklessLogRequestData.TopicData topicData : request.topics()) {
+            Uuid topicId = topicData.topicId();
+            List<InitDisklessLogResponseData.PartitionResponse> partitionResponses = new ArrayList<>();
+
+            if (!topics.containsKey(topicId)) {
+                for (InitDisklessLogRequestData.PartitionData partitionData : topicData.partitions()) {
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionData.partitionId())
+                        .setErrorCode(UNKNOWN_TOPIC_ID.code()));
+                }
+                log.info("Rejecting InitDisklessLog request for unknown topic ID {}.", topicId);
+                topicResponses.add(new InitDisklessLogResponseData.TopicResponse()
+                    .setTopicId(topicId)
+                    .setPartitions(partitionResponses));
+                continue;
+            }
+
+            TopicControlInfo topic = topics.get(topicId);
+            boolean isDisklessTopic = Boolean.parseBoolean(
+                configurationControl.currentTopicConfig(topic.name).getOrDefault(DISKLESS_ENABLE_CONFIG, "false"));
+            if (isDisklessTopic) {
+                for (InitDisklessLogRequestData.PartitionData partitionData : topicData.partitions()) {
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionData.partitionId())
+                        .setErrorCode(INVALID_REQUEST.code()));
+                }
+                log.info("Rejecting InitDisklessLog request for topic {} because it is already diskless.", topic.name);
+                topicResponses.add(new InitDisklessLogResponseData.TopicResponse()
+                    .setTopicId(topicId)
+                    .setPartitions(partitionResponses));
+                continue;
+            }
+
+            for (InitDisklessLogRequestData.PartitionData partitionData : topicData.partitions()) {
+                int partitionId = partitionData.partitionId();
+                PartitionRegistration partition = topic.parts.get(partitionId);
+
+                if (partition == null) {
+                    log.info("Rejecting InitDisklessLog request for unknown partition {}-{}.",
+                        topic.name, partitionId);
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(UNKNOWN_TOPIC_OR_PARTITION.code()));
+                    continue;
+                }
+
+                // If the partition leader has a higher leader/partition epoch, then it is likely
+                // that this node is no longer the active controller. We return NOT_CONTROLLER in
+                // this case to give the leader an opportunity to find the new controller.
+                if (partitionData.leaderEpoch() > partition.leaderEpoch) {
+                    log.debug("Rejecting InitDisklessLog request from node {} for {}-{} because " +
+                            "the current leader epoch is {}, which is less than the provided value {}.",
+                        request.brokerId(), topic.name, partitionId,
+                        partition.leaderEpoch, partitionData.leaderEpoch());
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(NOT_CONTROLLER.code()));
+                    continue;
+                }
+
+                if (partitionData.leaderEpoch() < partition.leaderEpoch) {
+                    log.debug("Rejecting InitDisklessLog request from node {} for {}-{} because " +
+                            "the current leader epoch is {}, not {}.",
+                        request.brokerId(), topic.name, partitionId,
+                        partition.leaderEpoch, partitionData.leaderEpoch());
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(FENCED_LEADER_EPOCH.code()));
+                    continue;
+                }
+
+                if (request.brokerId() != partition.leader) {
+                    log.info("Rejecting InitDisklessLog request from node {} for {}-{} because " +
+                            "the current leader is {}.",
+                        request.brokerId(), topic.name, partitionId, partition.leader);
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(INVALID_REQUEST.code()));
+                    continue;
+                }
+
+                if (partitionData.disklessStartOffset() < 0) {
+                    log.info("Rejecting InitDisklessLog request from node {} for {}-{} because " +
+                            "disklessStartOffset {} is invalid.",
+                        request.brokerId(), topic.name, partitionId, partitionData.disklessStartOffset());
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(INVALID_REQUEST.code()));
+                    continue;
+                }
+
+                if (partition.disklessStartOffset != PartitionRegistration.NO_DISKLESS_START_OFFSET) {
+                    log.info("Rejecting InitDisklessLog request from node {} for {}-{} because " +
+                            "the partition is already initialized with disklessStartOffset={}.",
+                        request.brokerId(), topic.name, partitionId, partition.disklessStartOffset);
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(INVALID_REQUEST.code()));
+                    continue;
+                }
+
+                List<InitDisklessLogFields.ProducerStateEntry> producerStates =
+                    partitionData.producerStates().stream()
+                        .map(ps -> new InitDisklessLogFields.ProducerStateEntry(
+                            ps.producerId(),
+                            ps.producerEpoch(),
+                            ps.baseSequence(),
+                            ps.lastSequence(),
+                            ps.assignedOffset(),
+                            ps.batchMaxTimestamp()))
+                        .toList();
+
+                PartitionChangeRecord record = new PartitionChangeRecord()
+                    .setTopicId(topicId)
+                    .setPartitionId(partitionId);
+                record.unknownTaggedFields().add(
+                    InitDisklessLogFields.encodeDisklessStartOffset(partitionData.disklessStartOffset()));
+                if (!producerStates.isEmpty()) {
+                    record.unknownTaggedFields().add(
+                        InitDisklessLogFields.encodeProducerStates(producerStates));
+                }
+
+                records.add(new ApiMessageAndVersion(record, (short) 0));
+
+                log.info("InitDisklessLog for {}-{}: disklessStartOffset={}, producerStates.size={}",
+                    topic.name, partitionId, partitionData.disklessStartOffset(),
+                    producerStates.size());
+
+                partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                    .setPartitionId(partitionId)
+                    .setErrorCode(NONE.code()));
+            }
+
+            topicResponses.add(new InitDisklessLogResponseData.TopicResponse()
+                .setTopicId(topicId)
+                .setPartitions(partitionResponses));
+        }
+
+        return ControllerResult.of(records, new InitDisklessLogResponseData().setTopics(topicResponses));
     }
 
     /**

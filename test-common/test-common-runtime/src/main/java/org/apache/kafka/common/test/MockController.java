@@ -55,6 +55,8 @@ import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData;
+import org.apache.kafka.common.metadata.InitDisklessLogRequestData;
+import org.apache.kafka.common.metadata.InitDisklessLogResponseData;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaEntity;
@@ -523,6 +525,13 @@ public class MockController implements Controller {
     }
 
     @Override
+    public CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
+        ControllerRequestContext context,
+        InitDisklessLogRequestData request
+    ) {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
     public void beginShutdown() {
         this.active = false;
     }

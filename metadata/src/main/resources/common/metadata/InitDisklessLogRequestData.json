@@ -1,0 +1,56 @@
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+{
+  "type": "data",
+  "name": "InitDisklessLogRequestData",
+  "validVersions": "0",
+  "flexibleVersions": "0+",
+  "fields": [
+    { "name": "BrokerId", "type": "int32", "versions": "0+",
+      "about": "The broker ID of the requesting leader." },
+    { "name": "BrokerEpoch", "type": "int64", "versions": "0+", "default": "-1",
+      "about": "The epoch of the requesting broker." },
+    { "name": "Topics", "type": "[]TopicData", "versions": "0+",
+      "about": "The topics to initialize as diskless.", "fields": [
+      { "name": "TopicId", "type": "uuid", "versions": "0+",
+        "about": "The topic ID." },
+      { "name": "Partitions", "type": "[]PartitionData", "versions": "0+",
+        "about": "The partitions to initialize as diskless.", "fields": [
+        { "name": "PartitionId", "type": "int32", "versions": "0+",
+          "about": "The partition ID." },
+        { "name": "DisklessStartOffset", "type": "int64", "versions": "0+",
+          "about": "The first offset retained for diskless reads." },
+        { "name": "LeaderEpoch", "type": "int32", "versions": "0+",
+          "about": "The leader epoch seen by the broker." },
+        { "name": "ProducerStates", "type": "[]ProducerState", "versions": "0+",
+          "about": "Producer state snapshots used for idempotence.", "fields": [
+          { "name": "ProducerId", "type": "int64", "versions": "0+",
+            "about": "The producer ID." },
+          { "name": "ProducerEpoch", "type": "int16", "versions": "0+",
+            "about": "The producer epoch." },
+          { "name": "BaseSequence", "type": "int32", "versions": "0+",
+            "about": "The base sequence number." },
+          { "name": "LastSequence", "type": "int32", "versions": "0+",
+            "about": "The last sequence number." },
+          { "name": "AssignedOffset", "type": "int64", "versions": "0+",
+            "about": "The offset assigned to the batch." },
+          { "name": "BatchMaxTimestamp", "type": "int64", "versions": "0+",
+            "about": "The maximum timestamp in the batch." }
+        ]}
+      ]}
+    ]}
+  ]
+}

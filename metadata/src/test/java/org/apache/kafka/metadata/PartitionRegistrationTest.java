@@ -407,4 +407,94 @@ public class PartitionRegistrationTest {
         PartitionRegistration registration = new PartitionRegistration(record);
         assertArrayEquals(new Uuid[]{DirectoryId.MIGRATING, DirectoryId.MIGRATING}, registration.directories);
     }
+
+    @Test
+    public void testDefaultDisklessStartOffset() {
+        PartitionRegistration registration = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).build();
+        assertEquals(PartitionRegistration.NO_DISKLESS_START_OFFSET, registration.disklessStartOffset);
+    }
+
+    @Test
+    public void testWithDisklessStartOffset() {
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(10).setPartitionEpoch(20).build();
+
+        PartitionRegistration updated = original.withDisklessStartOffset(42L);
+
+        assertEquals(42L, updated.disklessStartOffset);
+        assertArrayEquals(original.replicas, updated.replicas);
+        assertArrayEquals(original.isr, updated.isr);
+        assertEquals(original.leader, updated.leader);
+        assertEquals(original.leaderEpoch, updated.leaderEpoch);
+        assertEquals(original.partitionEpoch, updated.partitionEpoch);
+        assertEquals(original.leaderRecoveryState, updated.leaderRecoveryState);
+    }
+
+    @Test
+    public void testWithDisklessStartOffsetPreservesImmutability() {
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).build();
+
+        PartitionRegistration updated = original.withDisklessStartOffset(100L);
+
+        assertEquals(PartitionRegistration.NO_DISKLESS_START_OFFSET, original.disklessStartOffset);
+        assertEquals(100L, updated.disklessStartOffset);
+        assertNotEquals(original, updated);
+    }
+
+    @Test
+    public void testMergePreservesDisklessFields() {
+        List<InitDisklessLogFields.ProducerStateEntry> producerStates = List.of(
+            new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L),
+            new InitDisklessLogFields.ProducerStateEntry(2L, (short) 1, 5, 15, 200L, 6000L)
+        );
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setDisklessStartOffset(42L).
+            setDisklessProducerStates(producerStates).build();
+
+        PartitionRegistration merged = original.merge(new PartitionChangeRecord().
+            setLeader(2).setIsr(List.of(2, 3)));
+
+        assertEquals(42L, merged.disklessStartOffset);
+        assertEquals(producerStates, merged.disklessProducerStates);
+    }
+
+    @Test
+    public void testDisklessFieldsInEqualsAndHashCode() {
+        List<InitDisklessLogFields.ProducerStateEntry> states = List.of(
+            new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L)
+        );
+        PartitionRegistration a = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setDisklessStartOffset(42L).
+            setDisklessProducerStates(states).build();
+        PartitionRegistration b = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setDisklessStartOffset(42L).
+            setDisklessProducerStates(states).build();
+        PartitionRegistration c = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setDisklessStartOffset(99L).build();
+        PartitionRegistration d = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setDisklessStartOffset(42L).build();
+
+        assertEquals(a, b);
+        assertEquals(a.hashCode(), b.hashCode());
+        assertNotEquals(a, c);
+        assertNotEquals(a, d);
+    }
 }
