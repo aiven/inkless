@@ -91,8 +91,8 @@ public final class MirrorConfig {
     // Fetcher configuration
     public static final String NUM_REPLICA_FETCHERS_CONFIG = "mirror.num.replica.fetchers";
     public static final int NUM_REPLICA_FETCHERS_DEFAULT = 1;
-    public static final String NUM_REPLICA_FETCHERS_DOC = "Number of fetcher threads used to replicate records from remote clusters via cluster mirror. " +
-            "The total number of remote fetchers on each broker is bound by <code>mirror.num.replica.fetchers</code> multiplied by the number of cluster mirrors. " +
+    public static final String NUM_REPLICA_FETCHERS_DOC = "Number of fetcher threads per source broker per cluster mirror used to replicate records from remote clusters. " +
+            "The total number of mirror fetcher threads on each broker is this value multiplied by the number of distinct source brokers multiplied by the number of cluster mirrors. " +
             "Increasing this value can increase the degree of I/O parallelism for cross-cluster replication at the cost of higher CPU and memory utilization.";
 
     // Metadata refresh interval

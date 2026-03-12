@@ -38,6 +38,7 @@ import org.apache.kafka.server.ReplicaState
 import org.apache.kafka.server.PartitionFetchState
 import org.apache.kafka.server.log.remote.storage.RetriableRemoteStorageException
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
+import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.util.ShutdownableThread
 import org.apache.kafka.storage.internals.log.LogAppendInfo
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
@@ -252,18 +253,8 @@ abstract class AbstractFetcherThread(name: String,
   }
 
   /**
-   * Updates the leader epoch in fetch state for mirrored partitions.
-   *
    * This method updates the currentLeaderEpoch in the fetch state to match the source cluster's
    * current leader epoch, enabling proper epoch validation when fetching from the source.
-   *
-   * For mirrored partitions, the currentLeaderEpoch in fetch state tracks the SOURCE cluster's
-   * leader epoch (not the destination cluster's epoch). This is critical because:
-   * 1. Fetch requests to source cluster include currentLeaderEpoch for validation
-   * 2. Source cluster validates this epoch matches its current leader
-   * 3. Mismatched epochs result in UNKNOWN_LEADER_EPOCH errors
-   *
-   * @param partitionToData Map of partitions to their current leader information from source cluster
    */
   private def updateMirrorFetchEpoch(partitionToData: Map[TopicPartition, PartitionData]): Unit = {
     val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStateMap.asScala
@@ -289,42 +280,31 @@ abstract class AbstractFetcherThread(name: String,
     partitionStates.set(newStates.asJava)
   }
 
-  /**
-   * Reassigns mirrored partitions to new fetcher threads after source leader change.
-   *
-   * The detection mechanism compares the current source leader endpoint (from partitionToData)
-   * with the endpoint of the fetcher thread currently handling each partition. When they differ,
-   * the partition is reassigned by removing it from the current fetcher and adding it to a
-   * fetcher for the new leader.
-   *
-   * Leader identity is determined by comparing (host, port) rather than broker ID because:
-   * - Consumer-based fetchers may use ID -1 instead of the actual broker ID
-   * - Network addresses (host, port) uniquely identify broker endpoints
-   * - This comparison works correctly across different cluster configurations
-   *
-   * @param partitionToData Map of partitions to their current leader information from source cluster
-   */
+  /** Reassigns mirrored partitions to new fetcher threads after source leader change. */
   private def maybeCreateMirrorFetchers(partitionToData: Map[TopicPartition, PartitionData]): Unit = {
     var newStates: Map[TopicPartition, InitialFetchState] = scala.collection.mutable.Map.empty[TopicPartition, InitialFetchState]
       partitionStates.partitionStateMap.asScala
       .foreach { case (topicPartition, currentFetchState) =>
         partitionToData.get(topicPartition) match {
           case Some(partitionData) =>
-            val leaderNode = if (leader.lastSeenEndpoints().isEmpty) Optional.empty() else Optional.of(leader.lastSeenEndpoints().get(partitionData.currentLeader().leaderId()))
-            // if leader node change, we need to update it.
-            // Note: we can't compare the node id because it might be different from the original node id (ex: replied as consumer id -1)
+            val leaderNode = if (leader.lastSeenEndpoints().isEmpty) Optional.empty()
+              else Optional.of(leader.lastSeenEndpoints().get(partitionData.currentLeader().leaderId()))
+            // If leader node change, we need to update it.
+            // Note: we can't compare the node id because it might be different from the original node id (ex: replied as consumer id -1).
             if (leaderNode.isPresent && (!leaderNode.get().host.equals(leader.brokerEndPoint().host()) ||
               leaderNode.get().port != leader.brokerEndPoint().port)) {
-                val brokerEndpoint = new org.apache.kafka.server.network.BrokerEndPoint(leaderNode.get.id(), leaderNode.get.host, leaderNode.get.port)
+                val brokerEndpoint = new BrokerEndPoint(leaderNode.get.id(), leaderNode.get.host, leaderNode.get.port)
                 newStates += topicPartition -> InitialFetchState(currentFetchState.topicId().toScala, brokerEndpoint,
                   partitionData.currentLeader().leaderEpoch(), currentFetchState.fetchOffset(), mirrorName)
             }
           case _ =>
         }
       }
-    info("!!! createFetcherForReadOnly:" + newStates)
-    removeFetcherForPartitions(newStates.keySet)
-    addFetcherForPartitions(newStates)
+    if (newStates.nonEmpty) {
+      info("!!! maybeCreateMirrorFetchers: " + newStates)
+      removeFetcherForPartitions(newStates.keySet)
+      addFetcherForPartitions(newStates)
+    }
   }
 
   // Visible for testing

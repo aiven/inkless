@@ -38,14 +38,14 @@ import scala.jdk.CollectionConverters._
  * BlockingSend implementation for cross-cluster mirroring. Creates a dedicated NetworkClient
  * configured with cluster-specific security settings (SASL/SSL) from MirrorConfig.
  */
-class MirrorBlockingSender(sourceBroker: BrokerEndPoint,
-                           mirrorConfig: MirrorConfig,
-                           brokerConfig: KafkaConfig,
-                           metrics: Metrics,
-                           time: Time,
-                           fetcherId: Int,
-                           clientId: String,
-                           logContext: LogContext) extends BlockingSend {
+class MirrorSourceSender(sourceBroker: BrokerEndPoint,
+                         mirrorConfig: MirrorConfig,
+                         brokerConfig: KafkaConfig,
+                         metrics: Metrics,
+                         time: Time,
+                         fetcherId: Int,
+                         clientId: String,
+                         logContext: LogContext) extends BlockingSend {
   private val sourceNode = new Node(sourceBroker.id, sourceBroker.host, sourceBroker.port)
   private val socketTimeout: Int = brokerConfig.replicaSocketTimeoutMs
 
@@ -109,8 +109,6 @@ class MirrorBlockingSender(sourceBroker: BrokerEndPoint,
   }
 
   override def initiateClose(): Unit = {
-    // Note: For Cluster Mirror connections, we don't use dynamic reconfiguration
-    // so no need to remove reconfigurable components
     networkClient.initiateClose()
   }
 

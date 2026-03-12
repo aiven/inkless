@@ -1081,26 +1081,6 @@ public interface Admin extends AutoCloseable {
     ListGroupsResult listGroups(ListGroupsOptions options);
 
     /**
-     * List the cluster mirrors available in the cluster with the default options.
-     *
-     * <p>This is a convenience method for {@link #listMirrors(ListMirrorsOptions)} with default options.
-     * See the overload for more details.
-     *
-     * @return The ListMirrorsResult.
-     */
-    default ListMirrorsResult listMirrors() {
-        return listMirrors(new ListMirrorsOptions());
-    }
-
-    /**
-     * List the cluster mirrors available in the cluster.
-     *
-     * @param options The options to use when listing the mirrors.
-     * @return The ListMirrorsResult.
-     */
-    ListMirrorsResult listMirrors(ListMirrorsOptions options);
-
-    /**
      * Elect a replica as leader for topic partitions.
      * <p>
      * This is a convenience method for {@link #electLeaders(ElectionType, Set, ElectLeadersOptions)}
@@ -1724,17 +1704,59 @@ public interface Admin extends AutoCloseable {
      */
     RemoveTopicsFromMirrorResult removeTopicsFromMirror(Set<String> topics, RemoveTopicsFromMirrorOptions options);
 
+    /**
+     * Pause mirroring for the specified topics.
+     *
+     * Paused topics remain read-only on the destination cluster but stop fetching new data from the
+     * source cluster. The mirror fetcher threads are removed for these partitions, preserving the
+     * current replicated state. Mirroring can be resumed later with {@link #resumeMirrorTopics}.
+     *
+     * @param topics Set of topic names to pause mirroring for
+     * @param options Options for the pause mirror topics operation
+     * @return The PauseMirrorTopicsResult containing futures for each topic
+     */
     PauseMirrorTopicsResult pauseMirrorTopics(Set<String> topics, PauseMirrorTopicsOptions options);
 
     default PauseMirrorTopicsResult pauseMirrorTopics(Set<String> topics) {
         return pauseMirrorTopics(topics, new PauseMirrorTopicsOptions());
     }
 
+    /**
+     * Resume mirroring for previously paused topics.
+     *
+     * Resumed topics restart fetching data from the source cluster, picking up from where they
+     * left off. New mirror fetcher threads are created and the partitions transition back to the
+     * MIRRORING state.
+     *
+     * @param topics Set of topic names to resume mirroring for
+     * @param options Options for the resume mirror topics operation
+     * @return The ResumeMirrorTopicsResult containing futures for each topic
+     */
     ResumeMirrorTopicsResult resumeMirrorTopics(Set<String> topics, ResumeMirrorTopicsOptions options);
 
     default ResumeMirrorTopicsResult resumeMirrorTopics(Set<String> topics) {
         return resumeMirrorTopics(topics, new ResumeMirrorTopicsOptions());
     }
+
+    /**
+     * List the cluster mirrors available in the cluster with the default options.
+     *
+     * <p>This is a convenience method for {@link #listMirrors(ListMirrorsOptions)} with default options.
+     * See the overload for more details.
+     *
+     * @return The ListMirrorsResult.
+     */
+    default ListMirrorsResult listMirrors() {
+        return listMirrors(new ListMirrorsOptions());
+    }
+
+    /**
+     * List the cluster mirrors available in the cluster.
+     *
+     * @param options The options to use when listing the mirrors.
+     * @return The ListMirrorsResult.
+     */
+    ListMirrorsResult listMirrors(ListMirrorsOptions options);
 
     /**
      * Describe cluster mirrors with the default options.

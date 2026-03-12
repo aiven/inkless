@@ -183,7 +183,6 @@ class ControllerApis(
     val configChanges = new util.HashMap[ConfigResource, util.Map[String, Entry[AlterConfigOp.OpType, String]]]()
     val resource = new ConfigResource(ConfigResource.Type.forId(64), createMirrorRequest.data().mirrorName())
     createMirrorRequest.data().config.forEach { config =>
-      // TODO: currently assume always SET value
       altersByName.put(config.name, new util.AbstractMap.SimpleEntry[AlterConfigOp.OpType, String](
         AlterConfigOp.OpType.forId(0), config.value))
     }
