@@ -78,7 +78,6 @@ public final class InitDisklessLogFields {
             buf.putLong(s.assignedOffset());
             buf.putLong(s.batchMaxTimestamp());
         }
-        buf.flip();
         return new RawTaggedField(PRODUCER_STATES_TAG, buf.array());
     }
 

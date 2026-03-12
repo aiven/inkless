@@ -1460,7 +1460,7 @@ public class ReplicationControlManager {
                         .setPartitionId(partitionData.partitionId())
                         .setErrorCode(INVALID_REQUEST.code()));
                 }
-                log.info("Rejecting InitDisklessLog request for non-classic topic {}.", topic.name);
+                log.info("Rejecting InitDisklessLog request for topic {} because it is already diskless.", topic.name);
                 topicResponses.add(new InitDisklessLogResponseData.TopicResponse()
                     .setTopicId(topicId)
                     .setPartitions(partitionResponses));
