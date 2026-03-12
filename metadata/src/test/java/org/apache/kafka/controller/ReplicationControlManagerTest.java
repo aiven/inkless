@@ -67,6 +67,8 @@ import org.apache.kafka.common.metadata.BrokerRegistrationChangeRecord;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.metadata.FeatureLevelRecord;
+import org.apache.kafka.common.metadata.InitDisklessLogRequestData;
+import org.apache.kafka.common.metadata.InitDisklessLogResponseData;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.RegisterBrokerRecord;
@@ -5317,6 +5319,30 @@ public class ReplicationControlManagerTest {
 
     @Nested
     class InitDisklessLogTests {
+        private InitDisklessLogRequestData singlePartitionRequest(
+            int brokerId,
+            long brokerEpoch,
+            Uuid topicId,
+            int partitionId,
+            long disklessStartOffset,
+            int leaderEpoch,
+            List<InitDisklessLogRequestData.ProducerState> producerStates
+        ) {
+            InitDisklessLogRequestData request = new InitDisklessLogRequestData()
+                .setBrokerId(brokerId)
+                .setBrokerEpoch(brokerEpoch);
+            InitDisklessLogRequestData.TopicData topicData = new InitDisklessLogRequestData.TopicData()
+                .setTopicId(topicId);
+            InitDisklessLogRequestData.PartitionData partitionData = new InitDisklessLogRequestData.PartitionData()
+                .setPartitionId(partitionId)
+                .setDisklessStartOffset(disklessStartOffset)
+                .setLeaderEpoch(leaderEpoch);
+            partitionData.producerStates().addAll(producerStates);
+            topicData.partitions().add(partitionData);
+            request.topics().add(topicData);
+            return request;
+        }
+
         @Test
         public void testInitDisklessLogSuccess() {
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
@@ -5331,16 +5357,20 @@ public class ReplicationControlManagerTest {
             assertEquals(PartitionRegistration.NO_DISKLESS_START_OFFSET, partition.disklessStartOffset);
 
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
-            InitDisklessLogRequestData request = new InitDisklessLogRequestData(
-                0, defaultBrokerEpoch(0),
-                List.of(new InitDisklessLogRequestData.TopicData(topicId,
-                    List.of(new InitDisklessLogRequestData.PartitionData(0, 100L,
-                        partition.leaderEpoch,
-                        List.of(new InitDisklessLogRequestData.ProducerState(
-                            42L, (short) 1, 0, 5, 200L, 1000L
-                        ))
-                    ))
-                ))
+            InitDisklessLogRequestData request = singlePartitionRequest(
+                0,
+                defaultBrokerEpoch(0),
+                topicId,
+                0,
+                100L,
+                partition.leaderEpoch,
+                List.of(new InitDisklessLogRequestData.ProducerState()
+                    .setProducerId(42L)
+                    .setProducerEpoch((short) 1)
+                    .setBaseSequence(0)
+                    .setLastSequence(5)
+                    .setAssignedOffset(200L)
+                    .setBatchMaxTimestamp(1000L))
             );
 
             ControllerResult<InitDisklessLogResponseData> result =
@@ -5369,7 +5399,7 @@ public class ReplicationControlManagerTest {
             assertEquals(topicId, response.topics().get(0).topicId());
             assertEquals(1, response.topics().get(0).partitions().size());
             assertEquals(0, response.topics().get(0).partitions().get(0).partitionId());
-            assertEquals(NONE, response.topics().get(0).partitions().get(0).error());
+            assertEquals(NONE.code(), response.topics().get(0).partitions().get(0).errorCode());
         }
 
         @Test
@@ -5385,14 +5415,8 @@ public class ReplicationControlManagerTest {
             PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
 
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
-            InitDisklessLogRequestData request = new InitDisklessLogRequestData(
-                0, defaultBrokerEpoch(0),
-                List.of(new InitDisklessLogRequestData.TopicData(topicId,
-                    List.of(new InitDisklessLogRequestData.PartitionData(0, 42L,
-                        partition.leaderEpoch, List.of()
-                    ))
-                ))
-            );
+            InitDisklessLogRequestData request = singlePartitionRequest(
+                0, defaultBrokerEpoch(0), topicId, 0, 42L, partition.leaderEpoch, List.of());
 
             ControllerResult<InitDisklessLogResponseData> result =
                 replicationControl.initDisklessLog(requestContext, request);
@@ -5412,19 +5436,15 @@ public class ReplicationControlManagerTest {
 
             Uuid unknownTopicId = Uuid.randomUuid();
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
-            InitDisklessLogRequestData request = new InitDisklessLogRequestData(
-                0, defaultBrokerEpoch(0),
-                List.of(new InitDisklessLogRequestData.TopicData(unknownTopicId,
-                    List.of(new InitDisklessLogRequestData.PartitionData(0, 100L, 0, List.of()))
-                ))
-            );
+            InitDisklessLogRequestData request = singlePartitionRequest(
+                0, defaultBrokerEpoch(0), unknownTopicId, 0, 100L, 0, List.of());
 
             ControllerResult<InitDisklessLogResponseData> result =
                 replicationControl.initDisklessLog(requestContext, request);
 
             assertEquals(0, result.records().size());
-            assertEquals(UNKNOWN_TOPIC_ID,
-                result.response().topics().get(0).partitions().get(0).error());
+            assertEquals(UNKNOWN_TOPIC_ID.code(),
+                result.response().topics().get(0).partitions().get(0).errorCode());
         }
 
         @Test
@@ -5438,19 +5458,15 @@ public class ReplicationControlManagerTest {
 
             Uuid topicId = createTopicResult.topicId();
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
-            InitDisklessLogRequestData request = new InitDisklessLogRequestData(
-                0, defaultBrokerEpoch(0),
-                List.of(new InitDisklessLogRequestData.TopicData(topicId,
-                    List.of(new InitDisklessLogRequestData.PartitionData(99, 100L, 0, List.of()))
-                ))
-            );
+            InitDisklessLogRequestData request = singlePartitionRequest(
+                0, defaultBrokerEpoch(0), topicId, 99, 100L, 0, List.of());
 
             ControllerResult<InitDisklessLogResponseData> result =
                 replicationControl.initDisklessLog(requestContext, request);
 
             assertEquals(0, result.records().size());
-            assertEquals(UNKNOWN_TOPIC_OR_PARTITION,
-                result.response().topics().get(0).partitions().get(0).error());
+            assertEquals(UNKNOWN_TOPIC_OR_PARTITION.code(),
+                result.response().topics().get(0).partitions().get(0).errorCode());
         }
 
         @Test
@@ -5462,10 +5478,9 @@ public class ReplicationControlManagerTest {
             ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
 
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
-            InitDisklessLogRequestData request = new InitDisklessLogRequestData(
-                0, defaultBrokerEpoch(0) - 1,
-                List.of()
-            );
+            InitDisklessLogRequestData request = new InitDisklessLogRequestData()
+                .setBrokerId(0)
+                .setBrokerEpoch(defaultBrokerEpoch(0) - 1);
 
             assertThrows(StaleBrokerEpochException.class,
                 () -> replicationControl.initDisklessLog(requestContext, request));
@@ -5484,21 +5499,15 @@ public class ReplicationControlManagerTest {
             PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
 
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
-            InitDisklessLogRequestData request = new InitDisklessLogRequestData(
-                0, defaultBrokerEpoch(0),
-                List.of(new InitDisklessLogRequestData.TopicData(topicId,
-                    List.of(new InitDisklessLogRequestData.PartitionData(0, 100L,
-                        partition.leaderEpoch + 10, List.of()
-                    ))
-                ))
-            );
+            InitDisklessLogRequestData request = singlePartitionRequest(
+                0, defaultBrokerEpoch(0), topicId, 0, 100L, partition.leaderEpoch + 10, List.of());
 
             ControllerResult<InitDisklessLogResponseData> result =
                 replicationControl.initDisklessLog(requestContext, request);
 
             assertEquals(0, result.records().size());
-            assertEquals(NOT_CONTROLLER,
-                result.response().topics().get(0).partitions().get(0).error());
+            assertEquals(NOT_CONTROLLER.code(),
+                result.response().topics().get(0).partitions().get(0).errorCode());
         }
 
         @Test
@@ -5515,21 +5524,15 @@ public class ReplicationControlManagerTest {
             assertTrue(partition.leaderEpoch > 0 || partition.leaderEpoch == 0);
 
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
-            InitDisklessLogRequestData request = new InitDisklessLogRequestData(
-                0, defaultBrokerEpoch(0),
-                List.of(new InitDisklessLogRequestData.TopicData(topicId,
-                    List.of(new InitDisklessLogRequestData.PartitionData(0, 100L,
-                        partition.leaderEpoch - 1, List.of()
-                    ))
-                ))
-            );
+            InitDisklessLogRequestData request = singlePartitionRequest(
+                0, defaultBrokerEpoch(0), topicId, 0, 100L, partition.leaderEpoch - 1, List.of());
 
             ControllerResult<InitDisklessLogResponseData> result =
                 replicationControl.initDisklessLog(requestContext, request);
 
             assertEquals(0, result.records().size());
-            assertEquals(FENCED_LEADER_EPOCH,
-                result.response().topics().get(0).partitions().get(0).error());
+            assertEquals(FENCED_LEADER_EPOCH.code(),
+                result.response().topics().get(0).partitions().get(0).errorCode());
         }
 
         @Test
@@ -5546,21 +5549,15 @@ public class ReplicationControlManagerTest {
             int notLeaderId = (partition.leader == 0) ? 1 : 0;
 
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
-            InitDisklessLogRequestData request = new InitDisklessLogRequestData(
-                notLeaderId, defaultBrokerEpoch(notLeaderId),
-                List.of(new InitDisklessLogRequestData.TopicData(topicId,
-                    List.of(new InitDisklessLogRequestData.PartitionData(0, 100L,
-                        partition.leaderEpoch, List.of()
-                    ))
-                ))
-            );
+            InitDisklessLogRequestData request = singlePartitionRequest(
+                notLeaderId, defaultBrokerEpoch(notLeaderId), topicId, 0, 100L, partition.leaderEpoch, List.of());
 
             ControllerResult<InitDisklessLogResponseData> result =
                 replicationControl.initDisklessLog(requestContext, request);
 
             assertEquals(0, result.records().size());
-            assertEquals(INVALID_REQUEST,
-                result.response().topics().get(0).partitions().get(0).error());
+            assertEquals(INVALID_REQUEST.code(),
+                result.response().topics().get(0).partitions().get(0).errorCode());
         }
 
         @Test
@@ -5576,20 +5573,32 @@ public class ReplicationControlManagerTest {
             PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
 
             List<InitDisklessLogRequestData.ProducerState> producerStates = List.of(
-                new InitDisklessLogRequestData.ProducerState(1L, (short) 0, 0, 10, 100L, 5000L),
-                new InitDisklessLogRequestData.ProducerState(2L, (short) 3, 5, 15, 200L, 6000L),
-                new InitDisklessLogRequestData.ProducerState(3L, (short) 1, 0, 0, 300L, 7000L)
+                new InitDisklessLogRequestData.ProducerState()
+                    .setProducerId(1L)
+                    .setProducerEpoch((short) 0)
+                    .setBaseSequence(0)
+                    .setLastSequence(10)
+                    .setAssignedOffset(100L)
+                    .setBatchMaxTimestamp(5000L),
+                new InitDisklessLogRequestData.ProducerState()
+                    .setProducerId(2L)
+                    .setProducerEpoch((short) 3)
+                    .setBaseSequence(5)
+                    .setLastSequence(15)
+                    .setAssignedOffset(200L)
+                    .setBatchMaxTimestamp(6000L),
+                new InitDisklessLogRequestData.ProducerState()
+                    .setProducerId(3L)
+                    .setProducerEpoch((short) 1)
+                    .setBaseSequence(0)
+                    .setLastSequence(0)
+                    .setAssignedOffset(300L)
+                    .setBatchMaxTimestamp(7000L)
             );
 
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
-            InitDisklessLogRequestData request = new InitDisklessLogRequestData(
-                0, defaultBrokerEpoch(0),
-                List.of(new InitDisklessLogRequestData.TopicData(topicId,
-                    List.of(new InitDisklessLogRequestData.PartitionData(0, 50L,
-                        partition.leaderEpoch, producerStates
-                    ))
-                ))
-            );
+            InitDisklessLogRequestData request = singlePartitionRequest(
+                0, defaultBrokerEpoch(0), topicId, 0, 50L, partition.leaderEpoch, producerStates);
 
             ControllerResult<InitDisklessLogResponseData> result =
                 replicationControl.initDisklessLog(requestContext, request);
@@ -5601,7 +5610,7 @@ public class ReplicationControlManagerTest {
                 InitDisklessLogFields.decodeProducerStates(record.unknownTaggedFields());
             assertEquals(3, decodedStates.size());
 
-            assertEquals(NONE, result.response().topics().get(0).partitions().get(0).error());
+            assertEquals(NONE.code(), result.response().topics().get(0).partitions().get(0).errorCode());
 
             ctx.replay(result.records());
             PartitionRegistration updatedPartition = replicationControl.getPartition(topicId, 0);

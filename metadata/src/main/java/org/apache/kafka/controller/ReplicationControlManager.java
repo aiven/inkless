@@ -71,6 +71,8 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.On
 import org.apache.kafka.common.metadata.BrokerRegistrationChangeRecord;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
+import org.apache.kafka.common.metadata.InitDisklessLogRequestData;
+import org.apache.kafka.common.metadata.InitDisklessLogResponseData;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
@@ -1438,11 +1440,14 @@ public class ReplicationControlManager {
 
             if (!topics.containsKey(topicId)) {
                 for (InitDisklessLogRequestData.PartitionData partitionData : topicData.partitions()) {
-                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse(
-                        partitionData.partitionId(), UNKNOWN_TOPIC_ID));
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionData.partitionId())
+                        .setErrorCode(UNKNOWN_TOPIC_ID.code()));
                 }
                 log.info("Rejecting InitDisklessLog request for unknown topic ID {}.", topicId);
-                topicResponses.add(new InitDisklessLogResponseData.TopicResponse(topicId, partitionResponses));
+                topicResponses.add(new InitDisklessLogResponseData.TopicResponse()
+                    .setTopicId(topicId)
+                    .setPartitions(partitionResponses));
                 continue;
             }
 
@@ -1455,8 +1460,9 @@ public class ReplicationControlManager {
                 if (partition == null) {
                     log.info("Rejecting InitDisklessLog request for unknown partition {}-{}.",
                         topic.name, partitionId);
-                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse(
-                        partitionId, UNKNOWN_TOPIC_OR_PARTITION));
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(UNKNOWN_TOPIC_OR_PARTITION.code()));
                     continue;
                 }
 
@@ -1465,11 +1471,12 @@ public class ReplicationControlManager {
                 // this case to give the leader an opportunity to find the new controller.
                 if (partitionData.leaderEpoch() > partition.leaderEpoch) {
                     log.debug("Rejecting InitDisklessLog request from node {} for {}-{} because " +
-                            "the current leader epoch is {}, which is greater than the local value {}.",
+                            "the current leader epoch is {}, which is less than the provided value {}.",
                         request.brokerId(), topic.name, partitionId,
                         partition.leaderEpoch, partitionData.leaderEpoch());
-                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse(
-                        partitionId, NOT_CONTROLLER));
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(NOT_CONTROLLER.code()));
                     continue;
                 }
 
@@ -1478,8 +1485,9 @@ public class ReplicationControlManager {
                             "the current leader epoch is {}, not {}.",
                         request.brokerId(), topic.name, partitionId,
                         partition.leaderEpoch, partitionData.leaderEpoch());
-                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse(
-                        partitionId, FENCED_LEADER_EPOCH));
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(FENCED_LEADER_EPOCH.code()));
                     continue;
                 }
 
@@ -1487,8 +1495,9 @@ public class ReplicationControlManager {
                     log.info("Rejecting InitDisklessLog request from node {} for {}-{} because " +
                             "the current leader is {}.",
                         request.brokerId(), topic.name, partitionId, partition.leader);
-                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse(
-                        partitionId, INVALID_REQUEST));
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(INVALID_REQUEST.code()));
                     continue;
                 }
 
@@ -1519,14 +1528,17 @@ public class ReplicationControlManager {
                     topic.name, partitionId, partitionData.disklessStartOffset(),
                     producerStates.size());
 
-                partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse(
-                    partitionId, NONE));
+                partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                    .setPartitionId(partitionId)
+                    .setErrorCode(NONE.code()));
             }
 
-            topicResponses.add(new InitDisklessLogResponseData.TopicResponse(topicId, partitionResponses));
+            topicResponses.add(new InitDisklessLogResponseData.TopicResponse()
+                .setTopicId(topicId)
+                .setPartitions(partitionResponses));
         }
 
-        return ControllerResult.of(records, new InitDisklessLogResponseData(topicResponses));
+        return ControllerResult.of(records, new InitDisklessLogResponseData().setTopics(topicResponses));
     }
 
     /**

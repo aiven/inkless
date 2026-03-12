@@ -68,6 +68,8 @@ import org.apache.kafka.common.metadata.DelegationTokenRecord;
 import org.apache.kafka.common.metadata.EndTransactionRecord;
 import org.apache.kafka.common.metadata.FeatureLevelRecord;
 import org.apache.kafka.common.metadata.FenceBrokerRecord;
+import org.apache.kafka.common.metadata.InitDisklessLogRequestData;
+import org.apache.kafka.common.metadata.InitDisklessLogResponseData;
 import org.apache.kafka.common.metadata.MetadataRecordType;
 import org.apache.kafka.common.metadata.NoOpRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
@@ -1772,7 +1774,7 @@ public final class QuorumController implements Controller {
         InitDisklessLogRequestData request
     ) {
         if (request.topics().isEmpty()) {
-            return CompletableFuture.completedFuture(new InitDisklessLogResponseData(List.of()));
+            return CompletableFuture.completedFuture(new InitDisklessLogResponseData());
         }
         return appendWriteEvent("initDisklessLog", context.deadlineNs(),
             () -> replicationControl.initDisklessLog(context, request));
