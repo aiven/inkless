@@ -26,6 +26,7 @@ import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogStartOffsetIncr
 
 import java.util.Optional
 import scala.collection.{Map, Set}
+import scala.jdk.CollectionConverters._
 
 /**
  * Fetcher thread for cross-cluster mirroring. Unlike ReplicaFetcherThread, this rewrites

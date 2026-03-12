@@ -113,6 +113,8 @@ abstract class AbstractFetcherThread(name: String,
 
   protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {}
 
+  protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {}
+
   override def shutdown(): Unit = {
     initiateShutdown()
     inLock(partitionMapLock) {
