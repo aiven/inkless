@@ -1501,6 +1501,16 @@ public class ReplicationControlManager {
                     continue;
                 }
 
+                if (partitionData.disklessStartOffset() < 0) {
+                    log.info("Rejecting InitDisklessLog request from node {} for {}-{} because " +
+                            "disklessStartOffset {} is invalid.",
+                        request.brokerId(), topic.name, partitionId, partitionData.disklessStartOffset());
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(INVALID_REQUEST.code()));
+                    continue;
+                }
+
                 List<InitDisklessLogFields.ProducerStateEntry> producerStates =
                     partitionData.producerStates().stream()
                         .map(ps -> new InitDisklessLogFields.ProducerStateEntry(

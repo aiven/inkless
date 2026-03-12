@@ -5561,6 +5561,30 @@ public class ReplicationControlManagerTest {
         }
 
         @Test
+        public void testInitDisklessLogNegativeStartOffset() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            CreatableTopicResult createTopicResult = ctx.createTestTopic("foo",
+                new int[][] {new int[] {0, 1, 2}});
+
+            Uuid topicId = createTopicResult.topicId();
+            PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
+
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
+            InitDisklessLogRequestData request = singlePartitionRequest(
+                0, defaultBrokerEpoch(0), topicId, 0, -1L, partition.leaderEpoch, List.of());
+
+            ControllerResult<InitDisklessLogResponseData> result =
+                replicationControl.initDisklessLog(requestContext, request);
+
+            assertEquals(0, result.records().size());
+            assertEquals(INVALID_REQUEST.code(),
+                result.response().topics().get(0).partitions().get(0).errorCode());
+        }
+
+        @Test
         public void testInitDisklessLogMultipleProducerStates() {
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
             ReplicationControlManager replicationControl = ctx.replicationControl;
