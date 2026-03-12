@@ -30,10 +30,10 @@ import kafka.utils.TestUtils
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET
 import org.apache.kafka.clients.admin.{Admin, AlterConfigOp, ConfigEntry, NewTopic}
 import org.apache.kafka.common.Uuid
-import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.config.ConfigResource.Type.BROKER
 import org.apache.kafka.common.internals.Topic
-import org.apache.kafka.common.metadata.{FeatureLevelRecord, PartitionRecord, RemoveTopicRecord, TopicRecord}
+import org.apache.kafka.common.metadata.{ConfigRecord, FeatureLevelRecord, PartitionRecord, RemoveTopicRecord, TopicRecord}
 import org.apache.kafka.common.test.{KafkaClusterTestKit, TestKitNodes}
 import org.apache.kafka.common.utils.Exit
 import org.apache.kafka.coordinator.common.runtime.{KRaftCoordinatorMetadataDelta, KRaftCoordinatorMetadataImage}
@@ -361,5 +361,123 @@ class BrokerMetadataPublisherTest {
 
     // SharePartitionManager is receiving the latest changes.
     verify(sharePartitionManager).onShareVersionToggle(any(), any())
+  }
+
+  @Test
+  def testSealTransitioningTopicsOnDisklessEnableChange(): Unit = {
+    val config = KafkaConfig.fromProps(TestUtils.createBrokerConfig(0))
+    val metadataCache = new KRaftMetadataCache(0, () => KRaftVersion.KRAFT_VERSION_1)
+    val logManager = mock(classOf[LogManager])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val inklessMetadataView = mock(classOf[InklessMetadataView])
+    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    val faultHandler = mock(classOf[FaultHandler])
+
+    val metadataPublisher = new BrokerMetadataPublisher(
+      config,
+      metadataCache,
+      logManager,
+      replicaManager,
+      mock(classOf[GroupCoordinator]),
+      mock(classOf[TransactionCoordinator]),
+      mock(classOf[ShareCoordinator]),
+      mock(classOf[SharePartitionManager]),
+      mock(classOf[DynamicConfigPublisher]),
+      mock(classOf[DynamicClientQuotaPublisher]),
+      mock(classOf[DynamicTopicClusterQuotaPublisher]),
+      mock(classOf[ScramPublisher]),
+      mock(classOf[DelegationTokenPublisher]),
+      mock(classOf[AclPublisher]),
+      faultHandler,
+      faultHandler
+    )
+
+    val topicName = "test-seal-topic"
+    val topicId = Uuid.randomUuid()
+
+    // Build initial image with topic (diskless.enable = false by default)
+    var delta = new MetadataDelta(MetadataImage.EMPTY)
+    delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+    delta.replay(new PartitionRecord()
+      .setTopicId(topicId).setPartitionId(0).setLeader(config.brokerId))
+    val baseImage = delta.apply(MetadataProvenance.EMPTY)
+
+    // Now create a delta that sets diskless.enable = true
+    delta = new MetadataDelta(baseImage)
+    delta.replay(new ConfigRecord()
+      .setResourceType(ConfigResource.Type.TOPIC.id())
+      .setResourceName(topicName)
+      .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+      .setValue("true"))
+
+    metadataPublisher.onMetadataUpdate(delta, delta.apply(MetadataProvenance.EMPTY),
+      LogDeltaManifest.newBuilder()
+        .provenance(MetadataProvenance.EMPTY)
+        .leaderAndEpoch(LeaderAndEpoch.UNKNOWN)
+        .numBatches(1)
+        .elapsedNs(100)
+        .numBytes(42)
+        .build())
+
+    verify(replicaManager).sealTopicPartitions(topicName)
+  }
+
+  @Test
+  def testNoSealingWhenDisklessEnableNotChanged(): Unit = {
+    val config = KafkaConfig.fromProps(TestUtils.createBrokerConfig(0))
+    val metadataCache = new KRaftMetadataCache(0, () => KRaftVersion.KRAFT_VERSION_1)
+    val logManager = mock(classOf[LogManager])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val inklessMetadataView = mock(classOf[InklessMetadataView])
+    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    val faultHandler = mock(classOf[FaultHandler])
+
+    val metadataPublisher = new BrokerMetadataPublisher(
+      config,
+      metadataCache,
+      logManager,
+      replicaManager,
+      mock(classOf[GroupCoordinator]),
+      mock(classOf[TransactionCoordinator]),
+      mock(classOf[ShareCoordinator]),
+      mock(classOf[SharePartitionManager]),
+      mock(classOf[DynamicConfigPublisher]),
+      mock(classOf[DynamicClientQuotaPublisher]),
+      mock(classOf[DynamicTopicClusterQuotaPublisher]),
+      mock(classOf[ScramPublisher]),
+      mock(classOf[DelegationTokenPublisher]),
+      mock(classOf[AclPublisher]),
+      faultHandler,
+      faultHandler
+    )
+
+    val topicName = "test-no-seal-topic"
+    val topicId = Uuid.randomUuid()
+
+    // Build initial image with topic
+    var delta = new MetadataDelta(MetadataImage.EMPTY)
+    delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+    delta.replay(new PartitionRecord()
+      .setTopicId(topicId).setPartitionId(0).setLeader(config.brokerId))
+    val baseImage = delta.apply(MetadataProvenance.EMPTY)
+
+    // Create a delta that changes a non-diskless config
+    delta = new MetadataDelta(baseImage)
+    delta.replay(new ConfigRecord()
+      .setResourceType(ConfigResource.Type.TOPIC.id())
+      .setResourceName(topicName)
+      .setName(TopicConfig.RETENTION_MS_CONFIG)
+      .setValue("86400000"))
+
+    metadataPublisher.onMetadataUpdate(delta, delta.apply(MetadataProvenance.EMPTY),
+      LogDeltaManifest.newBuilder()
+        .provenance(MetadataProvenance.EMPTY)
+        .leaderAndEpoch(LeaderAndEpoch.UNKNOWN)
+        .numBatches(1)
+        .elapsedNs(100)
+        .numBytes(42)
+        .build())
+
+    verify(replicaManager, Mockito.never()).sealTopicPartitions(any())
   }
 }

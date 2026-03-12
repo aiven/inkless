@@ -4073,4 +4073,102 @@ class PartitionTest extends AbstractPartitionTest {
     partition.setLog(mockLog, false)
     assertThrows(classOf[PolicyViolationException], () =>  partition.deleteRecordsOnLeader(1L))
   }
+
+  @Test
+  def testSealPartition(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+
+    assertFalse(partition.isSealed)
+
+    partition.seal()
+
+    assertTrue(partition.isSealed)
+  }
+
+  @Test
+  def testSealIsIdempotent(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+
+    partition.seal()
+    assertTrue(partition.isSealed)
+
+    partition.seal()
+    assertTrue(partition.isSealed)
+  }
+
+  @Test
+  def testSealedPartitionRejectsAppends(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+
+    val requestLocal = RequestLocal.withThreadConfinedCaching
+    val records = TestUtils.records(List(new SimpleRecord("k".getBytes, "v".getBytes)))
+
+    // Appending before sealing should succeed
+    partition.appendRecordsToLeader(records, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal)
+
+    partition.seal()
+
+    // Appending after sealing should throw NotLeaderOrFollowerException
+    val newRecords = TestUtils.records(List(new SimpleRecord("k2".getBytes, "v2".getBytes)))
+    assertThrows(classOf[NotLeaderOrFollowerException], () =>
+      partition.appendRecordsToLeader(newRecords, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal))
+  }
+
+  @Test
+  def testSealedPartitionStabilizesLeo(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+
+    val requestLocal = RequestLocal.withThreadConfinedCaching
+    val records = TestUtils.records(List(new SimpleRecord("k".getBytes, "v".getBytes)))
+    partition.appendRecordsToLeader(records, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal)
+
+    val leoBeforeSeal = partition.localLogOrException.logEndOffset
+
+    partition.seal()
+
+    // LEO should remain stable after sealing
+    assertEquals(leoBeforeSeal, partition.localLogOrException.logEndOffset)
+
+    // Further appends are rejected
+    val newRecords = TestUtils.records(List(new SimpleRecord("k2".getBytes, "v2".getBytes)))
+    assertThrows(classOf[NotLeaderOrFollowerException], () =>
+      partition.appendRecordsToLeader(newRecords, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal))
+
+    // LEO remains unchanged
+    assertEquals(leoBeforeSeal, partition.localLogOrException.logEndOffset)
+  }
+
+  @Test
+  def testSealedPartitionPreservedAcrossMakeLeader(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+
+    partition.seal()
+    assertTrue(partition.isSealed)
+
+    // Transitioning to leader with a new epoch should not clear the sealed flag
+    val replicas = Array(brokerId, remoteReplicaId)
+    val newRegistration = new PartitionRegistration.Builder()
+      .setLeader(brokerId)
+      .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
+      .setLeaderEpoch(leaderEpoch + 1)
+      .setIsr(replicas)
+      .setPartitionEpoch(2)
+      .setReplicas(replicas)
+      .setDirectories(DirectoryId.unassignedArray(replicas.length))
+      .build()
+
+    partition.makeLeader(newRegistration, isNew = false, offsetCheckpoints, None)
+
+    assertTrue(partition.isSealed, "Sealed flag should be preserved across makeLeader")
+
+    val requestLocal = RequestLocal.withThreadConfinedCaching
+    val records = TestUtils.records(List(new SimpleRecord("k".getBytes, "v".getBytes)))
+    assertThrows(classOf[NotLeaderOrFollowerException], () =>
+      partition.appendRecordsToLeader(records, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal))
+  }
 }

@@ -553,6 +553,18 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
+  def sealTopicPartitions(topic: String): Unit = {
+    allPartitions.forEach { (tp, hostedPartition) =>
+      if (tp.topic() == topic) {
+        hostedPartition match {
+          case HostedPartition.Online(partition) if partition.isLeader =>
+            partition.seal()
+          case _ =>
+        }
+      }
+    }
+  }
+
   private def offlinePartitionCount: Int = {
     allPartitions.values.asScala.iterator.count(_.getClass == HostedPartition.Offline.getClass)
   }
@@ -2736,10 +2748,12 @@ class ReplicaManager(val config: KafkaConfig,
       "local leaders.")
     replicaFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
     localLeaders.foreachEntry { (tp, info) =>
-      if (!_inklessMetadataView.isDisklessTopic(tp.topic()))
+      val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic())
+      val existingPartition = onlinePartition(tp)
+      if (!isDiskless) {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
-            val  partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+            val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
             partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
             changedPartitions.add(partition)
@@ -2754,6 +2768,21 @@ class ReplicaManager(val config: KafkaConfig,
               markPartitionOffline(tp)
           }
         }
+      } else if (existingPartition.isDefined) {
+        // Classic-to-diskless transition: seal the partition before making it leader
+        // so that no produce request can ever be processed by the new leader.
+        val partition = existingPartition.get
+        try {
+          partition.seal()
+          val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+          partition.makeLeader(info.partition, false, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+        } catch {
+          case e: KafkaStorageException =>
+            stateChangeLogger.info(s"Skipped the become-leader state change for transitioning partition $tp " +
+              s"with topic id ${info.topicId} due to a storage error ${e.getMessage}")
+            markPartitionOffline(tp)
+        }
+      }
     }
   }
 
@@ -2781,7 +2810,7 @@ class ReplicaManager(val config: KafkaConfig,
             // - This also ensures that the local replica is created even if the leader
             //   is unavailable. This is required to ensure that we include the partition's
             //   high watermark in the checkpoint file (see KAFKA-1647).
-            val  partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+            val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
             val isNewLeaderEpoch = partition.makeFollower(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
             if (isInControlledShutdown && (info.partition.leader == NO_LEADER ||
