@@ -1452,6 +1452,20 @@ public class ReplicationControlManager {
             }
 
             TopicControlInfo topic = topics.get(topicId);
+            boolean isDisklessTopic = Boolean.parseBoolean(
+                configurationControl.currentTopicConfig(topic.name).getOrDefault(DISKLESS_ENABLE_CONFIG, "false"));
+            if (isDisklessTopic) {
+                for (InitDisklessLogRequestData.PartitionData partitionData : topicData.partitions()) {
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionData.partitionId())
+                        .setErrorCode(INVALID_REQUEST.code()));
+                }
+                log.info("Rejecting InitDisklessLog request for non-classic topic {}.", topic.name);
+                topicResponses.add(new InitDisklessLogResponseData.TopicResponse()
+                    .setTopicId(topicId)
+                    .setPartitions(partitionResponses));
+                continue;
+            }
 
             for (InitDisklessLogRequestData.PartitionData partitionData : topicData.partitions()) {
                 int partitionId = partitionData.partitionId();

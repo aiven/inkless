@@ -5620,6 +5620,58 @@ public class ReplicationControlManagerTest {
         }
 
         @Test
+        public void testInitDisklessLogNonClassicTopicRejected() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            CreatableTopicResult createTopicResult = ctx.createTestTopic(
+                "foo", 1, (short) 1, Map.of(DISKLESS_ENABLE_CONFIG, "true"), NONE.code());
+
+            Uuid topicId = createTopicResult.topicId();
+            PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
+            int leaderId = partition.leader;
+
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
+            InitDisklessLogRequestData request = singlePartitionRequest(
+                leaderId, defaultBrokerEpoch(leaderId), topicId, 0, 100L, partition.leaderEpoch, List.of());
+
+            ControllerResult<InitDisklessLogResponseData> result =
+                replicationControl.initDisklessLog(requestContext, request);
+
+            assertEquals(0, result.records().size());
+            assertEquals(INVALID_REQUEST.code(),
+                result.response().topics().get(0).partitions().get(0).errorCode());
+        }
+
+        @Test
+        public void testInitDisklessLogExplicitClassicTopicAccepted() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            CreatableTopicResult createTopicResult = ctx.createTestTopic(
+                "foo", 1, (short) 1, Map.of(DISKLESS_ENABLE_CONFIG, "false"), NONE.code());
+
+            Uuid topicId = createTopicResult.topicId();
+            PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
+            int leaderId = partition.leader;
+
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
+            InitDisklessLogRequestData request = singlePartitionRequest(
+                leaderId, defaultBrokerEpoch(leaderId), topicId, 0, 100L, partition.leaderEpoch, List.of());
+
+            ControllerResult<InitDisklessLogResponseData> result =
+                replicationControl.initDisklessLog(requestContext, request);
+
+            assertEquals(1, result.records().size());
+            assertEquals(NONE.code(),
+                result.response().topics().get(0).partitions().get(0).errorCode());
+        }
+
+        @Test
         public void testInitDisklessLogMultipleProducerStates() {
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
             ReplicationControlManager replicationControl = ctx.replicationControl;
