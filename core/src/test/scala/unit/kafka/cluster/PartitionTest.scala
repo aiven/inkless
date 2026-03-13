@@ -21,7 +21,7 @@ import com.yammer.metrics.core.Metric
 import kafka.log.LogManager
 import kafka.server._
 import kafka.utils._
-import org.apache.kafka.common.errors.{ApiException, FencedLeaderEpochException, InconsistentTopicIdException, InvalidTxnStateException, NotLeaderOrFollowerException, OffsetNotAvailableException, OffsetOutOfRangeException, UnknownLeaderEpochException}
+import org.apache.kafka.common.errors.{ApiException, FencedLeaderEpochException, InconsistentTopicIdException, InvalidTxnStateException, NotLeaderOrFollowerException, OffsetNotAvailableException, OffsetOutOfRangeException, ReplicaNotAvailableException, UnknownLeaderEpochException}
 import org.apache.kafka.common.message.{AlterPartitionResponseData, FetchResponseData}
 import org.apache.kafka.common.protocol.{ApiKeys, Errors}
 import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
@@ -4111,5 +4111,101 @@ class PartitionTest extends AbstractPartitionTest {
       spyLogManager,
       alterPartitionManager)
     partition.tryCompleteDelayedRequests()
+  }
+
+  @Test
+  def testSealPartition(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+
+    assertFalse(partition.isSealed)
+
+    partition.seal()
+
+    assertTrue(partition.isSealed)
+  }
+
+  @Test
+  def testSealIsIdempotent(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+
+    partition.seal()
+    assertTrue(partition.isSealed)
+
+    partition.seal()
+    assertTrue(partition.isSealed)
+  }
+
+  @Test
+  def testSealedPartitionRejectsAppends(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+
+    val requestLocal = RequestLocal.withThreadConfinedCaching
+    val records = TestUtils.records(List(new SimpleRecord("k".getBytes, "v".getBytes)))
+
+    // Appending before sealing should succeed
+    partition.appendRecordsToLeader(records, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal)
+
+    partition.seal()
+
+    // Appending after sealing should throw ReplicaNotAvailableException
+    val newRecords = TestUtils.records(List(new SimpleRecord("k2".getBytes, "v2".getBytes)))
+    assertThrows(classOf[ReplicaNotAvailableException], () =>
+      partition.appendRecordsToLeader(newRecords, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal))
+  }
+
+  @Test
+  def testSealedPartitionStabilizesLeo(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+
+    val requestLocal = RequestLocal.withThreadConfinedCaching
+    val records = TestUtils.records(List(new SimpleRecord("k".getBytes, "v".getBytes)))
+    partition.appendRecordsToLeader(records, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal)
+
+    val leoBeforeSeal = partition.localLogOrException.logEndOffset
+
+    partition.seal()
+
+    // LEO should remain stable after sealing
+    assertEquals(leoBeforeSeal, partition.localLogOrException.logEndOffset)
+
+    // Further appends are rejected
+    val newRecords = TestUtils.records(List(new SimpleRecord("k2".getBytes, "v2".getBytes)))
+    assertThrows(classOf[ReplicaNotAvailableException], () =>
+      partition.appendRecordsToLeader(newRecords, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal))
+
+    // LEO remains unchanged
+    assertEquals(leoBeforeSeal, partition.localLogOrException.logEndOffset)
+  }
+
+  @Test
+  def testSealedPartitionPreservedAcrossMakeLeader(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+
+    partition.seal()
+    assertTrue(partition.isSealed)
+
+    // Transitioning to leader with a new epoch should not clear the sealed flag
+    val replicas = List(brokerId, remoteReplicaId).map(Int.box).asJava
+    val newState = new LeaderAndIsrRequest.PartitionState()
+      .setLeader(brokerId)
+      .setLeaderEpoch(leaderEpoch + 1)
+      .setIsr(replicas)
+      .setPartitionEpoch(2)
+      .setReplicas(replicas)
+      .setIsNew(false)
+
+    partition.makeLeader(newState, offsetCheckpoints, None)
+
+    assertTrue(partition.isSealed, "Sealed flag should be preserved across makeLeader")
+
+    val requestLocal = RequestLocal.withThreadConfinedCaching
+    val records = TestUtils.records(List(new SimpleRecord("k".getBytes, "v".getBytes)))
+    assertThrows(classOf[ReplicaNotAvailableException], () =>
+      partition.appendRecordsToLeader(records, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal))
   }
 }
