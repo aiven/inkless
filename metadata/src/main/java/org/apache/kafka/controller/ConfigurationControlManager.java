@@ -223,7 +223,7 @@ public class ConfigurationControlManager {
         return ControllerResult.atomicOf(outputRecords, outputResults);
     }
 
-    ControllerResult<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(Set<String> topics) {
+    ControllerResult<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(String mirrorName, Set<String> topics) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         RemoveTopicsFromMirrorResponseData data = new RemoveTopicsFromMirrorResponseData();
         List<RemoveTopicsFromMirrorResponseData.TopicResult> topicResList = new ArrayList<>();
@@ -240,14 +240,21 @@ public class ConfigurationControlManager {
                 topicRes.setErrorCode(Errors.INVALID_REQUEST.code());
             } else {
                 curVal = currentConfigs.get(mirrorNameConfig);
-                // Verify the current value should not be empty
                 if (curVal == null || curVal.isBlank()) {
                     topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
 
-                // decide if we should clear the mirror name or append a stopped symbol
+                String originalName = curVal.endsWith(PAUSED_TOPIC_SUFFIX)
+                    ? curVal.substring(0, curVal.length() - PAUSED_TOPIC_SUFFIX.length())
+                    : curVal;
+                if (!originalName.equals(mirrorName)) {
+                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicResList.add(topicRes);
+                    continue;
+                }
+
                 String newMirrorName = curVal.endsWith(REMOVED_TOPIC_SUFFIX) ? "" : curVal + REMOVED_TOPIC_SUFFIX;
                 Map<String, Entry<OpType, String>> keyToOps = Map.of(mirrorNameConfig, new AbstractMap.SimpleImmutableEntry<>(SET, newMirrorName));
 
@@ -367,21 +374,17 @@ public class ConfigurationControlManager {
         return ControllerResult.of(records, data);
     }
 
-    ControllerResult<AddTopicsToMirrorResponseData> addTopicsToMirror(Map<String, String> topicToMirrorName) {
+    ControllerResult<AddTopicsToMirrorResponseData> addTopicsToMirror(String mirrorName, Set<String> topics) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         AddTopicsToMirrorResponseData data = new AddTopicsToMirrorResponseData();
         List<AddTopicsToMirrorResponseData.TopicResult> topicResList = new ArrayList<>();
-        for (Entry<String, String> topicToMirrorNameEntry : topicToMirrorName.entrySet()) {
-            String topic = topicToMirrorNameEntry.getKey();
-            String mirrorName = topicToMirrorNameEntry.getValue();
-
+        for (String topic : topics) {
             AddTopicsToMirrorResponseData.TopicResult topicRes = new AddTopicsToMirrorResponseData.TopicResult();
             ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
 
             TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
             if (currentConfigs != null) {
                 String currMirrorNameValue = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
-                // Verify the current value should be empty or ends with removed suffix
                 if (currMirrorNameValue != null && (currMirrorNameValue.isBlank() || !currMirrorNameValue.endsWith(REMOVED_TOPIC_SUFFIX))) {
                     topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
                     topicResList.add(topicRes);

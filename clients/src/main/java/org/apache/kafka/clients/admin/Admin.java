@@ -1683,12 +1683,12 @@ public interface Admin extends AutoCloseable {
      * replicating data from the source cluster. This operation marks the specified topics with the
      * mirror name, preventing local writes and enabling the MirrorFetcherThread to begin replication.
      *
-     * @param topicToMirrorName Map of topic names to mirror names, allowing multiple topics to be
-     *                          added to potentially different mirrors in a single operation
+     * @param mirrorName The mirror name to add the topics to
+     * @param topics Set of topic names to add to mirroring
      * @param options Options for the add topics to mirror operation
      * @return The AddTopicsToMirrorResult containing futures for each topic addition
      */
-    AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options);
+    AddTopicsToMirrorResult addTopicsToMirror(String mirrorName, Set<String> topics, AddTopicsToMirrorOptions options);
 
     /**
      * Remove topics from cluster mirror, making them writable on the destination cluster.
@@ -1698,11 +1698,12 @@ public interface Admin extends AutoCloseable {
      * the mirror clears the mirrorName field from partition metadata, which allows producers to write
      * to these partitions.
      *
+     * @param mirrorName The mirror name to remove the topics from
      * @param topics Set of topic names to remove from mirroring
      * @param options Options for the remove topics from mirror operation
      * @return The RemoveTopicsFromMirrorResult containing futures for each topic removal
      */
-    RemoveTopicsFromMirrorResult removeTopicsFromMirror(Set<String> topics, RemoveTopicsFromMirrorOptions options);
+    RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options);
 
     /**
      * Pause mirroring for the specified topics.

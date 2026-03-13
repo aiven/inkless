@@ -23,7 +23,7 @@ import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
 
-import java.util.Map;
+import java.util.Set;
 
 public class AddTopicsToMirrorRequest extends AbstractRequest {
     public static class Builder extends AbstractRequest.Builder<AddTopicsToMirrorRequest> {
@@ -35,11 +35,12 @@ public class AddTopicsToMirrorRequest extends AbstractRequest {
             this.data = data;
         }
 
-        public Builder(Map<String, String> topicToMirrorName) {
+        public Builder(String mirrorName, Set<String> topics) {
             super(ApiKeys.ADD_TOPICS_TO_MIRROR, ApiKeys.ADD_TOPICS_TO_MIRROR.oldestVersion(),
                     ApiKeys.ADD_TOPICS_TO_MIRROR.latestVersion());
             AddTopicsToMirrorRequestData data = new AddTopicsToMirrorRequestData();
-            topicToMirrorName.forEach((topic, mirrorName) -> data.topics().add(new AddTopicsToMirrorRequestData.TopicData().setTopicName(topic).setMirrorName(mirrorName)));
+            data.setMirrorName(mirrorName);
+            topics.forEach(topic -> data.topics().add(new AddTopicsToMirrorRequestData.TopicData().setTopicName(topic)));
             this.data = data;
         }
 

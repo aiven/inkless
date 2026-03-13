@@ -19,10 +19,10 @@ package org.apache.kafka.clients.admin;
 
 import org.apache.kafka.common.KafkaFuture;
 
-import java.util.Map;
+import java.util.Set;
 
 /**
- * The result of the {@link Admin#addTopicsToMirror(Map, AddTopicsToMirrorOptions)} call.
+ * The result of the {@link Admin#addTopicsToMirror(String, Set, AddTopicsToMirrorOptions)} call.
  *
  * The API of this class is evolving, see {@link Admin} for details.
  */
