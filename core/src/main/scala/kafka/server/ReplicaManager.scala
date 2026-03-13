@@ -2776,6 +2776,8 @@ class ReplicaManager(val config: KafkaConfig,
           partition.seal()
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
           partition.makeLeader(info.partition, false, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+
+          changedPartitions.add(partition)
         } catch {
           case e: KafkaStorageException =>
             stateChangeLogger.info(s"Skipped the become-leader state change for transitioning partition $tp " +

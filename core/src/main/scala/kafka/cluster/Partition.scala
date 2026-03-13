@@ -260,9 +260,10 @@ class Partition(val topicPartition: TopicPartition,
   def isSealed: Boolean = _sealed
 
   def seal(): Unit = inWriteLock(leaderIsrUpdateLock) {
-    _sealed = true
-    stateChangeLogger.info(s"Sealed partition $topicPartition for diskless migration " +
-      s"with LEO ${localLogOrException.logEndOffset}")
+    if (!_sealed) {
+      _sealed = true
+      stateChangeLogger.info(s"Sealed partition $topicPartition for diskless migration with LEO ${localLogOrException.logEndOffset}")
+    }
   }
 
   def isReassigning: Boolean = assignmentState.isInstanceOf[OngoingReassignmentState]

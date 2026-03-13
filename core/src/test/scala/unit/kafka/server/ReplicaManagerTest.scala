@@ -6951,21 +6951,21 @@ class ReplicaManagerTest {
         inklessMetadataView = Some(inklessMetadata))
 
       try {
-        // First, create the partition as a classic leader
+        // First, create the partition as a classic follower (leader is broker 1)
         val createDelta = new TopicsDelta(TopicsImage.EMPTY)
         createDelta.replay(new TopicRecord().setName(topicName).setTopicId(transTopicId))
         createDelta.replay(new PartitionRecord()
           .setPartitionId(0).setTopicId(transTopicId)
           .setReplicas(util.Arrays.asList(0, 1)).setIsr(util.Arrays.asList(0, 1))
-          .setLeader(0).setLeaderEpoch(0).setPartitionEpoch(0))
+          .setLeader(1).setLeaderEpoch(0).setPartitionEpoch(0))
         val createImage = imageFromTopics(createDelta.apply())
         rm.applyDelta(createDelta, createImage)
 
         val partition = rm.getPartitionOrException(new TopicPartition(topicName, 0))
-        assertTrue(partition.isLeader)
+        assertFalse(partition.isLeader)
         assertFalse(partition.isSealed)
 
-        // Now simulate the topic becoming diskless with a leadership change in the same delta
+        // Now simulate a follower->leader transition while the topic becomes diskless
         when(inklessMetadata.isDisklessTopic(topicName)).thenReturn(true)
 
         val changeDelta = new TopicsDelta(createDelta.apply())
