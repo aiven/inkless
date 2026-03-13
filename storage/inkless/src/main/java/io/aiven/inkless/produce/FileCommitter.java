@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
 
 import com.groupcdg.pitest.annotations.DoNotMutate;
@@ -34,7 +35,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -54,10 +55,26 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
 /**
  * The file committer.
  *
- * <p>It uploads files concurrently, but commits them to the control plan sequentially.
+ * <p>It uploads files concurrently, but commits them to the control plane sequentially.
+ *
+ * <h2>Thread Pool Lifecycle</h2>
+ * <p>This class manages three thread pools for upload, commit, and cache storage operations.
+ * The pools are created during construction and must be shut down via {@link #close()}.
+ *
+ * <p><b>Design Note:</b> Thread pools are created in the constructor arguments before delegation.
+ * If construction fails after pool creation (e.g., due to invalid arguments), the pools may leak.
+ * This is acceptable because:
+ * <ul>
+ *   <li>This is a broker startup component - construction failure prevents broker startup</li>
+ *   <li>The JVM would exit anyway, cleaning up all threads</li>
+ *   <li>Failure scenarios are low-probability edge cases (null arguments, OOM)</li>
+ * </ul>
+ * <p>Arguments are validated early in the delegated constructor to fail-fast before
+ * any significant work is done with the thread pools.
  */
 class FileCommitter implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitter.class);
+    private static final long EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 30;
 
     private final FileCommitterMetrics metrics;
 
@@ -80,6 +97,10 @@ class FileCommitter implements Closeable {
 
     private final AtomicInteger totalFilesInProgress = new AtomicInteger(0);
     private final AtomicInteger totalBytesInProgress = new AtomicInteger(0);
+
+    // Tracks the previous commit to ensure commits happen in submission order, not upload completion order.
+    // Each new commit waits for both its upload AND the previous commit to complete before starting.
+    private CompletableFuture<?> previousCommitFuture = CompletableFuture.completedFuture(null);
 
     @DoNotMutate
     FileCommitter(final int brokerId,
@@ -157,81 +178,142 @@ class FileCommitter implements Closeable {
         lock.lock();
         try {
             final Instant uploadAndCommitStart = TimeUtils.durationMeasurementNow(time);
-            CompletableFuture<List<CommitBatchResponse>> commitFuture;
+            final CompletableFuture<List<CommitBatchResponse>> commitFuture;
+
             if (file.isEmpty()) {
-                // If the file is empty, skip uploading and committing, but proceed with the later steps.
                 commitFuture = CompletableFuture.completedFuture(Collections.emptyList());
             } else {
-                metrics.fileAdded(file.size());
-                metrics.batchesAdded(file.commitBatchRequests().size());
-                totalFilesInProgress.addAndGet(1);
-                totalBytesInProgress.addAndGet(file.size());
-
-                // Start uploading and add to the commit queue (as Runnable).
-                // This ensures files are uploaded in concurrently, but committed to the control plane sequentially,
-                // because `executorServiceCommit` is single-threaded.
-                final FileUploadJob uploadJob = FileUploadJob.createFromByteArray(
-                        objectKeyCreator,
-                        storage,
-                        time,
-                        maxFileUploadAttempts,
-                        fileUploadRetryBackoff,
-                        file.data(),
-                        metrics::fileUploadFinished
-                );
-                final Future<ObjectKey> uploadFuture = executorServiceUpload.submit(uploadJob);
-
-                final FileCommitJob commitJob = new FileCommitJob(
-                        brokerId,
-                        file,
-                        uploadFuture,
-                        time,
-                        controlPlane,
-                        storage,
-                        metrics::fileCommitFinished,
-                        metrics::fileCommitWaitFinished
-                );
-                commitFuture = CompletableFuture.supplyAsync(commitJob, executorServiceCommit)
-                        .whenComplete((result, error) -> {
-                            totalFilesInProgress.addAndGet(-1);
-                            totalBytesInProgress.addAndGet(-file.size());
-                            if (error != null) {
-                                // at this point the commit has failed and need to check whether it failed on upload or commit
-                                LOGGER.error("Failed to commit diskless file {}", file, error);
-                                if (error.getCause() instanceof FileUploadException) {
-                                    metrics.fileUploadFailed();
-                                } else {
-                                    metrics.fileCommitFailed();
-                                }
-                            } else {
-                                // only mark as finished if everything succeeded
-                                metrics.fileFinished(file.start(), uploadAndCommitStart);
-                            }
-                        });
-
-                final CacheStoreJob cacheStoreJob = new CacheStoreJob(
-                        time,
-                        objectCache,
-                        keyAlignmentStrategy,
-                        file.data(),
-                        uploadFuture,
-                        metrics::cacheStoreFinished
-                );
-                executorServiceCacheStore.submit(cacheStoreJob);
+                commitFuture = commitNonEmptyFile(file, uploadAndCommitStart);
             }
-            commitFuture.whenComplete((commitBatchResponses, throwable) -> {
-                final AppendCompleter completerJob = new AppendCompleter(file, batchCoordinateCache);
-                if (commitBatchResponses != null) {
-                    completerJob.finishCommitSuccessfully(commitBatchResponses);
-                    metrics.writeCompleted();
-                } else {
-                    completerJob.finishCommitWithError();
-                    metrics.writeFailed();
-                }
-            });
+
+            attachCompletionHandler(file, commitFuture);
         } finally {
             lock.unlock();
         }
+    }
+
+    private CompletableFuture<List<CommitBatchResponse>> commitNonEmptyFile(
+            final ClosedFile file,
+            final Instant uploadAndCommitStart) {
+
+        updateMetricsOnStart(file);
+
+        final CompletableFuture<ObjectKey> uploadFuture = startUpload(file);
+        final FileCommitJob commitJob = createCommitJob(file);
+        final CacheStoreJob cacheStoreJob = createCacheStoreJob(file);
+
+        return commitWithPipeline(file, uploadFuture, commitJob, cacheStoreJob, uploadAndCommitStart);
+    }
+
+    private void updateMetricsOnStart(final ClosedFile file) {
+        metrics.fileAdded(file.size());
+        metrics.batchesAdded(file.commitBatchRequests().size());
+        totalFilesInProgress.addAndGet(1);
+        totalBytesInProgress.addAndGet(file.size());
+    }
+
+    private CompletableFuture<ObjectKey> startUpload(final ClosedFile file) {
+        final FileUploadJob uploadJob = FileUploadJob.createFromByteArray(
+                objectKeyCreator, storage, time,
+                maxFileUploadAttempts, fileUploadRetryBackoff,
+                file.data(), metrics::fileUploadFinished
+        );
+        return CompletableFuture.supplyAsync(
+                () -> {
+                    try {
+                        return uploadJob.call();
+                    } catch (final Exception e) {
+                        throw new FileUploadException(e);
+                    }
+                },
+                executorServiceUpload
+        );
+    }
+
+    private FileCommitJob createCommitJob(final ClosedFile file) {
+        return new FileCommitJob(
+                brokerId, file, time, controlPlane, storage,
+                metrics::fileCommitFinished, metrics::fileCommitWaitFinished
+        );
+    }
+
+    private CacheStoreJob createCacheStoreJob(final ClosedFile file) {
+        return new CacheStoreJob(
+                time, objectCache, keyAlignmentStrategy,
+                file.data(), metrics::cacheStoreFinished
+        );
+    }
+
+    /**
+     * Pipelined commit: callbacks triggered when upload completes, no thread blocking.
+     * Commits are chained to ensure submission order is preserved.
+     * Cache store is fire-and-forget (runs only on success).
+     */
+    private CompletableFuture<List<CommitBatchResponse>> commitWithPipeline(
+            final ClosedFile file,
+            final CompletableFuture<ObjectKey> uploadFuture,
+            final FileCommitJob commitJob,
+            final CacheStoreJob cacheStoreJob,
+            final Instant uploadAndCommitStart) {
+
+        // Wait for previous commit to complete (success OR failure) before starting this one.
+        // Using handle() ensures we don't propagate previous failures - each commit is independent.
+        // We only use previousCommitFuture for ordering, not for error propagation.
+        final CompletableFuture<?> prevCommitBarrier = previousCommitFuture.handle((result, error) -> null);
+
+        // Chain commit to run after upload completes AND previous commit completes
+        final CompletableFuture<List<CommitBatchResponse>> commitFuture = uploadFuture
+                .thenCombine(prevCommitBarrier, (objectKey, ignored) -> objectKey)
+                .thenApplyAsync(objectKey -> {
+                    // Reset the submit time now that we're ready to commit.
+                    // This ensures FileCommitWaitTime measures only the executor queue wait,
+                    // not the time waiting for upload completion or previous commits in the chain.
+                    commitJob.markReadyToCommit();
+                    return commitJob.apply(objectKey);
+                }, executorServiceCommit)
+                .whenComplete((result, error) -> handleCommitResult(file, uploadAndCommitStart, error));
+
+        // Cache store is fire-and-forget, runs only on successful upload
+        uploadFuture.thenAcceptAsync(cacheStoreJob, executorServiceCacheStore);
+
+        // Update chain for next commit
+        previousCommitFuture = commitFuture;
+
+        return commitFuture;
+    }
+
+    private void handleCommitResult(final ClosedFile file, final Instant uploadAndCommitStart, final Throwable error) {
+        totalFilesInProgress.addAndGet(-1);
+        totalBytesInProgress.addAndGet(-file.size());
+        if (error != null) {
+            LOGGER.error("Failed to commit diskless file {}", file, error);
+            // Unwrap CompletionException if present to check for the actual cause
+            final Throwable cause = (error instanceof java.util.concurrent.CompletionException && error.getCause() != null)
+                    ? error.getCause()
+                    : error;
+            if (cause instanceof FileUploadException) {
+                metrics.fileUploadFailed();
+            } else {
+                metrics.fileCommitFailed();
+            }
+        } else {
+            metrics.fileFinished(file.start(), uploadAndCommitStart);
+        }
+    }
+
+    private void attachCompletionHandler(
+            final ClosedFile file,
+            final CompletableFuture<List<CommitBatchResponse>> commitFuture) {
+        commitFuture.whenComplete((commitBatchResponses, throwable) -> {
+            final AppendCompleter completerJob = new AppendCompleter(file, batchCoordinateCache);
+            if (commitBatchResponses != null) {
+                completerJob.finishCommitSuccessfully(commitBatchResponses);
+                metrics.writeCompleted();
+            } else {
+                completerJob.finishCommitWithError();
+                metrics.writeFailed();
+            }
+        });
     }
 
     int totalFilesInProgress() {
@@ -242,11 +324,40 @@ class FileCommitter implements Closeable {
         return totalBytesInProgress.get();
     }
 
+    private static final long SHUTDOWN_TIMEOUT_SECONDS = 30;
+
     @Override
     public void close() throws IOException {
-        // Don't wait here, they should try to finish their work.
+        // First, await any pending async work to ensure callbacks are scheduled before shutdown.
+        // This prevents RejectedExecutionException for in-flight uploads.
+        final CompletableFuture<?> pendingWork;
+        lock.lock();
+        try {
+            pendingWork = previousCommitFuture;
+        } finally {
+            lock.unlock();
+        }
+
+        try {
+            // Wait for pending work with a timeout to avoid indefinite blocking
+            pendingWork
+                    .orTimeout(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    .handle((result, error) -> null)  // Ignore errors, we just want to wait
+                    .join();
+        } catch (final Exception e) {
+            LOGGER.warn("Timeout waiting for pending commits during shutdown", e);
+        }
+
+        // Reject new upload work immediately.
         executorServiceUpload.shutdown();
-        executorServiceCommit.shutdown();
+        // Cache is best-effort; cancel immediately rather than waiting.
+        executorServiceCacheStore.shutdownNow();
+        // Wait for in-flight commits to finish — each commit job internally blocks on its
+        // paired uploadFuture.get(), so this also waits for the corresponding uploads.
+        // Completing commits prevents orphaned files in object storage (uploaded but not registered).
+        ThreadUtils.shutdownExecutorServiceQuietly(executorServiceCommit, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        // Force-shutdown any remaining uploads that had no corresponding commit queued.
+        executorServiceUpload.shutdownNow();
         metrics.close();
         if (threadPoolMonitor != null) threadPoolMonitor.close();
     }

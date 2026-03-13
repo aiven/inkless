@@ -203,28 +203,14 @@ class WriterPropertyTest {
                 Arbitraries.longs().between(uploadDurationAvg - 5, uploadDurationAvg + 5))
         );
         final CommitterHandler committerHandler = new CommitterHandler(
-            uploaderHandler,
-            new MockExecutorServiceWithFutureSupport(),
-            new Timer("commit",
-                time,
-                Instant.ofEpochMilli(time.milliseconds()),
-                Arbitraries.longs().between(commitDurationAvg - 2, commitDurationAvg + 2))
+            new MockExecutorServiceWithFutureSupport()
         );
         final CompleterHandler completerHandler = new CompleterHandler(
                 committerHandler,
-                new MockExecutorServiceWithFutureSupport(),
-                new Timer("complete",
-                        time,
-                        Instant.ofEpochMilli(time.milliseconds()),
-                        Arbitraries.longs().between(completeDurationAvg - 2, completeDurationAvg + 2))
+                new MockExecutorService()
         );
         final CacheStoreHandler cacheStoreHandler = new CacheStoreHandler(
-                uploaderHandler,
-                new MockExecutorServiceWithFutureSupport(),
-                new Timer("cacheStore",
-                        time,
-                        Instant.ofEpochMilli(time.milliseconds()),
-                        Arbitraries.longs().between(cacheStoreDurationAvg - 2, cacheStoreDurationAvg + 2))
+                new MockExecutorService()
         );
         try(final FileCommitter fileCommitter = new FileCommitter(
             11,
@@ -281,9 +267,17 @@ class WriterPropertyTest {
                 requester.handleFinishedRequests();
                 commitTicker.maybeTick();
                 uploaderHandler.maybeRunNext();
+                // In async mode, upload callbacks add commit/cache tasks.
+                // Process them immediately without waiting for timer.
                 committerHandler.maybeRunNext();
+                while (!committerHandler.executorService.queue.isEmpty()) {
+                    committerHandler.executorService.runNextIfExists();
+                }
                 completerHandler.maybeRunNext();
                 cacheStoreHandler.maybeRunNext();
+                while (!cacheStoreHandler.executorService.queue.isEmpty()) {
+                    cacheStoreHandler.executorService.runNextIfExists();
+                }
                 time.sleep(1);
             }
             assertThat(finished).withFailMessage(String.format("Not finished in %d virtual ms", maxTime)).isTrue();
@@ -528,17 +522,17 @@ class WriterPropertyTest {
 
         @Override
         public boolean isShutdown() {
-            throw new RuntimeException("Not implemented");
+            return false;
         }
 
         @Override
         public boolean isTerminated() {
-            throw new RuntimeException("Not implemented");
+            return queue.isEmpty();
         }
 
         @Override
         public boolean awaitTermination(final long timeout, final TimeUnit unit) throws InterruptedException {
-            throw new RuntimeException("Not implemented");
+            return true;
         }
     }
 
@@ -574,10 +568,11 @@ class WriterPropertyTest {
 
         @Override
         boolean runNextIfExists() throws InterruptedException {
-            assertThat(returnedFutures.size()).isEqualTo(queue.size());
+            // In async mode, callbacks can add tasks during execution, making sizes unbalanced
             final boolean result = super.runNextIfExists();
             if (result) {
-                assert returnedFutures.take().isDone();
+                final Future<?> completed = returnedFutures.take();
+                assertThat(completed.isDone()).isTrue();
             }
             return result;
         }
@@ -607,32 +602,20 @@ class WriterPropertyTest {
     }
 
     private static class CommitterHandler {
-        private final UploaderHandler uploaderHandler;
         private final MockExecutorServiceWithFutureSupport executorService;
-        private final Timer timer;
 
-        private CommitterHandler(final UploaderHandler uploaderHandler,
-                                 final MockExecutorServiceWithFutureSupport executorService,
-                                 final Timer timer) {
-            this.uploaderHandler = uploaderHandler;
+        private CommitterHandler(final MockExecutorServiceWithFutureSupport executorService) {
             this.executorService = executorService;
-            this.timer = timer;
         }
 
         void maybeRunNext() throws InterruptedException {
-            if (!timer.happensNow()) {
-                return;
-            }
-            if (!uploaderHandler.oldestFutureIsDone()) {
-                // Otherwise it'd block indefinitely.
-                return;
-            }
+            // In async mode, run immediately - no timer delay since tasks are
+            // only queued via callbacks when uploads complete
             executorService.runNextIfExists();
         }
 
         boolean oldestFutureIsDone() {
-            return uploaderHandler.oldestFutureIsDone()
-                    && Optional.ofNullable(executorService.returnedFutures.peek())
+            return Optional.ofNullable(executorService.returnedFutures.peek())
                     .map(Future::isDone)
                     .orElse(true);
         }
@@ -641,22 +624,15 @@ class WriterPropertyTest {
     private static class CompleterHandler {
         private final CommitterHandler committerHandler;
         private final MockExecutorService executorService;
-        private final Timer timer;
 
         private CompleterHandler(final CommitterHandler committerHandler,
-                                 final MockExecutorService executorService,
-                                 final Timer timer) {
+                                 final MockExecutorService executorService) {
             this.committerHandler = committerHandler;
             this.executorService = executorService;
-            this.timer = timer;
         }
 
         void maybeRunNext() throws InterruptedException {
-            if (!timer.happensNow()) {
-                return;
-            }
             if (!committerHandler.oldestFutureIsDone()) {
-                // Otherwise it'd block indefinitely.
                 return;
             }
             executorService.runNextIfExists();
@@ -664,26 +640,14 @@ class WriterPropertyTest {
     }
 
     private static class CacheStoreHandler {
-        private final UploaderHandler uploaderHandler;
         private final MockExecutorService executorService;
-        private final Timer timer;
 
-        private CacheStoreHandler(final UploaderHandler uploaderHandler,
-                                 final MockExecutorService executorService,
-                                 final Timer timer) {
-            this.uploaderHandler = uploaderHandler;
+        private CacheStoreHandler(final MockExecutorService executorService) {
             this.executorService = executorService;
-            this.timer = timer;
         }
 
         void maybeRunNext() throws InterruptedException {
-            if (!timer.happensNow()) {
-                return;
-            }
-            if (!uploaderHandler.oldestFutureIsDone()) {
-                // Otherwise it'd block indefinitely.
-                return;
-            }
+            // In async mode, run immediately - no timer delay
             executorService.runNextIfExists();
         }
     }

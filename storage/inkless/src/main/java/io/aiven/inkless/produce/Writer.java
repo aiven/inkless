@@ -63,7 +63,16 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
  * <p>The Writer has the active file, the queue of files being uploaded.
  * It schedules commit ticks at the specified interval.
  *
- * <p>The class is thread-safe: all the event entry points are protected with the lock.</p>
+ * <p>The class is thread-safe: all the event entry points are protected with the lock.
+ *
+ * <h2>Thread Pool Lifecycle</h2>
+ * <p>This class creates a scheduled executor for commit ticks and delegates to {@link FileCommitter}
+ * which manages additional thread pools. All pools must be shut down via {@link #close()}.
+ *
+ * <p><b>Design Note:</b> Thread pools are created in the constructor arguments before delegation.
+ * If construction fails after pool creation, the pools may leak. This is acceptable for broker
+ * startup components where failure prevents broker startup and JVM exit cleans up resources.
+ * See {@link FileCommitter} for details.
  */
 class Writer implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(Writer.class);

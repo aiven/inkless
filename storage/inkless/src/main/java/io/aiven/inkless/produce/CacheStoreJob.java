@@ -21,7 +21,6 @@ import org.apache.kafka.common.utils.Time;
 
 import java.util.Collections;
 import java.util.Set;
-import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
@@ -32,32 +31,43 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 
-public class CacheStoreJob implements Runnable {
+/**
+ * Handles caching of uploaded file data to the object cache.
+ *
+ * <p>Implements {@link Consumer} for use with {@code CompletableFuture.thenAcceptAsync()}.
+ * When the upload completes successfully, the data is stored to cache.
+ *
+ * <p><b>Thread Safety:</b> The {@link #accept} method is safe to call from any thread.
+ * The caller controls the execution context via {@code thenAcceptAsync(..., executor)}.
+ */
+class CacheStoreJob implements Consumer<ObjectKey> {
 
     private final Time time;
     private final ObjectCache cache;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final byte[] data;
-    private final Future<ObjectKey> uploadFuture;
     private final Consumer<Long> cacheStoreDurationCallback;
 
-    public CacheStoreJob(Time time, ObjectCache cache, KeyAlignmentStrategy keyAlignmentStrategy, byte[] data, Future<ObjectKey> uploadFuture, Consumer<Long> cacheStoreDurationCallback) {
+    public CacheStoreJob(Time time,
+                         ObjectCache cache,
+                         KeyAlignmentStrategy keyAlignmentStrategy,
+                         byte[] data,
+                         Consumer<Long> cacheStoreDurationCallback) {
         this.time = time;
         this.cache = cache;
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.data = data;
-        this.uploadFuture = uploadFuture;
         this.cacheStoreDurationCallback = cacheStoreDurationCallback;
     }
 
+    /**
+     * Stores the uploaded file data to cache.
+     *
+     * <p>This method is only called when upload succeeds (via thenAcceptAsync).
+     */
     @Override
-    public void run() {
-        try {
-            ObjectKey objectKey = uploadFuture.get();
-            storeToCache(objectKey);
-        } catch (final Throwable e) {
-            // If the upload failed there's nothing to cache and we succeed vacuously.
-        }
+    public void accept(ObjectKey objectKey) {
+        storeToCache(objectKey);
     }
 
     private void storeToCache(ObjectKey objectKey) {
