@@ -6861,6 +6861,126 @@ class ReplicaManagerTest {
 
     // TODO: Add more fetch tests combinations, edge cases ara not covered yet.
 
+    @Test
+    def testSealTopicPartitionsSealsOnlyLeadersOfTargetTopic(): Unit = {
+      val props = TestUtils.createBrokerConfig(0)
+      val config = KafkaConfig.fromProps(props)
+      val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
+      val aliveBrokers = Seq(new Node(0, "host0", 0), new Node(1, "host1", 1))
+      mockGetAliveBrokerFunctions(metadataCache, aliveBrokers)
+      when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_VERSION)
+      val rm = new ReplicaManager(
+        metrics = metrics,
+        config = config,
+        time = time,
+        scheduler = new MockScheduler(time),
+        logManager = mockLogMgr,
+        quotaManagers = quotaManager,
+        metadataCache = metadataCache,
+        logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size),
+        alterPartitionManager = alterPartitionManager)
+
+      try {
+        val topicToSeal = "topic-to-seal"
+        val otherTopic = "other-topic"
+        val sealTopicId = Uuid.randomUuid()
+        val otherTopicId = Uuid.randomUuid()
+        setupMetadataCacheWithTopicIds(Map(topicToSeal -> sealTopicId, otherTopic -> otherTopicId), metadataCache)
+
+        val delta = new TopicsDelta(TopicsImage.EMPTY)
+        delta.replay(new TopicRecord().setName(topicToSeal).setTopicId(sealTopicId))
+        delta.replay(new TopicRecord().setName(otherTopic).setTopicId(otherTopicId))
+        // topicToSeal: partition 0 is leader, partition 1 is follower
+        delta.replay(new PartitionRecord()
+          .setPartitionId(0).setTopicId(sealTopicId)
+          .setReplicas(util.Arrays.asList(0, 1)).setIsr(util.Arrays.asList(0, 1))
+          .setLeader(0).setLeaderEpoch(0).setPartitionEpoch(0))
+        delta.replay(new PartitionRecord()
+          .setPartitionId(1).setTopicId(sealTopicId)
+          .setReplicas(util.Arrays.asList(0, 1)).setIsr(util.Arrays.asList(0, 1))
+          .setLeader(1).setLeaderEpoch(0).setPartitionEpoch(0))
+        // otherTopic: partition 0 is leader
+        delta.replay(new PartitionRecord()
+          .setPartitionId(0).setTopicId(otherTopicId)
+          .setReplicas(util.Arrays.asList(0, 1)).setIsr(util.Arrays.asList(0, 1))
+          .setLeader(0).setLeaderEpoch(0).setPartitionEpoch(0))
+        val image = imageFromTopics(delta.apply())
+        rm.applyDelta(delta, image)
+
+        val sealLeader = rm.getPartitionOrException(new TopicPartition(topicToSeal, 0))
+        val sealFollower = rm.getPartitionOrException(new TopicPartition(topicToSeal, 1))
+        val otherLeader = rm.getPartitionOrException(new TopicPartition(otherTopic, 0))
+
+        rm.sealTopicPartitions(topicToSeal)
+
+        assertTrue(sealLeader.isSealed, "Leader of target topic should be sealed")
+        assertFalse(sealFollower.isSealed, "Follower of target topic should not be sealed")
+        assertFalse(otherLeader.isSealed, "Leader of other topic should not be sealed")
+      } finally {
+        rm.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testApplyDeltaSealsMigratedLeaderPartitions(): Unit = {
+      val props = TestUtils.createBrokerConfig(0)
+      val config = KafkaConfig.fromProps(props)
+      val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
+      val aliveBrokers = Seq(new Node(0, "host0", 0), new Node(1, "host1", 1))
+      val kraftMetadataCache: KRaftMetadataCache = mock(classOf[KRaftMetadataCache])
+      when(kraftMetadataCache.topicConfig(anyString())).thenReturn(new Properties())
+      mockGetAliveBrokerFunctions(kraftMetadataCache, aliveBrokers)
+      when(kraftMetadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_VERSION)
+      val topicName = "transitioning-topic"
+      val transTopicId = Uuid.randomUuid()
+      setupMetadataCacheWithTopicIds(Map(topicName -> transTopicId), kraftMetadataCache)
+
+      val inklessMetadata = mock(classOf[InklessMetadataView])
+      when(inklessMetadata.isDisklessTopic(any())).thenReturn(false)
+
+      val rm = new ReplicaManager(
+        metrics = metrics,
+        config = config,
+        time = time,
+        scheduler = new MockScheduler(time),
+        logManager = mockLogMgr,
+        quotaManagers = quotaManager,
+        metadataCache = kraftMetadataCache,
+        logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size),
+        alterPartitionManager = alterPartitionManager,
+        inklessMetadataView = Some(inklessMetadata))
+
+      try {
+        // First, create the partition as a classic follower (leader is broker 1)
+        val createDelta = new TopicsDelta(TopicsImage.EMPTY)
+        createDelta.replay(new TopicRecord().setName(topicName).setTopicId(transTopicId))
+        createDelta.replay(new PartitionRecord()
+          .setPartitionId(0).setTopicId(transTopicId)
+          .setReplicas(util.Arrays.asList(0, 1)).setIsr(util.Arrays.asList(0, 1))
+          .setLeader(1).setLeaderEpoch(0).setPartitionEpoch(0))
+        val createImage = imageFromTopics(createDelta.apply())
+        rm.applyDelta(createDelta, createImage)
+
+        val partition = rm.getPartitionOrException(new TopicPartition(topicName, 0))
+        assertFalse(partition.isLeader)
+        assertFalse(partition.isSealed)
+
+        // Now simulate a follower->leader transition while the topic becomes diskless
+        when(inklessMetadata.isDisklessTopic(topicName)).thenReturn(true)
+
+        val changeDelta = new TopicsDelta(createDelta.apply())
+        changeDelta.replay(new PartitionChangeRecord()
+          .setPartitionId(0).setTopicId(transTopicId)
+          .setLeader(0).setIsr(util.Arrays.asList(0, 1)))
+        val changeImage = imageFromTopics(changeDelta.apply())
+        rm.applyDelta(changeDelta, changeImage)
+
+        assertTrue(partition.isSealed, "Transitioning leader partition should be sealed after applyDelta")
+      } finally {
+        rm.shutdown(checkpointHW = false)
+      }
+    }
+
     private def mockFetchHandler(disklessResponse: Map[TopicIdPartition, FetchPartitionData]) = {
       // We use constructor mocking here to inject a FetchHandler mock into ReplicaManager,
       // because ReplicaManager internally constructs its own FetchHandler instance and does not

@@ -194,6 +194,11 @@ class Partition(val topicPartition: TopicPartition,
   @volatile private[cluster] var partitionState: PartitionState = new CommittedPartitionState(util.Set.of(), LeaderRecoveryState.RECOVERED)
   @volatile var assignmentState: AssignmentState = new SimpleAssignmentState(util.List.of())
 
+  // When true, the partition is sealed for classic-to-diskless migration.
+  // A sealed partition rejects all produce requests via appendRecordsToLeader.
+  // Set under the write lock to guarantee that once sealed, LEO cannot increase.
+  @volatile private var _sealed: Boolean = false
+
   // Logs belonging to this partition. Majority of time it will be only one log, but if log directory
   // is getting changed (as a result of ReplicaAlterLogDirs command), we may have two logs until copy
   // completes and a switch to new location is performed.
@@ -251,6 +256,15 @@ class Partition(val topicPartition: TopicPartition,
    * the effectiveMinIsr().
    */
   def isAtMinIsr: Boolean = leaderLogIfLocal.exists { partitionState.isr.size == effectiveMinIsr(_) }
+
+  def isSealed: Boolean = _sealed
+
+  def seal(): Unit = inWriteLock(leaderIsrUpdateLock) {
+    if (!_sealed) {
+      _sealed = true
+      stateChangeLogger.info(s"Sealed partition $topicPartition for diskless migration with LEO ${localLogOrException.logEndOffset}")
+    }
+  }
 
   def isReassigning: Boolean = assignmentState.isInstanceOf[OngoingReassignmentState]
 
@@ -1224,6 +1238,12 @@ class Partition(val topicPartition: TopicPartition,
     transactionVersion: Short = TransactionVersion.TV_UNKNOWN
   ): LogAppendInfo = {
     val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {
+      if (_sealed) {
+        // Force metadata refresh and client retries while the migration from classic to diskless is still ongoing.
+        throw new ReplicaNotAvailableException(
+          s"Partition $topicPartition is sealed for diskless migration on broker $localBrokerId")
+      }
+
       leaderLogIfLocal match {
         case Some(leaderLog) =>
           val minIsr = effectiveMinIsr(leaderLog)

@@ -24,6 +24,7 @@ import kafka.server.share.SharePartitionManager
 import kafka.server.{KafkaConfig, ReplicaManager}
 import kafka.utils.Logging
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors.TimeoutException
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.coordinator.common.runtime.{KRaftCoordinatorMetadataDelta, KRaftCoordinatorMetadataImage}
@@ -142,6 +143,10 @@ class BrokerMetadataPublisher(
       } else if (isDebugEnabled) {
         debug(s"Publishing metadata at offset $highestOffsetAndEpoch with $metadataVersionLogMsg.")
       }
+
+      // Seal existing leader partitions for topics transitioning from classic to diskless.
+      // New leaders elected are instead sealed inside ReplicaManager.applyLocalLeadersDelta.
+      sealExistingLeadersOfTopicsMigratedToDiskless(delta, newImage)
 
       // Apply topic deltas.
       Option(delta.topicsDelta()).foreach { topicsDelta =>
@@ -335,6 +340,24 @@ class BrokerMetadataPublisher(
       }
       changes.followers.forEach { (topicPartition, partitionInfo) =>
         resignation(topicPartition.partition, Some(partitionInfo.partition.leaderEpoch))
+      }
+    }
+  }
+
+  private def sealExistingLeadersOfTopicsMigratedToDiskless(delta: MetadataDelta, newImage: MetadataImage): Unit = {
+    Option(delta.configsDelta()).foreach { configsDelta =>
+      configsDelta.changes().forEach { (resource, _) =>
+        if (resource.`type`() == ConfigResource.Type.TOPIC) {
+          val topicName = resource.name()
+          val oldProps = delta.image().configs().configProperties(resource)
+          val wasDiskless = oldProps.getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
+          val newProps = newImage.configs().configProperties(resource)
+          val isDiskless = newProps.getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
+          if (!wasDiskless && isDiskless) {
+            info(s"Topic $topicName transitioning from classic to diskless, sealing leader partitions")
+            replicaManager.sealTopicPartitions(topicName)
+          }
+        }
       }
     }
   }
