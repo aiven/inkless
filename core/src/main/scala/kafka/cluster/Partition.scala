@@ -1239,7 +1239,8 @@ class Partition(val topicPartition: TopicPartition,
   ): LogAppendInfo = {
     val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {
       if (_sealed) {
-        throw new BrokerNotAvailableException(
+        // Force metadata refresh and client retries while the migration from classic to diskless is still ongoing.
+        throw new ReplicaNotAvailableException(
           s"Partition $topicPartition is sealed for diskless migration on broker $localBrokerId")
       }
 

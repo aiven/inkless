@@ -21,7 +21,7 @@ import com.yammer.metrics.core.Metric
 import kafka.log.LogManager
 import kafka.server._
 import kafka.utils._
-import org.apache.kafka.common.errors.{ApiException, BrokerNotAvailableException, FencedLeaderEpochException, InconsistentTopicIdException, InvalidTxnStateException, NotLeaderOrFollowerException, OffsetNotAvailableException, OffsetOutOfRangeException, PolicyViolationException, UnknownLeaderEpochException}
+import org.apache.kafka.common.errors.{ApiException, FencedLeaderEpochException, InconsistentTopicIdException, InvalidTxnStateException, NotLeaderOrFollowerException, OffsetNotAvailableException, OffsetOutOfRangeException, PolicyViolationException, ReplicaNotAvailableException, UnknownLeaderEpochException}
 import org.apache.kafka.common.message.{AlterPartitionResponseData, FetchResponseData}
 import org.apache.kafka.common.protocol.{ApiKeys, Errors}
 import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
@@ -4111,9 +4111,9 @@ class PartitionTest extends AbstractPartitionTest {
 
     partition.seal()
 
-    // Appending after sealing should throw BrokerNotAvailableException
+    // Appending after sealing should throw ReplicaNotAvailableException
     val newRecords = TestUtils.records(List(new SimpleRecord("k2".getBytes, "v2".getBytes)))
-    assertThrows(classOf[BrokerNotAvailableException], () =>
+    assertThrows(classOf[ReplicaNotAvailableException], () =>
       partition.appendRecordsToLeader(newRecords, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal))
   }
 
@@ -4135,7 +4135,7 @@ class PartitionTest extends AbstractPartitionTest {
 
     // Further appends are rejected
     val newRecords = TestUtils.records(List(new SimpleRecord("k2".getBytes, "v2".getBytes)))
-    assertThrows(classOf[BrokerNotAvailableException], () =>
+    assertThrows(classOf[ReplicaNotAvailableException], () =>
       partition.appendRecordsToLeader(newRecords, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal))
 
     // LEO remains unchanged
@@ -4168,7 +4168,7 @@ class PartitionTest extends AbstractPartitionTest {
 
     val requestLocal = RequestLocal.withThreadConfinedCaching
     val records = TestUtils.records(List(new SimpleRecord("k".getBytes, "v".getBytes)))
-    assertThrows(classOf[BrokerNotAvailableException], () =>
+    assertThrows(classOf[ReplicaNotAvailableException], () =>
       partition.appendRecordsToLeader(records, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal))
   }
 }
