@@ -43,6 +43,7 @@ import org.apache.kafka.server.util.ShutdownableThread
 import org.apache.kafka.storage.internals.log.LogAppendInfo
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.util
 import java.util.Optional
@@ -111,6 +112,8 @@ abstract class AbstractFetcherThread(name: String,
   }
 
   protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {}
+
+  protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {}
 
   override def shutdown(): Unit = {
     initiateShutdown()
@@ -256,7 +259,7 @@ abstract class AbstractFetcherThread(name: String,
    * This method updates the currentLeaderEpoch in the fetch state to match the source cluster's
    * current leader epoch, enabling proper epoch validation when fetching from the source.
    */
-  private def updateMirrorFetchEpoch(partitionToData: Map[TopicPartition, PartitionData]): Unit = {
+  private def updateMirrorFetchEpoch(partitionToData: Map[TopicPartition, PartitionData]): Unit = inLock(partitionMapLock) {
     val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStateMap.asScala
       .map { case (topicPartition, currentFetchState) =>
         val updatedFetchState = partitionToData.get(topicPartition) match {
@@ -283,7 +286,8 @@ abstract class AbstractFetcherThread(name: String,
   /** Reassigns mirrored partitions to new fetcher threads after source leader change. */
   private def maybeCreateMirrorFetchers(partitionToData: Map[TopicPartition, PartitionData]): Unit = {
     var newStates: Map[TopicPartition, InitialFetchState] = scala.collection.mutable.Map.empty[TopicPartition, InitialFetchState]
-      partitionStates.partitionStateMap.asScala
+      // snapshot to avoid ConcurrentModificationException from concurrent addFetcherForPartitions
+      partitionStates.partitionStateMap.asScala.toMap
       .foreach { case (topicPartition, currentFetchState) =>
         partitionToData.get(topicPartition) match {
           case Some(partitionData) =>
@@ -393,12 +397,14 @@ abstract class AbstractFetcherThread(name: String,
     val mirrorPartitionsWithNewEpoch = mutable.Map.empty[TopicPartition, PartitionData]
     val mirrorPartitionsWithNewLeader = mutable.Map.empty[TopicPartition, PartitionData]
     var responseData: Map[TopicPartition, FetchData] = Map.empty
+    var fetchException: Option[Throwable] = None
 
     try {
       debug(s"!!! Sending fetch request $fetchRequest")
       responseData = leader.fetch(fetchRequest).asScala
     } catch {
       case t: Throwable =>
+        fetchException = Some(t)
         if (isRunning) {
           warn(s"Error in response for fetch request $fetchRequest", t)
           inLock(partitionMapLock) {
@@ -565,6 +571,14 @@ abstract class AbstractFetcherThread(name: String,
       updateMirrorFetchEpoch(mirrorPartitionsWithNewEpoch)
     if (mirrorPartitionsWithNewLeader.nonEmpty)
       maybeCreateMirrorFetchers(mirrorPartitionsWithNewLeader)
+    if (fetchException.exists(_.isInstanceOf[IOException]) && partitionsWithError.nonEmpty && mirrorName.nonEmpty) {
+      try {
+        handleMirrorFetchConnectionFailure(partitionsWithError.toSet)
+      } catch {
+        case t: Throwable =>
+          warn(s"Failed to re-resolve source leader for mirror $mirrorName", t)
+      }
+    }
     if (partitionsWithError.nonEmpty) {
       handlePartitionsWithErrors(partitionsWithError, "processFetchRequest")
     }
@@ -658,7 +672,7 @@ abstract class AbstractFetcherThread(name: String,
    *
    * @param fetchOffsets the partitions to update fetch offset and maybe mark truncation complete
    */
-  private def updateFetchOffsetAndMaybeMarkTruncationComplete(fetchOffsets: Map[TopicPartition, OffsetTruncationState]): Unit = {
+  private def updateFetchOffsetAndMaybeMarkTruncationComplete(fetchOffsets: Map[TopicPartition, OffsetTruncationState]): Unit = inLock(partitionMapLock) {
     val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStateMap.asScala
       .map { case (topicPartition, currentFetchState) =>
         val maybeTruncationComplete = fetchOffsets.get(topicPartition) match {

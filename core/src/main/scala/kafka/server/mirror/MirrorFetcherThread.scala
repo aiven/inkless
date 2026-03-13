@@ -26,6 +26,7 @@ import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogStartOffsetIncr
 
 import java.util.Optional
 import scala.collection.{Map, Set}
+import scala.jdk.CollectionConverters._
 
 /**
  * Fetcher thread for cross-cluster mirroring. Unlike ReplicaFetcherThread, this rewrites
@@ -39,13 +40,14 @@ class MirrorFetcherThread(name: String,
                           replicaMgr: ReplicaManager,
                           quota: ReplicaQuota,
                           logPrefix: String,
-                          mirrorName: String)
+                          mirrorName: String,
+                          mirrorFetchBackoffMs: Int)
   extends AbstractFetcherThread(name = name,
                                 clientId = name,
                                 leader = leader,
                                 failedPartitions,
                                 fetchTierStateMachine = new TierStateMachine(leader, replicaMgr, false),
-                                fetchBackOffMs = brokerConfig.replicaFetchBackoffMs,
+                                fetchBackOffMs = mirrorFetchBackoffMs,
                                 isInterruptible = false,
                                 replicaMgr.brokerTopicStats,
                                 mirrorName) {
@@ -55,8 +57,16 @@ class MirrorFetcherThread(name: String,
     replicaMgr.mirrorFetcherManager.removeFetcherForPartitions(partitions)
   }
 
+  // invalidates stale source leaders for affected partitions before creating new fetchers
   override protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
-    replicaMgr.mirrorFetcherManager.addFetcherForPartitions(partitionAndOffsets)
+    replicaMgr.mirrorMetadataManager.foreach(_.invalidateSourceLeader(mirrorName, partitionAndOffsets.keySet.asJava))
+    replicaMgr.maybeCreateMirrorFetchers(mirrorName, partitionAndOffsets.keySet.asJava)
+  }
+
+  // invalidates cached source leaders for affected partitions on IOException from the source cluster
+  override protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {
+    replicaMgr.mirrorMetadataManager.foreach(_.invalidateSourceLeader(mirrorName, mirrorPartitions.asJava))
+    replicaMgr.maybeCreateMirrorFetchers(mirrorName, mirrorPartitions.asJava)
   }
 
   // process fetched data

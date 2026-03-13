@@ -140,7 +140,6 @@ public enum MetadataVersion {
     IBP_4_2_IV1(29, "4.2", "IV1", false),
 
     // Enables Cluster Mirroring (early access).
-    // Adds mirrorName field to PartitionRecord for read-only leader identification.
     //
     // *** THIS IS A PLACEHOLDER UNSTABLE VERSION WHICH IS USED TO DEFINE THE POINT AT WHICH   ***
     // *** CLUSTER MIRRORING BECOMES PRODUCTION-READY IN THE FUTURE. ITS DEFINITION ALLOWS THE ***

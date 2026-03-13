@@ -95,6 +95,16 @@ public final class MirrorConfig {
             "The total number of mirror fetcher threads on each broker is this value multiplied by the number of distinct source brokers multiplied by the number of cluster mirrors. " +
             "Increasing this value can increase the degree of I/O parallelism for cross-cluster replication at the cost of higher CPU and memory utilization.";
 
+    public static final String FETCH_BACKOFF_MS_CONFIG = "mirror.fetch.backoff.ms";
+    public static final long FETCH_BACKOFF_MS_DEFAULT = 1000;
+    public static final String FETCH_BACKOFF_MS_DOC = "The amount of time to wait before retrying mirror fetch requests after a failure. " +
+            "This controls the backoff for mirror fetcher threads on connection errors or other exceptions from the source cluster.";
+
+    public static final String TRUNCATION_BACKOFF_MS_CONFIG = "mirror.truncation.backoff.ms";
+    public static final long TRUNCATION_BACKOFF_MS_DEFAULT = 5000L;
+    public static final String TRUNCATION_BACKOFF_MS_DOC = "The amount of time to wait before retrying truncation to last mirrored offsets " +
+            "when the source cluster is unavailable during the PREPARING state.";
+
     // Metadata refresh interval
     public static final String METADATA_REFRESH_INTERVAL_MS_CONFIG = "mirror.metadata.refresh.interval.ms";
     public static final long METADATA_REFRESH_INTERVAL_MS_DEFAULT = 30000L; // 30 seconds
@@ -315,6 +325,14 @@ public final class MirrorConfig {
         return config.getLong(METADATA_REFRESH_INTERVAL_MS_CONFIG);
     }
 
+    public long fetchBackoffMs() {
+        return config.getLong(FETCH_BACKOFF_MS_CONFIG);
+    }
+
+    public long truncationBackoffMs() {
+        return config.getLong(TRUNCATION_BACKOFF_MS_CONFIG);
+    }
+
     /**
      * Returns the underlying AbstractConfig instance.
      * This provides access to all configuration values including those processed by config providers.
@@ -362,7 +380,9 @@ public final class MirrorConfig {
             .define(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_NUM_PARTITIONS_DOC)
             .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC)
             .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC)
-            .define(METADATA_REFRESH_INTERVAL_MS_CONFIG, LONG, METADATA_REFRESH_INTERVAL_MS_DEFAULT, atLeast(0L), MEDIUM, METADATA_REFRESH_INTERVAL_MS_DOC);
+            .define(METADATA_REFRESH_INTERVAL_MS_CONFIG, LONG, METADATA_REFRESH_INTERVAL_MS_DEFAULT, atLeast(0L), MEDIUM, METADATA_REFRESH_INTERVAL_MS_DOC)
+            .define(FETCH_BACKOFF_MS_CONFIG, LONG, FETCH_BACKOFF_MS_DEFAULT, atLeast(0L), MEDIUM, FETCH_BACKOFF_MS_DOC)
+            .define(TRUNCATION_BACKOFF_MS_CONFIG, LONG, TRUNCATION_BACKOFF_MS_DEFAULT, atLeast(0L), MEDIUM, TRUNCATION_BACKOFF_MS_DOC);
     }
 
     /**
