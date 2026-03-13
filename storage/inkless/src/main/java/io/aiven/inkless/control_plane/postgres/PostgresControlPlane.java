@@ -362,8 +362,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     public List<GetProducerStateResponse> getProducerState(final List<GetProducerStateRequest> requests) {
         try {
-            // used for testing purposes only, so using jobs connection pool is fine
-            final GetProducerStateJob job = new GetProducerStateJob(time, jobsJooqCtx, requests, pgMetrics::onGetProducerStateCompleted);
+            final GetProducerStateJob job = new GetProducerStateJob(time, readJooqCtx, requests, pgMetrics::onGetProducerStateCompleted);
             return job.call();
         } catch (final Exception e) {
             if (e instanceof ControlPlaneException) {
