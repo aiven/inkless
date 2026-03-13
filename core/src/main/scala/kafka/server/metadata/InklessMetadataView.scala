@@ -24,11 +24,14 @@ import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.{TopicIdPartition, Uuid}
 import org.apache.kafka.storage.internals.log.LogConfig
 
+import org.apache.kafka.common.Node
+import org.apache.kafka.common.network.ListenerName
+
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 import java.util.function.Supplier
 import java.{lang, util}
-import scala.jdk.CollectionConverters.{CollectionHasAsScala, IterableHasAsJava, MapHasAsScala, SetHasAsJava}
+import scala.jdk.CollectionConverters._
 
 class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[util.Map[String, Object]]) extends MetadataView {
 
@@ -61,6 +64,10 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
     metadataCache.getAliveBrokers().asJava
   }
 
+  override def getAliveBrokerNodes(listenerName: ListenerName): util.List[Node] = {
+    metadataCache.getAliveBrokerNodes(listenerName).asJava
+  }
+
   // Only method requiring specific KRaftMetadataCache functionality.
   // If we could refactor RetentionEnforcement to not require this, we could use the MetadataView interface directly.
   override def getBrokerCount: Integer = metadataCache.currentImage().cluster().brokers().size()
@@ -71,6 +78,10 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
 
   override def isDisklessTopic(topicName: String): Boolean = {
     metadataCache.topicConfig(topicName).getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
+  }
+
+  override def isRemoteStorageEnabled(topicName: String): Boolean = {
+    metadataCache.topicConfig(topicName).getProperty(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false").toBoolean
   }
 
   override def getDisklessTopicPartitions: util.Set[TopicIdPartition] = {
