@@ -63,3 +63,5 @@ kafka.Kafka
 __pycache__
 
 _data/
+
+.inkless-sync/
