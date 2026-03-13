@@ -84,11 +84,14 @@ The name of this Apache Kafka fork implementing diskless topics. Named to reflec
 A consumer reading older data (based on batch timestamp age, not consumer lag). These terms are used interchangeably in Kafka literature; Inkless uses "lagging consumer" in configuration names (`inkless.fetch.lagging.consumer.*`).
 
 **Leaderless**
-Unlike traditional Kafka where a partition leader handles all writes and most reads (with followers only fetching for replication), Inkless diskless topics have no designated partition leader. Any broker can serve produce and fetch requests for any partition. Metadata coordination still requires the Batch Coordinator for ordering.
+Unlike traditional Kafka where a partition leader handles all writes and most reads (with followers only fetching for replication), Inkless diskless topics have no designated partition leader at the data layer. Any broker can serve produce and fetch requests for any partition. Metadata coordination still requires the Batch Coordinator for ordering. Note: with [Managed Replicas](#managed-replicas), KRaft tracks a leader for operational purposes (metrics, job ownership, tooling), but the data path remains leaderless — the transformer routes to any alive broker.
 
 ---
 
 ## M
+
+**Managed Replicas**
+Diskless topics created with `diskless.managed.rf.enable=true` use real KRaft-managed replicas with rack-aware placement. Unlike legacy RF=1 diskless topics, managed replicas provide deterministic replica assignments, standard Kafka tooling compatibility, and a foundation for future topic migration (Classic <-> Diskless). ISR membership for managed replicas is liveness-gated (not lag-gated) since data is in object storage. See [FEATURES.md](./FEATURES.md#managed-replicas) for details.
 
 **Mixed Cluster**
 A Kafka cluster containing both classic topics (using local disk storage) and diskless topics (using object storage).
@@ -168,7 +171,8 @@ A single write ahead log file that is rotated and uploaded to object storage whe
 |------------------------------|----------------------------------------------------------|
 | Data on local disk           | Data in object storage                                   |
 | Replication via ISR          | Replication via storage backend                          |
-| Partition leaders            | Leaderless (any broker can serve)                        |
+| Partition leaders            | Leaderless at data layer (any broker can serve); with managed replicas, KRaft tracks leader for operations |
+| RF user-defined              | RF=1 (legacy) or user-defined with managed replicas (`diskless.managed.rf.enable=true`) |
 | Segments on disk             | Objects in storage                                       |
 | ZooKeeper/KRaft for metadata | KRaft for cluster metadata + Batch Coordinator for message metadata and order |
 

@@ -32,7 +32,7 @@ See [Releases](RELEASES.md) for available versions.
 ### Getting Started
 - [Quickstart](QUICKSTART.md) - How to run Inkless with Docker or locally
 - [Architecture](ARCHITECTURE.md) - Design and system architecture overview
-- [Features](FEATURES.md) - Currently supported features and API compatibility
+- [Features](FEATURES.md) - Currently supported features, API compatibility, and [managed replicas](FEATURES.md#managed-replicas)
 
 ### Operations & Configuration
 - [Performance](PERFORMANCE.md) - Performance tuning guide for producers and consumers
@@ -53,8 +53,8 @@ See [Releases](RELEASES.md) for available versions.
 
 ### Important Notes About Auto-Generated Documentation
 
-**Metrics Documentation:**  
-The [metrics.rst](metrics.rst) documentation currently covers only storage backend metrics (S3, Azure, GCS). Additional Inkless-specific metrics (batch coordinator performance, cache hit rates, object cache operations, etc.) are available through JMX but not yet fully documented. Full metrics documentation will be added as the feature matures.
+**Metrics Documentation:**
+The [metrics.rst](metrics.rst) documentation currently covers only storage backend metrics (S3, Azure, GCS). Additional Inkless-specific metrics (batch coordinator performance, cache hit rates, object cache operations, etc.) are available through JMX but not yet fully documented. Controller-level diskless metrics (`DisklessTopicCount`, `DisklessPartitionCount`, `DisklessOfflinePartitionCount`) are documented in [FEATURES.md](FEATURES.md#controller-metrics). Full metrics documentation will be added as the feature matures.
 
 **Topic Configurations:**  
 Currently, diskless topics have minimal topic-specific configurations as the feature is being developed for upstream contribution to Apache Kafka. See [topic_configs.rst](topic_configs.rst) for the current configuration options. Additional topic-level configurations may be added as the feature matures.
