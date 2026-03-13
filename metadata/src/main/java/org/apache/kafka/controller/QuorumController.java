@@ -1804,19 +1804,21 @@ public final class QuorumController implements Controller {
     @Override
     public CompletableFuture<PauseMirrorTopicsResponseData> pauseMirrorTopics(
             ControllerRequestContext context,
+            String mirrorName,
             Set<String> topics
     ) {
         return appendWriteEvent("pauseMirrorTopics", context.deadlineNs(),
-                () -> configurationControl.pauseMirrorTopics(topics));
+                () -> configurationControl.pauseMirrorTopics(mirrorName, topics));
     }
 
     @Override
     public CompletableFuture<ResumeMirrorTopicsResponseData> resumeMirrorTopics(
             ControllerRequestContext context,
+            String mirrorName,
             Set<String> topics
     ) {
         return appendWriteEvent("resumeMirrorTopics", context.deadlineNs(),
-                () -> configurationControl.resumeMirrorTopics(topics));
+                () -> configurationControl.resumeMirrorTopics(mirrorName, topics));
     }
 
     @Override

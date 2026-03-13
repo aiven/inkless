@@ -1393,12 +1393,12 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
-    public PauseMirrorTopicsResult pauseMirrorTopics(Set<String> topics, PauseMirrorTopicsOptions options) {
+    public PauseMirrorTopicsResult pauseMirrorTopics(String mirrorName, Set<String> topics, PauseMirrorTopicsOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
 
     @Override
-    public ResumeMirrorTopicsResult resumeMirrorTopics(Set<String> topics, ResumeMirrorTopicsOptions options) {
+    public ResumeMirrorTopicsResult resumeMirrorTopics(String mirrorName, Set<String> topics, ResumeMirrorTopicsOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
 

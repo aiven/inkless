@@ -257,24 +257,26 @@ public abstract class MirrorCommand {
 
         private void pauseMirrorTopics(MirrorCommandOptions opts) throws Exception {
             String topicPattern = opts.topic().get();
+            String mirrorName = opts.mirror().get();
 
             var allTopics = adminClient.listTopics().names().get();
             Set<String> matchingTopics = matchTopics(allTopics, topicPattern);
 
-            PauseMirrorTopicsResult result = adminClient.pauseMirrorTopics(matchingTopics, new PauseMirrorTopicsOptions());
+            PauseMirrorTopicsResult result = adminClient.pauseMirrorTopics(mirrorName, matchingTopics, new PauseMirrorTopicsOptions());
             result.all().get();
-            System.out.printf("Paused mirroring for %d topic(s): %s%n", matchingTopics.size(), matchingTopics);
+            System.out.printf("Paused mirroring for %d topic(s) in mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
         }
 
         private void resumeMirrorTopics(MirrorCommandOptions opts) throws Exception {
             String topicPattern = opts.topic().get();
+            String mirrorName = opts.mirror().get();
 
             var allTopics = adminClient.listTopics().names().get();
             Set<String> matchingTopics = matchTopics(allTopics, topicPattern);
 
-            ResumeMirrorTopicsResult result = adminClient.resumeMirrorTopics(matchingTopics, new ResumeMirrorTopicsOptions());
+            ResumeMirrorTopicsResult result = adminClient.resumeMirrorTopics(mirrorName, matchingTopics, new ResumeMirrorTopicsOptions());
             result.all().get();
-            System.out.printf("Resumed mirroring for %d topic(s): %s%n", matchingTopics.size(), matchingTopics);
+            System.out.printf("Resumed mirroring for %d topic(s) in mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
         }
 
         private void listMirrors() throws ExecutionException, InterruptedException {
@@ -541,8 +543,8 @@ public abstract class MirrorCommand {
             if (!has(bootstrapServerOpt))
                 throw new IllegalArgumentException("--bootstrap-server must be specified");
 
-            // --mirror is required for create, alter, add, and remove operations, but optional for list, describe, pause, and resume
-            if (!has(listOpt) && !has(describeOpt) && !has(pauseOpt) && !has(resumeOpt) && !has(mirrorOpt))
+            // --mirror is required for create, alter, add, remove, pause, and resume operations, but optional for list and describe
+            if (!has(listOpt) && !has(describeOpt) && !has(mirrorOpt))
                 throw new IllegalArgumentException("--mirror must be specified");
 
             if (has(createOpt) && !has(mirrorConfigOpt))

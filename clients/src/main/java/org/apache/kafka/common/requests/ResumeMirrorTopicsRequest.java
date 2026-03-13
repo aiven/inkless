@@ -35,10 +35,11 @@ public class ResumeMirrorTopicsRequest extends AbstractRequest {
             this.data = data;
         }
 
-        public Builder(Set<String> topics) {
+        public Builder(String mirrorName, Set<String> topics) {
             super(ApiKeys.RESUME_MIRROR_TOPICS, ApiKeys.RESUME_MIRROR_TOPICS.oldestVersion(),
                     ApiKeys.RESUME_MIRROR_TOPICS.latestVersion());
             ResumeMirrorTopicsRequestData data = new ResumeMirrorTopicsRequestData();
+            data.setMirrorName(mirrorName);
             topics.forEach(topic -> data.topics().add(new ResumeMirrorTopicsRequestData.TopicData().setTopicName(topic)));
             this.data = data;
         }

@@ -1712,15 +1712,12 @@ public interface Admin extends AutoCloseable {
      * source cluster. The mirror fetcher threads are removed for these partitions, preserving the
      * current replicated state. Mirroring can be resumed later with {@link #resumeMirrorTopics}.
      *
+     * @param mirrorName The mirror name to pause the topics for
      * @param topics Set of topic names to pause mirroring for
      * @param options Options for the pause mirror topics operation
      * @return The PauseMirrorTopicsResult containing futures for each topic
      */
-    PauseMirrorTopicsResult pauseMirrorTopics(Set<String> topics, PauseMirrorTopicsOptions options);
-
-    default PauseMirrorTopicsResult pauseMirrorTopics(Set<String> topics) {
-        return pauseMirrorTopics(topics, new PauseMirrorTopicsOptions());
-    }
+    PauseMirrorTopicsResult pauseMirrorTopics(String mirrorName, Set<String> topics, PauseMirrorTopicsOptions options);
 
     /**
      * Resume mirroring for previously paused topics.
@@ -1729,15 +1726,12 @@ public interface Admin extends AutoCloseable {
      * left off. New mirror fetcher threads are created and the partitions transition back to the
      * MIRRORING state.
      *
+     * @param mirrorName The mirror name to resume the topics for
      * @param topics Set of topic names to resume mirroring for
      * @param options Options for the resume mirror topics operation
      * @return The ResumeMirrorTopicsResult containing futures for each topic
      */
-    ResumeMirrorTopicsResult resumeMirrorTopics(Set<String> topics, ResumeMirrorTopicsOptions options);
-
-    default ResumeMirrorTopicsResult resumeMirrorTopics(Set<String> topics) {
-        return resumeMirrorTopics(topics, new ResumeMirrorTopicsOptions());
-    }
+    ResumeMirrorTopicsResult resumeMirrorTopics(String mirrorName, Set<String> topics, ResumeMirrorTopicsOptions options);
 
     /**
      * List the cluster mirrors available in the cluster with the default options.

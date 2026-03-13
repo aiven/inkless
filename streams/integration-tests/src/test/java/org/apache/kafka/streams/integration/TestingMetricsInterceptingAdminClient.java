@@ -448,13 +448,13 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     }
 
     @Override
-    public PauseMirrorTopicsResult pauseMirrorTopics(final Set<String> topics, final PauseMirrorTopicsOptions options) {
-        return adminDelegate.pauseMirrorTopics(topics, options);
+    public PauseMirrorTopicsResult pauseMirrorTopics(final String mirrorName, final Set<String> topics, final PauseMirrorTopicsOptions options) {
+        return adminDelegate.pauseMirrorTopics(mirrorName, topics, options);
     }
 
     @Override
-    public ResumeMirrorTopicsResult resumeMirrorTopics(final Set<String> topics, final ResumeMirrorTopicsOptions options) {
-        return adminDelegate.resumeMirrorTopics(topics, options);
+    public ResumeMirrorTopicsResult resumeMirrorTopics(final String mirrorName, final Set<String> topics, final ResumeMirrorTopicsOptions options) {
+        return adminDelegate.resumeMirrorTopics(mirrorName, topics, options);
     }
 
     @Override

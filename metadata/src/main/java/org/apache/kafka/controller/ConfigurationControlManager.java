@@ -275,7 +275,7 @@ public class ConfigurationControlManager {
         return ControllerResult.of(records, data);
     }
 
-    ControllerResult<PauseMirrorTopicsResponseData> pauseMirrorTopics(Set<String> topics) {
+    ControllerResult<PauseMirrorTopicsResponseData> pauseMirrorTopics(String mirrorName, Set<String> topics) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         PauseMirrorTopicsResponseData data = new PauseMirrorTopicsResponseData();
         List<PauseMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
@@ -295,13 +295,24 @@ public class ConfigurationControlManager {
                 }
 
                 if (curVal.endsWith(PAUSED_TOPIC_SUFFIX)) {
-                    // Already paused, idempotent success
+                    String originalName = curVal.substring(0, curVal.length() - PAUSED_TOPIC_SUFFIX.length());
+                    if (!originalName.equals(mirrorName)) {
+                        topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                        topicResList.add(topicRes);
+                        continue;
+                    }
                     topicRes.setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
 
                 if (curVal.endsWith(REMOVED_TOPIC_SUFFIX)) {
+                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicResList.add(topicRes);
+                    continue;
+                }
+
+                if (!curVal.equals(mirrorName)) {
                     topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
@@ -328,7 +339,7 @@ public class ConfigurationControlManager {
         return ControllerResult.of(records, data);
     }
 
-    ControllerResult<ResumeMirrorTopicsResponseData> resumeMirrorTopics(Set<String> topics) {
+    ControllerResult<ResumeMirrorTopicsResponseData> resumeMirrorTopics(String mirrorName, Set<String> topics) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         ResumeMirrorTopicsResponseData data = new ResumeMirrorTopicsResponseData();
         List<ResumeMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
@@ -354,6 +365,12 @@ public class ConfigurationControlManager {
                 }
 
                 String originalMirrorName = curVal.substring(0, curVal.length() - PAUSED_TOPIC_SUFFIX.length());
+                if (!originalMirrorName.equals(mirrorName)) {
+                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicResList.add(topicRes);
+                    continue;
+                }
+
                 Map<String, Entry<OpType, String>> keyToOps = Map.of(TopicConfig.MIRROR_NAME_CONFIG,
                     new AbstractMap.SimpleImmutableEntry<>(SET, originalMirrorName));
 

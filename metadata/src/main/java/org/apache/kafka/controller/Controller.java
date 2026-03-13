@@ -182,11 +182,13 @@ public interface Controller extends AclMutator, AutoCloseable {
 
     CompletableFuture<PauseMirrorTopicsResponseData> pauseMirrorTopics(
             ControllerRequestContext context,
+            String mirrorName,
             Set<String> topics
     );
 
     CompletableFuture<ResumeMirrorTopicsResponseData> resumeMirrorTopics(
             ControllerRequestContext context,
+            String mirrorName,
             Set<String> topics
     );
 

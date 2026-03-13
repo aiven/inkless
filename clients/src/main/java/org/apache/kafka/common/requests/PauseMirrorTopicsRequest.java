@@ -35,10 +35,11 @@ public class PauseMirrorTopicsRequest extends AbstractRequest {
             this.data = data;
         }
 
-        public Builder(Set<String> topics) {
+        public Builder(String mirrorName, Set<String> topics) {
             super(ApiKeys.PAUSE_MIRROR_TOPICS, ApiKeys.PAUSE_MIRROR_TOPICS.oldestVersion(),
                     ApiKeys.PAUSE_MIRROR_TOPICS.latestVersion());
             PauseMirrorTopicsRequestData data = new PauseMirrorTopicsRequestData();
+            data.setMirrorName(mirrorName);
             topics.forEach(topic -> data.topics().add(new PauseMirrorTopicsRequestData.TopicData().setTopicName(topic)));
             this.data = data;
         }
