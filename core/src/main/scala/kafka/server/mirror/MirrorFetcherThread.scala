@@ -17,7 +17,7 @@
 package kafka.server.mirror
 
 import kafka.server._
-import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.{Node, TopicPartition}
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.requests.FetchResponse
 import org.apache.kafka.server.{LeaderEndPoint, PartitionFetchState}
@@ -57,13 +57,18 @@ class MirrorFetcherThread(name: String,
     replicaMgr.mirrorFetcherManager.removeFetcherForPartitions(partitions)
   }
 
-  // invalidates stale source leaders for affected partitions before creating new fetchers
+  // uses leader info from fetch response to update cache and create new fetchers directly
   override protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
-    replicaMgr.mirrorMetadataManager.foreach(_.invalidateSourceLeader(mirrorName, partitionAndOffsets.keySet.asJava))
-    replicaMgr.maybeCreateMirrorFetchers(mirrorName, partitionAndOffsets.keySet.asJava)
+    replicaMgr.mirrorMetadataManager.foreach { mmm =>
+      partitionAndOffsets.foreach { case (tp, state) =>
+        mmm.updateSourceLeader(mirrorName, tp,
+          new Node(state.leader.id(), state.leader.host(), state.leader.port()))
+      }
+    }
+    replicaMgr.mirrorFetcherManager.addFetcherForPartitions(partitionAndOffsets)
   }
 
-  // invalidates cached source leaders for affected partitions on IOException from the source cluster
+  // invalidates cached source leaders for affected partitions when source connection is broken
   override protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {
     replicaMgr.mirrorMetadataManager.foreach(_.invalidateSourceLeader(mirrorName, mirrorPartitions.asJava))
     replicaMgr.maybeCreateMirrorFetchers(mirrorName, mirrorPartitions.asJava)
