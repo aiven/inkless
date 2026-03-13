@@ -2840,7 +2840,8 @@ class PartitionTest extends AbstractPartitionTest {
       "InSyncReplicasCount",
       "ReplicasCount",
       "LastStableOffsetLag",
-      "AtMinIsr")
+      "AtMinIsr",
+      "Sealed")
 
     def getMetric(metric: String): Option[Metric] = {
       KafkaYammerMetrics.defaultRegistry().allMetrics().asScala.find { case (metricName, _) =>
@@ -4084,6 +4085,29 @@ class PartitionTest extends AbstractPartitionTest {
     partition.seal()
 
     assertTrue(partition.isSealed)
+  }
+
+  @Test
+  def testSealedPartitionMetric(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+
+    def sealedGaugeValue(): Int = {
+      KafkaYammerMetrics.defaultRegistry().allMetrics().asScala
+        .find { case (metricName, _) =>
+          metricName.getName == "Sealed" && metricName.getType == "Partition" &&
+            metricName.getScope.contains(s"topic.${topicPartition.topic}") &&
+            metricName.getScope.contains(s"partition.${topicPartition.partition}")
+        }
+        .map(_._2.asInstanceOf[com.yammer.metrics.core.Gauge[Int]].value())
+        .getOrElse(fail("Sealed metric not found"))
+    }
+
+    assertEquals(0, sealedGaugeValue(), "Sealed gauge should be 0 before sealing")
+
+    partition.seal()
+
+    assertEquals(1, sealedGaugeValue(), "Sealed gauge should be 1 after sealing")
   }
 
   @Test

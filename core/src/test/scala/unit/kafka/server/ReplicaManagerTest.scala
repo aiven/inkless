@@ -6911,11 +6911,14 @@ class ReplicaManagerTest {
         val sealFollower = rm.getPartitionOrException(new TopicPartition(topicToSeal, 1))
         val otherLeader = rm.getPartitionOrException(new TopicPartition(otherTopic, 0))
 
+        assertEquals(0, yammerMetricValue("name=SealedPartitionsCount"), "SealedPartitionsCount should be 0 before sealing")
+
         rm.sealTopicPartitions(topicToSeal)
 
         assertTrue(sealLeader.isSealed, "Leader of target topic should be sealed")
         assertFalse(sealFollower.isSealed, "Follower of target topic should not be sealed")
         assertFalse(otherLeader.isSealed, "Leader of other topic should not be sealed")
+        assertEquals(1, yammerMetricValue("name=SealedPartitionsCount"), "SealedPartitionsCount should be 1 after sealing one leader")
       } finally {
         rm.shutdown(checkpointHW = false)
       }
