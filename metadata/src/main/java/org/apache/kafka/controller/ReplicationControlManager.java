@@ -2253,6 +2253,10 @@ public class ReplicationControlManager {
                     " additional partition(s), but only " + topic.assignments().size() +
                     " assignment(s) were specified.");
             }
+            if (isDisklessTopic(topic.name()) && !isDisklessManagedReplicasEnabled) {
+                throw new InvalidReplicaAssignmentException(
+                    "A manual partition assignment cannot be specified for diskless topics.");
+            }
         }
         try {
             context.applyPartitionChangeQuota(additional); // check controller mutation quota
