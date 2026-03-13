@@ -173,6 +173,7 @@ object Partition {
     metricsGroup.removeMetric("ReplicasCount", tags)
     metricsGroup.removeMetric("LastStableOffsetLag", tags)
     metricsGroup.removeMetric("AtMinIsr", tags)
+    metricsGroup.removeMetric("Sealed", tags)
   }
 }
 
@@ -374,6 +375,7 @@ class Partition(val topicPartition: TopicPartition,
   metricsGroup.newGauge("AtMinIsr", () => if (isAtMinIsr) 1 else 0, tags)
   metricsGroup.newGauge("ReplicasCount", () => if (isLeader) assignmentState.replicationFactor else 0, tags)
   metricsGroup.newGauge("LastStableOffsetLag", () => log.map(_.lastStableOffsetLag).getOrElse(0), tags)
+  metricsGroup.newGauge("Sealed", () => if (isSealed) 1 else 0, tags)
 
   def unifiedLog(): Optional[UnifiedLog] = log.toJava
 
