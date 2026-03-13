@@ -21,12 +21,12 @@
   * A: Partitions are used for distributing the load of producers and consumers. They allow for parallelism, meaning multiple consumers can read from different partitions simultaneously, and multiple producers can write to them concurrently. This parallelism significantly improves the throughput and scalability of the system. Without partitions, the system would be less efficient and harder to scale.  
 * **Q: Should I still use more than one partition?**  
   * A: Yes, consumer parallelism is still limited by the partition count, and so multiple partitions will permit multiple consumers to process data in parallel. Each consumer consumes from one partition, so having more partitions than consumers will not work. This ensures that multiple consumers can work concurrently without stepping on each other's toes.  
-* **Q: Is there a partition leader in diskless topics?**  
-  * A: No, for diskless topics, there is no leader for each partition in the traditional Kafka sense. This is one of the key aspects of being "leaderless" at the data layer. Any broker can serve data from any partition, which simplifies the architecture and improves availability.  
-* **Q: What about replications in Inkless?**  
-  * A: Replication for diskless topics is delegated to the storage layer, meaning the object storage system handles data redundancy and durability. Services like AWS S3, GCS, or Azure Blob Storage have built-in replication mechanisms, which Inkless leverages instead of managing replication at the Kafka broker level.  
-* **Q: Are there under-replicated partitions in Inkless?**  
-  * A: No, there are no under-replicated partitions in Inkless by design because the storage layer handles data replication. Object storage services are designed to be highly durable and redundant, typically providing multiple copies of data across different storage units or even different physical locations. This eliminates the traditional Kafka problem of under-replicated partitions.  
+* **Q: Is there a partition leader in diskless topics?**
+  * A: At the data layer, no — any broker can serve produce and fetch requests for any diskless partition. However, with **managed replicas** (`diskless.managed.rf.enable=true`), KRaft tracks a leader for operational purposes: metrics, tooling output (`kafka-topics.sh --describe`), job ownership, and future RLM/tiering integration. The metadata transformer routes requests based on client AZ and broker liveness, preferring assigned replicas but falling back to any alive broker when needed.  
+* **Q: What about replications in Inkless?**
+  * A: Data replication for diskless topics is delegated to the storage layer — object storage services like AWS S3, GCS, or Azure Blob Storage provide built-in redundancy and durability. With **managed replicas** (`diskless.managed.rf.enable=true`), KRaft maintains real replica assignments with rack-aware placement (e.g., RF=3 across 3 AZs). These replicas are "metadata-only" — they provide deterministic broker assignment, leadership, and tooling compatibility, but data itself remains in object storage. There is no inter-broker data replication for diskless topics.  
+* **Q: Are there under-replicated partitions in Inkless?**
+  * A: For **legacy RF=1 diskless topics**, there are no under-replicated partitions since data durability is handled entirely by object storage. With **managed replicas** (RF > 1), KRaft may report under-replicated partitions when a replica broker is fenced or offline. However, this is **informational only** — diskless topics remain fully available because the metadata transformer routes around offline brokers. When the broker returns, it is immediately back in ISR (no catch-up needed). Diskless under-replication metrics (`DisklessOfflinePartitionCount`) are tracked separately from classic metrics to avoid false critical alerts.  
 * **Q: What is the storage backed with?**  
   * A: The storage is backed by cloud object storage services such as AWS S3, Google Cloud Storage (GCS), and Azure Blob Storage. Inkless offloads data persistence to these services, taking advantage of their scalability, reliability, and cost-effectiveness.  
 * **Q: Do you have segments?**  
@@ -83,6 +83,21 @@
   * A: Yes, Inkless retains the fundamental characteristic of being an append-only distributed log. Messages are appended to the end of the log and are not modified or deleted. This ensures consistency and makes it suitable for event streaming use cases.
 
 **Usage and Operations**
+
+**Managed Replicas**
+
+* **Q: What are managed replicas?**
+  * A: Managed replicas are real KRaft-managed replica assignments for diskless topics, enabled via `diskless.managed.rf.enable=true`. Unlike the legacy RF=1 model where the transformer ignores KRaft metadata and hashes to any broker, managed replicas provide rack-aware placement, deterministic leadership, and standard Kafka tooling compatibility. See [FEATURES.md](./FEATURES.md#managed-replicas) for details.
+* **Q: How do I enable managed replicas?**
+  * A: Set `diskless.managed.rf.enable=true` in the controller/broker server configuration. Then set `default.replication.factor` to your desired RF (e.g., matching the number of AZs). New diskless topics created with RF=-1 will resolve to this value. You can also specify an explicit RF at topic creation time.
+* **Q: Do managed replicas affect existing diskless topics?**
+  * A: No. The `diskless.managed.rf.enable` config only affects **new** topic creation. Existing RF=1 diskless topics continue to work. To modernize existing topics, use `kafka-reassign-partitions.sh` to expand RF manually.
+* **Q: Does managed replicas mean data is replicated between brokers?**
+  * A: No. Data remains in object storage only. There is no inter-broker replication for diskless topics regardless of RF. The replicas are "metadata-only" — they provide deterministic broker assignment and leadership for operational purposes (tooling, metrics, job ownership), but each broker serves data directly from object storage.
+* **Q: What happens when a replica broker goes down with managed replicas?**
+  * A: The metadata transformer routes around the offline broker instantly. For `DISKLESS_ONLY` partitions, the transformer can fall back to any alive broker in the client's AZ, then cross-AZ. The partition remains available. When the broker returns, it is immediately back in ISR — no catch-up fetch is needed since data is in object storage.
+* **Q: Can I reassign diskless partitions to different brokers?**
+  * A: Yes. Use `kafka-reassign-partitions.sh` as with classic topics. Diskless reassignment is **immediate** — there is no staged adding/removing process since all brokers can serve from object storage. The RF cannot be changed during reassignment.
 
 * **Q: Can I change the topic type from classic to diskless?**  
   * A: Currently, the topic type (classic or diskless) is set at topic creation and cannot be changed afterward. This is because the storage mechanism is fundamentally different between the two types. In the future, there might be mechanisms to facilitate data migration between classic and diskless topics, but direct conversion is not supported right now.  
