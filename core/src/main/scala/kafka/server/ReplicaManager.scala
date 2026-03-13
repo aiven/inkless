@@ -591,6 +591,18 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
+  def sealTopicPartitions(topic: String): Unit = {
+    allPartitions.foreachEntry { (tp, hostedPartition) =>
+      if (tp.topic() == topic) {
+        hostedPartition match {
+          case HostedPartition.Online(partition) if partition.isLeader =>
+            partition.seal()
+          case _ =>
+        }
+      }
+    }
+  }
+
   private def offlinePartitionCount: Int = {
     allPartitions.values.iterator.count(_.getClass == HostedPartition.Offline.getClass)
   }
@@ -3050,7 +3062,9 @@ class ReplicaManager(val config: KafkaConfig,
       "local leaders.")
     replicaFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
     localLeaders.foreachEntry { (tp, info) =>
-      if (!_inklessMetadataView.isDisklessTopic(tp.topic()))
+      val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic())
+      val existingPartition = onlinePartition(tp)
+      if (!isDiskless) {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
@@ -3069,6 +3083,24 @@ class ReplicaManager(val config: KafkaConfig,
               markPartitionOffline(tp)
           }
         }
+      } else if (existingPartition.isDefined) {
+        // Classic-to-diskless transition: seal the partition before making it leader
+        // so that no produce request can ever be processed by the new leader.
+        val partition = existingPartition.get
+        try {
+          partition.seal()
+          val state = info.partition.toLeaderAndIsrPartitionState(tp, false)
+          val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+          partition.makeLeader(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+
+          changedPartitions.add(partition)
+        } catch {
+          case e: KafkaStorageException =>
+            stateChangeLogger.info(s"Skipped the become-leader state change for transitioning partition $tp " +
+              s"with topic id ${info.topicId} due to a storage error ${e.getMessage}")
+            markPartitionOffline(tp)
+        }
+      }
     }
   }
 
