@@ -440,6 +440,13 @@ public class ConfigurationControlManager {
 
         for (Entry<ConfigResource, Map<String, Entry<OpType, String>>> resourceEntry :
                 configChanges.entrySet()) {
+            String mirrorName = resourceEntry.getKey().name();
+            if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX) || mirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) {
+                data.setErrorCode(Errors.INVALID_REQUEST.code());
+                data.setErrorMessage("Mirror name must not end with '"
+                    + REMOVED_TOPIC_SUFFIX + "' or '" + PAUSED_TOPIC_SUFFIX + "'");
+                return ControllerResult.of(List.of(), data);
+            }
             ApiError apiError = incrementalAlterConfigResource(resourceEntry.getKey(),
                     resourceEntry.getValue(),
                     newlyCreatedResource,
