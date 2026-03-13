@@ -2268,6 +2268,9 @@ public abstract class AbstractControlPlaneTest {
 
             assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
                 .containsExactly(GetLogInfoResponse.success(100, 100, 100, 0));
+
+            assertThat(controlPlane.getProducerState(List.of(new GetProducerStateRequest(NEW_TOPIC_ID, 0))))
+                .containsExactly(GetProducerStateResponse.success(List.of()));
         }
 
         @Test
@@ -2311,6 +2314,16 @@ public abstract class AbstractControlPlaneTest {
 
             assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
                 .containsExactly(GetLogInfoResponse.success(100, 100, 100, 0));
+
+            final var producerStateResponses = controlPlane.getProducerState(List.of(
+                new GetProducerStateRequest(NEW_TOPIC_ID, 0)
+            ));
+            assertThat(producerStateResponses).hasSize(1);
+            assertThat(producerStateResponses.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(producerStateResponses.get(0).entries()).containsExactly(
+                new GetProducerStateResponse.ProducerStateEntry(
+                    producerId, producerEpoch, baseSequence, lastSequence, assignedOffset, batchMaxTimestamp)
+            );
         }
 
         @Test
@@ -2326,6 +2339,16 @@ public abstract class AbstractControlPlaneTest {
                         producerId, producerEpoch, 0, lastSequence, assignedOffset, 5000)))
             ));
 
+            // Verify initial producer state from init
+            final var initialState = controlPlane.getProducerState(List.of(
+                new GetProducerStateRequest(NEW_TOPIC_ID, 0)
+            ));
+            assertThat(initialState).hasSize(1);
+            assertThat(initialState.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(initialState.get(0).entries()).containsExactly(
+                new GetProducerStateResponse.ProducerStateEntry(producerId, producerEpoch, 0, lastSequence, assignedOffset, 5000)
+            );
+
             final TopicIdPartition tidp = new TopicIdPartition(NEW_TOPIC_ID, 0, NEW_TOPIC);
 
             final CommitBatchRequest request = CommitBatchRequest.idempotent(
@@ -2336,6 +2359,17 @@ public abstract class AbstractControlPlaneTest {
             assertThat(commitResponses).hasSize(1);
             assertThat(commitResponses.get(0).errors()).isEqualTo(Errors.NONE);
             assertThat(commitResponses.get(0).assignedBaseOffset()).isEqualTo(100);
+
+            // Verify producer state now includes both the init entry and the committed batch
+            final var updatedState = controlPlane.getProducerState(List.of(
+                new GetProducerStateRequest(NEW_TOPIC_ID, 0)
+            ));
+            assertThat(updatedState).hasSize(1);
+            assertThat(updatedState.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(updatedState.get(0).entries()).containsExactly(
+                new GetProducerStateResponse.ProducerStateEntry(producerId, producerEpoch, 0, lastSequence, assignedOffset, 5000),
+                new GetProducerStateResponse.ProducerStateEntry(producerId, producerEpoch, 5, 5, 100, 6000)
+            );
         }
 
         @Test
@@ -2375,6 +2409,150 @@ public abstract class AbstractControlPlaneTest {
                 GetLogInfoResponse.success(100, 100, 100, 0),
                 GetLogInfoResponse.success(200, 200, 200, 0)
             );
+
+            assertThat(controlPlane.getProducerState(List.of(
+                new GetProducerStateRequest(NEW_TOPIC_ID, 0),
+                new GetProducerStateRequest(NEW_TOPIC_ID, 1)
+            ))).containsExactly(
+                GetProducerStateResponse.success(List.of()),
+                GetProducerStateResponse.success(List.of())
+            );
+        }
+    }
+
+    @Nested
+    class GetProducerState {
+        @Test
+        void unknownTopicPartition() {
+            final var responses = controlPlane.getProducerState(List.of(
+                new GetProducerStateRequest(NONEXISTENT_TOPIC_ID, 0)
+            ));
+            assertThat(responses).containsExactly(GetProducerStateResponse.unknownTopicOrPartition());
+        }
+
+        @Test
+        void emptyProducerState() {
+            final var responses = controlPlane.getProducerState(List.of(
+                new GetProducerStateRequest(EXISTING_TOPIC_1_ID, 0)
+            ));
+            assertThat(responses).containsExactly(GetProducerStateResponse.success(List.of()));
+        }
+
+        @Test
+        void afterIdempotentCommit() {
+            final long producerId = 42L;
+            final short producerEpoch = 1;
+            final int baseSequence = 0;
+            final int lastSequence = 9;
+            final long batchMaxTimestamp = 5000;
+
+            final CommitBatchRequest request = CommitBatchRequest.idempotent(
+                0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, 100, 0, 9, batchMaxTimestamp,
+                TimestampType.CREATE_TIME, producerId, producerEpoch, baseSequence, lastSequence);
+            controlPlane.commitFile("obj1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request));
+
+            final var responses = controlPlane.getProducerState(List.of(
+                new GetProducerStateRequest(EXISTING_TOPIC_1_ID, 0)
+            ));
+            assertThat(responses).hasSize(1);
+            assertThat(responses.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(responses.get(0).entries()).containsExactly(
+                new GetProducerStateResponse.ProducerStateEntry(producerId, producerEpoch, baseSequence, lastSequence, 0, batchMaxTimestamp)
+            );
+        }
+
+        @Test
+        void afterInitDisklessLog() {
+            final Uuid newTopicId = new Uuid(30, 30);
+            final String newTopic = "topic-new";
+            final long producerId = 42L;
+            final short producerEpoch = 1;
+            final int baseSequence = 5;
+            final int lastSequence = 9;
+            final long assignedOffset = 95;
+            final long batchMaxTimestamp = 5000;
+
+            controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(newTopicId, newTopic, 0, 100, 100,
+                    List.of(new InitDisklessLogProducerState(
+                        producerId, producerEpoch, baseSequence, lastSequence, assignedOffset, batchMaxTimestamp)))
+            ));
+
+            final var responses = controlPlane.getProducerState(List.of(
+                new GetProducerStateRequest(newTopicId, 0)
+            ));
+            assertThat(responses).hasSize(1);
+            assertThat(responses.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(responses.get(0).entries()).containsExactly(
+                new GetProducerStateResponse.ProducerStateEntry(producerId, producerEpoch, baseSequence, lastSequence, assignedOffset, batchMaxTimestamp)
+            );
+        }
+
+        @Test
+        void multipleProducers() {
+            final long producer1 = 1L;
+            final long producer2 = 2L;
+            final short epoch = 0;
+
+            final CommitBatchRequest request1 = CommitBatchRequest.idempotent(
+                0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, 100, 0, 9, 1000,
+                TimestampType.CREATE_TIME, producer1, epoch, 0, 9);
+            final CommitBatchRequest request2 = CommitBatchRequest.idempotent(
+                0, EXISTING_TOPIC_1_ID_PARTITION_0, 100, 100, 10, 19, 2000,
+                TimestampType.CREATE_TIME, producer2, epoch, 0, 9);
+            controlPlane.commitFile("obj1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request1, request2));
+
+            final var responses = controlPlane.getProducerState(List.of(
+                new GetProducerStateRequest(EXISTING_TOPIC_1_ID, 0)
+            ));
+            assertThat(responses).hasSize(1);
+            assertThat(responses.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(responses.get(0).entries()).containsExactlyInAnyOrder(
+                new GetProducerStateResponse.ProducerStateEntry(producer1, epoch, 0, 9, 0, 1000),
+                new GetProducerStateResponse.ProducerStateEntry(producer2, epoch, 0, 9, 10, 2000)
+            );
+        }
+
+        @Test
+        void multiplePartitions() {
+            final long producerId = 1L;
+            final short epoch = 0;
+
+            final CommitBatchRequest request1 = CommitBatchRequest.idempotent(
+                0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, 100, 0, 9, 1000,
+                TimestampType.CREATE_TIME, producerId, epoch, 0, 9);
+            final CommitBatchRequest request2 = CommitBatchRequest.idempotent(
+                0, EXISTING_TOPIC_1_ID_PARTITION_1, 100, 100, 0, 9, 2000,
+                TimestampType.CREATE_TIME, producerId, epoch, 0, 9);
+            controlPlane.commitFile("obj1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request1, request2));
+
+            final var responses = controlPlane.getProducerState(List.of(
+                new GetProducerStateRequest(EXISTING_TOPIC_1_ID, 0),
+                new GetProducerStateRequest(EXISTING_TOPIC_1_ID, 1)
+            ));
+            assertThat(responses).hasSize(2);
+            assertThat(responses.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(responses.get(0).entries()).containsExactly(
+                new GetProducerStateResponse.ProducerStateEntry(producerId, epoch, 0, 9, 0, 1000)
+            );
+            assertThat(responses.get(1).errors()).isEqualTo(Errors.NONE);
+            assertThat(responses.get(1).entries()).containsExactly(
+                new GetProducerStateResponse.ProducerStateEntry(producerId, epoch, 0, 9, 0, 2000)
+            );
+        }
+
+        @Test
+        void noProducerStateForNonIdempotentBatch() {
+            final CommitBatchRequest request = CommitBatchRequest.of(
+                0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, 100, 0, 9, 1000, TimestampType.CREATE_TIME);
+            controlPlane.commitFile("obj1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request));
+
+            final var responses = controlPlane.getProducerState(List.of(
+                new GetProducerStateRequest(EXISTING_TOPIC_1_ID, 0)
+            ));
+            assertThat(responses).hasSize(1);
+            assertThat(responses.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(responses.get(0).entries()).isEmpty();
         }
     }
 
