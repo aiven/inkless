@@ -226,6 +226,7 @@ public class ConfigurationControlManager {
     ControllerResult<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(String mirrorName, Set<String> topics) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         RemoveTopicsFromMirrorResponseData data = new RemoveTopicsFromMirrorResponseData();
+        data.setMirrorName(mirrorName);
         List<RemoveTopicsFromMirrorResponseData.TopicResult> topicResList = new ArrayList<>();
         for (String topic : topics) {
             String mirrorNameConfig = TopicConfig.MIRROR_NAME_CONFIG;
@@ -278,6 +279,7 @@ public class ConfigurationControlManager {
     ControllerResult<PauseMirrorTopicsResponseData> pauseMirrorTopics(String mirrorName, Set<String> topics) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         PauseMirrorTopicsResponseData data = new PauseMirrorTopicsResponseData();
+        data.setMirrorName(mirrorName);
         List<PauseMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
         for (String topic : topics) {
             PauseMirrorTopicsResponseData.TopicResult topicRes = new PauseMirrorTopicsResponseData.TopicResult();
@@ -342,6 +344,7 @@ public class ConfigurationControlManager {
     ControllerResult<ResumeMirrorTopicsResponseData> resumeMirrorTopics(String mirrorName, Set<String> topics) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         ResumeMirrorTopicsResponseData data = new ResumeMirrorTopicsResponseData();
+        data.setMirrorName(mirrorName);
         List<ResumeMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
         for (String topic : topics) {
             ResumeMirrorTopicsResponseData.TopicResult topicRes = new ResumeMirrorTopicsResponseData.TopicResult();
@@ -394,6 +397,7 @@ public class ConfigurationControlManager {
     ControllerResult<AddTopicsToMirrorResponseData> addTopicsToMirror(String mirrorName, Set<String> topics) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         AddTopicsToMirrorResponseData data = new AddTopicsToMirrorResponseData();
+        data.setMirrorName(mirrorName);
         List<AddTopicsToMirrorResponseData.TopicResult> topicResList = new ArrayList<>();
         for (String topic : topics) {
             AddTopicsToMirrorResponseData.TopicResult topicRes = new AddTopicsToMirrorResponseData.TopicResult();
