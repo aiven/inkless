@@ -1238,7 +1238,7 @@ class Partition(val topicPartition: TopicPartition,
   ): LogAppendInfo = {
     val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {
       if (_sealed) {
-        throw new NotLeaderOrFollowerException(
+        throw new BrokerNotAvailableException(
           s"Partition $topicPartition is sealed for diskless migration on broker $localBrokerId")
       }
 
