@@ -27,7 +27,7 @@ import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
@@ -151,6 +151,7 @@ object ReplicaManager {
   private val UnderMinIsrPartitionCountMetricName = "UnderMinIsrPartitionCount"
   private val AtMinIsrPartitionCountMetricName = "AtMinIsrPartitionCount"
   private val ReassigningPartitionsMetricName = "ReassigningPartitions"
+  private val SealedPartitionsCountMetricName = "SealedPartitionsCount"
   private val PartitionsWithLateTransactionsCountMetricName = "PartitionsWithLateTransactionsCount"
   private val ProducerIdCountMetricName = "ProducerIdCount"
   private val IsrExpandsPerSecMetricName = "IsrExpandsPerSec"
@@ -165,6 +166,7 @@ object ReplicaManager {
     UnderMinIsrPartitionCountMetricName,
     AtMinIsrPartitionCountMetricName,
     ReassigningPartitionsMetricName,
+    SealedPartitionsCountMetricName,
     PartitionsWithLateTransactionsCountMetricName,
     ProducerIdCountMetricName
   )
@@ -310,10 +312,13 @@ class ReplicaManager(val config: KafkaConfig,
   metricsGroup.newGauge(UnderMinIsrPartitionCountMetricName, () => leaderPartitionsIterator.count(_.isUnderMinIsr))
   metricsGroup.newGauge(AtMinIsrPartitionCountMetricName, () => leaderPartitionsIterator.count(_.isAtMinIsr))
   metricsGroup.newGauge(ReassigningPartitionsMetricName, () => reassigningPartitionsCount)
+  metricsGroup.newGauge(SealedPartitionsCountMetricName, () => sealedPartitionsCount)
   metricsGroup.newGauge(PartitionsWithLateTransactionsCountMetricName, () => lateTransactionsCount)
   metricsGroup.newGauge(ProducerIdCountMetricName, () => producerIdCount)
 
   private def reassigningPartitionsCount: Int = leaderPartitionsIterator.count(_.isReassigning)
+
+  private def sealedPartitionsCount: Int = leaderPartitionsIterator.count(_.isSealed)
 
   private def lateTransactionsCount: Int = {
     val currentTimeMs = time.milliseconds()
