@@ -100,9 +100,6 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
 
       for ((remoteFetcherKey, initialFetchOffsets) <- partitionsPerFetcher) {
         val fetcherThread = mirrorFetcherThreadMap.get(remoteFetcherKey) match {
-          case Some(currentFetcherThread) if currentFetcherThread.isThreadFailed =>
-            logger.warn("Recreating failed mirror fetcher for {}", remoteFetcherKey)
-            addAndStartFetcherThread(remoteFetcherKey)
           case Some(currentFetcherThread) if currentFetcherThread.leader.brokerEndPoint() == remoteFetcherKey.sourceBroker =>
             // reuse the fetcher thread
             logger.debug("Reusing mirror fetcher for {}", remoteFetcherKey)

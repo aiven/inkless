@@ -287,22 +287,24 @@ abstract class AbstractFetcherThread(name: String,
   private def maybeCreateMirrorFetchers(partitionToData: Map[TopicPartition, PartitionData]): Unit = {
     var newStates: Map[TopicPartition, InitialFetchState] = scala.collection.mutable.Map.empty[TopicPartition, InitialFetchState]
       // snapshot under lock to avoid ConcurrentModificationException from concurrent addFetcherForPartitions
-      inLock(partitionMapLock) { partitionStates.partitionStateMap.asScala.toMap }
-      .foreach { case (topicPartition, currentFetchState) =>
-        partitionToData.get(topicPartition) match {
-          case Some(partitionData) =>
-            val leaderNode = if (leader.lastSeenEndpoints().isEmpty) Optional.empty()
-              else Optional.of(leader.lastSeenEndpoints().get(partitionData.currentLeader().leaderId()))
-            // If leader node change, we need to update it.
-            // Note: we can't compare the node id because it might be different from the original node id (ex: replied as consumer id -1).
-            if (leaderNode.isPresent && (!leaderNode.get().host.equals(leader.brokerEndPoint().host()) ||
-              leaderNode.get().port != leader.brokerEndPoint().port)) {
-                val brokerEndpoint = new BrokerEndPoint(leaderNode.get.id(), leaderNode.get.host, leaderNode.get.port)
-                newStates += topicPartition -> InitialFetchState(currentFetchState.topicId().toScala, brokerEndpoint,
-                  partitionData.currentLeader().leaderEpoch(), currentFetchState.fetchOffset(), mirrorName)
+      inLock(partitionMapLock) {
+        partitionStates.partitionStateMap.asScala
+          .foreach { case (topicPartition, currentFetchState) =>
+            partitionToData.get(topicPartition) match {
+              case Some(partitionData) =>
+                val leaderNode = if (leader.lastSeenEndpoints().isEmpty) Optional.empty()
+                else Optional.of(leader.lastSeenEndpoints().get(partitionData.currentLeader().leaderId()))
+                // If leader node change, we need to update it.
+                // Note: we can't compare the node id because it might be different from the original node id (ex: replied as consumer id -1).
+                if (leaderNode.isPresent && (!leaderNode.get().host.equals(leader.brokerEndPoint().host()) ||
+                  leaderNode.get().port != leader.brokerEndPoint().port)) {
+                  val brokerEndpoint = new BrokerEndPoint(leaderNode.get.id(), leaderNode.get.host, leaderNode.get.port)
+                  newStates += topicPartition -> InitialFetchState(currentFetchState.topicId().toScala, brokerEndpoint,
+                    partitionData.currentLeader().leaderEpoch(), currentFetchState.fetchOffset(), mirrorName)
+                }
+              case _ =>
             }
-          case _ =>
-        }
+          }
       }
     if (newStates.nonEmpty) {
       info("!!! maybeCreateMirrorFetchers: " + newStates)
