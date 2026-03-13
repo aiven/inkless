@@ -700,6 +700,40 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized List<GetProducerStateResponse> getProducerState(final List<GetProducerStateRequest> requests) {
+        final List<GetProducerStateResponse> result = new ArrayList<>();
+        for (final GetProducerStateRequest request : requests) {
+            final TopicIdPartition tidp = findTopicIdPartition(request.topicId(), request.partition());
+            if (tidp == null || logs.get(tidp) == null) {
+                result.add(GetProducerStateResponse.unknownTopicOrPartition());
+            } else {
+                final TreeMap<Long, LatestProducerState> partitionProducers = producers.get(tidp);
+                if (partitionProducers == null || partitionProducers.isEmpty()) {
+                    result.add(GetProducerStateResponse.success(List.of()));
+                } else {
+                    final List<GetProducerStateResponse.ProducerStateEntry> entries = new ArrayList<>();
+                    for (final var entry : partitionProducers.entrySet()) {
+                        final long producerId = entry.getKey();
+                        final LatestProducerState state = entry.getValue();
+                        for (final ProducerStateItem item : state.lastEntries()) {
+                            entries.add(new GetProducerStateResponse.ProducerStateEntry(
+                                producerId,
+                                state.epoch(),
+                                item.baseSequence(),
+                                item.lastSequence(),
+                                item.assignedOffset(),
+                                item.batchMaxTimestamp()
+                            ));
+                        }
+                    }
+                    result.add(GetProducerStateResponse.success(entries));
+                }
+            }
+        }
+        return result;
+    }
+
+    @Override
     public void close() throws IOException {
         // Do nothing.
     }

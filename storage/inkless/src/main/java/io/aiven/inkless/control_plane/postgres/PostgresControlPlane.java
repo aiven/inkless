@@ -59,6 +59,8 @@ import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.control_plane.GetLogInfoRequest;
 import io.aiven.inkless.control_plane.GetLogInfoResponse;
+import io.aiven.inkless.control_plane.GetProducerStateRequest;
+import io.aiven.inkless.control_plane.GetProducerStateResponse;
 import io.aiven.inkless.control_plane.InitDisklessLogRequest;
 import io.aiven.inkless.control_plane.InitDisklessLogResponse;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
@@ -353,6 +355,20 @@ public class PostgresControlPlane extends AbstractControlPlane {
                 throw (ControlPlaneException) e;
             } else {
                 throw new ControlPlaneException("Failed to get log info", e);
+            }
+        }
+    }
+
+    @Override
+    public List<GetProducerStateResponse> getProducerState(final List<GetProducerStateRequest> requests) {
+        try {
+            final GetProducerStateJob job = new GetProducerStateJob(time, readJooqCtx, requests, pgMetrics::onGetProducerStateCompleted);
+            return job.call();
+        } catch (final Exception e) {
+            if (e instanceof ControlPlaneException) {
+                throw (ControlPlaneException) e;
+            } else {
+                throw new ControlPlaneException("Failed to get producer state", e);
             }
         }
     }
