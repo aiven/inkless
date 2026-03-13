@@ -23,7 +23,7 @@
   "flexibleVersions": "0+",
   "fields": [
     { "name": "MirrorName", "type": "string", "versions": "0+",
-      "about": "The mirror name to resume the topics for." },
+      "about": "The cluster mirror name to." },
     { "name": "Topics", "type": "[]TopicData", "versions": "0+", "about": "The data for the topics.",
       "fields": [
         { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
