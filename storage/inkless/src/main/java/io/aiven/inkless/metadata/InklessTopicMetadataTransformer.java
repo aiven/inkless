@@ -24,7 +24,6 @@ import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Utils;
-import org.apache.kafka.metadata.LeaderAndIsr;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -183,7 +182,8 @@ public class InklessTopicMetadataTransformer implements Closeable {
         // Keep original replicaNodes - show real RF to clients
         partition.setIsrNodes(result.aliveReplicas());
         partition.setOfflineReplicas(result.offlineReplicas());
-        partition.setLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH);
+        // Preserve the original leader epoch from the controller — clients may depend on
+        // epoch monotonicity for fencing (e.g., idempotent producer, consumer offset validation).
     }
 
     /**
@@ -215,7 +215,6 @@ public class InklessTopicMetadataTransformer implements Closeable {
         partition.setEligibleLeaderReplicas(Collections.emptyList());
         partition.setLastKnownElr(Collections.emptyList());
         partition.setOfflineReplicas(result.offlineReplicas());
-        partition.setLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH);
     }
 
     /**
@@ -236,7 +235,6 @@ public class InklessTopicMetadataTransformer implements Closeable {
         partition.setReplicaNodes(singleReplica);
         partition.setIsrNodes(singleReplica);
         partition.setOfflineReplicas(Collections.emptyList());
-        partition.setLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH);
     }
 
     /**
@@ -258,7 +256,6 @@ public class InklessTopicMetadataTransformer implements Closeable {
         partition.setEligibleLeaderReplicas(Collections.emptyList());
         partition.setLastKnownElr(Collections.emptyList());
         partition.setOfflineReplicas(Collections.emptyList());
-        partition.setLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH);
     }
 
     /**
