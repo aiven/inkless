@@ -41,6 +41,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -301,13 +302,13 @@ class DeleteRecordsInterceptorTest {
 
     @Test
     public void closeShutdownsExecutorService() throws IOException, InterruptedException {
-        when(executorService.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)).thenReturn(true);
+        when(executorService.awaitTermination(5, TimeUnit.SECONDS)).thenReturn(true);
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(controlPlane, metadataView, executorService);
 
         interceptor.close();
 
         verify(executorService).shutdown();
-        verify(executorService).awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+        verify(executorService).awaitTermination(5, TimeUnit.SECONDS);
     }
 }
