@@ -14,12 +14,14 @@
 // limitations under the License.
 
 {
-  "type": "data",
-  "name": "InitDisklessLogRequestData",
+  "apiKey": 500,
+  "type": "request",
+  "listeners": ["controller"],
+  "name": "InitDisklessLogRequest",
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "BrokerId", "type": "int32", "versions": "0+",
+    { "name": "BrokerId", "type": "int32", "versions": "0+", "entityType": "brokerId",
       "about": "The broker ID of the requesting leader." },
     { "name": "BrokerEpoch", "type": "int64", "versions": "0+", "default": "-1",
       "about": "The epoch of the requesting broker." },
