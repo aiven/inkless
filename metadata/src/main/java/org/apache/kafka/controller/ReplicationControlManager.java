@@ -2125,8 +2125,12 @@ public class ReplicationControlManager {
                 continue;
             }
 
-            // Skip diskless topics: the metadata transformer handles leader routing
-            // for diskless topics, so controller-level preferred leader election is unnecessary.
+            // Skip diskless topics: the metadata transformer handles leader routing,
+            // so controller-level preferred leader election is unnecessary.
+            // After reassignment, the leader may not match the preferred replica (replicas[0])
+            // because PartitionChangeBuilder.electLeader() prefers keeping the current leader.
+            // This is intentional — the metadata transformer routes requests independently of
+            // the preferred replica order.
             if (isDisklessTopic(topic.name)) {
                 continue;
             }
@@ -2599,6 +2603,8 @@ public class ReplicationControlManager {
         boolean isDiskless = isDisklessTopic(topics.get(tp.topicId()).name);
 
         // Diskless topics don't use local directories — skip the directory check in leader election.
+        // Any active (unfenced, not in controlled shutdown) broker can lead a diskless partition,
+        // since it reads all data from object storage rather than local disk.
         IntPredicate leaderAcceptor = isDiskless
             ? clusterControl::isActive
             : new LeaderAcceptor(clusterControl, part);
@@ -2615,8 +2621,20 @@ public class ReplicationControlManager {
 
         if (isDiskless) {
             // Diskless: data is in object storage, no replica sync needed.
-            // Apply target replicas directly — skip the staged adding/removing process.
-            // Only include active (unfenced, not in controlled shutdown) brokers in ISR.
+            // Apply target replicas directly — skip the staged adding/removing process
+            // (no addingReplicas/removingReplicas). This is safe because:
+            //
+            // 1. No offline risk: the reassignment is rejected if all target brokers are
+            //    fenced (see activeIsr check below). As long as at least one target broker
+            //    is active, PartitionChangeBuilder.electLeader() will elect it as leader
+            //    since the leaderAcceptor above only requires isActive (no directory check).
+            //
+            // 2. Cache warming: new leaders start with a cold InklessMetadataView cache,
+            //    which may cause higher fetch latency and increased object storage reads
+            //    until the cache is populated. This is a transient effect — the architecture
+            //    already assumes brokers are interchangeable since all data lives in object
+            //    storage. A future optimization could pre-warm target brokers' caches before
+            //    completing the reassignment.
             if (!target.replicas().equals(currentReplicas)) {
                 List<Integer> activeIsr = target.replicas().stream()
                     .filter(clusterControl::isActive)
