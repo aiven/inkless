@@ -166,6 +166,9 @@ class BrokerServer(
 
   var persister: Persister = _
 
+  var disklessMigrationManager: Option[DisklessMigrationManager] = None
+  private var disklessMigrationChannelManager: NodeToControllerChannelManager = _
+
   private def maybeChangeStatus(from: ProcessStatus, to: ProcessStatus): Boolean = {
     lock.lock()
     try {
@@ -353,6 +356,23 @@ class BrokerServer(
         )
       }
 
+      disklessMigrationChannelManager = new NodeToControllerChannelManagerImpl(
+        controllerNodeProvider,
+        time,
+        metrics,
+        config,
+        channelName = "diskless-migration",
+        s"broker-${config.nodeId}-",
+        retryTimeoutMs = 60000
+      )
+      disklessMigrationChannelManager.start()
+      disklessMigrationManager = Some(new DisklessMigrationManager(
+        controllerChannelManager = disklessMigrationChannelManager,
+        scheduler = kafkaScheduler,
+        brokerId = config.brokerId,
+        brokerEpochSupplier = () => lifecycleManager.brokerEpoch
+      ))
+
       this._replicaManager = new ReplicaManager(
         config = config,
         metrics = metrics,
@@ -371,7 +391,8 @@ class BrokerServer(
         directoryEventHandler = directoryEventHandler,
         defaultActionQueue = defaultActionQueue,
         inklessSharedState = inklessSharedState,
-        inklessMetadataView = Some(inklessMetadataView)
+        inklessMetadataView = Some(inklessMetadataView),
+        disklessMigrationManager = disklessMigrationManager
       )
 
       /* start token manager */
@@ -854,6 +875,9 @@ class BrokerServer(
 
       if (replicaManager != null)
         CoreUtils.swallow(replicaManager.shutdown(), this)
+
+      if (disklessMigrationChannelManager != null)
+        CoreUtils.swallow(disklessMigrationChannelManager.shutdown(), this)
 
       if (alterPartitionManager != null)
         CoreUtils.swallow(alterPartitionManager.shutdown(), this)

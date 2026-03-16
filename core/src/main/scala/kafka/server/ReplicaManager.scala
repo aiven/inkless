@@ -231,7 +231,8 @@ class ReplicaManager(val config: KafkaConfig,
                      val directoryEventHandler: DirectoryEventHandler = DirectoryEventHandler.NOOP,
                      val defaultActionQueue: ActionQueue = new DelayedActionQueue,
                      inklessSharedState: Option[SharedState] = None,
-                     inklessMetadataView: Option[InklessMetadataView] = None
+                     inklessMetadataView: Option[InklessMetadataView] = None,
+                     disklessMigrationManager: Option[DisklessMigrationManager] = None
                      ) extends Logging {
   // Changing the package or class name may cause incompatibility with existing code and metrics configuration
   private val metricsPackage = "kafka.server"
@@ -559,11 +560,13 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   def sealTopicPartitions(topic: String): Unit = {
+    val topicId = _inklessMetadataView.getTopicId(topic)
     allPartitions.forEach { (tp, hostedPartition) =>
       if (tp.topic() == topic) {
         hostedPartition match {
           case HostedPartition.Online(partition) if partition.isLeader =>
             partition.seal()
+            if (topicId != null) disklessMigrationManager.foreach(_.registerPartition(partition, topicId))
           case _ =>
         }
       }
@@ -2784,6 +2787,7 @@ class ReplicaManager(val config: KafkaConfig,
           partition.makeLeader(info.partition, false, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
           changedPartitions.add(partition)
+          disklessMigrationManager.foreach(_.registerPartition(partition, info.topicId))
         } catch {
           case e: KafkaStorageException =>
             stateChangeLogger.info(s"Skipped the become-leader state change for transitioning partition $tp " +
@@ -2808,8 +2812,9 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
-      if (!_inklessMetadataView.isDisklessTopic(tp.topic()))
-        getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
+      if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
+        disklessMigrationManager.foreach(_.removePartition(tp))
+      } else getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             followerTopicSet.add(tp.topic)
 
