@@ -349,11 +349,9 @@ public class ReplicationControlManager {
     private final ClassicTopicRemoteStorageForcePolicy classicTopicRemoteStorageForcePolicy;
 
     /**
-     * When true, diskless topics use managed replicas with RF = rack_count (one replica per rack).
+     * When true, diskless topics use managed replicas with user-defined RF
+     * (or {@code default.replication.factor} when RF=-1).
      * When false, diskless topics use legacy RF=1 behavior.
-     *
-     * <p>Phase 1 limitation: This config only affects topic creation. Add Partitions inherits
-     * RF from existing partitions (correct behavior - maintains consistency within the topic).
      */
     private final boolean isDisklessManagedReplicasEnabled;
 
@@ -2306,11 +2304,19 @@ public class ReplicationControlManager {
             ).assignments();
             isrs = partitionAssignments.stream().map(PartitionAssignment::replicas).toList();
         }
+        // For unmanaged diskless, ISR includes all replicas regardless of fenced state —
+        // consistent with topic creation. Data lives in object storage, so broker fencing
+        // doesn't affect data availability.
+        boolean isDiskless = isDisklessTopic(topic.name());
+        Predicate<Integer> brokerFilter = (isDiskless && !isDisklessManagedReplicasEnabled)
+            ? x -> true
+            : clusterControl::isActive;
+
         int partitionId = startPartitionId;
         for (int i = 0; i < partitionAssignments.size(); i++) {
             PartitionAssignment partitionAssignment = partitionAssignments.get(i);
             List<Integer> isr = isrs.get(i).stream().
-                filter(clusterControl::isActive).toList();
+                filter(brokerFilter).toList();
             // If the ISR is empty, it means that all brokers are fenced or
             // in controlled shutdown. To be consistent with the replica placer,
             // we reject the create topic request with INVALID_REPLICATION_FACTOR.

@@ -4558,6 +4558,50 @@ public class ReplicationControlManagerTest {
                 assertNotNull(partition, "Partition " + p + " should exist");
                 assertEquals(1, partition.replicas.length,
                     "Partition " + p + " should have RF=1");
+                assertTrue(partition.leader >= 0,
+                    "Partition " + p + " should have a valid leader");
+            }
+        }
+
+        @Test
+        public void testAddPartitionsWithFencedBroker() {
+            MetadataVersion metadataVersion = MetadataVersion.latestTesting();
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(metadataVersion)
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Create a diskless topic with RF=1 (unmanaged), 1 partition
+            String topic = "foo";
+            CreatableTopicResult createResult = ctx.createTestTopic(
+                topic, 1, (short) 1,
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"), NONE.code());
+
+            // Fence broker 2
+            ctx.fenceBrokers(2);
+
+            // Add 2 more partitions — should succeed, new partitions placed on unfenced brokers
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_PARTITIONS);
+            ControllerResult<List<CreatePartitionsTopicResult>> addResult =
+                replication.createPartitions(requestContext, List.of(
+                    new CreatePartitionsTopic().setName(topic).setCount(3).setAssignments(null)));
+            assertEquals(NONE.code(), addResult.response().get(0).errorCode());
+            ctx.replay(addResult.records());
+
+            // Verify new partitions are placed on unfenced brokers
+            for (int p = 1; p < 3; p++) {
+                PartitionRegistration partition = replication.getPartition(createResult.topicId(), p);
+                assertNotNull(partition, "Partition " + p + " should exist");
+                assertEquals(1, partition.replicas.length,
+                    "Partition " + p + " should have RF=1");
+                assertNotEquals(2, partition.replicas[0],
+                    "Partition " + p + " should not be placed on fenced broker");
+                assertTrue(partition.leader >= 0,
+                    "Partition " + p + " should have a valid leader");
             }
         }
 
