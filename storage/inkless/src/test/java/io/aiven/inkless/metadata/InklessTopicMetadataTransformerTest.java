@@ -494,6 +494,7 @@ class InklessTopicMetadataTransformerTest {
                             .setReplicaNodes(List.of(1, 2, 3))  // RF=3 (managed)
                             .setIsrNodes(List.of(1, 2, 3))
                             .setOfflineReplicas(Collections.emptyList())
+                            .setLeaderEpoch(7)
                     ))
             );
 
@@ -509,7 +510,7 @@ class InklessTopicMetadataTransformerTest {
             assertThat(partition.isrNodes()).isEqualTo(List.of(1, 2, 3));
             assertThat(partition.offlineReplicas()).isEmpty();
             assertThat(partition.errorCode()).isEqualTo(Errors.NONE.code());
-            assertThat(partition.leaderEpoch()).isEqualTo(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
         }
 
         @Test
@@ -527,6 +528,7 @@ class InklessTopicMetadataTransformerTest {
                             .setReplicaNodes(List.of(1, 3))  // No replicas in az0
                             .setIsrNodes(List.of(1, 3))
                             .setOfflineReplicas(Collections.emptyList())
+                            .setLeaderEpoch(7)
                     ))
             );
 
@@ -542,7 +544,7 @@ class InklessTopicMetadataTransformerTest {
             assertThat(partition.isrNodes()).isEqualTo(List.of(1, 3));
             assertThat(partition.offlineReplicas()).isEmpty();
             assertThat(partition.errorCode()).isEqualTo(Errors.NONE.code());
-            assertThat(partition.leaderEpoch()).isEqualTo(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
         }
 
         @Test
@@ -564,6 +566,7 @@ class InklessTopicMetadataTransformerTest {
                             .setReplicaNodes(List.of(1, 3))
                             .setIsrNodes(List.of(1, 3))
                             .setOfflineReplicas(Collections.emptyList())
+                            .setLeaderEpoch(7)
                     ))
             );
 
@@ -574,7 +577,7 @@ class InklessTopicMetadataTransformerTest {
             // Leader should be a cross-AZ replica (1 or 3)
             assertThat(partition.leaderId()).isIn(1, 3);
             assertThat(partition.errorCode()).isEqualTo(Errors.NONE.code());
-            assertThat(partition.leaderEpoch()).isEqualTo(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
         }
 
         @Test
@@ -597,6 +600,7 @@ class InklessTopicMetadataTransformerTest {
                             .setReplicaNodes(List.of(1, 3))
                             .setIsrNodes(List.of(1, 3))
                             .setOfflineReplicas(Collections.emptyList())
+                            .setLeaderEpoch(7)
                     ))
             );
 
@@ -612,7 +616,7 @@ class InklessTopicMetadataTransformerTest {
             assertThat(partition.isrNodes()).isEmpty();
             assertThat(partition.offlineReplicas()).containsExactlyInAnyOrder(1, 3);
             assertThat(partition.replicaNodes()).isEqualTo(List.of(1, 3));
-            assertThat(partition.leaderEpoch()).isEqualTo(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
         }
 
         @Test
@@ -631,6 +635,7 @@ class InklessTopicMetadataTransformerTest {
                                 .setOfflineReplicas(Collections.emptyList())
                                 .setEligibleLeaderReplicas(List.of(10, 11))
                                 .setLastKnownElr(List.of(10, 11))
+                                .setLeaderEpoch(7)
                         ))
                 ).iterator()));
 
@@ -646,7 +651,7 @@ class InklessTopicMetadataTransformerTest {
             assertThat(partition.eligibleLeaderReplicas()).isEmpty();
             assertThat(partition.lastKnownElr()).isEmpty();
             assertThat(partition.errorCode()).isEqualTo(Errors.NONE.code());
-            assertThat(partition.leaderEpoch()).isEqualTo(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
         }
 
         @Test
@@ -665,6 +670,7 @@ class InklessTopicMetadataTransformerTest {
                                 .setOfflineReplicas(Collections.emptyList())
                                 .setEligibleLeaderReplicas(List.of(10))
                                 .setLastKnownElr(List.of(10))
+                                .setLeaderEpoch(7)
                         ))
                 ).iterator()));
 
@@ -679,7 +685,7 @@ class InklessTopicMetadataTransformerTest {
             assertThat(partition.lastKnownElr()).isEmpty();
             assertThat(partition.offlineReplicas()).isEmpty();
             assertThat(partition.errorCode()).isEqualTo(Errors.NONE.code());
-            assertThat(partition.leaderEpoch()).isEqualTo(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
         }
     }
 
@@ -714,6 +720,7 @@ class InklessTopicMetadataTransformerTest {
                             .setReplicaNodes(List.of(1, 2, 3))
                             .setIsrNodes(List.of(1, 2, 3))
                             .setOfflineReplicas(Collections.emptyList())
+                            .setLeaderEpoch(7)
                     ))
             );
 
@@ -726,7 +733,7 @@ class InklessTopicMetadataTransformerTest {
             assertThat(partition.isrNodes()).isEqualTo(List.of(1, 2, 3));
             assertThat(partition.offlineReplicas()).isEmpty();
             assertThat(partition.errorCode()).isEqualTo(Errors.NONE.code());
-            assertThat(partition.leaderEpoch()).isEqualTo(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
         }
 
         @Test
@@ -745,6 +752,7 @@ class InklessTopicMetadataTransformerTest {
                             .setReplicaNodes(List.of(1, 3))  // No replicas in az0
                             .setIsrNodes(List.of(1, 3))
                             .setOfflineReplicas(Collections.emptyList())
+                            .setLeaderEpoch(7)
                     ))
             );
 
@@ -757,7 +765,7 @@ class InklessTopicMetadataTransformerTest {
             assertThat(partition.isrNodes()).isEqualTo(List.of(1, 3));
             assertThat(partition.offlineReplicas()).isEmpty();
             assertThat(partition.errorCode()).isEqualTo(Errors.NONE.code());
-            assertThat(partition.leaderEpoch()).isEqualTo(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
         }
 
         @Test
@@ -781,6 +789,7 @@ class InklessTopicMetadataTransformerTest {
                             .setReplicaNodes(List.of(1, 3))  // All offline
                             .setIsrNodes(List.of(1, 3))
                             .setOfflineReplicas(Collections.emptyList())
+                            .setLeaderEpoch(7)
                     ))
             );
 
@@ -796,7 +805,7 @@ class InklessTopicMetadataTransformerTest {
             // ISR should be empty (no alive replicas), offline should show all replicas
             assertThat(partition.isrNodes()).isEmpty();
             assertThat(partition.offlineReplicas()).containsExactlyInAnyOrder(1, 3);
-            assertThat(partition.leaderEpoch()).isEqualTo(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
         }
 
         @Test
@@ -819,6 +828,7 @@ class InklessTopicMetadataTransformerTest {
                             .setReplicaNodes(List.of(1, 2, 3))
                             .setIsrNodes(List.of(1, 2, 3))
                             .setOfflineReplicas(Collections.emptyList())
+                            .setLeaderEpoch(7)
                     ))
             );
 
@@ -835,7 +845,7 @@ class InklessTopicMetadataTransformerTest {
             // Replicas preserved (show real RF)
             assertThat(partition.replicaNodes()).isEqualTo(List.of(1, 2, 3));
             assertThat(partition.errorCode()).isEqualTo(Errors.NONE.code());
-            assertThat(partition.leaderEpoch()).isEqualTo(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
         }
 
         @Test
@@ -854,6 +864,7 @@ class InklessTopicMetadataTransformerTest {
                                 .setOfflineReplicas(Collections.emptyList())
                                 .setEligibleLeaderReplicas(List.of(10, 11))
                                 .setLastKnownElr(List.of(10, 11))
+                                .setLeaderEpoch(7)
                         ))
                 ).iterator()));
 
@@ -868,7 +879,7 @@ class InklessTopicMetadataTransformerTest {
             assertThat(partition.eligibleLeaderReplicas()).isEmpty();
             assertThat(partition.lastKnownElr()).isEmpty();
             assertThat(partition.errorCode()).isEqualTo(Errors.NONE.code());
-            assertThat(partition.leaderEpoch()).isEqualTo(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
         }
 
         @Test
@@ -888,6 +899,7 @@ class InklessTopicMetadataTransformerTest {
                                 .setOfflineReplicas(Collections.emptyList())
                                 .setEligibleLeaderReplicas(List.of(10))
                                 .setLastKnownElr(List.of(10))
+                                .setLeaderEpoch(7)
                         ))
                 ).iterator()));
 
@@ -902,7 +914,7 @@ class InklessTopicMetadataTransformerTest {
             assertThat(partition.eligibleLeaderReplicas()).isEmpty();
             assertThat(partition.lastKnownElr()).isEmpty();
             assertThat(partition.errorCode()).isEqualTo(Errors.NONE.code());
-            assertThat(partition.leaderEpoch()).isEqualTo(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
         }
 
         @Test
@@ -927,6 +939,7 @@ class InklessTopicMetadataTransformerTest {
                                 .setOfflineReplicas(Collections.emptyList())
                                 .setEligibleLeaderReplicas(List.of(10))
                                 .setLastKnownElr(List.of(10))
+                                .setLeaderEpoch(7)
                         ))
                 ).iterator()));
 
@@ -940,7 +953,58 @@ class InklessTopicMetadataTransformerTest {
             assertThat(partition.offlineReplicas()).containsExactlyInAnyOrder(1, 3);
             assertThat(partition.eligibleLeaderReplicas()).isEmpty();
             assertThat(partition.lastKnownElr()).isEmpty();
-            assertThat(partition.leaderEpoch()).isEqualTo(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
+        }
+
+        @Test
+        void clusterMetadata_preservesLeaderEpoch() {
+            final int originalLeaderEpoch = 5;
+            final var topicMetadata = List.of(
+                new MetadataResponseTopic()
+                    .setName(TOPIC_DISKLESS)
+                    .setTopicId(TOPIC_DISKLESS_ID)
+                    .setPartitions(List.of(
+                        new MetadataResponsePartition()
+                            .setPartitionIndex(0)
+                            .setLeaderId(1)
+                            .setReplicaNodes(List.of(1, 2))
+                            .setIsrNodes(List.of(1, 2))
+                            .setOfflineReplicas(Collections.emptyList())
+                            .setLeaderEpoch(originalLeaderEpoch)
+                    ))
+            );
+
+            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            transformer.transformClusterMetadata(LISTENER_NAME, "diskless_az=az0", topicMetadata);
+
+            final var partition = topicMetadata.get(0).partitions().get(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(originalLeaderEpoch);
+        }
+
+        @Test
+        void describeTopicResponse_preservesLeaderEpoch() {
+            final int originalLeaderEpoch = 7;
+            final var describeResponse = new DescribeTopicPartitionsResponseData()
+                .setTopics(new DescribeTopicPartitionsResponseTopicCollection(List.of(
+                    new DescribeTopicPartitionsResponseTopic()
+                        .setName(TOPIC_DISKLESS)
+                        .setTopicId(TOPIC_DISKLESS_ID)
+                        .setPartitions(List.of(
+                            new DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponsePartition()
+                                .setPartitionIndex(0)
+                                .setLeaderId(1)
+                                .setReplicaNodes(List.of(1, 2))
+                                .setIsrNodes(List.of(1, 2))
+                                .setOfflineReplicas(Collections.emptyList())
+                                .setLeaderEpoch(originalLeaderEpoch)
+                        ))
+                ).iterator()));
+
+            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            transformer.transformDescribeTopicResponse(LISTENER_NAME, "diskless_az=az0", describeResponse);
+
+            final var partition = describeResponse.topics().find(TOPIC_DISKLESS).partitions().get(0);
+            assertThat(partition.leaderEpoch()).isEqualTo(originalLeaderEpoch);
         }
     }
 }
