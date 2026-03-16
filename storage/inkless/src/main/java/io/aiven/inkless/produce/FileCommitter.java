@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
 
 import com.groupcdg.pitest.annotations.DoNotMutate;
@@ -35,6 +36,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -54,10 +56,26 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
 /**
  * The file committer.
  *
- * <p>It uploads files concurrently, but commits them to the control plan sequentially.
+ * <p>It uploads files concurrently, but commits them to the control plane sequentially.
+ *
+ * <h2>Thread Pool Lifecycle</h2>
+ * <p>This class manages three thread pools for upload, commit, and cache storage operations.
+ * The pools are created during construction and must be shut down via {@link #close()}.
+ *
+ * <p><b>Design Note:</b> Thread pools are created in the constructor arguments before delegation.
+ * If construction fails after pool creation (e.g., due to invalid arguments), the pools may leak.
+ * This is acceptable because:
+ * <ul>
+ *   <li>This is a broker startup component - construction failure prevents broker startup</li>
+ *   <li>The JVM would exit anyway, cleaning up all threads</li>
+ *   <li>Failure scenarios are low-probability edge cases (null arguments, OOM)</li>
+ * </ul>
+ * <p>Arguments are validated early in the delegated constructor to fail-fast before
+ * any significant work is done with the thread pools.
  */
 class FileCommitter implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitter.class);
+    private static final long EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 30;
 
     private final FileCommitterMetrics metrics;
 
@@ -244,9 +262,16 @@ class FileCommitter implements Closeable {
 
     @Override
     public void close() throws IOException {
-        // Don't wait here, they should try to finish their work.
+        // Reject new upload work immediately.
         executorServiceUpload.shutdown();
-        executorServiceCommit.shutdown();
+        // Cache is best-effort; cancel immediately rather than waiting.
+        executorServiceCacheStore.shutdownNow();
+        // Wait for in-flight commits to finish — each commit job internally blocks on its
+        // paired uploadFuture.get(), so this also waits for the corresponding uploads.
+        // Completing commits prevents orphaned files in object storage (uploaded but not registered).
+        ThreadUtils.shutdownExecutorServiceQuietly(executorServiceCommit, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        // Force-shutdown any remaining uploads that had no corresponding commit queued.
+        executorServiceUpload.shutdownNow();
         metrics.close();
         if (threadPoolMonitor != null) threadPoolMonitor.close();
     }

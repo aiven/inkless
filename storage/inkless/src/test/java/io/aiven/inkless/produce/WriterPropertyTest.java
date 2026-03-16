@@ -528,17 +528,17 @@ class WriterPropertyTest {
 
         @Override
         public boolean isShutdown() {
-            throw new RuntimeException("Not implemented");
+            return false;
         }
 
         @Override
         public boolean isTerminated() {
-            throw new RuntimeException("Not implemented");
+            return queue.isEmpty();
         }
 
         @Override
         public boolean awaitTermination(final long timeout, final TimeUnit unit) throws InterruptedException {
-            throw new RuntimeException("Not implemented");
+            return true;
         }
     }
 

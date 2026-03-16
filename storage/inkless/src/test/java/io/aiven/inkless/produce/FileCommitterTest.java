@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -41,6 +42,7 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.cache.BatchCoordinateCache;
 import io.aiven.inkless.cache.CaffeineBatchCoordinateCache;
@@ -64,6 +66,8 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -266,7 +270,9 @@ class FileCommitterTest {
     }
 
     @Test
-    void close() throws IOException {
+    void closeGraceful() throws IOException, InterruptedException {
+        when(executorServiceCommit.awaitTermination(30, TimeUnit.SECONDS)).thenReturn(true);
+
         final FileCommitter committer = new FileCommitter(
                 BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, storage,
                 KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, time,
@@ -275,9 +281,86 @@ class FileCommitterTest {
 
         committer.close();
 
+        // Upload pool rejects new work immediately.
         verify(executorServiceUpload).shutdown();
-        verify(executorServiceCommit).shutdown();
+        // Cache is best-effort, cancelled immediately.
+        verify(executorServiceCacheStore).shutdownNow();
+        // Commits are awaited (they internally wait for their paired uploads).
+        verify(executorServiceCommit).awaitTermination(30, TimeUnit.SECONDS);
+        // Graceful termination: no force-shutdown needed on commit pool.
+        verify(executorServiceCommit, never()).shutdownNow();
+        // Remaining uploads with no queued commit are force-stopped.
+        verify(executorServiceUpload).shutdownNow();
         verify(metrics).close();
+    }
+
+    @Test
+    void closeCommitPoolTimesOutThenTerminates() throws IOException, InterruptedException {
+        // First await returns false (timeout), after shutdownNow second await succeeds.
+        when(executorServiceCommit.awaitTermination(30, TimeUnit.SECONDS))
+            .thenReturn(false)
+            .thenReturn(true);
+
+        final FileCommitter committer = new FileCommitter(
+                BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, storage,
+                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, time,
+                3, Duration.ofMillis(100),
+                executorServiceUpload, executorServiceCommit, executorServiceCacheStore, metrics);
+
+        committer.close();
+
+        final InOrder commitOrder = inOrder(executorServiceCommit);
+        // Commit pool: shutdown → await → timeout → shutdownNow → await again.
+        commitOrder.verify(executorServiceCommit).shutdown();
+        commitOrder.verify(executorServiceCommit).awaitTermination(30, TimeUnit.SECONDS);
+        commitOrder.verify(executorServiceCommit).shutdownNow();
+        commitOrder.verify(executorServiceCommit).awaitTermination(30, TimeUnit.SECONDS);
+
+        verify(executorServiceUpload).shutdownNow();
+        verify(metrics).close();
+    }
+
+    @Test
+    void closeCommitPoolNeverTerminates() throws IOException, InterruptedException {
+        // Both awaits return false — pool never terminates.
+        when(executorServiceCommit.awaitTermination(30, TimeUnit.SECONDS))
+            .thenReturn(false)
+            .thenReturn(false);
+
+        final FileCommitter committer = new FileCommitter(
+                BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, storage,
+                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, time,
+                3, Duration.ofMillis(100),
+                executorServiceUpload, executorServiceCommit, executorServiceCacheStore, metrics);
+
+        committer.close();
+
+        verify(executorServiceCommit).shutdownNow();
+        // Cleanup still completes despite commit pool not terminating.
+        verify(executorServiceUpload).shutdownNow();
+        verify(metrics).close();
+    }
+
+    @Test
+    void closeInterruptedDuringAwait() throws IOException, InterruptedException {
+        when(executorServiceCommit.awaitTermination(30, TimeUnit.SECONDS))
+            .thenThrow(new InterruptedException("shutdown interrupted"));
+
+        final FileCommitter committer = new FileCommitter(
+                BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, storage,
+                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, time,
+                3, Duration.ofMillis(100),
+                executorServiceUpload, executorServiceCommit, executorServiceCacheStore, metrics);
+
+        committer.close();
+
+        // On interrupt: commit pool is force-shutdown.
+        verify(executorServiceCommit).shutdownNow();
+        // Rest of cleanup still runs.
+        verify(executorServiceUpload).shutdownNow();
+        verify(metrics).close();
+        // Interrupt flag is preserved.
+        assertThat(Thread.interrupted()).isTrue();
     }
 
     @Test
