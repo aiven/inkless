@@ -438,23 +438,23 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     }
 
     @Override
-    public AddTopicsToMirrorResult addTopicsToMirror(final Map<String, String> topicToMirrorName, final AddTopicsToMirrorOptions options) {
-        return adminDelegate.addTopicsToMirror(topicToMirrorName, options);
+    public AddTopicsToMirrorResult addTopicsToMirror(final String mirrorName, final Set<String> topics, final AddTopicsToMirrorOptions options) {
+        return adminDelegate.addTopicsToMirror(mirrorName, topics, options);
     }
 
     @Override
-    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(final Set<String> topics, final RemoveTopicsFromMirrorOptions options) {
-        return adminDelegate.removeTopicsFromMirror(topics, options);
+    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(final String mirrorName, final Set<String> topics, final RemoveTopicsFromMirrorOptions options) {
+        return adminDelegate.removeTopicsFromMirror(mirrorName, topics, options);
     }
 
     @Override
-    public PauseMirrorTopicsResult pauseMirrorTopics(final Set<String> topics, final PauseMirrorTopicsOptions options) {
-        return adminDelegate.pauseMirrorTopics(topics, options);
+    public PauseMirrorTopicsResult pauseMirrorTopics(final String mirrorName, final Set<String> topics, final PauseMirrorTopicsOptions options) {
+        return adminDelegate.pauseMirrorTopics(mirrorName, topics, options);
     }
 
     @Override
-    public ResumeMirrorTopicsResult resumeMirrorTopics(final Set<String> topics, final ResumeMirrorTopicsOptions options) {
-        return adminDelegate.resumeMirrorTopics(topics, options);
+    public ResumeMirrorTopicsResult resumeMirrorTopics(final String mirrorName, final Set<String> topics, final ResumeMirrorTopicsOptions options) {
+        return adminDelegate.resumeMirrorTopics(mirrorName, topics, options);
     }
 
     @Override

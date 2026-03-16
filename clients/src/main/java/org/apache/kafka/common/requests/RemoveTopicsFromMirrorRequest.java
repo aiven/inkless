@@ -35,10 +35,11 @@ public class RemoveTopicsFromMirrorRequest extends AbstractRequest {
             this.data = data;
         }
 
-        public Builder(Set<String> topics) {
+        public Builder(String mirrorName, Set<String> topics) {
             super(ApiKeys.REMOVE_TOPICS_FROM_MIRROR, ApiKeys.REMOVE_TOPICS_FROM_MIRROR.oldestVersion(),
                     ApiKeys.REMOVE_TOPICS_FROM_MIRROR.latestVersion());
             RemoveTopicsFromMirrorRequestData data = new RemoveTopicsFromMirrorRequestData();
+            data.setMirrorName(mirrorName);
             topics.forEach(topic -> data.topics().add(new RemoveTopicsFromMirrorRequestData.TopicData().setTopicName(topic)));
             this.data = data;
         }

@@ -17,10 +17,10 @@
 
 package org.apache.kafka.clients.admin;
 
-import java.util.Map;
+import java.util.Set;
 
 /**
- * Options for {@link Admin#addTopicsToMirror(Map, AddTopicsToMirrorOptions)}.
+ * Options for {@link Admin#addTopicsToMirror(String, Set, AddTopicsToMirrorOptions)}.
  */
 public class AddTopicsToMirrorOptions extends AbstractOptions<AddTopicsToMirrorOptions> {
 }

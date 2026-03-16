@@ -232,7 +232,7 @@ public abstract class MirrorCommand {
             // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
             Thread.sleep(1000);
             // Ensures the mirror.name config is properly set even when topics already exist
-            AddTopicsToMirrorResult addResult = adminClient.addTopicsToMirror(topics, new AddTopicsToMirrorOptions());
+            AddTopicsToMirrorResult addResult = adminClient.addTopicsToMirror(mirrorName, topics.keySet(), new AddTopicsToMirrorOptions());
             addResult.all().get();
 
             System.out.printf("Added %d topic(s) to mirror %s: %s%n", topics.size(), mirrorName, topics.keySet());
@@ -250,31 +250,33 @@ public abstract class MirrorCommand {
 
             // Remove all matching topics from the mirror
             RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = adminClient.removeTopicsFromMirror(
-                matchingTopics, new RemoveTopicsFromMirrorOptions());
+                mirrorName, matchingTopics, new RemoveTopicsFromMirrorOptions());
             removeTopicsFromMirrorResult.all().get();
             System.out.printf("Removed %d topic(s) from mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
         }
 
         private void pauseMirrorTopics(MirrorCommandOptions opts) throws Exception {
             String topicPattern = opts.topic().get();
+            String mirrorName = opts.mirror().get();
 
             var allTopics = adminClient.listTopics().names().get();
             Set<String> matchingTopics = matchTopics(allTopics, topicPattern);
 
-            PauseMirrorTopicsResult result = adminClient.pauseMirrorTopics(matchingTopics, new PauseMirrorTopicsOptions());
+            PauseMirrorTopicsResult result = adminClient.pauseMirrorTopics(mirrorName, matchingTopics, new PauseMirrorTopicsOptions());
             result.all().get();
-            System.out.printf("Paused mirroring for %d topic(s): %s%n", matchingTopics.size(), matchingTopics);
+            System.out.printf("Paused mirroring for %d topic(s) in mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
         }
 
         private void resumeMirrorTopics(MirrorCommandOptions opts) throws Exception {
             String topicPattern = opts.topic().get();
+            String mirrorName = opts.mirror().get();
 
             var allTopics = adminClient.listTopics().names().get();
             Set<String> matchingTopics = matchTopics(allTopics, topicPattern);
 
-            ResumeMirrorTopicsResult result = adminClient.resumeMirrorTopics(matchingTopics, new ResumeMirrorTopicsOptions());
+            ResumeMirrorTopicsResult result = adminClient.resumeMirrorTopics(mirrorName, matchingTopics, new ResumeMirrorTopicsOptions());
             result.all().get();
-            System.out.printf("Resumed mirroring for %d topic(s): %s%n", matchingTopics.size(), matchingTopics);
+            System.out.printf("Resumed mirroring for %d topic(s) in mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
         }
 
         private void listMirrors() throws ExecutionException, InterruptedException {
@@ -541,8 +543,8 @@ public abstract class MirrorCommand {
             if (!has(bootstrapServerOpt))
                 throw new IllegalArgumentException("--bootstrap-server must be specified");
 
-            // --mirror is required for create, alter, add, and remove operations, but optional for list, describe, pause, and resume
-            if (!has(listOpt) && !has(describeOpt) && !has(pauseOpt) && !has(resumeOpt) && !has(mirrorOpt))
+            // --mirror is required for create, alter, add, remove, pause, and resume operations, but optional for list and describe
+            if (!has(listOpt) && !has(describeOpt) && !has(mirrorOpt))
                 throw new IllegalArgumentException("--mirror must be specified");
 
             if (has(createOpt) && !has(mirrorConfigOpt))

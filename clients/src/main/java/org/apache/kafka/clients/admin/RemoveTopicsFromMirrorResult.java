@@ -29,7 +29,7 @@ import java.util.Set;
 public class RemoveTopicsFromMirrorResult {
     private final KafkaFuture<Void> future;
 
-    RemoveTopicsFromMirrorResult(final KafkaFuture<Void> future) {
+    RemoveTopicsFromMirrorResult(KafkaFuture<Void> future) {
         this.future = future;
     }
 

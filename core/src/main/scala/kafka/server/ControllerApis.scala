@@ -235,11 +235,12 @@ class ControllerApis(
     val addTopicsToMirrorRequest = request.body[AddTopicsToMirrorRequest]
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    val topicToMirrorName: util.Map[String, String] = new util.HashMap[String, String]()
+    val mirrorName = addTopicsToMirrorRequest.data().mirrorName()
+    val topics: util.Set[String] = new util.HashSet[String]()
     addTopicsToMirrorRequest.data().topics().forEach( topic => {
-        topicToMirrorName.put(topic.topicName(), topic.mirrorName())
+        topics.add(topic.topicName())
     })
-    controller.addTopicsToMirror(context, topicToMirrorName)
+    controller.addTopicsToMirror(context, mirrorName, topics)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
@@ -257,11 +258,12 @@ class ControllerApis(
     val removeTopicsFromMirrorRequest = request.body[RemoveTopicsFromMirrorRequest]
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
+    val mirrorName = removeTopicsFromMirrorRequest.data().mirrorName()
     val topics: util.Set[String] = new util.HashSet[String]()
     removeTopicsFromMirrorRequest.data().topics().forEach( topic => {
         topics.add(topic.topicName())
     })
-    controller.removeTopicsFromMirror(context, topics)
+    controller.removeTopicsFromMirror(context, mirrorName, topics)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
@@ -279,9 +281,10 @@ class ControllerApis(
     val pauseRequest = request.body[PauseMirrorTopicsRequest]
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
+    val mirrorName = pauseRequest.data().mirrorName()
     val topics: util.Set[String] = new util.HashSet[String]()
     pauseRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
-    controller.pauseMirrorTopics(context, topics)
+    controller.pauseMirrorTopics(context, mirrorName, topics)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
@@ -298,9 +301,10 @@ class ControllerApis(
     val resumeRequest = request.body[ResumeMirrorTopicsRequest]
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
+    val mirrorName = resumeRequest.data().mirrorName()
     val topics: util.Set[String] = new util.HashSet[String]()
     resumeRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
-    controller.resumeMirrorTopics(context, topics)
+    controller.resumeMirrorTopics(context, mirrorName, topics)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
