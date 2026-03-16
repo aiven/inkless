@@ -146,14 +146,13 @@ public class ServerConfigs {
     // RF=-1 resolves to default.replication.factor. Explicit RF values (1, 2, 3, ...) are accepted.
     // Placement uses standard rack-aware assignment.
     // When disabled (default), diskless topics use legacy RF=1 behavior (RF=-1 resolves to 1, RF > 1 rejected).
-    // This config only affects topic creation.
+    // This config affects topic creation and add-partitions (manual assignments allowed when enabled).
     public static final String DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG = "diskless.managed.rf.enable";
     public static final boolean DISKLESS_MANAGED_REPLICAS_ENABLE_DEFAULT = false;
     public static final String DISKLESS_MANAGED_REPLICAS_ENABLE_DOC = "When enabled, new diskless topics are created " +
         "with user-defined replication factor. RF=-1 resolves to default.replication.factor. " +
         "Explicit RF values are accepted. Placement uses standard rack-aware assignment. " +
-        "When disabled, diskless topics use legacy RF=1 behavior. " +
-        "This config only affects topic creation.";
+        "When disabled, diskless topics use legacy RF=1 behavior.";
 
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG = "classic.remote.storage.force.enable";
     public static final boolean CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT = false;
