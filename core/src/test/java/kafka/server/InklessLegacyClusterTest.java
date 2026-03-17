@@ -77,13 +77,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
-public class InklessClusterTest {
+public class InklessLegacyClusterTest {
     @Container
     protected static InklessPostgreSQLContainer pgContainer = PostgreSQLTestContainer.container();
     @Container
     protected static MinioContainer s3Container = S3TestContainer.minio();
 
-    private static final Logger log = LoggerFactory.getLogger(InklessClusterTest.class);
+    private static final Logger log = LoggerFactory.getLogger(InklessLegacyClusterTest.class);
 
     private KafkaClusterTestKit cluster;
 
