@@ -14,11 +14,14 @@
 // limitations under the License.
 
 {
-  "type": "data",
-  "name": "InitDisklessLogResponseData",
+  "apiKey": 500,
+  "type": "response",
+  "name": "InitDisklessLogResponse",
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
+    { "name": "ThrottleTimeMs", "type": "int32", "versions": "0+",
+      "about": "The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota." },
     { "name": "Topics", "type": "[]TopicResponse", "versions": "0+",
       "about": "Per-topic init results.", "fields": [
       { "name": "TopicId", "type": "uuid", "versions": "0+",
