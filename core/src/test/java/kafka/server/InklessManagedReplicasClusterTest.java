@@ -63,6 +63,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntFunction;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.config.InklessConfig;
@@ -200,42 +201,18 @@ public class InklessManagedReplicasClusterTest {
             }
         }
 
-        // Produce records
-        AtomicInteger recordsProduced = new AtomicInteger();
+        // Produce and consume records
         final long now = System.currentTimeMillis();
-        try (Producer<byte[], byte[]> producer = new KafkaProducer<>(clientConfigs)) {
-            for (int i = 0; i < numRecords; i++) {
-                byte[] value = ("message-" + i).getBytes(StandardCharsets.UTF_8);
-                // Distribute across partitions
-                int partition = i % numPartitions;
-                final ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topicName, partition, now, null, value);
-                producer.send(record, (metadata, exception) -> {
-                    if (exception != null) {
-                        log.error("Failed to send record", exception);
-                    } else {
-                        recordsProduced.incrementAndGet();
-                    }
-                });
-            }
-            producer.flush();
-        }
-        assertEquals(numRecords, recordsProduced.get());
+        produceRecords(clientConfigs, numRecords, i -> {
+            byte[] value = ("message-" + i).getBytes(StandardCharsets.UTF_8);
+            return new ProducerRecord<>(topicName, i % numPartitions, now, null, value);
+        });
 
-        // Consume records
-        int recordsConsumed = 0;
-        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(clientConfigs)) {
-            List<TopicPartition> partitions = new ArrayList<>();
-            for (int i = 0; i < numPartitions; i++) {
-                partitions.add(new TopicPartition(topicName, i));
-            }
-            consumer.assign(partitions);
-            for (int i = 0; i < 10; i++) {
-                ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(5));
-                recordsConsumed += poll.count();
-                if (recordsConsumed >= numRecords) break;
-            }
+        List<TopicPartition> partitions = new ArrayList<>();
+        for (int i = 0; i < numPartitions; i++) {
+            partitions.add(new TopicPartition(topicName, i));
         }
-        assertEquals(numRecords, recordsConsumed);
+        consumeWithAssign(clientConfigs, partitions, numRecords);
     }
 
     @Test
@@ -277,37 +254,13 @@ public class InklessManagedReplicasClusterTest {
                 "Leader should be the az1 broker (node 0) for a client with diskless_az=az1");
         }
 
-        // Produce records with AZ-aware client (client hints az1)
-        AtomicInteger recordsProduced = new AtomicInteger();
-        try (Producer<byte[], byte[]> producer = new KafkaProducer<>(clientConfigs)) {
-            for (int i = 0; i < numRecords; i++) {
-                byte[] value = ("az-message-" + i).getBytes(StandardCharsets.UTF_8);
-                final ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topicName, value);
-                producer.send(record, (metadata, exception) -> {
-                    if (exception != null) {
-                        log.error("Failed to send record", exception);
-                    } else {
-                        recordsProduced.incrementAndGet();
-                    }
-                });
-            }
-            producer.flush();
-        }
-        assertEquals(numRecords, recordsProduced.get());
+        // Produce and consume records with AZ-aware client
+        produceRecords(clientConfigs, numRecords, i -> {
+            byte[] value = ("az-message-" + i).getBytes(StandardCharsets.UTF_8);
+            return new ProducerRecord<>(topicName, value);
+        });
 
-        // Consume records with AZ-aware client (same az1 hint)
-        Map<String, Object> consumerConfigs = new HashMap<>(clientConfigs);
-        consumerConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString());
-        int recordsConsumed = 0;
-        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerConfigs)) {
-            consumer.subscribe(Collections.singletonList(topicName));
-            for (int i = 0; i < 10; i++) {
-                ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(5));
-                recordsConsumed += poll.count();
-                if (recordsConsumed >= numRecords) break;
-            }
-        }
-        assertEquals(numRecords, recordsConsumed);
+        consumeWithSubscribe(clientConfigs, topicName, numRecords);
     }
 
     @Test
@@ -340,5 +293,51 @@ public class InklessManagedReplicasClusterTest {
                     "Non-diskless topic should use explicit RF, not managed replicas");
             }
         }
+    }
+
+    private void produceRecords(Map<String, Object> configs, int numRecords,
+                                IntFunction<ProducerRecord<byte[], byte[]>> recordFactory) {
+        AtomicInteger recordsProduced = new AtomicInteger();
+        try (Producer<byte[], byte[]> producer = new KafkaProducer<>(configs)) {
+            for (int i = 0; i < numRecords; i++) {
+                producer.send(recordFactory.apply(i), (metadata, exception) -> {
+                    if (exception != null) {
+                        log.error("Failed to send record", exception);
+                    } else {
+                        recordsProduced.incrementAndGet();
+                    }
+                });
+            }
+            producer.flush();
+        }
+        assertEquals(numRecords, recordsProduced.get());
+    }
+
+    private void consumeWithAssign(Map<String, Object> configs, List<TopicPartition> partitions, int numRecords) {
+        int recordsConsumed = 0;
+        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(configs)) {
+            consumer.assign(partitions);
+            for (int i = 0; i < 10; i++) {
+                ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(5));
+                recordsConsumed += poll.count();
+                if (recordsConsumed >= numRecords) break;
+            }
+        }
+        assertEquals(numRecords, recordsConsumed);
+    }
+
+    private void consumeWithSubscribe(Map<String, Object> configs, String topic, int numRecords) {
+        Map<String, Object> consumerConfigs = new HashMap<>(configs);
+        consumerConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString());
+        int recordsConsumed = 0;
+        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerConfigs)) {
+            consumer.subscribe(Collections.singletonList(topic));
+            for (int i = 0; i < 10; i++) {
+                ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(5));
+                recordsConsumed += poll.count();
+                if (recordsConsumed >= numRecords) break;
+            }
+        }
+        assertEquals(numRecords, recordsConsumed);
     }
 }
