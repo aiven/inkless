@@ -9,6 +9,7 @@ This document describes how Inkless enables **client rack awareness** to route c
 - ✅ Client rack awareness implemented via `client.id` pattern
 - ✅ Works with any Kafka client version
 - ✅ Eliminates most cross-AZ costs for diskless topics
+- ✅ Managed replicas support: real KRaft-managed replicas with rack-aware placement (via `diskless.managed.rf.enable`)
 - ⚠️ Non-standard approach, requires user awareness
 
 ### Future State (KIP-1163)
@@ -78,6 +79,7 @@ broker.rack=us-east-1a
 
 **Used by:**
 - **Replica placement**: Kafka distributes partition replicas across different racks for fault tolerance
+- **Diskless managed replicas**: When `diskless.managed.rf.enable=true`, diskless topics use rack-aware placement (one replica per rack when possible)
 - **Consumer follower fetching**: Consumers with `client.rack` can fetch from nearby replicas
 - **Inkless client rack awareness**: Inkless uses this to match clients to brokers in the same AZ
 
@@ -227,14 +229,16 @@ broker_index = abs(murmur2(topicId + "-" + partitionIndex)) % eligible_brokers.s
 
 Diskless topics have fundamentally different ISR (In-Sync Replicas) semantics compared to classic topics:
 
-| Aspect                      | Classic Topics                      | Diskless Topics                               |
-|-----------------------------|-------------------------------------|-----------------------------------------------|
-| Replication                 | Brokers replicate data to followers | No inter-broker replication; object storage   |
-| ISR meaning                 | Replicas caught up with the leader  | All alive brokers are effectively "in-sync"   |
-| Leader election             | Based on ISR membership             | Any broker can serve any partition            |
-| Under-replicated partitions | Possible when followers fall behind | Not applicable; no replication to fall behind |
+| Aspect                      | Classic Topics                      | Diskless Topics (RF=1, legacy)               | Diskless Topics (managed replicas, RF > 1) |
+|-----------------------------|-------------------------------------|-----------------------------------------------|---------------------------------------------|
+| Replication                 | Brokers replicate data to followers | No inter-broker replication; object storage   | No inter-broker replication; object storage  |
+| ISR meaning                 | Replicas caught up with the leader  | All alive brokers are effectively "in-sync"   | Liveness-gated: alive replicas are in-sync   |
+| Leader election             | Based on ISR membership             | Any broker can serve any partition            | Standard KRaft election from ISR; transformer routes around failures |
+| Under-replicated partitions | Possible when followers fall behind | Not applicable; no replication to fall behind | Informational only; availability preserved by transformer |
 
-**Implication for client rack awareness:** Since any broker can serve any diskless partition, the client rack awareness mechanism simply selects a broker in the client's AZ. There's no concern about ISR membership or replica lag.
+**With managed replicas (RF > 1):** KRaft maintains real replica assignments with rack-aware placement. The metadata transformer prefers assigned replicas (same-AZ first) but falls back to any alive broker when all replicas are offline. ISR membership is liveness-gated — when a broker returns after fencing, it rejoins ISR immediately since data is in object storage and no catch-up is needed.
+
+**Implication for client rack awareness:** With managed replicas, the transformer prefers routing to assigned replicas in the client's AZ (improving cache locality and deterministic routing). With legacy RF=1, the transformer hashes to any broker in the client's AZ. In both cases, cross-AZ routing is a last resort.
 
 ### Advantages
 
