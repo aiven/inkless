@@ -80,10 +80,14 @@ public class InklessConfig extends AbstractConfig {
     private static final int CONSUME_CACHE_BLOCK_BYTES_DEFAULT = 16 * 1024 * 1024;  // 16 MiB
 
     public static final String CONSUME_CACHE_MAX_COUNT_CONFIG = CONSUME_PREFIX + "cache.max.count";
-    private static final String CONSUME_CACHE_MAX_COUNT_DOC = "The maximum number of objects to cache in memory. " +
-        "If the cache exceeds this limit, and the cache persistence is enabled, " +
-        "the least recently used objects will be persisted to disk and removed from memory.";
+    private static final String CONSUME_CACHE_MAX_COUNT_DOC = "The maximum number of objects to cache in memory.";
     private static final int CONSUME_CACHE_MAX_COUNT_DEFAULT = 1000;
+
+    public static final String CONSUME_CACHE_MAX_BYTES_CONFIG = CONSUME_PREFIX + "cache.max.bytes";
+    private static final String CONSUME_CACHE_MAX_BYTES_DOC = "Best-effort limit on cached data based on the sum of cached payload byte lengths. " +
+        "When set to a value greater than 0, byte-based eviction is used instead of count-based (" + CONSUME_CACHE_MAX_COUNT_CONFIG + "). " +
+        "Set to 0 (default) to use count-based eviction.";
+    private static final long CONSUME_CACHE_MAX_BYTES_DEFAULT = 0;
 
     public static final String CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG = CONSUME_PREFIX + "cache.expiration.lifespan.sec";
     private static final String CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DOC = "The lifespan in seconds of a cache entry before it will be removed from all storages.";
@@ -327,6 +331,14 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(1),
             ConfigDef.Importance.LOW,
             CONSUME_CACHE_MAX_COUNT_DOC
+        );
+        configDef.define(
+            CONSUME_CACHE_MAX_BYTES_CONFIG,
+            ConfigDef.Type.LONG,
+            CONSUME_CACHE_MAX_BYTES_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            CONSUME_CACHE_MAX_BYTES_DOC
         );
         configDef.define(
             CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG,
@@ -635,5 +647,9 @@ public class InklessConfig extends AbstractConfig {
 
     public Duration batchCoordinateCacheTtl() {
         return Duration.ofMillis(getInt(CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_CONFIG));
+    }
+
+    public long cacheMaxBytes() {
+        return getLong(CONSUME_CACHE_MAX_BYTES_CONFIG);
     }
 }

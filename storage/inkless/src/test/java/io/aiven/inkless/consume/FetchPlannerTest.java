@@ -346,7 +346,7 @@ public class FetchPlannerTest {
             // - Ensures multiple objects can be fetched through async API
             // - Validates that the async execution model works correctly
             // - Confirms data integrity when handling multiple async operations
-            try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                 final byte[] dataA = "data-for-a".getBytes();
                 final byte[] dataB = "data-for-b".getBytes();
 
@@ -415,7 +415,7 @@ public class FetchPlannerTest {
         @Test
         public void testCacheMiss() throws Exception {
             // Setup: Cache miss scenario - data not in cache, must fetch from remote
-            try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                 final byte[] expectedData = "test-data".getBytes();
                 final ByteBuffer byteBuffer = ByteBuffer.wrap(expectedData);
 
@@ -463,7 +463,7 @@ public class FetchPlannerTest {
         @Test
         public void testCacheHit() throws Exception {
             // Setup: Cache hit scenario - data already in cache
-            try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                 final byte[] expectedData = "cached-data".getBytes();
                 final FileExtent cachedFileExtent = new FileExtent().setData(expectedData);
 
@@ -505,7 +505,7 @@ public class FetchPlannerTest {
         @Test
         public void testFetchFailure() throws Exception {
             // Test that fetch failures are properly wrapped and propagated
-            try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
 
                 // Mock fetcher to throw exception
                 when(fetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
@@ -546,7 +546,7 @@ public class FetchPlannerTest {
             // This ensures transient errors (network issues, temporary S3 unavailability) don't
             // permanently block access to data.
 
-            try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                 final byte[] expectedData = "recovered-data".getBytes();
 
                 // First call fails, second call succeeds
@@ -600,7 +600,7 @@ public class FetchPlannerTest {
             // This validates the cache's deduplication behavior which prevents redundant
             // fetches to object storage when multiple threads/requests need the same data.
 
-            try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                 final byte[] expectedData = "shared-data".getBytes();
 
                 // Mock fetcher to return data
@@ -649,7 +649,7 @@ public class FetchPlannerTest {
             // Test that the FetchPlanner records metrics at various stages of the fetch operation.
             // This ensures observability into the system's behavior.
 
-            try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                 final byte[] dataA = "data-a".getBytes();
                 final byte[] dataB = "data-bb".getBytes();
 
@@ -697,7 +697,7 @@ public class FetchPlannerTest {
             // ALL data should use the hot path (cache + recentDataExecutor), regardless of data age.
             // This test verifies that old data that would normally use cold path
             // still uses hot path when the feature is disabled.
-            try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                 final byte[] expectedData = "old-data-but-hot-path".getBytes();
 
                 when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
@@ -739,7 +739,7 @@ public class FetchPlannerTest {
             // Test that execution path handles empty batches gracefully.
             // This verifies the defensive check in createFetchRequests works correctly
             // and that the full execution flow (planning + execution) handles empty batches.
-            try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                 // Response with Errors.NONE but empty batches list
                 final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                     partition0, FindBatchResponse.success(List.of(), 0, 1) // Empty batches
@@ -776,7 +776,7 @@ public class FetchPlannerTest {
             @Test
             public void recentDataUsesRecentExecutorWithoutRateLimit() throws Exception {
                 // Validates hot path: recent data uses recent executor, no rate limiting
-                try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+                try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] expectedData = "recent-data".getBytes();
                     final Bucket rateLimiter = Bucket.builder()
                         .addLimit(limit -> limit.capacity(1).refillGreedy(1, java.time.Duration.ofSeconds(1)))
@@ -818,7 +818,7 @@ public class FetchPlannerTest {
             @Test
             public void boundaryConditionExactlyAtThreshold() throws Exception {
                 // Validates boundary: dataAge == threshold uses hot path
-                try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+                try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] expectedData = "boundary-data".getBytes();
                     final long threshold = 60 * 1000L;
 
@@ -858,7 +858,7 @@ public class FetchPlannerTest {
             @Test
             public void laggingDataUsesLaggingExecutorWithRateLimit() throws Exception {
                 // Validates cold path: old data uses lagging executor with rate limiting
-                try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+                try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] expectedData = "old-data".getBytes();
                     final Bucket rateLimiter = Bucket.builder()
                         .addLimit(limit -> limit.capacity(10).refillGreedy(10, java.time.Duration.ofSeconds(1)))
@@ -901,7 +901,7 @@ public class FetchPlannerTest {
             @Test
             public void laggingDataWithoutRateLimiter() throws Exception {
                 // Validates cold path works without rate limiter (optional feature)
-                try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+                try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] expectedData = "old-data-no-limit".getBytes();
 
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
@@ -940,7 +940,7 @@ public class FetchPlannerTest {
             @Test
             public void fetchFailureInColdPathPropagatesException() throws Exception {
                 // Test that fetch failures in the cold path are properly wrapped and propagated
-                try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+                try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     // Mock fetcher to throw exception
                     when(fetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
                         .thenThrow(new RuntimeException("S3 unavailable"));
@@ -984,7 +984,7 @@ public class FetchPlannerTest {
             public void executorQueueFullThrowsRejectedExecutionException() throws Exception {
                 // Test that RejectedExecutionException is thrown when lagging consumer executor queue is full.
                 // This validates the AbortPolicy backpressure mechanism.
-                try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+                try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     // Create a saturated executor: 1 thread + 1 queue slot, both occupied
                     final CountDownLatch blockLatch = new CountDownLatch(1);
                     final CountDownLatch threadStartedLatch = new CountDownLatch(1);
@@ -1085,7 +1085,7 @@ public class FetchPlannerTest {
                 // This validates that shutdown scenarios are properly monitored.
                 // Note: This tests shutdown behavior, which is different from queue saturation
                 // (tested in executorQueueFullThrowsRejectedExecutionException).
-                try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+                try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     // Create an executor that we'll shut down
                     final ExecutorService shutdownExecutor = new ThreadPoolExecutor(
                         1,  // corePoolSize
@@ -1154,7 +1154,7 @@ public class FetchPlannerTest {
             @Test
             public void multipleRequestsMixedHotAndColdPaths() throws Exception {
                 // Validates path selection is per-request: some hot, some cold
-                try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+                try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] recentData = "recent".getBytes();
                     final byte[] oldData = "old".getBytes();
                     final long threshold = 60 * 1000L;
@@ -1200,7 +1200,7 @@ public class FetchPlannerTest {
                 // Validates that hot and cold paths execute concurrently on separate executors.
                 // This ensures thread pool isolation works correctly and both paths can make progress
                 // simultaneously without blocking each other.
-                try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+                try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] recentData = "recent-concurrent".getBytes();
                     final byte[] oldData = "old-concurrent".getBytes();
                     final long threshold = 60 * 1000L;
@@ -1285,7 +1285,7 @@ public class FetchPlannerTest {
             @Test
             public void allRequestsUseRecentPathWhenFeatureDisabled() throws Exception {
                 // Validates: laggingConsumerExecutor = null → feature disabled, all use hot path
-                try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+                try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] expectedData = "all-recent".getBytes();
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
                     when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
@@ -1318,7 +1318,7 @@ public class FetchPlannerTest {
             @Test
             public void rateLimiterCanBeDisabledIndependently() throws Exception {
                 // Validates: rateLimiter = null → cold path without rate limiting
-                try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+                try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] expectedData = "cold-no-limit".getBytes();
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
                     when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
@@ -1352,7 +1352,7 @@ public class FetchPlannerTest {
             @Test
             public void bothFeaturesCanBeEnabled() throws Exception {
                 // Validates: both executor and rate limiter enabled → full cold path
-                try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+                try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] expectedData = "cold-with-limit".getBytes();
                     final Bucket rateLimiter = Bucket.builder()
                         .addLimit(limit -> limit.capacity(10).refillGreedy(10, java.time.Duration.ofSeconds(1)))
