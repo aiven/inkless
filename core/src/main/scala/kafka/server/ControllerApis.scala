@@ -138,6 +138,7 @@ class ControllerApis(
         case ApiKeys.ADD_RAFT_VOTER => handleAddRaftVoter(request)
         case ApiKeys.REMOVE_RAFT_VOTER => handleRemoveRaftVoter(request)
         case ApiKeys.UPDATE_RAFT_VOTER => handleUpdateRaftVoter(request)
+        case ApiKeys.INIT_DISKLESS_LOG => handleInitDisklessLogRequest(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
       }
 
@@ -664,6 +665,22 @@ class ControllerApis(
         alterPartitionRequest.getErrorResponse(exception)
       } else {
         new AlterPartitionResponse(result)
+      }
+      requestHelper.sendResponseExemptThrottle(request, response)
+    }
+  }
+
+  def handleInitDisklessLogRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    val initDisklessLogRequest = request.body[InitDisklessLogRequest]
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      OptionalLong.empty())
+    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    val future = controller.initDisklessLog(context, initDisklessLogRequest.data)
+    future.handle[Unit] { (result, exception) =>
+      val response = if (exception != null) {
+        initDisklessLogRequest.getErrorResponse(exception)
+      } else {
+        new InitDisklessLogResponse(result)
       }
       requestHelper.sendResponseExemptThrottle(request, response)
     }
