@@ -68,13 +68,15 @@ docker compose exec broker /opt/kafka/bin/kafka-topics.sh \
   --describe --topic test-managed
 ```
 
-Expected output:
+Example output (your exact leader/replica ordering may differ):
 ```
 Topic: test-managed  PartitionCount: 3  ReplicationFactor: 2
   Partition: 0  Leader: 1  Replicas: 1,2  Isr: 1,2
   Partition: 1  Leader: 2  Replicas: 2,1  Isr: 2,1
   Partition: 2  Leader: 1  Replicas: 1,2  Isr: 1,2
 ```
+
+You should verify that `ReplicationFactor: 2` and that each partition's replicas include both broker IDs `1` and `2` (one replica per AZ).
 
 **Step 3: Produce messages**
 
