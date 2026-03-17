@@ -20,7 +20,12 @@ package org.apache.kafka.common.requests;
 import org.apache.kafka.common.message.InitDisklessLogRequestData;
 import org.apache.kafka.common.message.InitDisklessLogResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 
 public class InitDisklessLogRequest extends AbstractRequest {
 
@@ -38,8 +43,18 @@ public class InitDisklessLogRequest extends AbstractRequest {
 
     @Override
     public AbstractResponse getErrorResponse(int throttleTimeMs, Throwable e) {
+        List<InitDisklessLogResponseData.TopicResponse> results = new ArrayList<>();
+        data.topics().forEach(
+            topicData -> results.add(new InitDisklessLogResponseData.TopicResponse()
+                .setTopicId(topicData.topicId())
+                .setPartitions(topicData.partitions().stream()
+                    .map(partitionData -> new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionData.partitionId())
+                        .setErrorCode(Errors.forException(e).code()))
+                    .collect(Collectors.toList()))));
         return new InitDisklessLogResponse(new InitDisklessLogResponseData()
-            .setThrottleTimeMs(throttleTimeMs));
+            .setThrottleTimeMs(throttleTimeMs)
+            .setTopics(results));
     }
 
     public static InitDisklessLogRequest parse(Readable readable, short version) {
