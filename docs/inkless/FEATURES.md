@@ -16,6 +16,7 @@ Currently Diskless topics support:
 * ListOffsets
 * Access restriction via ACLs
 * Committing offsets via traditional Group Coordinators
+* Managed replicas with user-defined replication factor (see [Managed Replicas](#managed-replicas))
 
 The following are notable unsupported features:
 * cleanup.policy=delete
@@ -41,8 +42,9 @@ If not specified above, features are untested and assumed to be inoperable.
     - the output is modified according to client and broker racks.
 - `CREATE_TOPICS`
     - Diskless topics cannot be created with the remote storage enabled;
-    - the replication factor must be `1` or `-1`;
-    - the initial partition assignment provided by the user is ignored.
+    - when `diskless.managed.rf.enable=false` (default): the replication factor must be `1` or `-1` (resolves to 1);
+    - when `diskless.managed.rf.enable=true`: any valid RF is accepted — RF=-1 resolves to `default.replication.factor`, explicit RF values (1, 2, 3, ...) are accepted, and placement uses standard rack-aware assignment;
+    - manual replica assignments are accepted only when `diskless.managed.rf.enable=true` (rejected in legacy mode).
 - `DELETE_TOPICS`
 - `DELETE_RECORDS`
 - `OFFSET_FOR_LEADER_EPOCH`
@@ -50,10 +52,12 @@ If not specified above, features are untested and assumed to be inoperable.
 - `ALTER_CONFIGS`
     - the remote storage cannot be enabled for Diskless topics.
 - `CREATE_PARTITIONS`
+    - manual partition assignments are accepted only when `diskless.managed.rf.enable=true` (rejected in legacy mode).
 - `INCREMENTAL_ALTER_CONFIGS`
     - the remote storage cannot be enabled for Diskless topics.
 - `ALTER_PARTITION_REASSIGNMENTS`
-    - the replication factor can't be changed for Diskless topics.
+    - the replication factor can't be changed for Diskless topics;
+    - reassignments for diskless topics are applied immediately (no staged adding/removing) since data lives in object storage and all brokers are instantly in-sync.
 
 ### Diskless topics are excluded
 - `ADD_PARTITIONS_TO_TXN`
@@ -142,6 +146,51 @@ If not specified above, features are untested and assumed to be inoperable.
 - `DESCRIBE_SHARE_GROUP_OFFSETS`
 - `ALTER_SHARE_GROUP_OFFSETS`
 - `DELETE_SHARE_GROUP_OFFSETS`
+
+## Managed Replicas
+
+Diskless topics can optionally use **managed replicas** — real KRaft-managed replicas with rack-aware placement. These replicas are metadata-only: they provide deterministic broker assignment and leadership, but there is no inter-broker data replication (data remains in object storage). This is controlled by the `diskless.managed.rf.enable` server configuration.
+
+### Activation
+
+| Config | Default | Description |
+|--------|---------|-------------|
+| `diskless.managed.rf.enable` | `false` | When enabled, new diskless topics accept user-defined RF and partition expansion (`CREATE_PARTITIONS`) allows manual assignments. Does not retrofit existing replica sets. |
+| `default.replication.factor` | `1` | Used when RF=-1 is specified. Operators typically set this to match the rack/AZ count. |
+
+### Behavior
+
+| Aspect | `diskless.managed.rf.enable=false` (legacy) | `diskless.managed.rf.enable=true` |
+|--------|----------------------------------------------|-----------------------------------|
+| RF=-1 | Resolves to 1 | Resolves to `default.replication.factor` |
+| RF=1 | Accepted | Accepted |
+| RF > 1 | Rejected | Accepted |
+| Placement | Single replica (any broker) | Standard rack-aware (`ReplicaPlacer`) |
+
+### ISR Semantics
+
+Diskless replicas require no lag-based catch-up because data lives in object storage, not on broker-local disks. ISR membership is determined solely by broker liveness:
+- ISR membership is **liveness-gated** (broker alive/unfenced), not lag-gated
+- When a broker is fenced or shut down, it is removed from ISR
+- When a broker returns, it is added back to ISR immediately — no catch-up required
+- `min.insync.replicas` semantics remain intact
+
+### Partition Reassignment
+
+Diskless partition reassignment is **immediate** — there is no staged adding/removing process because all brokers can serve from object storage instantly. The ISR is set to the active (unfenced, not in controlled shutdown) brokers in the new replica set upon reassignment.
+
+### Controller Metrics
+
+New JMX metrics are available on the active controller (`kafka.controller:type=KafkaController,name=<MetricName>`, e.g. `kafka.controller:type=KafkaController,name=DisklessTopicCount`):
+
+| Metric | Description |
+|--------|-------------|
+| `DisklessTopicCount` | Total number of diskless topics |
+| `DisklessPartitionCount` | Total number of partitions in diskless topics |
+| `DisklessOfflinePartitionCount` | Diskless partitions without a leader (leader=-1), typically because no eligible assigned replica is available to lead |
+
+These metrics are tracked separately from classic partition metrics to avoid false alerts — diskless topics may show offline replicas in KRaft metadata while remaining fully available via the metadata transformer.
+
 
 # Roadmap
 
