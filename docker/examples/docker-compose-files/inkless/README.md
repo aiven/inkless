@@ -13,7 +13,7 @@ See the [Quickstart guide](../../../../docs/inkless/QUICKSTART.md#dockerized-dem
 | `make azure-local`      | Azurite Azure-compatible storage                  |
 | `make s3-aws`           | Real AWS S3 (requires AWS credentials)            |
 | `make managed-replicas` | Multi-AZ cluster with managed replicas (RF=2)     |
-| `make destroy`          | Manual cleanup (automatic on Ctrl+C)              |
+| `make destroy`          | Manual cleanup (run after stopping the demo)      |
 
 ## Image version
 
