@@ -166,8 +166,8 @@ class BrokerServer(
 
   var persister: Persister = _
 
-  var disklessMigrationManager: Option[DisklessMigrationManager] = None
-  private var disklessMigrationChannelManager: NodeToControllerChannelManager = _
+  private var maybeInitDisklessLogManager: Option[InitDisklessLogManager] = None
+  private var initDisklessLogChannelManager: NodeToControllerChannelManager = _
 
   private def maybeChangeStatus(from: ProcessStatus, to: ProcessStatus): Boolean = {
     lock.lock()
@@ -356,7 +356,7 @@ class BrokerServer(
         )
       }
 
-      disklessMigrationChannelManager = new NodeToControllerChannelManagerImpl(
+      initDisklessLogChannelManager = new NodeToControllerChannelManagerImpl(
         controllerNodeProvider,
         time,
         metrics,
@@ -365,9 +365,9 @@ class BrokerServer(
         s"broker-${config.nodeId}-",
         retryTimeoutMs = 60000
       )
-      disklessMigrationChannelManager.start()
-      disklessMigrationManager = Some(new DisklessMigrationManager(
-        controllerChannelManager = disklessMigrationChannelManager,
+      initDisklessLogChannelManager.start()
+      maybeInitDisklessLogManager = Some(new InitDisklessLogManager(
+        controllerChannelManager = initDisklessLogChannelManager,
         scheduler = kafkaScheduler,
         brokerId = config.brokerId,
         brokerEpochSupplier = () => lifecycleManager.brokerEpoch
@@ -392,7 +392,7 @@ class BrokerServer(
         defaultActionQueue = defaultActionQueue,
         inklessSharedState = inklessSharedState,
         inklessMetadataView = Some(inklessMetadataView),
-        disklessMigrationManager = disklessMigrationManager
+        initDisklessLogManager = maybeInitDisklessLogManager
       )
 
       /* start token manager */
@@ -876,8 +876,8 @@ class BrokerServer(
       if (replicaManager != null)
         CoreUtils.swallow(replicaManager.shutdown(), this)
 
-      if (disklessMigrationChannelManager != null)
-        CoreUtils.swallow(disklessMigrationChannelManager.shutdown(), this)
+      if (initDisklessLogChannelManager != null)
+        CoreUtils.swallow(initDisklessLogChannelManager.shutdown(), this)
 
       if (alterPartitionManager != null)
         CoreUtils.swallow(alterPartitionManager.shutdown(), this)

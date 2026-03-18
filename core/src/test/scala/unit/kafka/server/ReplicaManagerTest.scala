@@ -7001,7 +7001,7 @@ class ReplicaManagerTest {
       val inklessMetadata = mock(classOf[InklessMetadataView])
       when(inklessMetadata.isDisklessTopic(any())).thenReturn(false)
 
-      val migrationManager = mock(classOf[DisklessMigrationManager])
+      val initDisklessLogManager = mock(classOf[InitDisklessLogManager])
       val tp = new TopicPartition(topicName, 0)
 
       val rm = new ReplicaManager(
@@ -7015,7 +7015,7 @@ class ReplicaManagerTest {
         logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size),
         alterPartitionManager = alterPartitionManager,
         inklessMetadataView = Some(inklessMetadata),
-        disklessMigrationManager = Some(migrationManager))
+        initDisklessLogManager = Some(initDisklessLogManager))
 
       try {
         // Create the partition as a classic follower (leader is broker 1)
@@ -7037,7 +7037,7 @@ class ReplicaManagerTest {
         val leaderImage = imageFromTopics(leaderDelta.apply())
         rm.applyDelta(leaderDelta, leaderImage)
 
-        verify(migrationManager).registerPartition(any(classOf[Partition]), org.mockito.ArgumentMatchers.eq(transTopicId))
+        verify(initDisklessLogManager).registerPartition(any(classOf[Partition]), org.mockito.ArgumentMatchers.eq(transTopicId))
 
         // Now transition back to follower (leader moves to broker 1)
         val followerDelta = new TopicsDelta(leaderDelta.apply())
@@ -7047,7 +7047,7 @@ class ReplicaManagerTest {
         val followerImage = imageFromTopics(followerDelta.apply())
         rm.applyDelta(followerDelta, followerImage)
 
-        verify(migrationManager).removePartition(tp)
+        verify(initDisklessLogManager).removePartition(tp)
       } finally {
         rm.shutdown(checkpointHW = false)
       }

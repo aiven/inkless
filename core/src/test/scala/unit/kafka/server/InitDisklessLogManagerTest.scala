@@ -37,7 +37,7 @@ import java.util.Optional
 import java.util.concurrent.ConcurrentLinkedQueue
 import scala.jdk.CollectionConverters._
 
-class DisklessMigrationManagerTest {
+class InitDisklessLogManagerTest {
 
   private val brokerId = 0
   private val brokerEpoch = 42L
@@ -47,14 +47,14 @@ class DisklessMigrationManagerTest {
   private var channelManager: MockInitDisklessLogChannelManager = _
   private var mockTime: MockTime = _
   private var scheduler: MockScheduler = _
-  private var manager: DisklessMigrationManager = _
+  private var manager: InitDisklessLogManager = _
 
   @BeforeEach
   def setUp(): Unit = {
     channelManager = new MockInitDisklessLogChannelManager()
     mockTime = new MockTime()
     scheduler = new MockScheduler(mockTime)
-    manager = new DisklessMigrationManager(
+    manager = new InitDisklessLogManager(
       controllerChannelManager = channelManager,
       scheduler = scheduler,
       brokerId = brokerId,
@@ -444,10 +444,26 @@ class DisklessMigrationManagerTest {
   }
 
   @Test
-  def testPartitionWithNoLogIsSkipped(): Unit = {
-    // Given a partition with no log
+  def testUnsealedPartitionIsSkipped(): Unit = {
+    // Given a partition that is not sealed
     val partition = mock(classOf[Partition])
     when(partition.topicPartition).thenReturn(tp0)
+    when(partition.isSealed).thenReturn(false)
+
+    // When the partition is registered
+    manager.registerPartition(partition, topicId)
+
+    // Then it is not tracked and the controller is not called
+    assertTrue(manager.trackedPartitions.isEmpty)
+    assertTrue(channelManager.requests.isEmpty)
+  }
+
+  @Test
+  def testPartitionWithNoLogIsSkipped(): Unit = {
+    // Given a sealed partition with no log
+    val partition = mock(classOf[Partition])
+    when(partition.topicPartition).thenReturn(tp0)
+    when(partition.isSealed).thenReturn(true)
     when(partition.log).thenReturn(None)
 
     // When the partition is registered
