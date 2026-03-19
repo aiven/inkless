@@ -6869,6 +6869,7 @@ class ReplicaManagerTest {
       val aliveBrokers = Seq(new Node(0, "host0", 0), new Node(1, "host1", 1))
       mockGetAliveBrokerFunctions(metadataCache, aliveBrokers)
       when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_VERSION)
+      val initDisklessLogManager = mock(classOf[InitDisklessLogManager])
       val rm = new ReplicaManager(
         metrics = metrics,
         config = config,
@@ -6878,7 +6879,8 @@ class ReplicaManagerTest {
         quotaManagers = quotaManager,
         metadataCache = metadataCache,
         logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size),
-        alterPartitionManager = alterPartitionManager)
+        alterPartitionManager = alterPartitionManager,
+        initDisklessLogManager = Some(initDisklessLogManager))
 
       try {
         val topicToSeal = "topic-to-seal"
@@ -6938,6 +6940,7 @@ class ReplicaManagerTest {
       val transTopicId = Uuid.randomUuid()
       setupMetadataCacheWithTopicIds(Map(topicName -> transTopicId), kraftMetadataCache)
 
+      val initDisklessLogManager = mock(classOf[InitDisklessLogManager])
       val inklessMetadata = mock(classOf[InklessMetadataView])
       when(inklessMetadata.isDisklessTopic(any())).thenReturn(false)
 
@@ -6951,7 +6954,9 @@ class ReplicaManagerTest {
         metadataCache = kraftMetadataCache,
         logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size),
         alterPartitionManager = alterPartitionManager,
-        inklessMetadataView = Some(inklessMetadata))
+        inklessMetadataView = Some(inklessMetadata),
+        initDisklessLogManager = Some(initDisklessLogManager)
+      )
 
       try {
         // First, create the partition as a classic follower (leader is broker 1)
@@ -6985,7 +6990,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testApplyDeltaRemovesFromMigrationManagerOnFollowerTransition(): Unit = {
+    def testApplyDeltaRemovesFromInitDisklessLogManagerOnFollowerTransition(): Unit = {
       val props = TestUtils.createBrokerConfig(0)
       val config = KafkaConfig.fromProps(props)
       val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
