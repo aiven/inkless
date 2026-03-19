@@ -80,13 +80,14 @@ public class InklessConfigsTest {
     }
 
     private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig, boolean disklessStorageEnableConfig, boolean isDisklessAllowFromClassicEnabled) throws Exception {
-        return init(defaultDisklessEnableConfig, disklessStorageEnableConfig, isDisklessAllowFromClassicEnabled, isDisklessAllowFromClassicEnabled, true, false, List.of());
+        return init(defaultDisklessEnableConfig, disklessStorageEnableConfig, isDisklessAllowFromClassicEnabled, isDisklessAllowFromClassicEnabled, false, true, false, List.of());
     }
 
     private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig,
                                      boolean disklessStorageEnableConfig,
                                      boolean isDisklessAllowFromClassicEnabled,
                                      boolean disklessManagedReplicasEnabled,
+                                     boolean disklessRemoteStorageConsolidationEnabled,
                                      boolean remoteLogStorageSystemEnabled,
                                      boolean classicRemoteStorageForceEnabled,
                                      List<String> classicRemoteStorageForceExcludeTopicRegexes) throws Exception {
@@ -101,6 +102,7 @@ public class InklessConfigsTest {
             .setConfigProp(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, String.valueOf(disklessStorageEnableConfig))
             .setConfigProp(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, String.valueOf(isDisklessAllowFromClassicEnabled))
             .setConfigProp(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, String.valueOf(disklessManagedReplicasEnabled))
+            .setConfigProp(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, String.valueOf(disklessRemoteStorageConsolidationEnabled))
             .setConfigProp(ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG, String.valueOf(classicRemoteStorageForceEnabled))
             .setConfigProp(ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG,
                 String.join(",", classicRemoteStorageForceExcludeTopicRegexes))
@@ -230,7 +232,7 @@ public class InklessConfigsTest {
         private static final List<String> EXCLUDED_TOPIC_REGEXES = List.of("_schemas", "mm2-(.*)");
 
         private KafkaClusterTestKit initWithClassicRemoteStorageForceEnabled() throws Exception {
-            return init(false, true, false, false, true, true, EXCLUDED_TOPIC_REGEXES);
+            return init(false, true, false, false, false, true, true, EXCLUDED_TOPIC_REGEXES);
         }
 
         @Test
@@ -403,7 +405,7 @@ public class InklessConfigsTest {
         @Test
         void managedReplicasRequiresDisklessStorageSystem() {
             final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> init(false, false, false, true, true, false, List.of()));
+                () -> init(false, false, false, true, false, true, false, List.of()));
             assertEquals(
                 "requirement failed: diskless.managed.rf.enable requires diskless.storage.system.enable=true",
                 exception.getMessage());
@@ -412,7 +414,7 @@ public class InklessConfigsTest {
         @Test
         void allowFromClassicRequiresManagedReplicas() {
             final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> init(false, true, true, false, true, false, List.of()));
+                () -> init(false, true, true, false, false, true, false, List.of()));
             assertEquals(
                 "requirement failed: diskless.allow.from.classic.enable requires diskless.managed.rf.enable=true",
                 exception.getMessage());
@@ -421,9 +423,27 @@ public class InklessConfigsTest {
         @Test
         void allowFromClassicRequiresRemoteLogStorage() {
             final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> init(false, true, true, true, false, false, List.of()));
+                () -> init(false, true, true, true, false, false, false, List.of()));
             assertEquals(
                 "requirement failed: diskless.allow.from.classic.enable requires remote.log.storage.system.enable=true",
+                exception.getMessage());
+        }
+
+        @Test
+        void disklessRemoteStorageConsolidationRequiresManagedReplicas() {
+            final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> init(false, true, false, false, true, true, false, List.of()));
+            assertEquals(
+                "requirement failed: diskless.remote.storage.consolidation.enable requires diskless.managed.rf.enable=true",
+                exception.getMessage());
+        }
+
+        @Test
+        void disklessRemoteStorageConsolidationRequiresRemoteLogStorage() {
+            final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> init(false, true, false, true, true, false, false, List.of()));
+            assertEquals(
+                "requirement failed: diskless.remote.storage.consolidation.enable requires remote.log.storage.system.enable=true",
                 exception.getMessage());
         }
 

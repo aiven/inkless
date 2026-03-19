@@ -154,6 +154,12 @@ public class ServerConfigs {
         "Explicit RF values are accepted. Placement uses standard rack-aware assignment. " +
         "When disabled, diskless topics use legacy RF=1 behavior.";
 
+    public static final String DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG = "diskless.remote.storage.consolidation.enable";
+    public static final boolean DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_DEFAULT = false;
+    public static final String DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_DOC = "When enabled, it allows topics to set both " +
+        "diskless.enable=true and remote.storage.enable=true on new topics. Setting both will start consolidating Diskless WAL segments into " +
+        "Kafka tiered log storage on the configured topic.";
+
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG = "classic.remote.storage.force.enable";
     public static final boolean CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT = false;
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC = "Force classic topics to be created with remote.storage.enable=true, " +
@@ -215,6 +221,8 @@ public class ServerConfigs {
             .define(DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, BOOLEAN, DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DEFAULT, LOW,
                 DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DOC)
             .define(DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, BOOLEAN, DISKLESS_MANAGED_REPLICAS_ENABLE_DEFAULT, MEDIUM, DISKLESS_MANAGED_REPLICAS_ENABLE_DOC)
+            .define(DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, BOOLEAN, DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_DEFAULT,
+                MEDIUM, DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG, BOOLEAN, CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT, LOW,
                 CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG, LIST, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DEFAULT,
