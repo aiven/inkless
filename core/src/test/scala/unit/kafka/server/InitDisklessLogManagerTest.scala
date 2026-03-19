@@ -111,13 +111,13 @@ class InitDisklessLogManagerTest {
     manager.registerPartition(partition, topicId)
 
     // Then the state transitions to SendingToController and a batch send is scheduled (not fired yet)
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
     assertTrue(channelManager.requests.isEmpty)
 
     // And after lingerMs elapses, the scheduled batch fires automatically
     fireLinger()
     pollAndComplete(makeSuccessResponse(topicId, 0))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
   }
 
   @Test
@@ -130,7 +130,7 @@ class InitDisklessLogManagerTest {
 
     // Then the controller is not called and state is WaitingForHW
     assertTrue(channelManager.requests.isEmpty)
-    assertEquals(Some(MigrationState.WaitingForHW), manager.migrationState(tp0))
+    assertEquals(Some(InitState.WaitingForHW), manager.initState(tp0))
   }
 
   @Test
@@ -138,26 +138,29 @@ class InitDisklessLogManagerTest {
     // Given a partition registered with HW < LEO
     val partition = mockPartition(hw = 50, leo = 100)
     manager.registerPartition(partition, topicId)
-    assertEquals(Some(MigrationState.WaitingForHW), manager.migrationState(tp0))
+    assertEquals(Some(InitState.WaitingForHW), manager.initState(tp0))
 
     // When HW advances but does not reach LEO
+    val log = partition.log.get
+    when(log.highWatermark).thenReturn(80L)
     manager.onHighWatermarkUpdated(tp0, 80)
 
     // Then no batch is scheduled and state stays WaitingForHW
     assertTrue(channelManager.requests.isEmpty)
-    assertEquals(Some(MigrationState.WaitingForHW), manager.migrationState(tp0))
+    assertEquals(Some(InitState.WaitingForHW), manager.initState(tp0))
 
     // When HW catches up to LEO
+    when(log.highWatermark).thenReturn(100L)
     manager.onHighWatermarkUpdated(tp0, 100)
 
     // Then the state transitions to SendingToController and a batch is scheduled
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
     assertTrue(channelManager.requests.isEmpty)
 
     // And after lingerMs elapses, the controller is called and state becomes AwaitingMetadata
     fireLinger()
     pollAndComplete(makeSuccessResponse(topicId, 0))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
   }
 
   @Test
@@ -179,7 +182,7 @@ class InitDisklessLogManagerTest {
     manager.registerPartition(partition, topicId)
 
     // Then the batch is scheduled but not yet sent
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
     assertTrue(channelManager.requests.isEmpty)
 
     // And after lingerMs elapses, the request contains correct broker metadata, topic, partition, and producer state data
@@ -224,7 +227,7 @@ class InitDisklessLogManagerTest {
 
     // Then it is tracked once and state remains WaitingForHW
     assertEquals(Set(tp0), manager.trackedPartitions)
-    assertEquals(Some(MigrationState.WaitingForHW), manager.migrationState(tp0))
+    assertEquals(Some(InitState.WaitingForHW), manager.initState(tp0))
   }
 
   @Test
@@ -232,7 +235,7 @@ class InitDisklessLogManagerTest {
     // Given a partition registered with HW < LEO (WaitingForHW)
     val partition = mockPartition(hw = 50, leo = 100)
     manager.registerPartition(partition, topicId)
-    assertEquals(Some(MigrationState.WaitingForHW), manager.migrationState(tp0))
+    assertEquals(Some(InitState.WaitingForHW), manager.initState(tp0))
 
     // When HW catches up and the partition is re-registered
     val log = partition.log.get
@@ -240,13 +243,13 @@ class InitDisklessLogManagerTest {
     manager.registerPartition(partition, topicId)
 
     // Then it transitions to SendingToController
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
     assertTrue(channelManager.requests.isEmpty)
 
     // And after lingerMs elapses, the controller is called and state becomes AwaitingMetadata
     fireLinger()
     pollAndComplete(makeSuccessResponse(topicId, 0))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
   }
 
   @Test
@@ -256,7 +259,7 @@ class InitDisklessLogManagerTest {
     manager.registerPartition(partition, topicId)
     fireLinger()
     pollAndComplete(makeErrorResponse(topicId, 0, Errors.NOT_CONTROLLER))
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
 
     // When the partition is re-registered (simulating leadership bounce-back),
     // lingerMs preempts the retry backoff
@@ -265,7 +268,7 @@ class InitDisklessLogManagerTest {
 
     // Then the preempting linger batch fires and the controller is called again
     pollAndComplete(makeSuccessResponse(topicId, 0))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
 
     // And the stale retry task fires harmlessly (partition already in AwaitingMetadata)
     mockTime.sleep(manager.initialRetryBackoffMs)
@@ -280,13 +283,13 @@ class InitDisklessLogManagerTest {
     manager.registerPartition(partition, topicId)
     fireLinger()
     pollAndComplete(makeSuccessResponse(topicId, 0))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
 
     // When the partition is re-registered
     manager.registerPartition(partition, topicId)
 
     // Then state remains AwaitingMetadata with no additional controller call
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
     assertTrue(channelManager.requests.isEmpty)
   }
 
@@ -302,7 +305,7 @@ class InitDisklessLogManagerTest {
 
     // Then it is no longer tracked
     assertTrue(manager.trackedPartitions.isEmpty)
-    assertEquals(None, manager.migrationState(tp0))
+    assertEquals(None, manager.initState(tp0))
   }
 
   @Test
@@ -310,7 +313,7 @@ class InitDisklessLogManagerTest {
     // Given a partition registered with HW = LEO and a batch scheduled
     val partition = mockPartition(hw = 100, leo = 100)
     manager.registerPartition(partition, topicId)
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
 
     // When the scheduled batch fires and the controller returns a permanent error (FENCED_LEADER_EPOCH)
     fireLinger()
@@ -325,7 +328,7 @@ class InitDisklessLogManagerTest {
     // Given a partition registered with HW = LEO and a batch scheduled
     val partition = mockPartition(hw = 100, leo = 100)
     manager.registerPartition(partition, topicId)
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
 
     // When the scheduled batch fires and the controller returns INVALID_REQUEST
     fireLinger()
@@ -340,21 +343,21 @@ class InitDisklessLogManagerTest {
     // Given a partition registered with HW = LEO and a batch scheduled
     val partition = mockPartition(hw = 100, leo = 100)
     manager.registerPartition(partition, topicId)
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
 
     // When the scheduled batch fires and the controller returns a retriable error (NOT_CONTROLLER)
     fireLinger()
     pollAndComplete(makeErrorResponse(topicId, 0, Errors.NOT_CONTROLLER))
 
     // Then the partition stays in SendingToController
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
 
     // When the retry fires and succeeds
     fireRetry()
     pollAndComplete(makeSuccessResponse(topicId, 0))
 
     // Then state transitions to AwaitingMetadata
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
   }
 
   @Test
@@ -362,21 +365,21 @@ class InitDisklessLogManagerTest {
     // Given a partition registered with HW = LEO and a batch scheduled
     val partition = mockPartition(hw = 100, leo = 100)
     manager.registerPartition(partition, topicId)
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
 
     // When the scheduled batch fires and the controller call times out
     fireLinger()
     channelManager.requests.poll().timeout()
 
     // Then the partition stays in SendingToController
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
 
     // When the retry fires and succeeds
     fireRetry()
     pollAndComplete(makeSuccessResponse(topicId, 0))
 
     // Then state transitions to AwaitingMetadata
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
   }
 
   @Test
@@ -386,7 +389,7 @@ class InitDisklessLogManagerTest {
     manager.registerPartition(partition, topicId)
     fireLinger()
     pollAndComplete(makeErrorResponse(topicId, 0, Errors.NOT_CONTROLLER))
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
 
     // When the partition loses leadership before the retry fires
     when(partition.isLeader).thenReturn(false)
@@ -406,7 +409,7 @@ class InitDisklessLogManagerTest {
     manager.registerPartition(partition, topicId)
 
     // Then a batch is scheduled (leadership is checked at send time, not registration time)
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
 
     // And after lingerMs elapses and the batch fires
     fireLinger()
@@ -490,7 +493,7 @@ class InitDisklessLogManagerTest {
     }
 
     // Then the partition remains in SendingToController (backoff doesn't overflow)
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
   }
 
   // --- Batching tests ---
@@ -510,9 +513,9 @@ class InitDisklessLogManagerTest {
     manager.registerPartition(partition2, topicId)
 
     // Then only the two ready partitions are in SendingToController, the third waits for HW
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
-    assertEquals(Some(MigrationState.WaitingForHW), manager.migrationState(tp1))
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp2))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
+    assertEquals(Some(InitState.WaitingForHW), manager.initState(tp1))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp2))
     assertTrue(channelManager.requests.isEmpty)
 
     // And after lingerMs elapses, only the two ready partitions are sent to the controller
@@ -527,15 +530,17 @@ class InitDisklessLogManagerTest {
     captured.complete(makeBatchSuccessResponse(topicId, Seq(0, 2)))
 
     // And the ready partitions transition to AwaitingMetadata while the waiting one stays
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
-    assertEquals(Some(MigrationState.WaitingForHW), manager.migrationState(tp1))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp2))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
+    assertEquals(Some(InitState.WaitingForHW), manager.initState(tp1))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp2))
 
     // When the third partition's HW catches up
+    val log1 = partition1.log.get
+    when(log1.highWatermark).thenReturn(200L)
     manager.onHighWatermarkUpdated(tp1, 200)
 
     // Then it transitions to SendingToController
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp1))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp1))
 
     // And after lingerMs elapses, it is sent to the controller on its own
     fireLinger()
@@ -543,7 +548,7 @@ class InitDisklessLogManagerTest {
     assertEquals(1, lateRequest.topics().get(0).partitions().size())
     assertEquals(1, lateRequest.topics().get(0).partitions().get(0).partitionId())
     pollAndComplete(makeSuccessResponse(topicId, 1))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp1))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp1))
   }
 
   @Test
@@ -561,9 +566,9 @@ class InitDisklessLogManagerTest {
     manager.registerPartition(partition2, topicId)
 
     // Then all are in SendingToController and the controller hasn't been called yet
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp1))
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp2))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp1))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp2))
     assertTrue(channelManager.requests.isEmpty)
 
     // And after lingerMs elapses, a single controller call is made containing all three partitions
@@ -577,9 +582,9 @@ class InitDisklessLogManagerTest {
     pollAndComplete(makeBatchSuccessResponse(topicId, Seq(0, 1, 2)))
 
     // And all partitions transition to AwaitingMetadata
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp1))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp2))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp1))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp2))
   }
 
   @Test
@@ -608,8 +613,8 @@ class InitDisklessLogManagerTest {
     manager.registerPartition(partition1, topicId2)
 
     // Then both are in SendingToController and the controller hasn't been called yet
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp1))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp1))
     assertTrue(channelManager.requests.isEmpty)
 
     // And after lingerMs elapses, a single controller call is made with both topics
@@ -621,8 +626,8 @@ class InitDisklessLogManagerTest {
     pollAndComplete(successResponse)
 
     // And both partitions transition to AwaitingMetadata
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp1))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp1))
   }
 
   @Test
@@ -658,9 +663,9 @@ class InitDisklessLogManagerTest {
     pollAndComplete(mixedResponse)
 
     // Then each partition transitions to the appropriate state
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
-    assertEquals(None, manager.migrationState(tp1))
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp2))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
+    assertEquals(None, manager.initState(tp1))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp2))
 
     // When the retry fires for the retriable-error partition
     fireRetry()
@@ -670,7 +675,7 @@ class InitDisklessLogManagerTest {
     pollAndComplete(makeSuccessResponse(topicId, 2))
 
     // Then only that partition is retried and transitions to AwaitingMetadata
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp2))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp2))
   }
 
   @Test
@@ -687,16 +692,16 @@ class InitDisklessLogManagerTest {
     channelManager.requests.poll().timeout()
 
     // Then both partitions stay in SendingToController
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp1))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp1))
 
     // When the retry fires and succeeds
     fireRetry()
     pollAndComplete(makeBatchSuccessResponse(topicId, Seq(0, 1)))
 
     // Then both partitions transition to AwaitingMetadata
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp1))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp1))
   }
 
   @Test
@@ -710,19 +715,23 @@ class InitDisklessLogManagerTest {
     assertTrue(channelManager.requests.isEmpty)
 
     // When both HWs catch up
+    val log0 = partition0.log.get
+    val log1 = partition1.log.get
+    when(log0.highWatermark).thenReturn(100L)
+    when(log1.highWatermark).thenReturn(100L)
     manager.onHighWatermarkUpdated(tp0, 100)
     manager.onHighWatermarkUpdated(tp1, 100)
 
     // Then both transition to SendingToController and a batch is scheduled
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp1))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp1))
     assertTrue(channelManager.requests.isEmpty)
 
     // And after lingerMs elapses, a single controller call is made with both partitions
     fireLinger()
     pollAndComplete(makeBatchSuccessResponse(topicId, Seq(0, 1)))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp1))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp1))
   }
 
   @Test
@@ -733,21 +742,21 @@ class InitDisklessLogManagerTest {
     manager.registerPartition(partition0, topicId)
     fireLinger()
     pollAndComplete(makeErrorResponse(topicId, 0, Errors.NOT_CONTROLLER))
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
 
     // When a new ready partition is registered within the lingerMs window
     val partition1 = mockPartition(tp = tp1, hw = 200, leo = 200)
     manager.registerPartition(partition1, topicId)
 
     // Then both partitions are in SendingToController
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp1))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp1))
 
     // And after lingerMs elapses, the backoff is preempted and both partitions are sent
     fireLinger()
     pollAndComplete(makeBatchSuccessResponse(topicId, Seq(0, 1)))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp1))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp1))
   }
 
   @Test
@@ -757,14 +766,14 @@ class InitDisklessLogManagerTest {
     manager.registerPartition(partition, topicId)
     fireLinger()
     pollAndComplete(makeErrorResponse(topicId, 0, Errors.NOT_CONTROLLER))
-    assertEquals(Some(MigrationState.SendingToController), manager.migrationState(tp0))
+    assertEquals(Some(InitState.SendingToController), manager.initState(tp0))
 
     // When the first retry fires
     fireRetry()
     pollAndComplete(makeSuccessResponse(topicId, 0))
 
     // Then the backoff is positive (no overflow) and the retry succeeds
-    assertEquals(Some(MigrationState.AwaitingMetadata), manager.migrationState(tp0))
+    assertEquals(Some(InitState.AwaitingMetadata), manager.initState(tp0))
   }
 
   private def makeSuccessResponse(topicId: Uuid, partitionId: Int): InitDisklessLogResponseData = {

@@ -361,17 +361,19 @@ class BrokerServer(
         time,
         metrics,
         config,
-        channelName = "diskless-migration",
+        channelName = "init-diskless-log",
         s"broker-${config.nodeId}-",
         retryTimeoutMs = 60000
       )
       initDisklessLogChannelManager.start()
-      maybeInitDisklessLogManager = Some(new InitDisklessLogManager(
-        controllerChannelManager = initDisklessLogChannelManager,
-        scheduler = kafkaScheduler,
-        brokerId = config.brokerId,
-        brokerEpochSupplier = () => lifecycleManager.brokerEpoch
-      ))
+      maybeInitDisklessLogManager = sharedServer.inklessControlPlane.map { _ =>
+        new InitDisklessLogManager(
+          controllerChannelManager = initDisklessLogChannelManager,
+          scheduler = kafkaScheduler,
+          brokerId = config.brokerId,
+          brokerEpochSupplier = () => lifecycleManager.brokerEpoch
+        )
+      }
 
       this._replicaManager = new ReplicaManager(
         config = config,

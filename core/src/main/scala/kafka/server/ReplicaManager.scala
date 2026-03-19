@@ -560,6 +560,10 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   def sealTopicPartitions(topic: String): Unit = {
+    if (initDisklessLogManager.isEmpty) {
+      warn(s"Cannot seal partitions for topic $topic as InitDisklessLogManager is not enabled.")
+      return
+    }
     allPartitions.forEach { (tp, hostedPartition) =>
       if (tp.topic() == topic) {
         hostedPartition match {

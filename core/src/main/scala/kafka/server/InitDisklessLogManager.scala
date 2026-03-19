@@ -34,21 +34,21 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import scala.jdk.CollectionConverters._
 
-sealed trait MigrationState
+sealed trait InitState
 
-object MigrationState {
+object InitState {
   /** HW has not yet caught up with LEO; waiting for replica fetch cycles to advance it. */
-  case object WaitingForHW extends MigrationState
+  case object WaitingForHW extends InitState
   /** HW == LEO; partition is queued for the next batched InitDisklessLog controller call. */
-  case object SendingToController extends MigrationState
+  case object SendingToController extends InitState
   /** Controller accepted the request; waiting for the PartitionChangeRecord with disklessStartOffset to propagate. */
-  case object AwaitingMetadata extends MigrationState
+  case object AwaitingMetadata extends InitState
 }
 
-private[server] case class MigrationPartitionState(
+private[server] case class InitPartitionState(
   partition: Partition,
   topicId: Uuid,
-  state: MigrationState,
+  state: InitState,
   retryAttempt: Int = 0
 )
 
@@ -61,7 +61,7 @@ class InitDisklessLogManager(
 
   this.logIdent = s"[InitDisklessLogManager broker=$brokerId] "
 
-  private val tracked = new ConcurrentHashMap[TopicPartition, MigrationPartitionState]()
+  private val tracked = new ConcurrentHashMap[TopicPartition, InitPartitionState]()
 
   // Delay (ms) of the currently pending scheduled send. Long.MaxValue means no send is pending.
   // A new call with a shorter delay preempts the pending one (e.g. lingerMs preempts a retry
@@ -78,7 +78,7 @@ class InitDisklessLogManager(
 
   def trackedPartitions: Set[TopicPartition] = tracked.keySet().asScala.toSet
 
-  def migrationState(tp: TopicPartition): Option[MigrationState] =
+  def initState(tp: TopicPartition): Option[InitState] =
     Option(tracked.get(tp)).map(_.state)
 
   /**
@@ -93,10 +93,7 @@ class InitDisklessLogManager(
       error(s"Partition $tp is not sealed, which should never happen. Skipping migration.")
       return
     }
-    if (tracked.containsKey(tp)) {
-      reEvaluateTrackedPartition(tp)
-      return
-    }
+
     val log = partition.log.getOrElse {
       warn(s"Partition $tp sealed but has no log, skipping migration")
       return
@@ -108,83 +105,49 @@ class InitDisklessLogManager(
       error(s"Partition $tp has HW ($hw) > LEO ($leo), which should never happen. Skipping migration.")
       return
     }
-
-    // Register listener before tracking so that onFailed/onDeleted can clean up
-    // the partition from any state, not just WaitingForHW.
-    partition.maybeAddListener(this)
-
-    if (hw == leo) {
-      info(s"Partition $tp sealed with HW ($hw) == LEO ($leo), ready for InitDisklessLog")
-      tracked.put(tp, MigrationPartitionState(partition, topicId, MigrationState.SendingToController))
-      scheduleBatchSend()
-    } else {
-      info(s"Partition $tp sealed, waiting for HW ($hw) to catch up with LEO ($leo)")
-      tracked.put(tp, MigrationPartitionState(partition, topicId, MigrationState.WaitingForHW))
+    
+    val newState = InitPartitionState(partition, topicId, InitState.WaitingForHW)
+    if (tracked.putIfAbsent(tp, newState) == null) {
+      partition.maybeAddListener(this)
     }
-  }
 
-  /**
-   * Re-evaluate a partition that is already tracked, e.g. after a leadership bounce-back,
-   * and check whether the current state needs advancing.
-   */
-  private def reEvaluateTrackedPartition(tp: TopicPartition): Unit = {
-    var shouldSchedule = false
-    tracked.computeIfPresent(tp, (_, existingState) => {
-      existingState.state match {
-        case MigrationState.WaitingForHW =>
-          existingState.partition.log match {
-            case None => existingState
-            case Some(log) =>
-              val hw = log.highWatermark
-              val leo = log.logEndOffset
-              if (hw > leo) {
-                error(s"Partition $tp has HW ($hw) > LEO ($leo) on re-evaluation, removing from tracking.")
-                null
-              } else if (hw == leo) {
-                info(s"Partition $tp HW ($hw) caught up with LEO ($leo) on re-evaluation, ready for InitDisklessLog")
-                shouldSchedule = true
-                existingState.copy(state = MigrationState.SendingToController, retryAttempt = 0)
-              } else {
-                existingState
-              }
-          }
-
-        case MigrationState.SendingToController =>
-          shouldSchedule = true
-          existingState
-
-        case MigrationState.AwaitingMetadata =>
-          debug(s"Partition $tp already in AwaitingMetadata state, controller accepted the migration")
-          existingState
-      }
-    })
-    if (shouldSchedule) scheduleBatchSend()
+    maybeAdvanceState(tp)
   }
 
   /**
    * PartitionListener callback: called when HW advances on a partition.
    */
   override def onHighWatermarkUpdated(topicPartition: TopicPartition, offset: Long): Unit = {
+    maybeAdvanceState(topicPartition)
+  }
+
+  /**
+   * Atomically advance a tracked partition's state if conditions are met.
+   * Single place where HW/LEO is evaluated to decide state transitions.
+   */
+  private def maybeAdvanceState(tp: TopicPartition): Unit = {
     var shouldSchedule = false
-    tracked.computeIfPresent(topicPartition, (_, mps) => {
-      if (mps.state != MigrationState.WaitingForHW) mps
-      else {
-        mps.partition.log match {
-          case None => mps
-          case Some(log) =>
-            val leo = log.logEndOffset
-            if (offset > leo) {
-              error(s"Partition $topicPartition has HW ($offset) > LEO ($leo), which should never happen. Removing from tracking.")
-              null
-            } else if (offset == leo) {
-              info(s"Partition $topicPartition HW ($offset) caught up with LEO ($leo), ready for InitDisklessLog")
-              shouldSchedule = true
-              mps.copy(state = MigrationState.SendingToController)
-            } else {
-              info(s"Partition $topicPartition still waiting for HW ($offset) to catch up with LEO ($leo)")
-              mps
-            }
-        }
+    tracked.computeIfPresent(tp, (_, initPartitionState) => {
+      initPartitionState.state match {
+        case InitState.WaitingForHW =>
+          initPartitionState.partition.log match {
+            case None => initPartitionState
+            case Some(log) =>
+              val hw = log.highWatermark
+              val leo = log.logEndOffset
+              if (hw > leo) {
+                error(s"Partition $tp has HW ($hw) > LEO ($leo). Removing from tracking.")
+                null
+              } else if (hw == leo) {
+                info(s"Partition $tp HW ($hw) caught up with LEO ($leo), ready for InitDisklessLog")
+                shouldSchedule = true
+                initPartitionState.copy(state = InitState.SendingToController, retryAttempt = 0)
+              } else initPartitionState
+          }
+        case InitState.SendingToController =>
+          shouldSchedule = true
+          initPartitionState
+        case InitState.AwaitingMetadata => initPartitionState
       }
     })
     if (shouldSchedule) scheduleBatchSend()
@@ -209,7 +172,7 @@ class InitDisklessLogManager(
    */
   def removePartition(tp: TopicPartition): Unit = {
     if (tracked.remove(tp) != null) {
-      info(s"Removed partition $tp from diskless migration tracking")
+      info(s"Removed partition $tp from diskless init tracking")
     }
   }
 
@@ -221,7 +184,7 @@ class InitDisklessLogManager(
   private[server] def scheduleBatchSend(delayMs: Long = lingerMs): Unit = {
     val current = pendingDelayMs.get()
     if (delayMs < current && pendingDelayMs.compareAndSet(current, delayMs)) {
-      scheduler.scheduleOnce("diskless-migration-batch-send", () => {
+      scheduler.scheduleOnce("init-diskless-log-batch-send", () => {
         pendingDelayMs.set(Long.MaxValue)
         sendBatch()
       }, delayMs)
@@ -233,8 +196,8 @@ class InitDisklessLogManager(
    * and send a single InitDisklessLog request to the controller.
    */
   private[server] def sendBatch(): Unit = {
-    val ready = tracked.asScala.filter { case (_, migrationPartitionState) =>
-      migrationPartitionState.state == MigrationState.SendingToController
+    val ready = tracked.asScala.filter { case (_, initPartitionState) =>
+      initPartitionState.state == InitState.SendingToController
     }.toMap
 
     if (ready.isEmpty) return
@@ -332,7 +295,7 @@ class InitDisklessLogManager(
    * Process the batched response, handling each partition's result individually.
    */
   private def handleBatchResponse(response: InitDisklessLogResponseData): Unit = {
-    val retriablePartitions = mutable.Set[TopicPartition]()
+    val retriableAttempts = mutable.Map[TopicPartition, Int]()
 
     for (topicResponse <- response.topics().asScala) {
       for (partitionResponse <- topicResponse.partitions().asScala) {
@@ -343,7 +306,7 @@ class InitDisklessLogManager(
             case Errors.NONE =>
               info(s"InitDisklessLog succeeded for partition $tp, transitioning to AwaitingMetadata")
               tracked.computeIfPresent(tp, (_, mps) =>
-                mps.copy(state = MigrationState.AwaitingMetadata, retryAttempt = 0))
+                mps.copy(state = InitState.AwaitingMetadata, retryAttempt = 0))
 
             case Errors.FENCED_LEADER_EPOCH | Errors.INVALID_REQUEST =>
               info(s"InitDisklessLog for partition $tp returned permanent error $error, removing from tracking")
@@ -353,18 +316,15 @@ class InitDisklessLogManager(
               warn(s"InitDisklessLog for partition $tp returned retriable error $error")
               val updated = tracked.computeIfPresent(tp, (_, mps) =>
                 mps.copy(retryAttempt = mps.retryAttempt + 1))
-              if (updated != null) retriablePartitions.add(tp)
+              if (updated != null) retriableAttempts.put(tp, updated.retryAttempt)
           }
         }
       }
     }
 
-    if (retriablePartitions.nonEmpty) {
-      val minBackoff = retriablePartitions.map { tp =>
-        val migrationPartitionState = tracked.get(tp)
-        if (migrationPartitionState != null) computeBackoff(migrationPartitionState.retryAttempt) else maxRetryBackoffMs
-      }.min
-      warn(s"Scheduling batch retry for ${retriablePartitions.size} partition(s) in ${minBackoff}ms")
+    if (retriableAttempts.nonEmpty) {
+      val minBackoff = retriableAttempts.values.map(computeBackoff).min
+      warn(s"Scheduling batch retry for ${retriableAttempts.size} partition(s) in ${minBackoff}ms")
       scheduleBatchSend(minBackoff)
     }
   }
@@ -377,7 +337,7 @@ class InitDisklessLogManager(
     var maxAttempt = 0
     partitions.foreach { tp =>
       tracked.computeIfPresent(tp, (_, mps) => {
-        if (mps.state != MigrationState.SendingToController) mps
+        if (mps.state != InitState.SendingToController) mps
         else {
           val attempt = mps.retryAttempt + 1
           if (attempt > maxAttempt) maxAttempt = attempt
