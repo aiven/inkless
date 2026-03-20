@@ -34,6 +34,7 @@ import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.metadata.KafkaConfigSchema;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
+import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.mutable.BoundedList;
 import org.apache.kafka.server.policy.AlterConfigPolicy;
 import org.apache.kafka.server.policy.AlterConfigPolicy.RequestMetadata;
@@ -277,7 +278,10 @@ public class ConfigurationControlManager {
                         configResource.type().equals(Type.TOPIC) &&
                         Objects.equals(key, TopicConfig.DISKLESS_ENABLE_CONFIG) &&
                         Boolean.parseBoolean(opValue) &&
-                        !Boolean.parseBoolean(currentValue)) {
+                        !Boolean.parseBoolean(currentValue) &&
+                        !Boolean.parseBoolean(String.valueOf(staticConfig.getOrDefault(
+                            ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG,
+                            ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DEFAULT)))) {
                         return ApiError.fromThrowable(
                             new InvalidConfigurationException("It is invalid to enable diskless on an already existing topic."));
                     }
