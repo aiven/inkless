@@ -498,7 +498,8 @@ public class LogConfig extends AbstractConfig {
     private static void validateDiskless(Map<String, String> existingConfigs,
                                          Map<String, Object> requestedConfigs,
                                          Map<?, ?> newConfigs,
-                                         boolean isDisklessStorageSystemEnabled) {
+                                         boolean isDisklessStorageSystemEnabled,
+                                         boolean isDisklessAllowFromClassicEnabled) {
         final boolean isCreation = existingConfigs.isEmpty();
         final boolean isDisklessExplicitlySet = requestedConfigs.containsKey(TopicConfig.DISKLESS_ENABLE_CONFIG);
         final boolean isRemoteStorageExplicitlySet = requestedConfigs.containsKey(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
@@ -518,7 +519,7 @@ public class LogConfig extends AbstractConfig {
             isDisklessEnabled = wasDisklessEnabled;
         }
 
-        validateDisklessTransition(isCreation, isDisklessExplicitlySet, isDisklessEnabled, wasDisklessEnabled);
+        validateDisklessTransition(isCreation, isDisklessExplicitlySet, isDisklessEnabled, wasDisklessEnabled, isDisklessAllowFromClassicEnabled);
 
         // Only one between diskless.enable and remote.storage.enable can be set, no matter the value.
         final boolean hasExplicitDiskless = isDisklessExplicitlySet || wasDisklessExplicitlySet;
@@ -529,9 +530,9 @@ public class LogConfig extends AbstractConfig {
     private static void validateDisklessTransition(boolean isCreation,
                                                    boolean isDisklessExplicitlySet,
                                                    boolean isDisklessEnabled,
-                                                   boolean wasDisklessEnabled) {
-        // Diskless can be enabled only at creation
-        if (!isCreation && isDisklessExplicitlySet && isDisklessEnabled && !wasDisklessEnabled) {
+                                                   boolean wasDisklessEnabled,
+                                                   boolean isDisklessAllowFromClassicEnabled) {
+        if (!isCreation && isDisklessExplicitlySet && isDisklessEnabled && !wasDisklessEnabled && !isDisklessAllowFromClassicEnabled) {
             throw new InvalidConfigurationException("It is invalid to enable diskless on an already existing topic.");
         }
 
@@ -565,9 +566,10 @@ public class LogConfig extends AbstractConfig {
                                                      Map<String, Object> requestedConfigs,
                                                      Map<?, ?> newConfigs,
                                                      boolean isRemoteLogStorageSystemEnabled,
-                                                     boolean isDisklessStorageSystemEnabled) {
+                                                     boolean isDisklessStorageSystemEnabled,
+                                                     boolean isDisklessAllowFromClassicEnabled) {
         validateValues(newConfigs);
-        validateDiskless(existingConfigs, requestedConfigs, newConfigs, isDisklessStorageSystemEnabled);
+        validateDiskless(existingConfigs, requestedConfigs, newConfigs, isDisklessStorageSystemEnabled, isDisklessAllowFromClassicEnabled);
 
         boolean isRemoteLogStorageEnabled = (Boolean) newConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
         if (isRemoteLogStorageEnabled) {
@@ -702,7 +704,7 @@ public class LogConfig extends AbstractConfig {
             combinedConfigs.putAll(props);
             Map<?, ?> valueMaps = CONFIG.parse(combinedConfigs);
             validateTopicLogConfigValues(existingConfigs, Utils.castToStringObjectMap(props), valueMaps,
-                    isRemoteLogStorageSystemEnabled, isDisklessStorageSystemEnabled);
+                    isRemoteLogStorageSystemEnabled, isDisklessStorageSystemEnabled, isDisklessAllowFromClassicEnabled);
         }
     }
 
