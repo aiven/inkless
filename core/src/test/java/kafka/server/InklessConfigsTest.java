@@ -337,6 +337,51 @@ public class InklessConfigsTest {
         }
     }
 
+    @Nested
+    final class DisklessAllowFromClassic {
+
+        @Test
+        void cannotEnableDisklessOnClassicTopicWhenAllowFromClassicDisabled() throws Exception {
+            final KafkaClusterTestKit cluster = init(false, true, false);
+            final Map<String, Object> clientConfigs = new HashMap<>();
+            clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+            try (final Admin admin = AdminClient.create(clientConfigs)) {
+                final String topicWithoutDisklessSet = "classic-topic-no-diskless";
+                createTopic(admin, topicWithoutDisklessSet, Map.of());
+                assertEquals("false", getTopicConfig(admin, topicWithoutDisklessSet).get(DISKLESS_ENABLE_CONFIG));
+                assertThrows(ExecutionException.class,
+                    () -> alterTopicConfig(admin, topicWithoutDisklessSet, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
+
+                final String topicWithDisklessFalse = "classic-topic-diskless-false";
+                createTopic(admin, topicWithDisklessFalse, Map.of(DISKLESS_ENABLE_CONFIG, "false"));
+                assertEquals("false", getTopicConfig(admin, topicWithDisklessFalse).get(DISKLESS_ENABLE_CONFIG));
+                assertThrows(ExecutionException.class,
+                    () -> alterTopicConfig(admin, topicWithDisklessFalse, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
+            } finally {
+                cluster.close();
+            }
+        }
+
+        @Test
+        void canEnableDisklessOnClassicTopicWhenAllowFromClassicEnabled() throws Exception {
+            final KafkaClusterTestKit cluster = init(false, true, true);
+            final Map<String, Object> clientConfigs = new HashMap<>();
+            clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+            try (final Admin admin = AdminClient.create(clientConfigs)) {
+                final String topic = "classic-topic-to-diskless";
+                createTopic(admin, topic, Map.of());
+                assertEquals("false", getTopicConfig(admin, topic).get(DISKLESS_ENABLE_CONFIG));
+
+                alterTopicConfig(admin, topic, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
+                assertEquals("true", getTopicConfig(admin, topic).get(DISKLESS_ENABLE_CONFIG));
+            } finally {
+                cluster.close();
+            }
+        }
+    }
+
     public void createTopic(Admin admin, String topic, Map<String, String> configs) throws Exception {
         admin.createTopics(Collections.singletonList(
             new NewTopic(topic, 1, (short) 1)

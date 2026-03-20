@@ -572,19 +572,54 @@ class LogConfigTest {
       kafkaConfig)
   }
 
+  @Test
+  def testDisklessAllowFromClassicAtUpdate(): Unit = {
+    val kafkaConfig = KafkaConfig.fromProps(TestUtils.createDummyBrokerConfig())
+    val mutualExclusionError = "It is not valid to set a value for both diskless.enable and remote.storage.enable."
+    val existingWithoutDisklessOrRemote = util.Map.of(TopicConfig.RETENTION_MS_CONFIG, "1000")
+    val existingWithDisklessFalse = util.Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")
+    val existingWithDisklessTrue = util.Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")
+    val existingWithRemoteFalse = util.Map.of(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false")
+    val existingWithRemoteTrue = util.Map.of(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")
+
+    // Case 1: set diskless.enable=true with allowFromClassic=true
+    val setDisklessTrue = topicProps(TopicConfig.DISKLESS_ENABLE_CONFIG -> "true")
+
+    assertValid(existingWithoutDisklessOrRemote, setDisklessTrue, kafkaConfig, disklessAllowFromClassic = true)
+    assertValid(existingWithDisklessFalse, setDisklessTrue, kafkaConfig, disklessAllowFromClassic = true)
+    assertValid(existingWithDisklessTrue, setDisklessTrue, kafkaConfig, disklessAllowFromClassic = true)
+    // Mutual exclusion still applies even with allowFromClassic
+    assertInvalid(existingWithRemoteFalse, setDisklessTrue, mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true)
+    assertInvalid(existingWithRemoteTrue, setDisklessTrue, mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true)
+
+    // Case 2: set diskless.enable=false with allowFromClassic=true - disabling diskless is still forbidden
+    val setDisklessFalse = topicProps(TopicConfig.DISKLESS_ENABLE_CONFIG -> "false")
+
+    assertValid(existingWithoutDisklessOrRemote, setDisklessFalse, kafkaConfig, disklessAllowFromClassic = true)
+    assertValid(existingWithDisklessFalse, setDisklessFalse, kafkaConfig, disklessAllowFromClassic = true)
+    assertInvalid(existingWithDisklessTrue, setDisklessFalse,
+      "It is invalid to disable diskless.", kafkaConfig, disklessAllowFromClassic = true)
+    assertInvalid(existingWithRemoteFalse, setDisklessFalse,
+      mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true)
+    assertInvalid(existingWithRemoteTrue, setDisklessFalse,
+      mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true)
+  }
+
   private def topicProps(entries: (String, String)*): Properties = {
     val props = new Properties()
     entries.foreach { case (k, v) => props.put(k, v) }
     props
   }
 
-  private def assertValid(existingConfigs: util.Map[String, String], props: Properties, kafkaConfig: KafkaConfig): Unit = {
-    LogConfig.validate(existingConfigs, props, kafkaConfig.extractLogConfigMap, true)
+  private def assertValid(existingConfigs: util.Map[String, String], props: Properties, kafkaConfig: KafkaConfig,
+                          disklessAllowFromClassic: Boolean = false): Unit = {
+    LogConfig.validate(existingConfigs, props, kafkaConfig.extractLogConfigMap, true, disklessAllowFromClassic)
   }
 
-  private def assertInvalid(existingConfigs: util.Map[String, String], props: Properties, expectedMessage: String, kafkaConfig: KafkaConfig): Unit = {
+  private def assertInvalid(existingConfigs: util.Map[String, String], props: Properties, expectedMessage: String,
+                             kafkaConfig: KafkaConfig, disklessAllowFromClassic: Boolean = false): Unit = {
     val ex = assertThrows(classOf[InvalidConfigurationException],
-      () => LogConfig.validate(existingConfigs, props, kafkaConfig.extractLogConfigMap, true))
+      () => LogConfig.validate(existingConfigs, props, kafkaConfig.extractLogConfigMap, true, disklessAllowFromClassic))
     assertEquals(expectedMessage, ex.getMessage)
   }
 
