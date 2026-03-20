@@ -1458,19 +1458,6 @@ public class ReplicationControlManager {
             }
 
             TopicControlInfo topic = topics.get(topicId);
-            boolean isDisklessTopic = isDisklessTopic(topic.name);
-            if (isDisklessTopic) {
-                for (InitDisklessLogRequestData.PartitionData partitionData : topicData.partitions()) {
-                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
-                        .setPartitionId(partitionData.partitionId())
-                        .setErrorCode(INVALID_REQUEST.code()));
-                }
-                log.info("Rejecting InitDisklessLog request for topic {} because it is already diskless.", topic.name);
-                topicResponses.add(new InitDisklessLogResponseData.TopicResponse()
-                    .setTopicId(topicId)
-                    .setPartitions(partitionResponses));
-                continue;
-            }
 
             for (InitDisklessLogRequestData.PartitionData partitionData : topicData.partitions()) {
                 int partitionId = partitionData.partitionId();
