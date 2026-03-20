@@ -7122,6 +7122,7 @@ class ReplicaManagerTest {
       val aliveBrokers = Seq(new Node(0, "host0", 0), new Node(1, "host1", 1))
       mockGetAliveBrokerFunctions(metadataCache, aliveBrokers)
       when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_VERSION)
+      val initDisklessLogManager = mock(classOf[InitDisklessLogManager])
       val rm = new ReplicaManager(
         metrics = metrics,
         config = config,
@@ -7131,7 +7132,8 @@ class ReplicaManagerTest {
         quotaManagers = quotaManager,
         metadataCache = metadataCache,
         logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size),
-        alterPartitionManager = alterPartitionManager)
+        alterPartitionManager = alterPartitionManager,
+        initDisklessLogManager = Some(initDisklessLogManager))
 
       try {
         val topicToSeal = "topic-to-seal"
@@ -7191,6 +7193,7 @@ class ReplicaManagerTest {
       val transTopicId = Uuid.randomUuid()
       setupMetadataCacheWithTopicIds(Map(topicName -> transTopicId), kraftMetadataCache)
 
+      val initDisklessLogManager = mock(classOf[InitDisklessLogManager])
       val inklessMetadata = mock(classOf[InklessMetadataView])
       when(inklessMetadata.isDisklessTopic(any())).thenReturn(false)
 
@@ -7204,7 +7207,9 @@ class ReplicaManagerTest {
         metadataCache = kraftMetadataCache,
         logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size),
         alterPartitionManager = alterPartitionManager,
-        inklessMetadataView = Some(inklessMetadata))
+        inklessMetadataView = Some(inklessMetadata),
+        initDisklessLogManager = Some(initDisklessLogManager)
+      )
 
       try {
         // First, create the partition as a classic follower (leader is broker 1)
@@ -7232,6 +7237,75 @@ class ReplicaManagerTest {
         rm.applyDelta(changeDelta, changeImage)
 
         assertTrue(partition.isSealed, "Transitioning leader partition should be sealed after applyDelta")
+      } finally {
+        rm.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testApplyDeltaRemovesFromInitDisklessLogManagerOnFollowerTransition(): Unit = {
+      val props = TestUtils.createBrokerConfig(0)
+      val config = KafkaConfig.fromProps(props)
+      val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
+      val aliveBrokers = Seq(new Node(0, "host0", 0), new Node(1, "host1", 1))
+      val kraftMetadataCache: KRaftMetadataCache = mock(classOf[KRaftMetadataCache])
+      when(kraftMetadataCache.topicConfig(anyString())).thenReturn(new Properties())
+      mockGetAliveBrokerFunctions(kraftMetadataCache, aliveBrokers)
+      when(kraftMetadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_VERSION)
+      val topicName = "transitioning-topic"
+      val transTopicId = Uuid.randomUuid()
+      setupMetadataCacheWithTopicIds(Map(topicName -> transTopicId), kraftMetadataCache)
+
+      val inklessMetadata = mock(classOf[InklessMetadataView])
+      when(inklessMetadata.isDisklessTopic(any())).thenReturn(false)
+
+      val initDisklessLogManager = mock(classOf[InitDisklessLogManager])
+      val tp = new TopicPartition(topicName, 0)
+
+      val rm = new ReplicaManager(
+        metrics = metrics,
+        config = config,
+        time = time,
+        scheduler = new MockScheduler(time),
+        logManager = mockLogMgr,
+        quotaManagers = quotaManager,
+        metadataCache = kraftMetadataCache,
+        logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size),
+        alterPartitionManager = alterPartitionManager,
+        inklessMetadataView = Some(inklessMetadata),
+        initDisklessLogManager = Some(initDisklessLogManager))
+
+      try {
+        // Create the partition as a classic follower (leader is broker 1)
+        val createDelta = new TopicsDelta(TopicsImage.EMPTY)
+        createDelta.replay(new TopicRecord().setName(topicName).setTopicId(transTopicId))
+        createDelta.replay(new PartitionRecord()
+          .setPartitionId(0).setTopicId(transTopicId)
+          .setReplicas(util.Arrays.asList(0, 1)).setIsr(util.Arrays.asList(0, 1))
+          .setLeader(1).setLeaderEpoch(0).setPartitionEpoch(0))
+        val createImage = imageFromTopics(createDelta.apply())
+        rm.applyDelta(createDelta, createImage)
+
+        // Transition to leader while topic becomes diskless
+        when(inklessMetadata.isDisklessTopic(topicName)).thenReturn(true)
+        val leaderDelta = new TopicsDelta(createDelta.apply())
+        leaderDelta.replay(new PartitionChangeRecord()
+          .setPartitionId(0).setTopicId(transTopicId)
+          .setLeader(0).setIsr(util.Arrays.asList(0, 1)))
+        val leaderImage = imageFromTopics(leaderDelta.apply())
+        rm.applyDelta(leaderDelta, leaderImage)
+
+        verify(initDisklessLogManager).registerPartition(any(classOf[Partition]), org.mockito.ArgumentMatchers.eq(transTopicId))
+
+        // Now transition back to follower (leader moves to broker 1)
+        val followerDelta = new TopicsDelta(leaderDelta.apply())
+        followerDelta.replay(new PartitionChangeRecord()
+          .setPartitionId(0).setTopicId(transTopicId)
+          .setLeader(1).setIsr(util.Arrays.asList(0, 1)))
+        val followerImage = imageFromTopics(followerDelta.apply())
+        rm.applyDelta(followerDelta, followerImage)
+
+        verify(initDisklessLogManager).removePartition(tp)
       } finally {
         rm.shutdown(checkpointHW = false)
       }
