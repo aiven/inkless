@@ -117,6 +117,7 @@ public final class SharedState implements Closeable {
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
             new CaffeineCache(
                 config.cacheMaxCount(),
+                config.cacheMaxBytes(),
                 config.cacheExpirationLifespanSec(),
                 config.cacheExpirationMaxIdleSec()
             ),

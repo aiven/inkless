@@ -19,6 +19,7 @@ package io.aiven.inkless.cache;
 
 import com.github.benmanes.caffeine.cache.AsyncCache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Weigher;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
 
 import java.io.IOException;
@@ -43,16 +44,27 @@ public final class CaffeineCache implements ObjectCache {
 
     public CaffeineCache(
         final long maxCacheSize,
+        final long maxCacheBytes,
         final long lifespanSeconds,
         final int maxIdleSeconds
     ) {
-        cache = Caffeine.newBuilder()
-                .maximumSize(maxCacheSize)
-                .expireAfterWrite(Duration.ofSeconds(lifespanSeconds))
-                .expireAfterAccess(Duration.ofSeconds(maxIdleSeconds != -1 ? maxIdleSeconds: 180))
-                .recordStats()
-                .buildAsync();
+        final Caffeine<Object, Object> builder = Caffeine.newBuilder();
+        // Caffeine does not support both maximumSize and maximumWeight simultaneously.
+        // When bytes limit is configured, use weight-based eviction; otherwise use count-based.
+        if (maxCacheBytes > 0) {
+            builder.maximumWeight(maxCacheBytes).weigher(weigher());
+        } else {
+            builder.maximumSize(maxCacheSize);
+        }
+        builder.expireAfterWrite(Duration.ofSeconds(lifespanSeconds));
+        builder.expireAfterAccess(Duration.ofSeconds(maxIdleSeconds != -1 ? maxIdleSeconds : 180));
+        builder.recordStats();
+        cache = builder.buildAsync();
         metrics = new CaffeineCacheMetrics(cache.synchronous());
+    }
+
+    private static Weigher<CacheKey, FileExtent> weigher() {
+        return (key, value) -> value.data().length;
     }
 
     @Override
@@ -113,6 +125,11 @@ public final class CaffeineCache implements ObjectCache {
     @Override
     public long size() {
         return cache.synchronous().estimatedSize();
+    }
+
+    // visible for testing
+    void cleanUp() {
+        cache.synchronous().cleanUp();
     }
 
     public CacheStats stats() {
