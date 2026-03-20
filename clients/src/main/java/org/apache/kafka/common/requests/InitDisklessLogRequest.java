@@ -21,7 +21,9 @@ import org.apache.kafka.common.message.InitDisklessLogRequestData;
 import org.apache.kafka.common.message.InitDisklessLogResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.protocol.Readable;
+import org.apache.kafka.common.protocol.ByteBufferAccessor;
+
+import java.nio.ByteBuffer;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -57,8 +59,8 @@ public class InitDisklessLogRequest extends AbstractRequest {
             .setTopics(results));
     }
 
-    public static InitDisklessLogRequest parse(Readable readable, short version) {
-        return new InitDisklessLogRequest(new InitDisklessLogRequestData(readable, version), version);
+    public static InitDisklessLogRequest parse(ByteBuffer buffer, short version) {
+        return new InitDisklessLogRequest(new InitDisklessLogRequestData(new ByteBufferAccessor(buffer), version), version);
     }
 
     public static class Builder extends AbstractRequest.Builder<InitDisklessLogRequest> {

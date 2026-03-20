@@ -20,7 +20,9 @@ package org.apache.kafka.common.requests;
 import org.apache.kafka.common.message.InitDisklessLogResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.protocol.Readable;
+import org.apache.kafka.common.protocol.ByteBufferAccessor;
+
+import java.nio.ByteBuffer;
 
 import java.util.EnumMap;
 import java.util.Map;
@@ -58,7 +60,7 @@ public class InitDisklessLogResponse extends AbstractResponse {
         data.setThrottleTimeMs(throttleTimeMs);
     }
 
-    public static InitDisklessLogResponse parse(Readable readable, short version) {
-        return new InitDisklessLogResponse(new InitDisklessLogResponseData(readable, version));
+    public static InitDisklessLogResponse parse(ByteBuffer buffer, short version) {
+        return new InitDisklessLogResponse(new InitDisklessLogResponseData(new ByteBufferAccessor(buffer), version));
     }
 }
