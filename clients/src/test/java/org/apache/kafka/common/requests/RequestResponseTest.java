@@ -166,6 +166,8 @@ import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData.AlterC
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData.AlterableConfig;
 import org.apache.kafka.common.message.IncrementalAlterConfigsResponseData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsResponseData.AlterConfigsResourceResponse;
+import org.apache.kafka.common.message.InitDisklessLogRequestData;
+import org.apache.kafka.common.message.InitDisklessLogResponseData;
 import org.apache.kafka.common.message.InitProducerIdRequestData;
 import org.apache.kafka.common.message.InitProducerIdResponseData;
 import org.apache.kafka.common.message.InitializeShareGroupStateRequestData;
@@ -1080,6 +1082,7 @@ public class RequestResponseTest {
             case DESCRIBE_SHARE_GROUP_OFFSETS: return createDescribeShareGroupOffsetsRequest(version);
             case ALTER_SHARE_GROUP_OFFSETS: return createAlterShareGroupOffsetsRequest(version);
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsRequest(version);
+            case INIT_DISKLESS_LOG: return createInitDisklessLogRequest(version);
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
     }
@@ -1175,6 +1178,7 @@ public class RequestResponseTest {
             case DESCRIBE_SHARE_GROUP_OFFSETS: return createDescribeShareGroupOffsetsResponse();
             case ALTER_SHARE_GROUP_OFFSETS: return createAlterShareGroupOffsetsResponse();
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsResponse();
+            case INIT_DISKLESS_LOG: return createInitDisklessLogResponse();
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
     }
@@ -1266,6 +1270,47 @@ public class RequestResponseTest {
                                 ))
                 ));
         return new AssignReplicasToDirsResponse(data);
+    }
+
+    private InitDisklessLogRequest createInitDisklessLogRequest(short version) {
+        InitDisklessLogRequestData data = new InitDisklessLogRequestData()
+                .setBrokerId(1)
+                .setBrokerEpoch(123L)
+                .setTopics(singletonList(
+                        new InitDisklessLogRequestData.TopicData()
+                                .setTopicId(Uuid.fromString("qo0Pcp70TdGnAa7YKMKCqw"))
+                                .setPartitions(singletonList(
+                                        new InitDisklessLogRequestData.PartitionData()
+                                                .setPartitionId(0)
+                                                .setDisklessStartOffset(100L)
+                                                .setLeaderEpoch(5)
+                                                .setProducerStates(singletonList(
+                                                        new InitDisklessLogRequestData.ProducerState()
+                                                                .setProducerId(1000L)
+                                                                .setProducerEpoch((short) 0)
+                                                                .setBaseSequence(0)
+                                                                .setLastSequence(10)
+                                                                .setAssignedOffset(100L)
+                                                                .setBatchMaxTimestamp(System.currentTimeMillis())
+                                                ))
+                                ))
+                ));
+        return new InitDisklessLogRequest.Builder(data).build(version);
+    }
+
+    private InitDisklessLogResponse createInitDisklessLogResponse() {
+        InitDisklessLogResponseData data = new InitDisklessLogResponseData()
+                .setThrottleTimeMs(123)
+                .setTopics(singletonList(
+                        new InitDisklessLogResponseData.TopicResponse()
+                                .setTopicId(Uuid.fromString("qo0Pcp70TdGnAa7YKMKCqw"))
+                                .setPartitions(singletonList(
+                                        new InitDisklessLogResponseData.PartitionResponse()
+                                                .setPartitionId(0)
+                                                .setErrorCode(Errors.NONE.code())
+                                ))
+                ));
+        return new InitDisklessLogResponse(data);
     }
 
     private DescribeTopicPartitionsRequest createDescribeTopicPartitionsRequest(short version) {
