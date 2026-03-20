@@ -117,8 +117,16 @@ Under ``inkless.``
   * Valid Values: [-1,...]
   * Importance: low
 
+``consume.cache.max.bytes``
+  Best-effort limit on cached data based on the sum of cached payload byte lengths. When set to a value greater than 0, byte-based eviction is used instead of count-based (consume.cache.max.count). Set to 0 (default) to use count-based eviction.
+
+  * Type: long
+  * Default: 0
+  * Valid Values: [0,...]
+  * Importance: low
+
 ``consume.cache.max.count``
-  The maximum number of objects to cache in memory. If the cache exceeds this limit, and the cache persistence is enabled, the least recently used objects will be persisted to disk and removed from memory.
+  The maximum number of objects to cache in memory.
 
   * Type: long
   * Default: 1000
