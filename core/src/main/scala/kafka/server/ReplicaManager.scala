@@ -293,7 +293,8 @@ class ReplicaManager(val config: KafkaConfig,
                      val directoryEventHandler: DirectoryEventHandler = DirectoryEventHandler.NOOP,
                      val defaultActionQueue: ActionQueue = new DelayedActionQueue,
                      inklessSharedState: Option[SharedState] = None,
-                     inklessMetadataView: Option[InklessMetadataView] = None
+                     inklessMetadataView: Option[InklessMetadataView] = None,
+                     initDisklessLogManager: Option[InitDisklessLogManager] = None
                      ) extends Logging {
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
@@ -597,11 +598,21 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   def sealTopicPartitions(topic: String): Unit = {
+    if (initDisklessLogManager.isEmpty) {
+      error(s"Cannot seal partitions for topic $topic: InitDisklessLogManager is not enabled.")
+      return
+    }
     allPartitions.foreachEntry { (tp, hostedPartition) =>
       if (tp.topic() == topic) {
         hostedPartition match {
           case HostedPartition.Online(partition) if partition.isLeader =>
-            partition.seal()
+            partition.topicId match {
+              case Some(id) =>
+                partition.seal()
+                initDisklessLogManager.foreach(_.registerPartition(partition, id))
+              case None =>
+                error(s"Partition ${partition.topicPartition} has no topic ID, skipping seal and migration registration")
+            }
           case _ =>
         }
       }
@@ -3100,6 +3111,7 @@ class ReplicaManager(val config: KafkaConfig,
           partition.makeLeader(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
           changedPartitions.add(partition)
+          initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId))
         } catch {
           case e: KafkaStorageException =>
             stateChangeLogger.info(s"Skipped the become-leader state change for transitioning partition $tp " +
@@ -3124,8 +3136,11 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
-      if (!_inklessMetadataView.isDisklessTopic(tp.topic()))
-        getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
+      if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
+        // Already-diskless partitions have no local Partition object, so there is no
+        // makeFollower to call. Clean up migration tracking since only the leader drives migration.
+        initDisklessLogManager.foreach(_.removePartition(tp))
+      } else getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             followerTopicSet.add(tp.topic)
 

@@ -164,6 +164,9 @@ class BrokerServer(
 
   var persister: Persister = _
 
+  private var maybeInitDisklessLogManager: Option[InitDisklessLogManager] = None
+  private var initDisklessLogChannelManager: NodeToControllerChannelManager = _
+
   private def maybeChangeStatus(from: ProcessStatus, to: ProcessStatus): Boolean = {
     lock.lock()
     try {
@@ -347,6 +350,25 @@ class BrokerServer(
         )
       }
 
+      initDisklessLogChannelManager = new NodeToControllerChannelManagerImpl(
+        controllerNodeProvider,
+        time,
+        metrics,
+        config,
+        channelName = "init-diskless-log",
+        s"broker-${config.nodeId}-",
+        retryTimeoutMs = 60000
+      )
+      initDisklessLogChannelManager.start()
+      maybeInitDisklessLogManager = sharedServer.inklessControlPlane.map { _ =>
+        new InitDisklessLogManager(
+          controllerChannelManager = initDisklessLogChannelManager,
+          scheduler = kafkaScheduler,
+          brokerId = config.brokerId,
+          brokerEpochSupplier = () => lifecycleManager.brokerEpoch
+        )
+      }
+
       this._replicaManager = new ReplicaManager(
         config = config,
         metrics = metrics,
@@ -367,7 +389,8 @@ class BrokerServer(
         directoryEventHandler = directoryEventHandler,
         defaultActionQueue = defaultActionQueue,
         inklessSharedState = inklessSharedState,
-        inklessMetadataView = Some(inklessMetadataView)
+        inklessMetadataView = Some(inklessMetadataView),
+        initDisklessLogManager = maybeInitDisklessLogManager
       )
 
       /* start token manager */
@@ -828,6 +851,9 @@ class BrokerServer(
 
       if (replicaManager != null)
         CoreUtils.swallow(replicaManager.shutdown(), this)
+
+      if (initDisklessLogChannelManager != null)
+        CoreUtils.swallow(initDisklessLogChannelManager.shutdown(), this)
 
       if (alterPartitionManager != null)
         CoreUtils.swallow(alterPartitionManager.shutdown(), this)
