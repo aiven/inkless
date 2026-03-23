@@ -31,6 +31,9 @@ TAGS
 Vagrantfile.local
 /logs
 .DS_Store
+Pipfile
+.java-version
+.cursor/
 
 config/server-*
 config/zookeeper-*
@@ -47,6 +50,7 @@ tests/venv
 docs/generated/
 
 .release-settings.json
+.release_work_dir/
 
 kafkatest.egg-info/
 systest/

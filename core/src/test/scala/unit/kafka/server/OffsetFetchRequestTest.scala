@@ -269,6 +269,39 @@ class OffsetFetchRequestTest(cluster: ClusterInstance) extends GroupCoordinatorB
           )
         )
 
+        // Fetch with empty group id.
+        assertEquals(
+          new OffsetFetchResponseData.OffsetFetchResponseGroup()
+            .setGroupId("")
+            .setTopics(List(
+              new OffsetFetchResponseData.OffsetFetchResponseTopics()
+                .setName("foo")
+                .setPartitions(List(
+                  new OffsetFetchResponseData.OffsetFetchResponsePartitions()
+                    .setPartitionIndex(0)
+                    .setCommittedOffset(-1L),
+                  new OffsetFetchResponseData.OffsetFetchResponsePartitions()
+                    .setPartitionIndex(1)
+                    .setCommittedOffset(-1L),
+                  new OffsetFetchResponseData.OffsetFetchResponsePartitions()
+                    .setPartitionIndex(5)
+                    .setCommittedOffset(-1L)
+                ).asJava)
+            ).asJava),
+          fetchOffsets(
+            groupId = "",
+            memberId = memberId,
+            memberEpoch = memberEpoch,
+            partitions = List(
+              new TopicPartition("foo", 0),
+              new TopicPartition("foo", 1),
+              new TopicPartition("foo", 5) // This one does not exist.
+            ),
+            requireStable = requireStable,
+            version = version.toShort
+          )
+        )
+
         // Fetch with stale member epoch.
         assertEquals(
           new OffsetFetchResponseData.OffsetFetchResponseGroup()
@@ -532,6 +565,44 @@ class OffsetFetchRequestTest(cluster: ClusterInstance) extends GroupCoordinatorB
           requireStable = requireStable,
           version = version.toShort
         ).toSet
+      )
+    }
+  }
+
+  @ClusterTest
+  def testGroupErrors(): Unit = {
+    for (version <- ApiKeys.OFFSET_FETCH.oldestVersion() to ApiKeys.OFFSET_FETCH.latestVersion(isUnstableApiEnabled)) {
+      assertEquals(
+        if (version >= 2) {
+          new OffsetFetchResponseData.OffsetFetchResponseGroup()
+            .setGroupId("unknown")
+            .setErrorCode(Errors.NOT_COORDINATOR.code)
+        } else {
+          // Version 1 does not support group level errors. Hence, the error is
+          // returned at the partition level.
+          new OffsetFetchResponseData.OffsetFetchResponseGroup()
+            .setGroupId("unknown")
+            .setTopics(List(
+              new OffsetFetchResponseData.OffsetFetchResponseTopics()
+                .setName("foo")
+                .setPartitions(List(
+                  new OffsetFetchResponseData.OffsetFetchResponsePartitions()
+                    .setPartitionIndex(0)
+                    .setErrorCode(Errors.NOT_COORDINATOR.code)
+                    .setCommittedOffset(-1)
+                    .setCommittedLeaderEpoch(-1)
+                    .setMetadata("")
+                ).asJava)
+            ).asJava)
+        },
+        fetchOffsets(
+          groupId = "unknown",
+          memberId = null,
+          memberEpoch = -1,
+          partitions = List(new TopicPartition("foo", 0)),
+          requireStable = false,
+          version = version.toShort
+        )
       )
     }
   }

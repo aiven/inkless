@@ -292,11 +292,10 @@ textfiles.replace(f"{repo_dir}/streams/quickstart/java/src/main/resources/archet
 print("Updating ducktape version.py")
 textfiles.replace(f"{repo_dir}/tests/kafkatest/version.py", "^DEV_VERSION =.*",
     f"DEV_VERSION = KafkaVersion(\"{release_version}-SNAPSHOT\")", regex=True)
-print("Updating docs templateData.js")
-textfiles.replace(f"{repo_dir}/docs/js/templateData.js", "-SNAPSHOT", "", regex=True)
 git.commit(f"Bump version to {release_version}")
 git.create_tag(rc_tag)
 git.switch_branch(starting_branch)
+git.merge_ref(rc_tag)
 
 # Note that we don't use tempfile here because mkdtemp causes problems with being able to determine the absolute path to a file.
 # Instead we rely on a fixed path
@@ -367,7 +366,8 @@ confirm_or_fail("Have you sufficiently verified the release artifacts?")
 print(templates.deploy_instructions())
 confirm_or_fail("Have you successfully deployed the artifacts?")
 confirm_or_fail(f"Ok to push RC tag {rc_tag}?")
-git.push_tag(rc_tag)
+git.push_ref(rc_tag)
+git.push_ref(starting_branch)
 
 # Move back to starting branch and clean out the temporary release branch (e.g. 1.0.0) we used to generate everything
 git.reset_hard_head()

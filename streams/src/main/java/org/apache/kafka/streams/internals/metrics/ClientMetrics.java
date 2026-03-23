@@ -19,16 +19,17 @@ package org.apache.kafka.streams.internals.metrics;
 import org.apache.kafka.common.metrics.Gauge;
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.Sensor.RecordingLevel;
-import org.apache.kafka.streams.KafkaStreams.State;
 import org.apache.kafka.streams.processor.internals.metrics.StreamsMetricsImpl;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
+import java.util.Collections;
 import java.util.Properties;
 
 import static org.apache.kafka.streams.processor.internals.metrics.StreamsMetricsImpl.CLIENT_LEVEL_GROUP;
+import static org.apache.kafka.streams.processor.internals.metrics.StreamsMetricsImpl.PROCESS_ID_TAG;
 import static org.apache.kafka.streams.processor.internals.metrics.StreamsMetricsImpl.addSumMetricToSensor;
 
 public class ClientMetrics {
@@ -118,7 +119,7 @@ public class ClientMetrics {
     }
 
     public static void addStateMetric(final StreamsMetricsImpl streamsMetrics,
-                                      final Gauge<State> stateProvider) {
+                                      final Gauge<String> stateProvider) {
         streamsMetrics.addClientLevelMutableMetric(
             STATE,
             STATE_DESCRIPTION,
@@ -127,21 +128,25 @@ public class ClientMetrics {
         );
     }
 
-    public static void addClientStateTelemetryMetric(final StreamsMetricsImpl streamsMetrics,
+    public static void addClientStateTelemetryMetric(final String processId,
+                                                     final StreamsMetricsImpl streamsMetrics,
                                                      final Gauge<Integer> stateProvider) {
         streamsMetrics.addClientLevelMutableMetric(
             CLIENT_STATE,
             STATE_DESCRIPTION,
+            Collections.singletonMap(PROCESS_ID_TAG, processId),
             RecordingLevel.INFO,
             stateProvider
         );
     }
 
-    public static void addClientRecordingLevelMetric(final StreamsMetricsImpl streamsMetrics,
+    public static void addClientRecordingLevelMetric(final String processId,
+                                                     final StreamsMetricsImpl streamsMetrics,
                                                      final int recordingLevel) {
         streamsMetrics.addClientLevelImmutableMetric(
                 RECORDING_LEVEL,
                 RECORDING_LEVEL_DESCRIPTION,
+                Collections.singletonMap(PROCESS_ID_TAG, processId),
                 RecordingLevel.INFO,
                 recordingLevel
         );

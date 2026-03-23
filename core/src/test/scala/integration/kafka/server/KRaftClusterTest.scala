@@ -65,6 +65,7 @@ import java.util.{Collections, Optional, OptionalLong, Properties}
 import scala.collection.{Seq, mutable}
 import scala.concurrent.duration.{FiniteDuration, MILLISECONDS, SECONDS}
 import scala.jdk.CollectionConverters._
+import scala.util.Using
 
 @Timeout(120)
 @Tag("integration")
@@ -1012,8 +1013,7 @@ class KRaftClusterTest {
     val cluster = new KafkaClusterTestKit.Builder(
       new TestKitNodes.Builder().
         setNumBrokerNodes(1).
-        setNumControllerNodes(1).
-        setFeature(KRaftVersion.FEATURE_NAME, 1.toShort).build()).build()
+        setNumControllerNodes(1).build()).setStandalone(true).build()
     try {
       cluster.format()
       cluster.startup()
@@ -1618,6 +1618,51 @@ class KRaftClusterTest {
       }
     } finally {
       cluster.close()
+    }
+  }
+
+  /**
+   * Test that once a cluster is formatted, a bootstrap.metadata file that contains an unsupported
+   * MetadataVersion is not a problem. This is a regression test for KAFKA-19192.
+   */
+  @Test
+  def testOldBootstrapMetadataFile(): Unit = {
+    val baseDirectory = TestUtils.tempDir().toPath()
+    Using.resource(new KafkaClusterTestKit.Builder(
+      new TestKitNodes.Builder().
+        setNumBrokerNodes(1).
+        setNumControllerNodes(1).
+        setBaseDirectory(baseDirectory).
+          build()).
+      setDeleteOnClose(false).
+        build()
+    ) { cluster =>
+      cluster.format()
+      cluster.startup()
+      cluster.waitForReadyBrokers()
+    }
+    val oldBootstrapMetadata = BootstrapMetadata.fromRecords(
+      util.Arrays.asList(
+        new ApiMessageAndVersion(
+          new FeatureLevelRecord().
+            setName(MetadataVersion.FEATURE_NAME).
+            setFeatureLevel(1),
+          0.toShort)
+      ),
+      "oldBootstrapMetadata")
+    // Re-create the cluster using the same directory structure as above.
+    // Since we do not need to use the bootstrap metadata, the fact that
+    // it specifies an obsolete metadata.version should not be a problem.
+    Using.resource(new KafkaClusterTestKit.Builder(
+      new TestKitNodes.Builder().
+        setNumBrokerNodes(1).
+        setNumControllerNodes(1).
+        setBaseDirectory(baseDirectory).
+        setBootstrapMetadata(oldBootstrapMetadata).
+          build()).build()
+    ) { cluster =>
+      cluster.startup()
+      cluster.waitForReadyBrokers()
     }
   }
 
