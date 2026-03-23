@@ -57,6 +57,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -65,6 +66,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -704,7 +706,7 @@ public class TaskManager {
                                                          final CompletableFuture<StateUpdater.RemovedTaskResult> future) {
         final StateUpdater.RemovedTaskResult removedTaskResult;
         try {
-            removedTaskResult = future.get();
+            removedTaskResult = future.get(5, TimeUnit.MINUTES);
             if (removedTaskResult == null) {
                 throw new IllegalStateException("Task " + taskId + " was not found in the state updater. "
                     + BUG_ERROR_MESSAGE);
@@ -719,6 +721,10 @@ public class TaskManager {
             Thread.currentThread().interrupt();
             log.error(INTERRUPTED_ERROR_MESSAGE, shouldNotHappen);
             throw new IllegalStateException(INTERRUPTED_ERROR_MESSAGE, shouldNotHappen);
+        } catch (final java.util.concurrent.TimeoutException timeoutException) {
+            log.warn("The state updater wasn't able to remove task {} in time. The state updater thread may be dead. "
+                    + BUG_ERROR_MESSAGE, taskId, timeoutException);
+            return null;
         }
     }
 
@@ -973,9 +979,12 @@ public class TaskManager {
         }
     }
 
+    /**
+     * @throws StreamsException if fetching committed offsets timed out often enough to exceed task timeout
+     */
     private void transitRestoredTaskToRunning(final Task task,
                                               final long now,
-                                              final java.util.function.Consumer<Set<TopicPartition>> offsetResetter) {
+                                              final java.util.function.Consumer<Set<TopicPartition>> offsetResetter) throws StreamsException {
         try {
             task.completeRestoration(offsetResetter);
             tasks.addTask(task);
@@ -1052,8 +1061,22 @@ public class TaskManager {
     private void handleRestoredTasksFromStateUpdater(final long now,
                                                      final java.util.function.Consumer<Set<TopicPartition>> offsetResetter) {
         final Duration timeout = Duration.ZERO;
-        for (final Task task : stateUpdater.drainRestoredActiveTasks(timeout)) {
-            transitRestoredTaskToRunning(task, now, offsetResetter);
+        // Create a mutable copy to support iterator.remove()
+        final Set<StreamTask> restoredTasks = new LinkedHashSet<>(stateUpdater.drainRestoredActiveTasks(timeout));
+        final Iterator<StreamTask> iterator = restoredTasks.iterator();
+
+        try {
+            while (iterator.hasNext()) {
+                final Task task = iterator.next();
+                transitRestoredTaskToRunning(task, now, offsetResetter);
+                iterator.remove(); // Remove successfully transitioned tasks
+            }
+        } finally {
+            // Add back any tasks that we drained but didn't successfully transition
+            // from the state updater, so that they are closed during shutdown.
+            for (final Task task : restoredTasks) {
+                stateUpdater.add(task);
+            }
         }
     }
 
@@ -1463,10 +1486,20 @@ public class TaskManager {
         // TODO: change type to `StreamTask`
         final Set<Task> activeTasks = new TreeSet<>(Comparator.comparing(Task::id));
         activeTasks.addAll(tasks.activeTasks());
+        // TODO: change type to `StandbyTask`
+        final Set<Task> standbyTasks = new TreeSet<>(Comparator.comparing(Task::id));
+        standbyTasks.addAll(tasks.standbyTasks());
+
+        final Set<Task> pendingActiveTasks = tasks.drainPendingActiveTasksToInit();
+        activeTasks.addAll(pendingActiveTasks);
+        tasks.addPendingTasksToClose(pendingActiveTasks);
+        final Set<Task> pendingStandbyTasks = tasks.drainPendingStandbyTasksToInit();
+        standbyTasks.addAll(pendingStandbyTasks);
+        tasks.addPendingTasksToClose(pendingStandbyTasks);
 
         executeAndMaybeSwallow(
             clean,
-            () -> closeAndCleanUpTasks(activeTasks, standbyTaskIterable(), clean),
+            () -> closeAndCleanUpTasks(activeTasks, standbyTasks, clean),
             e -> firstException.compareAndSet(null, e),
             e -> log.warn("Ignoring an exception while unlocking remaining task directories.", e)
         );
@@ -1499,6 +1532,12 @@ public class TaskManager {
 
     private void shutdownStateUpdater() {
         if (stateUpdater != null) {
+            // If there are failed tasks handling them first
+            for (final StateUpdater.ExceptionAndTask exceptionAndTask : stateUpdater.drainExceptionsAndFailedTasks()) {
+                final Task failedTask = exceptionAndTask.task();
+                closeTaskDirty(failedTask, false);
+            }
+
             final Map<TaskId, CompletableFuture<StateUpdater.RemovedTaskResult>> futures = new LinkedHashMap<>();
             for (final Task task : stateUpdater.tasks()) {
                 final CompletableFuture<StateUpdater.RemovedTaskResult> future = stateUpdater.remove(task.id());
@@ -1507,7 +1546,8 @@ public class TaskManager {
             final Set<Task> tasksToCloseClean = new HashSet<>();
             final Set<Task> tasksToCloseDirty = new HashSet<>();
             addToTasksToClose(futures, tasksToCloseClean, tasksToCloseDirty);
-            stateUpdater.shutdown(Duration.ofMillis(Long.MAX_VALUE));
+            // at this point we removed all tasks, so the shutdown should not take a lot of time
+            stateUpdater.shutdown(Duration.ofMinutes(1L));
 
             for (final Task task : tasksToCloseClean) {
                 tasks.addTask(task);
@@ -1515,16 +1555,22 @@ public class TaskManager {
             for (final Task task : tasksToCloseDirty) {
                 closeTaskDirty(task, false);
             }
+            // Handling all failures that occurred during the remove process
             for (final StateUpdater.ExceptionAndTask exceptionAndTask : stateUpdater.drainExceptionsAndFailedTasks()) {
                 final Task failedTask = exceptionAndTask.task();
                 closeTaskDirty(failedTask, false);
+            }
+
+            // If there is anything left unhandled due to timeouts, handling now
+            for (final Task task : stateUpdater.tasks()) {
+                closeTaskDirty(task, false);
             }
         }
     }
 
     private void shutdownSchedulingTaskManager() {
         if (schedulingTaskManager != null) {
-            schedulingTaskManager.shutdown(Duration.ofMillis(Long.MAX_VALUE));
+            schedulingTaskManager.shutdown(Duration.ofMinutes(5L));
         }
     }
 
@@ -1561,7 +1607,7 @@ public class TaskManager {
                                                       final boolean clean,
                                                       final AtomicReference<RuntimeException> firstException) {
         if (!clean) {
-            return activeTaskIterable();
+            return activeTasksToClose;
         }
         final Comparator<Task> byId = Comparator.comparing(Task::id);
         final Set<Task> tasksToCommit = new TreeSet<>(byId);
@@ -1619,7 +1665,7 @@ public class TaskManager {
                 }
             }
 
-            for (final Task task : activeTaskIterable()) {
+            for (final Task task : activeTasksToClose) {
                 try {
                     task.postCommit(true);
                 } catch (final RuntimeException e) {
@@ -1654,7 +1700,7 @@ public class TaskManager {
                                                        final boolean clean,
                                                        final AtomicReference<RuntimeException> firstException) {
         if (!clean) {
-            return standbyTaskIterable();
+            return standbyTasksToClose;
         }
         final Set<Task> tasksToCloseDirty = new HashSet<>();
 
@@ -1848,9 +1894,7 @@ public class TaskManager {
         final long nowMs
     ) {
         for (final TopicPartition partition : partitions) {
-            final Task task = getActiveTask(partition);
-            task.maybeInitTaskTimeoutOrThrow(nowMs, timeoutException);
-            stateUpdater.add(task);
+            getActiveTask(partition).maybeInitTaskTimeoutOrThrow(nowMs, timeoutException);
         }
     }
 
