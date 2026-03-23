@@ -1,7 +1,7 @@
 .PHONY: all
 all: clean fmt test pitest build_release
 
-VERSION := 4.1.0-inkless-SNAPSHOT
+VERSION := 4.2.0-inkless-SNAPSHOT
 
 # Docker image settings (aligned with .github/workflows/inkless-release.yml)
 REGISTRY := ghcr.io
