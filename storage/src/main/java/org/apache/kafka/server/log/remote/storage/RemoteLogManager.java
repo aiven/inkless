@@ -1493,7 +1493,33 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
             log.updateHighestOffsetInRemoteStorage(offsetAndEpoch.offset());
         }
     }
-    
+
+    public class DisklessConsolidationRemoteOffsetUpdateTask extends RLMTask {
+
+        private TopicIdPartition topicIdPartition;
+        private OffsetAndEpoch offsetAndEpoch;
+
+        public DisklessConsolidationRemoteOffsetUpdateTask(TopicIdPartition topicIdPartition) {
+            super(topicIdPartition);
+            this.topicIdPartition = topicIdPartition;
+        }
+
+        @Override
+        protected void execute(UnifiedLog log) throws InterruptedException, RemoteStorageException, ExecutionException {
+            OffsetAndEpoch offsetAndEpoch = findHighestRemoteOffset(topicIdPartition, log);
+            log.updateHighestOffsetInRemoteStorage(offsetAndEpoch.offset());
+            this.offsetAndEpoch = offsetAndEpoch;
+        }
+
+        public TopicIdPartition topicIdPartition() {
+            return topicIdPartition;
+        }
+
+        public OffsetAndEpoch offsetAndEpoch() {
+            return offsetAndEpoch;
+        }
+    }
+
     private boolean deleteRemoteLogSegment(
         RemoteLogSegmentMetadata segmentMetadata,
         Predicate<RemoteLogSegmentMetadata> predicate
@@ -1902,6 +1928,22 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
             nextBatch = remoteLogInputStream.nextBatch();
         } while (nextBatch != null && nextBatch.lastOffset() < offset);
         return new EnrichedRecordBatch(nextBatch, skippedBytes);
+    }
+
+    /**
+     * Creates a new task for querying the highest remote offset. This task should be run on a separate thread.
+     * @param topicPartitionLogs
+     * @return
+     */
+    public Set<DisklessConsolidationRemoteOffsetUpdateTask> getRemoteOffsetUpdateTasks(Set<TopicPartitionLog> topicPartitionLogs, Map<String, Uuid> topicIds) {
+        Map<TopicIdPartition, Boolean> topicIdPartitions = filterPartitions(topicPartitionLogs)
+            .collect(Collectors.toMap(p -> new TopicIdPartition(topicIds.get(p.topicPartition().topic()), p.topicPartition()),
+            p -> p.unifiedLog().isPresent() ? p.unifiedLog().get().config().remoteLogCopyDisable() : false));
+        // Filter partitions with UnifiedLog
+        return topicIdPartitions.entrySet().stream()
+            .filter(entry -> !entry.getValue())
+            .map(Map.Entry::getKey)
+            .map(DisklessConsolidationRemoteOffsetUpdateTask::new).collect(Collectors.toSet());
     }
 
     OffsetAndEpoch findHighestRemoteOffset(TopicIdPartition topicIdPartition, UnifiedLog log) throws RemoteStorageException {

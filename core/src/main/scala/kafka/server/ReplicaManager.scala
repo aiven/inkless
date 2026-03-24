@@ -23,6 +23,7 @@ import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchRes
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendHandler
+import io.aiven.inkless.unification.{ConsolidationPoolHandler, RemotePartitionDispatcher}
 import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
@@ -277,6 +278,11 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
   // FIXME: FileMerger is having issues with hanging queries. Disabling until fixed.
   private val inklessFileMerger: Option[FileMerger] = None // inklessSharedState.map(new FileMerger(_))
+  private val inklessConsolidationPoolHandler: Option[ConsolidationPoolHandler] = remoteLogManager.map(_ => new ConsolidationPoolHandler())
+  private val inklessConsolidationOffsetDispatcher: Option[RemotePartitionDispatcher] =
+    if (inklessConsolidationPoolHandler.isDefined)
+      remoteLogManager.map(rlm => new RemotePartitionDispatcher(rlm, inklessConsolidationPoolHandler.get))
+    else None
 
   /* epoch of the controller that last changed the leader */
   protected val localBrokerId = config.brokerId
@@ -2507,6 +2513,8 @@ class ReplicaManager(val config: KafkaConfig,
     replicaSelectorPlugin.foreach(_.close)
     removeAllTopicMetrics()
     addPartitionsToTxnManager.foreach(_.shutdown())
+    inklessConsolidationOffsetDispatcher.foreach(_.close())
+    inklessConsolidationPoolHandler.foreach(_.shutdown())
     inklessAppendHandler.foreach(_.close())
     inklessFetchHandler.foreach(_.close())
     inklessFetchOffsetHandler.foreach(_.close())
@@ -2702,6 +2710,13 @@ class ReplicaManager(val config: KafkaConfig,
     val metadataVersion = newImage.features().metadataVersionOrThrow()
 
     replicaStateChangeLock.synchronized {
+      // Handle deleted diskless partitions that are in consolidation
+      inklessMetadataView.foreach(imv => {
+        val localDeleteIds = localChanges.deletes.asScala
+          .filter(tp => imv.isConsolidatedDisklessTopic(tp.topic))
+          .map(tp => tp.topic -> imv.getTopicId(tp.topic)).toMap.asJava
+        inklessConsolidationOffsetDispatcher.foreach(_.applyPartitionDeletes(localChanges.deletes, localDeleteIds))
+      })
       // Handle deleted partitions. We need to do this first because we might subsequently
       // create new partitions with the same names as the ones we are deleting here.
       if (!localChanges.deletes.isEmpty) {
@@ -2745,6 +2760,10 @@ class ReplicaManager(val config: KafkaConfig,
         replicaAlterLogDirsManager.shutdownIdleFetcherThreads()
 
         remoteLogManager.foreach(rlm => rlm.onLeadershipChange((leaderChangedPartitions.toSet: Set[TopicPartitionLog]).asJava, (followerChangedPartitions.toSet: Set[TopicPartitionLog]).asJava, localChanges.topicIds()))
+        inklessMetadataView.foreach { imv =>
+          inklessConsolidationOffsetDispatcher.foreach(_.applyNewLeaders((leaderChangedPartitions.filter(p => imv.isConsolidatedDisklessTopic(p.topic)).toSet: Set[TopicPartitionLog]).asJava, localChanges.topicIds()))
+          inklessConsolidationOffsetDispatcher.foreach(_.applyNewFollowers((followerChangedPartitions.filter(p => imv.isConsolidatedDisklessTopic(p.topic)).toSet: Set[TopicPartitionLog]).asJava, localChanges.topicIds()))
+        }
       }
 
       if (metadataVersion.isDirectoryAssignmentSupported) {
@@ -2766,14 +2785,18 @@ class ReplicaManager(val config: KafkaConfig,
     replicaFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
     localLeaders.foreachEntry { (tp, info) =>
       val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic())
+      val isConsolidatedDisklessTopic = _inklessMetadataView.isConsolidatedDisklessTopic(tp.topic)
       val existingPartition = onlinePartition(tp)
-      if (!isDiskless) {
+      if (!isDiskless || isConsolidatedDisklessTopic) {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
             partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
             changedPartitions.add(partition)
+            if (isConsolidatedDisklessTopic) {
+              partition.createLogIfNotExists(isNew = true, isFutureReplica = false, offsetCheckpoints = offsetCheckpoints, topicId = partition.topicId, targetLogDirectoryId = partitionAssignedDirectoryId)
+            }
           } catch {
             case e: KafkaStorageException =>
               stateChangeLogger.info(s"Skipped the become-leader state change for $tp " +
@@ -2785,7 +2808,7 @@ class ReplicaManager(val config: KafkaConfig,
               markPartitionOffline(tp)
           }
         }
-      } else if (existingPartition.isDefined) {
+      } else if (existingPartition.isDefined && !isConsolidatedDisklessTopic) {
         // Classic-to-diskless transition: seal the partition before making it leader
         // so that no produce request can ever be processed by the new leader.
         val partition = existingPartition.get
