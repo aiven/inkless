@@ -571,7 +571,8 @@ class ReplicaManager(val config: KafkaConfig,
           case HostedPartition.Online(partition) if partition.isLeader =>
             partition.topicId match {
               case Some(id) =>
-                sealAndRegisterPartitionMigration(partition, id)
+                partition.seal()
+                initDisklessLogManager.foreach(_.registerPartition(partition, id))
               case None =>
                 error(s"Partition ${partition.topicPartition} has no topic ID, skipping seal and migration registration")
             }
@@ -579,11 +580,6 @@ class ReplicaManager(val config: KafkaConfig,
         }
       }
     }
-  }
-
-  private def sealAndRegisterPartitionMigration(partition: Partition, topicId: Uuid): Unit = {
-    partition.seal()
-    initDisklessLogManager.foreach(_.registerPartition(partition, topicId))
   }
 
   def sealExistingLeadersOfTopicsMigratedToDiskless(delta: MetadataDelta, newImage: MetadataImage): Unit = {
@@ -2815,9 +2811,10 @@ class ReplicaManager(val config: KafkaConfig,
         val partition = existingPartition.get
         try {
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+          partition.seal()
           partition.makeLeader(info.partition, false, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
-          sealAndRegisterPartitionMigration(partition, info.topicId)
+          initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
           changedPartitions.add(partition)
         } catch {
           case e: KafkaStorageException =>
