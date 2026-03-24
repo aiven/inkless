@@ -20,6 +20,7 @@ import kafka.server.KafkaConfig;
 import kafka.server.ReplicaManager;
 
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.WriteMirrorStatesResponseData;
@@ -132,7 +133,6 @@ public class MirrorCoordinator {
                 break;
             case MIRRORING:
                 log.debug("MIRRORING topics {}.", topicPartitions);
-                // start mirroring
                 replicaManager.maybeCreateMirrorFetchers(mirrorName, topicPartitions);
                 break;
             case PAUSING:
@@ -151,6 +151,7 @@ public class MirrorCoordinator {
                 break;
             case STOPPED:
                 log.debug("STOPPED for topics {}.", topicPartitions);
+                writeMirrorPidResetBarrier(mirrorName, topicPartitions);
                 // topic is writable
                 break;
             case FAILED:
@@ -158,7 +159,7 @@ public class MirrorCoordinator {
                 // TODO: implement recovery actions (i.e. exponential backoff retry)
                 break;
             default:
-                log.error("Illegal state transition to " + newState);
+                log.error("Illegal state transition to {}", newState);
                 throw new IllegalArgumentException("Illegal state transition to " + newState);
         }
     }
@@ -348,7 +349,7 @@ public class MirrorCoordinator {
 
         // periodically query source cluster to get the metadata
         long metadataRefreshIntervalMs = brokerConfig.mirrorConfig().metadataRefreshIntervalMs();
-        scheduler.schedule("MirrorMetadataRefresh", metadataManager::syncMetadata, metadataRefreshIntervalMs, metadataRefreshIntervalMs);
+        scheduler.schedule("MirrorMetadataRefresh", metadataManager::syncMetadata, 0, metadataRefreshIntervalMs);
 
         log.info("Startup complete.");
     }
@@ -371,6 +372,21 @@ public class MirrorCoordinator {
                     scheduleTruncation(mirrorName, topicPartitions, retryDelayMs);
                 }
             }, delayMs);
+    }
+
+    private void writeMirrorPidResetBarrier(String mirrorName, Set<TopicPartition> topicPartitions) {
+        Uuid sourceClusterId = metadataManager.getSourceClusterId(mirrorName);
+        if (sourceClusterId == null) {
+            log.warn("Source cluster ID not available for mirror {}. Skipping PID reset barrier.", mirrorName);
+            return;
+        }
+        for (TopicPartition tp : topicPartitions) {
+            try {
+                replicaManager.getPartitionOrException(tp).appendMirrorPidResetBarrier(sourceClusterId);
+            } catch (Exception e) {
+                log.error("Failed to write PID reset barrier for partition {} in mirror {}", tp, mirrorName, e);
+            }
+        }
     }
 
     private Map<String, Map<Integer, Long>> lastMirroredOffsetsToCoordinatorRecords(Map<MirrorUtils.PartitionKey, Long> offsets) {

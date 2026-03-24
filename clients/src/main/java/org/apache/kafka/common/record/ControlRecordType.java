@@ -54,6 +54,9 @@ public enum ControlRecordType {
     KRAFT_VERSION((short) 5),
     KRAFT_VOTERS((short) 6),
 
+    // Cluster mirroring control messages
+    MIRROR_PID_RESET((short) 7),
+
     // UNKNOWN is used to indicate a control type which the client is not aware of and should be ignored
     UNKNOWN((short) -1);
 
@@ -117,6 +120,8 @@ public enum ControlRecordType {
                 return KRAFT_VERSION;
             case 6:
                 return KRAFT_VOTERS;
+            case 7:
+                return MIRROR_PID_RESET;
 
             default:
                 return UNKNOWN;

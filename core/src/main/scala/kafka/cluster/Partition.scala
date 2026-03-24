@@ -1392,7 +1392,8 @@ class Partition(val topicPartition: TopicPartition,
   private def doAppendRecordsToFollowerOrFutureReplica(
     records: MemoryRecords,
     isFuture: Boolean,
-    partitionLeaderEpoch: Int
+    partitionLeaderEpoch: Int,
+    sourceClusterId: Uuid
   ): Option[LogAppendInfo] = {
     if (isFuture) {
       // The read lock is needed to handle race condition if request handler thread tries to
@@ -1400,13 +1401,13 @@ class Partition(val topicPartition: TopicPartition,
       inReadLock(leaderIsrUpdateLock) {
         // Note the replica may be undefined if it is removed by a non-ReplicaAlterLogDirsThread before
         // this method is called
-        futureLog.map { _.appendAsFollower(records, partitionLeaderEpoch, getMirrorName().nonEmpty && isLeader) }
+        futureLog.map { _.appendAsFollower(records, partitionLeaderEpoch, sourceClusterId) }
       }
     } else {
       // The lock is needed to prevent the follower replica from being updated while ReplicaAlterDirThread
       // is executing maybeReplaceCurrentWithFutureReplica() to replace follower replica with the future replica.
       futureLogLock.synchronized {
-        Some(localLogOrException.appendAsFollower(records, partitionLeaderEpoch, getMirrorName().nonEmpty && isLeader))
+        Some(localLogOrException.appendAsFollower(records, partitionLeaderEpoch, sourceClusterId))
       }
     }
   }
@@ -1414,10 +1415,11 @@ class Partition(val topicPartition: TopicPartition,
   def appendRecordsToFollowerOrFutureReplica(
     records: MemoryRecords,
     isFuture: Boolean,
-    partitionLeaderEpoch: Int
+    partitionLeaderEpoch: Int,
+    sourceClusterId: Uuid = null
   ): Option[LogAppendInfo] = {
     try {
-      doAppendRecordsToFollowerOrFutureReplica(records, isFuture, partitionLeaderEpoch)
+      doAppendRecordsToFollowerOrFutureReplica(records, isFuture, partitionLeaderEpoch, sourceClusterId)
     } catch {
       case e: UnexpectedAppendOffsetException =>
         val log = if (isFuture) futureLocalLogOrException else localLogOrException
@@ -1435,10 +1437,14 @@ class Partition(val topicPartition: TopicPartition,
           info(s"Unexpected offset in append to $topicPartition. First offset ${e.firstOffset} is less than log start offset ${log.logStartOffset}." +
                s" Since this is the first record to be appended to the $replicaName's log, will start the log from offset ${e.firstOffset}.")
           truncateFullyAndStartAt(e.firstOffset, isFuture)
-          doAppendRecordsToFollowerOrFutureReplica(records, isFuture, partitionLeaderEpoch)
+          doAppendRecordsToFollowerOrFutureReplica(records, isFuture, partitionLeaderEpoch, sourceClusterId)
         } else
           throw e
     }
+  }
+
+  def appendMirrorPidResetBarrier(sourceClusterId: Uuid): Unit = {
+    localLogOrException.appendMirrorPidResetBarrier(sourceClusterId)
   }
 
   def appendRecordsToLeader(records: MemoryRecords, origin: AppendOrigin, requiredAcks: Int,

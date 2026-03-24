@@ -20,6 +20,7 @@ import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.errors.CorruptRecordException;
 import org.apache.kafka.common.message.KRaftVersionRecord;
 import org.apache.kafka.common.message.LeaderChangeMessage;
+import org.apache.kafka.common.message.MirrorPidResetRecord;
 import org.apache.kafka.common.message.SnapshotFooterRecord;
 import org.apache.kafka.common.message.SnapshotHeaderRecord;
 import org.apache.kafka.common.message.VotersRecord;
@@ -815,6 +816,25 @@ public class MemoryRecords extends AbstractRecords {
             )
         ) {
             builder.appendVotersMessage(timestamp, votersRecord);
+            return builder.build();
+        }
+    }
+
+    public static MemoryRecords withMirrorPidResetRecord(
+        long initialOffset,
+        long timestamp,
+        int leaderEpoch,
+        ByteBuffer buffer,
+        MirrorPidResetRecord mirrorPidResetRecord
+    ) {
+        try (MemoryRecordsBuilder builder = createKraftControlRecordBuilder(
+                initialOffset,
+                timestamp,
+                leaderEpoch,
+                buffer
+            )
+        ) {
+            builder.appendMirrorPidResetMessage(timestamp, mirrorPidResetRecord);
             return builder.build();
         }
     }

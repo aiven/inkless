@@ -31,7 +31,10 @@ import org.apache.kafka.common.errors.RecordBatchTooLargeException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.DescribeProducersResponseData;
+import org.apache.kafka.common.message.MirrorPidResetRecord;
 import org.apache.kafka.common.record.CompressionType;
+import org.apache.kafka.common.record.ControlRecordUtils;
+import org.apache.kafka.common.record.DefaultRecordBatch;
 import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
@@ -1043,7 +1046,7 @@ public class UnifiedLog implements AutoCloseable {
     }
 
     public LogAppendInfo appendAsFollower(MemoryRecords records, int leaderEpoch) {
-        return appendAsFollower(records, leaderEpoch, false);
+        return appendAsFollower(records, leaderEpoch, null);
     }
 
     /**
@@ -1051,10 +1054,11 @@ public class UnifiedLog implements AutoCloseable {
      *
      * @param records The records to append
      * @param leaderEpoch the epoch of the replica appending
+     * @param sourceClusterId The source cluster UUID for mirror leaders, or null if not mirroring
      * @throws KafkaStorageException If the append fails due to an I/O error.
      * @return Information about the appended messages including the first and last offset.
      */
-    public LogAppendInfo appendAsFollower(MemoryRecords records, int leaderEpoch, boolean isMirroredTopic) {
+    public LogAppendInfo appendAsFollower(MemoryRecords records, int leaderEpoch, Uuid sourceClusterId) {
         return append(records,
                       AppendOrigin.REPLICATION,
                       false,
@@ -1063,7 +1067,7 @@ public class UnifiedLog implements AutoCloseable {
                       VerificationGuard.SENTINEL,
                       true,
                       RecordBatch.CURRENT_MAGIC_VALUE,
-                      isMirroredTopic);
+                      sourceClusterId);
     }
 
     private LogAppendInfo append(MemoryRecords records,
@@ -1074,7 +1078,7 @@ public class UnifiedLog implements AutoCloseable {
                                  VerificationGuard verificationGuard,
                                  boolean ignoreRecordSize,
                                  byte toMagic) {
-        return append(records, origin, validateAndAssignOffsets, leaderEpoch, requestLocal, verificationGuard, ignoreRecordSize, toMagic, false);
+        return append(records, origin, validateAndAssignOffsets, leaderEpoch, requestLocal, verificationGuard, ignoreRecordSize, toMagic, null);
     }
 
     /**
@@ -1090,7 +1094,7 @@ public class UnifiedLog implements AutoCloseable {
      * @param requestLocal The request local instance if validateAndAssignOffsets is true
      * @param ignoreRecordSize True to skip validation of record size
      * @param toMagic Current Magic value
-     * @param isMirrorLeader True if this is a read-only leader fetching from source cluster
+     * @param sourceClusterId The source cluster UUID for mirror leaders, or null if not mirroring
      * @throws KafkaStorageException If the append fails due to an I/O error.
      * @throws OffsetsOutOfOrderException If out of order offsets found in 'records'
      * @throws UnexpectedAppendOffsetException If the first or last offset in append is less than next offset
@@ -1104,7 +1108,7 @@ public class UnifiedLog implements AutoCloseable {
                                  VerificationGuard verificationGuard,
                                  boolean ignoreRecordSize,
                                  byte toMagic,
-                                 boolean isMirrorLeader) {
+                                 Uuid sourceClusterId) {
         // We want to ensure the partition metadata file is written to the log dir before any log data is written to disk.
         // This will ensure that any log data can be recovered with the correct topic ID in the case of failure.
         maybeFlushMetadataFile();
@@ -1170,7 +1174,7 @@ public class UnifiedLog implements AutoCloseable {
                                     });
                                 }
                             } else {
-                                maybeOverrideProducerIdAndLeaderEpoch(records, isMirrorLeader);
+                                maybeOverrideProducerIdAndLeaderEpoch(records, sourceClusterId);
                                 // we are taking the offsets we are given
                                 if (appendInfo.firstOrLastOffsetOfFirstBatch() < localLog.logEndOffset()) {
                                     // we may still be able to recover if the log is empty
@@ -1274,22 +1278,44 @@ public class UnifiedLog implements AutoCloseable {
     }
 
     /**
-     * Override producer IDs and leader epochs for records being mirrored from a source cluster.
-     * This is only applied to read-only leaders (partition leader with mirrorName set)
-     * to ensure producer IDs from source cluster don't conflict with local producer IDs,
-     * and local epoch-based partition replication can work without changes.
-     *
-     * @param records The records being appended
-     * @param isMirrorLeader True if this is a read-only leader fetching from source cluster
+     * Rewrites leader epochs and producer IDs for mirrored records. Leader epochs are set to
+     * the local epoch. Producer IDs are mapped into the negative space using -(PID + 2) to
+     * avoid conflicts with local producers, while preserving -1 (NO_PRODUCER_ID) for
+     * non-idempotent batches. Already-negative PIDs (from chained mirroring) pass through
+     * unchanged, making the transformation idempotent.
      */
-    private void maybeOverrideProducerIdAndLeaderEpoch(MemoryRecords records, boolean isMirrorLeader) {
-        if (isMirrorLeader) {
+    private void maybeOverrideProducerIdAndLeaderEpoch(MemoryRecords records, Uuid sourceClusterId) {
+        if (sourceClusterId != null) {
             for (MutableRecordBatch batch : records.batches()) {
-                // Keep using local leader epochs
                 batch.setPartitionLeaderEpoch(latestEpoch().orElse(0));
-                // Mirrored producer IDs occupy the negative space to avoid any conflict
-                batch.setProducerId(-(batch.producerId() + 2));
+                long pid = batch.producerId();
+                if (pid >= 0) {
+                    batch.setProducerId(-(pid + 2));
+                }
             }
+        }
+    }
+
+    public void appendMirrorPidResetBarrier(Uuid sourceClusterId) {
+        try {
+            synchronized (lock) {
+                MirrorPidResetRecord record = new MirrorPidResetRecord()
+                    .setVersion(ControlRecordUtils.MIRROR_PID_RESET_CURRENT_VERSION)
+                    .setSourceClusterId(sourceClusterId.toString());
+                int bufferSize = DefaultRecordBatch.RECORD_BATCH_OVERHEAD + 256;
+                ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
+                long offset = localLog.logEndOffset();
+                int leaderEpoch = latestEpoch().orElse(0);
+                MemoryRecords records = MemoryRecords.withMirrorPidResetRecord(
+                    offset, time().milliseconds(), leaderEpoch, buffer, record);
+                localLog.append(offset, records);
+                producerStateManager.expireMirroredProducers();
+                producerStateManager.updateMapEndOffset(offset + 1);
+                updateHighWatermarkWithLogEndOffset();
+                logger.info("Wrote mirror PID reset barrier at offset {} for source cluster {}", offset, sourceClusterId);
+            }
+        } catch (IOException e) {
+            throw new KafkaStorageException("Failed to append mirror PID reset barrier", e);
         }
     }
 

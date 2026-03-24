@@ -132,7 +132,7 @@ public class PartitionMakeFollowerBenchmark {
             int initialOffSet = 0;
             while (true) {
                 MemoryRecords memoryRecords =  MemoryRecords.withRecords(initialOffSet, Compression.NONE, 0, simpleRecords);
-                partition.appendRecordsToFollowerOrFutureReplica(memoryRecords, false, Integer.MAX_VALUE);
+                partition.appendRecordsToFollowerOrFutureReplica(memoryRecords, false, Integer.MAX_VALUE, null);
                 initialOffSet = initialOffSet + 2;
             }
         });

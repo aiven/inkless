@@ -411,6 +411,21 @@ public class ProducerStateManager {
         }
     }
 
+    public void expireMirroredProducers() {
+        int count = 0;
+        var it = producers.entrySet().iterator();
+        while (it.hasNext()) {
+            if (it.next().getKey() < 0) {
+                it.remove();
+                count++;
+            }
+        }
+        if (count > 0) {
+            producerIdCount = producers.size();
+            log.info("Expired {} mirrored producer(s) from {}", count, topicPartition);
+        }
+    }
+
     public void updateMapEndOffset(long lastOffset) {
         lastMapOffset = lastOffset;
     }
