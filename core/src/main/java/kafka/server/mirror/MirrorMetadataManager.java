@@ -682,22 +682,23 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         log.info("Mirror config for '{}': {}", mirrorName, props);
 
         var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
-        // Use random node id here because we don't know node id of remote brokers
-        int rand = random.nextInt(addresses.size());
-        var brokerEndpoint = new BrokerEndPoint(random.nextInt(), addresses.get(rand).getHostString(), addresses.get(rand).getPort());
-        var logContext = new LogContext("[" + MirrorMetadataManager.class.getName() + " replicaId=" + nodeId + ", mirrorName=" + mirrorName + "] ");
-
-        MirrorSourceSender sender = new MirrorSourceSender(
-                brokerEndpoint,
-                MirrorConfig.fromProperties(props),
-                brokerConfig,
-                metrics,
-                time,
-                brokerEndpoint.id(),
-                "broker-" + nodeId + "-mirror-metadata-manager-" + mirrorName,
-                logContext
-        );
-        sourceSenders.put(mirrorName, List.of(sender));
+        MirrorConfig mirrorConfig = MirrorConfig.fromProperties(props);
+        List<MirrorSourceSender> senders = new ArrayList<>();
+        for (var address : addresses) {
+            var brokerEndpoint = new BrokerEndPoint(random.nextInt(), address.getHostString(), address.getPort());
+            var logContext = new LogContext("[" + MirrorMetadataManager.class.getName() + " replicaId=" + nodeId + ", mirrorName=" + mirrorName + "] ");
+            senders.add(new MirrorSourceSender(
+                    brokerEndpoint,
+                    mirrorConfig,
+                    brokerConfig,
+                    metrics,
+                    time,
+                    brokerEndpoint.id(),
+                    "broker-" + nodeId + "-mirror-metadata-manager-" + mirrorName,
+                    logContext
+            ));
+        }
+        sourceSenders.put(mirrorName, senders);
     }
 
     /** Sends a request to the source cluster, iterating available senders with fallback on failure. */
