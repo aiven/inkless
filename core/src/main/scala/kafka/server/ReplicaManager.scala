@@ -1871,7 +1871,22 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    val (disklessFetchInfosWithoutTopicId, classicFetchInfos) = fetchInfos.partition { case (k, _) => _inklessMetadataView.isDisklessTopic(k.topic()) }
+    val disklessFetchInfosWithoutTopicId = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
+    val classicFetchInfos = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
+    fetchInfos.foreach { case (tp, partitionData) =>
+      if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
+        val startOffset = _inklessMetadataView.getDisklessStartOffset(tp.topicPartition())
+        if (startOffset != PartitionRegistration.NO_DISKLESS_START_OFFSET &&
+          partitionData.fetchOffset < startOffset
+        ) {
+          classicFetchInfos += tp -> partitionData
+        } else {
+          disklessFetchInfosWithoutTopicId += tp -> partitionData
+        }
+      } else {
+        classicFetchInfos += tp -> partitionData
+      }
+    }
     inklessSharedState match {
       case None =>
         if (disklessFetchInfosWithoutTopicId.nonEmpty) {
@@ -1898,14 +1913,6 @@ class ReplicaManager(val config: KafkaConfig,
       } else {
         disklessFetchInfo
       }
-    }
-
-
-    if (params.isFromFollower && disklessFetchInfos.nonEmpty) {
-      warn("Diskless topics are not supported for follower fetch requests. " +
-        s"Request from follower ${params.replicaId} contains diskless topics: ${disklessFetchInfos.map(_._1.topic()).mkString(", ")}")
-      responseCallback(Seq.empty)
-      return
     }
 
     // Override maxWaitMs and minBytes with lower-bound if there are diskless fetches. Otherwise, leave the consumer-provided values.

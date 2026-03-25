@@ -21,7 +21,8 @@ package kafka.server.metadata
 import io.aiven.inkless.control_plane.MetadataView
 import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.network.ListenerName
-import org.apache.kafka.common.{Node, TopicIdPartition, Uuid}
+import org.apache.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
+import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.storage.internals.log.LogConfig
 
 import java.util
@@ -80,6 +81,13 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
       .flatMap(t => IntStream.range(0, metadataCache.numPartitions(t).get())
         .mapToObj(p => new TopicIdPartition(metadataCache.getTopicId(t), p, t)))
       .collect(Collectors.toSet[TopicIdPartition]())
+  }
+
+  def getDisklessStartOffset(topicPartition: TopicPartition): Long = {
+    Option(metadataCache.currentImage().topics().getTopic(topicPartition.topic()))
+      .flatMap(topicImage => Option(topicImage.partitions().get(topicPartition.partition())))
+      .map(_.disklessStartOffset)
+      .getOrElse(PartitionRegistration.NO_DISKLESS_START_OFFSET)
   }
 
   override def getTopicConfig(topicName: String): LogConfig = topicConfigs.computeIfAbsent(topicName, t => {
