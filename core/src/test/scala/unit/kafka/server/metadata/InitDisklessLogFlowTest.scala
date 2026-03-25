@@ -60,6 +60,76 @@ class InitDisklessLogFlowTest {
   )
 
   @Test
+  def testEndToEndFlowFromSealingToControlPlaneInit(): Unit = {
+    val ctx = newContext()
+    val topicName = "integration-e2e-seal-to-control-plane-init"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+
+    when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(anyString())).thenReturn(false)
+
+    try {
+      val createDelta = new TopicsDelta(TopicsImage.EMPTY)
+      createDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      createDelta.replay(new PartitionRecord()
+        .setTopicId(topicId).setPartitionId(0).setReplicas(util.Arrays.asList(0, 1))
+        .setIsr(util.Arrays.asList(0, 1)).setLeader(ctx.config.brokerId)
+        .setLeaderEpoch(0).setPartitionEpoch(0))
+      val createImage = imageFromTopics(createDelta.apply())
+      ctx.replicaManager.applyDelta(createDelta, createImage)
+
+      val partition = ctx.replicaManager.getPartitionOrException(tp)
+      assertFalse(partition.isSealed)
+
+      // Step 1: enable diskless and trigger sealing + controller init request path.
+      ctx.metadataPublisher._firstPublish = false
+      when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
+      val enableDisklessDelta = new MetadataDelta(createImage)
+      enableDisklessDelta.replay(new ConfigRecord()
+        .setResourceType(ConfigResource.Type.TOPIC.id())
+        .setResourceName(topicName)
+        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+        .setValue("true"))
+      val disklessImage = withClusterBrokers(enableDisklessDelta.apply(MetadataProvenance.EMPTY))
+      ctx.metadataPublisher.onMetadataUpdate(enableDisklessDelta, disklessImage, metadataManifest())
+
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
+      ctx.scheduler.tick()
+      assertTrue(partition.isSealed)
+      assertEquals(1, ctx.channelManager.requests.size())
+
+      // Simulate successful controller response.
+      ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
+        new org.apache.kafka.common.message.InitDisklessLogResponseData.TopicResponse()
+          .setTopicId(topicId)
+          .setPartitions(util.List.of(
+            new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
+              .setPartitionId(0)
+              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+          ))
+      )))
+
+      // Step 2: apply committed PartitionChangeRecord with diskless fields.
+      val pcrDelta = new MetadataDelta(disklessImage)
+      val pcr = new PartitionChangeRecord()
+        .setTopicId(topicId)
+        .setPartitionId(0)
+        .setIsr(util.Arrays.asList(0, 1))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessStartOffset(100L))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeProducerStates(util.List.of()))
+      pcrDelta.replay(pcr)
+      val pcrImage = withClusterBrokers(pcrDelta.apply(MetadataProvenance.EMPTY))
+      ctx.metadataPublisher.onMetadataUpdate(pcrDelta, pcrImage, metadataManifest())
+      ctx.scheduler.tick()
+
+      // Final check: metadata-triggered control-plane init executed.
+      verify(ctx.controlPlane, times(1)).initDisklessLog(any())
+    } finally {
+      shutdown(ctx)
+    }
+  }
+
+  @Test
   def testOnMetadataUpdateSealsAndRegistersExistingClassicLeader(): Unit = {
     // Given a classic topic where this broker is already the leader.
     val ctx = newContext()
