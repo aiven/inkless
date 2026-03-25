@@ -396,7 +396,7 @@ public class MirrorCoordinator {
                 replicaManager.appendRecords(
                     // TODO: replace this with Cluster Mirror specific timeout
                     Duration.ofSeconds(5).toMillis(),
-                    (short) -1,
+                    (short) -1, // request ack from all ISR
                     true,
                     AppendOrigin.COORDINATOR,
                     CollectionConverters.asScala(Map.of(topicIdPartition, records)),
@@ -475,7 +475,7 @@ public class MirrorCoordinator {
             replicaManager.appendRecords(
                     // TODO: replace this with Cluster Mirror specific timeout
                     Duration.ofSeconds(5).toMillis(),
-                    (short) -1,
+                    (short) -1, // request ack from all ISR
                     true,
                     AppendOrigin.COORDINATOR,
                     CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
