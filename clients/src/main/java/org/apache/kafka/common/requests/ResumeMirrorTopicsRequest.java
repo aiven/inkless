@@ -17,36 +17,36 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.AddTopicsToMirrorRequestData;
-import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsRequestData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
 
 import java.util.Set;
 
-public class AddTopicsToMirrorRequest extends AbstractRequest {
-    public static class Builder extends AbstractRequest.Builder<AddTopicsToMirrorRequest> {
+public class ResumeMirrorTopicsRequest extends AbstractRequest {
+    public static class Builder extends AbstractRequest.Builder<ResumeMirrorTopicsRequest> {
 
-        private final AddTopicsToMirrorRequestData data;
+        private final ResumeMirrorTopicsRequestData data;
 
-        public Builder(AddTopicsToMirrorRequestData data) {
-            super(ApiKeys.ADD_TOPICS_TO_MIRROR);
+        public Builder(ResumeMirrorTopicsRequestData data) {
+            super(ApiKeys.RESUME_MIRROR_TOPICS);
             this.data = data;
         }
 
         public Builder(String mirrorName, Set<String> topics) {
-            super(ApiKeys.ADD_TOPICS_TO_MIRROR, ApiKeys.ADD_TOPICS_TO_MIRROR.oldestVersion(),
-                    ApiKeys.ADD_TOPICS_TO_MIRROR.latestVersion());
-            AddTopicsToMirrorRequestData data = new AddTopicsToMirrorRequestData();
+            super(ApiKeys.RESUME_MIRROR_TOPICS, ApiKeys.RESUME_MIRROR_TOPICS.oldestVersion(),
+                    ApiKeys.RESUME_MIRROR_TOPICS.latestVersion());
+            ResumeMirrorTopicsRequestData data = new ResumeMirrorTopicsRequestData();
             data.setMirrorName(mirrorName);
-            topics.forEach(topic -> data.topics().add(new AddTopicsToMirrorRequestData.TopicData().setTopicName(topic)));
+            topics.forEach(topic -> data.topics().add(new ResumeMirrorTopicsRequestData.TopicData().setTopicName(topic)));
             this.data = data;
         }
 
         @Override
-        public AddTopicsToMirrorRequest build(short version) {
-            return new AddTopicsToMirrorRequest(data, version);
+        public ResumeMirrorTopicsRequest build(short version) {
+            return new ResumeMirrorTopicsRequest(data, version);
         }
 
         @Override
@@ -55,32 +55,30 @@ public class AddTopicsToMirrorRequest extends AbstractRequest {
         }
     }
 
-    private final AddTopicsToMirrorRequestData data;
+    private final ResumeMirrorTopicsRequestData data;
 
-    public AddTopicsToMirrorRequest(AddTopicsToMirrorRequestData data, short version) {
-        super(ApiKeys.ADD_TOPICS_TO_MIRROR, version);
+    public ResumeMirrorTopicsRequest(ResumeMirrorTopicsRequestData data, short version) {
+        super(ApiKeys.RESUME_MIRROR_TOPICS, version);
         this.data = data;
     }
 
     @Override
-    public AddTopicsToMirrorRequestData data() {
+    public ResumeMirrorTopicsRequestData data() {
         return data;
     }
 
     @Override
     public AbstractResponse getErrorResponse(int throttleTimeMs, Throwable e) {
         Errors error = Errors.forException(e);
-        AddTopicsToMirrorResponseData responseData = new AddTopicsToMirrorResponseData();
+        ResumeMirrorTopicsResponseData responseData = new ResumeMirrorTopicsResponseData();
         responseData.setErrorCode(error.code());
-
-        return new AddTopicsToMirrorResponse(responseData);
+        return new ResumeMirrorTopicsResponse(responseData);
     }
 
-    public static AddTopicsToMirrorRequest parse(Readable readable, short version) {
-        return new AddTopicsToMirrorRequest(
-                new AddTopicsToMirrorRequestData(readable, version),
+    public static ResumeMirrorTopicsRequest parse(Readable readable, short version) {
+        return new ResumeMirrorTopicsRequest(
+                new ResumeMirrorTopicsRequestData(readable, version),
                 version
         );
     }
-
 }

@@ -117,7 +117,6 @@ public final class ClientUtils {
     public static ChannelBuilder createChannelBuilder(AbstractConfig config, Time time, LogContext logContext) {
         SecurityProtocol securityProtocol = SecurityProtocol.forName(config.getString(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG));
         String clientSaslMechanism = config.getString(SaslConfigs.SASL_MECHANISM);
-        log.info("!!! createChannelBuilder:" + securityProtocol + " " + clientSaslMechanism);
         return ChannelBuilders.clientChannelBuilder(securityProtocol, JaasContext.Type.CLIENT, config, null,
                 clientSaslMechanism, time, logContext);
     }

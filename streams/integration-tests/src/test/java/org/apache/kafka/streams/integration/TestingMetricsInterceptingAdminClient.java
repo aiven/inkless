@@ -146,6 +146,8 @@ import org.apache.kafka.clients.admin.NewPartitionReassignment;
 import org.apache.kafka.clients.admin.NewPartitions;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.admin.PauseMirrorTopicsOptions;
+import org.apache.kafka.clients.admin.PauseMirrorTopicsResult;
 import org.apache.kafka.clients.admin.RaftVoterEndpoint;
 import org.apache.kafka.clients.admin.RecordsToDelete;
 import org.apache.kafka.clients.admin.RemoveMembersFromConsumerGroupOptions;
@@ -156,6 +158,8 @@ import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorOptions;
 import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorResult;
 import org.apache.kafka.clients.admin.RenewDelegationTokenOptions;
 import org.apache.kafka.clients.admin.RenewDelegationTokenResult;
+import org.apache.kafka.clients.admin.ResumeMirrorTopicsOptions;
+import org.apache.kafka.clients.admin.ResumeMirrorTopicsResult;
 import org.apache.kafka.clients.admin.TerminateTransactionOptions;
 import org.apache.kafka.clients.admin.TerminateTransactionResult;
 import org.apache.kafka.clients.admin.UnregisterBrokerOptions;
@@ -434,13 +438,23 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     }
 
     @Override
-    public AddTopicsToMirrorResult addTopicsToMirror(final Map<String, String> topicToMirrorName, final AddTopicsToMirrorOptions options) {
-        return adminDelegate.addTopicsToMirror(topicToMirrorName, options);
+    public AddTopicsToMirrorResult addTopicsToMirror(final String mirrorName, final Set<String> topics, final AddTopicsToMirrorOptions options) {
+        return adminDelegate.addTopicsToMirror(mirrorName, topics, options);
     }
 
     @Override
-    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(final Set<String> topics, final RemoveTopicsFromMirrorOptions options) {
-        return adminDelegate.removeTopicsFromMirror(topics, options);
+    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(final String mirrorName, final Set<String> topics, final RemoveTopicsFromMirrorOptions options) {
+        return adminDelegate.removeTopicsFromMirror(mirrorName, topics, options);
+    }
+
+    @Override
+    public PauseMirrorTopicsResult pauseMirrorTopics(final String mirrorName, final Set<String> topics, final PauseMirrorTopicsOptions options) {
+        return adminDelegate.pauseMirrorTopics(mirrorName, topics, options);
+    }
+
+    @Override
+    public ResumeMirrorTopicsResult resumeMirrorTopics(final String mirrorName, final Set<String> topics, final ResumeMirrorTopicsOptions options) {
+        return adminDelegate.resumeMirrorTopics(mirrorName, topics, options);
     }
 
     @Override

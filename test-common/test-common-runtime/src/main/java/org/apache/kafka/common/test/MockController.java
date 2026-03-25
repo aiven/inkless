@@ -54,9 +54,11 @@ import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
+import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData;
 import org.apache.kafka.common.protocol.Errors;
@@ -119,6 +121,7 @@ public class MockController implements Controller {
     @Override
     public CompletableFuture<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(
             ControllerRequestContext context,
+            String mirrorName,
             Set<String> topics) {
         throw new UnsupportedOperationException();
     }
@@ -126,7 +129,8 @@ public class MockController implements Controller {
     @Override
     public CompletableFuture<AddTopicsToMirrorResponseData> addTopicsToMirror(
             ControllerRequestContext context,
-            Map<String, String> topicToMirrorName
+            String mirrorName,
+            Set<String> topics
     ) {
         throw new UnsupportedOperationException();
     }
@@ -134,6 +138,22 @@ public class MockController implements Controller {
     public CompletableFuture<BumpLeaderEpochResponseData> bumpLeaderEpoch(
             ControllerRequestContext context,
             Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CompletableFuture<PauseMirrorTopicsResponseData> pauseMirrorTopics(
+            ControllerRequestContext context,
+            String mirrorName,
+            Set<String> topics) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CompletableFuture<ResumeMirrorTopicsResponseData> resumeMirrorTopics(
+            ControllerRequestContext context,
+            String mirrorName,
+            Set<String> topics) {
         throw new UnsupportedOperationException();
     }
 

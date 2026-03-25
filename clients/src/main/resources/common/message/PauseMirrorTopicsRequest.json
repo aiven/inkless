@@ -14,16 +14,16 @@
 // limitations under the License.
 
 {
-  "apiKey": 95,
+  "apiKey": 102,
   "type": "request",
   "listeners": ["broker", "controller"],
-  "name": "AddTopicsToMirrorRequest",
+  "name": "PauseMirrorTopicsRequest",
   // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName",
-      "about": "The cluster mirror name." },
+    { "name": "MirrorName", "type": "string", "versions": "0+",
+      "about": "The mirror name to pause the topics for." },
     { "name": "Topics", "type": "[]TopicData", "versions": "0+", "about": "The data for the topics.",
       "fields": [
         { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},

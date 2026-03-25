@@ -17,7 +17,7 @@
 package kafka.server.mirror
 
 import kafka.server._
-import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.{Node, TopicPartition}
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.requests.FetchResponse
 import org.apache.kafka.server.{LeaderEndPoint, PartitionFetchState}
@@ -26,6 +26,7 @@ import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogStartOffsetIncr
 
 import java.util.Optional
 import scala.collection.{Map, Set}
+import scala.jdk.CollectionConverters._
 
 /**
  * Fetcher thread for cross-cluster mirroring. Unlike ReplicaFetcherThread, this rewrites
@@ -39,13 +40,14 @@ class MirrorFetcherThread(name: String,
                           replicaMgr: ReplicaManager,
                           quota: ReplicaQuota,
                           logPrefix: String,
-                          mirrorName: String)
+                          mirrorName: String,
+                          mirrorFetchBackoffMs: Int)
   extends AbstractFetcherThread(name = name,
                                 clientId = name,
                                 leader = leader,
                                 failedPartitions,
                                 fetchTierStateMachine = new TierStateMachine(leader, replicaMgr, false),
-                                fetchBackOffMs = brokerConfig.replicaFetchBackoffMs,
+                                fetchBackOffMs = mirrorFetchBackoffMs,
                                 isInterruptible = false,
                                 replicaMgr.brokerTopicStats,
                                 mirrorName) {
@@ -55,8 +57,21 @@ class MirrorFetcherThread(name: String,
     replicaMgr.mirrorFetcherManager.removeFetcherForPartitions(partitions)
   }
 
+  // uses leader info from fetch response to update cache and create new fetchers directly
   override protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
+    replicaMgr.mirrorMetadataManager.foreach { mmm =>
+      partitionAndOffsets.foreach { case (tp, state) =>
+        mmm.updateSourceLeader(mirrorName, tp,
+          new Node(state.leader.id(), state.leader.host(), state.leader.port()))
+      }
+    }
     replicaMgr.mirrorFetcherManager.addFetcherForPartitions(partitionAndOffsets)
+  }
+
+  // invalidates cached source leaders for affected partitions when source connection is broken
+  override protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {
+    replicaMgr.mirrorMetadataManager.foreach(_.invalidateSourceLeader(mirrorName, mirrorPartitions.asJava))
+    replicaMgr.maybeCreateMirrorFetchers(mirrorName, mirrorPartitions.asJava)
   }
 
   // process fetched data

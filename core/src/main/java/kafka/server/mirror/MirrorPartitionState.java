@@ -18,46 +18,62 @@ package kafka.server.mirror;
 
 /**
  * Represents the lifecycle states of a mirror partition.
- * FAILED state can be entered from PREPARING or MIRRORING when errors occur.
- * <pre>
- * 1. INITIALIZING
- *    Triggered by: AddTopicsToMirror API call
- *    Waits for: Metadata update (partition becomes read-only leader)
- *
- * 2. PREPARING
- *    Triggered by: Metadata update callback in MirrorMetadataManager
- *    Actions: Fetch last mirrored offsets, schedule truncation
- *
- * 3. MIRRORING
- *    Triggered by: ISR truncation completion in Partition.checkIsrTruncationAndTransition
- *    Actions: Start MirrorFetcherThread to replicate data
- *
- * 4. STOPPING
- *    Triggered by: RemoveTopicsFromMirror API or topic deletion
- *    Actions: Record last mirrored offsets to internal topic
- *
- * 5. STOPPED
- *    Triggered by: Last mirrored offsets persisted
- *    Result: Topic becomes writable on destination cluster
- * </pre>
  */
 public enum MirrorPartitionState {
-    /** Topics are being prepared for mirroring (truncation may be needed) */
+    /**
+     * The coordinator detects via onMetadataUpdate that it leads a mirror partition.
+     * It fetches last mirrored offsets from the source cluster and truncates logs to
+     * align the local log with the source.
+     * Valid from: null, UNKNOWN, STOPPED, FAILED.
+     */
     PREPARING((byte) 0),
 
-    /** Active mirroring from source cluster is in progress */
+    /**
+     * All ISR members have completed truncation. A MirrorFetcherThread is started to
+     * continuously replicate records from the source cluster.
+     * Valid from: PREPARING, PAUSED.
+     */
     MIRRORING((byte) 1),
 
-    /** Mirroring is being gracefully stopped */
-    STOPPING((byte) 2),
+    /**
+     * Triggered by PauseMirrorTopics API (appends .paused suffix to mirror.name config).
+     * The system removes fetchers for the affected partitions.
+     * Valid from: MIRRORING only.
+     */
+    PAUSING((byte) 2),
 
-    /** Mirroring has stopped; topic is now writable on this cluster */
-    STOPPED((byte) 4),
+    /**
+     * Fetchers have been removed. The partition stays read-only with no active fetchers
+     * and no metadata sync (configs, consumer groups, ACLs). On resume, transitions
+     * directly to MIRRORING (fetchers resume from local LEO, no truncation needed).
+     * Valid from: PAUSING only.
+     */
+    PAUSED((byte) 3),
 
-    /** Error occurred during preparation or mirroring */
-    FAILED((byte) 8),
+    /**
+     * Triggered by RemoveTopicsFromMirror API (fail over) or topic deletion on the source.
+     * The system records the last mirrored offset to the internal topic.
+     * Valid from: PREPARING, MIRRORING, PAUSING (race guard), PAUSED.
+     */
+    STOPPING((byte) 4),
 
-    /** Unknown state */
+    /**
+     * Last mirrored offsets have been persisted. The topic becomes writable on the
+     * destination cluster (fetcher removed, read-only flag cleared).
+     * Valid from: STOPPING only.
+     */
+    STOPPED((byte) 5),
+
+    /**
+     * An error occurred. Can transition back to PREPARING to retry.
+     * Valid from: any state.
+     */
+    FAILED((byte) 6),
+
+    /**
+     * No cached state (broker just became leader, state not loaded yet).
+     * Not an explicit API-driven state, just the absence of state.
+     */
     UNKNOWN((byte) 16);
 
     private final byte value;
@@ -77,10 +93,14 @@ public enum MirrorPartitionState {
             case 1:
                 return MIRRORING;
             case 2:
-                return STOPPING;
+                return PAUSING;
+            case 3:
+                return PAUSED;
             case 4:
+                return STOPPING;
+            case 5:
                 return STOPPED;
-            case 8:
+            case 6:
                 return FAILED;
             case 16:
                 return UNKNOWN;
@@ -99,10 +119,18 @@ public enum MirrorPartitionState {
                         || source == MirrorPartitionState.STOPPED
                         || source == MirrorPartitionState.FAILED;
             case MIRRORING:
-                return source == MirrorPartitionState.PREPARING;
-            case STOPPING:
                 return source == MirrorPartitionState.PREPARING
-                        || source == MirrorPartitionState.MIRRORING;
+                        || source == MirrorPartitionState.PAUSED;
+            case PAUSING:
+                return source == MirrorPartitionState.MIRRORING;
+            case PAUSED:
+                return source == MirrorPartitionState.PAUSING;
+            case STOPPING:
+                // TODO: remove PAUSING once state transitions are serialized via the shared queue
+                return source == MirrorPartitionState.PREPARING
+                        || source == MirrorPartitionState.MIRRORING
+                        || source == MirrorPartitionState.PAUSING
+                        || source == MirrorPartitionState.PAUSED;
             case STOPPED:
                 return source == MirrorPartitionState.STOPPING;
             case FAILED:

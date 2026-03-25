@@ -258,12 +258,16 @@ import org.apache.kafka.common.requests.ListPartitionReassignmentsRequest;
 import org.apache.kafka.common.requests.ListPartitionReassignmentsResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
+import org.apache.kafka.common.requests.PauseMirrorTopicsRequest;
+import org.apache.kafka.common.requests.PauseMirrorTopicsResponse;
 import org.apache.kafka.common.requests.RemoveRaftVoterRequest;
 import org.apache.kafka.common.requests.RemoveRaftVoterResponse;
 import org.apache.kafka.common.requests.RemoveTopicsFromMirrorRequest;
 import org.apache.kafka.common.requests.RemoveTopicsFromMirrorResponse;
 import org.apache.kafka.common.requests.RenewDelegationTokenRequest;
 import org.apache.kafka.common.requests.RenewDelegationTokenResponse;
+import org.apache.kafka.common.requests.ResumeMirrorTopicsRequest;
+import org.apache.kafka.common.requests.ResumeMirrorTopicsResponse;
 import org.apache.kafka.common.requests.UnregisterBrokerRequest;
 import org.apache.kafka.common.requests.UnregisterBrokerResponse;
 import org.apache.kafka.common.requests.UpdateFeaturesRequest;
@@ -4873,7 +4877,7 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options) {
+    public AddTopicsToMirrorResult addTopicsToMirror(String mirrorName, Set<String> topics, AddTopicsToMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
         final Call call = new Call("addTopicsToMirror", calcDeadlineMs(now, options.timeoutMs()),
@@ -4881,7 +4885,7 @@ public class KafkaAdminClient extends AdminClient {
 
             @Override
             AddTopicsToMirrorRequest.Builder createRequest(int timeoutMs) {
-                return new AddTopicsToMirrorRequest.Builder(topicToMirrorName);
+                return new AddTopicsToMirrorRequest.Builder(mirrorName, topics);
             }
 
             @Override
@@ -4896,7 +4900,7 @@ public class KafkaAdminClient extends AdminClient {
                     case REQUEST_TIMED_OUT:
                         throw error.exception();
                     default:
-                        log.error("Mirror topics addition failed: ", topicToMirrorName.keySet());
+                        log.error("Mirror topics addition failed: {}", topics);
                         future.completeExceptionally(error.exception());
                         break;
                 }
@@ -4912,7 +4916,7 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(Set<String> topics, RemoveTopicsFromMirrorOptions options) {
+    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
         final Call call = new Call("removeTopicsFromMirror", calcDeadlineMs(now, options.timeoutMs()),
@@ -4920,7 +4924,7 @@ public class KafkaAdminClient extends AdminClient {
 
             @Override
             RemoveTopicsFromMirrorRequest.Builder createRequest(int timeoutMs) {
-                return new RemoveTopicsFromMirrorRequest.Builder(topics);
+                return new RemoveTopicsFromMirrorRequest.Builder(mirrorName, topics);
             }
 
             @Override
@@ -4948,6 +4952,84 @@ public class KafkaAdminClient extends AdminClient {
         };
         runnable.call(call, now);
         return new RemoveTopicsFromMirrorResult(future);
+    }
+
+    @Override
+    public PauseMirrorTopicsResult pauseMirrorTopics(String mirrorName, Set<String> topics, PauseMirrorTopicsOptions options) {
+        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        final Call call = new Call("pauseMirrorTopics", calcDeadlineMs(now, options.timeoutMs()),
+                new LeastLoadedBrokerOrActiveKController()) {
+
+            @Override
+            PauseMirrorTopicsRequest.Builder createRequest(int timeoutMs) {
+                return new PauseMirrorTopicsRequest.Builder(mirrorName, topics);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final PauseMirrorTopicsResponse response =
+                        (PauseMirrorTopicsResponse) abstractResponse;
+                Errors error = Errors.forCode(response.data().errorCode());
+                switch (error) {
+                    case NONE:
+                        future.complete(null);
+                        break;
+                    case REQUEST_TIMED_OUT:
+                        throw error.exception();
+                    default:
+                        log.error("Mirror topics pause failed: {}", topics);
+                        future.completeExceptionally(error.exception());
+                        break;
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return new PauseMirrorTopicsResult(future);
+    }
+
+    @Override
+    public ResumeMirrorTopicsResult resumeMirrorTopics(String mirrorName, Set<String> topics, ResumeMirrorTopicsOptions options) {
+        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        final Call call = new Call("resumeMirrorTopics", calcDeadlineMs(now, options.timeoutMs()),
+                new LeastLoadedBrokerOrActiveKController()) {
+
+            @Override
+            ResumeMirrorTopicsRequest.Builder createRequest(int timeoutMs) {
+                return new ResumeMirrorTopicsRequest.Builder(mirrorName, topics);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final ResumeMirrorTopicsResponse response =
+                        (ResumeMirrorTopicsResponse) abstractResponse;
+                Errors error = Errors.forCode(response.data().errorCode());
+                switch (error) {
+                    case NONE:
+                        future.complete(null);
+                        break;
+                    case REQUEST_TIMED_OUT:
+                        throw error.exception();
+                    default:
+                        log.error("Mirror topics resume failed: {}", topics);
+                        future.completeExceptionally(error.exception());
+                        break;
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return new ResumeMirrorTopicsResult(future);
     }
 
     @Override

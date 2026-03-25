@@ -16,13 +16,21 @@
  */
 package kafka.server.mirror;
 
+import kafka.server.KafkaConfig;
+
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.metrics.Metrics;
+import org.apache.kafka.common.utils.LogContext;
+import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.config.MirrorConfig;
+import org.apache.kafka.server.network.BrokerEndPoint;
 
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import static org.apache.kafka.controller.ConfigurationControlManager.PAUSED_TOPIC_SUFFIX;
 import static org.apache.kafka.controller.ConfigurationControlManager.REMOVED_TOPIC_SUFFIX;
 
 /**
@@ -30,6 +38,17 @@ import static org.apache.kafka.controller.ConfigurationControlManager.REMOVED_TO
  */
 public final class MirrorUtils {
     private MirrorUtils() {}
+
+    public static MirrorSourceSender createSender(BrokerEndPoint brokerEndpoint,
+                                                  MirrorConfig mirrorConfig,
+                                                  KafkaConfig brokerConfig,
+                                                  Metrics metrics,
+                                                  Time time,
+                                                  String clientId,
+                                                  LogContext logContext) {
+        return new MirrorSourceSender(brokerEndpoint, mirrorConfig, brokerConfig,
+                metrics, time, brokerEndpoint.id(), clientId, logContext);
+    }
 
     public static Map<String, Set<Integer>> groupPartitionsByTopic(Set<TopicPartition> topicPartitions) {
         Map<String, Set<Integer>> topicToPartitions = new HashMap<>();
@@ -56,6 +75,9 @@ public final class MirrorUtils {
         }
         if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
             return mirrorName.substring(0, mirrorName.length() - REMOVED_TOPIC_SUFFIX.length());
+        }
+        if (mirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) {
+            return mirrorName.substring(0, mirrorName.length() - PAUSED_TOPIC_SUFFIX.length());
         }
         return mirrorName;
     }

@@ -1081,26 +1081,6 @@ public interface Admin extends AutoCloseable {
     ListGroupsResult listGroups(ListGroupsOptions options);
 
     /**
-     * List the cluster mirrors available in the cluster with the default options.
-     *
-     * <p>This is a convenience method for {@link #listMirrors(ListMirrorsOptions)} with default options.
-     * See the overload for more details.
-     *
-     * @return The ListMirrorsResult.
-     */
-    default ListMirrorsResult listMirrors() {
-        return listMirrors(new ListMirrorsOptions());
-    }
-
-    /**
-     * List the cluster mirrors available in the cluster.
-     *
-     * @param options The options to use when listing the mirrors.
-     * @return The ListMirrorsResult.
-     */
-    ListMirrorsResult listMirrors(ListMirrorsOptions options);
-
-    /**
      * Elect a replica as leader for topic partitions.
      * <p>
      * This is a convenience method for {@link #electLeaders(ElectionType, Set, ElectLeadersOptions)}
@@ -1703,12 +1683,12 @@ public interface Admin extends AutoCloseable {
      * replicating data from the source cluster. This operation marks the specified topics with the
      * mirror name, preventing local writes and enabling the MirrorFetcherThread to begin replication.
      *
-     * @param topicToMirrorName Map of topic names to mirror names, allowing multiple topics to be
-     *                          added to potentially different mirrors in a single operation
+     * @param mirrorName The mirror name to add the topics to
+     * @param topics Set of topic names to add to mirroring
      * @param options Options for the add topics to mirror operation
      * @return The AddTopicsToMirrorResult containing futures for each topic addition
      */
-    AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options);
+    AddTopicsToMirrorResult addTopicsToMirror(String mirrorName, Set<String> topics, AddTopicsToMirrorOptions options);
 
     /**
      * Remove topics from cluster mirror, making them writable on the destination cluster.
@@ -1718,11 +1698,60 @@ public interface Admin extends AutoCloseable {
      * the mirror clears the mirrorName field from partition metadata, which allows producers to write
      * to these partitions.
      *
+     * @param mirrorName The mirror name to remove the topics from
      * @param topics Set of topic names to remove from mirroring
      * @param options Options for the remove topics from mirror operation
      * @return The RemoveTopicsFromMirrorResult containing futures for each topic removal
      */
-    RemoveTopicsFromMirrorResult removeTopicsFromMirror(Set<String> topics, RemoveTopicsFromMirrorOptions options);
+    RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options);
+
+    /**
+     * Pause mirroring for the specified topics.
+     *
+     * Paused topics remain read-only on the destination cluster but stop fetching new data from the
+     * source cluster. The mirror fetcher threads are removed for these partitions, preserving the
+     * current replicated state. Mirroring can be resumed later with {@link #resumeMirrorTopics}.
+     *
+     * @param mirrorName The mirror name to pause the topics for
+     * @param topics Set of topic names to pause mirroring for
+     * @param options Options for the pause mirror topics operation
+     * @return The PauseMirrorTopicsResult containing futures for each topic
+     */
+    PauseMirrorTopicsResult pauseMirrorTopics(String mirrorName, Set<String> topics, PauseMirrorTopicsOptions options);
+
+    /**
+     * Resume mirroring for previously paused topics.
+     *
+     * Resumed topics restart fetching data from the source cluster, picking up from where they
+     * left off. New mirror fetcher threads are created and the partitions transition back to the
+     * MIRRORING state.
+     *
+     * @param mirrorName The mirror name to resume the topics for
+     * @param topics Set of topic names to resume mirroring for
+     * @param options Options for the resume mirror topics operation
+     * @return The ResumeMirrorTopicsResult containing futures for each topic
+     */
+    ResumeMirrorTopicsResult resumeMirrorTopics(String mirrorName, Set<String> topics, ResumeMirrorTopicsOptions options);
+
+    /**
+     * List the cluster mirrors available in the cluster with the default options.
+     *
+     * <p>This is a convenience method for {@link #listMirrors(ListMirrorsOptions)} with default options.
+     * See the overload for more details.
+     *
+     * @return The ListMirrorsResult.
+     */
+    default ListMirrorsResult listMirrors() {
+        return listMirrors(new ListMirrorsOptions());
+    }
+
+    /**
+     * List the cluster mirrors available in the cluster.
+     *
+     * @param options The options to use when listing the mirrors.
+     * @return The ListMirrorsResult.
+     */
+    ListMirrorsResult listMirrors(ListMirrorsOptions options);
 
     /**
      * Describe cluster mirrors with the default options.

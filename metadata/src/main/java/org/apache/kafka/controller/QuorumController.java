@@ -57,9 +57,11 @@ import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
+import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData;
 import org.apache.kafka.common.metadata.AbortTransactionRecord;
@@ -1792,19 +1794,41 @@ public final class QuorumController implements Controller {
     @Override
     public CompletableFuture<AddTopicsToMirrorResponseData> addTopicsToMirror(
             ControllerRequestContext context,
-            Map<String, String> topicToMirrorName
+            String mirrorName,
+            Set<String> topics
     ) {
         return appendWriteEvent("addTopicsToMirror", context.deadlineNs(),
-                () -> configurationControl.addTopicsToMirror(topicToMirrorName));
+                () -> configurationControl.addTopicsToMirror(mirrorName, topics));
     }
 
     @Override
     public CompletableFuture<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(
             ControllerRequestContext context,
+            String mirrorName,
             Set<String> topics
     ) {
         return appendWriteEvent("removeTopicsFromMirror", context.deadlineNs(),
-                () -> configurationControl.removeTopicsFromMirror(topics));
+                () -> configurationControl.removeTopicsFromMirror(mirrorName, topics));
+    }
+
+    @Override
+    public CompletableFuture<PauseMirrorTopicsResponseData> pauseMirrorTopics(
+            ControllerRequestContext context,
+            String mirrorName,
+            Set<String> topics
+    ) {
+        return appendWriteEvent("pauseMirrorTopics", context.deadlineNs(),
+                () -> configurationControl.pauseMirrorTopics(mirrorName, topics));
+    }
+
+    @Override
+    public CompletableFuture<ResumeMirrorTopicsResponseData> resumeMirrorTopics(
+            ControllerRequestContext context,
+            String mirrorName,
+            Set<String> topics
+    ) {
+        return appendWriteEvent("resumeMirrorTopics", context.deadlineNs(),
+                () -> configurationControl.resumeMirrorTopics(mirrorName, topics));
     }
 
     @Override

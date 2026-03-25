@@ -281,13 +281,23 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
-    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(Set<String> topics, RemoveTopicsFromMirrorOptions options) {
-        return delegate.removeTopicsFromMirror(topics, options);
+    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
+        return delegate.removeTopicsFromMirror(mirrorName, topics, options);
     }
 
     @Override
-    public AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options) {
-        return delegate.addTopicsToMirror(topicToMirrorName, options);
+    public PauseMirrorTopicsResult pauseMirrorTopics(String mirrorName, Set<String> topics, PauseMirrorTopicsOptions options) {
+        return delegate.pauseMirrorTopics(mirrorName, topics, options);
+    }
+
+    @Override
+    public ResumeMirrorTopicsResult resumeMirrorTopics(String mirrorName, Set<String> topics, ResumeMirrorTopicsOptions options) {
+        return delegate.resumeMirrorTopics(mirrorName, topics, options);
+    }
+
+    @Override
+    public AddTopicsToMirrorResult addTopicsToMirror(String mirrorName, Set<String> topics, AddTopicsToMirrorOptions options) {
+        return delegate.addTopicsToMirror(mirrorName, topics, options);
     }
     public DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames, DescribeMirrorsOptions options) {
         return delegate.describeMirrors(mirrorNames, options);

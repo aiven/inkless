@@ -374,6 +374,10 @@ public abstract class AbstractRequest implements AbstractRequestResponse {
                 return ReadMirrorStatesRequest.parse(readable, apiVersion);
             case BUMP_LEADER_EPOCH:
                 return BumpLeaderEpochRequest.parse(readable, apiVersion);
+            case PAUSE_MIRROR_TOPICS:
+                return PauseMirrorTopicsRequest.parse(readable, apiVersion);
+            case RESUME_MIRROR_TOPICS:
+                return ResumeMirrorTopicsRequest.parse(readable, apiVersion);
             default:
                 throw new AssertionError(String.format("ApiKey %s is not currently handled in `parseRequest`, the " +
                         "code should be updated to do so.", apiKey));

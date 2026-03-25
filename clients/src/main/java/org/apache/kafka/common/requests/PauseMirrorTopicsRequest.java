@@ -17,36 +17,36 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.AddTopicsToMirrorRequestData;
-import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
+import org.apache.kafka.common.message.PauseMirrorTopicsRequestData;
+import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
 
 import java.util.Set;
 
-public class AddTopicsToMirrorRequest extends AbstractRequest {
-    public static class Builder extends AbstractRequest.Builder<AddTopicsToMirrorRequest> {
+public class PauseMirrorTopicsRequest extends AbstractRequest {
+    public static class Builder extends AbstractRequest.Builder<PauseMirrorTopicsRequest> {
 
-        private final AddTopicsToMirrorRequestData data;
+        private final PauseMirrorTopicsRequestData data;
 
-        public Builder(AddTopicsToMirrorRequestData data) {
-            super(ApiKeys.ADD_TOPICS_TO_MIRROR);
+        public Builder(PauseMirrorTopicsRequestData data) {
+            super(ApiKeys.PAUSE_MIRROR_TOPICS);
             this.data = data;
         }
 
         public Builder(String mirrorName, Set<String> topics) {
-            super(ApiKeys.ADD_TOPICS_TO_MIRROR, ApiKeys.ADD_TOPICS_TO_MIRROR.oldestVersion(),
-                    ApiKeys.ADD_TOPICS_TO_MIRROR.latestVersion());
-            AddTopicsToMirrorRequestData data = new AddTopicsToMirrorRequestData();
+            super(ApiKeys.PAUSE_MIRROR_TOPICS, ApiKeys.PAUSE_MIRROR_TOPICS.oldestVersion(),
+                    ApiKeys.PAUSE_MIRROR_TOPICS.latestVersion());
+            PauseMirrorTopicsRequestData data = new PauseMirrorTopicsRequestData();
             data.setMirrorName(mirrorName);
-            topics.forEach(topic -> data.topics().add(new AddTopicsToMirrorRequestData.TopicData().setTopicName(topic)));
+            topics.forEach(topic -> data.topics().add(new PauseMirrorTopicsRequestData.TopicData().setTopicName(topic)));
             this.data = data;
         }
 
         @Override
-        public AddTopicsToMirrorRequest build(short version) {
-            return new AddTopicsToMirrorRequest(data, version);
+        public PauseMirrorTopicsRequest build(short version) {
+            return new PauseMirrorTopicsRequest(data, version);
         }
 
         @Override
@@ -55,32 +55,30 @@ public class AddTopicsToMirrorRequest extends AbstractRequest {
         }
     }
 
-    private final AddTopicsToMirrorRequestData data;
+    private final PauseMirrorTopicsRequestData data;
 
-    public AddTopicsToMirrorRequest(AddTopicsToMirrorRequestData data, short version) {
-        super(ApiKeys.ADD_TOPICS_TO_MIRROR, version);
+    public PauseMirrorTopicsRequest(PauseMirrorTopicsRequestData data, short version) {
+        super(ApiKeys.PAUSE_MIRROR_TOPICS, version);
         this.data = data;
     }
 
     @Override
-    public AddTopicsToMirrorRequestData data() {
+    public PauseMirrorTopicsRequestData data() {
         return data;
     }
 
     @Override
     public AbstractResponse getErrorResponse(int throttleTimeMs, Throwable e) {
         Errors error = Errors.forException(e);
-        AddTopicsToMirrorResponseData responseData = new AddTopicsToMirrorResponseData();
+        PauseMirrorTopicsResponseData responseData = new PauseMirrorTopicsResponseData();
         responseData.setErrorCode(error.code());
-
-        return new AddTopicsToMirrorResponse(responseData);
+        return new PauseMirrorTopicsResponse(responseData);
     }
 
-    public static AddTopicsToMirrorRequest parse(Readable readable, short version) {
-        return new AddTopicsToMirrorRequest(
-                new AddTopicsToMirrorRequestData(readable, version),
+    public static PauseMirrorTopicsRequest parse(Readable readable, short version) {
+        return new PauseMirrorTopicsRequest(
+                new PauseMirrorTopicsRequestData(readable, version),
                 version
         );
     }
-
 }
