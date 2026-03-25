@@ -24,7 +24,7 @@ import org.apache.kafka.common.message.{InitDisklessLogRequestData, InitDiskless
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.{InitDisklessLogRequest, InitDisklessLogResponse}
 import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
-import org.apache.kafka.server.partition.PartitionListener
+import kafka.cluster.PartitionListener
 import org.apache.kafka.server.util.Scheduler
 import org.apache.kafka.storage.internals.log.UnifiedLog
 
@@ -76,9 +76,9 @@ class InitDisklessLogManager(
   private[server] val initialRetryBackoffMs = 1000L
   private[server] val maxRetryBackoffMs = 30000L
 
-  def trackedPartitions: Set[TopicPartition] = tracked.keySet().asScala.toSet
+  private[server] def getTrackedPartitions: Set[TopicPartition] = tracked.keySet().asScala.toSet
 
-  def initState(tp: TopicPartition): Option[InitState] =
+  private[server] def getInitState(tp: TopicPartition): Option[InitState] =
     Option(tracked.get(tp)).map(_.state)
 
   /**
