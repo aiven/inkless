@@ -294,6 +294,10 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleWriteMirrorStates(request: RequestChannel.Request): Unit = {
     if (isClusterMirroringEnabled) {
+      if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+        requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData().setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)))
+        return
+      }
       val writeMirrorStatesRequest = request.body[WriteMirrorStatesRequest]
       val mirrorName = writeMirrorStatesRequest.data().mirrorName()
       val partitionMetadata = new util.HashMap[String, util.Set[PartitionStateInfo]]()
@@ -313,6 +317,10 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleReadMirrorStates(request: RequestChannel.Request): Unit = {
     if (isClusterMirroringEnabled) {
+      if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+        requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData().setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)))
+        return
+      }
       val readMirrorStatesRequest = request.body[ReadMirrorStatesRequest]
       val mirrorName = readMirrorStatesRequest.data().mirrorName()
       val partitionMetadata = new util.HashMap[String, util.Set[Integer]]()
@@ -333,6 +341,10 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleLastMirroredOffset(request: RequestChannel.Request): Unit = {
     if (isClusterMirroringEnabled) {
+      if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+        requestHelper.sendMaybeThrottle(request, new LastMirroredOffsetsResponse(new LastMirroredOffsetsResponseData().setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)))
+        return
+      }
       val lastMirroredOffsetRequest = request.body[LastMirroredOffsetsRequest]
       val responseData = new LastMirroredOffsetsResponseData()
       val mirrorName = lastMirroredOffsetRequest.data().mirrorName()
@@ -1561,6 +1573,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             return (Errors.INVALID_REQUEST, Node.noNode)
         }
       } else if (keyType == CoordinatorType.MIRROR.id) {
+        authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
         try {
           MirrorRecordKey.validate(key)
         } catch {
