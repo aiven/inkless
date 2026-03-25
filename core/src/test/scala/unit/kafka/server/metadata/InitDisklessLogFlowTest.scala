@@ -17,6 +17,7 @@
 
 package kafka.server.metadata
 
+import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogResponse => CpInitResponse}
 import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
 import kafka.server.QuotaFactory.QuotaManagers
@@ -28,6 +29,7 @@ import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.metadata.{ConfigRecord, PartitionChangeRecord, PartitionRecord, TopicRecord}
 import org.apache.kafka.image.{AclsImage, ClientQuotasImage, ClusterImageTest, ConfigurationsImage, DelegationTokenImage, FeaturesImage, MetadataDelta, MetadataImage, MetadataProvenance, ProducerIdsImage, ScramImage, TopicsDelta, TopicsImage}
 import org.apache.kafka.image.loader.LogDeltaManifest
+import org.apache.kafka.metadata.InitDisklessLogFields
 import org.apache.kafka.metadata.publisher.{AclPublisher, DelegationTokenPublisher, DynamicClientQuotaPublisher, ScramPublisher}
 import org.apache.kafka.raft.LeaderAndEpoch
 import org.apache.kafka.server.common.MetadataVersion
@@ -37,7 +39,7 @@ import org.apache.kafka.storage.internals.log.{LogConfig, LogDirFailureChannel}
 import org.junit.jupiter.api.Assertions.{assertEquals, assertFalse, assertTrue}
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.{any, anyString}
-import org.mockito.Mockito.{mock, when}
+import org.mockito.Mockito.{mock, times, verify, when}
 
 import java.util
 import scala.jdk.CollectionConverters._
@@ -51,10 +53,81 @@ class InitDisklessLogFlowTest {
     replicaManager: ReplicaManager,
     initDisklessLogManager: InitDisklessLogManager,
     metadataPublisher: BrokerMetadataPublisher,
+    controlPlane: ControlPlane,
     channelManager: MockInitDisklessLogChannelManager,
     time: MockTime,
     scheduler: MockScheduler
   )
+
+  @Test
+  def testEndToEndFlowFromSealingToControlPlaneInit(): Unit = {
+    val ctx = newContext()
+    val topicName = "integration-e2e-seal-to-control-plane-init"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+
+    when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(anyString())).thenReturn(false)
+
+    try {
+      val createDelta = new TopicsDelta(TopicsImage.EMPTY)
+      createDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      createDelta.replay(new PartitionRecord()
+        .setTopicId(topicId).setPartitionId(0).setReplicas(util.Arrays.asList(0, 1))
+        .setIsr(util.Arrays.asList(0, 1)).setLeader(ctx.config.brokerId)
+        .setLeaderEpoch(0).setPartitionEpoch(0))
+      val createImage = imageFromTopics(createDelta.apply())
+      ctx.replicaManager.applyDelta(createDelta, createImage)
+
+      val partition = ctx.replicaManager.getPartitionOrException(tp)
+      assertFalse(partition.isSealed)
+
+      // Step 1: enable diskless and trigger sealing + controller init request path.
+      ctx.metadataPublisher._firstPublish = false
+      when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
+      val enableDisklessDelta = new MetadataDelta(createImage)
+      enableDisklessDelta.replay(new ConfigRecord()
+        .setResourceType(ConfigResource.Type.TOPIC.id())
+        .setResourceName(topicName)
+        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+        .setValue("true"))
+      val disklessImage = withClusterBrokers(enableDisklessDelta.apply(MetadataProvenance.EMPTY))
+      ctx.metadataPublisher.onMetadataUpdate(enableDisklessDelta, disklessImage, metadataManifest())
+
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
+      ctx.scheduler.tick()
+      assertTrue(partition.isSealed)
+      assertEquals(1, ctx.channelManager.requests.size())
+
+      // Simulate successful controller response.
+      ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
+        new org.apache.kafka.common.message.InitDisklessLogResponseData.TopicResponse()
+          .setTopicId(topicId)
+          .setPartitions(util.List.of(
+            new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
+              .setPartitionId(0)
+              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+          ))
+      )))
+
+      // Step 2: apply committed PartitionChangeRecord with diskless fields.
+      val pcrDelta = new MetadataDelta(disklessImage)
+      val pcr = new PartitionChangeRecord()
+        .setTopicId(topicId)
+        .setPartitionId(0)
+        .setIsr(util.Arrays.asList(0, 1))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessStartOffset(100L))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeProducerStates(util.List.of()))
+      pcrDelta.replay(pcr)
+      val pcrImage = withClusterBrokers(pcrDelta.apply(MetadataProvenance.EMPTY))
+      ctx.metadataPublisher.onMetadataUpdate(pcrDelta, pcrImage, metadataManifest())
+      ctx.scheduler.tick()
+
+      // Final check: metadata-triggered control-plane init executed.
+      verify(ctx.controlPlane, times(1)).initDisklessLog(any())
+    } finally {
+      shutdown(ctx)
+    }
+  }
 
   @Test
   def testOnMetadataUpdateSealsAndRegistersExistingClassicLeader(): Unit = {
@@ -477,6 +550,141 @@ class InitDisklessLogFlowTest {
     }
   }
 
+  @Test
+  def testOnMetadataUpdatePartitionChangeRecordWithDisklessFieldsTriggersControlPlaneInit(): Unit = {
+    val ctx = newContext()
+    val topicName = "integration-diskless-pcr-triggers-control-plane"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+
+    when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(anyString())).thenReturn(false)
+
+    try {
+      val createDelta = new TopicsDelta(TopicsImage.EMPTY)
+      createDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      createDelta.replay(new PartitionRecord()
+        .setTopicId(topicId).setPartitionId(0).setReplicas(util.Arrays.asList(0, 1))
+        .setIsr(util.Arrays.asList(0, 1)).setLeader(ctx.config.brokerId)
+        .setLeaderEpoch(0).setPartitionEpoch(0))
+      val createImage = imageFromTopics(createDelta.apply())
+      ctx.replicaManager.applyDelta(createDelta, createImage)
+
+      ctx.metadataPublisher._firstPublish = false
+      when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
+      val disklessDelta = new MetadataDelta(createImage)
+      disklessDelta.replay(new ConfigRecord()
+        .setResourceType(ConfigResource.Type.TOPIC.id())
+        .setResourceName(topicName)
+        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+        .setValue("true"))
+      val disklessImage = withClusterBrokers(disklessDelta.apply(MetadataProvenance.EMPTY))
+      ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
+
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
+      ctx.scheduler.tick()
+      assertEquals(1, ctx.channelManager.requests.size())
+      ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
+        new org.apache.kafka.common.message.InitDisklessLogResponseData.TopicResponse()
+          .setTopicId(topicId)
+          .setPartitions(util.List.of(
+            new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
+              .setPartitionId(0)
+              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+          ))
+      )))
+      assertEquals(Some(InitState.AwaitingMetadata), ctx.initDisklessLogManager.getInitState(tp))
+
+      val pcrDelta = new MetadataDelta(disklessImage)
+      val pcr = new PartitionChangeRecord()
+        .setTopicId(topicId)
+        .setPartitionId(0)
+        .setIsr(util.Arrays.asList(0, 1))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessStartOffset(100L))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeProducerStates(util.List.of()))
+      pcrDelta.replay(pcr)
+      val pcrImage = withClusterBrokers(pcrDelta.apply(MetadataProvenance.EMPTY))
+      ctx.metadataPublisher.onMetadataUpdate(pcrDelta, pcrImage, metadataManifest())
+
+      ctx.scheduler.tick()
+
+      verify(ctx.controlPlane, times(1)).initDisklessLog(any())
+      assertTrackedStates(ctx, Map.empty)
+      assertEquals(None, ctx.initDisklessLogManager.getInitState(tp))
+    } finally {
+      shutdown(ctx)
+    }
+  }
+
+  @Test
+  def testOnMetadataUpdateFollowerCanAlsoInvokeControlPlaneAfterCommittedMetadata(): Unit = {
+    val broker0Ctx = newContext(brokerId = 0)
+    val broker1Ctx = newContext(brokerId = 1)
+    val topicName = "integration-follower-can-init-control-plane"
+    val topicId = Uuid.randomUuid()
+
+    when(broker0Ctx.replicaManager.inklessMetadataView().isDisklessTopic(anyString())).thenReturn(false)
+    when(broker1Ctx.replicaManager.inklessMetadataView().isDisklessTopic(anyString())).thenReturn(false)
+
+    try {
+      val createDelta = new TopicsDelta(TopicsImage.EMPTY)
+      createDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      createDelta.replay(new PartitionRecord()
+        .setTopicId(topicId).setPartitionId(0).setReplicas(util.Arrays.asList(0, 1))
+        .setIsr(util.Arrays.asList(0, 1)).setLeader(0).setLeaderEpoch(0).setPartitionEpoch(0))
+      val createImage = imageFromTopics(createDelta.apply())
+      broker0Ctx.replicaManager.applyDelta(createDelta, createImage)
+      broker1Ctx.replicaManager.applyDelta(createDelta, createImage)
+
+      broker0Ctx.metadataPublisher._firstPublish = false
+      broker1Ctx.metadataPublisher._firstPublish = false
+      when(broker0Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
+      when(broker1Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
+      val disklessDelta = new MetadataDelta(createImage)
+      disklessDelta.replay(new ConfigRecord()
+        .setResourceType(ConfigResource.Type.TOPIC.id())
+        .setResourceName(topicName)
+        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+        .setValue("true"))
+      val disklessImage = withClusterBrokers(disklessDelta.apply(MetadataProvenance.EMPTY))
+      broker0Ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
+      broker1Ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
+
+      broker0Ctx.time.sleep(broker0Ctx.initDisklessLogManager.lingerMs)
+      broker0Ctx.scheduler.tick()
+      assertEquals(1, broker0Ctx.channelManager.requests.size())
+      broker0Ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
+        new org.apache.kafka.common.message.InitDisklessLogResponseData.TopicResponse()
+          .setTopicId(topicId)
+          .setPartitions(util.List.of(
+            new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
+              .setPartitionId(0)
+              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+          ))
+      )))
+
+      val pcrDelta = new MetadataDelta(disklessImage)
+      val pcr = new PartitionChangeRecord()
+        .setTopicId(topicId)
+        .setPartitionId(0)
+        .setIsr(util.Arrays.asList(0, 1))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessStartOffset(100L))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeProducerStates(util.List.of()))
+      pcrDelta.replay(pcr)
+      val pcrImage = withClusterBrokers(pcrDelta.apply(MetadataProvenance.EMPTY))
+      broker0Ctx.metadataPublisher.onMetadataUpdate(pcrDelta, pcrImage, metadataManifest())
+      broker1Ctx.metadataPublisher.onMetadataUpdate(pcrDelta, pcrImage, metadataManifest())
+
+      broker0Ctx.scheduler.tick()
+      broker1Ctx.scheduler.tick()
+
+      verify(broker0Ctx.controlPlane, times(1)).initDisklessLog(any())
+      verify(broker1Ctx.controlPlane, times(1)).initDisklessLog(any())
+    } finally {
+      shutdown(broker0Ctx)
+      shutdown(broker1Ctx)
+    }
+  }
+
   private def newContext(brokerId: Int = 0): TestContext = {
     val config = kafka.server.KafkaConfig.fromProps(TestUtils.createBrokerConfig(brokerId))
     val metadataCache = mock(classOf[KRaftMetadataCache])
@@ -488,8 +696,11 @@ class InitDisklessLogFlowTest {
     val time = new MockTime()
     val scheduler = new MockScheduler(time)
     val channelManager = new MockInitDisklessLogChannelManager()
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.initDisklessLog(any())).thenReturn(util.List.of(CpInitResponse.success()))
     val initDisklessLogManager = new InitDisklessLogManager(
       controllerChannelManager = channelManager,
+      controlPlane = controlPlane,
       scheduler = scheduler,
       brokerId = config.brokerId,
       brokerEpochSupplier = () => 1L
@@ -531,7 +742,7 @@ class InitDisklessLogFlowTest {
       faultHandler
     )
 
-    TestContext(config, metadataCache, logManager, replicaManager, initDisklessLogManager, metadataPublisher, channelManager, time, scheduler)
+    TestContext(config, metadataCache, logManager, replicaManager, initDisklessLogManager, metadataPublisher, controlPlane, channelManager, time, scheduler)
   }
 
   private def shutdown(ctx: TestContext): Unit = {

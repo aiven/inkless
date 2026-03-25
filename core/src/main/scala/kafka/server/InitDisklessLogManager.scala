@@ -16,6 +16,7 @@
  */
 package kafka.server
 
+import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogProducerState => CpProducerState, InitDisklessLogRequest => CpInitRequest}
 import kafka.cluster.Partition
 import kafka.utils.Logging
 import org.apache.kafka.clients.ClientResponse
@@ -49,11 +50,19 @@ private[server] case class InitPartitionState(
   partition: Partition,
   topicId: Uuid,
   state: InitState,
+  metadataPayload: Option[DisklessInitMetadata] = None,
   retryAttempt: Int = 0
+)
+
+private[server] case class DisklessInitMetadata(
+  topicName: String,
+  disklessStartOffset: Long,
+  producerStates: util.List[CpProducerState]
 )
 
 class InitDisklessLogManager(
   controllerChannelManager: NodeToControllerChannelManager,
+  controlPlane: ControlPlane,
   scheduler: Scheduler,
   brokerId: Int,
   brokerEpochSupplier: () => Long
@@ -80,6 +89,41 @@ class InitDisklessLogManager(
 
   private[server] def getInitState(tp: TopicPartition): Option[InitState] =
     Option(tracked.get(tp)).map(_.state)
+
+  def onDisklessInitMetadataApplied(
+    partition: Partition,
+    topicId: Uuid,
+    topicName: String,
+    disklessStartOffset: Long,
+    producerStates: util.List[CpProducerState]
+  ): Unit = {
+    if (disklessStartOffset < 0) return
+
+    val tp = partition.topicPartition
+    val payload = DisklessInitMetadata(topicName, disklessStartOffset, producerStates)
+    val newState = InitPartitionState(
+      partition = partition,
+      topicId = topicId,
+      state = InitState.AwaitingMetadata,
+      metadataPayload = Some(payload),
+      retryAttempt = 0
+    )
+
+    if (tracked.putIfAbsent(tp, newState) == null) {
+      partition.maybeAddListener(this)
+    } else {
+      tracked.computeIfPresent(tp, (_, current) =>
+        current.copy(
+          partition = partition,
+          topicId = topicId,
+          state = InitState.AwaitingMetadata,
+          metadataPayload = Some(payload)
+        ))
+    }
+
+    // Metadata is already committed and visible; trigger CP init promptly.
+    scheduleBatchSend(0L)
+  }
 
   /**
    * Register a sealed partition for migration. Registers this manager as a
@@ -196,13 +240,17 @@ class InitDisklessLogManager(
    * and send a single InitDisklessLog request to the controller.
    */
   private[server] def sendBatch(): Unit = {
-    val ready = tracked.asScala.filter { case (_, initPartitionState) =>
+    val readyForController = tracked.asScala.filter { case (_, initPartitionState) =>
       initPartitionState.state == InitState.SendingToController
     }.toMap
 
-    if (ready.isEmpty) return
+    val readyForControlPlane = tracked.asScala.filter { case (_, initPartitionState) =>
+      initPartitionState.state == InitState.AwaitingMetadata && initPartitionState.metadataPayload.isDefined
+    }.toMap
 
-    val validPartitions = ready.filter { case (tp, mps) =>
+    if (readyForController.isEmpty && readyForControlPlane.isEmpty) return
+
+    val validPartitions = readyForController.filter { case (tp, mps) =>
       if (!mps.partition.isLeader) {
         info(s"Partition $tp is no longer leader, removing from migration tracking")
         tracked.remove(tp)
@@ -216,7 +264,10 @@ class InitDisklessLogManager(
       }
     }
 
-    if (validPartitions.isEmpty) return
+    if (validPartitions.isEmpty) {
+      if (readyForControlPlane.nonEmpty) initOnControlPlane(readyForControlPlane)
+      return
+    }
 
     val topicDataMap = new util.LinkedHashMap[Uuid, util.List[InitDisklessLogRequestData.PartitionData]]()
 
@@ -271,6 +322,8 @@ class InitDisklessLogManager(
         handleBatchException(partitionKeys, new RuntimeException("InitDisklessLog request timed out"))
       }
     })
+
+    if (readyForControlPlane.nonEmpty) initOnControlPlane(readyForControlPlane)
   }
 
   private def extractProducerStates(
@@ -306,7 +359,7 @@ class InitDisklessLogManager(
             case Errors.NONE =>
               info(s"InitDisklessLog succeeded for partition $tp, transitioning to AwaitingMetadata")
               tracked.computeIfPresent(tp, (_, mps) =>
-                mps.copy(state = InitState.AwaitingMetadata, retryAttempt = 0))
+                mps.copy(state = InitState.AwaitingMetadata, metadataPayload = None, retryAttempt = 0))
 
             case Errors.FENCED_LEADER_EPOCH | Errors.INVALID_REQUEST =>
               info(s"InitDisklessLog for partition $tp returned permanent error $error, removing from tracking")
@@ -368,5 +421,57 @@ class InitDisklessLogManager(
 
   private def computeBackoff(attempt: Int): Long = {
     Math.min(initialRetryBackoffMs * (1L << Math.min(Math.max(attempt - 1, 0), 14)), maxRetryBackoffMs)
+  }
+
+  private def initOnControlPlane(readyForControlPlane: Map[TopicPartition, InitPartitionState]): Unit = {
+    val retriableAttempts = mutable.Map[TopicPartition, Int]()
+
+    readyForControlPlane.foreach { case (tp, mps) =>
+      val metadata = mps.metadataPayload.get
+      mps.partition.log match {
+        case None =>
+          warn(s"Partition $tp has no log while applying diskless metadata, scheduling retry")
+          val updated = tracked.computeIfPresent(tp, (_, current) => current.copy(retryAttempt = current.retryAttempt + 1))
+          if (updated != null) retriableAttempts.put(tp, updated.retryAttempt)
+        case Some(log) =>
+          val request = new CpInitRequest(
+            mps.topicId,
+            metadata.topicName,
+            tp.partition(),
+            log.logStartOffset,
+            metadata.disklessStartOffset,
+            metadata.producerStates
+          )
+
+          try {
+            val responses = controlPlane.initDisklessLog(util.List.of(request))
+            val response = Option(responses).flatMap(_.asScala.headOption)
+            response match {
+              case Some(r) if r.error() == Errors.NONE || r.error() == Errors.INVALID_REQUEST =>
+                info(s"Control-plane InitDisklessLog completed for $tp with ${r.error()}. Removing from tracking.")
+                tracked.remove(tp)
+              case Some(r) =>
+                warn(s"Control-plane InitDisklessLog for $tp returned retriable error ${r.error()}")
+                val updated = tracked.computeIfPresent(tp, (_, current) => current.copy(retryAttempt = current.retryAttempt + 1))
+                if (updated != null) retriableAttempts.put(tp, updated.retryAttempt)
+              case None =>
+                warn(s"Control-plane InitDisklessLog for $tp returned no response, scheduling retry")
+                val updated = tracked.computeIfPresent(tp, (_, current) => current.copy(retryAttempt = current.retryAttempt + 1))
+                if (updated != null) retriableAttempts.put(tp, updated.retryAttempt)
+            }
+          } catch {
+            case t: Throwable =>
+              warn(s"Control-plane InitDisklessLog for $tp failed with exception, scheduling retry", t)
+              val updated = tracked.computeIfPresent(tp, (_, current) => current.copy(retryAttempt = current.retryAttempt + 1))
+              if (updated != null) retriableAttempts.put(tp, updated.retryAttempt)
+          }
+      }
+    }
+
+    if (retriableAttempts.nonEmpty) {
+      val minBackoff = retriableAttempts.values.map(computeBackoff).min
+      warn(s"Scheduling control-plane InitDisklessLog retry for ${retriableAttempts.size} partition(s) in ${minBackoff}ms")
+      scheduleBatchSend(minBackoff)
+    }
   }
 }
