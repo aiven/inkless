@@ -168,7 +168,7 @@ class ControllerApis(
   }
 
   def handleCreateMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    authHelper.authorizeClusterOperation(request, ALTER)
 
     // Check if cluster mirroring is supported by the mirror.version feature
     val mirrorVersionLevel = apiVersionManager.features.finalizedFeatures.getOrDefault(MirrorVersion.FEATURE_NAME, 0.toShort)
@@ -231,7 +231,7 @@ class ControllerApis(
   }
 
   def handleAddTopicsToMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    authHelper.authorizeClusterOperation(request, ALTER)
     val addTopicsToMirrorRequest = request.body[AddTopicsToMirrorRequest]
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
@@ -254,7 +254,7 @@ class ControllerApis(
   }
 
   def handleRemoveTopicsFromMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    authHelper.authorizeClusterOperation(request, ALTER)
     val removeTopicsFromMirrorRequest = request.body[RemoveTopicsFromMirrorRequest]
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
@@ -277,7 +277,7 @@ class ControllerApis(
   }
 
   def handlePauseMirrorTopics(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    authHelper.authorizeClusterOperation(request, ALTER)
     val pauseRequest = request.body[PauseMirrorTopicsRequest]
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
@@ -297,7 +297,7 @@ class ControllerApis(
   }
 
   def handleResumeMirrorTopics(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    authHelper.authorizeClusterOperation(request, ALTER)
     val resumeRequest = request.body[ResumeMirrorTopicsRequest]
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
