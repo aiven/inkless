@@ -147,7 +147,7 @@ public class MirrorCoordinator {
             case STOPPING:
                 log.debug("STOPPING for topics {}.", topicPartitions);
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
-                mirrorMetadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions);
+                metadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions);
                 truncateToLastStableOffset(topicPartitions, tp -> updateLastMirroredOffsets(mirrorName, Set.of(tp)));
                 break;
             case STOPPED:
@@ -262,7 +262,7 @@ public class MirrorCoordinator {
             Map<Integer, Integer> offsets = new HashMap<>();
             parts.forEach(i -> replicaManager.getPartitionOrException(
                     new TopicPartition(topic, i)).log().foreach(log -> {
-                        LOG.info("!!! latstepoch for partition {} is {} ", i, log.latestEpoch());
+                        this.log.info("!!! latstepoch for partition {} is {} ", i, log.latestEpoch());
                         // don't need to store anything if latest epoch is empty
                         log.latestEpoch().ifPresent(epoch -> offsets.put(i, epoch));
                 return null;
@@ -317,7 +317,7 @@ public class MirrorCoordinator {
         } else {
             // write state data to remote coordinator (async network operation)
             Map<String, Set<MirrorUtils.PartitionStateInfo>> topicMetadata =
-                    Map.of(topicPartition.topic(), Set.of(new MirrorUtils.PartitionStateInfo(topicPartition.partition(), newState, -1L)));
+                    Map.of(topicPartition.topic(), Set.of(new MirrorUtils.PartitionStateInfo(topicPartition.partition(), newState, -1)));
             metadataManager.writeStatesToRemoteCoordinator(mirrorName, topicMetadata, Set.of(),
                     res -> res.data().topics().forEach(topic -> topic.partitions().forEach(par -> {
                         if (par.errorCode() == Errors.NONE.code()) {
@@ -390,7 +390,7 @@ public class MirrorCoordinator {
     }
 
     public int getLastMirroredOffset(String mirrorName, TopicPartition topicPartition) {
-        return mirrorMetadataManager.getLastMirroredOffset(mirrorName, topicPartition);
+        return metadataManager.getLastMirroredOffset(mirrorName, topicPartition);
     }
 
     /** Persists offsets to local or remote coordinators, optionally transitioning to STOPPED. */
@@ -577,7 +577,7 @@ public class MirrorCoordinator {
                             if (version == CoordinatorRecordType.LAST_MIRRORED_OFFSETS.id()) {
                                 String clusterName = readMirrorNameFromKey(record.key());
                                 Map<String, Map<Integer, Integer>> offsets = readLastMirroredOffsetsValue(record.value());
-                                mirrorMetadataManager.updateLastMirroredOffsets(clusterName, offsets, Map.of());
+                                metadataManager.updateLastMirroredOffsets(clusterName, offsets, Map.of());
                             } else if (version == CoordinatorRecordType.MIRROR_PARTITION_STATE.id()) {
                                 String clusterName = readMirrorNameFromKey(record.key());
                                 MirrorUtils.PartitionStateLogEntry value = readMirrorPartitionStateValue(record.value());

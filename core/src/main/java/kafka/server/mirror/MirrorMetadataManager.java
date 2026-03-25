@@ -948,7 +948,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         channelManager.sendRequest(new BumpLeaderEpochRequest.Builder(
                 new BumpLeaderEpochRequestData().setTopics(topicStates)
-        ), new TimeoutHandler());
+        ), new TimeoutHandler(log));
     }
 
     /**

@@ -14,7 +14,7 @@
 // limitations under the License.
 
 {
-  "apiKey": 102,
+  "apiKey": 104,
   "type": "response",
   "name": "BumpLeaderEpochResponse",
   // Version 0 is the initial version.

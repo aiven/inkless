@@ -14,7 +14,7 @@
 // limitations under the License.
 
 {
-  "apiKey": 102,
+  "apiKey": 104,
   "type": "request",
   "listeners": ["broker", "controller"],
   "name": "BumpLeaderEpochRequest",
