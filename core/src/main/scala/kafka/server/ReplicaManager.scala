@@ -19,7 +19,7 @@ package kafka.server
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse}
+import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendHandler
@@ -56,7 +56,7 @@ import org.apache.kafka.common.requests._
 import org.apache.kafka.common.utils.{Exit, Time}
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.image.{LocalReplicaChanges, MetadataDelta, MetadataImage, TopicsDelta}
-import org.apache.kafka.metadata.LeaderAndIsr
+import org.apache.kafka.metadata.{LeaderAndIsr, PartitionRegistration}
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
 import org.apache.kafka.server.{ActionQueue, DelayedActionQueue, common}
 import org.apache.kafka.server.common.{DirectoryEventHandler, RequestLocal, StopPartition, TopicOptionalIdPartition}
@@ -1765,7 +1765,22 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    val (disklessFetchInfosWithoutTopicId, classicFetchInfos) = fetchInfos.partition { case (k, _) => _inklessMetadataView.isDisklessTopic(k.topic()) }
+    val disklessFetchInfosWithoutTopicId = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
+    val classicFetchInfos = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
+    fetchInfos.foreach { case (tp, partitionData) =>
+      if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
+        val startOffset = _inklessMetadataView.getDisklessStartOffset(tp.topicPartition())
+        if (startOffset != PartitionRegistration.NO_DISKLESS_START_OFFSET &&
+          partitionData.fetchOffset < startOffset
+        ) {
+          classicFetchInfos += tp -> partitionData
+        } else {
+          disklessFetchInfosWithoutTopicId += tp -> partitionData
+        }
+      } else {
+        classicFetchInfos += tp -> partitionData
+      }
+    }
     inklessSharedState match {
       case None =>
         if (disklessFetchInfosWithoutTopicId.nonEmpty) {
@@ -1792,14 +1807,6 @@ class ReplicaManager(val config: KafkaConfig,
       } else {
         disklessFetchInfo
       }
-    }
-
-
-    if (params.isFromFollower && disklessFetchInfos.nonEmpty) {
-      warn("Diskless topics are not supported for follower fetch requests. " +
-        s"Request from follower ${params.replicaId} contains diskless topics: ${disklessFetchInfos.map(_._1.topic()).mkString(", ")}")
-      responseCallback(Seq.empty)
-      return
     }
 
     // Override maxWaitMs and minBytes with lower-bound if there are diskless fetches. Otherwise, leave the consumer-provided values.
@@ -3085,6 +3092,59 @@ class ReplicaManager(val config: KafkaConfig,
         // We only want to update the directoryIds if DirectoryAssignment is supported!
         localChanges.directoryIds.forEach(maybeUpdateTopicAssignment)
       }
+    }
+
+    notifyDisklessInitMetadataApplied(delta)
+  }
+
+  private def notifyDisklessInitMetadataApplied(delta: TopicsDelta): Unit = {
+    initDisklessLogManager.foreach { manager =>
+      delta.changedTopics().forEach { (topicId, topicDelta) =>
+        val topicName = topicDelta.name()
+        topicDelta.partitionChanges().forEach { (partitionId, partitionRegistration) =>
+          if (partitionRegistration.disklessStartOffset != PartitionRegistration.NO_DISKLESS_START_OFFSET &&
+            shouldNotifyDisklessInitFromDelta(delta, topicId, partitionId, partitionRegistration)) {
+            val tp = new TopicPartition(topicName, partitionId)
+            onlinePartition(tp).foreach { partition =>
+              val producerStates = partitionRegistration.disklessProducerStates.asScala.map { producerState =>
+                new InitDisklessLogProducerState(
+                  producerState.producerId(),
+                  producerState.producerEpoch(),
+                  producerState.baseSequence(),
+                  producerState.lastSequence(),
+                  producerState.assignedOffset(),
+                  producerState.batchMaxTimestamp()
+                )
+              }.asJava
+              manager.onDisklessInitMetadataApplied(
+                partition = partition,
+                topicId = topicId,
+                topicName = topicName,
+                disklessStartOffset = partitionRegistration.disklessStartOffset,
+                producerStates = producerStates
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private def shouldNotifyDisklessInitFromDelta(
+    delta: TopicsDelta,
+    topicId: Uuid,
+    partitionId: Int,
+    registration: org.apache.kafka.metadata.PartitionRegistration
+  ): Boolean = {
+    val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
+      Option(topicImage.partitions().get(partitionId))
+    }
+
+    previousPartition match {
+      case None => true
+      case Some(previous) =>
+        previous.disklessStartOffset != registration.disklessStartOffset ||
+          previous.disklessProducerStates != registration.disklessProducerStates
     }
   }
 

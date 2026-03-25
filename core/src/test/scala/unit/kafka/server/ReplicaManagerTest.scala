@@ -60,7 +60,7 @@ import org.apache.kafka.common.utils.{LogContext, Time, Utils}
 import org.apache.kafka.coordinator.transaction.TransactionLogConfig
 import org.apache.kafka.image._
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
-import org.apache.kafka.metadata.LeaderAndIsr
+import org.apache.kafka.metadata.{InitDisklessLogFields, LeaderAndIsr}
 import org.apache.kafka.metadata.properties.{MetaProperties, MetaPropertiesEnsemble, MetaPropertiesVersion, PropertiesUtils}
 import org.apache.kafka.server.common.{DirectoryEventHandler, KRaftVersion, MetadataVersion, OffsetAndEpoch, StopPartition}
 import org.apache.kafka.server.config.{KRaftConfigs, ReplicationConfigs, ServerLogConfigs}
@@ -6390,6 +6390,69 @@ class ReplicaManagerTest {
       // Then we should get an immediate empty response.
       assertNotNull(responseData)
       assertEquals(0, responseData.size)
+    }
+
+    @Test
+    def testFetchDisklessBelowStartOffsetReadsFromClassicLog(): Unit = {
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic())))
+
+        val initialDelta = new TopicsDelta(TopicsImage.EMPTY)
+        initialDelta.replay(new TopicRecord()
+          .setName(disklessTopicPartition.topic)
+          .setTopicId(disklessTopicPartition.topicId))
+        initialDelta.replay(new PartitionRecord()
+          .setTopicId(disklessTopicPartition.topicId)
+          .setPartitionId(disklessTopicPartition.partition)
+          .setLeader(1)
+          .setLeaderEpoch(0)
+          .setPartitionEpoch(0)
+          .setReplicas(List[Integer](1).asJava)
+          .setIsr(List[Integer](1).asJava))
+        val initialImage = initialDelta.apply()
+
+        val migrationDelta = new TopicsDelta(initialImage)
+        val partitionChangeRecord = new PartitionChangeRecord()
+          .setTopicId(disklessTopicPartition.topicId)
+          .setPartitionId(disklessTopicPartition.partition)
+          .setIsr(List[Integer](1).asJava)
+        partitionChangeRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessStartOffset(100L))
+        partitionChangeRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeProducerStates(util.List.of()))
+        migrationDelta.replay(partitionChangeRecord)
+        replicaManager.metadataCache.asInstanceOf[KRaftMetadataCache].setImage(imageFromTopics(migrationDelta.apply()))
+        when(replicaManager.inklessMetadataView().getDisklessStartOffset(disklessTopicPartition.topicPartition())).thenReturn(100L)
+
+        doReturn(Seq(disklessTopicPartition ->
+          LogReadResult(
+            new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+            None, 10L, 0L, 10L, 0L, 0L, None
+          ))
+        ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+        val fetchParams = new FetchParams(
+          -1: Short, -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        assertNotNull(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+        verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
     }
 
     @Test
