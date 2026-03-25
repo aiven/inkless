@@ -7040,7 +7040,7 @@ class ReplicaManagerTest {
     def testApplyDeltaRemovesFromInitDisklessLogManagerOnFollowerTransition(): Unit = {
       val props = TestUtils.createBrokerConfig(0)
       val config = KafkaConfig.fromProps(props)
-      val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
+      val mockLogMgr = TestUtils.createLogManager(config.logDirs.map(new File(_)), new LogConfig(new Properties()))
       val aliveBrokers = Seq(new Node(0, "host0", 0), new Node(1, "host1", 1))
       val kraftMetadataCache: KRaftMetadataCache = mock(classOf[KRaftMetadataCache])
       when(kraftMetadataCache.topicConfig(anyString())).thenReturn(new Properties())
@@ -7048,7 +7048,8 @@ class ReplicaManagerTest {
       when(kraftMetadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_VERSION)
       val topicName = "transitioning-topic"
       val transTopicId = Uuid.randomUuid()
-      setupMetadataCacheWithTopicIds(Map(topicName -> transTopicId), kraftMetadataCache)
+      when(kraftMetadataCache.getTopicName(transTopicId)).thenReturn(Some(topicName))
+      when(kraftMetadataCache.getTopicId(topicName)).thenReturn(transTopicId)
 
       val inklessMetadata = mock(classOf[InklessMetadataView])
       when(inklessMetadata.isDisklessTopic(any())).thenReturn(false)
