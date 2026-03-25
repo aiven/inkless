@@ -31,10 +31,8 @@ import org.apache.kafka.common.errors.RecordBatchTooLargeException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.DescribeProducersResponseData;
-import org.apache.kafka.common.message.MirrorPidResetRecord;
 import org.apache.kafka.common.record.CompressionType;
-import org.apache.kafka.common.record.ControlRecordUtils;
-import org.apache.kafka.common.record.DefaultRecordBatch;
+import org.apache.kafka.common.record.ControlRecordType;
 import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
@@ -1296,27 +1294,15 @@ public class UnifiedLog implements AutoCloseable {
         }
     }
 
-    public void appendMirrorPidResetBarrier(Uuid sourceClusterId) {
-        try {
-            synchronized (lock) {
-                MirrorPidResetRecord record = new MirrorPidResetRecord()
-                    .setVersion(ControlRecordUtils.MIRROR_PID_RESET_CURRENT_VERSION)
-                    .setSourceClusterId(sourceClusterId.toString());
-                int bufferSize = DefaultRecordBatch.RECORD_BATCH_OVERHEAD + 256;
-                ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
-                long offset = localLog.logEndOffset();
-                int leaderEpoch = latestEpoch().orElse(0);
-                MemoryRecords records = MemoryRecords.withMirrorPidResetRecord(
-                    offset, time().milliseconds(), leaderEpoch, buffer, record);
-                localLog.append(offset, records);
-                producerStateManager.expireMirroredProducers();
-                producerStateManager.updateMapEndOffset(offset + 1);
-                updateHighWatermarkWithLogEndOffset();
-                logger.info("Wrote mirror PID reset barrier at offset {} for source cluster {}", offset, sourceClusterId);
+    private static boolean isMirrorPidResetBatch(RecordBatch batch) {
+        Iterator<Record> iterator = batch.iterator();
+        if (iterator.hasNext()) {
+            Record record = iterator.next();
+            if (record.hasKey()) {
+                return ControlRecordType.parse(record.key()) == ControlRecordType.MIRROR_PID_RESET;
             }
-        } catch (IOException e) {
-            throw new KafkaStorageException("Failed to append mirror PID reset barrier", e);
         }
+        return false;
     }
 
     public void assignEpochStartOffset(int leaderEpoch, long startOffset) {
@@ -1430,7 +1416,9 @@ public class UnifiedLog implements AutoCloseable {
         int relativePositionInSegment = appendOffsetMetadata.relativePositionInSegment;
 
         for (MutableRecordBatch batch : records.batches()) {
-            if (batch.hasProducerId()) {
+            if (batch.isControlBatch() && isMirrorPidResetBatch(batch)) {
+                producerStateManager.expireMirroredProducers();
+            } else if (batch.hasProducerId()) {
                 // if this is a client produce request, there will be up to 5 batches which could have been duplicated.
                 // If we find a duplicate, we return the metadata of the appended batch to the client.
                 if (origin == AppendOrigin.CLIENT) {
@@ -2619,7 +2607,9 @@ public class UnifiedLog implements AutoCloseable {
         Map<Long, ProducerAppendInfo> loadedProducers = new HashMap<>();
         final List<CompletedTxn> completedTxns = new ArrayList<>();
         records.batches().forEach(batch -> {
-            if (batch.hasProducerId()) {
+            if (batch.isControlBatch() && isMirrorPidResetBatch(batch)) {
+                producerStateManager.expireMirroredProducers();
+            } else if (batch.hasProducerId()) {
                 Optional<CompletedTxn> maybeCompletedTxn = updateProducers(
                         producerStateManager,
                         batch,

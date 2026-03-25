@@ -23,10 +23,13 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.internals.Topic;
+import org.apache.kafka.common.message.MirrorPidResetRecord;
 import org.apache.kafka.common.message.WriteMirrorStatesResponseData;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.ControlRecordUtils;
+import org.apache.kafka.common.record.DefaultRecordBatch;
 import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
@@ -148,10 +151,10 @@ public class MirrorCoordinator {
                 log.debug("STOPPING for topics {}.", topicPartitions);
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
                 truncateToLastStableOffset(topicPartitions, tp -> updateLastMirroredOffsets(mirrorName, Set.of(tp)));
+                writeMirrorPidResetBarrier(mirrorName, topicPartitions);
                 break;
             case STOPPED:
                 log.debug("STOPPED for topics {}.", topicPartitions);
-                writeMirrorPidResetBarrier(mirrorName, topicPartitions);
                 // topic is writable
                 break;
             case FAILED:
@@ -380,9 +383,40 @@ public class MirrorCoordinator {
             log.warn("Source cluster ID not available for mirror {}. Skipping PID reset barrier.", mirrorName);
             return;
         }
+        MirrorPidResetRecord record = new MirrorPidResetRecord()
+            .setVersion(ControlRecordUtils.MIRROR_PID_RESET_CURRENT_VERSION)
+            .setSourceClusterId(sourceClusterId.toString());
+        long timestamp = time.milliseconds();
         for (TopicPartition tp : topicPartitions) {
             try {
-                replicaManager.getPartitionOrException(tp).appendMirrorPidResetBarrier(sourceClusterId);
+                var topicIdPartition = replicaManager.topicIdPartition(tp);
+                int bufferSize = DefaultRecordBatch.RECORD_BATCH_OVERHEAD + 256;
+                ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
+                MemoryRecords records = MemoryRecords.withMirrorPidResetRecord(0, timestamp, 0, buffer, record);
+                replicaManager.appendRecords(
+                    // TODO: replace this with Cluster Mirror specific timeout
+                    Duration.ofSeconds(5).toMillis(),
+                    (short) -1,
+                    true,
+                    AppendOrigin.COORDINATOR,
+                    CollectionConverters.asScala(Map.of(topicIdPartition, records)),
+                    partitionResponses -> {
+                        partitionResponses.foreach(partitionRes -> {
+                            ProduceResponse.PartitionResponse pr = partitionRes._2;
+                            if (pr.error.code() != Errors.NONE.code()) {
+                                log.error("Failed to write PID reset barrier for partition {} in mirror {}: {}",
+                                    tp, mirrorName, pr.error.message());
+                            } else {
+                                log.info("Wrote mirror PID reset barrier for partition {} in mirror {}", tp, mirrorName);
+                            }
+                            return null;
+                        });
+                        return null;
+                    },
+                    ignored -> null,
+                    RequestLocal.noCaching(),
+                    CollectionConverters.asScala(Map.of())
+                );
             } catch (Exception e) {
                 log.error("Failed to write PID reset barrier for partition {} in mirror {}", tp, mirrorName, e);
             }

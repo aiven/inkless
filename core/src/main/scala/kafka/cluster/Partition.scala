@@ -1443,10 +1443,6 @@ class Partition(val topicPartition: TopicPartition,
     }
   }
 
-  def appendMirrorPidResetBarrier(sourceClusterId: Uuid): Unit = {
-    localLogOrException.appendMirrorPidResetBarrier(sourceClusterId)
-  }
-
   def appendRecordsToLeader(records: MemoryRecords, origin: AppendOrigin, requiredAcks: Int,
                             requestLocal: RequestLocal, verificationGuard: VerificationGuard = VerificationGuard.SENTINEL): LogAppendInfo = {
     val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {
