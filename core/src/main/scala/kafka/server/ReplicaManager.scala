@@ -57,9 +57,8 @@ import org.apache.kafka.common.utils.{Exit, Time, Utils}
 import org.apache.kafka.coordinator.transaction.{AddPartitionsToTxnConfig, TransactionLogConfig}
 import org.apache.kafka.image.{LocalReplicaChanges, MetadataDelta, MetadataImage, TopicsDelta}
 import org.apache.kafka.logger.StateChangeLogger
-import org.apache.kafka.metadata.LeaderAndIsr
+import org.apache.kafka.metadata.{LeaderAndIsr, MetadataCache, PartitionRegistration}
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
-import org.apache.kafka.metadata.MetadataCache
 import org.apache.kafka.server.common.{DirectoryEventHandler, RequestLocal, StopPartition, TransactionVersion}
 import org.apache.kafka.server.log.remote.TopicPartitionLog
 import org.apache.kafka.server.config.ReplicationConfigs
@@ -1871,13 +1870,56 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    val (disklessFetchInfosWithoutTopicId, classicFetchInfos) = fetchInfos.partition { case (k, _) => _inklessMetadataView.isDisklessTopic(k.topic()) }
+    val disklessFetchInfosWithoutTopicId = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
+    val classicFetchInfos = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
+    val invalidDisklessFetchResponses = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionData)]()
+
+    fetchInfos.foreach { case (tp, partitionData) =>
+      val fetchInfo = tp -> partitionData
+      if (!_inklessMetadataView.isDisklessTopic(tp.topic())) {
+        classicFetchInfos += fetchInfo
+      } else {
+        val disklessStartOffset = _inklessMetadataView.getDisklessStartOffset(tp.topicPartition())
+        val shouldReadFromUnifiedLog =
+          disklessStartOffset != PartitionRegistration.NO_DISKLESS_START_OFFSET &&
+            partitionData.fetchOffset < disklessStartOffset
+
+        (shouldReadFromUnifiedLog, config.disklessManagedReplicasEnabled) match {
+          case (false, _) =>
+            disklessFetchInfosWithoutTopicId += fetchInfo
+          // Cannot read from UnifiedLog on a diskless topic if diskless managed replicas are not enabled.
+          case (true, false) =>
+            invalidDisklessFetchResponses += tp -> new FetchPartitionData(
+              Errors.INVALID_REQUEST,
+              UnifiedLog.UNKNOWN_OFFSET,
+              UnifiedLog.UNKNOWN_OFFSET,
+              MemoryRecords.EMPTY,
+              Optional.empty(),
+              OptionalLong.empty(),
+              Optional.empty(),
+              OptionalInt.empty(),
+              false
+            )
+          case (true, true) =>
+            classicFetchInfos += fetchInfo
+        }
+      }
+    }
+
+    def respond(response: Seq[(TopicIdPartition, FetchPartitionData)]): Unit =
+      responseCallback(response ++ invalidDisklessFetchResponses)
+
+    if (classicFetchInfos.isEmpty && disklessFetchInfosWithoutTopicId.isEmpty && invalidDisklessFetchResponses.nonEmpty) {
+      respond(Seq.empty)
+      return
+    }
+
     inklessSharedState match {
       case None =>
         if (disklessFetchInfosWithoutTopicId.nonEmpty) {
           error(s"Received diskless fetch request for topics ${disklessFetchInfosWithoutTopicId.map(_._1.topic()).distinct.mkString(", ")} but diskless storage system is not enabled. " +
             s"Replying an empty response.")
-          responseCallback(Seq.empty)
+          respond(Seq.empty)
           return
         }
       case Some(_) =>
@@ -1890,7 +1932,7 @@ class ReplicaManager(val config: KafkaConfig,
         _inklessMetadataView.getTopicId(topicIdPartition.topic()) match {
           case Uuid.ZERO_UUID =>
             error(s"Got null topic id from KRaft metadata for diskless topic ${topicIdPartition.topic()}")
-            responseCallback(Seq.empty)
+            respond(Seq.empty)
             return
           case topicId =>
             new TopicIdPartition(topicId, topicIdPartition.topicPartition()) -> partitionData
@@ -1900,8 +1942,7 @@ class ReplicaManager(val config: KafkaConfig,
       }
     }
 
-
-    if (params.isFromFollower && disklessFetchInfos.nonEmpty) {
+    if (!config.disklessManagedReplicasEnabled && params.isFromFollower && disklessFetchInfos.nonEmpty) {
       warn("Diskless topics are not supported for follower fetch requests. " +
         s"Request from follower ${params.replicaId} contains diskless topics: ${disklessFetchInfos.map(_._1.topic()).mkString(", ")}")
       responseCallback(Seq.empty)
@@ -1929,7 +1970,7 @@ class ReplicaManager(val config: KafkaConfig,
         quota = quota,
         maxWaitMs = Some(maxWaitMs),
         minBytes = Some(minBytes),
-        responseCallback = responseCallback,
+        responseCallback = respond,
       )
 
       // create a list of (topic, partition) pairs to use as keys for this delayed fetch operation
@@ -1994,7 +2035,7 @@ class ReplicaManager(val config: KafkaConfig,
     //                        6) has a preferred read replica
     if (remoteFetchInfos.isEmpty && disklessFetchInfos.isEmpty && (params.maxWaitMs <= 0 || bytesReadable >= params.minBytes || errorReadingData ||
       hasDivergingEpoch || hasPreferredReadReplica)) {
-      responseCallback(fetchPartitionData)
+      respond(fetchPartitionData)
     } else {
       // construct the fetch results from the read results
       val fetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]
@@ -2036,10 +2077,10 @@ class ReplicaManager(val config: KafkaConfig,
             }
         }
         logReadResultMap.putAll(disklessFetchResults)
-        processRemoteFetches(remoteFetchInfos, params, responseCallback, logReadResultMap, fetchPartitionStatus)
+        processRemoteFetches(remoteFetchInfos, params, respond, logReadResultMap, fetchPartitionStatus)
       } else {
         if (disklessFetchInfos.isEmpty && (bytesReadable >= params.minBytes || params.maxWaitMs <= 0)) {
-          responseCallback(fetchPartitionData)
+          respond(fetchPartitionData)
         } else {
           delayedResponse(fetchPartitionStatus)
         }
