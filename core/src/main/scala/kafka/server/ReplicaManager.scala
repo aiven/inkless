@@ -32,6 +32,7 @@ import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
 import org.apache.kafka.common.message.DeleteRecordsResponseData.DeleteRecordsPartitionResult
@@ -53,7 +54,7 @@ import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.utils.{Exit, Time, Utils}
 import org.apache.kafka.coordinator.transaction.{AddPartitionsToTxnConfig, TransactionLogConfig}
-import org.apache.kafka.image.{LocalReplicaChanges, MetadataImage, TopicsDelta}
+import org.apache.kafka.image.{LocalReplicaChanges, MetadataDelta, MetadataImage, TopicsDelta}
 import org.apache.kafka.logger.StateChangeLogger
 import org.apache.kafka.metadata.LeaderAndIsr
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
@@ -576,6 +577,25 @@ class ReplicaManager(val config: KafkaConfig,
                 error(s"Partition ${partition.topicPartition} has no topic ID, skipping seal and migration registration")
             }
           case _ =>
+        }
+      }
+    }
+  }
+
+  def sealExistingLeadersOfTopicsMigratedToDiskless(delta: MetadataDelta, newImage: MetadataImage): Unit = {
+    Option(delta.configsDelta()).foreach { configsDelta =>
+      configsDelta.changes().forEach { (resource, _) =>
+        if (resource.`type`() == ConfigResource.Type.TOPIC) {
+          val topicName = resource.name()
+          val oldProps = delta.image().configs().configProperties(resource)
+          val wasDiskless = oldProps.getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
+          val newProps = newImage.configs().configProperties(resource)
+          val isDiskless = newProps.getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
+          val topicExistedBefore = delta.image().topics().getTopic(topicName) != null
+          if (topicExistedBefore && !wasDiskless && isDiskless) {
+            info(s"Topic $topicName transitioning from classic to diskless, sealing leader partitions")
+            sealTopicPartitions(topicName)
+          }
         }
       }
     }
@@ -2790,12 +2810,12 @@ class ReplicaManager(val config: KafkaConfig,
         // so that no produce request can ever be processed by the new leader.
         val partition = existingPartition.get
         try {
-          partition.seal()
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+          partition.seal()
           partition.makeLeader(info.partition, false, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
+          initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
           changedPartitions.add(partition)
-          initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId))
         } catch {
           case e: KafkaStorageException =>
             stateChangeLogger.info(s"Skipped the become-leader state change for transitioning partition $tp " +
