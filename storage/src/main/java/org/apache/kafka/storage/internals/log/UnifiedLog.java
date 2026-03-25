@@ -1172,7 +1172,7 @@ public class UnifiedLog implements AutoCloseable {
                                     });
                                 }
                             } else {
-                                maybeOverrideProducerIdAndLeaderEpoch(records, sourceClusterId);
+                                maybeOverrideLeaderEpoch(records, sourceClusterId);
                                 // we are taking the offsets we are given
                                 if (appendInfo.firstOrLastOffsetOfFirstBatch() < localLog.logEndOffset()) {
                                     // we may still be able to recover if the log is empty
@@ -1282,14 +1282,10 @@ public class UnifiedLog implements AutoCloseable {
      * non-idempotent batches. Already-negative PIDs (from chained mirroring) pass through
      * unchanged, making the transformation idempotent.
      */
-    private void maybeOverrideProducerIdAndLeaderEpoch(MemoryRecords records, Uuid sourceClusterId) {
+    private void maybeOverrideLeaderEpoch(MemoryRecords records, Uuid sourceClusterId) {
         if (sourceClusterId != null) {
             for (MutableRecordBatch batch : records.batches()) {
                 batch.setPartitionLeaderEpoch(latestEpoch().orElse(0));
-                long pid = batch.producerId();
-                if (pid >= 0) {
-                    batch.setProducerId(-(pid + 2));
-                }
             }
         }
     }

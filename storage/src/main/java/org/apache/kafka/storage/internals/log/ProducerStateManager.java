@@ -412,16 +412,10 @@ public class ProducerStateManager {
     }
 
     public void expireMirroredProducers() {
-        int count = 0;
-        var it = producers.entrySet().iterator();
-        while (it.hasNext()) {
-            if (it.next().getKey() < 0) {
-                it.remove();
-                count++;
-            }
-        }
+        int count = producers.size();
         if (count > 0) {
-            producerIdCount = producers.size();
+            producers.clear();
+            producerIdCount = 0;
             log.info("Expired {} mirrored producer(s) from {}", count, topicPartition);
         }
     }
