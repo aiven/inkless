@@ -64,6 +64,8 @@ public class AclEntry {
                 return Set.of(DESCRIBE);
             case USER:
                 return Set.of(CREATE_TOKENS, DESCRIBE_TOKENS);
+            case CLUSTER_MIRROR:
+                return Set.of(CREATE, ALTER, DESCRIBE, DELETE, ALTER_CONFIGS, DESCRIBE_CONFIGS);
             default:
                 throw new IllegalArgumentException("Not a concrete resource type");
         }
@@ -76,6 +78,7 @@ public class AclEntry {
             case GROUP:
                 return Errors.GROUP_AUTHORIZATION_FAILED;
             case CLUSTER:
+            case CLUSTER_MIRROR:
                 return Errors.CLUSTER_AUTHORIZATION_FAILED;
             case TRANSACTIONAL_ID:
                 return Errors.TRANSACTIONAL_ID_AUTHORIZATION_FAILED;

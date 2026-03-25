@@ -1409,8 +1409,7 @@ public class MockAdminClient extends AdminClient {
             // Return empty description for mock
             MirrorDescription description = new MirrorDescription(
                 mirrorName,
-                Collections.emptyMap(),
-                Collections.emptySet()
+                Collections.emptyMap()
             );
             descriptions.put(mirrorName, description);
         }
