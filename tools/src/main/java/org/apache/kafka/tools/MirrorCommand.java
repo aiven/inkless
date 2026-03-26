@@ -26,6 +26,8 @@ import org.apache.kafka.clients.admin.CreateMirrorOptions;
 import org.apache.kafka.clients.admin.CreateMirrorResult;
 import org.apache.kafka.clients.admin.CreateTopicsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
+import org.apache.kafka.clients.admin.DeleteMirrorOptions;
+import org.apache.kafka.clients.admin.DeleteMirrorResult;
 import org.apache.kafka.clients.admin.DescribeMirrorsOptions;
 import org.apache.kafka.clients.admin.DescribeMirrorsResult;
 import org.apache.kafka.clients.admin.ListMirrorsResult;
@@ -94,6 +96,8 @@ public abstract class MirrorCommand {
                 mirrorService.addTopicsToMirror(opts);
             } else if (opts.hasRemoveOption()) {
                 mirrorService.removeTopicsFromMirror(opts);
+            } else if (opts.hasDeleteOption()) {
+                mirrorService.deleteMirror(opts);
             } else if (opts.hasPauseOption()) {
                 mirrorService.pauseMirrorTopics(opts);
             } else if (opts.hasResumeOption()) {
@@ -255,6 +259,14 @@ public abstract class MirrorCommand {
             System.out.printf("Removed %d topic(s) from mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
         }
 
+        private void deleteMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
+            String mirrorName = opts.mirror().get();
+            DeleteMirrorResult result = adminClient.deleteMirror(
+                mirrorName, new DeleteMirrorOptions());
+            result.all().get();
+            System.out.printf("Deleted mirror %s%n", mirrorName);
+        }
+
         private void pauseMirrorTopics(MirrorCommandOptions opts) throws Exception {
             String topicPattern = opts.topic().get();
             String mirrorName = opts.mirror().get();
@@ -400,6 +412,7 @@ public abstract class MirrorCommand {
         private final OptionSpecBuilder alterOpt;
         private final OptionSpecBuilder addOpt;
         private final OptionSpecBuilder removeOpt;
+        private final OptionSpecBuilder deleteOpt;
         private final OptionSpecBuilder pauseOpt;
         private final OptionSpecBuilder resumeOpt;
         private final OptionSpecBuilder listOpt;
@@ -430,6 +443,7 @@ public abstract class MirrorCommand {
             alterOpt = parser.accepts("alter", "Alter the configuration of an existing cluster mirror.");
             addOpt = parser.accepts("add", "Add topic(s) to an existing cluster mirror (supports regex).");
             removeOpt = parser.accepts("remove", "Remove topic(s) from an existing cluster mirror (supports regex).");
+            deleteOpt = parser.accepts("delete", "Delete a cluster mirror.");
             pauseOpt = parser.accepts("pause", "Pause mirroring for topic(s) matching the pattern (supports regex).");
             resumeOpt = parser.accepts("resume", "Resume mirroring for previously paused topic(s) matching the pattern (supports regex).");
             listOpt = parser.accepts("list", "List all cluster mirrors.");
@@ -445,7 +459,8 @@ public abstract class MirrorCommand {
                 .describedAs("topic")
                 .ofType(String.class);
 
-            replicationFactorOpt = parser.accepts("replication-factor", "The replication factor to use for the mirror topic. If not specified, uses the destination cluster's default.")
+            replicationFactorOpt = parser.accepts("replication-factor", "The replication factor to use for the mirror topic. " +
+                            "If not specified, uses the destination cluster's default.")
                 .withRequiredArg()
                 .describedAs("replication-factor")
                 .ofType(Short.class);
@@ -476,6 +491,10 @@ public abstract class MirrorCommand {
 
         private boolean hasRemoveOption() {
             return has(removeOpt);
+        }
+
+        private boolean hasDeleteOption() {
+            return has(deleteOpt);
         }
 
         private boolean hasPauseOption() {
@@ -535,9 +554,10 @@ public abstract class MirrorCommand {
 
             // should have exactly one action
             if ((has(createOpt) ? 1 : 0) + (has(alterOpt) ? 1 : 0) + (has(addOpt) ? 1 : 0) + (has(removeOpt) ? 1 : 0)
-                    + (has(pauseOpt) ? 1 : 0) + (has(resumeOpt) ? 1 : 0)
+                    + (has(deleteOpt) ? 1 : 0) + (has(pauseOpt) ? 1 : 0) + (has(resumeOpt) ? 1 : 0)
                     + (has(listOpt) ? 1 : 0) + (has(describeOpt) ? 1 : 0) != 1)
-                CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create, --alter, --add, --remove, --pause, --resume, --list, or --describe");
+                CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create, --alter, --add, " +
+                        "--remove, --delete, --pause, --resume, --list, or --describe");
 
             // check required args
             if (!has(bootstrapServerOpt))

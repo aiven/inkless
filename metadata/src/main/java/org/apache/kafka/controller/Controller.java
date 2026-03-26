@@ -41,6 +41,7 @@ import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartiti
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
+import org.apache.kafka.common.message.DeleteMirrorResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
@@ -190,6 +191,11 @@ public interface Controller extends AclMutator, AutoCloseable {
             ControllerRequestContext context,
             String mirrorName,
             Set<String> topics
+    );
+
+    CompletableFuture<DeleteMirrorResponseData> deleteMirror(
+            ControllerRequestContext context,
+            String mirrorName
     );
 
     /**

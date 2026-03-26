@@ -215,6 +215,8 @@ import org.apache.kafka.common.requests.CreateTopicsRequest;
 import org.apache.kafka.common.requests.CreateTopicsResponse;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
+import org.apache.kafka.common.requests.DeleteMirrorRequest;
+import org.apache.kafka.common.requests.DeleteMirrorResponse;
 import org.apache.kafka.common.requests.DeleteTopicsRequest;
 import org.apache.kafka.common.requests.DeleteTopicsResponse;
 import org.apache.kafka.common.requests.DescribeAclsRequest;
@@ -4874,6 +4876,45 @@ public class KafkaAdminClient extends AdminClient {
         };
         runnable.call(call, now);
         return new CreateMirrorResult(future);
+    }
+
+    @Override
+    public DeleteMirrorResult deleteMirror(String mirrorName, DeleteMirrorOptions options) {
+        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        final Call call = new Call("deleteMirror", calcDeadlineMs(now, options.timeoutMs()),
+                new LeastLoadedBrokerOrActiveKController()) {
+
+            @Override
+            DeleteMirrorRequest.Builder createRequest(int timeoutMs) {
+                return new DeleteMirrorRequest.Builder(mirrorName);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final DeleteMirrorResponse response =
+                        (DeleteMirrorResponse) abstractResponse;
+                Errors error = Errors.forCode(response.data().errorCode());
+                switch (error) {
+                    case NONE:
+                        future.complete(null);
+                        break;
+                    case REQUEST_TIMED_OUT:
+                        throw error.exception(response.data().errorMessage());
+                    default:
+                        log.error("Delete mirror {} failed: {}", mirrorName, response.data().errorMessage());
+                        future.completeExceptionally(error.exception(response.data().errorMessage()));
+                        break;
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return new DeleteMirrorResult(future);
     }
 
     @Override

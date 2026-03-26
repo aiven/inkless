@@ -1403,6 +1403,11 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
+    public DeleteMirrorResult deleteMirror(String mirrorName, DeleteMirrorOptions options) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
     public synchronized DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames, DescribeMirrorsOptions options) {
         Map<String, MirrorDescription> descriptions = new HashMap<>();
         for (String mirrorName : mirrorNames) {

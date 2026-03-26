@@ -139,6 +139,7 @@ class ControllerApis(
         case ApiKeys.REMOVE_TOPICS_FROM_MIRROR => handleRemoveTopicsFromMirror(request)
         case ApiKeys.PAUSE_MIRROR_TOPICS => handlePauseMirrorTopics(request)
         case ApiKeys.RESUME_MIRROR_TOPICS => handleResumeMirrorTopics(request)
+        case ApiKeys.DELETE_MIRROR => handleDeleteMirror(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
       }
 
@@ -319,6 +320,32 @@ class ControllerApis(
             new ResumeMirrorTopicsResponse(response.setThrottleTimeMs(throttleMs)))
         }
       }
+    CompletableFuture.completedFuture[Unit](())
+  }
+
+  def handleDeleteMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+
+    val mirrorVersionLevel = apiVersionManager.features.finalizedFeatures.getOrDefault(MirrorVersion.FEATURE_NAME, 0.toShort)
+    if (mirrorVersionLevel == 0) {
+      throw new UnsupportedVersionException(
+        "Cluster mirroring requires mirror.version >= 1. Current version: " + mirrorVersionLevel)
+    }
+
+    val deleteMirrorRequest = request.body[DeleteMirrorRequest]
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      OptionalLong.empty())
+    val mirrorName = deleteMirrorRequest.data().mirrorName()
+    controller.deleteMirror(context, mirrorName)
+      .handle[Unit] { (response, exception) =>
+        if (exception != null) {
+          requestHelper.handleError(request, exception)
+        } else {
+          requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
+            new DeleteMirrorResponse(response.setThrottleTimeMs(throttleMs)))
+        }
+      }
+
     CompletableFuture.completedFuture[Unit](())
   }
 
