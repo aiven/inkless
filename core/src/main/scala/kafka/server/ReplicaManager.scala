@@ -1409,13 +1409,16 @@ class ReplicaManager(val config: KafkaConfig,
       logStartOffset
     }
 
-    def validateReadOnlyTopic(partition: Partition): Unit = {
-      // if it's mirrored topic, it will become writable only when in STOPPED state
+    def validateReadOnlyTopic(partition: Partition, records: MemoryRecords): Unit = {
       val mirrorName = partition.getMirrorName()
-      if (mirrorMetadataManager.isDefined && mirrorName.nonEmpty &&
-        mirrorMetadataManager.get.getPartitionState(mirrorName, partition.topicPartition) != MirrorPartitionState.STOPPED) {
-        throw new ReadOnlyTopicException("Cannot append to read-only partition %s on broker %d (mirrorName=%s)"
-          .format(partition.topicPartition, localBrokerId, mirrorName))
+      if (mirrorMetadataManager.isDefined && mirrorName.nonEmpty) {
+        val state = mirrorMetadataManager.get.getPartitionState(mirrorName, partition.topicPartition)
+        val allowed = state == MirrorPartitionState.STOPPED ||
+          (state == MirrorPartitionState.STOPPING && records.batches().asScala.exists(ControlRecordType.isMirrorPidResetBatch))
+        if (!allowed) {
+          throw new ReadOnlyTopicException("Cannot append to read-only partition %s on broker %d (mirrorName=%s)"
+            .format(partition.topicPartition, localBrokerId, mirrorName))
+        }
       }
     }
 
@@ -1435,7 +1438,7 @@ class ReplicaManager(val config: KafkaConfig,
       } else {
         try {
           val partition = getPartitionOrException(topicIdPartition)
-          validateReadOnlyTopic(partition)
+          validateReadOnlyTopic(partition, records)
           val info = partition.appendRecordsToLeader(records, origin, requiredAcks, requestLocal,
             verificationGuards.getOrElse(topicIdPartition.topicPartition(), VerificationGuard.SENTINEL))
           val numAppendedMessages = info.numMessages

@@ -30,6 +30,7 @@ import org.apache.kafka.common.message.KRaftVersionRecordJsonConverter
 import org.apache.kafka.common.message.LeaderChangeMessageJsonConverter
 import org.apache.kafka.common.message.SnapshotFooterRecordJsonConverter
 import org.apache.kafka.common.message.SnapshotHeaderRecordJsonConverter
+import org.apache.kafka.common.message.MirrorPidResetRecordJsonConverter
 import org.apache.kafka.common.message.VotersRecordJsonConverter
 import org.apache.kafka.common.metadata.{MetadataJsonConverters, MetadataRecordType}
 import org.apache.kafka.common.protocol.{ApiMessage, ByteBufferAccessor}
@@ -356,6 +357,9 @@ object DumpLogSegments {
       case ControlRecordType.KRAFT_VOTERS=>
         val voters = ControlRecordUtils.deserializeVotersRecord(record)
         print(s" KRaftVoters ${VotersRecordJsonConverter.write(voters, voters.version())}")
+      case ControlRecordType.MIRROR_PID_RESET =>
+        val mirrorPidReset = ControlRecordUtils.deserializeMirrorPidResetRecord(record)
+        print(s" MirrorPidReset ${MirrorPidResetRecordJsonConverter.write(mirrorPidReset, mirrorPidReset.version())}")
       case controlType =>
         print(s" controlType: $controlType($controlTypeId)")
     }

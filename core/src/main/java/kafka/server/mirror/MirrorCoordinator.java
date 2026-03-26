@@ -20,12 +20,16 @@ import kafka.server.KafkaConfig;
 import kafka.server.ReplicaManager;
 
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.internals.Topic;
+import org.apache.kafka.common.message.MirrorPidResetRecord;
 import org.apache.kafka.common.message.WriteMirrorStatesResponseData;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.ControlRecordUtils;
+import org.apache.kafka.common.record.DefaultRecordBatch;
 import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
@@ -132,7 +136,6 @@ public class MirrorCoordinator {
                 break;
             case MIRRORING:
                 log.debug("MIRRORING topics {}.", topicPartitions);
-                // start mirroring
                 replicaManager.maybeCreateMirrorFetchers(mirrorName, topicPartitions);
                 break;
             case PAUSING:
@@ -148,6 +151,7 @@ public class MirrorCoordinator {
                 log.debug("STOPPING for topics {}.", topicPartitions);
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
                 truncateToLastStableOffset(topicPartitions, tp -> updateLastMirroredOffsets(mirrorName, Set.of(tp)));
+                writeMirrorPidResetBarrier(mirrorName, topicPartitions);
                 break;
             case STOPPED:
                 log.debug("STOPPED for topics {}.", topicPartitions);
@@ -158,7 +162,7 @@ public class MirrorCoordinator {
                 // TODO: implement recovery actions (i.e. exponential backoff retry)
                 break;
             default:
-                log.error("Illegal state transition to " + newState);
+                log.error("Illegal state transition to {}", newState);
                 throw new IllegalArgumentException("Illegal state transition to " + newState);
         }
     }
@@ -348,7 +352,7 @@ public class MirrorCoordinator {
 
         // periodically query source cluster to get the metadata
         long metadataRefreshIntervalMs = brokerConfig.mirrorConfig().metadataRefreshIntervalMs();
-        scheduler.schedule("MirrorMetadataRefresh", metadataManager::syncMetadata, metadataRefreshIntervalMs, metadataRefreshIntervalMs);
+        scheduler.schedule("MirrorMetadataRefresh", metadataManager::syncMetadata, 0, metadataRefreshIntervalMs);
 
         log.info("Startup complete.");
     }
@@ -371,6 +375,52 @@ public class MirrorCoordinator {
                     scheduleTruncation(mirrorName, topicPartitions, retryDelayMs);
                 }
             }, delayMs);
+    }
+
+    private void writeMirrorPidResetBarrier(String mirrorName, Set<TopicPartition> topicPartitions) {
+        Uuid sourceClusterId = metadataManager.getSourceClusterId(mirrorName);
+        if (sourceClusterId == null) {
+            log.warn("Source cluster ID not available for mirror {}. Skipping PID reset barrier.", mirrorName);
+            return;
+        }
+        MirrorPidResetRecord record = new MirrorPidResetRecord()
+            .setVersion(ControlRecordUtils.MIRROR_PID_RESET_CURRENT_VERSION)
+            .setSourceClusterId(sourceClusterId.toString());
+        long timestamp = time.milliseconds();
+        for (TopicPartition tp : topicPartitions) {
+            try {
+                var topicIdPartition = replicaManager.topicIdPartition(tp);
+                int bufferSize = DefaultRecordBatch.RECORD_BATCH_OVERHEAD + 256;
+                ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
+                MemoryRecords records = MemoryRecords.withMirrorPidResetRecord(0, timestamp, 0, buffer, record);
+                replicaManager.appendRecords(
+                    // TODO: replace this with Cluster Mirror specific timeout
+                    Duration.ofSeconds(5).toMillis(),
+                    (short) -1, // request ack from all ISR
+                    true,
+                    AppendOrigin.COORDINATOR,
+                    CollectionConverters.asScala(Map.of(topicIdPartition, records)),
+                    partitionResponses -> {
+                        partitionResponses.foreach(partitionRes -> {
+                            ProduceResponse.PartitionResponse pr = partitionRes._2;
+                            if (pr.error.code() != Errors.NONE.code()) {
+                                log.error("Failed to write PID reset barrier for partition {} in mirror {}: {}",
+                                    tp, mirrorName, pr.error.message());
+                            } else {
+                                log.info("Wrote mirror PID reset barrier for partition {} in mirror {}", tp, mirrorName);
+                            }
+                            return null;
+                        });
+                        return null;
+                    },
+                    ignored -> null,
+                    RequestLocal.noCaching(),
+                    CollectionConverters.asScala(Map.of())
+                );
+            } catch (Exception e) {
+                log.error("Failed to write PID reset barrier for partition {} in mirror {}", tp, mirrorName, e);
+            }
+        }
     }
 
     private Map<String, Map<Integer, Long>> lastMirroredOffsetsToCoordinatorRecords(Map<MirrorUtils.PartitionKey, Long> offsets) {
@@ -425,7 +475,7 @@ public class MirrorCoordinator {
             replicaManager.appendRecords(
                     // TODO: replace this with Cluster Mirror specific timeout
                     Duration.ofSeconds(5).toMillis(),
-                    (short) -1,
+                    (short) -1, // request ack from all ISR
                     true,
                     AppendOrigin.COORDINATOR,
                     CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),

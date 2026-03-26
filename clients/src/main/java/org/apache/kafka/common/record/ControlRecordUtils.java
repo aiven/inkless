@@ -18,6 +18,7 @@ package org.apache.kafka.common.record;
 
 import org.apache.kafka.common.message.KRaftVersionRecord;
 import org.apache.kafka.common.message.LeaderChangeMessage;
+import org.apache.kafka.common.message.MirrorPidResetRecord;
 import org.apache.kafka.common.message.SnapshotFooterRecord;
 import org.apache.kafka.common.message.SnapshotHeaderRecord;
 import org.apache.kafka.common.message.VotersRecord;
@@ -34,6 +35,7 @@ public class ControlRecordUtils {
     public static final short SNAPSHOT_FOOTER_CURRENT_VERSION = 0;
     public static final short SNAPSHOT_HEADER_CURRENT_VERSION = 0;
     public static final short KRAFT_VOTERS_CURRENT_VERSION = 0;
+    public static final short MIRROR_PID_RESET_CURRENT_VERSION = 0;
 
     public static LeaderChangeMessage deserializeLeaderChangeMessage(Record record) {
         ControlRecordType recordType = ControlRecordType.parse(record.key());
@@ -88,6 +90,13 @@ public class ControlRecordUtils {
 
     public static VotersRecord deserializeVotersRecord(ByteBuffer data) {
         return new VotersRecord(new ByteBufferAccessor(data.slice()), KRAFT_VOTERS_CURRENT_VERSION);
+    }
+
+    public static MirrorPidResetRecord deserializeMirrorPidResetRecord(Record record) {
+        ControlRecordType recordType = ControlRecordType.parse(record.key());
+        validateControlRecordType(ControlRecordType.MIRROR_PID_RESET, recordType);
+
+        return new MirrorPidResetRecord(new ByteBufferAccessor(record.value().slice()), MIRROR_PID_RESET_CURRENT_VERSION);
     }
 
     private static void validateControlRecordType(ControlRecordType expected, ControlRecordType actual) {

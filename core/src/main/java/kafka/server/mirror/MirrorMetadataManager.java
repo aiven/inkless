@@ -28,6 +28,7 @@ import org.apache.kafka.common.GroupState;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.acl.AccessControlEntryFilter;
 import org.apache.kafka.common.acl.AclBinding;
 import org.apache.kafka.common.acl.AclBindingFilter;
@@ -172,6 +173,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     // cache
     // thread-safe maps for concurrent access from metadata, scheduler, and fetcher threads
+    private final Map<String, Uuid> sourceClusterIds = new ConcurrentHashMap<>();
     private final Map<String, List<MirrorSourceSender>> sourceSenders = new ConcurrentHashMap<>();
     private final Map<String, Map<TopicPartition, Node>> sourceLeaders = new ConcurrentHashMap<>();
     private final Map<MirrorUtils.PartitionKey, MirrorPartitionState> partitionStates = new ConcurrentHashMap<>();
@@ -936,6 +938,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             return;
         }
 
+        String clusterId = metadataResponse.clusterId();
+        if (clusterId != null && !clusterId.isEmpty()) {
+            sourceClusterIds.put(mirrorName, Uuid.fromString(clusterId));
+        }
+
         Collection<Node> discoveredBrokers = metadataResponse.brokers();
         if (discoveredBrokers.isEmpty()) {
             return;
@@ -1429,10 +1436,34 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return result;
     }
 
+    Uuid getSourceClusterId(String mirrorName) {
+        Uuid cached = sourceClusterIds.get(mirrorName);
+        if (cached != null) {
+            return cached;
+        }
+        // cache miss: resolve by sending a synchronous metadata request
+        ensureConnection(mirrorName);
+        try {
+            var response = trySendRequest(mirrorName, MetadataRequest.Builder.allTopics());
+            if (response.responseBody() instanceof MetadataResponse metadataResponse) {
+                String clusterId = metadataResponse.clusterId();
+                if (clusterId != null && !clusterId.isEmpty()) {
+                    cached = Uuid.fromString(clusterId);
+                    sourceClusterIds.put(mirrorName, cached);
+                    return cached;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to resolve source cluster ID for mirror {}", mirrorName, e);
+        }
+        return null;
+    }
+
     void clear() {
         partitionStates.clear();
         partitionStateCounts.clear();
         lastMirroredOffsets.clear();
+        sourceClusterIds.clear();
         closeSourceSenders();
         sourceLeaders.clear();
     }

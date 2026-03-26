@@ -26,6 +26,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
+import java.util.Iterator;
 
 /**
  * Control records specify a schema for the record key which includes a version and type:
@@ -53,6 +54,9 @@ public enum ControlRecordType {
     // KRaft membership changes messages
     KRAFT_VERSION((short) 5),
     KRAFT_VOTERS((short) 6),
+
+    // Cluster mirroring control messages
+    MIRROR_PID_RESET((short) 7),
 
     // UNKNOWN is used to indicate a control type which the client is not aware of and should be ignored
     UNKNOWN((short) -1);
@@ -117,6 +121,8 @@ public enum ControlRecordType {
                 return KRAFT_VERSION;
             case 6:
                 return KRAFT_VOTERS;
+            case 7:
+                return MIRROR_PID_RESET;
 
             default:
                 return UNKNOWN;
@@ -125,5 +131,19 @@ public enum ControlRecordType {
 
     public static ControlRecordType parse(ByteBuffer key) {
         return fromTypeId(parseTypeId(key));
+    }
+
+    public static boolean isMirrorPidResetBatch(RecordBatch batch) {
+        if (!batch.isControlBatch()) {
+            return false;
+        }
+        Iterator<Record> iterator = batch.iterator();
+        if (iterator.hasNext()) {
+            Record record = iterator.next();
+            if (record.hasKey()) {
+                return parse(record.key()) == MIRROR_PID_RESET;
+            }
+        }
+        return false;
     }
 }
