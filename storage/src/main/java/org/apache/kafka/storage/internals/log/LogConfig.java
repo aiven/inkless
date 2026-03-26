@@ -529,9 +529,15 @@ public class LogConfig extends AbstractConfig {
         validateDisklessTransition(isCreation, isDisklessExplicitlySet, isDisklessEnabled, wasDisklessEnabled, isDisklessAllowFromClassicEnabled);
 
         // Only one between diskless.enable and remote.storage.enable can be set, no matter the value.
-        final boolean hasExplicitDiskless = isDisklessExplicitlySet || wasDisklessExplicitlySet;
-        final boolean hasExplicitRemoteStorage = isRemoteStorageExplicitlySet || wasRemoteStorageExplicitlySet;
-        validateDisklessAndRemoteStorageMutualExclusion(isDisklessExplicitlySet, isRemoteStorageExplicitlySet, hasExplicitDiskless, hasExplicitRemoteStorage);
+        // Exception: when classic-to-diskless migration is allowed, we permit setting diskless.enable
+        // on a topic that already has remote.storage.enable (the migration flow handles this).
+        final boolean isClassicToDisklessMigration = isDisklessAllowFromClassicEnabled
+            && isDisklessExplicitlySet && isDisklessEnabled && wasRemoteStorageExplicitlySet;
+        if (!isClassicToDisklessMigration) {
+            final boolean hasExplicitDiskless = isDisklessExplicitlySet || wasDisklessExplicitlySet;
+            final boolean hasExplicitRemoteStorage = isRemoteStorageExplicitlySet || wasRemoteStorageExplicitlySet;
+            validateDisklessAndRemoteStorageMutualExclusion(isDisklessExplicitlySet, isRemoteStorageExplicitlySet, hasExplicitDiskless, hasExplicitRemoteStorage);
+        }
     }
 
     private static void validateDisklessTransition(boolean isCreation,
