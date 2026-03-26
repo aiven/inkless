@@ -33,6 +33,8 @@
         "about": "The cluster mirror name." },
       { "name": "SourceBootstrap", "type": "string", "versions": "0+",
         "about": "The source cluster bootstrap servers." },
+      { "name": "SourceClusterId", "type": "string", "versions": "0+", "default": "",
+        "about": "The source cluster ID, or empty if not yet resolved." },
       { "name": "TopicCount", "type": "int32", "versions": "0+", "default": "0",
         "about": "The number of topics configured for this mirror. 0 indicates an empty mirror with no topics." }
     ]}

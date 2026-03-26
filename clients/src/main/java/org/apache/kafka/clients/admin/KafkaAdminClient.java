@@ -5060,6 +5060,7 @@ public class KafkaAdminClient extends AdminClient {
                         listings.add(new MirrorListing(
                                 mirror.mirrorName(),
                                 mirror.sourceBootstrap(),
+                                mirror.sourceClusterId(),
                                 mirror.topicCount()
                         ));
                     }
