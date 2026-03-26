@@ -1287,17 +1287,6 @@ public class UnifiedLog implements AutoCloseable {
         }
     }
 
-    private static boolean isMirrorPidResetBatch(RecordBatch batch) {
-        Iterator<Record> iterator = batch.iterator();
-        if (iterator.hasNext()) {
-            Record record = iterator.next();
-            if (record.hasKey()) {
-                return ControlRecordType.parse(record.key()) == ControlRecordType.MIRROR_PID_RESET;
-            }
-        }
-        return false;
-    }
-
     public void assignEpochStartOffset(int leaderEpoch, long startOffset) {
         leaderEpochCache.assign(leaderEpoch, startOffset);
     }
@@ -1409,7 +1398,7 @@ public class UnifiedLog implements AutoCloseable {
         int relativePositionInSegment = appendOffsetMetadata.relativePositionInSegment;
 
         for (MutableRecordBatch batch : records.batches()) {
-            if (batch.isControlBatch() && isMirrorPidResetBatch(batch)) {
+            if (ControlRecordType.isMirrorPidResetBatch(batch)) {
                 producerStateManager.expireMirroredProducers();
             }
 
@@ -2602,9 +2591,11 @@ public class UnifiedLog implements AutoCloseable {
         Map<Long, ProducerAppendInfo> loadedProducers = new HashMap<>();
         final List<CompletedTxn> completedTxns = new ArrayList<>();
         records.batches().forEach(batch -> {
-            if (batch.isControlBatch() && isMirrorPidResetBatch(batch)) {
+            if (ControlRecordType.isMirrorPidResetBatch(batch)) {
                 producerStateManager.expireMirroredProducers();
-            } else if (batch.hasProducerId()) {
+            }
+
+            if (batch.hasProducerId()) {
                 Optional<CompletedTxn> maybeCompletedTxn = updateProducers(
                         producerStateManager,
                         batch,

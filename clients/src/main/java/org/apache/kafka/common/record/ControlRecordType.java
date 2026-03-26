@@ -26,6 +26,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
+import java.util.Iterator;
 
 /**
  * Control records specify a schema for the record key which includes a version and type:
@@ -130,5 +131,19 @@ public enum ControlRecordType {
 
     public static ControlRecordType parse(ByteBuffer key) {
         return fromTypeId(parseTypeId(key));
+    }
+
+    public static boolean isMirrorPidResetBatch(RecordBatch batch) {
+        if (!batch.isControlBatch()) {
+            return false;
+        }
+        Iterator<Record> iterator = batch.iterator();
+        if (iterator.hasNext()) {
+            Record record = iterator.next();
+            if (record.hasKey()) {
+                return parse(record.key()) == MIRROR_PID_RESET;
+            }
+        }
+        return false;
     }
 }

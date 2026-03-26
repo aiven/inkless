@@ -1384,19 +1384,6 @@ class ReplicaManager(val config: KafkaConfig,
     requiredAcks == -1 || requiredAcks == 1 || requiredAcks == 0
   }
 
-  private def containsMirrorPidResetBatch(records: MemoryRecords): Boolean = {
-    import scala.jdk.CollectionConverters._
-    records.batches().asScala.exists { batch =>
-      batch.isControlBatch && {
-        val iter = batch.iterator()
-        iter.hasNext && {
-          val record = iter.next()
-          record.hasKey && ControlRecordType.parse(record.key()) == ControlRecordType.MIRROR_PID_RESET
-        }
-      }
-    }
-  }
-
   /**
    * Append the messages to the local replica logs
    */
@@ -1427,7 +1414,7 @@ class ReplicaManager(val config: KafkaConfig,
       if (mirrorMetadataManager.isDefined && mirrorName.nonEmpty) {
         val state = mirrorMetadataManager.get.getPartitionState(mirrorName, partition.topicPartition)
         val allowed = state == MirrorPartitionState.STOPPED ||
-          (state == MirrorPartitionState.STOPPING && containsMirrorPidResetBatch(records))
+          (state == MirrorPartitionState.STOPPING && records.batches().asScala.exists(ControlRecordType.isMirrorPidResetBatch))
         if (!allowed) {
           throw new ReadOnlyTopicException("Cannot append to read-only partition %s on broker %d (mirrorName=%s)"
             .format(partition.topicPartition, localBrokerId, mirrorName))
