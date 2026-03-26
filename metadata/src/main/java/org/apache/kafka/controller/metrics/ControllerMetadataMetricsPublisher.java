@@ -115,7 +115,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
                 changes.handleTopicChange(
                     prevImage.topics().getTopic(entry.getKey()),
                     entry.getValue(),
-                    isDisklessTopic(newImage.configs(), entry.getValue().name()));
+                    isDisklessTopic(prevImage.configs(), entry.getValue().name()));
             }
         }
         // Handle diskless.enable config changes on existing topics (no TopicDelta required).
