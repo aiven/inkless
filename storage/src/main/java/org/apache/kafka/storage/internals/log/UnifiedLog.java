@@ -1398,7 +1398,8 @@ public class UnifiedLog implements AutoCloseable {
         int relativePositionInSegment = appendOffsetMetadata.relativePositionInSegment;
 
         for (MutableRecordBatch batch : records.batches()) {
-            if (ControlRecordType.isMirrorPidResetBatch(batch)) {
+            if ((origin == AppendOrigin.COORDINATOR || origin == AppendOrigin.REPLICATION)
+                    && ControlRecordType.isMirrorPidResetBatch(batch)) {
                 producerStateManager.expireMirroredProducers();
             }
 
