@@ -115,10 +115,12 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
                 changes.handleDeletedTopic(prevTopic, isDisklessTopic(prevImage.configs(), prevTopic.name()));
             }
             for (Entry<Uuid, TopicDelta> entry : delta.topicsDelta().changedTopics().entrySet()) {
+                // Use prevImage configs intentionally: diskless.enable transitions
+                // are handled by the configsDelta loop below, not here.
                 changes.handleTopicChange(
                     prevImage.topics().getTopic(entry.getKey()),
                     entry.getValue(),
-                    isDisklessTopic(newImage.configs(), entry.getValue().name()));
+                    isDisklessTopic(prevImage.configs(), entry.getValue().name()));
             }
         }
         // Handle diskless.enable config changes on existing topics (no TopicDelta required).
