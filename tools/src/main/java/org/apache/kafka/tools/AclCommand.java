@@ -366,11 +366,14 @@ public class AclCommand {
         if (opts.options.has(opts.delegationTokenOpt)) {
             opts.options.valuesOf(opts.delegationTokenOpt).forEach(token -> resourceFilters.add(new ResourcePatternFilter(ResourceType.DELEGATION_TOKEN, token.trim(), patternType)));
         }
+        if (opts.options.has(opts.clusterMirrorOpt)) {
+            opts.options.valuesOf(opts.clusterMirrorOpt).forEach(mirror -> resourceFilters.add(new ResourcePatternFilter(ResourceType.CLUSTER_MIRROR, mirror.trim(), patternType)));
+        }
         if (opts.options.has(opts.userPrincipalOpt)) {
             opts.options.valuesOf(opts.userPrincipalOpt).forEach(user -> resourceFilters.add(new ResourcePatternFilter(ResourceType.USER, user.trim(), patternType)));
         }
         if (resourceFilters.isEmpty() && dieIfNoResourceFound) {
-            CommandLineUtils.printUsageAndExit(opts.parser, "You must provide at least one resource: --topic <topic> or --cluster or --group <group> or --delegation-token <Delegation Token ID>");
+            CommandLineUtils.printUsageAndExit(opts.parser, "You must provide at least one resource: --topic <topic> or --cluster or --group <group> or --cluster-mirror <mirror> or --delegation-token <Delegation Token ID>");
         }
         return resourceFilters;
     }
@@ -426,6 +429,7 @@ public class AclCommand {
         private final OptionSpecBuilder producerOpt;
         private final OptionSpecBuilder consumerOpt;
         private final OptionSpecBuilder forceOpt;
+        private final OptionSpec<String> clusterMirrorOpt;
         private final OptionSpec<String> userPrincipalOpt;
 
         public AclCommandOptions(String[] args) {
@@ -522,6 +526,11 @@ public class AclCommand {
             consumerOpt = parser.accepts("consumer", "Convenience option to add/remove ACLs for consumer role. " +
                     "This will generate ACLs that allows READ,DESCRIBE on topic and READ on group.");
             forceOpt = parser.accepts("force", "Assume Yes to all queries and do not prompt.");
+            clusterMirrorOpt = parser.accepts("cluster-mirror", "Cluster mirror to which ACLs should be added or removed. " +
+                            "A value of '*' indicates ACL should apply to all cluster mirrors.")
+                    .withRequiredArg()
+                    .describedAs("cluster-mirror")
+                    .ofType(String.class);
             userPrincipalOpt = parser.accepts("user-principal", "Specifies a user principal as a resource in relation with the operation. For instance " +
                             "one could grant CreateTokens or DescribeTokens permission on a given user principal.")
                     .withRequiredArg()

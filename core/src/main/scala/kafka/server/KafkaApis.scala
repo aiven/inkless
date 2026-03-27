@@ -294,6 +294,10 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleWriteMirrorStates(request: RequestChannel.Request): Unit = {
     if (isClusterMirroringEnabled) {
+      if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+        requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData().setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)))
+        return
+      }
       val writeMirrorStatesRequest = request.body[WriteMirrorStatesRequest]
       val mirrorName = writeMirrorStatesRequest.data().mirrorName()
       val partitionMetadata = new util.HashMap[String, util.Set[PartitionStateInfo]]()
@@ -313,6 +317,10 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleReadMirrorStates(request: RequestChannel.Request): Unit = {
     if (isClusterMirroringEnabled) {
+      if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+        requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData().setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)))
+        return
+      }
       val readMirrorStatesRequest = request.body[ReadMirrorStatesRequest]
       val mirrorName = readMirrorStatesRequest.data().mirrorName()
       val partitionMetadata = new util.HashMap[String, util.Set[Integer]]()
@@ -333,6 +341,10 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleLastMirroredOffset(request: RequestChannel.Request): Unit = {
     if (isClusterMirroringEnabled) {
+      if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+        requestHelper.sendMaybeThrottle(request, new LastMirroredOffsetsResponse(new LastMirroredOffsetsResponseData().setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)))
+        return
+      }
       val lastMirroredOffsetRequest = request.body[LastMirroredOffsetsRequest]
       val responseData = new LastMirroredOffsetsResponseData()
       val mirrorName = lastMirroredOffsetRequest.data().mirrorName()
@@ -400,20 +412,18 @@ class KafkaApis(val requestChannel: RequestChannel,
     val responseData = new ListMirrorsResponseData()
 
     if (isClusterMirroringEnabled) {
-      if (authHelper.authorize(request.context, DESCRIBE, CLUSTER, CLUSTER_NAME, logIfDenied = false)) {
-        val mirrors = new util.ArrayList[ListMirrorsResponseData.ListedMirror]()
-        mirrorCoordinator.getConfiguredMirrors().forEach(mirrorName => {
-          mirrors.add(new ListMirrorsResponseData.ListedMirror()
-            .setMirrorName(mirrorName)
-            .setSourceBootstrap(if (mirrorCoordinator.getSourceBootstrap(mirrorName) != null)
-              mirrorCoordinator.getSourceBootstrap(mirrorName) else "")
-            .setTopicCount(mirrorCoordinator.getConfiguredTopics(mirrorName).size()))
-        })
-        responseData.setMirrors(mirrors)
-        responseData.setErrorCode(Errors.NONE.code)
-      } else {
-        responseData.setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)
-      }
+      val mirrors = new util.ArrayList[ListMirrorsResponseData.ListedMirror]()
+      val authorizedMirrors = mirrorCoordinator.getConfiguredMirrors().asScala
+        .filter(mirrorName => authHelper.authorize(request.context, DESCRIBE, CLUSTER_MIRROR, mirrorName, logIfDenied = false))
+      authorizedMirrors.foreach(mirrorName => {
+        mirrors.add(new ListMirrorsResponseData.ListedMirror()
+          .setMirrorName(mirrorName)
+          .setSourceBootstrap(if (mirrorCoordinator.getSourceBootstrap(mirrorName) != null)
+            mirrorCoordinator.getSourceBootstrap(mirrorName) else "")
+          .setTopicCount(mirrorCoordinator.getConfiguredTopics(mirrorName).size()))
+      })
+      responseData.setMirrors(mirrors)
+      responseData.setErrorCode(Errors.NONE.code)
     } else {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), returning empty mirror list")
     }
@@ -426,15 +436,16 @@ class KafkaApis(val requestChannel: RequestChannel,
     val responseData = new DescribeMirrorsResponseData()
 
     if (isClusterMirroringEnabled) {
-      if (authHelper.authorize(request.context, DESCRIBE, CLUSTER, CLUSTER_NAME, logIfDenied = false)) {
-        val requestedMirrors = if (describeMirrorsRequest.data.mirrorNames.isEmpty) {
-          mirrorCoordinator.getConfiguredMirrors().asScala.toSeq // get all mirror partitions
-        } else {
-          describeMirrorsRequest.data.mirrorNames.asScala.toSeq
-        }
+      val requestedMirrors = if (describeMirrorsRequest.data.mirrorNames.isEmpty) {
+        mirrorCoordinator.getConfiguredMirrors().asScala.toSeq
+      } else {
+        describeMirrorsRequest.data.mirrorNames.asScala.toSeq
+      }
+      val authorizedMirrors = requestedMirrors
+        .filter(mirrorName => authHelper.authorize(request.context, DESCRIBE, CLUSTER_MIRROR, mirrorName, logIfDenied = false))
 
-        requestedMirrors.foreach { mirrorName =>
-          // Each broker reports partitions it's responsible for to avoid duplicates
+      authorizedMirrors.foreach { mirrorName =>
+        // Each broker reports partitions it's responsible for to avoid duplicates
           val lagInfoMap = replicaManager.getMirrorLagInfo(mirrorName)
           val partitionStates = mirrorCoordinator.getMirrorStates(mirrorName).asScala
 
@@ -475,10 +486,6 @@ class KafkaApis(val requestChannel: RequestChannel,
             responseData.mirrors().add(describedMirror)
           }
         }
-      } else {
-        // Authorization failed - return empty list with no error
-        // Individual mirror errors would be set per mirror if needed
-      }
     } else {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), returning empty mirror list")
     }
@@ -1561,6 +1568,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             return (Errors.INVALID_REQUEST, Node.noNode)
         }
       } else if (keyType == CoordinatorType.MIRROR.id) {
+        authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
         try {
           MirrorRecordKey.validate(key)
         } catch {

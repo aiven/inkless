@@ -45,7 +45,7 @@ import org.apache.kafka.common.protocol.Errors._
 import org.apache.kafka.common.protocol.{ApiKeys, ApiMessage, Errors}
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.resource.Resource.CLUSTER_NAME
-import org.apache.kafka.common.resource.ResourceType.{CLUSTER, GROUP, TOPIC, USER}
+import org.apache.kafka.common.resource.ResourceType.{CLUSTER, CLUSTER_MIRROR, GROUP, TOPIC, USER}
 import org.apache.kafka.common.utils.Time
 import org.apache.kafka.common.Uuid
 import org.apache.kafka.common.internals.Topic.MIRROR_STATE_TOPIC_NAME
@@ -168,7 +168,9 @@ class ControllerApis(
   }
 
   def handleCreateMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    val mirrorName = request.body[CreateMirrorRequest].data().mirrorName()
+    if (!authHelper.authorize(request.context, CREATE, CLUSTER_MIRROR, mirrorName))
+      throw new ClusterAuthorizationException(s"Request $request needs CREATE permission on ClusterMirror:$mirrorName.")
 
     // Check if cluster mirroring is supported by the mirror.version feature
     val mirrorVersionLevel = apiVersionManager.features.finalizedFeatures.getOrDefault(MirrorVersion.FEATURE_NAME, 0.toShort)
@@ -231,11 +233,12 @@ class ControllerApis(
   }
 
   def handleAddTopicsToMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
     val addTopicsToMirrorRequest = request.body[AddTopicsToMirrorRequest]
+    val mirrorName = addTopicsToMirrorRequest.data().mirrorName()
+    if (!authHelper.authorize(request.context, ALTER, CLUSTER_MIRROR, mirrorName))
+      throw new ClusterAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    val mirrorName = addTopicsToMirrorRequest.data().mirrorName()
     val topics: util.Set[String] = new util.HashSet[String]()
     addTopicsToMirrorRequest.data().topics().forEach( topic => {
         topics.add(topic.topicName())
@@ -254,11 +257,12 @@ class ControllerApis(
   }
 
   def handleRemoveTopicsFromMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
     val removeTopicsFromMirrorRequest = request.body[RemoveTopicsFromMirrorRequest]
+    val mirrorName = removeTopicsFromMirrorRequest.data().mirrorName()
+    if (!authHelper.authorize(request.context, ALTER, CLUSTER_MIRROR, mirrorName))
+      throw new ClusterAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    val mirrorName = removeTopicsFromMirrorRequest.data().mirrorName()
     val topics: util.Set[String] = new util.HashSet[String]()
     removeTopicsFromMirrorRequest.data().topics().forEach( topic => {
         topics.add(topic.topicName())
@@ -277,11 +281,12 @@ class ControllerApis(
   }
 
   def handlePauseMirrorTopics(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
     val pauseRequest = request.body[PauseMirrorTopicsRequest]
+    val mirrorName = pauseRequest.data().mirrorName()
+    if (!authHelper.authorize(request.context, ALTER, CLUSTER_MIRROR, mirrorName))
+      throw new ClusterAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    val mirrorName = pauseRequest.data().mirrorName()
     val topics: util.Set[String] = new util.HashSet[String]()
     pauseRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
     controller.pauseMirrorTopics(context, mirrorName, topics)
@@ -297,11 +302,12 @@ class ControllerApis(
   }
 
   def handleResumeMirrorTopics(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
     val resumeRequest = request.body[ResumeMirrorTopicsRequest]
+    val mirrorName = resumeRequest.data().mirrorName()
+    if (!authHelper.authorize(request.context, ALTER, CLUSTER_MIRROR, mirrorName))
+      throw new ClusterAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    val mirrorName = resumeRequest.data().mirrorName()
     val topics: util.Set[String] = new util.HashSet[String]()
     resumeRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
     controller.resumeMirrorTopics(context, mirrorName, topics)
@@ -631,11 +637,17 @@ class ControllerApis(
         } else {
           new ApiError(CLUSTER_AUTHORIZATION_FAILED)
         }
-      case ConfigResource.Type.TOPIC | ConfigResource.Type.MIRROR =>
+      case ConfigResource.Type.TOPIC =>
         if (authHelper.authorize(requestContext, ALTER_CONFIGS, TOPIC, resource.name)) {
           new ApiError(NONE)
         } else {
           new ApiError(TOPIC_AUTHORIZATION_FAILED)
+        }
+      case ConfigResource.Type.MIRROR =>
+        if (authHelper.authorize(requestContext, ALTER_CONFIGS, CLUSTER_MIRROR, resource.name)) {
+          new ApiError(NONE)
+        } else {
+          new ApiError(CLUSTER_AUTHORIZATION_FAILED)
         }
       case ConfigResource.Type.GROUP =>
         if (authHelper.authorize(requestContext, ALTER_CONFIGS, GROUP, resource.name)) {

@@ -32,14 +32,11 @@ import java.util.Set;
 public class MirrorDescription {
     private final String mirrorName;
     private final Map<String, Set<LeaderState>> topics;
-    private final Set<Integer> authorizedOperations;
 
     public MirrorDescription(String mirrorName,
-                             Map<String, Set<LeaderState>> topics,
-                             Set<Integer> authorizedOperations) {
+                             Map<String, Set<LeaderState>> topics) {
         this.mirrorName = mirrorName;
         this.topics = Collections.unmodifiableMap(topics);
-        this.authorizedOperations = authorizedOperations;
     }
 
     public String mirrorName() {
@@ -50,23 +47,18 @@ public class MirrorDescription {
         return topics;
     }
 
-    public Set<Integer> authorizedOperations() {
-        return authorizedOperations;
-    }
-
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         MirrorDescription that = (MirrorDescription) o;
         return Objects.equals(mirrorName, that.mirrorName) &&
-               Objects.equals(topics, that.topics) &&
-               Objects.equals(authorizedOperations, that.authorizedOperations);
+               Objects.equals(topics, that.topics);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(mirrorName, topics, authorizedOperations);
+        return Objects.hash(mirrorName, topics);
     }
 
     @Override
@@ -74,7 +66,6 @@ public class MirrorDescription {
         return "MirrorDescription{" +
                "mirrorName='" + mirrorName + '\'' +
                ", topics=" + topics +
-               ", authorizedOperations=" + authorizedOperations +
                '}';
     }
 

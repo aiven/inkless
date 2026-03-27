@@ -5217,13 +5217,11 @@ public class KafkaAdminClient extends AdminClient {
         private static class PartialMirrorDescription {
             final String mirrorName;
             final Map<String, Set<MirrorDescription.LeaderState>> topicPartitions;
-            final Set<Integer> authorizedOps;
             Throwable error;
 
             PartialMirrorDescription(String mirrorName) {
                 this.mirrorName = mirrorName;
                 this.topicPartitions = new HashMap<>();
-                this.authorizedOps = new HashSet<>();
                 this.error = null;
             }
 
@@ -5255,17 +5253,12 @@ public class KafkaAdminClient extends AdminClient {
                     }
                 }
 
-                // Merge authorized operations
-                if (mirror.authorizedOperations() != -2147483648) {
-                    authorizedOps.add(mirror.authorizedOperations());
-                }
             }
 
             MirrorDescription toMirrorDescription() {
                 return new MirrorDescription(
                         mirrorName,
-                        topicPartitions,
-                        authorizedOps.isEmpty() ? Collections.emptySet() : authorizedOps
+                        topicPartitions
                 );
             }
         }
