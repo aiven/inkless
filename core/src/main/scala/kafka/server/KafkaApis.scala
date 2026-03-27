@@ -416,10 +416,12 @@ class KafkaApis(val requestChannel: RequestChannel,
       val authorizedMirrors = mirrorCoordinator.getConfiguredMirrors().asScala
         .filter(mirrorName => authHelper.authorize(request.context, DESCRIBE, CLUSTER_MIRROR, mirrorName, logIfDenied = false))
       authorizedMirrors.foreach(mirrorName => {
+        val sourceClusterId = mirrorCoordinator.getSourceClusterId(mirrorName)
         mirrors.add(new ListMirrorsResponseData.ListedMirror()
           .setMirrorName(mirrorName)
           .setSourceBootstrap(if (mirrorCoordinator.getSourceBootstrap(mirrorName) != null)
             mirrorCoordinator.getSourceBootstrap(mirrorName) else "")
+          .setSourceClusterId(if (sourceClusterId != null) sourceClusterId.toString else "")
           .setTopicCount(mirrorCoordinator.getConfiguredTopics(mirrorName).size()))
       })
       responseData.setMirrors(mirrors)

@@ -938,9 +938,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             return;
         }
 
+        // Cross-cluster identity validation
         String clusterId = metadataResponse.clusterId();
         if (clusterId != null && !clusterId.isEmpty()) {
-            sourceClusterIds.put(mirrorName, Uuid.fromString(clusterId));
+            Uuid newClusterId = Uuid.fromString(clusterId);
+            Uuid previousClusterId = sourceClusterIds.put(mirrorName, newClusterId);
+            if (previousClusterId != null && !previousClusterId.equals(newClusterId)) {
+                throw new IllegalStateException("Source cluster ID changed for mirror " + mirrorName
+                    + ": expected " + previousClusterId + ", got " + newClusterId
+                    + ". This may indicate a misconfiguration or that the source cluster has been replaced.");
+            }
         }
 
         Collection<Node> discoveredBrokers = metadataResponse.brokers();

@@ -292,16 +292,20 @@ public abstract class MirrorCommand {
             listings.sort(Comparator.comparing(MirrorListing::mirrorName));
 
             // Print header
-            System.out.printf("%-30s %-10s %-50s%n", "MIRROR", "TOPICS", "SOURCE-BOOTSTRAP");
+            System.out.printf("%-30s %-10s %-26s %-50s%n", "MIRROR", "TOPICS", "SOURCE-CLUSTER-ID", "SOURCE-BOOTSTRAP");
 
             // Print each mirror
             for (MirrorListing listing : listings) {
                 String sourceBootstrap = listing.sourceBootstrap() != null && !listing.sourceBootstrap().isEmpty()
                     ? listing.sourceBootstrap()
                     : "-";
-                System.out.printf("%-30s %-10d %-50s%n",
+                String sourceClusterId = listing.sourceClusterId() != null && !listing.sourceClusterId().isEmpty()
+                    ? listing.sourceClusterId()
+                    : "-";
+                System.out.printf("%-30s %-10d %-26s %-50s%n",
                     truncateLeft(listing.mirrorName(), 30),
                     listing.topicCount(),
+                    sourceClusterId,
                     truncateLeft(sourceBootstrap, 50));
             }
         }

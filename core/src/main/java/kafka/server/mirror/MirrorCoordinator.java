@@ -677,6 +677,10 @@ public class MirrorCoordinator {
         return metadataManager.getSourceBootstrap(mirrorName);
     }
 
+    public Uuid getSourceClusterId(String mirrorName) {
+        return metadataManager.getSourceClusterId(mirrorName);
+    }
+
     public Map<TopicPartition, MirrorPartitionState> getMirrorStates(String mirrorName) {
         return metadataManager.getMirrorStates(mirrorName);
     }

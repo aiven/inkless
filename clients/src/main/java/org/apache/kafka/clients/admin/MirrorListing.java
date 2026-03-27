@@ -28,6 +28,7 @@ import java.util.Objects;
 public class MirrorListing {
     private final String mirrorName;
     private final String sourceBootstrap;
+    private final String sourceClusterId;
     private final int topicCount;
 
     /**
@@ -35,12 +36,25 @@ public class MirrorListing {
      *
      * @param mirrorName Mirror name
      * @param sourceBootstrap Source cluster bootstrap servers
+     * @param sourceClusterId Source cluster ID
+     * @param topicCount Number of topics configured for this mirror
+     */
+    public MirrorListing(String mirrorName, String sourceBootstrap, String sourceClusterId, int topicCount) {
+        this.mirrorName = mirrorName;
+        this.sourceBootstrap = sourceBootstrap;
+        this.sourceClusterId = sourceClusterId;
+        this.topicCount = topicCount;
+    }
+
+    /**
+     * Create an instance with the specified parameters (backwards compatibility).
+     *
+     * @param mirrorName Mirror name
+     * @param sourceBootstrap Source cluster bootstrap servers
      * @param topicCount Number of topics configured for this mirror
      */
     public MirrorListing(String mirrorName, String sourceBootstrap, int topicCount) {
-        this.mirrorName = mirrorName;
-        this.sourceBootstrap = sourceBootstrap;
-        this.topicCount = topicCount;
+        this(mirrorName, sourceBootstrap, "", topicCount);
     }
 
     /**
@@ -50,7 +64,7 @@ public class MirrorListing {
      * @param sourceBootstrap Source cluster bootstrap servers
      */
     public MirrorListing(String mirrorName, String sourceBootstrap) {
-        this(mirrorName, sourceBootstrap, 0);
+        this(mirrorName, sourceBootstrap, "", 0);
     }
 
     /**
@@ -72,6 +86,15 @@ public class MirrorListing {
     }
 
     /**
+     * The source cluster ID.
+     *
+     * @return Source cluster ID, or empty string if not yet resolved
+     */
+    public String sourceClusterId() {
+        return sourceClusterId;
+    }
+
+    /**
      * The number of topics configured for this mirror.
      *
      * @return Number of topics, or 0 if mirror has no topics configured
@@ -82,12 +105,12 @@ public class MirrorListing {
 
     @Override
     public String toString() {
-        return "MirrorListing(mirrorName='" + mirrorName + "', sourceBootstrap='" + sourceBootstrap + "', topicCount=" + topicCount + ")";
+        return "MirrorListing(mirrorName='" + mirrorName + "', sourceBootstrap='" + sourceBootstrap + "', sourceClusterId='" + sourceClusterId + "', topicCount=" + topicCount + ")";
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(mirrorName, sourceBootstrap, topicCount);
+        return Objects.hash(mirrorName, sourceBootstrap, sourceClusterId, topicCount);
     }
 
     @Override
@@ -97,6 +120,7 @@ public class MirrorListing {
         MirrorListing that = (MirrorListing) o;
         return topicCount == that.topicCount &&
                Objects.equals(mirrorName, that.mirrorName) &&
-               Objects.equals(sourceBootstrap, that.sourceBootstrap);
+               Objects.equals(sourceBootstrap, that.sourceBootstrap) &&
+               Objects.equals(sourceClusterId, that.sourceClusterId);
     }
 }

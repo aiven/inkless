@@ -710,10 +710,10 @@ public class ReplicationControlManager {
                                  List<ApiMessageAndVersion> configRecords,
                                  boolean authorizedToReturnConfigs) {
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
-        boolean useProvidedTopicId = false;
+        boolean useMirrorTopicId = false;
         // should keep source topicId for mirror topics
         if (topic.mirrorInfo() != null && !topic.mirrorInfo().topicId().equals(Uuid.ZERO_UUID)) {
-            useProvidedTopicId = true;
+            useMirrorTopicId = true;
         }
 
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
@@ -746,7 +746,7 @@ public class ReplicationControlManager {
                         "partition " + assignment.partitionIndex() + " are fenced or in controlled shutdown.");
                 }
 
-                if (useProvidedTopicId && isr.size() < assignment.brokerIds().size()) {
+                if (useMirrorTopicId && isr.size() < assignment.brokerIds().size()) {
                     return new ApiError(Errors.INVALID_REPLICA_ASSIGNMENT,
                         "Some brokers specified in the manual partition assignment for " +
                         "partition " + assignment.partitionIndex() + " are fenced or in controlled shutdown. " +
@@ -800,7 +800,7 @@ public class ReplicationControlManager {
                             "Unable to replicate the partition " + replicationFactor +
                                 " time(s): All brokers are currently fenced or in controlled shutdown.");
                     }
-                    if (useProvidedTopicId && isr.size() < partitionAssignment.replicas().size()) {
+                    if (useMirrorTopicId && isr.size() < partitionAssignment.replicas().size()) {
                         return new ApiError(Errors.INVALID_REPLICATION_FACTOR,
                             "Unable to replicate the partition " + replicationFactor +
                                 " time(s): Some brokers are currently fenced or in controlled shutdown. " +
@@ -830,7 +830,8 @@ public class ReplicationControlManager {
             return ApiError.fromThrowable(e);
         }
 
-        Uuid topicId = useProvidedTopicId ? topic.mirrorInfo().topicId() : Uuid.randomUuid();
+        // Preserve topic ID for mirror topics
+        Uuid topicId = useMirrorTopicId ? topic.mirrorInfo().topicId() : Uuid.randomUuid();
 
         CreatableTopicResult result = new CreatableTopicResult().
             setName(topic.name()).
