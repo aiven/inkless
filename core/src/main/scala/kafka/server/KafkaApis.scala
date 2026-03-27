@@ -375,7 +375,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     // TODO: do the mirror partition state validation before forwarding to controller
     if (!isClusterMirroringEnabled) {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring add topics to mirror request")
-      requestHelper.sendMaybeThrottle(request, new AddTopicsToMirrorResponse(new AddTopicsToMirrorResponseData().setErrorCode(Errors.INVALID_REQUEST.code)))
+      requestHelper.sendMaybeThrottle(request, new AddTopicsToMirrorResponse(new AddTopicsToMirrorResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
     forwardToController(request)
@@ -384,7 +384,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleRemoveTopicsFromMirror(request: RequestChannel.Request): Unit = {
     if (!isClusterMirroringEnabled) {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring remove topics from mirror request")
-      requestHelper.sendMaybeThrottle(request, new RemoveTopicsFromMirrorResponse(new RemoveTopicsFromMirrorResponseData().setErrorCode(Errors.INVALID_REQUEST.code)))
+      requestHelper.sendMaybeThrottle(request, new RemoveTopicsFromMirrorResponse(new RemoveTopicsFromMirrorResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
     forwardToController(request)
@@ -425,7 +425,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       responseData.setMirrors(mirrors)
       responseData.setErrorCode(Errors.NONE.code)
     } else {
-      logger.warn("Cluster Mirroring is disabled (mirror.version=0), returning empty mirror list")
+      logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring list mirrors request")
+      responseData.setErrorCode(Errors.UNSUPPORTED_VERSION.code)
     }
 
     requestHelper.sendMaybeThrottle(request, new ListMirrorsResponse(responseData))
@@ -487,7 +488,8 @@ class KafkaApis(val requestChannel: RequestChannel,
           }
         }
     } else {
-      logger.warn("Cluster Mirroring is disabled (mirror.version=0), returning empty mirror list")
+      logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring describe mirrors request")
+      responseData.setErrorCode(Errors.UNSUPPORTED_VERSION.code)
     }
 
     requestHelper.sendMaybeThrottle(request, new DescribeMirrorsResponse(responseData))
