@@ -193,11 +193,6 @@ public interface Controller extends AclMutator, AutoCloseable {
             Set<String> topics
     );
 
-    CompletableFuture<BumpLeaderEpochResponseData> bumpLeaderEpoch(
-            ControllerRequestContext context,
-            Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs
-    );
-
     /**
      * Find the ids for topic names.
      *

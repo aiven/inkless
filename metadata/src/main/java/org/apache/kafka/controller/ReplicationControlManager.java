@@ -705,41 +705,6 @@ public class ReplicationControlManager {
         }
     }
 
-    public ControllerResult<BumpLeaderEpochResponseData> bumpLeaderEpochs(Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs) {
-
-        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
-        for (Entry<Uuid, Map<Integer, Integer>> partitionLeaderEpoch : partitionLeaderEpochs.entrySet()) {
-            Uuid topicId = partitionLeaderEpoch.getKey();
-            Map<Integer, Integer> leaderEpochs = partitionLeaderEpoch.getValue();
-            TopicControlInfo info = topics.get(topicId);
-            String topicName = info.name;
-            leaderEpochs.forEach((partitionId, leaderEpoch) -> {
-                PartitionRegistration partition = info.parts.get(partitionId);
-                // only bump the leader epoch when local leader epoch is <= required min leader epoch
-                if (partition.leaderEpoch <= leaderEpoch) {
-                    PartitionChangeBuilder builder = new PartitionChangeBuilder(
-                            partition,
-                            info.topicId(),
-                            partitionId,
-                            new LeaderAcceptor(clusterControl, partition),
-                            featureControl.metadataVersionOrThrow(),
-                            getTopicEffectiveMinIsr(topicName)
-                    )
-                            // set the min leader epoch for each partition
-                            .setMinLeaderEpoch(leaderEpochs.getOrDefault(partitionId, NO_PARTITION_LEADER_EPOCH))
-                            .setDefaultDirProvider(clusterDescriber);
-
-                    builder.build().ifPresent(records::add);
-                    log.info("!!! update partition {} for topic {} from {} to {}: {}", partitionId, topicName, partition.leaderEpoch, leaderEpoch, records);
-                } else {
-                    log.info("!!! do not update partition {} for topic {} from {} to {}", partitionId, topicName, partition.leaderEpoch, leaderEpoch);
-                }
-            });
-        }
-
-        return ControllerResult.of(records, new BumpLeaderEpochResponseData().setErrorCode((short) 0));
-    }
-
     private ApiError createTopic(ControllerRequestContext context,
                                  CreatableTopic topic,
                                  List<ApiMessageAndVersion> records,

@@ -135,12 +135,6 @@ public class MockController implements Controller {
         throw new UnsupportedOperationException();
     }
 
-    public CompletableFuture<BumpLeaderEpochResponseData> bumpLeaderEpoch(
-            ControllerRequestContext context,
-            Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs) {
-        throw new UnsupportedOperationException();
-    }
-
     @Override
     public CompletableFuture<PauseMirrorTopicsResponseData> pauseMirrorTopics(
             ControllerRequestContext context,

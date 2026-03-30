@@ -147,7 +147,6 @@ public class MirrorCoordinator {
             case STOPPING:
                 log.debug("STOPPING for topics {}.", topicPartitions);
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
-                metadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions);
                 truncateToLastStableOffset(topicPartitions, tp -> updateLastMirroredOffsets(mirrorName, Set.of(tp)));
                 break;
             case STOPPED:
@@ -262,7 +261,6 @@ public class MirrorCoordinator {
             Map<Integer, Integer> offsets = new HashMap<>();
             parts.forEach(i -> replicaManager.getPartitionOrException(
                     new TopicPartition(topic, i)).log().foreach(log -> {
-                        this.log.info("!!! latstepoch for partition {} is {} ", i, log.latestEpoch());
                         // don't need to store anything if latest epoch is empty
                         log.latestEpoch().ifPresent(epoch -> offsets.put(i, epoch));
                 return null;

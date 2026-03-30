@@ -261,16 +261,6 @@ public class PartitionRegistration {
             newLeaderEpoch = leaderEpoch + 1;
         }
 
-        // We should bump the leader epoch when leaderEpoch is assigned (from bump_leader_epoch request), even if no_leader_change
-        if (record.minLeaderEpoch() != NO_PARTITION_LEADER_EPOCH) {
-            // If it's coming from bump leader epoch request, we should bump to a leader epoch >= record.minLeaderEpoch(), ex:
-            // current leader epoch is 0, record.minLeaderEpoch is 2, we should bump to 3
-            // current leader epoch is 2, record.minLeaderEpoch is 0, we should bump to 2
-            newLeaderEpoch = Math.max(record.minLeaderEpoch() + 1, newLeaderEpoch);
-        }
-
-        System.out.println("newLeaderEpoch: " + newLeaderEpoch + ";;" + record.minLeaderEpoch());
-
         LeaderRecoveryState newLeaderRecoveryState = leaderRecoveryState.changeTo(record.leaderRecoveryState());
 
         int[] newElr = (record.eligibleLeaderReplicas() == null) ? elr : Replicas.toArray(record.eligibleLeaderReplicas());

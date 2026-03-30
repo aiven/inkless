@@ -1670,8 +1670,8 @@ class ReplicaManager(val config: KafkaConfig,
     delayedRemoteFetchPurgatory.tryCompleteElseWatch(remoteFetch, delayedFetchKeys.asJava)
   }
 
-  def maybeTruncateForLeaderEpoch(offsets: util.Map[TopicPartition, Integer], callback: Consumer[TopicPartition]): Unit = {
-    offsets.forEach((tp, leaderEpoch) => {
+  def maybeTruncateForLeaderEpoch(epochs: util.Map[TopicPartition, Integer], callback: Consumer[TopicPartition]): Unit = {
+    epochs.forEach((tp, leaderEpoch) => {
       getLog(tp).map(log => {
         val endOffsetForEpoch = log.endOffsetForEpoch(leaderEpoch)
         val offsetToTruncate = if (endOffsetForEpoch.isPresent) endOffsetForEpoch.get().offset() else 0L

@@ -262,7 +262,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.LAST_MIRRORED_EPOCHS => handleLastMirroredEpoch(request)
         case ApiKeys.WRITE_MIRROR_STATES => handleWriteMirrorStates(request)
         case ApiKeys.READ_MIRROR_STATES => handleReadMirrorStates(request)
-        case ApiKeys.BUMP_LEADER_EPOCH => forwardToController(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
     } catch {

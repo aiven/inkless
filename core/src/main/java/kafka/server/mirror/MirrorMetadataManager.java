@@ -868,9 +868,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         if (apiResponse.responseBody() instanceof ApiVersionsResponse apiVersionsResponse) {
             if (apiVersionsResponse.apiVersion(ApiKeys.LAST_MIRRORED_EPOCHS.id) == null) {
                 log.debug("The LastMirroredEpochs API is not supported in source cluster, truncating to offset 0");
-                Map<TopicPartition, Integer> offsets = new HashMap<>();
-                topicPartitionSet.forEach(tp -> offsets.put(tp, 0));
-                replicaManager.maybeTruncateForLeaderEpoch(offsets, callback);
+                Map<TopicPartition, Integer> epochs = new HashMap<>();
+                topicPartitionSet.forEach(tp -> epochs.put(tp, 0));
+                replicaManager.maybeTruncateForLeaderEpoch(epochs, callback);
                 return;
             }
         }
@@ -895,14 +895,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         if (response.responseBody() instanceof LastMirroredEpochsResponse lastMirroredOffsetResponse) {
             log.debug("Received last mirrored epoch response: {}", lastMirroredOffsetResponse);
-            Map<TopicPartition, Integer> offsets = new HashMap<>();
+            Map<TopicPartition, Integer> epochs = new HashMap<>();
             lastMirroredOffsetResponse.data().topics().forEach(topic -> {
                 String name = topic.name();
                 topic.partitions().forEach(partition -> {
-                    offsets.put(new TopicPartition(name, partition.partitionIndex()), partition.lastMirroredEpoch());
+                    epochs.put(new TopicPartition(name, partition.partitionIndex()), partition.lastMirroredEpoch());
                 });
             });
-            replicaManager.maybeTruncateForLeaderEpoch(offsets, callback);
+            replicaManager.maybeTruncateForLeaderEpoch(epochs, callback);
         }
     }
 
@@ -927,28 +927,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
         metadataRefreshError.incrementAndGet();
-    }
-
-    public void sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions) {
-        List<BumpLeaderEpochRequestData.TopicState> topicStates = new ArrayList<>();
-        Map<String, Set<Integer>> partitions = new HashMap<>();
-        topicPartitions.forEach(tp -> {
-           partitions.computeIfAbsent(tp.topic(), key -> new HashSet<>()).add(tp.partition());
-        });
-        partitions.forEach((topic, parts) -> {
-            BumpLeaderEpochRequestData.TopicState topicState = new BumpLeaderEpochRequestData.TopicState();
-            List<BumpLeaderEpochRequestData.LeaderEpochState> topicLeaderEpoch = new ArrayList<>();
-            parts.forEach(partitionId -> {
-                int epoch = logManager.getLog(new TopicPartition(topic, partitionId), false).get().latestEpoch().orElse(0);
-                topicLeaderEpoch.add(new BumpLeaderEpochRequestData.LeaderEpochState().setMinLeaderEpoch(epoch).setPartitionIndex(partitionId));
-            });
-            topicState.setTopicId(metadataCache.getTopicId(topic)).setPartitions(topicLeaderEpoch);
-            topicStates.add(topicState);
-        });
-
-        channelManager.sendRequest(new BumpLeaderEpochRequest.Builder(
-                new BumpLeaderEpochRequestData().setTopics(topicStates)
-        ), new TimeoutHandler(log));
     }
 
     /**
