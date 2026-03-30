@@ -150,6 +150,7 @@ public class MirrorCoordinator {
             case STOPPING:
                 log.debug("STOPPING for topics {}.", topicPartitions);
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
+                metadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions);
                 truncateToLastStableOffset(topicPartitions, tp -> updateLastMirroredEpochs(mirrorName, Set.of(tp)));
                 writeMirrorPidResetBarrier(mirrorName, topicPartitions);
                 break;

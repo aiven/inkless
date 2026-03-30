@@ -16,6 +16,7 @@
  */
 package kafka.server.mirror;
 
+import kafka.log.LogManager;
 import kafka.server.KafkaConfig;
 import kafka.server.NetworkUtils;
 import kafka.server.ReplicaManager;
@@ -34,6 +35,7 @@ import org.apache.kafka.common.acl.AclBinding;
 import org.apache.kafka.common.acl.AclBindingFilter;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.message.BumpLeaderEpochRequestData;
 import org.apache.kafka.common.message.CreateAclsRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
@@ -56,6 +58,7 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
+import org.apache.kafka.common.requests.BumpLeaderEpochRequest;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
@@ -926,6 +929,29 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
         metadataRefreshError.incrementAndGet();
+    }
+
+    public void sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions) {
+        List<BumpLeaderEpochRequestData.TopicState> topicStates = new ArrayList<>();
+        Map<String, Set<Integer>> partitions = new HashMap<>();
+        topicPartitions.forEach(tp -> {
+            partitions.computeIfAbsent(tp.topic(), key -> new HashSet<>()).add(tp.partition());
+        });
+        partitions.forEach((topic, parts) -> {
+            BumpLeaderEpochRequestData.TopicState topicState = new BumpLeaderEpochRequestData.TopicState();
+            List<BumpLeaderEpochRequestData.LeaderEpochState> topicLeaderEpoch = new ArrayList<>();
+            parts.forEach(partitionId -> {
+
+                int epoch = logManager.getLog(new TopicPartition(topic, partitionId), false).get().latestEpoch().orElse(-1);
+                topicLeaderEpoch.add(new BumpLeaderEpochRequestData.LeaderEpochState().setMinLeaderEpoch(epoch).setPartitionIndex(partitionId));
+            });
+            topicState.setTopicId(metadataCache.getTopicId(topic)).setPartitions(topicLeaderEpoch);
+            topicStates.add(topicState);
+        });
+
+        channelManager.sendRequest(new BumpLeaderEpochRequest.Builder(
+                new BumpLeaderEpochRequestData().setTopics(topicStates)
+        ), new TimeoutHandler(log));
     }
 
     /**
