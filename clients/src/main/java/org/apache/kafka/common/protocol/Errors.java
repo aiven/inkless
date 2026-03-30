@@ -436,7 +436,7 @@ public enum Errors {
     MIRROR_TOPIC_ALREADY_PAUSED(139, "The mirror topic is already paused.", MirrorTopicAlreadyPausedException::new),
     MIRROR_TOPIC_NOT_PAUSED(140, "The mirror topic is not paused.", MirrorTopicNotPausedException::new),
     MIRROR_TOPIC_BEING_REMOVED(141, "The mirror topic is being removed.", MirrorTopicBeingRemovedException::new),
-    MIRROR_NOT_EMPTY(135, "The mirror still has active or non-removed topics.", MirrorNotEmptyException::new);
+    MIRROR_NOT_EMPTY(142, "The mirror still has active or non-removed topics.", MirrorNotEmptyException::new);
 
     private static final Logger log = LoggerFactory.getLogger(Errors.class);
 

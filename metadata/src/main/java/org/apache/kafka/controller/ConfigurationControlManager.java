@@ -471,7 +471,7 @@ public class ConfigurationControlManager {
         ConfigResource mirrorResource = new ConfigResource(Type.MIRROR, mirrorName);
         TimelineHashMap<String, String> mirrorConfigs = configData.get(mirrorResource);
         if (mirrorConfigs == null || mirrorConfigs.isEmpty()) {
-            data.setErrorCode(Errors.INVALID_REQUEST.code());
+            data.setErrorCode(Errors.UNKNOWN_MIRROR.code());
             data.setErrorMessage("Mirror '" + mirrorName + "' not found");
             return ControllerResult.of(records, data);
         }
@@ -498,6 +498,7 @@ public class ConfigurationControlManager {
                 Map<String, Entry<OpType, String>> keyToOps = Map.of(
                     TopicConfig.MIRROR_NAME_CONFIG, new AbstractMap.SimpleImmutableEntry<>(SET, ""));
                 ControllerResult<ApiError> configResult = incrementalAlterConfig(entry.getKey(), keyToOps, true);
+                // TODO add failure handling
                 if (configResult.response().isSuccess()) {
                     records.addAll(configResult.records());
                 }

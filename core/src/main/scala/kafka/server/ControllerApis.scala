@@ -324,7 +324,10 @@ class ControllerApis(
   }
 
   def handleDeleteMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    val deleteMirrorRequest = request.body[DeleteMirrorRequest]
+    val mirrorName = deleteMirrorRequest.data().mirrorName()
+    if (!authHelper.authorize(request.context, ALTER, CLUSTER_MIRROR, mirrorName))
+      throw new ClusterAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
 
     val mirrorVersionLevel = apiVersionManager.features.finalizedFeatures.getOrDefault(MirrorVersion.FEATURE_NAME, 0.toShort)
     if (mirrorVersionLevel == 0) {
@@ -332,10 +335,8 @@ class ControllerApis(
         "Cluster mirroring requires mirror.version >= 1. Current version: " + mirrorVersionLevel)
     }
 
-    val deleteMirrorRequest = request.body[DeleteMirrorRequest]
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    val mirrorName = deleteMirrorRequest.data().mirrorName()
     controller.deleteMirror(context, mirrorName)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
