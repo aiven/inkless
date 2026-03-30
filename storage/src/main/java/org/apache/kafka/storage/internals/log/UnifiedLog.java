@@ -32,6 +32,7 @@ import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.DescribeProducersResponseData;
 import org.apache.kafka.common.record.CompressionType;
+import org.apache.kafka.common.record.ControlRecordType;
 import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
@@ -1051,10 +1052,11 @@ public class UnifiedLog implements AutoCloseable {
      *
      * @param records The records to append
      * @param leaderEpoch the epoch of the replica appending
+     * @param isMirrorLeader true if this is a mirror leader appending from a source cluster
      * @throws KafkaStorageException If the append fails due to an I/O error.
      * @return Information about the appended messages including the first and last offset.
      */
-    public LogAppendInfo appendAsFollower(MemoryRecords records, int leaderEpoch, boolean isMirroredTopic) {
+    public LogAppendInfo appendAsFollower(MemoryRecords records, int leaderEpoch, boolean isMirrorLeader) {
         return append(records,
                       AppendOrigin.REPLICATION,
                       false,
@@ -1063,7 +1065,7 @@ public class UnifiedLog implements AutoCloseable {
                       VerificationGuard.SENTINEL,
                       true,
                       RecordBatch.CURRENT_MAGIC_VALUE,
-                      isMirroredTopic);
+                      isMirrorLeader);
     }
 
     private LogAppendInfo append(MemoryRecords records,
@@ -1090,7 +1092,7 @@ public class UnifiedLog implements AutoCloseable {
      * @param requestLocal The request local instance if validateAndAssignOffsets is true
      * @param ignoreRecordSize True to skip validation of record size
      * @param toMagic Current Magic value
-     * @param isMirrorLeader True if this is a read-only leader fetching from source cluster
+     * @param isMirrorLeader true if this is a mirror leader appending from a source cluster
      * @throws KafkaStorageException If the append fails due to an I/O error.
      * @throws OffsetsOutOfOrderException If out of order offsets found in 'records'
      * @throws UnexpectedAppendOffsetException If the first or last offset in append is less than next offset
@@ -1170,7 +1172,6 @@ public class UnifiedLog implements AutoCloseable {
                                     });
                                 }
                             } else {
-                                maybeOverrideProducerIdAndLeaderEpoch(records, isMirrorLeader);
                                 // we are taking the offsets we are given
                                 if (appendInfo.firstOrLastOffsetOfFirstBatch() < localLog.logEndOffset()) {
                                     // we may still be able to recover if the log is empty
@@ -1269,24 +1270,6 @@ public class UnifiedLog implements AutoCloseable {
                             }
                             return appendInfo;
                         });
-            }
-        }
-    }
-
-    /**
-     * Override producer IDs and leader epochs for records being mirrored from a source cluster.
-     * This is only applied to read-only leaders (partition leader with mirrorName set)
-     * to ensure producer IDs from source cluster don't conflict with local producer IDs,
-     * and local epoch-based partition replication can work without changes.
-     *
-     * @param records The records being appended
-     * @param isMirrorLeader True if this is a read-only leader fetching from source cluster
-     */
-    private void maybeOverrideProducerIdAndLeaderEpoch(MemoryRecords records, boolean isMirrorLeader) {
-        if (isMirrorLeader) {
-            for (MutableRecordBatch batch : records.batches()) {
-                // Mirrored producer IDs occupy the negative space to avoid any conflict
-                batch.setProducerId(-(batch.producerId() + 2));
             }
         }
     }
@@ -1402,6 +1385,11 @@ public class UnifiedLog implements AutoCloseable {
         int relativePositionInSegment = appendOffsetMetadata.relativePositionInSegment;
 
         for (MutableRecordBatch batch : records.batches()) {
+            if ((origin == AppendOrigin.COORDINATOR || origin == AppendOrigin.REPLICATION)
+                    && ControlRecordType.isMirrorPidResetBatch(batch)) {
+                producerStateManager.expireMirroredProducers();
+            }
+
             if (batch.hasProducerId()) {
                 // if this is a client produce request, there will be up to 5 batches which could have been duplicated.
                 // If we find a duplicate, we return the metadata of the appended batch to the client.
@@ -2593,6 +2581,10 @@ public class UnifiedLog implements AutoCloseable {
         Map<Long, ProducerAppendInfo> loadedProducers = new HashMap<>();
         final List<CompletedTxn> completedTxns = new ArrayList<>();
         records.batches().forEach(batch -> {
+            if (ControlRecordType.isMirrorPidResetBatch(batch)) {
+                producerStateManager.expireMirroredProducers();
+            }
+
             if (batch.hasProducerId()) {
                 Optional<CompletedTxn> maybeCompletedTxn = updateProducers(
                         producerStateManager,

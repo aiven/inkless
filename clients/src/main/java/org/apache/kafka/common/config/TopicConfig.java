@@ -221,7 +221,8 @@ public class TopicConfig {
 
     public static final String MIRROR_NAME_CONFIG = "mirror.name";
     public static final String MIRROR_NAME_DOC = "Identifies the mirror that manages this topic. " +
-            "Topics with this configuration set are read-only and can only be modified through mirror management APIs.";
+            "Topics with this configuration set are read-only and can only be modified through mirror management APIs. " +
+            "This property is hidden from DescribeConfigs responses to avoid exposing internal state to users.";
 
     /**
      * @deprecated down-conversion is not possible in Apache Kafka 4.0 and newer, hence this configuration is a no-op,

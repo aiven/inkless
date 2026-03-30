@@ -22,7 +22,7 @@ import kafka.network.RequestChannel
 import java.util.{Collections, Properties}
 import kafka.utils.Logging
 import org.apache.kafka.common.acl.AclOperation.DESCRIBE_CONFIGS
-import org.apache.kafka.common.config.{ConfigDef, ConfigResource}
+import org.apache.kafka.common.config.{ConfigDef, ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors.{ApiException, InvalidRequestException}
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.DescribeConfigsRequestData.DescribeConfigsResource
@@ -31,7 +31,7 @@ import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.{ApiError, DescribeConfigsRequest, DescribeConfigsResponse}
 import org.apache.kafka.common.requests.DescribeConfigsResponse.ConfigSource
 import org.apache.kafka.common.resource.Resource.CLUSTER_NAME
-import org.apache.kafka.common.resource.ResourceType.{CLUSTER, GROUP, TOPIC}
+import org.apache.kafka.common.resource.ResourceType.{CLUSTER, CLUSTER_MIRROR, GROUP, TOPIC}
 import org.apache.kafka.coordinator.group.GroupConfig
 import org.apache.kafka.metadata.{ConfigRepository, MetadataCache}
 import org.apache.kafka.server.ConfigHelperUtils.createResponseConfig
@@ -54,8 +54,10 @@ class ConfigHelper(metadataCache: MetadataCache, config: KafkaConfig, configRepo
     val describeConfigsRequest = request.body[DescribeConfigsRequest]
     val (authorizedResources, unauthorizedResources) = describeConfigsRequest.data.resources.asScala.partition { resource =>
       ConfigResource.Type.forId(resource.resourceType) match {
-        case ConfigResource.Type.BROKER | ConfigResource.Type.BROKER_LOGGER | ConfigResource.Type.CLIENT_METRICS | ConfigResource.Type.MIRROR =>
+        case ConfigResource.Type.BROKER | ConfigResource.Type.BROKER_LOGGER | ConfigResource.Type.CLIENT_METRICS =>
           authHelper.authorize(request.context, DESCRIBE_CONFIGS, CLUSTER, CLUSTER_NAME)
+        case ConfigResource.Type.MIRROR =>
+          authHelper.authorize(request.context, DESCRIBE_CONFIGS, CLUSTER_MIRROR, resource.resourceName)
         case ConfigResource.Type.TOPIC =>
           authHelper.authorize(request.context, DESCRIBE_CONFIGS, TOPIC, resource.resourceName)
         case ConfigResource.Type.GROUP =>
@@ -66,7 +68,8 @@ class ConfigHelper(metadataCache: MetadataCache, config: KafkaConfig, configRepo
     val authorizedConfigs = describeConfigs(authorizedResources.toList, describeConfigsRequest.data.includeSynonyms, describeConfigsRequest.data.includeDocumentation)
     val unauthorizedConfigs = unauthorizedResources.map { resource =>
       val error = ConfigResource.Type.forId(resource.resourceType) match {
-        case ConfigResource.Type.BROKER | ConfigResource.Type.BROKER_LOGGER | ConfigResource.Type.CLIENT_METRICS | ConfigResource.Type.MIRROR => Errors.CLUSTER_AUTHORIZATION_FAILED
+        case ConfigResource.Type.BROKER | ConfigResource.Type.BROKER_LOGGER | ConfigResource.Type.CLIENT_METRICS => Errors.CLUSTER_AUTHORIZATION_FAILED
+        case ConfigResource.Type.MIRROR => Errors.CLUSTER_AUTHORIZATION_FAILED
         case ConfigResource.Type.TOPIC => Errors.TOPIC_AUTHORIZATION_FAILED
         case ConfigResource.Type.GROUP => Errors.GROUP_AUTHORIZATION_FAILED
         case rt => throw new InvalidRequestException(s"Unexpected resource type $rt for resource ${resource.resourceName}")
@@ -91,6 +94,7 @@ class ConfigHelper(metadataCache: MetadataCache, config: KafkaConfig, configRepo
             Topic.validate(topic)
             if (metadataCache.contains(topic)) {
               val topicProps = configRepository.topicConfig(topic)
+              topicProps.remove(TopicConfig.MIRROR_NAME_CONFIG)
               val logConfig = LogConfig.fromProps(config.extractLogConfigMap, topicProps)
               createResponseConfig(resource, logConfig, createTopicConfigEntry(logConfig, topicProps, includeSynonyms, includeDocumentation)(_, _))
             } else {

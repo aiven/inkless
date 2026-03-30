@@ -48,11 +48,9 @@
           { "name": "Lag", "type": "int64", "versions": "0+", "default": "-1",
             "about": "The lag (source offset - destination offset), or -1 if not yet available." },
           { "name": "State", "type": "string", "versions": "0+",
-            "about": "The partition state (INITIALIZING, PREPARING, MIRRORING, STOPPING, STOPPED, FAILED)." }
+            "about": "The partition state." }
         ]}
-      ]},
-      { "name": "AuthorizedOperations", "type": "int32", "versions": "0+", "default": "-2147483648",
-        "about": "32-bit bitfield to represent authorized operations for this mirror." }
+      ]}
     ]}
   ]
 }

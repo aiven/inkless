@@ -238,11 +238,11 @@ public class ConfigurationControlManager {
             TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
             String curVal;
             if (currentConfigs == null) {
-                topicRes.setErrorCode(Errors.INVALID_REQUEST.code());
+                topicRes.setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code());
             } else {
                 curVal = currentConfigs.get(mirrorNameConfig);
                 if (curVal == null || curVal.isBlank()) {
-                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.UNKNOWN_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -251,7 +251,7 @@ public class ConfigurationControlManager {
                     ? curVal.substring(0, curVal.length() - PAUSED_TOPIC_SUFFIX.length())
                     : curVal;
                 if (!originalName.equals(mirrorName)) {
-                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.TOPIC_NOT_IN_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -287,11 +287,11 @@ public class ConfigurationControlManager {
 
             TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
             if (currentConfigs == null) {
-                topicRes.setErrorCode(Errors.INVALID_REQUEST.code());
+                topicRes.setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code());
             } else {
                 String curVal = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
                 if (curVal == null || curVal.isBlank()) {
-                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.UNKNOWN_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -299,7 +299,7 @@ public class ConfigurationControlManager {
                 if (curVal.endsWith(PAUSED_TOPIC_SUFFIX)) {
                     String originalName = curVal.substring(0, curVal.length() - PAUSED_TOPIC_SUFFIX.length());
                     if (!originalName.equals(mirrorName)) {
-                        topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                        topicRes.setErrorCode(Errors.TOPIC_NOT_IN_MIRROR.code()).setName(topic);
                         topicResList.add(topicRes);
                         continue;
                     }
@@ -309,13 +309,13 @@ public class ConfigurationControlManager {
                 }
 
                 if (curVal.endsWith(REMOVED_TOPIC_SUFFIX)) {
-                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.MIRROR_TOPIC_BEING_REMOVED.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
 
                 if (!curVal.equals(mirrorName)) {
-                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.TOPIC_NOT_IN_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -352,24 +352,24 @@ public class ConfigurationControlManager {
 
             TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
             if (currentConfigs == null) {
-                topicRes.setErrorCode(Errors.INVALID_REQUEST.code());
+                topicRes.setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code());
             } else {
                 String curVal = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
                 if (curVal == null || curVal.isBlank()) {
-                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.UNKNOWN_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
 
                 if (!curVal.endsWith(PAUSED_TOPIC_SUFFIX)) {
-                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.MIRROR_TOPIC_NOT_PAUSED.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
 
                 String originalMirrorName = curVal.substring(0, curVal.length() - PAUSED_TOPIC_SUFFIX.length());
                 if (!originalMirrorName.equals(mirrorName)) {
-                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.TOPIC_NOT_IN_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -407,7 +407,7 @@ public class ConfigurationControlManager {
             if (currentConfigs != null) {
                 String currMirrorNameValue = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
                 if (currMirrorNameValue != null && (currMirrorNameValue.isBlank() || !currMirrorNameValue.endsWith(REMOVED_TOPIC_SUFFIX))) {
-                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.TOPIC_ALREADY_IN_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -442,7 +442,7 @@ public class ConfigurationControlManager {
                 configChanges.entrySet()) {
             String mirrorName = resourceEntry.getKey().name();
             if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX) || mirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) {
-                data.setErrorCode(Errors.INVALID_REQUEST.code());
+                data.setErrorCode(Errors.INVALID_MIRROR_NAME.code());
                 data.setErrorMessage("Mirror name must not end with '"
                     + REMOVED_TOPIC_SUFFIX + "' or '" + PAUSED_TOPIC_SUFFIX + "'");
                 return ControllerResult.of(List.of(), data);
