@@ -99,6 +99,7 @@ public class PartitionChangeBuilder {
     private LeaderRecoveryState targetLeaderRecoveryState;
     private boolean eligibleLeaderReplicasEnabled;
     private DefaultDirProvider defaultDirProvider;
+    private int minLeaderEpoch = -1;
 
     // Whether allow electing last known leader in a Balanced recovery. Note, the last known leader will be stored in the
     // lastKnownElr field if enabled.
@@ -194,6 +195,11 @@ public class PartitionChangeBuilder {
 
     public PartitionChangeBuilder setDefaultDirProvider(DefaultDirProvider defaultDirProvider) {
         this.defaultDirProvider = defaultDirProvider;
+        return this;
+    }
+
+    public PartitionChangeBuilder setMinLeaderEpoch(int leaderEpoch) {
+        this.minLeaderEpoch = leaderEpoch;
         return this;
     }
 

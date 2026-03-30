@@ -271,7 +271,6 @@ abstract class AbstractFetcherThread(name: String,
             // Unclean leader elections are not supported by Cluster Mirroring as there is no way to reconcile log divergence
             // without being part of the same local partition epoch.
             val newLastFetchedEpoch: Optional[Integer] = Optional.empty()
-
             info(s"Discovered new fetch epoch for mirrored partition $topicPartition, " +
               s"currentLeaderEpoch: ${currentFetchState.currentLeaderEpoch} -> $newCurrentLeaderEpoch")
             new PartitionFetchState(currentFetchState.topicId, currentFetchState.fetchOffset(), currentFetchState.lag,

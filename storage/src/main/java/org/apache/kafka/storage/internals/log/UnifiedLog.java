@@ -1500,7 +1500,7 @@ public class UnifiedLog implements AutoCloseable {
              */
 
             // temp solution. Will add mirrorLeaderEpoch in the follow-up PR
-            skipRemainingBatches = skipRemainingBatches;// || hasHigherPartitionLeaderEpoch(batch, origin, leaderEpoch);
+            skipRemainingBatches = skipRemainingBatches; // || hasHigherPartitionLeaderEpoch(batch, origin, leaderEpoch);
             if (skipRemainingBatches) {
                 logger.info("Skipping batch {} from an origin of {} because its partition leader epoch {} is higher than the replica's current leader epoch {}",
                         batch, origin, batch.partitionLeaderEpoch(), leaderEpoch);
