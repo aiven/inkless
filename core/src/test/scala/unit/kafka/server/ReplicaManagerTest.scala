@@ -20,7 +20,7 @@ package kafka.server
 import com.yammer.metrics.core.{Gauge, Meter, Timer}
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
-import io.aiven.inkless.consume.FetchHandler
+import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse}
 import kafka.server.metadata.InklessMetadataView
 import io.aiven.inkless.produce.AppendHandler
@@ -40,9 +40,10 @@ import org.apache.kafka.clients.consumer.ShareAcquireMode
 import org.apache.kafka.common.{DirectoryId, IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.compress.Compression
 import org.apache.kafka.common.config.TopicConfig
-import org.apache.kafka.common.errors.InvalidPidMappingException
+import org.apache.kafka.common.errors.{InvalidPidMappingException, UnknownTopicOrPartitionException}
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.{DeleteRecordsResponseData, FetchResponseData, ShareFetchResponseData}
+import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetForLeaderPartition, OffsetForLeaderTopic}
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
 import org.apache.kafka.common.metadata.{PartitionChangeRecord, PartitionRecord, RemoveTopicRecord, TopicRecord}
 import org.apache.kafka.common.metrics.Metrics
@@ -83,7 +84,7 @@ import org.apache.kafka.server.util.timer.{MockTimer, SystemTimer}
 import org.apache.kafka.server.util.{MockScheduler, MockTime, Scheduler}
 import org.apache.kafka.storage.internals.checkpoint.LazyOffsetCheckpoints
 import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache
-import org.apache.kafka.storage.internals.log.{AppendOrigin, CleanerConfig, FetchDataInfo, LocalLog, LogAppendInfo, LogConfig, LogDirFailureChannel, LogLoader, LogOffsetMetadata, LogOffsetSnapshot, LogOffsetsListener, LogReadResult, LogSegments, ProducerStateManager, ProducerStateManagerConfig, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog, VerificationGuard}
+import org.apache.kafka.storage.internals.log.{AppendOrigin, CleanerConfig, FetchDataInfo, LocalLog, LogAppendInfo, LogConfig, LogDirFailureChannel, LogLoader, LogOffsetMetadata, LogOffsetSnapshot, LogOffsetsListener, LogReadResult, LogSegments, OffsetResultHolder, ProducerStateManager, ProducerStateManagerConfig, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog, VerificationGuard}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterAll, AfterEach, BeforeEach, Nested, Test}
@@ -93,7 +94,7 @@ import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
 import org.mockito.invocation.InvocationOnMock
 import org.mockito.stubbing.Answer
-import org.mockito.{Answers, ArgumentCaptor, ArgumentMatchers, MockedConstruction}
+import org.mockito.{Answers, ArgumentCaptor, ArgumentMatchers, MockedConstruction, Mockito}
 
 import java.io.{ByteArrayInputStream, File}
 import java.net.InetAddress
@@ -6860,6 +6861,51 @@ class ReplicaManagerTest {
     }
 
     // TODO: Add more fetch tests combinations, edge cases ara not covered yet.
+
+    @Test
+    def testLastOffsetForLeaderEpochDisklessWithControlPlaneError(): Unit = {
+      val errorResult = new OffsetResultHolder.FileRecordsOrError(
+        Optional.of(new UnknownTopicOrPartitionException("not found")),
+        Optional.empty()
+      )
+
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(errorResult))
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        createReplicaManager(List(disklessTopicPartition.topic()))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      val requestedEpochInfo = Seq(
+        new OffsetForLeaderTopic()
+          .setTopic(disklessTopicPartition.topic())
+          .setPartitions(util.List.of(
+            new OffsetForLeaderPartition()
+              .setPartition(disklessTopicPartition.partition())
+              .setLeaderEpoch(0)
+          ))
+      )
+
+      val result = replicaManager.lastOffsetForLeaderEpoch(requestedEpochInfo)
+
+      assertEquals(1, result.size)
+      val topicResult = result.head
+      assertEquals(disklessTopicPartition.topic(), topicResult.topic())
+      assertEquals(1, topicResult.partitions().size())
+      val partitionResult = topicResult.partitions().get(0)
+      assertEquals(Errors.UNKNOWN_TOPIC_OR_PARTITION.code, partitionResult.errorCode())
+      assertEquals(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET, partitionResult.endOffset())
+    }
 
     private def mockFetchHandler(disklessResponse: Map[TopicIdPartition, FetchPartitionData]) = {
       // We use constructor mocking here to inject a FetchHandler mock into ReplicaManager,
