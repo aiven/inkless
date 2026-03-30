@@ -42,6 +42,7 @@ import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartit
 import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.OffsetForLeaderTopic
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.{EpochEndOffset, OffsetForLeaderTopicResult}
+import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse
 import org.apache.kafka.common.message.{DescribeLogDirsResponseData, DescribeProducersResponseData}
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network.ListenerName
@@ -2965,14 +2966,19 @@ class ReplicaManager(val config: KafkaConfig,
           inklessFetchOffsetHandlerJob.get
             .add(tp, partitionRequest)
             .thenApply[EpochEndOffset](epochEndOffset => {
-              val endOffset = epochEndOffset.timestampAndOffset().get().offset
-              val errorCode = epochEndOffset.exception()
+              val error = epochEndOffset.exception()
                 .map[Errors](e => Errors.forException(e))
                 .orElse(Errors.NONE)
-                .code
+              if (error != Errors.NONE) {
+                warn(s"Error fetching offset for leader epoch from control plane for $tp: $error",
+                  epochEndOffset.exception().orElse(null))
+              }
+              val endOffset = epochEndOffset.timestampAndOffset()
+                .map[Long](_.offset)
+                .orElse(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET)
               new EpochEndOffset()
                 .setPartition(tp.partition())
-                .setErrorCode(errorCode)
+                .setErrorCode(error.code)
                 .setLeaderEpoch(leaderEpoch)
                 .setEndOffset(endOffset)
             })
