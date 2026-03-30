@@ -15,17 +15,17 @@
 
 // Cluster Mirror is in development. This schema is subject to non-backwards-compatible changes.
 //
-// LastMirroredOffsets record tracks the latest successfully mirrored offset for each partition.
-// The key identifies the source cluster by mirror name, while the value stores per-partition offsets for failback support.
+// LastMirroredEpochs record tracks the latest successfully mirrored epoch for each partition.
+// The key identifies the source cluster by mirror name, while the value stores per-partition epochs for failback support.
 {
   "apiKey": 1,
   "type": "coordinator-value",
-  "name": "LastMirroredOffsetsValue",
+  "name": "LastMirroredEpochsValue",
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
     { "name": "Topics", "type": "[]Topic", "versions": "0+",
-      "about": "The mirror topics for which we want to store the last mirrored offsets.",  "fields": [
+      "about": "The mirror topics for which we want to store the last mirrored epochs.",  "fields": [
       { "name": "Name", "type": "string", "versions": "0",
         "about": "The topic name." },
       { "name": "Partitions", "type": "[]Partition", "versions": "0+",

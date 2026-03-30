@@ -259,7 +259,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.RESUME_MIRROR_TOPICS => handleResumeMirrorTopics(request)
         case ApiKeys.LIST_MIRRORS => handleListMirrorsRequest(request)
         case ApiKeys.DESCRIBE_MIRRORS => handleDescribeMirrorsRequest(request)
-        case ApiKeys.LAST_MIRRORED_EPOCHS => handleLastMirroredOffset(request)
+        case ApiKeys.LAST_MIRRORED_EPOCHS => handleLastMirroredEpoch(request)
         case ApiKeys.WRITE_MIRROR_STATES => handleWriteMirrorStates(request)
         case ApiKeys.READ_MIRROR_STATES => handleReadMirrorStates(request)
         case ApiKeys.BUMP_LEADER_EPOCH => forwardToController(request)
@@ -301,7 +301,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       writeMirrorStatesRequest.data().topics().forEach(topic => {
         val partMetadata = new util.HashSet[PartitionStateInfo]()
         topic.partitions().forEach(part => {
-          partMetadata.add(new PartitionStateInfo(part.partitionIndex(), MirrorPartitionState.fromValue(part.state()), part.lastMirroredOffset()))
+          partMetadata.add(new PartitionStateInfo(part.partitionIndex(), MirrorPartitionState.fromValue(part.state()), part.lastMirroredEpoch()))
         })
         partitionMetadata.put(topic.name(), partMetadata)
       })
@@ -332,13 +332,13 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
-  def handleLastMirroredOffset(request: RequestChannel.Request): Unit = {
+  def handleLastMirroredEpoch(request: RequestChannel.Request): Unit = {
     if (isClusterMirroringEnabled) {
-      val lastMirroredOffsetRequest = request.body[LastMirroredEpochsRequest]
+      val lastMirroredEpochRequest = request.body[LastMirroredEpochsRequest]
       val responseData = new LastMirroredEpochsResponseData()
-      val mirrorName = lastMirroredOffsetRequest.data().mirrorName()
+      val mirrorName = lastMirroredEpochRequest.data().mirrorName()
       val topicResults = new util.ArrayList[LastMirroredEpochsResponseData.TopicResult]()
-      lastMirroredOffsetRequest.data().topics().forEach(topic => {
+      lastMirroredEpochRequest.data().topics().forEach(topic => {
         val topicResult = new LastMirroredEpochsResponseData.TopicResult()
         val partitionResults = new util.ArrayList[LastMirroredEpochsResponseData.PartitionResult]()
         topic.partitions().forEach(par => {
