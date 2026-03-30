@@ -512,8 +512,7 @@ abstract class AbstractFetcherThread(name: String,
                   partitionsWithError += topicPartition
 
                 case Errors.FENCED_LEADER_EPOCH =>
-                  // only need to do that for mirror leaders, i.e., the one using MirrorFetcherThread
-                  if (!this.isInstanceOf[MirrorFetcherThread]) {
+                  if (!currentFetchState.isMirrorFetch()) {
                     if (onPartitionFenced(topicPartition, fetchPartitionData.currentLeaderEpoch))
                       partitionsWithError += topicPartition
                   } else {
@@ -529,7 +528,7 @@ abstract class AbstractFetcherThread(name: String,
                     partitionsWithError += topicPartition
 
                 case Errors.NOT_LEADER_OR_FOLLOWER =>
-                  if (!this.isInstanceOf[MirrorFetcherThread]) {
+                  if (!currentFetchState.isMirrorFetch()) {
                     info(s"Remote broker is not the leader for partition $topicPartition, which could indicate " +
                       "that the partition is being moved")
                     partitionsWithError += topicPartition

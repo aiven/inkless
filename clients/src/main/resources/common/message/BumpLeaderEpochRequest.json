@@ -14,7 +14,7 @@
 // limitations under the License.
 
 {
-  "apiKey": 104,
+  "apiKey": 105,
   "type": "request",
   "listeners": ["broker", "controller"],
   "name": "BumpLeaderEpochRequest",
@@ -28,7 +28,7 @@
         { "name": "Partitions", "type": "[]LeaderEpochState", "versions": "0+", "about": "The name or topic ID of the topic.",
           "fields": [
             {"name": "partitionIndex", "type": "int32", "versions": "0+", "about": "The topic name."},
-            {"name": "minLeaderEpoch", "type": "int32", "versions": "0+", "default": -1, "about": "The minimum leader epoch."}
+            {"name": "minLeaderEpoch", "type": "int32", "versions": "0+", "default": -1, "about": "The minimum leader epoch requested."}
           ]}
       ]}
   ]

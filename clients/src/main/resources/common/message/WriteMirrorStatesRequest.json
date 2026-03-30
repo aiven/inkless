@@ -32,8 +32,8 @@
         "about": "The data for the partitions.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0",
           "about": "The partition index." },
-        { "name": "LastMirroredOffset", "type": "int32", "versions": "0",
-          "about": "The last mirrored offset." },
+        { "name": "LastMirroredEpoch", "type": "int32", "versions": "0",
+          "about": "The last mirrored epoch." },
         { "name": "State", "type": "int8", "versions": "0+",
           "about": "The mirror partition state." }
       ]}

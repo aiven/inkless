@@ -29,11 +29,11 @@
       { "name": "Name", "type": "string", "versions": "0",
         "about": "The topic name." },
       { "name": "Partitions", "type": "[]Partition", "versions": "0+",
-        "about": "Each partition to record the last mirrored offsets.", "fields": [
+        "about": "Each partition to record the last mirrored epochs.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0+",
           "about": "The partition index." },
-        { "name": "LastMirroredOffset", "type": "int32", "versions": "0+",
-          "about": "The last mirrored offset for this partition." }
+        { "name": "LastMirroredEpoch", "type": "int32", "versions": "0+",
+          "about": "The last mirrored epoch for this partition." }
       ]}
     ]}
   ]

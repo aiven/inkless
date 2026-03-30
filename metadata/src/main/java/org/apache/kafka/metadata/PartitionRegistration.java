@@ -244,8 +244,6 @@ public class PartitionRegistration {
                         directories : Uuid.toArray(checkDirectories(record)),
                 newReplicas.length
         );
-        // mirroring check, we should check if the new leader is part of the old isr, if no, it means it's unclean leadr election
-        // then we should force the leader node move to PREPARING state again.
         int[] newIsr = (record.isr() == null) ? isr : Replicas.toArray(record.isr());
         int[] newRemovingReplicas = (record.removingReplicas() == null) ?
             removingReplicas : Replicas.toArray(record.removingReplicas());

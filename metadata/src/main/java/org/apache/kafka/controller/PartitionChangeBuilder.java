@@ -438,8 +438,8 @@ public class PartitionChangeBuilder {
     public Optional<ApiMessageAndVersion> build() {
         PartitionChangeRecord record = new PartitionChangeRecord().
             setTopicId(topicId).
-            setPartitionId(partitionId)
-            .setMinLeaderEpoch(minLeaderEpoch);
+            setPartitionId(partitionId).
+            setMinLeaderEpoch(minLeaderEpoch);
         completeReassignmentIfNeeded();
 
         maybePopulateTargetElr();
