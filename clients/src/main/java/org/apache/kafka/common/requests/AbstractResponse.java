@@ -303,8 +303,8 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
                 return ListMirrorsResponse.parse(readable, version);
             case DESCRIBE_MIRRORS:
                 return DescribeMirrorsResponse.parse(readable, version);
-            case LAST_MIRRORED_OFFSETS:
-                return LastMirroredOffsetsResponse.parse(readable, version);
+            case LAST_MIRRORED_EPOCHS:
+                return LastMirroredEpochsResponse.parse(readable, version);
             case WRITE_MIRROR_STATES:
                 return WriteMirrorStatesResponse.parse(readable, version);
             case READ_MIRROR_STATES:

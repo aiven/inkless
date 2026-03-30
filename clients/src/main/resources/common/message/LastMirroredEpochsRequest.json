@@ -17,7 +17,7 @@
   "apiKey": 97,
   "type": "request",
   "listeners": ["broker", "controller"],
-  "name": "LastMirroredOffsetsRequest",
+  "name": "LastMirroredEpochsRequest",
   // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",

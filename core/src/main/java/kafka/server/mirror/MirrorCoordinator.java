@@ -389,8 +389,8 @@ public class MirrorCoordinator {
         return results;
     }
 
-    public int getLastMirroredOffset(String mirrorName, TopicPartition topicPartition) {
-        return metadataManager.getLastMirroredOffset(mirrorName, topicPartition);
+    public int getLastMirroredEpoch(String mirrorName, TopicPartition topicPartition) {
+        return metadataManager.getLastMirroredEpoch(mirrorName, topicPartition);
     }
 
     /** Persists offsets to local or remote coordinators, optionally transitioning to STOPPED. */

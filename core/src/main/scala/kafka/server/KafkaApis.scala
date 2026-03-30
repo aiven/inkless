@@ -259,7 +259,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.RESUME_MIRROR_TOPICS => handleResumeMirrorTopics(request)
         case ApiKeys.LIST_MIRRORS => handleListMirrorsRequest(request)
         case ApiKeys.DESCRIBE_MIRRORS => handleDescribeMirrorsRequest(request)
-        case ApiKeys.LAST_MIRRORED_OFFSETS => handleLastMirroredOffset(request)
+        case ApiKeys.LAST_MIRRORED_EPOCHS => handleLastMirroredOffset(request)
         case ApiKeys.WRITE_MIRROR_STATES => handleWriteMirrorStates(request)
         case ApiKeys.READ_MIRROR_STATES => handleReadMirrorStates(request)
         case ApiKeys.BUMP_LEADER_EPOCH => forwardToController(request)
@@ -334,18 +334,18 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleLastMirroredOffset(request: RequestChannel.Request): Unit = {
     if (isClusterMirroringEnabled) {
-      val lastMirroredOffsetRequest = request.body[LastMirroredOffsetsRequest]
-      val responseData = new LastMirroredOffsetsResponseData()
+      val lastMirroredOffsetRequest = request.body[LastMirroredEpochsRequest]
+      val responseData = new LastMirroredEpochsResponseData()
       val mirrorName = lastMirroredOffsetRequest.data().mirrorName()
-      val topicResults = new util.ArrayList[LastMirroredOffsetsResponseData.TopicResult]()
+      val topicResults = new util.ArrayList[LastMirroredEpochsResponseData.TopicResult]()
       lastMirroredOffsetRequest.data().topics().forEach(topic => {
-        val topicResult = new LastMirroredOffsetsResponseData.TopicResult()
-        val partitionResults = new util.ArrayList[LastMirroredOffsetsResponseData.PartitionResult]()
+        val topicResult = new LastMirroredEpochsResponseData.TopicResult()
+        val partitionResults = new util.ArrayList[LastMirroredEpochsResponseData.PartitionResult]()
         topic.partitions().forEach(par => {
           val partition = new TopicPartition(topic.name(), par.partitionIndex())
-          val partitionResult = new LastMirroredOffsetsResponseData.PartitionResult()
+          val partitionResult = new LastMirroredEpochsResponseData.PartitionResult()
           partitionResult.setPartitionIndex(par.partitionIndex())
-            .setLastMirroredOffset(mirrorCoordinator.getLastMirroredOffset(mirrorName, partition))
+            .setLastMirroredEpoch(mirrorCoordinator.getLastMirroredEpoch(mirrorName, partition))
           partitionResults.add(partitionResult)
         })
         topicResult.setName(topic.name())
@@ -353,10 +353,10 @@ class KafkaApis(val requestChannel: RequestChannel,
         topicResults.add(topicResult)
       })
       responseData.setTopics(topicResults)
-      requestHelper.sendMaybeThrottle(request, new LastMirroredOffsetsResponse(responseData))
+      requestHelper.sendMaybeThrottle(request, new LastMirroredEpochsResponse(responseData))
     } else {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring last mirrored offset request")
-      requestHelper.sendMaybeThrottle(request, new LastMirroredOffsetsResponse(new LastMirroredOffsetsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
+      requestHelper.sendMaybeThrottle(request, new LastMirroredEpochsResponse(new LastMirroredEpochsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
     }
   }
 

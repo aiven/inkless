@@ -40,7 +40,7 @@ import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
-import org.apache.kafka.common.message.LastMirroredOffsetsRequestData;
+import org.apache.kafka.common.message.LastMirroredEpochsRequestData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
 import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.message.OffsetCommitRequestData;
@@ -66,8 +66,8 @@ import org.apache.kafka.common.requests.DescribeAclsResponse;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
-import org.apache.kafka.common.requests.LastMirroredOffsetsRequest;
-import org.apache.kafka.common.requests.LastMirroredOffsetsResponse;
+import org.apache.kafka.common.requests.LastMirroredEpochsRequest;
+import org.apache.kafka.common.requests.LastMirroredEpochsResponse;
 import org.apache.kafka.common.requests.ListGroupsRequest;
 import org.apache.kafka.common.requests.ListGroupsResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
@@ -179,7 +179,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Map<String, Map<TopicPartition, Node>> sourceLeaders = new ConcurrentHashMap<>();
     private final Map<MirrorUtils.PartitionKey, MirrorPartitionState> partitionStates = new ConcurrentHashMap<>();
     private final Map<MirrorPartitionState, AtomicLong> partitionStateCounts = new ConcurrentHashMap<>();
-    private final Map<MirrorUtils.PartitionKey, Integer> lastMirroredOffsets = new ConcurrentHashMap<>();
+    private final Map<MirrorUtils.PartitionKey, Integer> lastMirroredEpochs = new ConcurrentHashMap<>();
 
     // metrics
     private KafkaMetricsGroup metricsGroup;
@@ -440,7 +440,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 String updatedMirrorName = originalMirrorName(mirrorName);
                 MirrorUtils.PartitionKey key = new MirrorUtils.PartitionKey(updatedMirrorName, followerTp.topic(), followerTp.partition());
                 removePartitionState(key);
-                lastMirroredOffsets.remove(key);
+                lastMirroredEpochs.remove(key);
             }
         });
     }
@@ -631,7 +631,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         readMirrorStatesResponse.data().topics().forEach(topic -> {
                             topic.partitions().forEach(partition -> {
                                 if (partition.lastMirroredOffset() != -1) {
-                                    lastMirroredOffsets.put(new MirrorUtils.PartitionKey(mirrorName, topic.name(), partition.partitionIndex()),
+                                    lastMirroredEpochs.put(new MirrorUtils.PartitionKey(mirrorName, topic.name(), partition.partitionIndex()),
                                             partition.lastMirroredOffset());
                                 }
                                 if (partition.state() != -1) {
@@ -660,7 +660,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             parts.forEach(part -> {
                 ReadMirrorStatesResponseData.PartitionResult partitionResult = new ReadMirrorStatesResponseData.PartitionResult();
                 partitionResult.setPartitionIndex(part);
-                partitionResult.setLastMirroredOffset(lastMirroredOffsets.getOrDefault(new MirrorUtils.PartitionKey(mirrorName, tp, part), -1));
+                partitionResult.setLastMirroredOffset(lastMirroredEpochs.getOrDefault(new MirrorUtils.PartitionKey(mirrorName, tp, part), -1));
                 partitionResult.setState(partitionStates.getOrDefault(
                         new MirrorUtils.PartitionKey(mirrorName, tp, part), MirrorPartitionState.UNKNOWN).value());
                 partitionResults.add(partitionResult);
@@ -830,10 +830,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-    int getLastMirroredOffset(String clusterName, TopicPartition topicPartition) {
+    int getLastMirroredEpoch(String clusterName, TopicPartition topicPartition) {
         MirrorUtils.PartitionKey key = new MirrorUtils.PartitionKey(clusterName, topicPartition.topic(), topicPartition.partition());
-        if (lastMirroredOffsets.containsKey(key)) {
-            return lastMirroredOffsets.get(key);
+        if (lastMirroredEpochs.containsKey(key)) {
+            return lastMirroredEpochs.get(key);
         }
         return -1;
     }
@@ -843,15 +843,15 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                                                   Map<String, Map<Integer, Integer>> removedOffsets) {
         removedOffsets.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
-                lastMirroredOffsets.remove(new MirrorUtils.PartitionKey(clusterName, topic, partition));
+                lastMirroredEpochs.remove(new MirrorUtils.PartitionKey(clusterName, topic, partition));
             });
         });
         addedOffsets.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
-                lastMirroredOffsets.put(new MirrorUtils.PartitionKey(clusterName, topic, partition), offset);
+                lastMirroredEpochs.put(new MirrorUtils.PartitionKey(clusterName, topic, partition), offset);
             });
         });
-        return lastMirroredOffsets;
+        return lastMirroredEpochs;
     }
 
     /** Fetches last mirrored offsets from source cluster and truncates local replicas to those offsets. */
@@ -866,7 +866,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         var apiResponse = trySendRequest(mirrorName, new ApiVersionsRequest.Builder());
 
         if (apiResponse.responseBody() instanceof ApiVersionsResponse apiVersionsResponse) {
-            if (apiVersionsResponse.apiVersion(ApiKeys.LAST_MIRRORED_OFFSETS.id) == null) {
+            if (apiVersionsResponse.apiVersion(ApiKeys.LAST_MIRRORED_EPOCHS.id) == null) {
                 log.debug("The LastMirroredOffsets API is not supported in source cluster, truncating to offset 0");
                 Map<TopicPartition, Integer> offsets = new HashMap<>();
                 topicPartitionSet.forEach(tp -> offsets.put(tp, 0));
@@ -875,31 +875,31 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             }
         }
 
-        List<LastMirroredOffsetsRequestData.TopicData> topicDataList = new ArrayList<>();
+        List<LastMirroredEpochsRequestData.TopicData> topicDataList = new ArrayList<>();
         groupPartitionsByTopic(topicPartitionSet).forEach((topic, partitions) -> {
-            List<LastMirroredOffsetsRequestData.PartitionData> partitionDataList = new ArrayList<>();
+            List<LastMirroredEpochsRequestData.PartitionData> partitionDataList = new ArrayList<>();
             partitions.forEach(partition -> {
-                LastMirroredOffsetsRequestData.PartitionData partitionData = new LastMirroredOffsetsRequestData.PartitionData();
+                LastMirroredEpochsRequestData.PartitionData partitionData = new LastMirroredEpochsRequestData.PartitionData();
                 partitionData.setPartitionIndex(partition);
                 partitionDataList.add(partitionData);
             });
-            LastMirroredOffsetsRequestData.TopicData topicData = new LastMirroredOffsetsRequestData.TopicData()
+            LastMirroredEpochsRequestData.TopicData topicData = new LastMirroredEpochsRequestData.TopicData()
                     .setName(topic).setPartitions(partitionDataList);
             topicDataList.add(topicData);
         });
 
         var response = trySendRequest(mirrorName,
-                new LastMirroredOffsetsRequest.Builder(
-                        new LastMirroredOffsetsRequestData().setMirrorName(mirrorName).setTopics(topicDataList))
+                new LastMirroredEpochsRequest.Builder(
+                        new LastMirroredEpochsRequestData().setMirrorName(mirrorName).setTopics(topicDataList))
         );
 
-        if (response.responseBody() instanceof LastMirroredOffsetsResponse lastMirroredOffsetResponse) {
+        if (response.responseBody() instanceof LastMirroredEpochsResponse lastMirroredOffsetResponse) {
             log.debug("Received last mirrored offset response: {}", lastMirroredOffsetResponse);
             Map<TopicPartition, Integer> offsets = new HashMap<>();
             lastMirroredOffsetResponse.data().topics().forEach(topic -> {
                 String name = topic.name();
                 topic.partitions().forEach(partition -> {
-                    offsets.put(new TopicPartition(name, partition.partitionIndex()), partition.lastMirroredOffset());
+                    offsets.put(new TopicPartition(name, partition.partitionIndex()), partition.lastMirroredEpoch());
                 });
             });
             replicaManager.maybeTruncateForLeaderEpoch(offsets, callback);
@@ -1457,7 +1457,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     void clear() {
         partitionStates.clear();
         partitionStateCounts.clear();
-        lastMirroredOffsets.clear();
+        lastMirroredEpochs.clear();
         closeSourceSenders();
         sourceLeaders.clear();
     }
