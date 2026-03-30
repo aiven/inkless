@@ -588,9 +588,12 @@ class LogConfigTest {
     assertValid(existingWithoutDisklessOrRemote, setDisklessTrue, kafkaConfig, disklessAllowFromClassic = true)
     assertValid(existingWithDisklessFalse, setDisklessTrue, kafkaConfig, disklessAllowFromClassic = true)
     assertValid(existingWithDisklessTrue, setDisklessTrue, kafkaConfig, disklessAllowFromClassic = true)
-    // Mutual exclusion still applies even with allowFromClassic
+    // Mutual exclusion still applies when existing remote.storage.enable=false
     assertInvalid(existingWithRemoteFalse, setDisklessTrue, mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true)
-    assertInvalid(existingWithRemoteTrue, setDisklessTrue, mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true)
+    // Classic-to-diskless migration: setting diskless.enable=true on a topic with remote.storage.enable=true is valid.
+    // In the controller flow, only the requested configs (here, diskless.enable=true) are passed as props; the
+    // existing configs (here, remote.storage.enable=true) come from existingWithRemoteTrue.
+    assertValid(existingWithRemoteTrue, setDisklessTrue, kafkaConfig, disklessAllowFromClassic = true)
 
     // Case 2: set diskless.enable=false with allowFromClassic=true - disabling diskless is still forbidden
     val setDisklessFalse = topicProps(TopicConfig.DISKLESS_ENABLE_CONFIG -> "false")
