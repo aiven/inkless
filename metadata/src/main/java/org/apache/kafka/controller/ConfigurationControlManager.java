@@ -496,12 +496,14 @@ public class ConfigurationControlManager {
             String mirrorNameValue = entry.getValue().get(TopicConfig.MIRROR_NAME_CONFIG);
             if (removedSuffix.equals(mirrorNameValue)) {
                 Map<String, Entry<OpType, String>> keyToOps = Map.of(
-                    TopicConfig.MIRROR_NAME_CONFIG, new AbstractMap.SimpleImmutableEntry<>(SET, ""));
+                    TopicConfig.MIRROR_NAME_CONFIG, new AbstractMap.SimpleImmutableEntry<>(DELETE, null));
                 ControllerResult<ApiError> configResult = incrementalAlterConfig(entry.getKey(), keyToOps, true);
-                // TODO add failure handling
-                if (configResult.response().isSuccess()) {
-                    records.addAll(configResult.records());
+                if (configResult.response().isFailure()) {
+                    data.setErrorCode(configResult.response().error().code());
+                    data.setErrorMessage("Failed to clear mirror association for topic '" + entry.getKey().name() + "'");
+                    return ControllerResult.of(records, data);
                 }
+                records.addAll(configResult.records());
             }
         }
 

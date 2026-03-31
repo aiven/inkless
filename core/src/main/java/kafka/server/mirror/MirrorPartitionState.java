@@ -53,7 +53,7 @@ public enum MirrorPartitionState {
     /**
      * Triggered by RemoveTopicsFromMirror API (fail over) or topic deletion on the source.
      * The system records the last mirrored offset to the internal topic.
-     * Valid from: PREPARING, MIRRORING, PAUSING (race guard), PAUSED.
+     * Valid from: PREPARING, MIRRORING, PAUSING (race guard), PAUSED, FAILED.
      */
     STOPPING((byte) 4),
 
@@ -108,6 +108,7 @@ public enum MirrorPartitionState {
         throw new IllegalArgumentException("Illegal mirror state: " + value);
     }
 
+    @SuppressWarnings("checkstyle:cyclomaticComplexity")
     public static boolean isValidTransition(MirrorPartitionState source, MirrorPartitionState target) {
         if (source == target) {
             return true;
@@ -130,7 +131,8 @@ public enum MirrorPartitionState {
                 return source == MirrorPartitionState.PREPARING
                         || source == MirrorPartitionState.MIRRORING
                         || source == MirrorPartitionState.PAUSING
-                        || source == MirrorPartitionState.PAUSED;
+                        || source == MirrorPartitionState.PAUSED
+                        || source == MirrorPartitionState.FAILED;
             case STOPPED:
                 return source == MirrorPartitionState.STOPPING;
             case FAILED:

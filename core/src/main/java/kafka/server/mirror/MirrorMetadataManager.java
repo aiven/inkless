@@ -168,6 +168,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
     private final Supplier<MirrorFetcherManager> mirrorFetcherManagerSupplier;
     private Optional<MirrorUtils.StateTransitioner> stateTransitioner = Optional.empty();
+    private Optional<Consumer<String>> mirrorDeletionHandler = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatorPartitionFinder = Optional.empty();
     private Optional<Function<String, Integer>> coordinatorPartitionByNameFinder = Optional.empty();
 
@@ -259,6 +260,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 .filter(e -> e.getKey().type() == ConfigResource.Type.MIRROR)
                 .forEach(e -> {
                     String mirrorName = e.getKey().name();
+                    boolean mirrorDeleted = newImage.configs()
+                        .configProperties(e.getKey()).isEmpty();
+                    if (mirrorDeleted) {
+                        log.info("Mirror '{}' has been deleted. Writing tombstone records.", mirrorName);
+                        mirrorDeletionHandler.ifPresent(h -> h.accept(mirrorName));
+                    }
                     sourceLeaders.remove(mirrorName);
                     List<MirrorSourceSender> senders = sourceSenders.remove(mirrorName);
                     if (senders != null) {
@@ -508,6 +515,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     void setStateTransitioner(MirrorUtils.StateTransitioner function) {
         this.stateTransitioner = Optional.of(function);
+    }
+
+    void setMirrorDeletionHandler(Consumer<String> handler) {
+        this.mirrorDeletionHandler = Optional.of(handler);
     }
 
     void setCoordinatorPartitionByKeyFinder(Function<MirrorRecordKey, Integer> function) {
@@ -775,11 +786,15 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     // atomic remove + counter decrement to keep partition state counts consistent
-    private void removePartitionState(MirrorUtils.PartitionKey key) {
+    void removePartitionState(MirrorUtils.PartitionKey key) {
         partitionStates.computeIfPresent(key, (k, oldState) -> {
             partitionStateCounts.computeIfAbsent(oldState, s -> new AtomicLong()).decrementAndGet();
             return null;
         });
+    }
+
+    void removeLastMirroredOffsets(String mirrorName) {
+        lastMirroredOffsets.keySet().removeIf(key -> key.mirrorName().equals(mirrorName));
     }
 
     private long partitionStateCount(MirrorPartitionState state) {
