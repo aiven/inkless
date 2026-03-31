@@ -546,15 +546,14 @@ public class MirrorCoordinator {
         var timestamp = time.milliseconds();
         var stateTombstone = CoordinatorRecord.tombstone(new MirrorPartitionStateKey().setMirrorName(mirrorName));
         var offsetTombstone = CoordinatorRecord.tombstone(new LastMirroredOffsetsKey().setMirrorName(mirrorName));
-        var stateKeyBytes = serde.serializeKey(stateTombstone);
-        var offsetKeyBytes = serde.serializeKey(offsetTombstone);
 
         for (int coordPartition : localCoordPartitions) {
             var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, coordPartition);
             var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
             var memRecord = MemoryRecords.withRecords(Compression.NONE,
-                new SimpleRecord(timestamp, stateKeyBytes, null),
-                new SimpleRecord(timestamp, offsetKeyBytes, null));
+                new SimpleRecord(timestamp, serde.serializeKey(stateTombstone), serde.serializeValue(stateTombstone)),
+                new SimpleRecord(timestamp, serde.serializeKey(offsetTombstone), serde.serializeValue(offsetTombstone))
+            );
             replicaManager.appendRecords(
                 Duration.ofSeconds(5).toMillis(),
                 (short) -1,
