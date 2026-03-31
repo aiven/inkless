@@ -90,14 +90,28 @@ class InitDisklessLogManager(
   private[server] def getInitState(tp: TopicPartition): Option[InitState] =
     Option(tracked.get(tp)).map(_.state)
 
-  def onDisklessInitMetadataApplied(
+  /**
+   * Handles already-applied diskless init metadata for a partition.
+   * This moves/keeps the partition in AwaitingMetadata and triggers a prompt
+   * control-plane init send, since metadata is committed and visible.
+   *
+   * @param partition Partition instance for the topic-partition to initialize.
+   * @param topicId Topic ID currently assigned to the partition.
+   * @param topicName Topic name used in the control-plane init payload.
+   * @param disklessStartOffset Start offset for diskless initialization; negative means absent.
+   * @param producerStates Producer state snapshots to seed the destination replica state.
+   */
+  def initOnControlPlane(
     partition: Partition,
     topicId: Uuid,
     topicName: String,
     disklessStartOffset: Long,
     producerStates: util.List[CpProducerState]
   ): Unit = {
-    if (disklessStartOffset < 0) return
+    if (disklessStartOffset < 0) {
+      warn(s"Received a negative disklessStartOffset ($disklessStartOffset) from the Controller for $topicName:$partition, skipping init on Diskless Coordinator.")
+      return
+    }
 
     val tp = partition.topicPartition
     val payload = DisklessInitMetadata(topicName, disklessStartOffset, producerStates)
@@ -106,7 +120,6 @@ class InitDisklessLogManager(
       topicId = topicId,
       state = InitState.AwaitingMetadata,
       metadataPayload = Some(payload),
-      retryAttempt = 0
     )
 
     if (tracked.putIfAbsent(tp, newState) == null) {

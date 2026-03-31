@@ -823,7 +823,7 @@ class InitDisklessLogManagerTest {
     val partition = mockPartition(hw = 100, leo = 100)
     when(controlPlane.initDisklessLog(any())).thenReturn(util.List.of(CpInitResponse.success()))
 
-    manager.onDisklessInitMetadataApplied(
+    manager.initOnControlPlane(
       partition = partition,
       topicId = topicId,
       topicName = tp0.topic(),
@@ -842,7 +842,7 @@ class InitDisklessLogManagerTest {
     val partition = mockPartition(hw = 100, leo = 100)
     when(controlPlane.initDisklessLog(any())).thenReturn(util.List.of(CpInitResponse.alreadyInitialized()))
 
-    manager.onDisklessInitMetadataApplied(
+    manager.initOnControlPlane(
       partition = partition,
       topicId = topicId,
       topicName = tp0.topic(),
@@ -863,7 +863,7 @@ class InitDisklessLogManagerTest {
       .thenReturn(util.List.of(new CpInitResponse(Errors.NOT_CONTROLLER)))
       .thenReturn(util.List.of(CpInitResponse.success()))
 
-    manager.onDisklessInitMetadataApplied(
+    manager.initOnControlPlane(
       partition = partition,
       topicId = topicId,
       topicName = tp0.topic(),
@@ -885,14 +885,14 @@ class InitDisklessLogManagerTest {
     val partition = mockPartition(hw = 100, leo = 100)
     when(controlPlane.initDisklessLog(any())).thenReturn(util.List.of(CpInitResponse.success()))
 
-    manager.onDisklessInitMetadataApplied(
+    manager.initOnControlPlane(
       partition = partition,
       topicId = topicId,
       topicName = tp0.topic(),
       disklessStartOffset = 100L,
       producerStates = util.List.of()
     )
-    manager.onDisklessInitMetadataApplied(
+    manager.initOnControlPlane(
       partition = partition,
       topicId = topicId,
       topicName = tp0.topic(),

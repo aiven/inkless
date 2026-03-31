@@ -2843,7 +2843,7 @@ class ReplicaManager(val config: KafkaConfig,
                   producerState.batchMaxTimestamp()
                 )
               }.asJava
-              manager.onDisklessInitMetadataApplied(
+              manager.initOnControlPlane(
                 partition = partition,
                 topicId = topicId,
                 topicName = topicName,
