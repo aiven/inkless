@@ -65,7 +65,7 @@ import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
 import org.apache.kafka.metadata.{LeaderAndIsr, MetadataCache}
 import org.apache.kafka.metadata.properties.{MetaProperties, MetaPropertiesEnsemble, MetaPropertiesVersion, PropertiesUtils}
 import org.apache.kafka.server.common.{DirectoryEventHandler, KRaftVersion, MetadataVersion, OffsetAndEpoch, RequestLocal, StopPartition}
-import org.apache.kafka.server.config.{KRaftConfigs, ReplicationConfigs, ServerLogConfigs}
+import org.apache.kafka.server.config.{KRaftConfigs, ReplicationConfigs, ServerConfigs, ServerLogConfigs}
 import org.apache.kafka.server.log.remote.TopicPartitionLog
 import org.apache.kafka.server.log.remote.storage._
 import org.apache.kafka.server.metrics.{KafkaMetricsGroup, KafkaYammerMetrics}
@@ -6591,25 +6591,183 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchFailDisklessWhenFromReplica(): Unit = {
-      // Given a topic partition that is diskless, we should not be able to fetch from it from a follower.
-      val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
-      val fetchParams = new FetchParams(
-        1, 1L, // follower fetch
-        10L, 100, 200, FetchIsolation.HIGH_WATERMARK, Optional.empty()
-      )
-      val fetchInfos = Seq(
-        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 10L, 0L, 123, Optional.empty())
-      )
-      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
-      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
-        responseData = response.toMap
+    def testFetchDisklessBelowStartOffsetReadsFromClassicLogWhenManagedReplicasEnabled(): Unit = {
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        val cp = mock(classOf[ControlPlane])
+        // Given managed replicas enabled
+        val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp), disklessManagedReplicasEnabled = true))
+        
+        // Given a diskless topic with disklessStartOffset = 100
+        when(replicaManager.inklessMetadataView().getDisklessStartOffset(disklessTopicPartition.topicPartition())).thenReturn(100L)
+
+        // Given a classic log read result for offsets below diskless start offset
+        doReturn(Seq(disklessTopicPartition ->
+          new LogReadResult(
+            new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+            Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+          ))
+        ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+        // When fetching messages below the diskless start offset
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        // Then the request is served from the unified log and not from diskless fetch handler
+        assertNotNull(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+        verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+        verify(cp, never()).findBatches(any(), any(), any())
+      } finally {
+        fetchHandlerCtor.close()
       }
-      // When we try to fetch messages from the diskless topic partition with a follower fetch,
-      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
-      // Then we should get an immediate empty response.
-      assertNotNull(responseData)
-      assertEquals(0, responseData.size)
+    }
+
+    @Test
+    def testFetchDisklessBelowStartOffsetFailsWhenManagedReplicasDisabled(): Unit = {
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        val cp = mock(classOf[ControlPlane])
+        // Given managed replicas are disabled
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = false,
+        ))
+        
+        // Given a diskless topic with disklessStartOffset = 100
+        when(replicaManager.inklessMetadataView().getDisklessStartOffset(disklessTopicPartition.topicPartition())).thenReturn(100L)
+
+        // When fetching messages below the diskless start offset
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        // Then the request fails
+        assertNotNull(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(Errors.INVALID_REQUEST, responseData(disklessTopicPartition).error)
+        assertEquals(MemoryRecords.EMPTY, responseData(disklessTopicPartition).records)
+        verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+        verify(cp, never()).findBatches(any(), any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFetchFailDisklessWhenFromReplicaAndUnmanagedReplicas(): Unit = {
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        // Given a topic partition that is diskless and managed replicas are disabled
+        val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = false)
+        val fetchParams = new FetchParams(
+          1, 1L, // follower fetch
+          10L, 100, 200, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 10L, 0L, 123, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+
+        // When we try to fetch messages from the diskless topic partition with a follower fetch,
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        // Then we should get an immediate empty response.
+        assertNotNull(responseData)
+        assertEquals(0, responseData.size)
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @ParameterizedTest(name = "testFetchDisklessAtOrAboveStartOffsetUsesDiskless with managedReplicasEnabled: {0}")
+    @ValueSource(booleans = Array(true, false))
+    def testFetchDisklessAtOrAboveDisklessStartOffset(managedReplicasEnabled: Boolean): Unit = {
+      val disklessResponse = Map(disklessTopicPartition ->
+        new FetchPartitionData(
+          Errors.NONE,
+          110L, 100L,
+          RECORDS,
+          Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      )
+      val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+      try {
+        val batchMetadata = mock(classOf[BatchMetadata])
+        when(batchMetadata.topicIdPartition()).thenReturn(disklessTopicPartition)
+        val batch = mock(classOf[BatchInfo])
+        when(batch.metadata()).thenReturn(batchMetadata)
+        val findBatchResponse = mock(classOf[FindBatchResponse])
+        when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+        when(findBatchResponse.highWatermark()).thenReturn(110L)
+        when(findBatchResponse.estimatedByteSize(100L)).thenReturn(RECORDS.sizeInBytes())
+        when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+        val cp = mock(classOf[ControlPlane])
+        when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = managedReplicasEnabled,
+        ))
+        
+        // Given a diskless topic with disklessStartOffset = 100
+        when(replicaManager.inklessMetadataView().getDisklessStartOffset(disklessTopicPartition.topicPartition())).thenReturn(100L)
+
+        // When fetching messages at the diskless start offset
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 100L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        // Then the request is served from diskless fetch handler and not from the unified log
+        assertNotNull(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(Errors.NONE, responseData(disklessTopicPartition).error)
+        assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+        verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
+        verify(cp, times(1)).findBatches(any(), any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
     }
 
     @Test
@@ -7178,9 +7336,11 @@ class ReplicaManagerTest {
     private def createReplicaManager(
       disklessTopics: Seq[String],
       controlPlane: Option[ControlPlane] = None,
-      topicIdMapping: Map[String, Uuid] = Map.empty
+      topicIdMapping: Map[String, Uuid] = Map.empty,
+      disklessManagedReplicasEnabled: Boolean = false
     ): ReplicaManager = {
       val props = TestUtils.createBrokerConfig(1, logDirCount = 2)
+      props.put(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, disklessManagedReplicasEnabled.toString)
       val config = KafkaConfig.fromProps(props)
       val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
       val sharedState = mock(classOf[SharedState], Answers.RETURNS_DEEP_STUBS)
