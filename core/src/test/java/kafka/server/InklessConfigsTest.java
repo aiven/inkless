@@ -80,12 +80,14 @@ public class InklessConfigsTest {
     }
 
     private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig, boolean disklessStorageEnableConfig, boolean isDisklessAllowFromClassicEnabled) throws Exception {
-        return init(defaultDisklessEnableConfig, disklessStorageEnableConfig, isDisklessAllowFromClassicEnabled, false, List.of());
+        return init(defaultDisklessEnableConfig, disklessStorageEnableConfig, isDisklessAllowFromClassicEnabled, isDisklessAllowFromClassicEnabled, true, false, List.of());
     }
 
     private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig,
                                      boolean disklessStorageEnableConfig,
                                      boolean isDisklessAllowFromClassicEnabled,
+                                     boolean disklessManagedReplicasEnabled,
+                                     boolean remoteLogStorageSystemEnabled,
                                      boolean classicRemoteStorageForceEnabled,
                                      List<String> classicRemoteStorageForceExcludeTopicRegexes) throws Exception {
         final TestKitNodes nodes = new TestKitNodes.Builder()
@@ -93,17 +95,16 @@ public class InklessConfigsTest {
             .setNumBrokerNodes(1)
             .setNumControllerNodes(1)
             .build();
-        var cluster = new KafkaClusterTestKit.Builder(nodes)
+        var builder = new KafkaClusterTestKit.Builder(nodes)
             .setConfigProp(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
             .setConfigProp(ServerLogConfigs.DISKLESS_ENABLE_CONFIG, String.valueOf(defaultDisklessEnableConfig))
             .setConfigProp(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, String.valueOf(disklessStorageEnableConfig))
             .setConfigProp(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, String.valueOf(isDisklessAllowFromClassicEnabled))
+            .setConfigProp(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, String.valueOf(disklessManagedReplicasEnabled))
             .setConfigProp(ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG, String.valueOf(classicRemoteStorageForceEnabled))
             .setConfigProp(ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG,
                 String.join(",", classicRemoteStorageForceExcludeTopicRegexes))
-            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
-            .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, "org.apache.kafka.server.log.remote.storage.NoOpRemoteStorageManager")
-            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_CLASS_NAME_PROP, "org.apache.kafka.server.log.remote.storage.NoOpRemoteLogMetadataManager")
+            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, String.valueOf(remoteLogStorageSystemEnabled))
             // PG control plane config
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl())
@@ -116,11 +117,24 @@ public class InklessConfigsTest {
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_ENDPOINT_URL_CONFIG, s3Container.getEndpoint())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_PATH_STYLE_ENABLED_CONFIG, "true")
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_ACCESS_KEY_ID_CONFIG, s3Container.getAccessKey())
-            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, s3Container.getSecretKey())
-            .build();
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, s3Container.getSecretKey());
+        if (remoteLogStorageSystemEnabled) {
+            builder.setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, "org.apache.kafka.server.log.remote.storage.NoOpRemoteStorageManager")
+                .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_CLASS_NAME_PROP, "org.apache.kafka.server.log.remote.storage.NoOpRemoteLogMetadataManager");
+        }
+        var cluster = builder.build();
         cluster.format();
-        cluster.startup();
-        cluster.waitForReadyBrokers();
+        try {
+            cluster.startup();
+            cluster.waitForReadyBrokers();
+        } catch (Exception e) {
+            try {
+                cluster.close();
+            } catch (Exception suppressed) {
+                e.addSuppressed(suppressed);
+            }
+            throw e;
+        }
 
         return cluster;
     }
@@ -216,7 +230,7 @@ public class InklessConfigsTest {
         private static final List<String> EXCLUDED_TOPIC_REGEXES = List.of("_schemas", "mm2-(.*)");
 
         private KafkaClusterTestKit initWithClassicRemoteStorageForceEnabled() throws Exception {
-            return init(false, true, false, true, EXCLUDED_TOPIC_REGEXES);
+            return init(false, true, false, false, true, true, EXCLUDED_TOPIC_REGEXES);
         }
 
         @Test
@@ -380,6 +394,43 @@ public class InklessConfigsTest {
             } finally {
                 cluster.close();
             }
+        }
+    }
+
+    @Nested
+    final class FeatureFlagDependencyValidation {
+
+        @Test
+        void managedReplicasRequiresDisklessStorageSystem() {
+            final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> init(false, false, false, true, true, false, List.of()));
+            assertEquals(
+                "requirement failed: diskless.managed.rf.enable requires diskless.storage.system.enable=true",
+                exception.getMessage());
+        }
+
+        @Test
+        void allowFromClassicRequiresManagedReplicas() {
+            final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> init(false, true, true, false, true, false, List.of()));
+            assertEquals(
+                "requirement failed: diskless.allow.from.classic.enable requires diskless.managed.rf.enable=true",
+                exception.getMessage());
+        }
+
+        @Test
+        void allowFromClassicRequiresRemoteLogStorage() {
+            final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> init(false, true, true, true, false, false, List.of()));
+            assertEquals(
+                "requirement failed: diskless.allow.from.classic.enable requires remote.log.storage.system.enable=true",
+                exception.getMessage());
+        }
+
+        @Test
+        void fullDependencyChainSucceeds() throws Exception {
+            final KafkaClusterTestKit cluster = init(false, true, true);
+            cluster.close();
         }
     }
 
