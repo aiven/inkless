@@ -1943,8 +1943,9 @@ class ReplicaManager(val config: KafkaConfig,
     }
 
     if (!config.disklessManagedReplicasEnabled && params.isFromFollower && disklessFetchInfos.nonEmpty) {
-      warn("Diskless topics are not supported for follower fetch requests. " +
-        s"Request from follower ${params.replicaId} contains diskless topics: ${disklessFetchInfos.map(_._1.topic()).mkString(", ")}")
+      warn(s"Follower fetch from replica ${params.replicaId} for diskless topics " +
+        s"${disklessFetchInfos.map(_._1.topic()).distinct.mkString(", ")} " +
+        s"rejected: managed replicas are not enabled.")
       responseCallback(Seq.empty)
       return
     }
