@@ -17,34 +17,34 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.BumpLeaderEpochRequestData;
-import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
+import org.apache.kafka.common.message.BumpLeaderEpochsRequestData;
+import org.apache.kafka.common.message.BumpLeaderEpochsResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
 
 import java.util.Map;
 
-public class BumpLeaderEpochRequest extends AbstractRequest {
-    public static class Builder extends AbstractRequest.Builder<BumpLeaderEpochRequest> {
+public class BumpLeaderEpochsRequest extends AbstractRequest {
+    public static class Builder extends AbstractRequest.Builder<BumpLeaderEpochsRequest> {
 
-        private final BumpLeaderEpochRequestData data;
+        private final BumpLeaderEpochsRequestData data;
 
-        public Builder(BumpLeaderEpochRequestData data) {
-            super(ApiKeys.BUMP_LEADER_EPOCH);
+        public Builder(BumpLeaderEpochsRequestData data) {
+            super(ApiKeys.BUMP_LEADER_EPOCHS);
             this.data = data;
         }
 
         public Builder(String name, Map<String, String> configs) {
-            super(ApiKeys.BUMP_LEADER_EPOCH, ApiKeys.BUMP_LEADER_EPOCH.oldestVersion(),
-                    ApiKeys.BUMP_LEADER_EPOCH.latestVersion());
-            BumpLeaderEpochRequestData data = new BumpLeaderEpochRequestData();
+            super(ApiKeys.BUMP_LEADER_EPOCHS, ApiKeys.BUMP_LEADER_EPOCHS.oldestVersion(),
+                    ApiKeys.BUMP_LEADER_EPOCHS.latestVersion());
+            BumpLeaderEpochsRequestData data = new BumpLeaderEpochsRequestData();
             this.data = data;
         }
 
         @Override
-        public BumpLeaderEpochRequest build(short version) {
-            return new BumpLeaderEpochRequest(data, version);
+        public BumpLeaderEpochsRequest build(short version) {
+            return new BumpLeaderEpochsRequest(data, version);
         }
 
         @Override
@@ -53,30 +53,30 @@ public class BumpLeaderEpochRequest extends AbstractRequest {
         }
     }
 
-    private final BumpLeaderEpochRequestData data;
+    private final BumpLeaderEpochsRequestData data;
 
-    public BumpLeaderEpochRequest(BumpLeaderEpochRequestData data, short version) {
-        super(ApiKeys.BUMP_LEADER_EPOCH, version);
+    public BumpLeaderEpochsRequest(BumpLeaderEpochsRequestData data, short version) {
+        super(ApiKeys.BUMP_LEADER_EPOCHS, version);
         this.data = data;
     }
 
     @Override
-    public BumpLeaderEpochRequestData data() {
+    public BumpLeaderEpochsRequestData data() {
         return data;
     }
 
     @Override
     public AbstractResponse getErrorResponse(int throttleTimeMs, Throwable e) {
         Errors error = Errors.forException(e);
-        BumpLeaderEpochResponseData responseData = new BumpLeaderEpochResponseData();
+        BumpLeaderEpochsResponseData responseData = new BumpLeaderEpochsResponseData();
         responseData.setErrorCode(error.code());
 
-        return new BumpLeaderEpochResponse(responseData);
+        return new BumpLeaderEpochsResponse(responseData);
     }
 
-    public static BumpLeaderEpochRequest parse(Readable readable, short version) {
-        return new BumpLeaderEpochRequest(
-                new BumpLeaderEpochRequestData(readable, version),
+    public static BumpLeaderEpochsRequest parse(Readable readable, short version) {
+        return new BumpLeaderEpochsRequest(
+                new BumpLeaderEpochsRequestData(readable, version),
                 version
         );
     }

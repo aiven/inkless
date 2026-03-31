@@ -309,8 +309,8 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
                 return WriteMirrorStatesResponse.parse(readable, version);
             case READ_MIRROR_STATES:
                 return ReadMirrorStatesResponse.parse(readable, version);
-            case BUMP_LEADER_EPOCH:
-                return BumpLeaderEpochResponse.parse(readable, version);
+            case BUMP_LEADER_EPOCHS:
+                return BumpLeaderEpochsResponse.parse(readable, version);
             case PAUSE_MIRROR_TOPICS:
                 return PauseMirrorTopicsResponse.parse(readable, version);
             case RESUME_MIRROR_TOPICS:

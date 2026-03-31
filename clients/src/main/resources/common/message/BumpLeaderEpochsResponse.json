@@ -16,7 +16,7 @@
 {
   "apiKey": 105,
   "type": "response",
-  "name": "BumpLeaderEpochResponse",
+  "name": "BumpLeaderEpochsResponse",
   // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",
