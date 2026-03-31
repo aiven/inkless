@@ -190,7 +190,6 @@ class ControllerApis(
         if (exception != null) {
           requestHelper.handleError(request, exception)
         } else {
-
           requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
             new BumpLeaderEpochsResponse(response.setThrottleTimeMs(throttleMs)))
         }
