@@ -17,34 +17,31 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.BumpLeaderEpochRequestData;
-import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
+import org.apache.kafka.common.message.DeleteMirrorRequestData;
+import org.apache.kafka.common.message.DeleteMirrorResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
 
-import java.util.Map;
+public class DeleteMirrorRequest extends AbstractRequest {
+    public static class Builder extends AbstractRequest.Builder<DeleteMirrorRequest> {
 
-public class BumpLeaderEpochRequest extends AbstractRequest {
-    public static class Builder extends AbstractRequest.Builder<BumpLeaderEpochRequest> {
+        private final DeleteMirrorRequestData data;
 
-        private final BumpLeaderEpochRequestData data;
-
-        public Builder(BumpLeaderEpochRequestData data) {
-            super(ApiKeys.BUMP_LEADER_EPOCH);
+        public Builder(DeleteMirrorRequestData data) {
+            super(ApiKeys.DELETE_MIRROR);
             this.data = data;
         }
 
-        public Builder(String name, Map<String, String> configs) {
-            super(ApiKeys.BUMP_LEADER_EPOCH, ApiKeys.BUMP_LEADER_EPOCH.oldestVersion(),
-                    ApiKeys.BUMP_LEADER_EPOCH.latestVersion());
-            BumpLeaderEpochRequestData data = new BumpLeaderEpochRequestData();
-            this.data = data;
+        public Builder(String mirrorName) {
+            super(ApiKeys.DELETE_MIRROR, ApiKeys.DELETE_MIRROR.oldestVersion(),
+                  ApiKeys.DELETE_MIRROR.latestVersion());
+            this.data = new DeleteMirrorRequestData().setMirrorName(mirrorName);
         }
 
         @Override
-        public BumpLeaderEpochRequest build(short version) {
-            return new BumpLeaderEpochRequest(data, version);
+        public DeleteMirrorRequest build(short version) {
+            return new DeleteMirrorRequest(data, version);
         }
 
         @Override
@@ -53,32 +50,30 @@ public class BumpLeaderEpochRequest extends AbstractRequest {
         }
     }
 
-    private final BumpLeaderEpochRequestData data;
+    private final DeleteMirrorRequestData data;
 
-    public BumpLeaderEpochRequest(BumpLeaderEpochRequestData data, short version) {
-        super(ApiKeys.BUMP_LEADER_EPOCH, version);
+    public DeleteMirrorRequest(DeleteMirrorRequestData data, short version) {
+        super(ApiKeys.DELETE_MIRROR, version);
         this.data = data;
     }
 
     @Override
-    public BumpLeaderEpochRequestData data() {
+    public DeleteMirrorRequestData data() {
         return data;
     }
 
     @Override
     public AbstractResponse getErrorResponse(int throttleTimeMs, Throwable e) {
         Errors error = Errors.forException(e);
-        BumpLeaderEpochResponseData responseData = new BumpLeaderEpochResponseData();
+        DeleteMirrorResponseData responseData = new DeleteMirrorResponseData();
         responseData.setErrorCode(error.code());
-
-        return new BumpLeaderEpochResponse(responseData);
+        return new DeleteMirrorResponse(responseData);
     }
 
-    public static BumpLeaderEpochRequest parse(Readable readable, short version) {
-        return new BumpLeaderEpochRequest(
-                new BumpLeaderEpochRequestData(readable, version),
+    public static DeleteMirrorRequest parse(Readable readable, short version) {
+        return new DeleteMirrorRequest(
+                new DeleteMirrorRequestData(readable, version),
                 version
         );
     }
-
 }

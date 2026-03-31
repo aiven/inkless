@@ -50,8 +50,8 @@ import org.apache.kafka.common.message.BrokerHeartbeatRequestDataJsonConverter;
 import org.apache.kafka.common.message.BrokerHeartbeatResponseDataJsonConverter;
 import org.apache.kafka.common.message.BrokerRegistrationRequestDataJsonConverter;
 import org.apache.kafka.common.message.BrokerRegistrationResponseDataJsonConverter;
-import org.apache.kafka.common.message.BumpLeaderEpochRequestDataJsonConverter;
-import org.apache.kafka.common.message.BumpLeaderEpochResponseDataJsonConverter;
+import org.apache.kafka.common.message.BumpLeaderEpochsRequestDataJsonConverter;
+import org.apache.kafka.common.message.BumpLeaderEpochsResponseDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupDescribeRequestDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupDescribeResponseDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupHeartbeatRequestDataJsonConverter;
@@ -248,8 +248,8 @@ import org.apache.kafka.common.requests.BrokerHeartbeatRequest;
 import org.apache.kafka.common.requests.BrokerHeartbeatResponse;
 import org.apache.kafka.common.requests.BrokerRegistrationRequest;
 import org.apache.kafka.common.requests.BrokerRegistrationResponse;
-import org.apache.kafka.common.requests.BumpLeaderEpochRequest;
-import org.apache.kafka.common.requests.BumpLeaderEpochResponse;
+import org.apache.kafka.common.requests.BumpLeaderEpochsRequest;
+import org.apache.kafka.common.requests.BumpLeaderEpochsResponse;
 import org.apache.kafka.common.requests.ConsumerGroupDescribeRequest;
 import org.apache.kafka.common.requests.ConsumerGroupDescribeResponse;
 import org.apache.kafka.common.requests.ConsumerGroupHeartbeatRequest;
@@ -616,8 +616,8 @@ public class RequestConvertToJson {
                 return WriteMirrorStatesRequestDataJsonConverter.write(((WriteMirrorStatesRequest) request).data(), request.version());
             case READ_MIRROR_STATES:
                 return ReadMirrorStatesRequestDataJsonConverter.write(((ReadMirrorStatesRequest) request).data(), request.version());
-            case BUMP_LEADER_EPOCH:
-                return BumpLeaderEpochRequestDataJsonConverter.write(((BumpLeaderEpochRequest) request).data(), request.version());
+            case BUMP_LEADER_EPOCHS:
+                return BumpLeaderEpochsRequestDataJsonConverter.write(((BumpLeaderEpochsRequest) request).data(), request.version());
             default:
                 throw new IllegalStateException("ApiKey " + request.apiKey() + " is not currently handled in `request`, the " +
                     "code should be updated to do so.");
@@ -818,8 +818,8 @@ public class RequestConvertToJson {
                 return WriteMirrorStatesResponseDataJsonConverter.write(((WriteMirrorStatesResponse) response).data(), version);
             case READ_MIRROR_STATES:
                 return ReadMirrorStatesResponseDataJsonConverter.write(((ReadMirrorStatesResponse) response).data(), version);
-            case BUMP_LEADER_EPOCH:
-                return BumpLeaderEpochResponseDataJsonConverter.write(((BumpLeaderEpochResponse) response).data(), version);
+            case BUMP_LEADER_EPOCHS:
+                return BumpLeaderEpochsResponseDataJsonConverter.write(((BumpLeaderEpochsResponse) response).data(), version);
             default:
                 throw new IllegalStateException("ApiKey " + response.apiKey() + " is not currently handled in `response`, the " +
                     "code should be updated to do so.");

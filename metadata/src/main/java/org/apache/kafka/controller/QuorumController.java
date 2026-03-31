@@ -42,7 +42,7 @@ import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
-import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
+import org.apache.kafka.common.message.BumpLeaderEpochsResponseData;
 import org.apache.kafka.common.message.ControllerRegistrationRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
@@ -51,6 +51,7 @@ import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartiti
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
+import org.apache.kafka.common.message.DeleteMirrorResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
@@ -1783,7 +1784,7 @@ public final class QuorumController implements Controller {
     }
 
     @Override
-    public CompletableFuture<BumpLeaderEpochResponseData> bumpLeaderEpoch(
+    public CompletableFuture<BumpLeaderEpochsResponseData> bumpLeaderEpoch(
             ControllerRequestContext context,
             Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs
     ) {
@@ -1829,6 +1830,15 @@ public final class QuorumController implements Controller {
     ) {
         return appendWriteEvent("resumeMirrorTopics", context.deadlineNs(),
                 () -> configurationControl.resumeMirrorTopics(mirrorName, topics));
+    }
+
+    @Override
+    public CompletableFuture<DeleteMirrorResponseData> deleteMirror(
+            ControllerRequestContext context,
+            String mirrorName
+    ) {
+        return appendWriteEvent("deleteMirror", context.deadlineNs(),
+                () -> configurationControl.deleteMirror(mirrorName));
     }
 
     @Override

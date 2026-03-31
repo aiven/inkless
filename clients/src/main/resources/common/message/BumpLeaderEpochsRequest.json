@@ -17,7 +17,7 @@
   "apiKey": 105,
   "type": "request",
   "listeners": ["broker", "controller"],
-  "name": "BumpLeaderEpochRequest",
+  "name": "BumpLeaderEpochsRequest",
   // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",
@@ -25,10 +25,10 @@
     { "name": "Topics", "type": "[]TopicState", "versions": "0+", "about": "The topic and partitions state.",
       "fields": [
         {"name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
-        { "name": "Partitions", "type": "[]LeaderEpochState", "versions": "0+", "about": "The name or topic ID of the topic.",
+        { "name": "Partitions", "type": "[]LeaderEpochState", "versions": "0+", "about": "The partition leader epochs.",
           "fields": [
-            {"name": "partitionIndex", "type": "int32", "versions": "0+", "about": "The topic name."},
-            {"name": "minLeaderEpoch", "type": "int32", "versions": "0+", "default": -1, "about": "The minimum leader epoch requested."}
+            {"name": "partitionIndex", "type": "int32", "versions": "0+", "about": "The partition index."},
+            {"name": "minLeaderEpoch", "type": "int32", "versions": "0+", "default": -1, "about": "The minimum leader epoch that the destination cluster should bump to."}
           ]}
       ]}
   ]

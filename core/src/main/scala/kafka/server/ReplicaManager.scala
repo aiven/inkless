@@ -1680,7 +1680,6 @@ class ReplicaManager(val config: KafkaConfig,
       getLog(tp).map(log => {
         val endOffsetForEpoch = log.endOffsetForEpoch(leaderEpoch)
         val offsetToTruncate = if (endOffsetForEpoch.isPresent) endOffsetForEpoch.get().offset() else 0L
-        info(s"!!! truncating $tp to leader epoch $leaderEpoch to offset $offsetToTruncate, endOffsetForEpoch = $endOffsetForEpoch")
         log.truncateTo(offsetToTruncate)
         val partition = getPartitionOrException(tp)
         partition.maybeCompleteIsrTruncation(log, onCompleteCallback = Optional.of(callback))

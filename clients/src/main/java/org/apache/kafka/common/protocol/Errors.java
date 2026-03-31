@@ -86,6 +86,7 @@ import org.apache.kafka.common.errors.LeaderNotAvailableException;
 import org.apache.kafka.common.errors.ListenerNotFoundException;
 import org.apache.kafka.common.errors.LogDirNotFoundException;
 import org.apache.kafka.common.errors.MemberIdRequiredException;
+import org.apache.kafka.common.errors.MirrorNotEmptyException;
 import org.apache.kafka.common.errors.MirrorTopicAlreadyPausedException;
 import org.apache.kafka.common.errors.MirrorTopicBeingRemovedException;
 import org.apache.kafka.common.errors.MirrorTopicNotPausedException;
@@ -434,7 +435,8 @@ public enum Errors {
     TOPIC_NOT_IN_MIRROR(138, "The topic does not belong to the specified mirror.", TopicNotInMirrorException::new),
     MIRROR_TOPIC_ALREADY_PAUSED(139, "The mirror topic is already paused.", MirrorTopicAlreadyPausedException::new),
     MIRROR_TOPIC_NOT_PAUSED(140, "The mirror topic is not paused.", MirrorTopicNotPausedException::new),
-    MIRROR_TOPIC_BEING_REMOVED(141, "The mirror topic is being removed.", MirrorTopicBeingRemovedException::new);
+    MIRROR_TOPIC_BEING_REMOVED(141, "The mirror topic is being removed.", MirrorTopicBeingRemovedException::new),
+    MIRROR_NOT_EMPTY(142, "The mirror still has active or non-removed topics.", MirrorNotEmptyException::new);
 
     private static final Logger log = LoggerFactory.getLogger(Errors.class);
 

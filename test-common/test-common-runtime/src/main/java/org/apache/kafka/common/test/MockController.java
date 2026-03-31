@@ -37,7 +37,7 @@ import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
-import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
+import org.apache.kafka.common.message.BumpLeaderEpochsResponseData;
 import org.apache.kafka.common.message.ControllerRegistrationRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
@@ -48,6 +48,7 @@ import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicResult;
+import org.apache.kafka.common.message.DeleteMirrorResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
@@ -135,7 +136,7 @@ public class MockController implements Controller {
         throw new UnsupportedOperationException();
     }
 
-    public CompletableFuture<BumpLeaderEpochResponseData> bumpLeaderEpoch(
+    public CompletableFuture<BumpLeaderEpochsResponseData> bumpLeaderEpoch(
             ControllerRequestContext context,
             Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs) {
         throw new UnsupportedOperationException();
@@ -154,6 +155,13 @@ public class MockController implements Controller {
             ControllerRequestContext context,
             String mirrorName,
             Set<String> topics) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CompletableFuture<DeleteMirrorResponseData> deleteMirror(
+            ControllerRequestContext context,
+            String mirrorName) {
         throw new UnsupportedOperationException();
     }
 
