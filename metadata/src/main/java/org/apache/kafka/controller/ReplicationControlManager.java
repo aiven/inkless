@@ -706,7 +706,6 @@ public class ReplicationControlManager {
     }
 
     public ControllerResult<BumpLeaderEpochsResponseData> bumpLeaderEpochs(Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs) {
-
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         for (Entry<Uuid, Map<Integer, Integer>> partitionLeaderEpoch : partitionLeaderEpochs.entrySet()) {
             Uuid topicId = partitionLeaderEpoch.getKey();

@@ -157,7 +157,8 @@ public class MirrorCoordinator {
                     updateLastMirroredEpochsFuture.complete(null);
                 });
                 CompletableFuture.allOf(bumpLeaderEpochFuture, updateLastMirroredEpochsFuture)
-                        .whenComplete((v, ex) -> writeMirrorPidResetBarrier(mirrorName, topicPartitions));
+                        .whenComplete((v, ex) -> writeMirrorPidResetBarrier(mirrorName, topicPartitions))
+                        .thenRun(() -> transitionTo(mirrorName, topicPartitions, MirrorPartitionState.STOPPED));
                 break;
             case STOPPED:
                 log.debug("STOPPED for topics {}.", topicPartitions);
@@ -417,8 +418,7 @@ public class MirrorCoordinator {
                                 log.error("Failed to write PID reset barrier for partition {} in mirror {}: {}",
                                     tp, mirrorName, pr.error.message());
                             } else {
-                                log.info("Wrote mirror PID reset barrier for partition {} in mirror {}. Moving to STOPPED state.", tp, mirrorName);
-                                transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPED);
+                                log.info("Wrote mirror PID reset barrier for partition {} in mirror {}", tp, mirrorName);
                             }
                             return null;
                         });

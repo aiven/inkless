@@ -944,7 +944,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             BumpLeaderEpochsRequestData.TopicState topicState = new BumpLeaderEpochsRequestData.TopicState();
             List<BumpLeaderEpochsRequestData.LeaderEpochState> topicLeaderEpoch = new ArrayList<>();
             parts.forEach(partitionId -> {
-
                 int epoch = logManager.getLog(new TopicPartition(topic, partitionId), false).get().latestEpoch().orElse(-1);
                 topicLeaderEpoch.add(new BumpLeaderEpochsRequestData.LeaderEpochState().setMinLeaderEpoch(epoch).setPartitionIndex(partitionId));
             });
@@ -955,7 +954,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         channelManager.sendRequest(new BumpLeaderEpochsRequest.Builder(
                 new BumpLeaderEpochsRequestData().setTopics(topicStates)
         ), new ControllerRequestCompletionHandler() {
-
             @Override
             public void onComplete(ClientResponse response) {
                 log.debug("Bump leader epoch response: {}", response);
