@@ -1734,6 +1734,18 @@ public interface Admin extends AutoCloseable {
     ResumeMirrorTopicsResult resumeMirrorTopics(String mirrorName, Set<String> topics, ResumeMirrorTopicsOptions options);
 
     /**
+     * Delete a cluster mirror including its configuration.
+     *
+     * The mirror must be empty (no topics) or all its topics must have been removed (in STOPPED
+     * state). After deletion, all mirror metadata are tombstoned and failback is no longer possible.
+     *
+     * @param mirrorName The name of the cluster mirror to delete
+     * @param options Options for the delete mirror operation
+     * @return The DeleteMirrorResult
+     */
+    DeleteMirrorResult deleteMirror(String mirrorName, DeleteMirrorOptions options);
+
+    /**
      * List the cluster mirrors available in the cluster with the default options.
      *
      * <p>This is a convenience method for {@link #listMirrors(ListMirrorsOptions)} with default options.

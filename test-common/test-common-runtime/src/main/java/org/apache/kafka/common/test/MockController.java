@@ -47,6 +47,7 @@ import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicResult;
+import org.apache.kafka.common.message.DeleteMirrorResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
@@ -147,6 +148,13 @@ public class MockController implements Controller {
             ControllerRequestContext context,
             String mirrorName,
             Set<String> topics) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CompletableFuture<DeleteMirrorResponseData> deleteMirror(
+            ControllerRequestContext context,
+            String mirrorName) {
         throw new UnsupportedOperationException();
     }
 

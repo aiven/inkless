@@ -27,6 +27,7 @@ import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.config.types.Password;
 import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
 import org.apache.kafka.common.message.CreateMirrorResponseData;
+import org.apache.kafka.common.message.DeleteMirrorResponseData;
 import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
@@ -61,6 +62,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.APPEND;
+import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.DELETE;
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
 import static org.apache.kafka.common.config.ConfigResource.Type.BROKER;
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
@@ -459,6 +461,66 @@ public class ConfigurationControlManager {
         data.setErrorCode((short) 0);
 
         return ControllerResult.atomicOf(outputRecords, data);
+    }
+
+    ControllerResult<DeleteMirrorResponseData> deleteMirror(String mirrorName) {
+        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        DeleteMirrorResponseData data = new DeleteMirrorResponseData();
+
+        // Check mirror existence
+        ConfigResource mirrorResource = new ConfigResource(Type.MIRROR, mirrorName);
+        TimelineHashMap<String, String> mirrorConfigs = configData.get(mirrorResource);
+        if (mirrorConfigs == null || mirrorConfigs.isEmpty()) {
+            data.setErrorCode(Errors.UNKNOWN_MIRROR.code());
+            data.setErrorMessage("Mirror '" + mirrorName + "' not found");
+            return ControllerResult.of(records, data);
+        }
+
+        // Precondition: no active/paused topics
+        String removedSuffix = mirrorName + REMOVED_TOPIC_SUFFIX;
+        for (Entry<ConfigResource, TimelineHashMap<String, String>> entry : configData.entrySet()) {
+            if (entry.getKey().type() != Type.TOPIC) continue;
+            String mirrorNameValue = entry.getValue().get(TopicConfig.MIRROR_NAME_CONFIG);
+            if (mirrorNameValue == null || mirrorNameValue.isBlank()) continue;
+            if (mirrorNameValue.equals(mirrorName) || mirrorNameValue.equals(mirrorName + PAUSED_TOPIC_SUFFIX)) {
+                data.setErrorCode(Errors.MIRROR_NOT_EMPTY.code());
+                data.setErrorMessage("Mirror '" + mirrorName + "' still has active or paused topic '"
+                    + entry.getKey().name() + "'");
+                return ControllerResult.of(records, data);
+            }
+        }
+
+        // Clear removed topic associations
+        for (Entry<ConfigResource, TimelineHashMap<String, String>> entry : configData.entrySet()) {
+            if (entry.getKey().type() != Type.TOPIC) continue;
+            String mirrorNameValue = entry.getValue().get(TopicConfig.MIRROR_NAME_CONFIG);
+            if (removedSuffix.equals(mirrorNameValue)) {
+                Map<String, Entry<OpType, String>> keyToOps = Map.of(
+                    TopicConfig.MIRROR_NAME_CONFIG, new AbstractMap.SimpleImmutableEntry<>(SET, ""));
+                ControllerResult<ApiError> configResult = incrementalAlterConfig(entry.getKey(), keyToOps, true);
+                // TODO add failure handling
+                if (configResult.response().isSuccess()) {
+                    records.addAll(configResult.records());
+                }
+            }
+        }
+
+        // Tombstone the mirror config
+        Map<String, Entry<OpType, String>> deleteOps = new HashMap<>();
+        for (String key : mirrorConfigs.keySet()) {
+            deleteOps.put(key, new AbstractMap.SimpleImmutableEntry<>(DELETE, null));
+        }
+        ControllerResult<ApiError> configResult = incrementalAlterConfig(mirrorResource, deleteOps, false);
+        if (configResult.response().isFailure()) {
+            data.setErrorCode(configResult.response().error().code());
+            data.setErrorMessage("Failed to delete mirror configuration");
+            return ControllerResult.of(records, data);
+        }
+        records.addAll(configResult.records());
+
+        // Topic disassociations and mirror config tombstones are applied as a single atomic batch
+        data.setErrorCode((short) 0);
+        return ControllerResult.atomicOf(records, data);
     }
 
     List<ApiMessageAndVersion> createClearElrRecordsAsNeeded(List<ApiMessageAndVersion> input) {

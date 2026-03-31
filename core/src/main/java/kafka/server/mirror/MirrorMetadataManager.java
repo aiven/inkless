@@ -363,7 +363,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             // get all resources containing the non-empty mirror name change
             Map<ConfigResource, ConfigurationDelta> mirrorNameChanged = delta.configsDelta().changes().entrySet().stream().filter(entry ->
                             entry.getValue().changes().containsKey(TopicConfig.MIRROR_NAME_CONFIG) &&
-                                    !entry.getValue().changes().get(TopicConfig.MIRROR_NAME_CONFIG).isEmpty())
+                                    !entry.getValue().changes().get(TopicConfig.MIRROR_NAME_CONFIG).isEmpty()
+                                    && !entry.getValue().changes().get(TopicConfig.MIRROR_NAME_CONFIG).get().isBlank())
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
             // get all topics from the resources
