@@ -16,6 +16,7 @@
  */
 package kafka.server.mirror;
 
+import kafka.log.LogManager;
 import kafka.server.KafkaConfig;
 import kafka.server.NetworkUtils;
 import kafka.server.ReplicaManager;
@@ -34,6 +35,7 @@ import org.apache.kafka.common.acl.AclBinding;
 import org.apache.kafka.common.acl.AclBindingFilter;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.message.BumpLeaderEpochsRequestData;
 import org.apache.kafka.common.message.CreateAclsRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
@@ -56,6 +58,7 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
+import org.apache.kafka.common.requests.BumpLeaderEpochsRequest;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
@@ -118,6 +121,7 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -927,6 +931,42 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
         metadataRefreshError.incrementAndGet();
+    }
+
+    public CompletableFuture<Void> sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        List<BumpLeaderEpochsRequestData.TopicState> topicStates = new ArrayList<>();
+        Map<String, Set<Integer>> partitions = new HashMap<>();
+        topicPartitions.forEach(tp -> {
+            partitions.computeIfAbsent(tp.topic(), key -> new HashSet<>()).add(tp.partition());
+        });
+        partitions.forEach((topic, parts) -> {
+            BumpLeaderEpochsRequestData.TopicState topicState = new BumpLeaderEpochsRequestData.TopicState();
+            List<BumpLeaderEpochsRequestData.LeaderEpochState> topicLeaderEpoch = new ArrayList<>();
+            parts.forEach(partitionId -> {
+                int epoch = logManager.getLog(new TopicPartition(topic, partitionId), false).get().latestEpoch().orElse(-1);
+                topicLeaderEpoch.add(new BumpLeaderEpochsRequestData.LeaderEpochState().setMinLeaderEpoch(epoch).setPartitionIndex(partitionId));
+            });
+            topicState.setTopicId(metadataCache.getTopicId(topic)).setPartitions(topicLeaderEpoch);
+            topicStates.add(topicState);
+        });
+
+        channelManager.sendRequest(new BumpLeaderEpochsRequest.Builder(
+                new BumpLeaderEpochsRequestData().setTopics(topicStates)
+        ), new ControllerRequestCompletionHandler() {
+            @Override
+            public void onComplete(ClientResponse response) {
+                log.debug("Bump leader epoch response: {}", response);
+                future.complete(null);
+            }
+
+            @Override
+            public void onTimeout() {
+                log.warn("BumpLeaderEpoch request timed out");
+            }
+        });
+
+        return future;
     }
 
     /**

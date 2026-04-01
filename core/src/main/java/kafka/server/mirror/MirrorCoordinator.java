@@ -150,8 +150,15 @@ public class MirrorCoordinator {
             case STOPPING:
                 log.debug("STOPPING for topics {}.", topicPartitions);
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
-                truncateToLastStableOffset(topicPartitions, tp -> updateLastMirroredEpochs(mirrorName, Set.of(tp)));
-                writeMirrorPidResetBarrier(mirrorName, topicPartitions);
+                CompletableFuture<Void> bumpLeaderEpochFuture = metadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions);
+                CompletableFuture<Void> updateLastMirroredEpochsFuture = new CompletableFuture<>();
+                truncateToLastStableOffset(topicPartitions, tp -> {
+                    updateLastMirroredEpochs(mirrorName, Set.of(tp));
+                    updateLastMirroredEpochsFuture.complete(null);
+                });
+                CompletableFuture.allOf(bumpLeaderEpochFuture, updateLastMirroredEpochsFuture)
+                        .whenComplete((v, ex) -> writeMirrorPidResetBarrier(mirrorName, topicPartitions))
+                        .thenRun(() -> transitionTo(mirrorName, topicPartitions, MirrorPartitionState.STOPPED));
                 break;
             case STOPPED:
                 log.debug("STOPPED for topics {}.", topicPartitions);
@@ -234,7 +241,7 @@ public class MirrorCoordinator {
             tps.put(topic, partitionIndices);
         });
 
-        updateLastMirroredEpochs(updatedMirrorName, offsets, false);
+        updateLastMirroredEpochs(updatedMirrorName, offsets);
 
         WriteMirrorStatesResponseData data = new WriteMirrorStatesResponseData();
         List<WriteMirrorStatesResponseData.TopicResult> topicResults = new ArrayList<>();
@@ -272,7 +279,7 @@ public class MirrorCoordinator {
             partitionOffsets.put(topic, offsets);
         });
 
-        updateLastMirroredEpochs(mirrorName, partitionOffsets, true);
+        updateLastMirroredEpochs(mirrorName, partitionOffsets);
     }
 
     private CompletableFuture<Optional<TopicPartition>> updateMirrorPartitionState(String mirrorName,
@@ -442,7 +449,7 @@ public class MirrorCoordinator {
     }
 
     /** Persists offsets to local or remote coordinators, optionally transitioning to STOPPED. */
-    public void updateLastMirroredEpochs(String mirrorName, Map<String, Map<Integer, Integer>> partitionOffsets, boolean transitionToStopped) {
+    public void updateLastMirroredEpochs(String mirrorName, Map<String, Map<Integer, Integer>> partitionOffsets) {
         // Separate partitions into local and remote coordinator groups
         Map<Integer, Set<TopicPartition>> localByCoordPartition = new HashMap<>();
         Map<String, Set<MirrorUtils.PartitionStateInfo>> remoteTopicMetadata = new HashMap<>();
@@ -488,25 +495,11 @@ public class MirrorCoordinator {
                     RequestLocal.noCaching(),
                     CollectionConverters.asScala(Map.of())
             );
-
-            // TODO: now we assume all partitions work without error, we should handle error cases
-            if (transitionToStopped) {
-                tps.forEach(tp ->
-                    transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPED));
-            }
         });
 
         // Write to remote coordinator (batched by coordinator node internally)
         if (!remoteTopicMetadata.isEmpty()) {
-            metadataManager.writeStatesToRemoteCoordinator(mirrorName, remoteTopicMetadata, Set.of(), res -> {
-                if (transitionToStopped) {
-                    res.data().topics().forEach(topic ->
-                        topic.partitions().forEach(partition ->
-                            transitionTo(mirrorName,
-                                Set.of(new TopicPartition(topic.name(), partition.partitionIndex())),
-                                MirrorPartitionState.STOPPED)));
-                }
-            });
+            metadataManager.writeStatesToRemoteCoordinator(mirrorName, remoteTopicMetadata, Set.of(), res -> { });
         }
     }
 

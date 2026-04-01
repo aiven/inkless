@@ -34,6 +34,7 @@ import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.{UNDEFINED
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.utils.Time
 import org.apache.kafka.common.{DirectoryId, IsolationLevel, TopicIdPartition, TopicPartition, Uuid, PartitionState => JPartitionState}
+import org.apache.kafka.controller.ConfigurationControlManager
 import org.apache.kafka.metadata.{LeaderAndIsr, LeaderRecoveryState, MetadataCache}
 import org.apache.kafka.server.common.RequestLocal
 import org.apache.kafka.server.log.remote.TopicPartitionLog
@@ -793,7 +794,12 @@ class Partition(val topicPartition: TopicPartition,
         // to ensure that these followers can truncate to the right offset, we must cache the new
         // leader epoch and the start offset since it should be larger than any epoch that a follower
         // would try to query.
-        leaderLog.assignEpochStartOffset(partitionState.leaderEpoch, leaderEpochStartOffset)
+
+        // don't update the leader epoch if the partition is a mirrored leader, we'll update it when receiving batches
+        // from source cluster leader
+        if (getMirrorName().isEmpty || getMirrorName().endsWith(ConfigurationControlManager.REMOVED_TOPIC_SUFFIX)) {
+          leaderLog.assignEpochStartOffset(partitionState.leaderEpoch, leaderEpochStartOffset)
+        }
 
         // Initialize lastCaughtUpTime of replicas as well as their lastFetchTimeMs and
         // lastFetchLeaderLogEndOffset.

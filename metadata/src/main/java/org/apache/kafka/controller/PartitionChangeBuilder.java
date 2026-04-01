@@ -60,6 +60,7 @@ public class PartitionChangeBuilder {
         if (record.removingReplicas() != null) return false;
         if (record.addingReplicas() != null) return false;
         if (record.leaderRecoveryState() != LeaderRecoveryState.NO_CHANGE) return false;
+        if (record.minLeaderEpoch() != -1) return false;
         return record.directories() == null;
     }
 
@@ -437,7 +438,8 @@ public class PartitionChangeBuilder {
     public Optional<ApiMessageAndVersion> build() {
         PartitionChangeRecord record = new PartitionChangeRecord().
             setTopicId(topicId).
-            setPartitionId(partitionId);
+            setPartitionId(partitionId).
+            setMinLeaderEpoch(minLeaderEpoch);
         completeReassignmentIfNeeded();
 
         maybePopulateTargetElr();
