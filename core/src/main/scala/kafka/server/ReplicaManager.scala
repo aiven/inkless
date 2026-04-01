@@ -2821,10 +2821,10 @@ class ReplicaManager(val config: KafkaConfig,
       }
     }
 
-    notifyDisklessInitMetadataApplied(delta)
+    initDisklessLogOnControlPlane(delta)
   }
 
-  private def notifyDisklessInitMetadataApplied(delta: TopicsDelta): Unit = {
+  private def initDisklessLogOnControlPlane(delta: TopicsDelta): Unit = {
     initDisklessLogManager.foreach { manager =>
       delta.changedTopics().forEach { (topicId, topicDelta) =>
         val topicName = topicDelta.name()
@@ -2834,14 +2834,14 @@ class ReplicaManager(val config: KafkaConfig,
           val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
             Option(topicImage.partitions().get(partitionId))
           }
-          val shouldNotifyDisklessInit = previousPartition match {
+          val shouldInitDisklessLogOnControlPlane = previousPartition match {
             case None => false
             case Some(previous) =>
               previous.disklessStartOffset == PartitionRegistration.NO_DISKLESS_START_OFFSET &&
                 partitionRegistration.disklessStartOffset >= 0
           }
           val tp = new TopicPartition(topicName, partitionId)
-          if (shouldNotifyDisklessInit) {
+          if (shouldInitDisklessLogOnControlPlane) {
             // Send init only for partitions that currently have a local Partition instance.
             onlinePartition(tp) match {
               case Some(partition) =>
