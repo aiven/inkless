@@ -530,13 +530,19 @@ public class LogConfig extends AbstractConfig {
         validateDisklessTransition(isCreation, isDisklessExplicitlySet, isDisklessEnabled, wasDisklessEnabled, isDisklessAllowFromClassicEnabled);
 
         // Only one between diskless.enable and remote.storage.enable can be set, no matter the value.
-        // Exception: when classic-to-diskless migration is allowed, we permit setting diskless.enable
-        // on a topic that already has remote.storage.enable (the migration flow handles this).
+        // Exception: when classic-to-diskless migration is allowed, we permit diskless.enable=true
+        // on a topic that already had remote.storage.enable=true — both during the migration itself
+        // and in steady state afterward (migrated topics retain both configs).
+        // Note: in the controller path, requestedConfigs is the merged state (existing + changes),
+        // so we cannot distinguish "client set this" from "already existed". We detect the exception
+        // by checking that diskless is (or will be) enabled and remote storage was and remains enabled.
         final boolean wasRemoteStorageEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
-        final boolean isClassicToDisklessMigration = isDisklessAllowFromClassicEnabled
-            && isDisklessExplicitlySet && isDisklessEnabled && !isRemoteStorageExplicitlySet
-            && wasRemoteStorageExplicitlySet && wasRemoteStorageEnabled;
-        if (!isClassicToDisklessMigration) {
+        final boolean requestedRemoteStorageEnabled = (Boolean) newConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
+        final boolean isDisklessWithRemoteStorageLegacy = isDisklessAllowFromClassicEnabled
+            && isDisklessEnabled
+            && wasRemoteStorageExplicitlySet && wasRemoteStorageEnabled
+            && requestedRemoteStorageEnabled;
+        if (!isDisklessWithRemoteStorageLegacy) {
             final boolean hasExplicitDiskless = isDisklessExplicitlySet || wasDisklessExplicitlySet;
             final boolean hasExplicitRemoteStorage = isRemoteStorageExplicitlySet || wasRemoteStorageExplicitlySet;
             validateDisklessAndRemoteStorageMutualExclusion(isDisklessExplicitlySet, isRemoteStorageExplicitlySet, hasExplicitDiskless, hasExplicitRemoteStorage);

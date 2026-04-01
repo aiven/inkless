@@ -573,9 +573,50 @@ class LogConfigTest {
     // Mutual exclusion still applies when existing remote.storage.enable=false
     assertInvalid(existingWithRemoteFalse, setDisklessTrue, mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true)
     // Classic-to-diskless migration: setting diskless.enable=true on a topic with remote.storage.enable=true is valid.
-    // In the controller flow, only the requested configs (here, diskless.enable=true) are passed as props; the
-    // existing configs (here, remote.storage.enable=true) come from existingWithRemoteTrue.
-    assertValid(existingWithRemoteTrue, setDisklessTrue, kafkaConfig, disklessAllowFromClassic = true)
+    // In the real controller flow (ConfigurationControlManager.validateAlterConfig), props contains the merged
+    // state of existing overrides + requested changes, so remote.storage.enable=true is included in props.
+    val setDisklessTrueWithExistingRemoteTrue = topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true"
+    )
+    assertValid(existingWithRemoteTrue, setDisklessTrueWithExistingRemoteTrue, kafkaConfig, disklessAllowFromClassic = true)
+    // Migration not allowed without allowFromClassic even with merged props
+    assertInvalid(existingWithRemoteTrue, setDisklessTrueWithExistingRemoteTrue,
+      "It is invalid to enable diskless on an already existing topic.", kafkaConfig, disklessAllowFromClassic = false)
+
+    // Updating both diskless.enable=true and remote.storage.enable=false in the same request must be rejected
+    // by mutual exclusion, even when allowFromClassic=true.
+    val setDisklessTrueAndRemoteFalse = topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "false"
+    )
+    assertInvalid(existingWithRemoteTrue, setDisklessTrueAndRemoteFalse,
+      mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true)
+
+    // Case 1c: Steady state after migration — a migrated topic has both diskless.enable=true and
+    // remote.storage.enable=true in existing configs. Updating an unrelated config (e.g. retention.ms)
+    // must not be blocked by mutual exclusion. In the controller path, props is the merged state,
+    // so both configs appear in requestedConfigs.
+    val existingMigrated = util.Map.of(
+      TopicConfig.DISKLESS_ENABLE_CONFIG, "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"
+    )
+    val setRetentionOnMigrated = topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true",
+      TopicConfig.RETENTION_MS_CONFIG -> "86400000"
+    )
+    assertValid(existingMigrated, setRetentionOnMigrated, kafkaConfig, disklessAllowFromClassic = true)
+
+    // Case 1d: Enabling diskless while simultaneously disabling remote storage (with delete) must still
+    // be rejected. The migration bypass only applies when remote storage remains enabled.
+    val setDisklessTrueAndRemoteFalseWithDelete = topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "false",
+      TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG -> "true"
+    )
+    assertInvalid(existingWithRemoteTrue, setDisklessTrueAndRemoteFalseWithDelete,
+      mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true)
 
     // Case 2: set diskless.enable=false with allowFromClassic=true - disabling diskless is still forbidden
     val setDisklessFalse = topicProps(TopicConfig.DISKLESS_ENABLE_CONFIG -> "false")
