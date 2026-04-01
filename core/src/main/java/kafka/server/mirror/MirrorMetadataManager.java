@@ -121,6 +121,7 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -932,7 +933,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         metadataRefreshError.incrementAndGet();
     }
 
-    public void sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions) {
+    public CompletableFuture<Void> sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
         List<BumpLeaderEpochsRequestData.TopicState> topicStates = new ArrayList<>();
         Map<String, Set<Integer>> partitions = new HashMap<>();
         topicPartitions.forEach(tp -> {
@@ -942,7 +944,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             BumpLeaderEpochsRequestData.TopicState topicState = new BumpLeaderEpochsRequestData.TopicState();
             List<BumpLeaderEpochsRequestData.LeaderEpochState> topicLeaderEpoch = new ArrayList<>();
             parts.forEach(partitionId -> {
-
                 int epoch = logManager.getLog(new TopicPartition(topic, partitionId), false).get().latestEpoch().orElse(-1);
                 topicLeaderEpoch.add(new BumpLeaderEpochsRequestData.LeaderEpochState().setMinLeaderEpoch(epoch).setPartitionIndex(partitionId));
             });
@@ -952,7 +953,20 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         channelManager.sendRequest(new BumpLeaderEpochsRequest.Builder(
                 new BumpLeaderEpochsRequestData().setTopics(topicStates)
-        ), new TimeoutHandler(log));
+        ), new ControllerRequestCompletionHandler() {
+            @Override
+            public void onComplete(ClientResponse response) {
+                log.debug("Bump leader epoch response: {}", response);
+                future.complete(null);
+            }
+
+            @Override
+            public void onTimeout() {
+                log.warn("BumpLeaderEpoch request timed out");
+            }
+        });
+
+        return future;
     }
 
     /**
