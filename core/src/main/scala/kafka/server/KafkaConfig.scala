@@ -632,6 +632,21 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
     if (nodeId != brokerId) {
       throw new ConfigException(s"You must set `${KRaftConfigs.NODE_ID_CONFIG}` to the same value as `${ServerConfigs.BROKER_ID_CONFIG}`.")
     }
+    // Diskless feature flag dependency chain:
+    //   diskless.storage.system.enable
+    //     → diskless.managed.rf.enable
+    //       → diskless.allow.from.classic.enable (also requires remote.log.storage.system.enable)
+    if (disklessManagedReplicasEnabled) {
+      require(disklessStorageSystemEnabled,
+        s"${ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG} requires ${ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG}=true")
+    }
+    if (disklessAllowFromClassicEnabled) {
+      require(disklessManagedReplicasEnabled,
+        s"${ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG} requires ${ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG}=true")
+      require(remoteLogManagerConfig.isRemoteStorageSystemEnabled,
+        s"${ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG} requires ${RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP}=true")
+    }
+
     require(logRollTimeMillis >= 1, "log.roll.ms must be greater than or equal to 1")
     require(logRollTimeJitterMillis >= 0, "log.roll.jitter.ms must be greater than or equal to 0")
     require(logRetentionTimeMillis >= 1 || logRetentionTimeMillis == -1, "log.retention.ms must be unlimited (-1) or, greater than or equal to 1")
