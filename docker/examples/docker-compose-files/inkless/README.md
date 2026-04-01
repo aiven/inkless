@@ -12,7 +12,7 @@ See the [Quickstart guide](../../../../docs/inkless/QUICKSTART.md#dockerized-dem
 | `make gcs-local`        | Fake GCS server                                   |
 | `make azure-local`      | Azurite Azure-compatible storage                  |
 | `make s3-aws`           | Real AWS S3 (requires AWS credentials)            |
-| `make managed-replicas` | Multi-AZ cluster with managed replicas (RF=2)     |
+| `make ts-unification`   | Diskless tiered storage unification               |
 | `make destroy`          | Manual cleanup (run after stopping the demo)      |
 
 ## Image version
@@ -27,19 +27,33 @@ make s3-local KAFKA_VERSION=local         # Locally built image (requires: make 
 
 See [Releases](../../../../docs/inkless/RELEASES.md#docker-images) for all available tags.
 
-## Testing Managed Replicas (Multi-AZ)
+## Diskless Tiered Storage Unification
 
-Test diskless topics with managed replicas (RF > 1) using the managed replicas overlay.
+Test classic-to-diskless migration and tiered storage unification features. The Inkless image bundles the
+[Aiven Tiered Storage plugin](https://github.com/Aiven-Open/tiered-storage-for-apache-kafka) (v1.1.1) —
+no local plugin build required.
 
 ### Quick start
 
 ```bash
-# Start 2-broker cluster with rack assignments (az1, az2)
-make managed-replicas KAFKA_VERSION=local
+# Start 2-broker cluster with classic TS + diskless + migration bridge
+make ts-unification
 
 # Or manually:
-docker compose -f docker-compose.yml -f docker-compose.s3-local.yml -f docker-compose.managed-replicas.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.s3-local.yml \
+               -f docker-compose.ts-unification.yml up -d
 ```
+
+### What's enabled
+
+| Config                                | Value  | Purpose                                         |
+|---------------------------------------|--------|--------------------------------------------------|
+| `remote.log.storage.system.enable`    | `true` | Classic tiered storage via Aiven TS plugin       |
+| `diskless.allow.from.classic.enable`  | `true` | Allow classic-to-diskless topic migration        |
+| `classic.remote.storage.force.enable` | `true` | All classic topics get `remote.storage.enable=true` |
+| `log.diskless.enable`                 | `false`| Topics start as classic (not diskless by default)|
+| `diskless.managed.rf.enable`          | `true` | Managed replicas with rack-aware placement       |
+| `default.replication.factor`          | `2`    | One replica per AZ                               |
 
 ### Cluster topology
 
@@ -48,87 +62,65 @@ docker compose -f docker-compose.yml -f docker-compose.s3-local.yml -f docker-co
 | broker   | 1       | az1  | broker+controller |
 | broker2  | 2       | az2  | broker+controller |
 
+### Storage
+
+Both classic tiered storage and diskless (Inkless) share the same MinIO `inkless` bucket:
+- **Classic tiered storage**: Aiven TS plugin → `tiered-storage/` prefix
+- **Diskless (Inkless)**: Inkless → bucket root
+
 ### Test procedure
 
-**Step 1: Create a diskless topic**
+**Step 1: Create a classic topic (default)**
 
 ```bash
 docker compose exec broker /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server broker:19092 \
-  --create --topic test-managed \
-  --config diskless.enable=true \
-  --partitions 3
+  --create --topic test-classic \
+  --partitions 1 --replication-factor 2
 ```
 
-**Step 2: Verify RF=2 (one replica per AZ)**
+Verify it has `remote.storage.enable=true` and `diskless.enable=false`:
 
 ```bash
 docker compose exec broker /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server broker:19092 \
-  --describe --topic test-managed
+  --describe --topic test-classic
 ```
 
-Example output (your exact leader/replica ordering may differ):
-```
-Topic: test-managed  PartitionCount: 3  ReplicationFactor: 2
-  Partition: 0  Leader: 1  Replicas: 1,2  Isr: 1,2
-  Partition: 1  Leader: 2  Replicas: 2,1  Isr: 2,1
-  Partition: 2  Leader: 1  Replicas: 1,2  Isr: 1,2
-```
-
-You should verify that `ReplicationFactor: 2` and that each partition's replicas include both broker IDs `1` and `2` (one replica per AZ).
-
-**Step 3: Produce messages**
+**Step 2: Produce messages**
 
 ```bash
 docker compose exec broker /opt/kafka/bin/kafka-console-producer.sh \
   --bootstrap-server broker:19092 \
-  --topic test-managed
+  --topic test-classic
 ```
 
-**Step 4: Consume messages**
+**Step 3: Migrate to diskless**
+
+```bash
+docker compose exec broker /opt/kafka/bin/kafka-configs.sh \
+  --bootstrap-server broker:19092 \
+  --alter --entity-type topics --entity-name test-classic \
+  --add-config diskless.enable=true
+```
+
+**Step 4: Verify migration**
+
+```bash
+docker compose exec broker /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server broker:19092 \
+  --describe --topic test-classic
+```
+
+The topic should now show `diskless.enable=true`.
+
+**Step 5: Consume from beginning (spans remote-classic + diskless)**
 
 ```bash
 docker compose exec broker /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server broker:19092 \
-  --topic test-managed \
+  --topic test-classic \
   --from-beginning
-```
-
-### Testing AZ-aware routing
-
-Use the `diskless_az=<az>` prefix in client ID to enable AZ-aware routing:
-
-```bash
-# Produce with AZ hint (prefers az1 replica)
-docker compose exec broker /opt/kafka/bin/kafka-console-producer.sh \
-  --bootstrap-server broker:19092 \
-  --topic test-managed \
-  --command-property client.id=diskless_az=az1
-
-# Consume with AZ hint (prefers az2 replica)
-docker compose exec broker /opt/kafka/bin/kafka-console-consumer.sh \
-  --bootstrap-server broker:19092 \
-  --topic test-managed \
-  --from-beginning \
-  --command-property client.id=diskless_az=az2
-```
-
-### Verifying metrics
-
-Check transformer metrics via Prometheus endpoint:
-
-```bash
-# View all AZ routing metrics
-curl -s http://localhost:7070/metrics | grep -Ei "client[-_]az"
-
-# Key metrics:
-# - client-az-hit-rate: Requests where broker found in client AZ
-# - client-az-miss-rate: Requests routed to different AZ
-# - client-az-unaware-rate: Requests without AZ hint
-# - cross-az-routing-total: Cross-AZ routing events
-# - fallback-total: Fallbacks to non-replica brokers
-# - offline-replicas-routed-around: Routing around offline replicas
 ```
 
 ### Cleanup
