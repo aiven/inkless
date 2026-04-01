@@ -862,7 +862,8 @@ public class DelayedShareFetch extends DelayedOperation {
                                     logReadResult.lastStableOffset().isPresent() ? OptionalLong.of(logReadResult.lastStableOffset().getAsLong()) : OptionalLong.empty(),
                                     info.abortedTransactions,
                                     logReadResult.preferredReadReplica().isPresent() ? OptionalInt.of(logReadResult.preferredReadReplica().getAsInt()) : OptionalInt.empty(),
-                                    false
+                                    false,
+                                    Optional.empty()
                                 )
                             )
                         );

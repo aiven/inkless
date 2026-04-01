@@ -1847,6 +1847,7 @@ public class DelayedShareFetchTest {
             -1L,
             OptionalLong.empty(),
             OptionalInt.empty(),
+            Optional.empty(),
             Optional.empty()
         ));
         when(pendingRemoteFetches.remoteFetches()).thenReturn(List.of(remoteFetch));
@@ -1928,6 +1929,7 @@ public class DelayedShareFetchTest {
             -1L,
             OptionalLong.empty(),
             OptionalInt.empty(),
+            Optional.empty(),
             Optional.empty()
         ));
         when(pendingRemoteFetches.remoteFetches()).thenReturn(List.of(remoteFetch));
@@ -2003,6 +2005,7 @@ public class DelayedShareFetchTest {
             -1L,
             OptionalLong.empty(),
             OptionalInt.empty(),
+            Optional.empty(),
             Optional.empty()
         ))));
         remoteReadTopicIdPartitions.forEach(topicIdPartition -> logReadResults.add(new Tuple2<>(topicIdPartition, new LogReadResult(
@@ -2015,6 +2018,7 @@ public class DelayedShareFetchTest {
             -1L,
             OptionalLong.empty(),
             OptionalInt.empty(),
+            Optional.empty(),
             Optional.empty()
         ))));
         return CollectionConverters.asScala(logReadResults).toSeq();

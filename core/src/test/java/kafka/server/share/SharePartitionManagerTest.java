@@ -3226,6 +3226,7 @@ public class SharePartitionManagerTest {
             -1L,
             OptionalLong.empty(),
             OptionalInt.empty(),
+            Optional.empty(),
             Optional.empty()
         ))));
         return CollectionConverters.asScala(logReadResults).toSeq();

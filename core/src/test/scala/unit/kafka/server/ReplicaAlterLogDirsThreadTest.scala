@@ -136,7 +136,8 @@ class ReplicaAlterLogDirsThreadTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false)
+      false,
+      Optional.empty())
     mockFetchFromCurrentLog(tid1p0, fencedRequestData, config, replicaManager, fencedResponseData)
 
     val endPoint = new BrokerEndPoint(0, "localhost", 1000)
@@ -177,7 +178,8 @@ class ReplicaAlterLogDirsThreadTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false)
+      false,
+      Optional.empty())
     mockFetchFromCurrentLog(tid1p0, requestData, config, replicaManager, responseData)
 
     thread.doWork()
@@ -236,7 +238,8 @@ class ReplicaAlterLogDirsThreadTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false)
+      false,
+      Optional.empty())
     mockFetchFromCurrentLog(tid1p0, requestData, config, replicaManager, responseData)
 
     val endPoint = new BrokerEndPoint(0, "localhost", 1000)
@@ -322,7 +325,8 @@ class ReplicaAlterLogDirsThreadTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false)
+      false,
+      Optional.empty())
     mockFetchFromCurrentLog(tid1p0, requestData, config, replicaManager, responseData)
 
     val endPoint = new BrokerEndPoint(0, "localhost", 1000)
@@ -417,7 +421,8 @@ class ReplicaAlterLogDirsThreadTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false)
+      false,
+      Optional.empty())
     mockFetchFromCurrentLog(tid1p0, requestData, config, replicaManager, responseData)
 
     val endPoint = new BrokerEndPoint(0, "localhost", 1000)

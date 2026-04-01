@@ -49,7 +49,6 @@ import org.apache.kafka.common.protocol.{ApiKeys, ApiMessage, Errors}
 import org.apache.kafka.common.record._
 import org.apache.kafka.common.replica.ClientMetadata
 import org.apache.kafka.common.replica.ClientMetadata.DefaultClientMetadata
-import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.FindCoordinatorRequest.CoordinatorType
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
 import org.apache.kafka.common.requests._
@@ -905,8 +904,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           else if (!metadataCache.contains(topicIdPartition.topicPartition))
             erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
           else {
-            interesting += topicIdPartition -> new PartitionData(data.topicId, data.fetchOffset, data.logStartOffset,
-              data.maxBytes, data.currentLeaderEpoch, data.lastFetchedEpoch)
+            interesting += topicIdPartition -> data
           }
         }
       } else {
@@ -964,6 +962,11 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setAbortedTransactions(abortedTransactions)
           .setRecords(data.records)
           .setPreferredReadReplica(data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID))
+
+        // For mirrored follower partitions, set mirrorLeaderEpoch from the log's highest epoch
+        if (versionId >= 19 && data.currentMirrorLeaderEpoch.isPresent) {
+          partitionData.setMirrorLeaderEpoch(data.currentMirrorLeaderEpoch.get())
+        }
 
         if (versionId >= 16) {
           data.error match {
