@@ -21,7 +21,8 @@ package kafka.server.metadata
 import io.aiven.inkless.control_plane.MetadataView
 import org.apache.kafka.admin.BrokerMetadata
 import org.apache.kafka.common.config.TopicConfig
-import org.apache.kafka.common.{TopicIdPartition, Uuid}
+import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
+import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.storage.internals.log.LogConfig
 
 import org.apache.kafka.common.Node

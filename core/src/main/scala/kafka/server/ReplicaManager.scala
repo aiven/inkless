@@ -1787,8 +1787,8 @@ class ReplicaManager(val config: KafkaConfig,
           case (true, false) =>
             invalidDisklessFetchResponses += tp -> new FetchPartitionData(
               Errors.INVALID_REQUEST,
-              UnifiedLog.UNKNOWN_OFFSET,
-              UnifiedLog.UNKNOWN_OFFSET,
+              UnifiedLog.UnknownOffset,
+              UnifiedLog.UnknownOffset,
               MemoryRecords.EMPTY,
               Optional.empty(),
               OptionalLong.empty(),
