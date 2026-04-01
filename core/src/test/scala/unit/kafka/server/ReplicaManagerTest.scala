@@ -7340,6 +7340,9 @@ class ReplicaManagerTest {
       disklessManagedReplicasEnabled: Boolean = false
     ): ReplicaManager = {
       val props = TestUtils.createBrokerConfig(1, logDirCount = 2)
+      if (disklessManagedReplicasEnabled) {
+        props.put(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
+      }
       props.put(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, disklessManagedReplicasEnabled.toString)
       val config = KafkaConfig.fromProps(props)
       val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
