@@ -33,6 +33,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -51,6 +52,7 @@ import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 
@@ -119,7 +121,7 @@ public class Reader implements AutoCloseable {
         BrokerTopicStats brokerTopicStats,
         int fetchMetadataThreadPoolSize,
         int fetchDataThreadPoolSize,
-        ObjectFetcher laggingObjectFetcher,
+        Optional<StorageBackend> maybeLaggingFetchStorage,
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
         int laggingConsumerThreadPoolSize,
@@ -135,14 +137,12 @@ public class Reader implements AutoCloseable {
             maxBatchesPerPartitionToFind,
             Executors.newFixedThreadPool(fetchMetadataThreadPoolSize, new InklessThreadFactory("inkless-fetch-metadata-", false)),
             Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory("inkless-fetch-data-", false)),
-            // Only create lagging consumer fetcher when feature is enabled (pool size > 0).
-            // A pool size of 0 is a valid configuration that explicitly disables the feature (null fetcher and executor).
-            laggingConsumerThreadPoolSize > 0 ? laggingObjectFetcher : null,
+            maybeLaggingFetchStorage.orElse(null),
             laggingConsumerThresholdMs,
             laggingConsumerRequestRateLimit,
             // Only create lagging consumer resources when feature is enabled (pool size > 0).
             // A pool size of 0 is a valid configuration that explicitly disables the feature
-            // by passing both a null executor and a null laggingObjectFetcher.
+            // by passing both a null executor and a null lagging fetch storage.
             laggingConsumerThreadPoolSize > 0
                 ? createBoundedThreadPool(laggingConsumerThreadPoolSize)
                 : null,
@@ -435,8 +435,7 @@ public class Reader implements AutoCloseable {
         if (metadataThreadPoolMonitor != null) metadataThreadPoolMonitor.close();
         if (dataThreadPoolMonitor != null) dataThreadPoolMonitor.close();
         if (laggingConsumerThreadPoolMonitor != null) laggingConsumerThreadPoolMonitor.close();
-        objectFetcher.close();
-        if (laggingConsumerObjectFetcher != null) laggingConsumerObjectFetcher.close();
+        // SharedState owns the storage backend lifecycle; only close thread pools and metrics here.
         fetchMetrics.close();
     }
 }

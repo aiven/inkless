@@ -71,7 +71,7 @@ public class FileMerger implements Runnable, Closeable {
         this.time = sharedState.time();
         this.config = sharedState.config();
         this.controlPlane = sharedState.controlPlane();
-        this.storage = sharedState.buildStorage();
+        this.storage = sharedState.backgroundStorage();
         this.objectKeyCreator = sharedState.objectKeyCreator();
         this.metrics = new FileMergerMetrics();
 
@@ -239,7 +239,7 @@ public class FileMerger implements Runnable, Closeable {
 
     @Override
     public void close() throws IOException {
-        storage.close();
+        // SharedState owns the storage backend lifecycle; only close component metrics here.
         metrics.close();
     }
 }
