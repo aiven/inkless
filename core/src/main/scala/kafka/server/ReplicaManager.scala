@@ -2829,49 +2829,60 @@ class ReplicaManager(val config: KafkaConfig,
       delta.changedTopics().forEach { (topicId, topicDelta) =>
         val topicName = topicDelta.name()
         topicDelta.partitionChanges().forEach { (partitionId, partitionRegistration) =>
-          if (partitionRegistration.disklessStartOffset != PartitionRegistration.NO_DISKLESS_START_OFFSET &&
-            shouldNotifyDisklessInitFromDelta(delta, topicId, partitionId, partitionRegistration)) {
-            val tp = new TopicPartition(topicName, partitionId)
-            onlinePartition(tp).foreach { partition =>
-              val producerStates = partitionRegistration.disklessProducerStates.asScala.map { producerState =>
-                new InitDisklessLogProducerState(
-                  producerState.producerId(),
-                  producerState.producerEpoch(),
-                  producerState.baseSequence(),
-                  producerState.lastSequence(),
-                  producerState.assignedOffset(),
-                  producerState.batchMaxTimestamp()
+          // Notify only on the specific transition from "not diskless-initialized"
+          // to "diskless-initialized" in metadata.
+          val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
+            Option(topicImage.partitions().get(partitionId))
+          }
+          val shouldNotifyDisklessInit = previousPartition match {
+            case None => false
+            case Some(previous) =>
+              previous.disklessStartOffset == PartitionRegistration.NO_DISKLESS_START_OFFSET &&
+                partitionRegistration.disklessStartOffset >= 0
+          }
+          val tp = new TopicPartition(topicName, partitionId)
+          if (shouldNotifyDisklessInit) {
+            // Send init only for partitions that currently have a local Partition instance.
+            onlinePartition(tp) match {
+              case Some(partition) =>
+                val producerStates = partitionRegistration.disklessProducerStates.asScala.map { producerState =>
+                  new InitDisklessLogProducerState(
+                    producerState.producerId(),
+                    producerState.producerEpoch(),
+                    producerState.baseSequence(),
+                    producerState.lastSequence(),
+                    producerState.assignedOffset(),
+                    producerState.batchMaxTimestamp()
+                  )
+                }.asJava
+                manager.initOnControlPlane(
+                  partition = partition,
+                  topicId = topicId,
+                  topicName = topicName,
+                  disklessStartOffset = partitionRegistration.disklessStartOffset,
+                  producerStates = producerStates
                 )
-              }.asJava
-              manager.initOnControlPlane(
-                partition = partition,
-                topicId = topicId,
-                topicName = topicName,
-                disklessStartOffset = partitionRegistration.disklessStartOffset,
-                producerStates = producerStates
-              )
+              case None =>
+                stateChangeLogger.info(
+                  s"Skipping diskless init on control plane for $tp because the partition is not online locally."
+                )
+            }
+          } else {
+            previousPartition match {
+              case None =>
+                stateChangeLogger.info(
+                  s"Skipping diskless init on control plane for $tp because no previous partition registration was found."
+                )
+              case Some(previous) =>
+                stateChangeLogger.info(
+                  s"Skipping diskless init on control plane for $tp because transition did not match " +
+                    s"${PartitionRegistration.NO_DISKLESS_START_OFFSET} -> >=0 " +
+                    s"(previous=${previous.disklessStartOffset}, current=${partitionRegistration.disklessStartOffset})."
+                )
             }
           }
         }
       }
-    }
-  }
-
-  private def shouldNotifyDisklessInitFromDelta(
-    delta: TopicsDelta,
-    topicId: Uuid,
-    partitionId: Int,
-    registration: org.apache.kafka.metadata.PartitionRegistration
-  ): Boolean = {
-    val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
-      Option(topicImage.partitions().get(partitionId))
-    }
-
-    previousPartition match {
-      case None => true
-      case Some(previous) =>
-        previous.disklessStartOffset != registration.disklessStartOffset ||
-          previous.disklessProducerStates != registration.disklessProducerStates
     }
   }
 
