@@ -75,6 +75,25 @@ RUN set -eux ; \
     apk del wget gpg gpg-agent; \
     apk cache clean;
 
+# Aiven Tiered Storage plugin (classic remote storage support)
+ARG ts_plugin_version=1.1.1
+ARG ts_plugin_base_url=https://github.com/Aiven-Open/tiered-storage-for-apache-kafka/releases/download/v${ts_plugin_version}
+
+ADD ${ts_plugin_base_url}/core-${ts_plugin_version}.tgz /tmp/core.tgz
+ADD ${ts_plugin_base_url}/s3-${ts_plugin_version}.tgz /tmp/s3.tgz
+ADD ${ts_plugin_base_url}/gcs-${ts_plugin_version}.tgz /tmp/gcs.tgz
+ADD ${ts_plugin_base_url}/azure-${ts_plugin_version}.tgz /tmp/azure.tgz
+
+RUN mkdir -p /opt/tiered-storage-plugin/core \
+             /opt/tiered-storage-plugin/s3 \
+             /opt/tiered-storage-plugin/gcs \
+             /opt/tiered-storage-plugin/azure && \
+    tar xzf /tmp/core.tgz -C /opt/tiered-storage-plugin/core --strip-components=1 && \
+    tar xzf /tmp/s3.tgz -C /opt/tiered-storage-plugin/s3 --strip-components=1 && \
+    tar xzf /tmp/gcs.tgz -C /opt/tiered-storage-plugin/gcs --strip-components=1 && \
+    tar xzf /tmp/azure.tgz -C /opt/tiered-storage-plugin/azure --strip-components=1 && \
+    rm /tmp/*.tgz
+
 COPY --from=build-jsa kafka.jsa /opt/kafka/kafka.jsa
 COPY --from=build-jsa storage.jsa /opt/kafka/storage.jsa
 COPY --chown=appuser:appuser resources/common-scripts /etc/kafka/docker
