@@ -17,8 +17,6 @@
 
 package org.apache.kafka.common.security.oauthbearer.internals.secured;
 
-import org.apache.kafka.common.KafkaException;
-
 import org.jose4j.jwk.HttpsJwks;
 import org.jose4j.jwk.JsonWebKey;
 import org.jose4j.jwk.VerificationJwkSelector;
@@ -105,8 +103,6 @@ public class RefreshingHttpsJwksVerificationKeyResolver implements CloseableVeri
         try {
             log.debug("configure started");
             refreshingHttpsJwks.init();
-        } catch (IOException e) {
-            throw new KafkaException(e);
         } finally {
             isInitialized = true;
         }

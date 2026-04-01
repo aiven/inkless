@@ -116,7 +116,7 @@ public final class RefreshingHttpsJwks implements OAuthBearerConfigurable {
      * calls to {@link #refresh()}.
      */
 
-    private List<JsonWebKey> jsonWebKeys;
+    private List<JsonWebKey> jsonWebKeys = Collections.emptyList();
 
     private boolean isInitialized;
 
@@ -170,7 +170,7 @@ public final class RefreshingHttpsJwks implements OAuthBearerConfigurable {
         this(time, httpsJwks, refreshMs, refreshRetryBackoffMs, refreshRetryBackoffMaxMs, Executors.newSingleThreadScheduledExecutor());
     }
 
-    public void init() throws IOException {
+    public void init() {
         try {
             log.debug("init started");
 
@@ -178,8 +178,12 @@ public final class RefreshingHttpsJwks implements OAuthBearerConfigurable {
 
             try {
                 localJWKs = httpsJwks.getJsonWebKeys();
-            } catch (JoseException e) {
-                throw new IOException("Could not refresh JWKS", e);
+            } catch (JoseException | IOException e) {
+                log.error("Failed to load JWKS from {} during broker startup. "
+                    + "Authentication will fail for all clients on OAuth listeners until keys are "
+                    + "successfully retrieved by the background refresh thread.",
+                    httpsJwks.getLocation(), e);
+                localJWKs = Collections.emptyList();
             }
 
             try {
@@ -189,9 +193,8 @@ public final class RefreshingHttpsJwks implements OAuthBearerConfigurable {
                 refreshLock.writeLock().unlock();
             }
 
-            // Since we just grabbed the keys (which will have invoked a HttpsJwks.refresh()
-            // internally), we can delay our first invocation by refreshMs.
-            //
+            // Schedule the background refresh unconditionally so the broker can self-heal
+            // if the initial fetch failed due to a transient or misconfiguration issue.
             // Note: we refer to this as a _scheduled_ refresh.
             executorService.scheduleAtFixedRate(this::refresh,
                     refreshMs,
@@ -310,7 +313,7 @@ public final class RefreshingHttpsJwks implements OAuthBearerConfigurable {
 
             log.info("OAuth JWKS refresh of {} complete", httpsJwks.getLocation());
         } catch (ExecutionException e) {
-            log.warn("OAuth JWKS refresh of {} encountered an error; not updating local JWKS cache", httpsJwks.getLocation(), e);
+            log.error("OAuth JWKS refresh of {} failed; JWKS cache not updated, authentication will continue to fail", httpsJwks.getLocation(), e);
         } finally {
             refreshInProgressFlag.set(false);
         }
