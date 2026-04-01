@@ -13,18 +13,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Cluster Mirror is in development. This schema is subject to non-backwards-compatible changes.
-//
-// LastMirroredOffsets record tracks the latest successfully mirrored offset for each partition.
-// The key identifies the source cluster by mirror name, while the value stores per-partition offsets for failback support.
 {
-  "apiKey": 1,
-  "type": "coordinator-key",
-  "name": "LastMirroredOffsetsKey",
+  "apiKey": 97,
+  "type": "request",
+  "listeners": ["broker", "controller"],
+  "name": "LastMirroredEpochsRequest",
+  // Version 0 is the initial version.
   "validVersions": "0",
-  "flexibleVersions": "none",
+  "flexibleVersions": "0+",
   "fields": [
-    { "name": "MirrorName", "type": "string", "versions": "0",
-      "about": "The cluster mirror name."}
+    { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName",
+      "about": "The cluster mirror name." },
+    { "name": "Topics", "type": "[]TopicData", "versions": "0",
+      "about": "The data for the topics.", "fields": [
+      { "name": "Name", "type": "string", "versions": "0", "entityType": "topicName",
+        "about": "The topic name." },
+      { "name": "Partitions", "type": "[]PartitionData", "versions": "0",
+        "about": "The data for the partitions.", "fields": [
+        { "name": "PartitionIndex", "type": "int32", "versions": "0",
+          "about": "The partition index." }
+      ]}
+    ]}
   ]
 }

@@ -50,6 +50,8 @@ import org.apache.kafka.common.message.BrokerHeartbeatRequestDataJsonConverter;
 import org.apache.kafka.common.message.BrokerHeartbeatResponseDataJsonConverter;
 import org.apache.kafka.common.message.BrokerRegistrationRequestDataJsonConverter;
 import org.apache.kafka.common.message.BrokerRegistrationResponseDataJsonConverter;
+import org.apache.kafka.common.message.BumpLeaderEpochsRequestDataJsonConverter;
+import org.apache.kafka.common.message.BumpLeaderEpochsResponseDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupDescribeRequestDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupDescribeResponseDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupHeartbeatRequestDataJsonConverter;
@@ -134,8 +136,8 @@ import org.apache.kafka.common.message.InitializeShareGroupStateRequestDataJsonC
 import org.apache.kafka.common.message.InitializeShareGroupStateResponseDataJsonConverter;
 import org.apache.kafka.common.message.JoinGroupRequestDataJsonConverter;
 import org.apache.kafka.common.message.JoinGroupResponseDataJsonConverter;
-import org.apache.kafka.common.message.LastMirroredOffsetsRequestDataJsonConverter;
-import org.apache.kafka.common.message.LastMirroredOffsetsResponseDataJsonConverter;
+import org.apache.kafka.common.message.LastMirroredEpochsRequestDataJsonConverter;
+import org.apache.kafka.common.message.LastMirroredEpochsResponseDataJsonConverter;
 import org.apache.kafka.common.message.LeaveGroupRequestDataJsonConverter;
 import org.apache.kafka.common.message.LeaveGroupResponseDataJsonConverter;
 import org.apache.kafka.common.message.ListConfigResourcesRequestDataJsonConverter;
@@ -246,6 +248,8 @@ import org.apache.kafka.common.requests.BrokerHeartbeatRequest;
 import org.apache.kafka.common.requests.BrokerHeartbeatResponse;
 import org.apache.kafka.common.requests.BrokerRegistrationRequest;
 import org.apache.kafka.common.requests.BrokerRegistrationResponse;
+import org.apache.kafka.common.requests.BumpLeaderEpochsRequest;
+import org.apache.kafka.common.requests.BumpLeaderEpochsResponse;
 import org.apache.kafka.common.requests.ConsumerGroupDescribeRequest;
 import org.apache.kafka.common.requests.ConsumerGroupDescribeResponse;
 import org.apache.kafka.common.requests.ConsumerGroupHeartbeatRequest;
@@ -330,8 +334,8 @@ import org.apache.kafka.common.requests.InitializeShareGroupStateRequest;
 import org.apache.kafka.common.requests.InitializeShareGroupStateResponse;
 import org.apache.kafka.common.requests.JoinGroupRequest;
 import org.apache.kafka.common.requests.JoinGroupResponse;
-import org.apache.kafka.common.requests.LastMirroredOffsetsRequest;
-import org.apache.kafka.common.requests.LastMirroredOffsetsResponse;
+import org.apache.kafka.common.requests.LastMirroredEpochsRequest;
+import org.apache.kafka.common.requests.LastMirroredEpochsResponse;
 import org.apache.kafka.common.requests.LeaveGroupRequest;
 import org.apache.kafka.common.requests.LeaveGroupResponse;
 import org.apache.kafka.common.requests.ListConfigResourcesRequest;
@@ -606,12 +610,14 @@ public class RequestConvertToJson {
                 return AddTopicsToMirrorRequestDataJsonConverter.write(((AddTopicsToMirrorRequest) request).data(), request.version());
             case REMOVE_TOPICS_FROM_MIRROR:
                 return RemoveTopicsFromMirrorRequestDataJsonConverter.write(((RemoveTopicsFromMirrorRequest) request).data(), request.version());
-            case LAST_MIRRORED_OFFSETS:
-                return LastMirroredOffsetsRequestDataJsonConverter.write(((LastMirroredOffsetsRequest) request).data(), request.version());
+            case LAST_MIRRORED_EPOCHS:
+                return LastMirroredEpochsRequestDataJsonConverter.write(((LastMirroredEpochsRequest) request).data(), request.version());
             case WRITE_MIRROR_STATES:
                 return WriteMirrorStatesRequestDataJsonConverter.write(((WriteMirrorStatesRequest) request).data(), request.version());
             case READ_MIRROR_STATES:
                 return ReadMirrorStatesRequestDataJsonConverter.write(((ReadMirrorStatesRequest) request).data(), request.version());
+            case BUMP_LEADER_EPOCHS:
+                return BumpLeaderEpochsRequestDataJsonConverter.write(((BumpLeaderEpochsRequest) request).data(), request.version());
             default:
                 throw new IllegalStateException("ApiKey " + request.apiKey() + " is not currently handled in `request`, the " +
                     "code should be updated to do so.");
@@ -806,12 +812,14 @@ public class RequestConvertToJson {
                 return AddTopicsToMirrorResponseDataJsonConverter.write(((AddTopicsToMirrorResponse) response).data(), version);
             case REMOVE_TOPICS_FROM_MIRROR:
                 return RemoveTopicsFromMirrorResponseDataJsonConverter.write(((RemoveTopicsFromMirrorResponse) response).data(), version);
-            case LAST_MIRRORED_OFFSETS:
-                return LastMirroredOffsetsResponseDataJsonConverter.write(((LastMirroredOffsetsResponse) response).data(), version);
+            case LAST_MIRRORED_EPOCHS:
+                return LastMirroredEpochsResponseDataJsonConverter.write(((LastMirroredEpochsResponse) response).data(), version);
             case WRITE_MIRROR_STATES:
                 return WriteMirrorStatesResponseDataJsonConverter.write(((WriteMirrorStatesResponse) response).data(), version);
             case READ_MIRROR_STATES:
                 return ReadMirrorStatesResponseDataJsonConverter.write(((ReadMirrorStatesResponse) response).data(), version);
+            case BUMP_LEADER_EPOCHS:
+                return BumpLeaderEpochsResponseDataJsonConverter.write(((BumpLeaderEpochsResponse) response).data(), version);
             default:
                 throw new IllegalStateException("ApiKey " + response.apiKey() + " is not currently handled in `response`, the " +
                     "code should be updated to do so.");

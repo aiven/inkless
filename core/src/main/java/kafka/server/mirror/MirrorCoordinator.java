@@ -44,8 +44,8 @@ import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
 import org.apache.kafka.coordinator.mirror.MirrorRecordKey;
 import org.apache.kafka.coordinator.mirror.MirrorRecordSerde;
 import org.apache.kafka.coordinator.mirror.generated.CoordinatorRecordType;
-import org.apache.kafka.coordinator.mirror.generated.LastMirroredOffsetsKey;
-import org.apache.kafka.coordinator.mirror.generated.LastMirroredOffsetsValue;
+import org.apache.kafka.coordinator.mirror.generated.LastMirroredEpochsKey;
+import org.apache.kafka.coordinator.mirror.generated.LastMirroredEpochsValue;
 import org.apache.kafka.coordinator.mirror.generated.MirrorPartitionStateKey;
 import org.apache.kafka.coordinator.mirror.generated.MirrorPartitionStateValue;
 import org.apache.kafka.metadata.MetadataCache;
@@ -150,8 +150,15 @@ public class MirrorCoordinator {
             case STOPPING:
                 log.debug("STOPPING for topics {}.", topicPartitions);
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
-                truncateToLastStableOffset(topicPartitions, tp -> updateLastMirroredOffsets(mirrorName, Set.of(tp)));
-                writeMirrorPidResetBarrier(mirrorName, topicPartitions);
+                CompletableFuture<Void> bumpLeaderEpochFuture = metadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions);
+                CompletableFuture<Void> updateLastMirroredEpochsFuture = new CompletableFuture<>();
+                truncateToLastStableOffset(topicPartitions, tp -> {
+                    updateLastMirroredEpochs(mirrorName, Set.of(tp));
+                    updateLastMirroredEpochsFuture.complete(null);
+                });
+                CompletableFuture.allOf(bumpLeaderEpochFuture, updateLastMirroredEpochsFuture)
+                        .whenComplete((v, ex) -> writeMirrorPidResetBarrier(mirrorName, topicPartitions))
+                        .thenRun(() -> transitionTo(mirrorName, topicPartitions, MirrorPartitionState.STOPPED));
                 break;
             case STOPPED:
                 log.debug("STOPPED for topics {}.", topicPartitions);
@@ -216,7 +223,7 @@ public class MirrorCoordinator {
                                         Map<String, Set<MirrorUtils.PartitionStateInfo>> topicMetadata,
                                         Consumer<WriteMirrorStatesResponse> callback) {
         String updatedMirrorName = MirrorUtils.originalMirrorName(mirrorName);
-        Map<String, Map<Integer, Long>> offsets = new HashMap<>();
+        Map<String, Map<Integer, Integer>> offsets = new HashMap<>();
         Map<String, Set<Integer>> tps = new HashMap<>();
         topicMetadata.forEach((topic, partitions) -> {
             Set<Integer> partitionIndices = new HashSet<>();
@@ -226,15 +233,15 @@ public class MirrorCoordinator {
                 if (partition.state() != null && partition.state() != MirrorPartitionState.UNKNOWN) {
                     updateMirrorPartitionState(updatedMirrorName, tp, partition.state());
                 }
-                if (partition.offset() != -1) {
+                if (partition.leaderEpoch() != -1) {
                     offsets.putIfAbsent(topic, new HashMap<>());
-                    offsets.get(topic).put(partition.partition(), partition.offset());
+                    offsets.get(topic).put(partition.partition(), partition.leaderEpoch());
                 }
             });
             tps.put(topic, partitionIndices);
         });
 
-        updateLastMirroredOffsets(updatedMirrorName, offsets, false);
+        updateLastMirroredEpochs(updatedMirrorName, offsets);
 
         WriteMirrorStatesResponseData data = new WriteMirrorStatesResponseData();
         List<WriteMirrorStatesResponseData.TopicResult> topicResults = new ArrayList<>();
@@ -259,16 +266,20 @@ public class MirrorCoordinator {
         metadataManager.getCachedPartitionMetadata(mirrorName, partitions, callback);
     }
 
-    private void updateLastMirroredOffsets(String mirrorName, Set<TopicPartition> topicPartitions) {
-        Map<String, Map<Integer, Long>> partitionOffsets = new HashMap<>();
+    private void updateLastMirroredEpochs(String mirrorName, Set<TopicPartition> topicPartitions) {
+        Map<String, Map<Integer, Integer>> partitionOffsets = new HashMap<>();
         MirrorUtils.groupPartitionsByTopic(topicPartitions).forEach((topic, parts) -> {
-            Map<Integer, Long> offsets = new HashMap<>();
+            Map<Integer, Integer> offsets = new HashMap<>();
             parts.forEach(i -> replicaManager.getPartitionOrException(
-                    new TopicPartition(topic, i)).log().foreach(log -> offsets.put(i, log.lastStableOffset())));
+                    new TopicPartition(topic, i)).log().foreach(log -> {
+                        // don't need to store anything if latest epoch is empty
+                        log.latestEpoch().ifPresent(epoch -> offsets.put(i, epoch));
+                        return null;
+                    }));
             partitionOffsets.put(topic, offsets);
         });
 
-        updateLastMirroredOffsets(mirrorName, partitionOffsets, true);
+        updateLastMirroredEpochs(mirrorName, partitionOffsets);
     }
 
     private CompletableFuture<Optional<TopicPartition>> updateMirrorPartitionState(String mirrorName,
@@ -315,7 +326,7 @@ public class MirrorCoordinator {
         } else {
             // write state data to remote coordinator (async network operation)
             Map<String, Set<MirrorUtils.PartitionStateInfo>> topicMetadata =
-                    Map.of(topicPartition.topic(), Set.of(new MirrorUtils.PartitionStateInfo(topicPartition.partition(), newState, -1L)));
+                    Map.of(topicPartition.topic(), Set.of(new MirrorUtils.PartitionStateInfo(topicPartition.partition(), newState, -1)));
             metadataManager.writeStatesToRemoteCoordinator(mirrorName, topicMetadata, Set.of(),
                     res -> res.data().topics().forEach(topic -> topic.partitions().forEach(par -> {
                         if (par.errorCode() == Errors.NONE.code()) {
@@ -369,7 +380,7 @@ public class MirrorCoordinator {
         scheduler.scheduleOnce("LastMirroredOffsetTruncation",
             () -> {
                 try {
-                    metadataManager.truncateToLastMirroredOffsets(replicaManager, mirrorName, topicPartitions,
+                    metadataManager.truncateToLastMirroredEpochs(replicaManager, mirrorName, topicPartitions,
                             partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING));
                 } catch (Exception e) {
                     log.warn("Failed to truncate to last mirrored offsets for mirror {}, retrying in {} ms", mirrorName, retryDelayMs, e);
@@ -424,22 +435,22 @@ public class MirrorCoordinator {
         }
     }
 
-    private Map<String, Map<Integer, Long>> lastMirroredOffsetsToCoordinatorRecords(Map<MirrorUtils.PartitionKey, Long> offsets) {
-        Map<String, Map<Integer, Long>> results = new HashMap<>();
+    private Map<String, Map<Integer, Integer>> lastMirroredEpochsToCoordinatorRecords(Map<MirrorUtils.PartitionKey, Integer> offsets) {
+        Map<String, Map<Integer, Integer>> results = new HashMap<>();
         offsets.forEach((key, value) -> {
-            Map<Integer, Long> partitionOffsets = results.getOrDefault(key.topic(), new HashMap<>());
+            Map<Integer, Integer> partitionOffsets = results.getOrDefault(key.topic(), new HashMap<>());
             partitionOffsets.put(key.partition(), value);
             results.put(key.topic(), partitionOffsets);
         });
         return results;
     }
 
-    public long getLastMirroredOffset(String mirrorName, TopicPartition topicPartition) {
-        return metadataManager.getLastMirroredOffset(mirrorName, topicPartition);
+    public int getLastMirroredEpoch(String mirrorName, TopicPartition topicPartition) {
+        return metadataManager.getLastMirroredEpoch(mirrorName, topicPartition);
     }
 
     /** Persists offsets to local or remote coordinators, optionally transitioning to STOPPED. */
-    public void updateLastMirroredOffsets(String mirrorName, Map<String, Map<Integer, Long>> partitionOffsets, boolean transitionToStopped) {
+    public void updateLastMirroredEpochs(String mirrorName, Map<String, Map<Integer, Integer>> partitionOffsets) {
         // Separate partitions into local and remote coordinator groups
         Map<Integer, Set<TopicPartition>> localByCoordPartition = new HashMap<>();
         Map<String, Set<MirrorUtils.PartitionStateInfo>> remoteTopicMetadata = new HashMap<>();
@@ -461,13 +472,13 @@ public class MirrorCoordinator {
         });
 
         // Update in-memory cache once with all offsets
-        var updatedOffsets = metadataManager.updateLastMirroredOffsets(mirrorName, partitionOffsets, Map.of());
+        var updatedOffsets = metadataManager.updateLastMirroredEpochs(mirrorName, partitionOffsets, Map.of());
 
         // Write to local coordinator partitions (one append per coordinator partition)
         localByCoordPartition.forEach((coordPartition, tps) -> {
             var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, coordPartition);
             var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
-            var record = generateLastMirroredOffsets(mirrorName, lastMirroredOffsetsToCoordinatorRecords(updatedOffsets));
+            var record = generateLastMirroredEpochs(mirrorName, lastMirroredEpochsToCoordinatorRecords(updatedOffsets));
             var keyBytes = serde.serializeKey(record);
             var valueBytes = serde.serializeValue(record);
             var timestamp = time.milliseconds();
@@ -485,25 +496,11 @@ public class MirrorCoordinator {
                     RequestLocal.noCaching(),
                     CollectionConverters.asScala(Map.of())
             );
-
-            // TODO: now we assume all partitions work without error, we should handle error cases
-            if (transitionToStopped) {
-                tps.forEach(tp ->
-                    transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPED));
-            }
         });
 
         // Write to remote coordinator (batched by coordinator node internally)
         if (!remoteTopicMetadata.isEmpty()) {
-            metadataManager.writeStatesToRemoteCoordinator(mirrorName, remoteTopicMetadata, Set.of(), res -> {
-                if (transitionToStopped) {
-                    res.data().topics().forEach(topic ->
-                        topic.partitions().forEach(partition ->
-                            transitionTo(mirrorName,
-                                Set.of(new TopicPartition(topic.name(), partition.partitionIndex())),
-                                MirrorPartitionState.STOPPED)));
-                }
-            });
+            metadataManager.writeStatesToRemoteCoordinator(mirrorName, remoteTopicMetadata, Set.of(), res -> { });
         }
     }
 
@@ -514,20 +511,20 @@ public class MirrorCoordinator {
         return CoordinatorRecord.record(key, apiVersion);
     }
 
-    private static CoordinatorRecord generateLastMirroredOffsets(String mirrorName, Map<String, Map<Integer, Long>> offsets) {
-        var key = new LastMirroredOffsetsKey().setMirrorName(mirrorName);
-        var val = new LastMirroredOffsetsValue();
-        var topics = new ArrayList<LastMirroredOffsetsValue.Topic>();
+    private static CoordinatorRecord generateLastMirroredEpochs(String mirrorName, Map<String, Map<Integer, Integer>> offsets) {
+        var key = new LastMirroredEpochsKey().setMirrorName(mirrorName);
+        var val = new LastMirroredEpochsValue();
+        var topics = new ArrayList<LastMirroredEpochsValue.Topic>();
         offsets.forEach((topic, partitionOffsets) -> {
-            var top = new LastMirroredOffsetsValue.Topic();
-            List<LastMirroredOffsetsValue.Partition> partitions = new ArrayList<>();
+            var top = new LastMirroredEpochsValue.Topic();
+            List<LastMirroredEpochsValue.Partition> partitions = new ArrayList<>();
             partitionOffsets.forEach((partition, offset) ->
-                    partitions.add(new LastMirroredOffsetsValue.Partition().setPartitionIndex(partition).setLastMirroredOffset(offset)));
+                    partitions.add(new LastMirroredEpochsValue.Partition().setPartitionIndex(partition).setLastMirroredEpoch(offset)));
             top.setPartitions(partitions);
             topics.add(top);
         });
         val.setTopics(topics);
-        var apiVersion = new ApiMessageAndVersion(val, LastMirroredOffsetsValue.HIGHEST_SUPPORTED_VERSION);
+        var apiVersion = new ApiMessageAndVersion(val, LastMirroredEpochsValue.HIGHEST_SUPPORTED_VERSION);
         return CoordinatorRecord.record(key, apiVersion);
     }
 
@@ -576,8 +573,8 @@ public class MirrorCoordinator {
 
     private String readMirrorNameFromKey(ByteBuffer buffer) {
         short version = buffer.getShort();
-        if (version == CoordinatorRecordType.LAST_MIRRORED_OFFSETS.id()) {
-            return new LastMirroredOffsetsKey(new ByteBufferAccessor(buffer), version).mirrorName();
+        if (version == CoordinatorRecordType.LAST_MIRRORED_EPOCHS.id()) {
+            return new LastMirroredEpochsKey(new ByteBufferAccessor(buffer), version).mirrorName();
         } else if (version == CoordinatorRecordType.MIRROR_PARTITION_STATE.id()) {
             return new MirrorPartitionStateKey(new ByteBufferAccessor(buffer), version).mirrorName();
         } else {
@@ -585,14 +582,14 @@ public class MirrorCoordinator {
         }
     }
 
-    private Map<String, Map<Integer, Long>> readLastMirroredOffsetsValue(ByteBuffer buffer) {
-        Map<String, Map<Integer, Long>> offsets = new HashMap<>();
+    private Map<String, Map<Integer, Integer>> readLastMirroredEpochsValue(ByteBuffer buffer) {
+        Map<String, Map<Integer, Integer>> offsets = new HashMap<>();
         short version = buffer.getShort();
-        if (version <= LastMirroredOffsetsValue.HIGHEST_SUPPORTED_VERSION && version >= LastMirroredOffsetsValue.LOWEST_SUPPORTED_VERSION) {
-            LastMirroredOffsetsValue value = new LastMirroredOffsetsValue(new ByteBufferAccessor(buffer), version);
+        if (version <= LastMirroredEpochsValue.HIGHEST_SUPPORTED_VERSION && version >= LastMirroredEpochsValue.LOWEST_SUPPORTED_VERSION) {
+            LastMirroredEpochsValue value = new LastMirroredEpochsValue(new ByteBufferAccessor(buffer), version);
             value.topics().forEach(t -> {
-                Map<Integer, Long> partitions = new HashMap<>();
-                t.partitions().forEach(p -> partitions.put(p.partitionIndex(), p.lastMirroredOffset()));
+                Map<Integer, Integer> partitions = new HashMap<>();
+                t.partitions().forEach(p -> partitions.put(p.partitionIndex(), p.lastMirroredEpoch()));
                 offsets.put(t.name(), partitions);
             });
         } else {
@@ -662,10 +659,10 @@ public class MirrorCoordinator {
                         batch.iterator().forEachRemaining(record -> {
                             require(record.hasKey(), "Mirror log's key should not be null");
                             short version = record.key().getShort();
-                            if (version == CoordinatorRecordType.LAST_MIRRORED_OFFSETS.id()) {
+                            if (version == CoordinatorRecordType.LAST_MIRRORED_EPOCHS.id()) {
                                 String clusterName = readMirrorNameFromKey(record.key());
-                                Map<String, Map<Integer, Long>> offsets = readLastMirroredOffsetsValue(record.value());
-                                metadataManager.updateLastMirroredOffsets(clusterName, offsets, Map.of());
+                                Map<String, Map<Integer, Integer>> offsets = readLastMirroredEpochsValue(record.value());
+                                metadataManager.updateLastMirroredEpochs(clusterName, offsets, Map.of());
                             } else if (version == CoordinatorRecordType.MIRROR_PARTITION_STATE.id()) {
                                 String clusterName = readMirrorNameFromKey(record.key());
                                 MirrorUtils.PartitionStateLogEntry value = readMirrorPartitionStateValue(record.value());

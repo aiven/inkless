@@ -42,6 +42,7 @@ import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
+import org.apache.kafka.common.message.BumpLeaderEpochsResponseData;
 import org.apache.kafka.common.message.ControllerRegistrationRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
@@ -1780,6 +1781,15 @@ public final class QuorumController implements Controller {
                     configurationControl.addMirrorConfig(configChanges, false);
             return result;
         });
+    }
+
+    @Override
+    public CompletableFuture<BumpLeaderEpochsResponseData> bumpLeaderEpoch(
+            ControllerRequestContext context,
+            Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs
+    ) {
+        return appendWriteEvent("bumpLeaderEpochs", context.deadlineNs(),
+                () -> replicationControl.bumpLeaderEpochs(partitionLeaderEpochs));
     }
 
     @Override

@@ -13,27 +13,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Cluster Mirror is in development. This schema is subject to non-backwards-compatible changes.
-//
-// LastMirroredOffsets record tracks the latest successfully mirrored offset for each partition.
-// The key identifies the source cluster by mirror name, while the value stores per-partition offsets for failback support.
 {
-  "apiKey": 1,
-  "type": "coordinator-value",
-  "name": "LastMirroredOffsetsValue",
+  "apiKey": 105,
+  "type": "response",
+  "name": "BumpLeaderEpochsResponse",
+  // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "Topics", "type": "[]Topic", "versions": "0+",
-      "about": "The mirror topics for which we want to store the last mirrored offsets.",  "fields": [
-      { "name": "Name", "type": "string", "versions": "0",
+    { "name": "ThrottleTimeMs", "type": "int32", "versions": "0+",
+      "about": "The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota." },
+    { "name": "ErrorCode", "type": "int16", "versions": "0+",
+      "about": "The error code, or 0 if there was no error." },
+    { "name": "Topics", "type": "[]TopicPartitions", "versions": "0+",
+      "about": "Each topic in the mirror.", "fields": [
+      { "name": "TopicName", "type": "string", "versions": "0+",
         "about": "The topic name." },
-      { "name": "Partitions", "type": "[]Partition", "versions": "0+",
-        "about": "Each partition to record the last mirrored offsets.", "fields": [
+      { "name": "Partitions", "type": "[]PartitionDetail", "versions": "0+",
+        "about": "Each partition state.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0+",
           "about": "The partition index." },
-        { "name": "LastMirroredOffset", "type": "int64", "versions": "0+",
-          "about": "The last mirrored offset for this partition." }
+        { "name": "ErrorCode", "type": "int16", "versions": "0",
+          "about": "The error code, or 0 if there was no error." }
       ]}
     ]}
   ]

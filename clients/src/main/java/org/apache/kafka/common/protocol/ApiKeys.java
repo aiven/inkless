@@ -139,13 +139,14 @@ public enum ApiKeys {
     CREATE_MIRROR(ApiMessageType.CREATE_MIRROR, false, true),
     ADD_TOPICS_TO_MIRROR(ApiMessageType.ADD_TOPICS_TO_MIRROR, false, true),
     REMOVE_TOPICS_FROM_MIRROR(ApiMessageType.REMOVE_TOPICS_FROM_MIRROR, false, true),
-    LAST_MIRRORED_OFFSETS(ApiMessageType.LAST_MIRRORED_OFFSETS),
+    LAST_MIRRORED_EPOCHS(ApiMessageType.LAST_MIRRORED_EPOCHS),
     WRITE_MIRROR_STATES(ApiMessageType.WRITE_MIRROR_STATES),
     READ_MIRROR_STATES(ApiMessageType.READ_MIRROR_STATES),
     LIST_MIRRORS(ApiMessageType.LIST_MIRRORS),
     DESCRIBE_MIRRORS(ApiMessageType.DESCRIBE_MIRRORS),
     PAUSE_MIRROR_TOPICS(ApiMessageType.PAUSE_MIRROR_TOPICS, false, true),
     RESUME_MIRROR_TOPICS(ApiMessageType.RESUME_MIRROR_TOPICS, false, true),
+    BUMP_LEADER_EPOCHS(ApiMessageType.BUMP_LEADER_EPOCHS, false, true),
     DELETE_MIRROR(ApiMessageType.DELETE_MIRROR, false, true);
 
     private static final Map<ApiMessageType.ListenerType, EnumSet<ApiKeys>> APIS_BY_LISTENER =
