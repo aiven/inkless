@@ -1687,7 +1687,7 @@ class ReplicaManager(val config: KafkaConfig,
         val offsetToTruncate = if (endOffsetForEpoch.isPresent) endOffsetForEpoch.get().offset() else 0L
         log.truncateTo(offsetToTruncate)
         val partition = getPartitionOrException(tp)
-        partition.maybeCompleteIsrTruncation(log, onCompleteCallback = Optional.of(callback))
+        partition.maybeCompleteTruncation(log, maybeWaitForAllReplicas = true, onCompleteCallback = Optional.of(callback))
       })
     })
   }
@@ -1697,7 +1697,7 @@ class ReplicaManager(val config: KafkaConfig,
       getLog(tp).map(log => {
         log.truncateTo(offset)
         val partition = getPartitionOrException(tp)
-        partition.maybeCompleteIsrTruncation(log, onCompleteCallback = Optional.of(callback))
+        partition.maybeCompleteTruncation(log, onCompleteCallback = Optional.of(callback))
       })
     })
   }
@@ -2583,8 +2583,8 @@ class ReplicaManager(val config: KafkaConfig,
           case Some(node) =>
             val log = partition.localLogOrException
 
-            // Set the mirrorLeaderEpoch only because the follower nodes should not have mirrorName set.
-            // Only the node using mirrorFetcher should set the mirrorName.
+            // Set the mirrorLeaderEpoch only when the follower nodes have mirrorName set.
+            // But the mirrorName is put as empty (default value) because only the node using mirrorFetcher should set the mirrorName.
             val mirrorLeaderEpoch: Optional[Integer] = if (partition.getMirrorName().isEmpty) Optional.empty() else Optional.of(0)
             partitionAndOffsets.put(topicPartition, InitialFetchState(
               log.topicId.toScala,

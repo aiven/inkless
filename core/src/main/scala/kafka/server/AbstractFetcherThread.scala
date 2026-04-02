@@ -401,9 +401,8 @@ abstract class AbstractFetcherThread(name: String,
     var fetchException: Option[Throwable] = None
 
     try {
-      info(s"!!! Sending fetch request $fetchRequest")
+      debug(s"!!! Sending fetch request $fetchRequest")
       responseData = leader.fetch(fetchRequest).asScala
-      info(s"!!! fetch response $responseData")
     } catch {
       case t: Throwable =>
         fetchException = Some(t)
@@ -463,7 +462,6 @@ abstract class AbstractFetcherThread(name: String,
                       else
                         currentFetchState.currentLeaderEpoch
 
-                      info("!!! processFetchRequest: " + epochForValidation + " " + currentFetchState.currentLeaderEpoch)
                       val logAppendInfoOpt = processPartitionData(
                         topicPartition,
                         currentFetchState.fetchOffset,
@@ -478,38 +476,30 @@ abstract class AbstractFetcherThread(name: String,
                         val lag = getPartitionLag(topicPartition, partitionData.highWatermark(), nextOffset, currentFetchState.mirrorName())
                         fetcherLagStats.getAndMaybePut(topicPartition).lag = lag
 
-                        val updateMirrorLeaderEpoch = shouldUpdateMirrorLeaderEpoch(topicPartition)
-                        // Update fetch state when:
-                        // 1. No data fetched but mirror leader epoch advanced (mirrored partitions only)
-                        // 2. Data was fetched OR this is the first fetch (lag was unknown)
-                        val shouldUpdateState = (validBytes == 0 && updateMirrorLeaderEpoch &&
-                          (currentFetchState.mirrorLeaderEpoch.isEmpty || (partitionData.mirrorLeaderEpoch > currentFetchState.mirrorLeaderEpoch.get()))) ||
-                          (validBytes > 0 || currentFetchState.lag.isEmpty)
+                        val newMirrorLeaderEpoch: Optional[Integer] = if (shouldUpdateMirrorLeaderEpoch(topicPartition)) {
+                          if (currentFetchState.mirrorLeaderEpoch.isPresent) {
+                            if (partitionData.mirrorLeaderEpoch > currentFetchState.mirrorLeaderEpoch.get())
+                              Optional.of(partitionData.mirrorLeaderEpoch());
+                            else {
+                              currentFetchState.mirrorLeaderEpoch()
+                            }
+                          } else {
+                            // set 0 if the mirrorLeaderEpoch is not set yet. This is the case for the topic that was not
+                            // a mirror topic but now it is added into mirrored topics.
+                            Optional.of(0)
+                          }
+                        } else {
+                          Optional.empty()
+                        }
 
                         // ReplicaDirAlterThread may have removed topicPartition from the partitionStates after processing the partition data
-                        if (shouldUpdateState && partitionStates.contains(topicPartition)) {
+                        if ((validBytes > 0 || currentFetchState.lag.isEmpty || newMirrorLeaderEpoch.orElse(-1) != currentFetchState.mirrorLeaderEpoch().orElse(-1)) &&
+                          partitionStates.contains(topicPartition)) {
                           val lastFetchedEpoch =
                             if (logAppendInfo.lastLeaderEpoch.isPresent && currentFetchState.lastFetchedEpoch.isPresent)
                               logAppendInfo.lastLeaderEpoch else currentFetchState.lastFetchedEpoch
-                          // For mirrored partitions, update mirror leader epoch from the fetch response
-                          val mirrorLeaderEpoch: Optional[Integer] = if (updateMirrorLeaderEpoch) {
-                            if (currentFetchState.mirrorLeaderEpoch.isPresent) {
-                              if (partitionData.mirrorLeaderEpoch > currentFetchState.mirrorLeaderEpoch.get())
-                                Optional.of(partitionData.mirrorLeaderEpoch());
-                              else {
-                                currentFetchState.mirrorLeaderEpoch()
-                              }
-                            } else {
-                              // set 0 if the mirrorLeaderEpoch is not set yet. This is the case for the topic that is
-                              // now added into mirrored topics.
-                              Optional.of(0)
-                            }
-                          } else {
-                            Optional.empty()
-                          }
-                          // Update partitionStates only if there is no exception during processPartitionData
                           val newFetchState = new PartitionFetchState(currentFetchState.topicId, nextOffset, Optional.of(lag),
-                            currentFetchState.currentLeaderEpoch, ReplicaState.FETCHING, lastFetchedEpoch, currentFetchState.mirrorName(), mirrorLeaderEpoch)
+                            currentFetchState.currentLeaderEpoch, ReplicaState.FETCHING, lastFetchedEpoch, currentFetchState.mirrorName(), newMirrorLeaderEpoch)
                           partitionStates.updateAndMoveToEnd(topicPartition, newFetchState)
                           if (validBytes > 0) fetcherStats.byteRate.mark(validBytes)
                         }

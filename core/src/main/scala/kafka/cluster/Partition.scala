@@ -827,7 +827,7 @@ class Partition(val topicPartition: TopicPartition,
       partitionEpoch = partitionState.partitionEpoch
       leaderReplicaIdOpt = Some(localBrokerId)
 
-      maybeCompleteIsrTruncation(leaderLog)
+      maybeCompleteTruncation(leaderLog)
       // We may need to increment high watermark since ISR could be down to 1.
       (maybeIncrementLeaderHW(leaderLog, currentTimeMs = currentTimeMs), isNewLeader)
     }
@@ -955,7 +955,7 @@ class Partition(val topicPartition: TopicPartition,
       // leaderIsrUpdateLock to prevent adding new hw to invalid log.
       inReadLock(leaderIsrUpdateLock) {
         leaderLogIfLocal.exists(leaderLog => {
-          maybeCompleteIsrTruncation(leaderLog, followerFetchTimeMs)
+          maybeCompleteTruncation(leaderLog, followerFetchTimeMs)
           maybeIncrementLeaderHW(leaderLog, followerFetchTimeMs)
         })
       }
@@ -1228,13 +1228,16 @@ class Partition(val topicPartition: TopicPartition,
    * consistency before resuming mirroring operations.
    *
    * @param leaderLog the leader's unified log
+   * @param maybeWaitForAllReplicas true if we should check the "mirror.support.unclean.leader.election" config to see if
+   *                                we should wait for all replicas to catch up.
    * @param currentTimeMs the current time in milliseconds
    * @param onComplete optional callback to invoke when truncation completes
    * @return true if the transition occurred, false if validation failed or no callback was registered
    */
-  def maybeCompleteIsrTruncation(leaderLog: UnifiedLog,
-                                  currentTimeMs: Long = time.milliseconds,
-                                  onCompleteCallback: Optional[Consumer[TopicPartition]] = Optional.empty()): Boolean = {
+  def maybeCompleteTruncation(leaderLog: UnifiedLog,
+                              currentTimeMs: Long = time.milliseconds,
+                              maybeWaitForAllReplicas: Boolean = false,
+                              onCompleteCallback: Optional[Consumer[TopicPartition]] = Optional.empty()): Boolean = {
     if (onCompleteCallback.isPresent) {
       onComplete = onCompleteCallback
     }
@@ -1244,8 +1247,19 @@ class Partition(val topicPartition: TopicPartition,
       return false
     }
 
+    if (maybeWaitForAllReplicas) {
+      val mirrorUncleanLeaderElection = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topic)).get(TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG).asInstanceOf[String]
+      if (mirrorUncleanLeaderElection != null &&
+        mirrorUncleanLeaderElection.toBoolean &&
+        assignmentState.replicationFactor > partitionState.isr.size) {
+        info(s"Not completing truncation because 'mirror.support.unclean.leader.election' is enabled and" +
+          s" partition ISR doesn't contain all replicas (ISR=${partitionState.isr}, replicationFactor=${assignmentState.replicationFactor})")
+        return false
+      }
+    }
+
     if (isUnderMinIsr) {
-      trace(s"Not increasing HWM because partition is under min ISR (ISR=${partitionState.isr})")
+      trace(s"Not completing truncation because partition is under min ISR (ISR=${partitionState.isr})")
       return false
     }
 
@@ -2048,7 +2062,7 @@ class Partition(val topicPartition: TopicPartition,
 
       // we may need to increment high watermark since ISR could be down to 1
       leaderLogIfLocal.exists(log => {
-        maybeCompleteIsrTruncation(log)
+        maybeCompleteTruncation(log)
         maybeIncrementLeaderHW(log)
       })
     }

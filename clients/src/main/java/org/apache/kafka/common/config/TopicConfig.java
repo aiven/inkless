@@ -224,6 +224,10 @@ public class TopicConfig {
             "Topics with this configuration set are read-only and can only be modified through mirror management APIs. " +
             "This property is hidden from DescribeConfigs responses to avoid exposing internal state to users.";
 
+    public static final String MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG = "mirror.support.unclean.leader.election";
+    public static final String MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_DOC = "When enabled, " +
+            "LastMirroredEpoch log truncation waits for all replicas (not just ISR members) to join the ISR and complete the truncation.";
+
     /**
      * @deprecated down-conversion is not possible in Apache Kafka 4.0 and newer, hence this configuration is a no-op,
      *             and it is deprecated for removal in Apache Kafka 5.0.
