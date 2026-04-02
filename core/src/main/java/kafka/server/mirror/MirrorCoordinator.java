@@ -377,7 +377,7 @@ public class MirrorCoordinator {
     /** Schedules truncation with retry on failure, using mirror.truncation.backoff.ms as retry delay. */
     private void scheduleTruncation(String mirrorName, Set<TopicPartition> topicPartitions, long delayMs) {
         long retryDelayMs = brokerConfig.mirrorConfig().truncationBackoffMs();
-        scheduler.scheduleOnce("LastMirroredEpochTruncation",
+        scheduler.scheduleOnce("LastMirroredEpochsTruncation",
             () -> {
                 try {
                     metadataManager.truncateToLastMirroredEpochs(replicaManager, mirrorName, topicPartitions,

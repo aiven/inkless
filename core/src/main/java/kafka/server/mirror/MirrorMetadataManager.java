@@ -912,10 +912,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         new LastMirroredEpochsRequestData().setMirrorName(mirrorName).setTopics(topicDataList))
         );
 
-        if (response.responseBody() instanceof LastMirroredEpochsResponse lastMirroredEpochResponse) {
-            log.debug("Received last mirrored epoch response: {}", lastMirroredEpochResponse);
+        if (response.responseBody() instanceof LastMirroredEpochsResponse lastMirroredEpochsResponse) {
+            log.debug("Received last mirrored epochs response: {}", lastMirroredEpochsResponse);
             Map<TopicPartition, Integer> epochs = new HashMap<>();
-            lastMirroredEpochResponse.data().topics().forEach(topic -> {
+            lastMirroredEpochsResponse.data().topics().forEach(topic -> {
                 String name = topic.name();
                 topic.partitions().forEach(partition -> {
                     epochs.put(new TopicPartition(name, partition.partitionIndex()), partition.lastMirroredEpoch());
