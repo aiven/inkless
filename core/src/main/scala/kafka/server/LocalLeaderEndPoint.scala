@@ -215,7 +215,7 @@ class LocalLeaderEndPoint(sourceBroker: BrokerEndPoint,
         Optional.empty[Integer]
       val topicId = fetchState.topicId.orElse(Uuid.ZERO_UUID)
       requestMap.put(topicPartition, new FetchRequest.PartitionData(topicId, fetchState.fetchOffset, logStartOffset,
-        fetchSize, Optional.of(fetchState.currentLeaderEpoch), lastFetchedEpoch))
+        fetchSize, Optional.of(fetchState.currentLeaderEpoch), lastFetchedEpoch, fetchState.mirrorLeaderEpoch()))
     } catch {
       case e: KafkaStorageException =>
         debug(s"Failed to build fetch for $topicPartition", e)

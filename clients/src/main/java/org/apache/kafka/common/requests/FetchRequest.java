@@ -79,9 +79,9 @@ public class FetchRequest extends AbstractRequest {
                 long logStartOffset,
                 int maxBytes,
                 Optional<Integer> currentLeaderEpoch,
-                Optional<Integer> mirrorLeaderEpoch
+                Optional<Integer> lastFetchedEpoch
         ) {
-            this(topicId, fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch, Optional.empty(), mirrorLeaderEpoch);
+            this(topicId, fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch, lastFetchedEpoch, Optional.empty());
         }
 
         public PartitionData(
