@@ -44,14 +44,14 @@ RUN if [ "$KAFKA_MODE" = "native" ]; then \
 
 FROM $jdk_version
 
-MAINTAINER Apache Kafka dev@kafka.apache.org
+LABEL org.opencontainers.image.authors="Apache Kafka dev@kafka.apache.org"
 VOLUME ["/opt/kafka-dev"]
 
 # Set the timezone.
 ENV TZ="/usr/share/zoneinfo/America/Los_Angeles"
 
 # Do not ask for confirmations when running apt-get, etc.
-ENV DEBIAN_FRONTEND noninteractive
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Set the ducker.creator label so that we know that this is a ducker image.  This will make it
 # visible to 'ducker purge'.  The ducker.creator label also lets us know what UNIX user built this
@@ -62,7 +62,7 @@ LABEL ducker.creator=$ducker_creator
 # Update Linux and install necessary utilities.
 RUN apt update && apt install -y sudo git netcat iptables rsync unzip wget curl jq coreutils openssh-server net-tools vim python3-pip python3-dev libffi-dev libssl-dev cmake pkg-config libfuse-dev iperf traceroute iproute2 iputils-ping && apt-get -y clean
 RUN python3 -m pip install -U pip==21.1.1;
-# NOTE: ducktape 0.12.0 supports py 3.9, 3.10, 3.11 and 3.12
+# NOTE: ducktape 0.14.0 supports py 3.9, 3.10, 3.11, 3.12 and 3.13
 COPY requirements.txt requirements.txt
 RUN pip3 install --upgrade -r requirements.txt
 
@@ -147,10 +147,13 @@ RUN useradd -u $UID -ms /bin/bash ducker \
   && mkdir -p /home/ducker/ \
   && rsync -aiq /root/.ssh/ /home/ducker/.ssh \
   && chown -R ducker /home/ducker/ /mnt/ /var/log/ \
-  && echo "PATH=$(runuser -l ducker -c 'echo $PATH'):$JAVA_HOME/bin" >> /home/ducker/.ssh/environment \
-  && echo 'PATH=$PATH:'"$JAVA_HOME/bin" >> /home/ducker/.profile \
   && echo 'ducker ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+
+# Symlink all JDK binaries (java, jcmd, jps, etc.) to /usr/bin.
+# We don't add PATH env to ~/.ssh/environment because on some Linux distributions,
+# PAM (Pluggable Authentication Modules) may re-read /etc/environment, overwriting PATH.
+RUN cp -sn $JAVA_HOME/bin/* /usr/bin/
 
 USER ducker
 
-CMD sudo service ssh start && tail -f /dev/null
+CMD ["sudo", "service", "ssh", "start", "-D"]
