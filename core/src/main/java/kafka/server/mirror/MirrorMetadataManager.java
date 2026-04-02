@@ -797,8 +797,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-    void removeLastMirroredOffsets(String mirrorName) {
-        lastMirroredOffsets.keySet().removeIf(key -> key.mirrorName().equals(mirrorName));
+    void removeLastMirroredEpochs(String mirrorName) {
+        lastMirroredEpochs.keySet().removeIf(key -> key.mirrorName().equals(mirrorName));
     }
 
     private long partitionStateCount(MirrorPartitionState state) {
@@ -912,10 +912,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         new LastMirroredEpochsRequestData().setMirrorName(mirrorName).setTopics(topicDataList))
         );
 
-        if (response.responseBody() instanceof LastMirroredEpochsResponse lastMirroredOffsetResponse) {
-            log.debug("Received last mirrored epoch response: {}", lastMirroredOffsetResponse);
+        if (response.responseBody() instanceof LastMirroredEpochsResponse lastMirroredEpochsResponse) {
+            log.debug("Received last mirrored epochs response: {}", lastMirroredEpochsResponse);
             Map<TopicPartition, Integer> epochs = new HashMap<>();
-            lastMirroredOffsetResponse.data().topics().forEach(topic -> {
+            lastMirroredEpochsResponse.data().topics().forEach(topic -> {
                 String name = topic.name();
                 topic.partitions().forEach(partition -> {
                     epochs.put(new TopicPartition(name, partition.partitionIndex()), partition.lastMirroredEpoch());
