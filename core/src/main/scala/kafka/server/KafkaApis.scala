@@ -347,11 +347,11 @@ class KafkaApis(val requestChannel: RequestChannel,
         requestHelper.sendMaybeThrottle(request, new LastMirroredEpochsResponse(new LastMirroredEpochsResponseData().setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)))
         return
       }
-      val lastMirroredOffsetRequest = request.body[LastMirroredEpochsRequest]
+      val lastMirroredEpochsRequest = request.body[LastMirroredEpochsRequest]
       val responseData = new LastMirroredEpochsResponseData()
-      val mirrorName = lastMirroredOffsetRequest.data().mirrorName()
+      val mirrorName = lastMirroredEpochsRequest.data().mirrorName()
       val topicResults = new util.ArrayList[LastMirroredEpochsResponseData.TopicResult]()
-      lastMirroredOffsetRequest.data().topics().forEach(topic => {
+      lastMirroredEpochsRequest.data().topics().forEach(topic => {
         val topicResult = new LastMirroredEpochsResponseData.TopicResult()
         val partitionResults = new util.ArrayList[LastMirroredEpochsResponseData.PartitionResult]()
         topic.partitions().forEach(par => {

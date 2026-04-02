@@ -377,7 +377,7 @@ public class MirrorCoordinator {
     /** Schedules truncation with retry on failure, using mirror.truncation.backoff.ms as retry delay. */
     private void scheduleTruncation(String mirrorName, Set<TopicPartition> topicPartitions, long delayMs) {
         long retryDelayMs = brokerConfig.mirrorConfig().truncationBackoffMs();
-        scheduler.scheduleOnce("LastMirroredOffsetTruncation",
+        scheduler.scheduleOnce("LastMirroredEpochTruncation",
             () -> {
                 try {
                     metadataManager.truncateToLastMirroredEpochs(replicaManager, mirrorName, topicPartitions,
@@ -542,7 +542,7 @@ public class MirrorCoordinator {
         // Write one partition state tombstone and one offset tombstone per coordinator partition
         var timestamp = time.milliseconds();
         var stateTombstone = CoordinatorRecord.tombstone(new MirrorPartitionStateKey().setMirrorName(mirrorName));
-        var offsetTombstone = CoordinatorRecord.tombstone(new LastMirroredOffsetsKey().setMirrorName(mirrorName));
+        var offsetTombstone = CoordinatorRecord.tombstone(new LastMirroredEpochsKey().setMirrorName(mirrorName));
 
         for (int coordPartition : localCoordPartitions) {
             var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, coordPartition);
@@ -568,7 +568,7 @@ public class MirrorCoordinator {
         states.keySet().forEach(tp ->
             metadataManager.removePartitionState(
                 new MirrorUtils.PartitionKey(mirrorName, tp.topic(), tp.partition())));
-        metadataManager.removeLastMirroredOffsets(mirrorName);
+        metadataManager.removeLastMirroredEpochs(mirrorName);
     }
 
     private String readMirrorNameFromKey(ByteBuffer buffer) {
