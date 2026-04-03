@@ -70,6 +70,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -95,6 +96,9 @@ public class MirrorCoordinator {
     private final MetadataCache metadataCache;
     private final Time time;
     private final MirrorRecordSerde serde;
+
+    // the inflight state change partitions. This is used to let the transition handler know that new state will be updated soon
+    private final Set<TopicPartition> stateChangeInflights = new HashSet<>();
 
     private volatile int numPartitions = -1;
 
@@ -150,7 +154,8 @@ public class MirrorCoordinator {
             case STOPPING:
                 log.debug("STOPPING for topics {}.", topicPartitions);
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
-                CompletableFuture<Void> bumpLeaderEpochFuture = metadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions);
+                CompletableFuture<Void> bumpLeaderEpochFuture = new CompletableFuture<>();
+                metadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions, bumpLeaderEpochFuture);
                 CompletableFuture<Void> updateLastMirroredEpochsFuture = new CompletableFuture<>();
                 truncateToLastStableOffset(topicPartitions, tp -> {
                     updateLastMirroredEpochs(mirrorName, Set.of(tp));
@@ -189,7 +194,12 @@ public class MirrorCoordinator {
                             } else {
                                 // successfully writes data into internal log
                                 try {
-                                    optTp.ifPresent(tp1 -> handleStateTransition(mirrorName, Set.of(tp1), newState));
+                                    optTp.ifPresent(tp1 -> {
+                                        // if this partition has state change inflight, don't need to handle state transition
+                                        if (!stateChangeInflights.contains(tp1)) {
+                                            handleStateTransition(mirrorName, Set.of(tp1), newState);
+                                        }
+                                    });
                                 } catch (Exception e) {
                                     log.error("Failed to handle state transition to {} for partition {}", newState, tp, e);
                                 }
@@ -286,6 +296,12 @@ public class MirrorCoordinator {
                                                                                   TopicPartition topicPartition,
                                                                                   MirrorPartitionState newState) {
         CompletableFuture<Optional<TopicPartition>> future = new CompletableFuture<>();
+        // no need to write a record for the same state again
+        if (metadataManager.getPartitionState(mirrorName, topicPartition) == newState) {
+            future.complete(Optional.of(topicPartition));
+            return future;
+        }
+        stateChangeInflights.add(topicPartition);
         if (isLocalCoordinator(mirrorName, topicPartition.topic(), topicPartition.partition())) {
             // this is the leader of the coordinator (async disk I/O operation)
             var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME,
@@ -313,6 +329,7 @@ public class MirrorCoordinator {
                                 future.completeExceptionally(pr.error.exception());
                             } else {
                                 metadataManager.updatePartitionState(new MirrorUtils.PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()), newState);
+                                stateChangeInflights.remove(topicPartition);
                                 future.complete(Optional.of(topicPartition));
                             }
                             return null;
@@ -331,6 +348,7 @@ public class MirrorCoordinator {
                     res -> res.data().topics().forEach(topic -> topic.partitions().forEach(par -> {
                         if (par.errorCode() == Errors.NONE.code()) {
                             metadataManager.updatePartitionState(new MirrorUtils.PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()), newState);
+                            stateChangeInflights.remove(topicPartition);
                             future.complete(Optional.of(topicPartition));
                         } else {
                             // propagate remote coordinator errors to trigger retry
@@ -445,7 +463,13 @@ public class MirrorCoordinator {
     }
 
     public int getLastMirroredEpoch(String mirrorName, TopicPartition topicPartition) {
-        return metadataManager.getLastMirroredEpoch(mirrorName, topicPartition);
+        try {
+            return metadataManager.getLastMirroredEpoch(mirrorName, topicPartition).get();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        } catch (ExecutionException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /** Persists offsets to local or remote coordinators, optionally transitioning to STOPPED. */
@@ -515,7 +539,7 @@ public class MirrorCoordinator {
         var val = new LastMirroredEpochsValue();
         var topics = new ArrayList<LastMirroredEpochsValue.Topic>();
         offsets.forEach((topic, partitionOffsets) -> {
-            var top = new LastMirroredEpochsValue.Topic();
+            var top = new LastMirroredEpochsValue.Topic().setName(topic);
             List<LastMirroredEpochsValue.Partition> partitions = new ArrayList<>();
             partitionOffsets.forEach((partition, offset) ->
                     partitions.add(new LastMirroredEpochsValue.Partition().setPartitionIndex(partition).setLastMirroredEpoch(offset)));

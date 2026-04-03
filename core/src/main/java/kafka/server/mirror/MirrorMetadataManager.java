@@ -184,6 +184,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Map<MirrorPartitionState, AtomicLong> partitionStateCounts = new ConcurrentHashMap<>();
     private final Map<MirrorUtils.PartitionKey, Integer> lastMirroredEpochs = new ConcurrentHashMap<>();
 
+    // because bump leader epoch needs to send request to the controller, and wait for metadata log fetch from broker
+    // to get the leader epoch update, we have to make sure the leader epoch has bumpped in the broker side before we can
+    // write the PID reset record
+    private Optional<MirrorUtils.BumpLeaderEpoch> bumpLeaderEpoch = Optional.empty();
+
     // metrics
     private KafkaMetricsGroup metricsGroup;
     private AtomicLong metadataRefreshError;
@@ -336,6 +341,25 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         if (delta.topicsDelta() != null) {
             clearFollowersState(delta.topicsDelta().localChanges(nodeId).followers().keySet(), newImage);
+        }
+        maybeCompleteBumpLeaderEpochFuture();
+    }
+
+    // Check if all partitions in bumpLeaderEpoch are updated to the higher leader epoch, then complete the future
+    public void maybeCompleteBumpLeaderEpochFuture() {
+        if (bumpLeaderEpoch.isPresent()) {
+            Set<TopicPartition> incompletedTps = bumpLeaderEpoch.get().partitionToEpoch().entrySet().stream().filter(entry -> {
+                TopicPartition tp = entry.getKey();
+                int epoch = entry.getValue();
+                return metadataImage.topics().getPartition(metadataImage.topics().getTopic(tp.topic()).id(), tp.partition()).leaderEpoch < epoch;
+            }).map(Map.Entry::getKey).collect(Collectors.toSet());
+            if (incompletedTps.isEmpty()) {
+                CompletableFuture<Void> future = bumpLeaderEpoch.get().future();
+                future.complete(null);
+                bumpLeaderEpoch = Optional.empty();
+            } else {
+                log.info("bumpLeaderEpoch future is not completed for partitions: {}, all: {}", incompletedTps, bumpLeaderEpoch.get().partitionToEpoch().keySet());
+            }
         }
     }
 
@@ -834,12 +858,28 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-    int getLastMirroredEpoch(String clusterName, TopicPartition topicPartition) {
+    CompletableFuture<Integer> getLastMirroredEpoch(String clusterName, TopicPartition topicPartition) {
+        CompletableFuture<Integer> future = new CompletableFuture<>();
         MirrorUtils.PartitionKey key = new MirrorUtils.PartitionKey(clusterName, topicPartition.topic(), topicPartition.partition());
         if (lastMirroredEpochs.containsKey(key)) {
-            return lastMirroredEpochs.get(key);
+            future.complete(lastMirroredEpochs.get(key));
+        } else {
+            // if there is no data in the cache, try to read from the remote coordinator
+            // but if the internal topic is not available, it means the coordinator is not enabled. Return -1 directly
+            if (metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME) != null && !isLocalCoordinator(clusterName, topicPartition.topic(), topicPartition.partition())) {
+                readStatesFromRemoteCoordinator(clusterName, Map.of(topicPartition.topic(), Set.of(topicPartition.partition())), res ->
+                        res.data().topics().forEach(topic ->
+                                topic.partitions().forEach(partition -> {
+                                    log.info("remote returned LME:" + partition.lastMirroredEpoch());
+                                    future.complete(partition.lastMirroredEpoch());
+                                })));
+            } else {
+                log.info("no record: -1");
+                // it means there is no LME record for this partition
+                future.complete(-1);
+            }
         }
-        return -1;
+        return future;
     }
 
     Map<MirrorUtils.PartitionKey, Integer> updateLastMirroredEpochs(String clusterName,
@@ -933,8 +973,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         metadataRefreshError.incrementAndGet();
     }
 
-    public CompletableFuture<Void> sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions) {
-        CompletableFuture<Void> future = new CompletableFuture<>();
+    public void sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions, CompletableFuture<Void> future) {
+        if (bumpLeaderEpoch.isPresent()) {
+            log.info("Bump leader epoch already in progress, skipping");
+            return;
+        }
+
+        Map<TopicPartition, Integer> partitionEpochs = new HashMap<>();
+
         List<BumpLeaderEpochsRequestData.TopicState> topicStates = new ArrayList<>();
         Map<String, Set<Integer>> partitions = new HashMap<>();
         topicPartitions.forEach(tp -> {
@@ -945,11 +991,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             List<BumpLeaderEpochsRequestData.LeaderEpochState> topicLeaderEpoch = new ArrayList<>();
             parts.forEach(partitionId -> {
                 int epoch = logManager.getLog(new TopicPartition(topic, partitionId), false).get().latestEpoch().orElse(-1);
+                partitionEpochs.put(new TopicPartition(topic, partitionId), epoch);
                 topicLeaderEpoch.add(new BumpLeaderEpochsRequestData.LeaderEpochState().setMinLeaderEpoch(epoch).setPartitionIndex(partitionId));
             });
             topicState.setTopicId(metadataCache.getTopicId(topic)).setPartitions(topicLeaderEpoch);
             topicStates.add(topicState);
         });
+
+        bumpLeaderEpoch = Optional.of(new MirrorUtils.BumpLeaderEpoch(future, partitionEpochs));
 
         channelManager.sendRequest(new BumpLeaderEpochsRequest.Builder(
                 new BumpLeaderEpochsRequestData().setTopics(topicStates)
@@ -957,7 +1006,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             @Override
             public void onComplete(ClientResponse response) {
                 log.debug("Bump leader epoch response: {}", response);
-                future.complete(null);
             }
 
             @Override
@@ -965,8 +1013,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 log.warn("BumpLeaderEpoch request timed out");
             }
         });
-
-        return future;
     }
 
     /**

@@ -343,6 +343,7 @@ class Partition(val topicPartition: TopicPartition,
   @volatile private[cluster] var partitionState: PartitionState = CommittedPartitionState(Set.empty, LeaderRecoveryState.RECOVERED)
   @volatile var assignmentState: AssignmentState = SimpleAssignmentState(Seq.empty)
   @volatile var onComplete: Optional[Consumer[TopicPartition]] = Optional.empty()
+  @volatile var onCaughtup: Optional[Consumer[TopicPartition]] = Optional.empty()
 
   // Logs belonging to this partition. Majority of time it will be only one log, but if log directory
   // is getting changed (as a result of ReplicaAlterLogDirs command), we may have two logs until copy
@@ -1229,7 +1230,7 @@ class Partition(val topicPartition: TopicPartition,
    *
    * @param leaderLog the leader's unified log
    * @param maybeWaitForAllReplicas true if we should check the "mirror.support.unclean.leader.election" config to see if
-   *                                we should wait for all replicas to catch up.
+   *                                we should wait for all replicas to catch up. This is used for last mirrored epoch truncation.
    * @param currentTimeMs the current time in milliseconds
    * @param onComplete optional callback to invoke when truncation completes
    * @return true if the transition occurred, false if validation failed or no callback was registered
@@ -1237,7 +1238,8 @@ class Partition(val topicPartition: TopicPartition,
   def maybeCompleteTruncation(leaderLog: UnifiedLog,
                               currentTimeMs: Long = time.milliseconds,
                               maybeWaitForAllReplicas: Boolean = false,
-                              onCompleteCallback: Optional[Consumer[TopicPartition]] = Optional.empty()): Boolean = {
+                              onCompleteCallback: Optional[Consumer[TopicPartition]] = Optional.empty(),
+                              onCaughtupCallback: Optional[Consumer[TopicPartition]] = Optional.empty()): Boolean = {
     if (onCompleteCallback.isPresent) {
       onComplete = onCompleteCallback
     }
@@ -1247,15 +1249,18 @@ class Partition(val topicPartition: TopicPartition,
       return false
     }
 
-    if (maybeWaitForAllReplicas) {
-      val mirrorUncleanLeaderElection = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topic)).get(TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG).asInstanceOf[String]
-      if (mirrorUncleanLeaderElection != null &&
-        mirrorUncleanLeaderElection.toBoolean &&
-        assignmentState.replicationFactor > partitionState.isr.size) {
+    if (onCaughtupCallback.isPresent) {
+      onCaughtup = onCaughtupCallback
+    }
+
+    val mirrorUncleanLeaderElection = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topic)).get(TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG).asInstanceOf[String]
+    val shouldWaitAllReplicas = mirrorUncleanLeaderElection != null && mirrorUncleanLeaderElection.toBoolean
+
+    if (maybeWaitForAllReplicas && shouldWaitAllReplicas &&
+      assignmentState.replicationFactor > partitionState.isr.size) {
         info(s"Not completing truncation because 'mirror.support.unclean.leader.election' is enabled and" +
           s" partition ISR doesn't contain all replicas (ISR=${partitionState.isr}, replicationFactor=${assignmentState.replicationFactor})")
         return false
-      }
     }
 
     if (isUnderMinIsr) {
@@ -1277,19 +1282,33 @@ class Partition(val topicPartition: TopicPartition,
       // Note here we are using the "maximal", see explanation above
       // We want to make sure all LEO are <= leader LEO
       if (replicaState.logEndOffsetMetadata.messageOffset > leaderLogEndOffset.messageOffset &&
-        (partitionState.maximalIsr.contains(replica.brokerId) || shouldWaitForReplicaToJoinIsr)
+        (partitionState.maximalIsr.contains(replica.brokerId) || shouldWaitAllReplicas || shouldWaitForReplicaToJoinIsr)
       ) {
         info("!!! ISR is not all truncated to the expected offset: " + replicaState)
         return false
       }
     }
 
-    // move state if truncation are done for all ISR
-    onComplete.ifPresent(callback => {
-      callback.accept(topicPartition)
-      onComplete = Optional.empty()
-    })
-    true
+    // two phase truncation:
+    // 1. check if all replicas are caught up to the leader's LEO. If so, then the leader starts to truncate the log using onCaughtup callback
+    // 2. check if all replicas have truncated to the expected offset. If so, then the partition is ready to move to next state
+    // The reason is that we may have truncated the leader's log to an offset where it is in the middle of the batch,
+    // and then the follower cannot sync up with the leader. This can happen in unclean leader election case.
+    if (onCaughtup.isPresent) {
+      onCaughtup.get().accept(topicPartition)
+      onCaughtup = Optional.empty()
+      // We are not yet done truncating, so return false
+      false
+    } else {
+      // move state if truncation are done for all ISR or all replicas
+      onComplete.ifPresent(callback => {
+        callback.accept(topicPartition)
+        onComplete = Optional.empty()
+      })
+      true
+    }
+
+
   }
 
   /**

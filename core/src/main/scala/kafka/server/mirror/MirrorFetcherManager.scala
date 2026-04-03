@@ -201,19 +201,19 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   }
 
   def updatePartitionLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long): Unit = {
-    this.synchronized {
-      val key = PartitionLagKey(mirrorName, topicPartition)
-      val lag = Math.max(0, sourceOffset - destinationOffset)
-      lagInfo.put(key, LagInfo(sourceOffset, destinationOffset, lag, time.milliseconds()))
-    }
+    // TODO: This is a temporary workaround to avoid deadlock. We should fix the root cause of the deadlock.
+    // this.synchronized {
+    val key = PartitionLagKey(mirrorName, topicPartition)
+    val lag = Math.max(0, sourceOffset - destinationOffset)
+    lagInfo.put(key, LagInfo(sourceOffset, destinationOffset, lag, time.milliseconds()))
   }
 
   def getMirrorLagInfo(mirrorName: String): Map[TopicPartition, LagInfo] = {
-    this.synchronized {
-      lagInfo.collect {
-        case (key, lagInfo) if key.mirrorName == mirrorName => key.topicPartition -> lagInfo
-      }.toMap
-    }
+    // TODO: This is a temporary workaround to avoid deadlock. We should fix the root cause of the deadlock.
+    // this.synchronized {
+    lagInfo.collect {
+      case (key, lagInfo) if key.mirrorName == mirrorName => key.topicPartition -> lagInfo
+    }.toMap
   }
 
   def removeFetchersForMirror(mirrorName: String): Unit = {

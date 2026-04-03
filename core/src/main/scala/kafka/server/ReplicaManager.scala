@@ -1685,9 +1685,16 @@ class ReplicaManager(val config: KafkaConfig,
       getLog(tp).map(log => {
         val endOffsetForEpoch = log.endOffsetForEpoch(leaderEpoch)
         val offsetToTruncate = if (endOffsetForEpoch.isPresent) endOffsetForEpoch.get().offset() else 0L
-        log.truncateTo(offsetToTruncate)
+        val onCaughtupCallback: Optional[Consumer[TopicPartition]] = if (log.logEndOffset() <= offsetToTruncate) {
+          Optional.empty()
+        } else {
+          Optional.of((tp: TopicPartition) => {
+            log.truncateTo(offsetToTruncate)
+          })
+        }
         val partition = getPartitionOrException(tp)
-        partition.maybeCompleteTruncation(log, maybeWaitForAllReplicas = true, onCompleteCallback = Optional.of(callback))
+        partition.maybeCompleteTruncation(log, maybeWaitForAllReplicas = true, onCompleteCallback = Optional.of(callback),
+          onCaughtupCallback = onCaughtupCallback)
       })
     })
   }
