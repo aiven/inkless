@@ -121,7 +121,7 @@ public record PartitionFetchState(
                 ", lag=" + lag +
                 ", delay=" + delay.orElse(0L) + "ms)" +
                 ", mirrorName=" + mirrorName +
-                ", mirrorLeaderEpoch=" + mirrorLeaderEpoch +")";
+                ", mirrorLeaderEpoch=" + mirrorLeaderEpoch + ")";
     }
 
     public PartitionFetchState updateTopicId(Optional<Uuid> newTopicId) {
