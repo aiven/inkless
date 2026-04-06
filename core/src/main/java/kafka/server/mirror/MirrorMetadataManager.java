@@ -187,9 +187,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     // because bump leader epoch needs to send request to the controller, and wait for metadata log fetch from broker
     // to get the leader epoch update, we have to make sure the leader epoch has bumpped in the broker side before we can
     // write the PID reset record
-    private Optional<MirrorUtils.BumpLeaderEpoch> bumpLeaderEpoch = Optional.empty();
+    private Set<MirrorUtils.BumpLeaderEpoch> bumpLeaderEpoch = ConcurrentHashMap.newKeySet();
 
-    // the inflight state processes partitions. This is used to let the transition handler know that the current state is still inflight.
+    // the inflight state processes partitions. This is used to let the transition handler know that the current state is still inflight, to avoid duplicate process.
     private final Map<TopicPartition, MirrorPartitionState> inflightStateProcesses = new ConcurrentHashMap<>();
 
     // metrics
@@ -350,20 +350,20 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     // Check if all partitions in bumpLeaderEpoch are updated to the higher leader epoch, then complete the future
     public void maybeCompleteBumpLeaderEpochFuture() {
-        if (bumpLeaderEpoch.isPresent()) {
-            Set<TopicPartition> incompletedTps = bumpLeaderEpoch.get().partitionToEpoch().entrySet().stream().filter(entry -> {
+        bumpLeaderEpoch.removeIf(bumpLeaderEpoch -> {
+            Set<TopicPartition> incompletedTps = bumpLeaderEpoch.partitionToEpoch().entrySet().stream().filter(entry -> {
                 TopicPartition tp = entry.getKey();
                 int epoch = entry.getValue();
                 return metadataImage.topics().getPartition(metadataImage.topics().getTopic(tp.topic()).id(), tp.partition()).leaderEpoch < epoch;
             }).map(Map.Entry::getKey).collect(Collectors.toSet());
             if (incompletedTps.isEmpty()) {
-                CompletableFuture<Void> future = bumpLeaderEpoch.get().future();
-                future.complete(null);
-                bumpLeaderEpoch = Optional.empty();
+                bumpLeaderEpoch.future().complete(null);
+                return true;
             } else {
-                log.info("bumpLeaderEpoch future is not completed for partitions: {}, all: {}", incompletedTps, bumpLeaderEpoch.get().partitionToEpoch().keySet());
+                log.info("bumpLeaderEpoch future is not completed for partitions: {}, all: {}", incompletedTps, bumpLeaderEpoch.partitionToEpoch().keySet());
+                return false;
             }
-        }
+        });
     }
 
     @Override
@@ -399,8 +399,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     String mirrorName = (String) props.get(TopicConfig.MIRROR_NAME_CONFIG);
                     if (mirrorName != null && !mirrorName.isBlank()) {
                         inflightStateProcesses.remove(tp);
-                        bumpLeaderEpoch.ifPresent(bumpLeaderEpoch ->
-                                bumpLeaderEpoch.future().completeExceptionally(new IllegalStateException("not leader anymore")));
+                        bumpLeaderEpoch.removeIf(bumpLeaderEpoch -> {
+                                bumpLeaderEpoch.future().completeExceptionally(new IllegalStateException("not leader anymore"));
+                                return true;
+                        });
                     }
                 }
             });
@@ -994,10 +996,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     public void sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions, CompletableFuture<Void> future) {
-        if (bumpLeaderEpoch.isPresent()) {
-            throw new IllegalStateException("Bump leader epoch should be triggered enter twice.");
-        }
-
         Map<TopicPartition, Integer> partitionEpochs = new HashMap<>();
 
         List<BumpLeaderEpochsRequestData.TopicState> topicStates = new ArrayList<>();
@@ -1017,7 +1015,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             topicStates.add(topicState);
         });
 
-        bumpLeaderEpoch = Optional.of(new MirrorUtils.BumpLeaderEpoch(future, partitionEpochs));
+        bumpLeaderEpoch.add(new MirrorUtils.BumpLeaderEpoch(future, partitionEpochs));
 
         channelManager.sendRequest(new BumpLeaderEpochsRequest.Builder(
                 new BumpLeaderEpochsRequestData().setTopics(topicStates)
@@ -1579,6 +1577,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         sourceClusterIds.clear();
         closeSourceSenders();
         sourceLeaders.clear();
+        bumpLeaderEpoch.clear();
+        inflightStateProcesses.clear();
     }
 
     private void closeSourceSenders() {

@@ -159,15 +159,25 @@ public class MirrorCoordinator {
                     updateLastMirroredEpochs(mirrorName, Set.of(tp));
                     updateLastMirroredEpochsFuture.complete(null);
                 });
+                CompletableFuture<Void> writePidResetBarrierFuture = new CompletableFuture<>();
+                // Wait until (1) bump leader epoch and (2) update last mirror epoch completes, then write mirror pid reset barrier record
                 CompletableFuture.allOf(bumpLeaderEpochFuture, updateLastMirroredEpochsFuture)
                         .whenComplete((v, ex) -> {
                             if (ex == null) {
-                                writeMirrorPidResetBarrier(mirrorName, topicPartitions);
+                                writeMirrorPidResetBarrier(mirrorName, topicPartitions, writePidResetBarrierFuture);
                             } else {
                                 log.error("Failed to complete the STOPPING state for partition: {}", topicPartitions, ex);
                             }
-                        })
-                        .thenRun(() -> transitionTo(mirrorName, topicPartitions, MirrorPartitionState.STOPPED));
+                        });
+                // Wait until pid reset barrier record is written, then transition to STOPPED state.
+                writePidResetBarrierFuture.whenComplete((v, ex) -> {
+                    if (ex != null) {
+                        log.error("Failed to write PID reset barrier for partition: {}", topicPartitions, ex);
+                    } else {
+                        transitionTo(mirrorName, topicPartitions, MirrorPartitionState.STOPPED);
+                    }
+                });
+
                 break;
             case STOPPED:
                 log.debug("STOPPED for topics {}.", topicPartitions);
@@ -200,7 +210,10 @@ public class MirrorCoordinator {
                                 try {
                                     optTp.ifPresent(tp1 -> {
                                         // if this partition has state process inflight, don't need to handle state transition
-                                        if (!metadataManager.inflightStateProcesses().containsKey(tp1) || metadataManager.inflightStateProcesses().get(tp1) != newState) {
+                                        // For mirroring, because the mirror fetcher will be removed when becoming the leader, we should re-run it.
+                                        // (and it's idempotent operation)
+                                        MirrorPartitionState inflightState = metadataManager.inflightStateProcesses().get(tp1);
+                                        if (inflightState == MirrorPartitionState.MIRRORING || inflightState != newState) {
                                             metadataManager.inflightStateProcesses().put(tp1, newState);
                                             handleStateTransition(mirrorName, Set.of(tp1), newState);
                                         } else {
@@ -410,10 +423,11 @@ public class MirrorCoordinator {
             }, delayMs);
     }
 
-    private void writeMirrorPidResetBarrier(String mirrorName, Set<TopicPartition> topicPartitions) {
+    private void writeMirrorPidResetBarrier(String mirrorName, Set<TopicPartition> topicPartitions, CompletableFuture<Void> writePidResetBarrierFuture) {
         Uuid sourceClusterId = metadataManager.getSourceClusterId(mirrorName);
         if (sourceClusterId == null) {
             log.warn("Source cluster ID not available for mirror {}. Skipping PID reset barrier.", mirrorName);
+            writePidResetBarrierFuture.complete(null);
             return;
         }
         MirrorPidResetRecord record = new MirrorPidResetRecord()
@@ -444,6 +458,7 @@ public class MirrorCoordinator {
                             }
                             return null;
                         });
+                        writePidResetBarrierFuture.complete(null);
                         return null;
                     },
                     ignored -> null,
@@ -452,6 +467,7 @@ public class MirrorCoordinator {
                 );
             } catch (Exception e) {
                 log.error("Failed to write PID reset barrier for partition {} in mirror {}", tp, mirrorName, e);
+                writePidResetBarrierFuture.completeExceptionally(e);
             }
         }
     }
