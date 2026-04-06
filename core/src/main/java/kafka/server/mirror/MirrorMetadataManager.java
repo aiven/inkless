@@ -189,6 +189,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     // write the PID reset record
     private Optional<MirrorUtils.BumpLeaderEpoch> bumpLeaderEpoch = Optional.empty();
 
+    // the inflight state processes partitions. This is used to let the transition handler know that the current state is still inflight.
+    private final Map<TopicPartition, MirrorPartitionState> inflightStateProcesses = new ConcurrentHashMap<>();
+
     // metrics
     private KafkaMetricsGroup metricsGroup;
     private AtomicLong metadataRefreshError;
@@ -280,7 +283,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
 
         // get all mirror partition leaders on this node based on the delta
-        Set<TopicPartition> mirrorLeaders = getMirrorLeaders(delta, newImage);
+        Set<TopicPartition> mirrorLeaders = getMirrorLeadersAndClearFollowerStates(delta, newImage);
         if (mirrorLeaders.isEmpty()) {
             return;
         }
@@ -369,18 +372,35 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         closeSourceSenders();
     }
 
+    public Map<TopicPartition, MirrorPartitionState> inflightStateProcesses() {
+        return inflightStateProcesses;
+    }
+
     /** Returns mirror partitions led by this broker, detecting both leadership and config changes */
-    private Set<TopicPartition> getMirrorLeaders(MetadataDelta delta, MetadataImage image) {
+    private Set<TopicPartition> getMirrorLeadersAndClearFollowerStates(MetadataDelta delta, MetadataImage image) {
         Set<TopicPartition> mirrorLeaderPartitions = new HashSet<>();
 
-        // new partition leader in topicsDelta that has mirror.name not empty
         if (delta.topicsDelta() != null) {
+            // new partition leader in topicsDelta that has mirror.name not empty
             delta.topicsDelta().localChanges(nodeId).leaders().keySet().forEach(tp -> {
                 Properties props = image.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic()));
                 if (props.containsKey(TopicConfig.MIRROR_NAME_CONFIG)) {
                     String mirrorName = (String) props.get(TopicConfig.MIRROR_NAME_CONFIG);
                     if (mirrorName != null && !mirrorName.isBlank()) {
                         mirrorLeaderPartitions.add(tp);
+                    }
+                }
+            });
+
+            // remove the inflight state from this node because it is not the leader anymore
+            delta.topicsDelta().localChanges(nodeId).followers().keySet().forEach(tp -> {
+                Properties props = image.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic()));
+                if (props.containsKey(TopicConfig.MIRROR_NAME_CONFIG)) {
+                    String mirrorName = (String) props.get(TopicConfig.MIRROR_NAME_CONFIG);
+                    if (mirrorName != null && !mirrorName.isBlank()) {
+                        inflightStateProcesses.remove(tp);
+                        bumpLeaderEpoch.ifPresent(bumpLeaderEpoch ->
+                                bumpLeaderEpoch.future().completeExceptionally(new IllegalStateException("not leader anymore")));
                     }
                 }
             });
@@ -975,8 +995,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     public void sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions, CompletableFuture<Void> future) {
         if (bumpLeaderEpoch.isPresent()) {
-            log.info("Bump leader epoch already in progress, skipping");
-            return;
+            throw new IllegalStateException("Bump leader epoch should be triggered enter twice.");
         }
 
         Map<TopicPartition, Integer> partitionEpochs = new HashMap<>();

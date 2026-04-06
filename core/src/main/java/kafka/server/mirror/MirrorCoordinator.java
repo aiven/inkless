@@ -70,7 +70,8 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -96,9 +97,6 @@ public class MirrorCoordinator {
     private final MetadataCache metadataCache;
     private final Time time;
     private final MirrorRecordSerde serde;
-
-    // the inflight state change partitions. This is used to let the transition handler know that new state will be updated soon
-    private final Set<TopicPartition> stateChangeInflights = new HashSet<>();
 
     private volatile int numPartitions = -1;
 
@@ -162,7 +160,13 @@ public class MirrorCoordinator {
                     updateLastMirroredEpochsFuture.complete(null);
                 });
                 CompletableFuture.allOf(bumpLeaderEpochFuture, updateLastMirroredEpochsFuture)
-                        .whenComplete((v, ex) -> writeMirrorPidResetBarrier(mirrorName, topicPartitions))
+                        .whenComplete((v, ex) -> {
+                            if (ex == null) {
+                                writeMirrorPidResetBarrier(mirrorName, topicPartitions);
+                            } else {
+                                log.error("Failed to complete the STOPPING state for partition: {}", topicPartitions, ex);
+                            }
+                        })
                         .thenRun(() -> transitionTo(mirrorName, topicPartitions, MirrorPartitionState.STOPPED));
                 break;
             case STOPPED:
@@ -195,9 +199,12 @@ public class MirrorCoordinator {
                                 // successfully writes data into internal log
                                 try {
                                     optTp.ifPresent(tp1 -> {
-                                        // if this partition has state change inflight, don't need to handle state transition
-                                        if (!stateChangeInflights.contains(tp1)) {
+                                        // if this partition has state process inflight, don't need to handle state transition
+                                        if (!metadataManager.inflightStateProcesses().containsKey(tp1) || metadataManager.inflightStateProcesses().get(tp1) != newState) {
+                                            metadataManager.inflightStateProcesses().put(tp1, newState);
                                             handleStateTransition(mirrorName, Set.of(tp1), newState);
+                                        } else {
+                                            log.debug("State transition for partition {} is already inflight, skipping.", tp1);
                                         }
                                     });
                                 } catch (Exception e) {
@@ -301,7 +308,6 @@ public class MirrorCoordinator {
             future.complete(Optional.of(topicPartition));
             return future;
         }
-        stateChangeInflights.add(topicPartition);
         if (isLocalCoordinator(mirrorName, topicPartition.topic(), topicPartition.partition())) {
             // this is the leader of the coordinator (async disk I/O operation)
             var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME,
@@ -329,7 +335,6 @@ public class MirrorCoordinator {
                                 future.completeExceptionally(pr.error.exception());
                             } else {
                                 metadataManager.updatePartitionState(new MirrorUtils.PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()), newState);
-                                stateChangeInflights.remove(topicPartition);
                                 future.complete(Optional.of(topicPartition));
                             }
                             return null;
@@ -348,7 +353,6 @@ public class MirrorCoordinator {
                     res -> res.data().topics().forEach(topic -> topic.partitions().forEach(par -> {
                         if (par.errorCode() == Errors.NONE.code()) {
                             metadataManager.updatePartitionState(new MirrorUtils.PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()), newState);
-                            stateChangeInflights.remove(topicPartition);
                             future.complete(Optional.of(topicPartition));
                         } else {
                             // propagate remote coordinator errors to trigger retry
@@ -464,11 +468,9 @@ public class MirrorCoordinator {
 
     public int getLastMirroredEpoch(String mirrorName, TopicPartition topicPartition) {
         try {
-            return metadataManager.getLastMirroredEpoch(mirrorName, topicPartition).get();
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        } catch (ExecutionException e) {
-            throw new RuntimeException(e);
+            return metadataManager.getLastMirroredEpoch(mirrorName, topicPartition).get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            throw new RuntimeException("Cannot get the last mirror epochs from the source cluster in time.", e);
         }
     }
 
