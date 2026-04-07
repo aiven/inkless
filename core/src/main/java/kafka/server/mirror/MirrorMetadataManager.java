@@ -880,28 +880,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-    CompletableFuture<Integer> getLastMirroredEpoch(String clusterName, TopicPartition topicPartition) {
-        CompletableFuture<Integer> future = new CompletableFuture<>();
-        MirrorUtils.PartitionKey key = new MirrorUtils.PartitionKey(clusterName, topicPartition.topic(), topicPartition.partition());
-        if (lastMirroredEpochs.containsKey(key)) {
-            future.complete(lastMirroredEpochs.get(key));
-        } else {
-            // if there is no data in the cache, try to read from the remote coordinator
-            // but if the internal topic is not available, it means the coordinator is not enabled. Return -1 directly
-            if (metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME) != null && !isLocalCoordinator(clusterName, topicPartition.topic(), topicPartition.partition())) {
-                readStatesFromRemoteCoordinator(clusterName, Map.of(topicPartition.topic(), Set.of(topicPartition.partition())), res ->
-                        res.data().topics().forEach(topic ->
-                                topic.partitions().forEach(partition -> {
-                                    log.info("remote returned LME:" + partition.lastMirroredEpoch());
-                                    future.complete(partition.lastMirroredEpoch());
-                                })));
-            } else {
-                log.info("no record: -1");
-                // it means there is no LME record for this partition
-                future.complete(-1);
-            }
-        }
-        return future;
+     Map<TopicPartition, Integer> getLastMirroredEpochs(String clusterName) {
+         Map<TopicPartition, Integer> result = new HashMap<>();
+             lastMirroredEpochs.forEach((key, epoch) -> {
+             if (key.mirrorName().equals(clusterName)) {
+                 result.put(new TopicPartition(key.topic(), key.partition()), epoch);
+             }
+         });
+         return result;
     }
 
     Map<MirrorUtils.PartitionKey, Integer> updateLastMirroredEpochs(String clusterName,

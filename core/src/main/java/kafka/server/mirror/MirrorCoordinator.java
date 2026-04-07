@@ -518,12 +518,8 @@ public class MirrorCoordinator {
         return results;
     }
 
-    public int getLastMirroredEpoch(String mirrorName, TopicPartition topicPartition) {
-        try {
-            return metadataManager.getLastMirroredEpoch(mirrorName, topicPartition).get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
-        } catch (Exception e) {
-            throw new RuntimeException("Cannot get the last mirror epochs from the source cluster in time.", e);
-        }
+    public Map<TopicPartition, Integer> getLastMirroredEpochs(String mirrorName) {
+        return metadataManager.getLastMirroredEpochs(mirrorName);
     }
 
     /** Persists offsets to local or remote coordinators, optionally transitioning to STOPPED. */
