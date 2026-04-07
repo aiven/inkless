@@ -207,7 +207,8 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
                  dynamicRaftQuorum=False,
                  use_transactions_v2=False,
                  use_share_groups=None,
-                 use_streams_groups=False
+                 use_streams_groups=False,
+                 use_cluster_mirroring=False,
                  ):
         """
         :param context: test context
@@ -273,6 +274,7 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         :param use_transactions_v2: When true, uses transaction.version=2 which utilizes the new transaction protocol introduced in KIP-890
         :param use_share_groups: When true, enables the use of share groups introduced in KIP-932
         :param use_streams_groups: When true, enables the use of streams groups introduced in KIP-1071
+        :param use_cluster_mirroring: When true, enables the use of cluster mirroring introduced in KIP-1279
         """
 
         self.zk = zk
@@ -299,6 +301,8 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         self.use_transactions_v2 = use_transactions_v2
         self.use_share_groups = use_share_groups
         self.use_streams_groups = use_streams_groups
+
+        self.use_cluster_mirroring = use_cluster_mirroring
 
         # Set consumer_group_migration_policy based on context and arguments.
         if consumer_group_migration_policy is None:
@@ -358,7 +362,7 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
                     extra_kafka_opts=extra_kafka_opts, tls_version=tls_version,
                     isolated_kafka=self, allow_zk_with_kraft=self.allow_zk_with_kraft,
                     server_prop_overrides=server_prop_overrides, dynamicRaftQuorum=self.dynamicRaftQuorum,
-                    use_streams_groups=self.use_streams_groups
+                    use_streams_groups=self.use_streams_groups, use_cluster_mirroring=self.use_cluster_mirroring
                 )
                 self.controller_quorum = self.isolated_controller_quorum
 
@@ -786,6 +790,10 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         if self.use_streams_groups is True:
             override_configs[config_property.UNSTABLE_API_VERSIONS_ENABLE] = str(True)
             override_configs[config_property.UNSTABLE_FEATURE_VERSIONS_ENABLE] = str(True)
+
+        if self.use_cluster_mirroring:
+            override_configs[config_property.UNSTABLE_API_VERSIONS_ENABLE] = 'true'
+            override_configs[config_property.UNSTABLE_FEATURE_VERSIONS_ENABLE] = 'true'
 
         #update template configs with test override configs
         configs.update(override_configs)
@@ -2012,3 +2020,83 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
 
     def java_class_name(self):
         return "kafka\.Kafka"
+
+    def create_cluster_mirror(self, node, mirror_name, mirror_config_file):
+        cluster_mirror_script = self.path.script("kafka-mirrors.sh", node)
+
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --bootstrap-server %s --create --mirror %s --mirror-config %s" % \
+               (cluster_mirror_script,
+                self.bootstrap_servers(self.security_protocol),
+                mirror_name,
+                mirror_config_file)
+        return self.run_cli_tool(node, cmd)
+
+    def list_cluster_mirror(self, node):
+        cluster_mirror_script = self.path.script("kafka-mirrors.sh", node)
+
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --bootstrap-server %s --list" % \
+               (cluster_mirror_script,
+                self.bootstrap_servers(self.security_protocol))
+        return self.run_cli_tool(node, cmd)
+
+    def describe_cluster_mirror(self, node):
+        cluster_mirror_script = self.path.script("kafka-mirrors.sh", node)
+
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --bootstrap-server %s --describe --json" % \
+               (cluster_mirror_script,
+                self.bootstrap_servers(self.security_protocol))
+        return self.run_cli_tool(node, cmd)
+
+
+    def _cluster_mirror_action(self, node, mirror_name, topics, action):
+        assert topics is not None and len(topics) > 0
+        cluster_mirror_script = self.path.script("kafka-mirrors.sh", node)
+
+        cmd = fix_opts_for_new_jvm(node)
+        topic_names = ' '.join(['--topic %s' % topic for topic in topics])
+        cmd += "%s --bootstrap-server %s --%s --mirror %s %s" % \
+               (cluster_mirror_script,
+                self.bootstrap_servers(self.security_protocol),
+                action,
+                mirror_name,
+                topic_names)
+        return self.run_cli_tool(node, cmd)
+
+    def add_topics_to_cluster_mirror(self, node, mirror_name, topics):
+        return self._cluster_mirror_action(node, mirror_name, topics, 'add')
+
+    def delete_topics_from_cluster_mirror(self, node, mirror_name, topics):
+        return self._cluster_mirror_action(node, mirror_name, topics, 'delete')
+
+    def delete_topics_from_cluster_mirror(self, node, mirror_name, topics):
+        return self._cluster_mirror_action(node, mirror_name, topics, 'pause')
+
+    def delete_topics_from_cluster_mirror(self, node, mirror_name, topics):
+        return self._cluster_mirror_action(node, mirror_name, topics, 'resume')
+    
+    def parse_describe_cluster_mirror(self, cluster_mirror_description):
+        """Parse output of kafka-mirrors.sh --describe (or describe_cluster_mirror() method above), which is a string of form
+        """
+        parsed = json.loads(cluster_mirror_description)
+        mirrors = {}
+        for item in parsed:
+            mirror = item["mirror"]
+            if mirror not in mirrors:
+                mirrors[mirror] = {}
+            
+            topic = item["topic"]
+            if topic not in mirrors[mirror]:
+                mirrors[mirror][topic] = {}
+            
+            partition = item["partition"]
+            mirrors[mirror][topic][partition] = {
+                "src_offset": item["sourceOffset"],
+                "dst_offset": item["destinationOffset"],
+                "lag": item["lag"],
+                "state": item["state"]
+            }
+
+        return mirrors
