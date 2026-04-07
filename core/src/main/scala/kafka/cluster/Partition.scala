@@ -1228,15 +1228,14 @@ class Partition(val topicPartition: TopicPartition,
    * consistency before resuming mirroring operations.
    *
    * @param leaderLog the leader's unified log
-   * @param maybeWaitForAllReplicas true if we should check the "mirror.support.unclean.leader.election" config to see if
-   *                                we should wait for all replicas to catch up.
    * @param currentTimeMs the current time in milliseconds
-   * @param onComplete optional callback to invoke when truncation completes
+   * @param waitForAllReplicas true if we should wait for all replicas to catch up for unclean leader election support
+   * @param onCompleteCallback optional callback to invoke when truncation completes
    * @return true if the transition occurred, false if validation failed or no callback was registered
    */
   def maybeCompleteTruncation(leaderLog: UnifiedLog,
                               currentTimeMs: Long = time.milliseconds,
-                              maybeWaitForAllReplicas: Boolean = false,
+                              waitForAllReplicas: Boolean = false,
                               onCompleteCallback: Optional[Consumer[TopicPartition]] = Optional.empty()): Boolean = {
     if (onCompleteCallback.isPresent) {
       onComplete = onCompleteCallback
@@ -1247,15 +1246,10 @@ class Partition(val topicPartition: TopicPartition,
       return false
     }
 
-    if (maybeWaitForAllReplicas) {
-      val mirrorUncleanLeaderElection = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topic)).get(TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG).asInstanceOf[String]
-      if (mirrorUncleanLeaderElection != null &&
-        mirrorUncleanLeaderElection.toBoolean &&
-        assignmentState.replicationFactor > partitionState.isr.size) {
+    if (waitForAllReplicas && assignmentState.replicationFactor > partitionState.isr.size) {
         info(s"Not completing truncation because 'mirror.support.unclean.leader.election' is enabled and" +
           s" partition ISR doesn't contain all replicas (ISR=${partitionState.isr}, replicationFactor=${assignmentState.replicationFactor})")
         return false
-      }
     }
 
     if (isUnderMinIsr) {

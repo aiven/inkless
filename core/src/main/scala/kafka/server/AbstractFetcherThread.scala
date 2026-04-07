@@ -455,7 +455,7 @@ abstract class AbstractFetcherThread(name: String,
                        * cluster's leader epoch (maintained by updateMirrorFetchEpoch when errors occur), ensuring proper
                        * validation of fetched batches from the source cluster.
                        *
-                       * For mirrored partition followers, use mirrorLeaderEpoch for validation of fetched batches from the leader.
+                       * Use mirrorLeaderEpoch to validate batches fetched from the leader.
                        */
                       val epochForValidation: Int = if (currentFetchState.mirrorLeaderEpoch.isPresent)
                         currentFetchState.mirrorLeaderEpoch.get()
@@ -484,8 +484,7 @@ abstract class AbstractFetcherThread(name: String,
                               currentFetchState.mirrorLeaderEpoch()
                             }
                           } else {
-                            // set 0 if the mirrorLeaderEpoch is not set yet. This is the case for the topic that was not
-                            // a mirror topic but now it is added into mirrored topics.
+                            // set 0 if the mirrorLeaderEpoch is not set yet. This is the case for the topic that just started mirroring.
                             Optional.of(0)
                           }
                         } else {
@@ -493,6 +492,7 @@ abstract class AbstractFetcherThread(name: String,
                         }
 
                         // ReplicaDirAlterThread may have removed topicPartition from the partitionStates after processing the partition data
+                        // We should update the mirrorLeaderEpoch if it has changed.
                         if ((validBytes > 0 || currentFetchState.lag.isEmpty || newMirrorLeaderEpoch.orElse(-1) != currentFetchState.mirrorLeaderEpoch().orElse(-1)) &&
                           partitionStates.contains(topicPartition)) {
                           val lastFetchedEpoch =

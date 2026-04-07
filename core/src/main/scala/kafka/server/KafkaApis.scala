@@ -963,7 +963,8 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setRecords(data.records)
           .setPreferredReadReplica(data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID))
 
-        // For mirrored follower partitions, set mirrorLeaderEpoch from the log's highest epoch
+        // For mirror follower partitions, set mirrorLeaderEpoch to the log's latest epoch
+        // The currentMirrorLeaderEpoch is set in [[Partition.readFromLog]]
         if (versionId >= 19 && data.currentMirrorLeaderEpoch.isPresent) {
           partitionData.setMirrorLeaderEpoch(data.currentMirrorLeaderEpoch.get())
         }
