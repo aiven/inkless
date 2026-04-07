@@ -23,6 +23,7 @@ import org.apache.kafka.common.message.{InitDisklessLogRequestData, InitDiskless
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.{AbstractRequest, InitDisklessLogRequest, InitDisklessLogResponse, RequestHeader}
 import org.apache.kafka.common.protocol.ApiKeys
+import org.apache.kafka.server.partition.PartitionListener
 import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.util.MockScheduler
 import org.apache.kafka.common.utils.MockTime
@@ -35,6 +36,7 @@ import org.mockito.Mockito._
 import java.util
 import java.util.Optional
 import java.util.concurrent.ConcurrentLinkedQueue
+import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 
 class InitDisklessLogManagerTest {
@@ -48,12 +50,14 @@ class InitDisklessLogManagerTest {
   private var mockTime: MockTime = _
   private var scheduler: MockScheduler = _
   private var manager: InitDisklessLogManager = _
+  private var listenersByTp: mutable.Map[TopicPartition, PartitionListener] = _
 
   @BeforeEach
   def setUp(): Unit = {
     channelManager = new MockInitDisklessLogChannelManager()
     mockTime = new MockTime()
     scheduler = new MockScheduler(mockTime)
+    listenersByTp = mutable.Map.empty
     manager = new InitDisklessLogManager(
       controllerChannelManager = channelManager,
       scheduler = scheduler,
@@ -99,6 +103,22 @@ class InitDisklessLogManagerTest {
     )
   }
 
+  private def listenerFor(tp: TopicPartition): PartitionListener = {
+    listenersByTp.getOrElse(tp, throw new AssertionError(s"Missing listener for $tp"))
+  }
+
+  private def triggerHighWatermarkUpdate(tp: TopicPartition, offset: Long): Unit = {
+    listenerFor(tp).onHighWatermarkUpdated(tp, offset)
+  }
+
+  private def triggerFailed(tp: TopicPartition): Unit = {
+    listenerFor(tp).onFailed(tp)
+  }
+
+  private def triggerDeleted(tp: TopicPartition): Unit = {
+    listenerFor(tp).onDeleted(tp)
+  }
+
   private def mockPartition(
     tp: TopicPartition = tp0,
     hw: Long,
@@ -115,7 +135,11 @@ class InitDisklessLogManagerTest {
     when(partition.isLeader).thenReturn(isLeader)
     when(partition.getLeaderEpoch).thenReturn(leaderEpoch)
     when(partition.log).thenReturn(Some(log))
-    when(partition.maybeAddListener(any())).thenReturn(true)
+    doAnswer(invocation => {
+      val listener = invocation.getArgument[PartitionListener](0)
+      listenersByTp.put(tp, listener)
+      true
+    }).when(partition).maybeAddListener(any(classOf[PartitionListener]))
     when(log.highWatermark).thenReturn(hw)
     when(log.logEndOffset).thenReturn(leo)
     when(log.producerStateManager()).thenReturn(producerStateManager)
@@ -165,7 +189,7 @@ class InitDisklessLogManagerTest {
     // When HW advances but does not reach LEO
     val log = partition.log.get
     when(log.highWatermark).thenReturn(80L)
-    manager.onHighWatermarkUpdated(tp0, 80)
+    triggerHighWatermarkUpdate(tp0, 80)
 
     // Then no batch is scheduled and state stays WaitingForHW
     assertTrue(channelManager.requests.isEmpty)
@@ -173,7 +197,7 @@ class InitDisklessLogManagerTest {
 
     // When HW catches up to LEO
     when(log.highWatermark).thenReturn(100L)
-    manager.onHighWatermarkUpdated(tp0, 100)
+    triggerHighWatermarkUpdate(tp0, 100)
 
     // Then the state transitions to SendingToController and a batch is scheduled
     assertState[SendingToController](tp0)
@@ -448,7 +472,7 @@ class InitDisklessLogManagerTest {
     assertEquals(Set(tp0), manager.getTrackedPartitions)
 
     // When onFailed is called for the partition
-    manager.onFailed(tp0)
+    triggerFailed(tp0)
 
     // Then the partition is removed from tracking
     assertTrue(manager.getTrackedPartitions.isEmpty)
@@ -462,7 +486,7 @@ class InitDisklessLogManagerTest {
     assertEquals(Set(tp0), manager.getTrackedPartitions)
 
     // When onDeleted is called for the partition
-    manager.onDeleted(tp0)
+    triggerDeleted(tp0)
 
     // Then the partition is removed from tracking
     assertTrue(manager.getTrackedPartitions.isEmpty)
@@ -560,7 +584,7 @@ class InitDisklessLogManagerTest {
     // When the third partition's HW catches up
     val log1 = partition1.log.get
     when(log1.highWatermark).thenReturn(200L)
-    manager.onHighWatermarkUpdated(tp1, 200)
+    triggerHighWatermarkUpdate(tp1, 200)
 
     // Then it transitions to SendingToController
     assertState[SendingToController](tp1)
@@ -742,8 +766,8 @@ class InitDisklessLogManagerTest {
     val log1 = partition1.log.get
     when(log0.highWatermark).thenReturn(100L)
     when(log1.highWatermark).thenReturn(100L)
-    manager.onHighWatermarkUpdated(tp0, 100)
-    manager.onHighWatermarkUpdated(tp1, 100)
+    triggerHighWatermarkUpdate(tp0, 100)
+    triggerHighWatermarkUpdate(tp1, 100)
 
     // Then both transition to SendingToController and a batch is scheduled
     assertState[SendingToController](tp0)

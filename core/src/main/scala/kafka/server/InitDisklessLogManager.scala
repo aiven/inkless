@@ -20,7 +20,6 @@ import kafka.cluster.Partition
 import kafka.utils.Logging
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.server.common.NodeToControllerChannelManager
-import org.apache.kafka.server.partition.PartitionListener
 import org.apache.kafka.server.util.Scheduler
 
 import java.util.concurrent.ConcurrentHashMap
@@ -32,7 +31,7 @@ class InitDisklessLogManager(
   scheduler: Scheduler,
   brokerId: Int,
   brokerEpochSupplier: () => Long
-) extends PartitionListener with Logging {
+) extends Logging {
 
   this.logIdent = s"[InitDisklessLogManager broker=$brokerId] "
 
@@ -66,23 +65,28 @@ class InitDisklessLogManager(
    * send. Otherwise, waits for HW advancement notifications.
    */
   def registerPartition(partition: Partition, topicId: Uuid): Unit = {
-    try {
-      val newState = WaitingForReplication(partition, topicId)
-      if (tracked.putIfAbsent(partition.topicPartition, newState) == null) {
-        partition.maybeAddListener(this)
-      }
-      info(s"Registered new partition ${partition.topicPartition} in state $newState")
-    } catch {
-      case validationEx: IllegalArgumentException => error("Validation error when registering a new partition", validationEx)
+    val newState = WaitingForReplication(partition, topicId, onPartitionUpdate = (tp, outcome) => {
+      tracked.computeIfPresent(tp, (_, _) => outcome match {
+        case waitingForReplication: WaitingForReplication => waitingForReplication // HW not caught with LEO yet, continue tracking
+        case sendingToController: SendingToController =>
+          // HW caught up with LEO, put a new controller request in the queue
+          enqueueSendingToController(tp, sendingToController)
+          // advance tracked partition
+          sendingToController
+        case _: Failed => null // failed update, remove from tracking
+      })
+    })
+    newState.validate() match {
+      case Left(errorString) =>
+        error(s"Validation error when registering a new partition: $errorString")
+        return
+      case _ =>
     }
+    if (tracked.putIfAbsent(partition.topicPartition, newState) == null) {
+      partition.maybeAddListener(newState)
+    }
+    info(s"Registered new partition ${partition.topicPartition} in state $newState")
     maybeAdvanceState(partition.topicPartition)
-  }
-
-  /**
-   * PartitionListener callback: called when HW advances on a partition.
-   */
-  override def onHighWatermarkUpdated(topicPartition: TopicPartition, offset: Long): Unit = {
-    maybeAdvanceState(topicPartition)
   }
 
   /**
@@ -121,20 +125,6 @@ class InitDisklessLogManager(
         tracked.remove(tp)
       }
     }(ExecutionContext.parasitic)
-  }
-
-  /**
-   * PartitionListener callback: called when the partition fails.
-   */
-  override def onFailed(topicPartition: TopicPartition): Unit = {
-    removePartition(topicPartition)
-  }
-
-  /**
-   * PartitionListener callback: called when the partition is deleted.
-   */
-  override def onDeleted(topicPartition: TopicPartition): Unit = {
-    removePartition(topicPartition)
   }
 
   /**

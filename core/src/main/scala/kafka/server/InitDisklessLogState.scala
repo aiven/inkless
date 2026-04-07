@@ -43,28 +43,36 @@ sealed trait WaitingForReplicationOutcome extends InitDisklessLogState
 /** HW has not yet caught up with LEO; waiting for replica fetch cycles to advance it. */
 final case class WaitingForReplication(
   partition: Partition,
-  topicId: Uuid
+  topicId: Uuid,
+  // called whenever there's a new partition event sent by the PartitionListener
+  onPartitionUpdate: (TopicPartition, WaitingForReplicationOutcome) => Unit  
 ) extends WaitingForReplicationOutcome with PartitionListener {
   logIdent = s"[InitDisklessLog->WaitingForReplication $tp] "
 
-  validate()
-  
-  def validate(): Unit = {
+  def validate(): Either[String, Unit] = {
     if (!partition.isSealed) {
-      error(s"Partition is not sealed, which should never happen. Skipping migration.")
-      throw new IllegalArgumentException()
+      return Left("Partition is not sealed, which should never happen. Skipping migration.")
     }
     val log: UnifiedLog = partition.log.getOrElse {
-      warn(s"Partition sealed but has no log. Skipping migration")
-      throw new IllegalArgumentException()
+      return Left("Partition sealed but has no log. Skipping migration")
     }
     val hw: Long = log.highWatermark
     val leo: Long = log.logEndOffset
     if (hw > leo) {
-      error(s"HW ($hw) > LEO ($leo), which should never happen. Skipping migration.")
-      throw new IllegalArgumentException()
+      Left(s"HW ($hw) > LEO ($leo), which should never happen. Skipping migration.")
+    } else {
+      Right(())
     }
   }
+
+  override def onHighWatermarkUpdated(tp: TopicPartition, offset: Long): Unit =
+    onPartitionUpdate(tp, maybeAdvanceState())
+
+  override def onFailed(tp: TopicPartition): Unit =
+    onPartitionUpdate(tp, Failed(partition, topicId))
+
+  override def onDeleted(tp: TopicPartition): Unit =
+    onPartitionUpdate(tp, Failed(partition, topicId))
   
   def maybeAdvanceState(): WaitingForReplicationOutcome = {
     partition.log match {
