@@ -26,6 +26,7 @@ import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrU
 import kafka.server.mirror.{LagInfo, MirrorFetcherManager, MirrorMetadataManager, MirrorPartitionState}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
@@ -1693,7 +1694,10 @@ class ReplicaManager(val config: KafkaConfig,
           })
         }
         val partition = getPartitionOrException(tp)
-        partition.maybeCompleteTruncation(log, maybeWaitForAllReplicas = true, onCompleteCallback = Optional.of(callback),
+        val mirrorUncleanLeaderElection = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic())).get(TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG).asInstanceOf[String]
+        val waitForAllReplicas = mirrorUncleanLeaderElection != null && mirrorUncleanLeaderElection.toBoolean
+
+        partition.maybeCompleteTruncation(log, waitForAllReplicas = waitForAllReplicas, onCompleteCallback = Optional.of(callback),
           onCaughtupCallback = onCaughtupCallback)
       })
     })

@@ -113,7 +113,7 @@
           "about": "The high-watermark known by the replica. -1 if the high-watermark is not known and 9223372036854775807 if the feature is not supported." },
         { "name": "MirrorLeaderEpoch", "type": "int32", "versions": "19+", "default": "-1", "taggedVersions": "19+",
           "tag": 2, "ignorable": true,
-          "about": "The current mirrored leader epoch of the partition." }
+          "about": "The latest known mirror leader epoch." }
       ]}
     ]},
     { "name": "ForgottenTopicsData", "type": "[]ForgottenTopic", "versions": "7+", "ignorable": false,

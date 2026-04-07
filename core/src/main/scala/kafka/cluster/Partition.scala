@@ -1229,15 +1229,15 @@ class Partition(val topicPartition: TopicPartition,
    * consistency before resuming mirroring operations.
    *
    * @param leaderLog the leader's unified log
-   * @param maybeWaitForAllReplicas true if we should check the "mirror.support.unclean.leader.election" config to see if
-   *                                we should wait for all replicas to catch up. This is used for last mirrored epoch truncation.
    * @param currentTimeMs the current time in milliseconds
-   * @param onComplete optional callback to invoke when truncation completes
+   * @param waitForAllReplicas true if we should wait for all replicas to catch up for unclean leader election support
+   * @param onCompleteCallback optional callback to invoke when truncation completes
+   * @param onCaughtupCallback optional callback to invoke when all ISRs are caught up
    * @return true if the transition occurred, false if validation failed or no callback was registered
    */
   def maybeCompleteTruncation(leaderLog: UnifiedLog,
                               currentTimeMs: Long = time.milliseconds,
-                              maybeWaitForAllReplicas: Boolean = false,
+                              waitForAllReplicas: Boolean = false,
                               onCompleteCallback: Optional[Consumer[TopicPartition]] = Optional.empty(),
                               onCaughtupCallback: Optional[Consumer[TopicPartition]] = Optional.empty()): Boolean = {
     if (onCompleteCallback.isPresent) {
@@ -1253,11 +1253,7 @@ class Partition(val topicPartition: TopicPartition,
       onCaughtup = onCaughtupCallback
     }
 
-    val mirrorUncleanLeaderElection = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topic)).get(TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG).asInstanceOf[String]
-    val shouldWaitAllReplicas = mirrorUncleanLeaderElection != null && mirrorUncleanLeaderElection.toBoolean
-
-    if (maybeWaitForAllReplicas && shouldWaitAllReplicas &&
-      assignmentState.replicationFactor > partitionState.isr.size) {
+    if (waitForAllReplicas && assignmentState.replicationFactor > partitionState.isr.size) {
         info(s"Not completing truncation because 'mirror.support.unclean.leader.election' is enabled and" +
           s" partition ISR doesn't contain all replicas (ISR=${partitionState.isr}, replicationFactor=${assignmentState.replicationFactor})")
         return false
@@ -1282,7 +1278,7 @@ class Partition(val topicPartition: TopicPartition,
       // Note here we are using the "maximal", see explanation above
       // We want to make sure all LEO are <= leader LEO
       if (replicaState.logEndOffsetMetadata.messageOffset > leaderLogEndOffset.messageOffset &&
-        (partitionState.maximalIsr.contains(replica.brokerId) || shouldWaitAllReplicas || shouldWaitForReplicaToJoinIsr)
+        (partitionState.maximalIsr.contains(replica.brokerId) || shouldWaitForReplicaToJoinIsr)
       ) {
         info("!!! ISR is not all truncated to the expected offset: " + replicaState)
         return false
