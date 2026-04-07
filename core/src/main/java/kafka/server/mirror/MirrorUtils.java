@@ -22,10 +22,9 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.common.MirrorVersion;
 import org.apache.kafka.server.config.MirrorConfig;
 import org.apache.kafka.server.network.BrokerEndPoint;
-
-import org.apache.kafka.server.common.MirrorVersion;
 
 import java.util.HashMap;
 import java.util.HashSet;
