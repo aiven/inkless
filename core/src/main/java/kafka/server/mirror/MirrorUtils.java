@@ -25,6 +25,8 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.config.MirrorConfig;
 import org.apache.kafka.server.network.BrokerEndPoint;
 
+import org.apache.kafka.server.common.MirrorVersion;
+
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -39,6 +41,11 @@ import static org.apache.kafka.controller.ConfigurationControlManager.REMOVED_TO
  */
 public final class MirrorUtils {
     private MirrorUtils() {}
+
+    public static boolean isClusterMirroringEnabled(Map<String, Short> finalizedFeatures) {
+        short featureLevel = finalizedFeatures.getOrDefault(MirrorVersion.FEATURE_NAME, (short) 0);
+        return MirrorVersion.fromFeatureLevel(featureLevel).isClusterMirroringSupported();
+    }
 
     public static MirrorSourceSender createSender(BrokerEndPoint brokerEndpoint,
                                                   MirrorConfig mirrorConfig,
