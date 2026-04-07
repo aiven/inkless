@@ -40,7 +40,7 @@ class InitDisklessLogManager(
   // Delay before firing a batch send, allowing multiple partitions that become ready
   // around the same time (e.g., when an entire topic is sealed) to be coalesced into one request.
   private[server] val lingerMs = 500L
-  // Initial retry period for retriable controller failures.
+  // Initial retry period for retriable failures.
   private[server] val retryPeriodMs = 1000L
   // Maximum exponential backoff delay used between retriable attempts.
   private[server] val maxRetryTimeMs = 10000L
@@ -59,57 +59,50 @@ class InitDisklessLogManager(
   private[server] def getInitState(tp: TopicPartition): Option[InitDisklessLogState] = Option(tracked.get(tp))
 
   /**
-   * Register a sealed partition for migration. Registers this manager as a
-   * PartitionListener to receive HW advancement notifications. If HW already
+   * Register a sealed partition for migration. If HW already
    * equals LEO, immediately marks the partition ready and schedules a batch
    * send. Otherwise, waits for HW advancement notifications.
    */
   def registerPartition(partition: Partition, topicId: Uuid): Unit = {
-    val newState = WaitingForReplication(partition, topicId, onPartitionUpdate = (tp, outcome) => {
-      tracked.computeIfPresent(tp, (_, _) => outcome match {
-        case waitingForReplication: WaitingForReplication => waitingForReplication // HW not caught with LEO yet, continue tracking
-        case sendingToController: SendingToController =>
-          // HW caught up with LEO, put a new controller request in the queue
-          enqueueSendingToController(tp, sendingToController)
-          // advance tracked partition
-          sendingToController
-        case _: Failed => null // failed update, remove from tracking
-      })
+    val waitingState = WaitingForReplication(partition, topicId, onPartitionUpdate = (tp, outcome) => {
+      tracked.computeIfPresent(tp, (_, _) => handleWaitingOutcome(tp, outcome))
     })
-    newState.validate() match {
-      case Left(errorString) =>
-        error(s"Validation error when registering a new partition: $errorString")
-        return
-      case _ =>
+
+    val tp = partition.topicPartition
+    val inserted = tracked.putIfAbsent(tp, waitingState) == null
+
+    // Evaluate immediately for both new and already tracked entries:
+    // - new entries may already be ready
+    // - duplicate registrations can re-drive a waiting or queued state
+    tracked.computeIfPresent(tp, (_, currentState) => currentState match {
+      case waitingForReplication: WaitingForReplication =>
+        handleWaitingOutcome(tp, waitingForReplication.maybeAdvanceState())
+      case sendingToController: SendingToController =>
+        enqueueSendingToController(tp, sendingToController)
+        sendingToController
+      case awaitingMetadata: AwaitingMetadata => awaitingMetadata
+      case _: Failed => null
+    })
+
+    if (inserted) {
+      Option(tracked.get(tp)).foreach {
+        case waitingForReplication: WaitingForReplication =>
+          // Listener is only needed while still waiting for HW advancement.
+          partition.maybeAddListener(waitingForReplication)
+        case _ =>
+      }
     }
-    if (tracked.putIfAbsent(partition.topicPartition, newState) == null) {
-      partition.maybeAddListener(newState)
-    }
-    info(s"Registered new partition ${partition.topicPartition} in state $newState")
-    maybeAdvanceState(partition.topicPartition)
+    info(s"Registered new partition $tp in state ${Option(tracked.get(tp))}")
   }
 
-  /**
-   * Atomically advance a tracked partition's state if conditions are met.
-   */
-  private def maybeAdvanceState(tp: TopicPartition): Unit = {
-    tracked.computeIfPresent(tp, (_, initDisklessLogState) => {
-      initDisklessLogState match {
-        case waitingForReplication: WaitingForReplication =>
-          waitingForReplication.maybeAdvanceState() match {
-            case sendingToController: SendingToController =>
-              enqueueSendingToController(tp, sendingToController)
-              sendingToController
-            case _: Failed => null // remove from tracking
-            case initDisklessLogState => initDisklessLogState
-          }
-        case sendingToController: SendingToController =>
-          enqueueSendingToController(tp, sendingToController)
-          sendingToController
-        case awaitingMetadata: AwaitingMetadata => awaitingMetadata
-        case _: Failed => null // remove from tracking
-      }
-    })
+  private def handleWaitingOutcome(tp: TopicPartition, outcome: WaitingForReplicationOutcome): InitDisklessLogState = {
+    outcome match {
+      case sendingToController: SendingToController =>
+        enqueueSendingToController(tp, sendingToController)
+        sendingToController
+      case _: Failed => null // remove from tracking
+      case waitingForReplication: WaitingForReplication => waitingForReplication
+    }
   }
 
   private def enqueueSendingToController(tp: TopicPartition, state: SendingToController): Unit = {
@@ -133,7 +126,7 @@ class InitDisklessLogManager(
   def removePartition(tp: TopicPartition): Unit = {
     if (tracked.remove(tp) != null) {
       sendingToControllerQueue.remove(tp)
-      info(s"Removed partition $tp from diskless init tracking")
+      info(s"Removed partition $tp from diskless init log tracking")
     }
   }
 }

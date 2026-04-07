@@ -17,13 +17,11 @@
 package kafka.server
 
 import kafka.cluster.Partition
+import kafka.server.InitDisklessLogBatchQueue.ParsedResponse
 import kafka.utils.Logging
-import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.common.message.{InitDisklessLogRequestData, InitDisklessLogResponseData}
 import org.apache.kafka.common.protocol.Errors
-import org.apache.kafka.common.requests.{InitDisklessLogRequest, InitDisklessLogResponse}
-import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.partition.PartitionListener
 import org.apache.kafka.storage.internals.log.UnifiedLog
 
@@ -49,7 +47,7 @@ final case class WaitingForReplication(
 ) extends WaitingForReplicationOutcome with PartitionListener {
   logIdent = s"[InitDisklessLog->WaitingForReplication $tp] "
 
-  def validate(): Either[String, Unit] = {
+  private def validate(): Either[String, Unit] = {
     if (!partition.isSealed) {
       return Left("Partition is not sealed, which should never happen. Skipping migration.")
     }
@@ -75,6 +73,12 @@ final case class WaitingForReplication(
     onPartitionUpdate(tp, Failed(partition, topicId))
   
   def maybeAdvanceState(): WaitingForReplicationOutcome = {
+    validate() match {
+      case Left(errorString) =>
+        error(errorString)
+        return Failed(partition, topicId)
+      case Right(_) =>
+    }
     partition.log match {
       case None => this
       case Some(log) =>
@@ -108,24 +112,9 @@ final case class SendingToController(
   }
 }
 
-object SendingToControllerBatchProtocol extends SendableBatchProtocol[
-  SendingToController,
-  NodeToControllerChannelManager,
-  InitDisklessLogResponseData
-] {
-  override def shouldSend(state: SendingToController): Boolean = {
-    if (!state.partition.isLeader) {
-      state.warn(s"Skipping InitDisklessLog controller request because this broker is no longer leader for ${state.tp}")
-      false
-    } else if (state.partition.log.isEmpty) {
-      state.warn(s"Skipping InitDisklessLog controller request because log is no longer present for ${state.tp}")
-      false
-    } else {
-      true
-    }
-  }
+object SendingToController {
 
-  private def buildRequestData(
+  def buildRequestData(
     states: Iterable[SendingToController],
     brokerId: Int,
     brokerEpoch: Long
@@ -151,35 +140,17 @@ object SendingToControllerBatchProtocol extends SendableBatchProtocol[
       .setTopics(topicDataList)
   }
 
-  override def sendBatch(
-    states: Iterable[SendingToController],
-    destination: NodeToControllerChannelManager,
-    brokerId: Int,
-    brokerEpoch: Long,
-    onBatchComplete: Either[String, InitDisklessLogResponseData] => Unit
-  ): Unit = {
-    val requestData = buildRequestData(states, brokerId, brokerEpoch)
-    val request = new InitDisklessLogRequest.Builder(requestData)
-    destination.sendRequest(request, new ControllerRequestCompletionHandler {
-      override def onComplete(response: ClientResponse): Unit = {
-        onBatchComplete(extractControllerResponse(response))
-      }
-
-      override def onTimeout(): Unit = onBatchComplete(Left("timeout"))
-    })
-  }
-
-  override def parseBatchResponse(response: InitDisklessLogResponseData): Iterable[SendableBatchProtocol.ParsedResponse] = {
-    val outcomes = scala.collection.mutable.ArrayBuffer[SendableBatchProtocol.ParsedResponse]()
+  def parseBatchResponse(response: InitDisklessLogResponseData): Iterable[ParsedResponse] = {
+    val outcomes = scala.collection.mutable.ArrayBuffer[ParsedResponse]()
     for (topicResponse <- response.topics().asScala) {
       for (partitionResponse <- topicResponse.partitions().asScala) {
         val error = Errors.forCode(partitionResponse.errorCode())
         val disposition = error match {
-          case Errors.NONE => SendableBatchProtocol.Success
-          case Errors.FENCED_LEADER_EPOCH | Errors.INVALID_REQUEST => SendableBatchProtocol.PermanentFailure
-          case _ => SendableBatchProtocol.RetriableFailure
+          case Errors.NONE => InitDisklessLogBatchQueue.Success
+          case Errors.FENCED_LEADER_EPOCH | Errors.INVALID_REQUEST => InitDisklessLogBatchQueue.PermanentFailure
+          case _ => InitDisklessLogBatchQueue.RetriableFailure
         }
-        outcomes += SendableBatchProtocol.ParsedResponse(
+        outcomes += ParsedResponse(
           topicId = topicResponse.topicId(),
           partitionId = partitionResponse.partitionId(),
           error = error,
@@ -221,18 +192,6 @@ object SendingToControllerBatchProtocol extends SendableBatchProtocol[
     states
   }
 
-  private def extractControllerResponse(response: ClientResponse): Either[String, InitDisklessLogResponseData] = {
-    if (response.authenticationException != null) {
-      Left("authentication exception")
-    } else if (response.versionMismatch != null) {
-      Left("version mismatch")
-    } else {
-      response.responseBody match {
-        case initDisklessLogResponse: InitDisklessLogResponse => Right(initDisklessLogResponse.data())
-        case _ => Left("unexpected response body type")
-      }
-    }
-  }
 }
 
 /** Controller accepted the request; waiting for the PartitionChangeRecord with disklessStartOffset to propagate. */

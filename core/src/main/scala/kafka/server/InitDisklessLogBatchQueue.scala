@@ -16,10 +16,13 @@
  */
 package kafka.server
 
+import kafka.server.InitDisklessLogBatchQueue.ParsedResponse
 import kafka.utils.Logging
+import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.message.InitDisklessLogResponseData
-import org.apache.kafka.server.common.NodeToControllerChannelManager
+import org.apache.kafka.common.requests.{InitDisklessLogRequest, InitDisklessLogResponse}
+import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.util.Scheduler
 
 import java.util
@@ -28,44 +31,7 @@ import java.util.concurrent.ScheduledFuture
 import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
 
-/**
- * Protocol that defines batched send/parse behavior for a specific state kind `S`
- * and destination type `D`.
- *
- * @tparam S state type handled by this protocol.
- * @tparam D destination type used to send batched requests.
- * @tparam Resp parsed response type produced by the destination.
- */
-trait SendableBatchProtocol[S <: InitDisklessLogState, D, Resp] {
-  /**
-   * Whether the state should be included in a batch at send time.
-   * Returning false indicates that the state should be excluded from this send attempt.
-   */
-  def shouldSend(state: S): Boolean
-
-  /**
-   * Sends one batch containing all currently selected states.
-   *
-   * Implementations must invoke `onBatchComplete` exactly once:
-   *  - `Right(response)` for a successfully received/decoded batch response
-   *  - `Left(reason)` for transport/protocol-level failures
-   */
-  def sendBatch(
-    states: Iterable[S],
-    destination: D,
-    brokerId: Int,
-    brokerEpoch: Long,
-    onBatchComplete: Either[String, Resp] => Unit
-  ): Unit
-
-  /**
-   * Converts a successful batch response into per-partition outcomes.
-   * Any state sent but missing from this parsed output is treated as retriable by callers.
-   */
-  def parseBatchResponse(response: Resp): Iterable[SendableBatchProtocol.ParsedResponse]
-}
-
-object SendableBatchProtocol {
+object InitDisklessLogBatchQueue {
   /** Classification for a partition result in a batch response. */
   sealed trait ResponseDisposition
   /** Partition was accepted by destination and can advance state. */
@@ -87,32 +53,16 @@ object SendableBatchProtocol {
   )
 }
 
-/** A queue that is able to batch multiple requests and send them all together in the same batch. */
-trait InitDisklessLogBatchQueue[S <: InitDisklessLogState]{
-
-  /* Enqueue a sendable state into the queue.
-  * The returned future contains the result of the operation (true if it was accepted by the destination, false if permanently failed).
-  * The future is completed only when a final response is given.
-  * */
-  def enqueue(tp: TopicPartition, state: S): Future[Boolean]
-
-  /**
-   * Remove the partition from this queue.
-   */
-  def remove(tp: TopicPartition): Unit
-
-}
-
-abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState, D, Resp](
-  destination: D,
-  protocol: SendableBatchProtocol[S, D, Resp],
+abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
   scheduler: Scheduler,
   brokerId: Int,
   brokerEpochSupplier: () => Long,
   lingerMs: Long,
   retryPeriodMs: Long,
   maxRetryTimeMs: Long
-) extends InitDisklessLogBatchQueue[S] with Logging {
+) extends Logging {
+  import InitDisklessLogBatchQueue._
+
   private case class Attempt(state: S, attemptNumber: Int)
   private var queuedByTp = new java.util.LinkedHashMap[TopicPartition, Attempt]()
   private val resultPromiseByTp = new java.util.HashMap[TopicPartition, Promise[Boolean]]()
@@ -129,8 +79,24 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState, D, 
     queueLock.synchronized(f)
   }
 
-  override def enqueue(tp: TopicPartition, state: S): Future[Boolean] = {
-    val promise = withQueueLock{
+  protected def shouldSend(state: S): Boolean
+
+  /**
+   * Sends one batch and returns parsed per-partition outcomes.
+   *
+   * Implementations must invoke `onBatchComplete` exactly once:
+   *  - `Right(outcomes)` for a successfully received/decoded batch response
+   *  - `Left(reason)` for transport/protocol-level failures
+   */
+  protected def sendBatch(
+    states: Iterable[S],
+    brokerId: Int,
+    brokerEpoch: Long,
+    onBatchComplete: Either[String, Iterable[ParsedResponse]] => Unit
+  ): Unit
+
+  def enqueue(tp: TopicPartition, state: S): Future[Boolean] = {
+    val promise = withQueueLock {
       val preservedAttemptNumber = Option(queuedByTp.get(tp)).map(_.attemptNumber).getOrElse(0)
       // Keep retry progression for already queued partitions, but always refresh the state payload.
       queuedByTp.put(tp, Attempt(state, attemptNumber = preservedAttemptNumber))
@@ -154,7 +120,7 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState, D, 
     promise.future
   }
 
-  override def remove(tp: TopicPartition): Unit = withQueueLock {
+  def remove(tp: TopicPartition): Unit = withQueueLock {
     queuedByTp.remove(tp)
     Option(resultPromiseByTp.remove(tp)).foreach(_.trySuccess(false))
   }
@@ -175,7 +141,7 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState, D, 
 
     val sendableByTp = new util.LinkedHashMap[TopicPartition, Attempt]()
     toSend.entrySet().asScala.foreach { entry =>
-      if (protocol.shouldSend(entry.getValue.state)) {
+      if (shouldSend(entry.getValue.state)) {
         sendableByTp.put(entry.getKey, entry.getValue)
       } else {
         completeAndRemovePromise(entry.getKey, accepted = false)
@@ -193,28 +159,27 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState, D, 
     }.toMap
 
     try {
-      protocol.sendBatch(
+      sendBatch(
         states = sendableStates,
-        destination = destination,
         brokerId = brokerId,
         brokerEpoch = brokerEpochSupplier(),
         onBatchComplete = { responseOrError =>
           try {
             responseOrError match {
-              case Right(parsedResponse) =>
-                val outcomesByTp = protocol.parseBatchResponse(parsedResponse)
+              case Right(parsedResponses) =>
+                val outcomesByTp = parsedResponses
                   .flatMap(outcome => keyToTp.get((outcome.topicId, outcome.partitionId)).map(_ -> outcome.disposition))
                   .toMap
 
                 sendableByTp.asScala.foreach { case (tp, attempt) =>
                   outcomesByTp.get(tp) match {
-                    case Some(SendableBatchProtocol.Success) => 
+                    case Some(Success) =>
                       info(s"Successful response for $tp")
                       completeAndRemovePromise(tp, accepted = true)
-                    case Some(SendableBatchProtocol.PermanentFailure) =>
+                    case Some(PermanentFailure) =>
                       info(s"Permanent failure response for $tp")
                       completeAndRemovePromise(tp, accepted = false)
-                    case Some(SendableBatchProtocol.RetriableFailure) =>
+                    case Some(RetriableFailure) =>
                       info(s"Retriable failure response for $tp")
                       enqueueRetryOrFail(tp, attempt)
                     case None => enqueueRetryOrFail(tp, attempt)
@@ -300,13 +265,7 @@ class SendingToControllerBatchQueue(
   lingerMs: Long,
   retryPeriodMs: Long,
   maxRetryTimeMs: Long
-) extends RetriableInitDisklessLogBatchQueue[
-  SendingToController,
-  NodeToControllerChannelManager,
-  InitDisklessLogResponseData
-](
-  destination = controllerChannelManager,
-  protocol = SendingToControllerBatchProtocol,
+) extends RetriableInitDisklessLogBatchQueue[SendingToController](
   scheduler = scheduler,
   brokerId = brokerId,
   brokerEpochSupplier = brokerEpochSupplier,
@@ -315,4 +274,46 @@ class SendingToControllerBatchQueue(
   maxRetryTimeMs = maxRetryTimeMs
 ) {
   logIdent = s"[SendingToControllerBatchQueue] "
+
+  override protected def shouldSend(state: SendingToController): Boolean = {
+    if (!state.partition.isLeader) {
+      state.warn(s"Skipping InitDisklessLog controller request because this broker is no longer leader for ${state.tp}")
+      false
+    } else if (state.partition.log.isEmpty) {
+      state.warn(s"Skipping InitDisklessLog controller request because log is no longer present for ${state.tp}")
+      false
+    } else {
+      true
+    }
+  }
+
+  override protected def sendBatch(
+    states: Iterable[SendingToController],
+    brokerId: Int,
+    brokerEpoch: Long,
+    onBatchComplete: Either[String, Iterable[ParsedResponse]] => Unit
+  ): Unit = {
+    val requestData = SendingToController.buildRequestData(states, brokerId, brokerEpoch)
+    val request = new InitDisklessLogRequest.Builder(requestData)
+    controllerChannelManager.sendRequest(request, new ControllerRequestCompletionHandler {
+      override def onComplete(response: ClientResponse): Unit = {
+        onBatchComplete(extractControllerResponse(response).map(SendingToController.parseBatchResponse))
+      }
+
+      override def onTimeout(): Unit = onBatchComplete(Left("timeout"))
+    })
+  }
+
+  private def extractControllerResponse(response: ClientResponse): Either[String, InitDisklessLogResponseData] = {
+    if (response.authenticationException != null) {
+      Left("authentication exception")
+    } else if (response.versionMismatch != null) {
+      Left("version mismatch")
+    } else {
+      response.responseBody match {
+        case initDisklessLogResponse: InitDisklessLogResponse => Right(initDisklessLogResponse.data())
+        case _ => Left("unexpected response body type")
+      }
+    }
+  }
 }
