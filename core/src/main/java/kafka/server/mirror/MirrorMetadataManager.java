@@ -400,8 +400,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     if (mirrorName != null && !mirrorName.isBlank()) {
                         inflightStateProcesses.remove(tp);
                         bumpLeaderEpoch.removeIf(bumpLeaderEpoch -> {
-                                bumpLeaderEpoch.future().completeExceptionally(new IllegalStateException("not leader anymore"));
-                                return true;
+                            bumpLeaderEpoch.future().completeExceptionally(new IllegalStateException("not leader anymore"));
+                            return true;
                         });
                     }
                 }
