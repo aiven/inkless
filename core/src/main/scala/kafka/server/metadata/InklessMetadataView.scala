@@ -74,6 +74,10 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
     metadataCache.topicConfig(topicName).getProperty(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false").toBoolean
   }
 
+  override def isConsolidatingDisklessTopic(topicName: String): Boolean = {
+    isDisklessTopic(topicName) && isRemoteStorageEnabled(topicName)
+  }
+
   override def getDisklessTopicPartitions: util.Set[TopicIdPartition] = {
     metadataCache.getAllTopics().stream()
       .filter(isDisklessTopic)
