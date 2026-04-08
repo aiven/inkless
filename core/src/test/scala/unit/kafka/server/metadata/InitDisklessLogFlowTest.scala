@@ -20,7 +20,7 @@ package kafka.server.metadata
 import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.{HostedPartition, InitDisklessLogManager, InitState, MockInitDisklessLogChannelManager, ReplicaManager}
+import kafka.server.{HostedPartition, InitDisklessLogManager, InitDisklessLogState, MockInitDisklessLogChannelManager, ReplicaManager, SendingToController}
 import kafka.server.share.SharePartitionManager
 import kafka.utils.TestUtils
 import org.apache.kafka.common.{Node, TopicPartition, Uuid}
@@ -97,7 +97,7 @@ class InitDisklessLogFlowTest {
 
       // Then the local leader is sealed and tracked for init in SendingToController.
       assertTrue(partition.isSealed)
-      assertTrackedStates(ctx, Map(tp -> InitState.SendingToController))
+      assertTrackedStates(ctx, Map(tp -> classOf[SendingToController]))
 
       // And when linger elapses.
       ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
@@ -106,7 +106,7 @@ class InitDisklessLogFlowTest {
       // Then exactly one batched request is emitted and tracking state is unchanged.
       assertEquals(1, ctx.channelManager.requests.size())
       assertSingleTopicRequest(ctx, topicId, Set(0))
-      assertTrackedStates(ctx, Map(tp -> InitState.SendingToController))
+      assertTrackedStates(ctx, Map(tp -> classOf[SendingToController]))
     } finally {
       shutdown(ctx)
     }
@@ -253,7 +253,7 @@ class InitDisklessLogFlowTest {
       ctx.metadataPublisher.onMetadataUpdate(toLeaderDelta, leaderImage, metadataManifest())
 
       // Then the partition is tracked in SendingToController.
-      assertTrackedStates(ctx, Map(tp -> InitState.SendingToController))
+      assertTrackedStates(ctx, Map(tp -> classOf[SendingToController]))
 
       // When leadership moves away from this broker.
       val toFollowerDelta = new MetadataDelta(leaderImage)
@@ -321,7 +321,7 @@ class InitDisklessLogFlowTest {
       // Then the new local leader is sealed and tracked in SendingToController.
       assertTrue(partition.isLeader)
       assertTrue(partition.isSealed)
-      assertTrackedStates(ctx, Map(tp -> InitState.SendingToController))
+      assertTrackedStates(ctx, Map(tp -> classOf[SendingToController]))
 
       // And when linger elapses.
       ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
@@ -330,7 +330,7 @@ class InitDisklessLogFlowTest {
       // Then one init request is emitted and state stays SendingToController until response.
       assertEquals(1, ctx.channelManager.requests.size())
       assertSingleTopicRequest(ctx, topicId, Set(0))
-      assertTrackedStates(ctx, Map(tp -> InitState.SendingToController))
+      assertTrackedStates(ctx, Map(tp -> classOf[SendingToController]))
     } finally {
       shutdown(ctx)
     }
@@ -386,8 +386,8 @@ class InitDisklessLogFlowTest {
       broker1Ctx.metadataPublisher.onMetadataUpdate(migrationDelta, migratedImage, metadataManifest())
 
       // Then each broker tracks only local-leader partitions, in SendingToController state.
-      assertTrackedStates(broker0Ctx, Map(tp0 -> InitState.SendingToController))
-      assertTrackedStates(broker1Ctx, Map(tp1 -> InitState.SendingToController, tp2 -> InitState.SendingToController))
+      assertTrackedStates(broker0Ctx, Map(tp0 -> classOf[SendingToController]))
+      assertTrackedStates(broker1Ctx, Map(tp1 -> classOf[SendingToController], tp2 -> classOf[SendingToController]))
       assertEquals(None, broker0Ctx.initDisklessLogManager.getInitState(tp1))
       assertEquals(None, broker0Ctx.initDisklessLogManager.getInitState(tp2))
       assertEquals(None, broker1Ctx.initDisklessLogManager.getInitState(tp0))
@@ -403,8 +403,8 @@ class InitDisklessLogFlowTest {
       assertEquals(1, broker1Ctx.channelManager.requests.size())
       assertSingleTopicRequest(broker0Ctx, topicId, Set(0))
       assertSingleTopicRequest(broker1Ctx, topicId, Set(1, 2))
-      assertTrackedStates(broker0Ctx, Map(tp0 -> InitState.SendingToController))
-      assertTrackedStates(broker1Ctx, Map(tp1 -> InitState.SendingToController, tp2 -> InitState.SendingToController))
+      assertTrackedStates(broker0Ctx, Map(tp0 -> classOf[SendingToController]))
+      assertTrackedStates(broker1Ctx, Map(tp1 -> classOf[SendingToController], tp2 -> classOf[SendingToController]))
     } finally {
       shutdown(broker0Ctx)
       shutdown(broker1Ctx)
@@ -458,7 +458,7 @@ class InitDisklessLogFlowTest {
       // Then only the new leader broker tracks the partition in SendingToController state.
       assertTrackedStates(broker0Ctx, Map.empty)
       assertEquals(None, broker0Ctx.initDisklessLogManager.getInitState(tp))
-      assertTrackedStates(broker1Ctx, Map(tp -> InitState.SendingToController))
+      assertTrackedStates(broker1Ctx, Map(tp -> classOf[SendingToController]))
 
       // And when linger elapses on both brokers.
       broker0Ctx.time.sleep(broker0Ctx.initDisklessLogManager.lingerMs)
@@ -470,7 +470,7 @@ class InitDisklessLogFlowTest {
       assertEquals(0, broker0Ctx.channelManager.requests.size())
       assertEquals(1, broker1Ctx.channelManager.requests.size())
       assertSingleTopicRequest(broker1Ctx, topicId, Set(0))
-      assertTrackedStates(broker1Ctx, Map(tp -> InitState.SendingToController))
+      assertTrackedStates(broker1Ctx, Map(tp -> classOf[SendingToController]))
     } finally {
       shutdown(broker0Ctx)
       shutdown(broker1Ctx)
@@ -541,11 +541,15 @@ class InitDisklessLogFlowTest {
 
   private def assertTrackedStates(
     ctx: TestContext,
-    expected: Map[TopicPartition, InitState]
+    expected: Map[TopicPartition, Class[_ <: InitDisklessLogState]]
   ): Unit = {
     assertEquals(expected.keySet, ctx.initDisklessLogManager.getTrackedPartitions)
-    expected.foreach { case (tp, state) =>
-      assertEquals(Some(state), ctx.initDisklessLogManager.getInitState(tp))
+    expected.foreach { case (tp, expectedStateClass) =>
+      val actualState = ctx.initDisklessLogManager.getInitState(tp)
+      assertTrue(
+        actualState.exists(expectedStateClass.isInstance),
+        s"Expected state ${expectedStateClass.getSimpleName} for $tp but was $actualState"
+      )
     }
   }
 
