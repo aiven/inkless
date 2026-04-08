@@ -313,6 +313,7 @@ if (repo != null) {
         'tests/kafkatest/tests/inkless/**',
         'inkless-sync/**',
         'core/src/main/scala/io/aiven/inkless/**',
+        'core/src/test/scala/io/aiven/inkless/**',
         // end of inkless ignored files
         'licenses/*',
         '**/generated/**',
