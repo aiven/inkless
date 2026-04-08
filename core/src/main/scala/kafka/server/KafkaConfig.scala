@@ -426,6 +426,7 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   val disklessStorageSystemEnabled: Boolean = getBoolean(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG)
   val disklessAllowFromClassicEnabled: Boolean = getBoolean(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG)
   val disklessManagedReplicasEnabled: Boolean = getBoolean(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG)
+  val disklessRemoteStorageConsolidationEnabled: Boolean = getBoolean(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG)
   val classicRemoteStorageForceEnabled: Boolean = getBoolean(ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG)
   val classicRemoteStorageForceExcludeTopicRegexes: java.util.List[String] =
     getList(ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG)
@@ -519,6 +520,7 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
     //   diskless.storage.system.enable
     //     → diskless.managed.rf.enable
     //       → diskless.allow.from.classic.enable (also requires remote.log.storage.system.enable)
+    //       → diskless.remote.storage.consolidation.enable (also requires remote.log.storage.system.enable)
     if (disklessManagedReplicasEnabled) {
       require(disklessStorageSystemEnabled,
         s"${ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG} requires ${ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG}=true")
@@ -528,6 +530,13 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
         s"${ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG} requires ${ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG}=true")
       require(remoteLogManagerConfig.isRemoteStorageSystemEnabled,
         s"${ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG} requires ${RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP}=true")
+    }
+
+    if (disklessRemoteStorageConsolidationEnabled) {
+      require(disklessManagedReplicasEnabled,
+        s"${ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG} requires ${ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG}=true")
+      require(remoteLogManagerConfig.isRemoteStorageSystemEnabled,
+        s"${ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG} requires ${RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP}=true")
     }
 
     require(logRollTimeMillis >= 1, "log.roll.ms must be greater than or equal to 1")
