@@ -29,7 +29,7 @@ public class AddTopicsToMirrorResponse extends AbstractResponse {
     private final AddTopicsToMirrorResponseData data;
 
     public AddTopicsToMirrorResponse(AddTopicsToMirrorResponseData data) {
-        super(ApiKeys.REMOVE_TOPICS_FROM_MIRROR);
+        super(ApiKeys.ADD_TOPICS_TO_MIRROR);
         this.data = data;
     }
 
