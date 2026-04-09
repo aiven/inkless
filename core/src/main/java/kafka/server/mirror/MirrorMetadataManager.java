@@ -23,8 +23,11 @@ import kafka.server.ReplicaManager;
 
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
+import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.DescribeMirrorsResult;
+import org.apache.kafka.clients.admin.MirrorDescription;
 import org.apache.kafka.common.GroupState;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Node;
@@ -117,6 +120,7 @@ import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -169,6 +173,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Optional<MirrorUtils.StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatorPartitionFinder = Optional.empty();
     private Optional<Function<String, Integer>> coordinatorPartitionByNameFinder = Optional.empty();
+    private volatile Admin adminClient;
 
     // cache
     // thread-safe maps for concurrent access from metadata, scheduler, and fetcher threads
@@ -902,17 +907,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /** Truncates local replicas using last mirrored leader epochs from this broker's coordinator cache. */
-    void truncateToLastMirroredEpochs(ReplicaManager replicaManager,
-                                      String mirrorName,
-                                      Set<TopicPartition> topicPartitionSet,
-                                      Consumer<TopicPartition> callback) {
+    CompletionStage<Map<String, MirrorDescription>> truncateToLastMirroredEpochs(String mirrorName,
+                                                                                 Set<TopicPartition> topicPartitionSet) {
         log.info("Truncating to last mirrored epochs from local state for mirror {}: {}", mirrorName, topicPartitionSet);
-        Map<TopicPartition, Integer> epochs = new HashMap<>();
-        topicPartitionSet.forEach(tp -> {
-            Integer epoch = lastMirroredEpochs.get(new MirrorUtils.PartitionKey(mirrorName, tp.topic(), tp.partition()));
-            epochs.put(tp, epoch != null ? epoch : 0);
-        });
-        replicaManager.maybeTruncateForLeaderEpoch(epochs, callback);
+        if (adminClient == null) {
+            Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName));
+            adminClient = Admin.create(props);
+        }
+
+        DescribeMirrorsResult result = adminClient.describeMirrors(List.of(mirrorName));
+        return result.allDescriptions().toCompletionStage();
     }
 
     /** Syncs metadata from all source clusters. */
