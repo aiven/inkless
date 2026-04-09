@@ -145,7 +145,7 @@ class ConfigAdminManager(nodeId: Int,
               }
               validateBrokerConfigChange(resource, configResource)
             case TOPIC =>
-                // mirror.name check
+                // mirror internal config check
                 if (resource.configs().stream().anyMatch(config => TopicConfig.MIRROR_NAME_CONFIG.equals(config.name()))) {
                   throw new InvalidRequestException("The 'mirror.name' configuration can only be modified through dedicated mirror management APIs.")
                 }
@@ -258,7 +258,11 @@ class ConfigAdminManager(nodeId: Int,
                 validateResourceNameIsCurrentNodeId(resource.resourceName())
               }
               validateBrokerConfigChange(resource, configResource)
-            case TOPIC | CLIENT_METRICS | GROUP =>
+            case TOPIC =>
+                if (resource.configs().asScala.exists(config => TopicConfig.MIRROR_NAME_CONFIG.equals(config.name()))) {
+                  throw new InvalidRequestException("The 'mirror.name' configuration can only be modified through dedicated mirror management APIs.")
+                }
+            case CLIENT_METRICS | GROUP =>
             // Nothing to do.
             case _ =>
               // Since legacy AlterConfigs does not support BROKER_LOGGER, any attempt to use it
