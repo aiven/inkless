@@ -259,6 +259,7 @@ public class FetchCompleterTest {
             var endOffset = startOffset + length;
             ByteBuffer copy = ByteBuffer.allocate(length);
             copy.put(records.buffer().duplicate().position(startOffset).limit(endOffset).slice());
+            copy.flip();  // Reset position to 0 for reading
             fileExtents.add(new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy)));
         }
 
@@ -297,6 +298,7 @@ public class FetchCompleterTest {
         ByteBuffer concatenatedBuffer = ByteBuffer.allocate(totalSize);
         concatenatedBuffer.put(recordsA.buffer());
         concatenatedBuffer.put(recordsB.buffer());
+        concatenatedBuffer.flip();  // Reset position to 0 for reading
 
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
             partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
@@ -378,6 +380,7 @@ public class FetchCompleterTest {
             var endOffset = startOffset + length;
             ByteBuffer copy = ByteBuffer.allocate(blockSize);
             copy.put(concatenatedBuffer.duplicate().position(startOffset).limit(endOffset).slice());
+            copy.flip();  // Reset position to 0 for reading
             fileExtents.add(new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy)));
         }
 
@@ -592,6 +595,7 @@ public class FetchCompleterTest {
             var endOffset = startOffset + length;
             ByteBuffer copy = ByteBuffer.allocate(length);
             copy.put(records.buffer().duplicate().position(startOffset).limit(endOffset).slice());
+            copy.flip();  // Reset position to 0 for reading
             fileExtents.add(new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy)));
         }
 
@@ -662,6 +666,7 @@ public class FetchCompleterTest {
             var endOffset = startOffset + length;
             ByteBuffer copy = ByteBuffer.allocate(length);
             copy.put(records.buffer().duplicate().position(startOffset).limit(endOffset).slice());
+            copy.flip();  // Reset position to 0 for reading
             fileExtents.add(new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy)));
         }
 
@@ -730,6 +735,7 @@ public class FetchCompleterTest {
             var endOffset = startOffset + length;
             ByteBuffer copy = ByteBuffer.allocate(length);
             copy.put(records.buffer().duplicate().position(startOffset).limit(endOffset).slice());
+            copy.flip();  // Reset position to 0 for reading
             fileExtents.add(new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy)));
         }
 

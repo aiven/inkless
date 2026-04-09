@@ -28,7 +28,6 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.nio.ByteBuffer;
-import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -42,7 +41,6 @@ import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -71,9 +69,8 @@ public class FileFetchJobTest {
         FileFetchJob job = new FileFetchJob(time, fetcher, objectA, range, durationMs -> { });
         FileExtent expectedFile = FileFetchJob.createFileExtent(objectA, range, ByteBuffer.wrap(array));
 
-        final ReadableByteChannel channel = mock(ReadableByteChannel.class);
-        when(fetcher.fetch(objectA, range)).thenReturn(channel);
-        when(fetcher.readToByteBuffer(channel)).thenReturn(ByteBuffer.wrap(array));
+        // FileFetchJob now uses fetchToByteBuffer directly for better performance
+        when(fetcher.fetchToByteBuffer(objectA, range)).thenReturn(ByteBuffer.wrap(array));
         FileExtent actualFile = job.call();
 
         assertThat(actualFile).isEqualTo(expectedFile);
@@ -148,6 +145,83 @@ public class FileFetchJobTest {
         );
 
         assertThat(fileRanges).containsExactlyInAnyOrderElementsOf(expectedRanges);
+    }
+
+    @Test
+    public void testCreateFileExtentWithDirectByteBuffer() {
+        // Direct ByteBuffers don't support .array() - this test verifies the fix handles them correctly
+        byte[] expectedData = {1, 2, 3, 4, 5};
+        ByteBuffer directBuffer = ByteBuffer.allocateDirect(expectedData.length);
+        directBuffer.put(expectedData);
+        directBuffer.flip();
+
+        ByteRange range = new ByteRange(100, expectedData.length);
+        FileExtent extent = FileFetchJob.createFileExtent(objectA, range, directBuffer);
+
+        assertThat(extent.object()).isEqualTo(objectA.value());
+        assertThat(extent.range().offset()).isEqualTo(100);
+        assertThat(extent.range().length()).isEqualTo(expectedData.length);
+        assertThat(extent.data()).isEqualTo(expectedData);
+    }
+
+    @Test
+    public void testCreateFileExtentWithReadOnlyByteBuffer() {
+        // Read-only ByteBuffers also don't support .array()
+        byte[] expectedData = {10, 20, 30, 40};
+        ByteBuffer readOnlyBuffer = ByteBuffer.wrap(expectedData).asReadOnlyBuffer();
+
+        ByteRange range = new ByteRange(50, expectedData.length);
+        FileExtent extent = FileFetchJob.createFileExtent(objectA, range, readOnlyBuffer);
+
+        assertThat(extent.object()).isEqualTo(objectA.value());
+        assertThat(extent.range().offset()).isEqualTo(50);
+        assertThat(extent.range().length()).isEqualTo(expectedData.length);
+        assertThat(extent.data()).isEqualTo(expectedData);
+    }
+
+    @Test
+    public void testCreateFileExtentWithNonZeroPosition() {
+        // ByteBuffer with non-zero position should only return remaining bytes
+        byte[] backingArray = {0, 0, 1, 2, 3, 4, 5};
+        ByteBuffer buffer = ByteBuffer.wrap(backingArray);
+        buffer.position(2); // Skip first 2 bytes
+
+        byte[] expectedData = {1, 2, 3, 4, 5};
+        ByteRange range = new ByteRange(0, expectedData.length);
+        FileExtent extent = FileFetchJob.createFileExtent(objectA, range, buffer);
+
+        assertThat(extent.range().length()).isEqualTo(expectedData.length);
+        assertThat(extent.data()).isEqualTo(expectedData);
+    }
+
+    @Test
+    public void testCreateFileExtentWithSlicedBuffer() {
+        // Sliced buffers have non-zero arrayOffset - this tests the arrayOffset handling
+        byte[] backingArray = {0, 0, 10, 20, 30, 0, 0};
+        ByteBuffer original = ByteBuffer.wrap(backingArray);
+        original.position(2);
+        original.limit(5);
+        ByteBuffer sliced = original.slice(); // Creates buffer with arrayOffset=2
+
+        byte[] expectedData = {10, 20, 30};
+        ByteRange range = new ByteRange(0, expectedData.length);
+        FileExtent extent = FileFetchJob.createFileExtent(objectA, range, sliced);
+
+        assertThat(extent.range().length()).isEqualTo(expectedData.length);
+        assertThat(extent.data()).isEqualTo(expectedData);
+    }
+
+    @Test
+    public void testCreateFileExtentWithHeapBufferSpanningEntireArray() {
+        // When buffer spans entire backing array, we can use array() directly (zero-copy)
+        byte[] expectedData = {1, 2, 3, 4, 5};
+        ByteBuffer buffer = ByteBuffer.wrap(expectedData);
+
+        ByteRange range = new ByteRange(0, expectedData.length);
+        FileExtent extent = FileFetchJob.createFileExtent(objectA, range, buffer);
+
+        assertThat(extent.range().length()).isEqualTo(expectedData.length);
+        assertThat(extent.data()).isSameAs(expectedData); // Same reference - no copy
     }
 
 }
