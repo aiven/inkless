@@ -859,6 +859,96 @@ class InitDisklessLogManagerTest {
     assertState[AwaitingMetadata](tp1)
   }
 
+  @Test
+  def testHWCatchesUpBetweenCheckAndListenerRegistration(): Unit = {
+    // Simulate HW advancing to LEO between the initial maybeAdvanceState()
+    // check and the maybeAddListener() call, with no further HW updates.
+    val partition = mock(classOf[Partition])
+    val log = mock(classOf[UnifiedLog])
+    val producerStateManager = mock(classOf[ProducerStateManager])
+
+    when(partition.topicPartition).thenReturn(tp0)
+    when(partition.isSealed).thenReturn(true)
+    when(partition.isLeader).thenReturn(true)
+    when(partition.getLeaderEpoch).thenReturn(1)
+    when(partition.log).thenReturn(Some(log))
+    when(log.logEndOffset).thenReturn(100L)
+    when(log.producerStateManager()).thenReturn(producerStateManager)
+    when(producerStateManager.activeProducers()).thenReturn(new util.HashMap())
+
+    // HW starts below LEO for the initial evaluation
+    when(log.highWatermark).thenReturn(50L)
+
+    // When maybeAddListener is called, HW has caught up — simulating
+    // the race where replicas finish between check and listener registration
+    doAnswer { invocation =>
+      when(log.highWatermark).thenReturn(100L)
+      listenersByTp.put(tp0, invocation.getArgument[PartitionListener](0))
+      true
+    }.when(partition).maybeAddListener(any(classOf[PartitionListener]))
+
+    manager.registerPartition(partition, topicId)
+
+    // Then the partition advances to SendingToController despite no explicit
+    // HW listener callback, because the post-listener re-evaluation catches it
+    assertState[SendingToController](tp0)
+
+    // And the flow completes normally
+    fireLinger()
+    pollAndComplete(makeSuccessResponse(topicId, 0))
+    assertState[AwaitingMetadata](tp0)
+  }
+
+  @Test
+  def testStaleListenerCallbackDoesNotRegressState(): Unit = {
+    // Given a partition registered with HW < LEO (WaitingForReplication)
+    val partition = mockPartition(hw = 50, leo = 100)
+    manager.registerPartition(partition, topicId)
+    assertState[WaitingForReplication](tp0)
+
+    // When HW catches up to LEO, advancing state to SendingToController
+    val log = partition.log.get
+    when(log.highWatermark).thenReturn(100L)
+    triggerHighWatermarkUpdate(tp0, 100)
+    assertState[SendingToController](tp0)
+
+    // And a stale HW listener callback fires after the state has already advanced
+    triggerHighWatermarkUpdate(tp0, 100)
+
+    // Then the state is NOT regressed back to SendingToController (a new instance) —
+    // the existing SendingToController state is preserved
+    assertState[SendingToController](tp0)
+
+    // And the flow completes normally
+    fireLinger()
+    pollAndComplete(makeSuccessResponse(topicId, 0))
+    assertState[AwaitingMetadata](tp0)
+  }
+
+  @Test
+  def testStaleListenerCallbackDoesNotRegressFromAwaitingMetadata(): Unit = {
+    // Given a partition registered with HW < LEO so a listener is captured
+    val partition = mockPartition(hw = 50, leo = 100)
+    manager.registerPartition(partition, topicId)
+    assertState[WaitingForReplication](tp0)
+
+    // When HW catches up, advancing to SendingToController, then to AwaitingMetadata
+    val log = partition.log.get
+    when(log.highWatermark).thenReturn(100L)
+    triggerHighWatermarkUpdate(tp0, 100)
+    assertState[SendingToController](tp0)
+    fireLinger()
+    pollAndComplete(makeSuccessResponse(topicId, 0))
+    assertState[AwaitingMetadata](tp0)
+
+    // And a stale HW listener callback fires after the state has already advanced
+    triggerHighWatermarkUpdate(tp0, 100)
+
+    // Then the state remains AwaitingMetadata and no spurious controller call is made
+    assertState[AwaitingMetadata](tp0)
+    assertTrue(channelManager.requests.isEmpty)
+  }
+
   private def makeSuccessResponse(topicId: Uuid, partitionId: Int): InitDisklessLogResponseData = {
     new InitDisklessLogResponseData().setTopics(util.List.of(
       new InitDisklessLogResponseData.TopicResponse()
