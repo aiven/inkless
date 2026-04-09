@@ -23,6 +23,7 @@ import org.apache.kafka.common.metrics.MetricConfig;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.metrics.MetricsReporter;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
@@ -130,9 +131,7 @@ public final class SharedState implements Closeable {
     @Override
     public void close() throws IOException {
         try {
-            cache.close();
-            controlPlane.close();
-            storageMetrics.close();
+            Utils.closeAll(cache, controlPlane, storageMetrics);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
