@@ -65,7 +65,10 @@ class InitDisklessLogManager(
    */
   def registerPartition(partition: Partition, topicId: Uuid): Unit = {
     val waitingState = WaitingForReplication(partition, topicId, onPartitionUpdate = (tp, outcome) => {
-      tracked.computeIfPresent(tp, (_, _) => handleWaitingOutcome(tp, outcome))
+      tracked.computeIfPresent(tp, (_, currentState) => currentState match {
+        case _: WaitingForReplication => handleWaitingOutcome(tp, outcome)
+        case other => other
+      })
     })
 
     val tp = partition.topicPartition

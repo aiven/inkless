@@ -858,6 +858,56 @@ class InitDisklessLogManagerTest {
     assertState[AwaitingMetadata](tp1)
   }
 
+  @Test
+  def testStaleListenerCallbackDoesNotRegressState(): Unit = {
+    // Given a partition registered with HW < LEO (WaitingForReplication)
+    val partition = mockPartition(hw = 50, leo = 100)
+    manager.registerPartition(partition, topicId)
+    assertState[WaitingForReplication](tp0)
+
+    // When HW catches up to LEO, advancing state to SendingToController
+    val log = partition.log.get
+    when(log.highWatermark).thenReturn(100L)
+    triggerHighWatermarkUpdate(tp0, 100)
+    assertState[SendingToController](tp0)
+
+    // And a stale HW listener callback fires after the state has already advanced
+    triggerHighWatermarkUpdate(tp0, 100)
+
+    // Then the state is NOT regressed back to SendingToController (a new instance) —
+    // the existing SendingToController state is preserved
+    assertState[SendingToController](tp0)
+
+    // And the flow completes normally
+    fireLinger()
+    pollAndComplete(makeSuccessResponse(topicId, 0))
+    assertState[AwaitingMetadata](tp0)
+  }
+
+  @Test
+  def testStaleListenerCallbackDoesNotRegressFromAwaitingMetadata(): Unit = {
+    // Given a partition registered with HW < LEO so a listener is captured
+    val partition = mockPartition(hw = 50, leo = 100)
+    manager.registerPartition(partition, topicId)
+    assertState[WaitingForReplication](tp0)
+
+    // When HW catches up, advancing to SendingToController, then to AwaitingMetadata
+    val log = partition.log.get
+    when(log.highWatermark).thenReturn(100L)
+    triggerHighWatermarkUpdate(tp0, 100)
+    assertState[SendingToController](tp0)
+    fireLinger()
+    pollAndComplete(makeSuccessResponse(topicId, 0))
+    assertState[AwaitingMetadata](tp0)
+
+    // And a stale HW listener callback fires after the state has already advanced
+    triggerHighWatermarkUpdate(tp0, 100)
+
+    // Then the state remains AwaitingMetadata and no spurious controller call is made
+    assertState[AwaitingMetadata](tp0)
+    assertTrue(channelManager.requests.isEmpty)
+  }
+
   private def makeSuccessResponse(topicId: Uuid, partitionId: Int): InitDisklessLogResponseData = {
     new InitDisklessLogResponseData().setTopics(util.List.of(
       new InitDisklessLogResponseData.TopicResponse()
