@@ -67,7 +67,7 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
 
   private case class Attempt(state: S, attemptNumber: Int)
   private var queuedByTp = new java.util.LinkedHashMap[TopicPartition, Attempt]()
-  private val resultPromiseByTp = new java.util.HashMap[TopicPartition, Promise[Boolean]]()
+  private val resultPromiseByTp = new java.util.concurrent.ConcurrentHashMap[TopicPartition, Promise[Boolean]]()
   private val retryBackoff = new ExponentialBackoff(retryPeriodMs, 2, maxRetryTimeMs, 0.0)
   
   private sealed trait TaskStatus
@@ -101,43 +101,21 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
   def enqueue(tp: TopicPartition, state: S): Future[Boolean] = {
     val promise = withQueueLock {
       val currentPromise = resultPromiseByTp.computeIfAbsent(tp, _ => Promise[Boolean]())
-      val duplicateQueued = Option(queuedByTp.get(tp)).exists(existing => existing.state == state)
-      if (duplicateQueued) {
-        taskStatus match {
-          case TaskScheduled(scheduledTask) =>
-            // Reschedule when receiving a duplicate so it's immediately sent
-            scheduledTask.cancel(false)
-            scheduleNewTask(lingerMs)
-          case _ =>
-        }
-        currentPromise
-      } else {
-        val preservedAttemptNumber = Option(queuedByTp.get(tp)).map(_.attemptNumber).getOrElse(0)
-        // Keep retry progression for already queued partitions, but always refresh the state payload.
-        queuedByTp.put(tp, Attempt(state, attemptNumber = preservedAttemptNumber))
-
-        taskStatus match {
-          case NoTask =>
-            // Schedule a new run, allowing linger for additional ready partitions.
-            scheduleNewTask(lingerMs)
-          case TaskScheduled(scheduledTask) =>
-            // Re-schedule using linger so newly ready partitions can batch together.
-            scheduledTask.cancel(false)
-            scheduleNewTask(lingerMs)
-          case TaskRunning =>
-            // A task is in-flight. Newly queued work is already in queuedByTp
-            // and will be picked up by finishTask.
-        }
-        currentPromise
+      val existing = Option(queuedByTp.get(tp))
+      val isDuplicate = existing.exists(_.state == state)
+      if (!isDuplicate) {
+        val attemptNum = existing.map(_.attemptNumber).getOrElse(0)
+        queuedByTp.put(tp, Attempt(state, attemptNumber = attemptNum))
       }
+      maybeScheduleOrReschedule(lingerMs)
+      currentPromise
     }
-    
     promise.future
   }
 
-  def remove(tp: TopicPartition): Unit = withQueueLock {
-    queuedByTp.remove(tp)
-    Option(resultPromiseByTp.remove(tp)).foreach(_.trySuccess(false))
+  def remove(tp: TopicPartition): Unit = {
+    withQueueLock { queuedByTp.remove(tp) }
+    completeAndRemovePromise(tp, accepted = false)
   }
   
   private def task(): Unit = {
@@ -222,12 +200,22 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
   }
 
   private def finishTask(): Unit = withQueueLock {
-    if (queuedByTp.isEmpty) {
-      taskStatus = NoTask
-    } else {
+    taskStatus = NoTask
+    if (!queuedByTp.isEmpty) {
       val hasFreshAttempts = queuedByTp.values().asScala.exists(_.attemptNumber == 0)
       val delayMs = if (hasFreshAttempts) lingerMs else computeRetryDelayMs()
-      scheduleNewTask(delayMs)
+      maybeScheduleOrReschedule(delayMs)
+    }
+  }
+
+  private def maybeScheduleOrReschedule(delayMs: Long): Unit = {
+    taskStatus match {
+      case NoTask =>
+        scheduleNewTask(delayMs)
+      case TaskScheduled(scheduledTask) =>
+        scheduledTask.cancel(false)
+        scheduleNewTask(delayMs)
+      case TaskRunning =>
     }
   }
 
@@ -246,7 +234,7 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
     }
   }
 
-  private def completeAndRemovePromise(tp: TopicPartition, accepted: Boolean): Unit = withQueueLock {
+  private def completeAndRemovePromise(tp: TopicPartition, accepted: Boolean): Unit = {
     Option(resultPromiseByTp.remove(tp)).foreach(_.trySuccess(accepted))
   }
 
