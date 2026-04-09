@@ -859,6 +859,46 @@ class InitDisklessLogManagerTest {
   }
 
   @Test
+  def testHWCatchesUpBetweenCheckAndListenerRegistration(): Unit = {
+    // Simulate HW advancing to LEO between the initial maybeAdvanceState()
+    // check and the maybeAddListener() call, with no further HW updates.
+    val partition = mock(classOf[Partition])
+    val log = mock(classOf[UnifiedLog])
+    val producerStateManager = mock(classOf[ProducerStateManager])
+
+    when(partition.topicPartition).thenReturn(tp0)
+    when(partition.isSealed).thenReturn(true)
+    when(partition.isLeader).thenReturn(true)
+    when(partition.getLeaderEpoch).thenReturn(1)
+    when(partition.log).thenReturn(Some(log))
+    when(log.logEndOffset).thenReturn(100L)
+    when(log.producerStateManager()).thenReturn(producerStateManager)
+    when(producerStateManager.activeProducers()).thenReturn(new util.HashMap())
+
+    // HW starts below LEO for the initial evaluation
+    when(log.highWatermark).thenReturn(50L)
+
+    // When maybeAddListener is called, HW has caught up — simulating
+    // the race where replicas finish between check and listener registration
+    doAnswer { invocation =>
+      when(log.highWatermark).thenReturn(100L)
+      listenersByTp.put(tp0, invocation.getArgument[PartitionListener](0))
+      true
+    }.when(partition).maybeAddListener(any(classOf[PartitionListener]))
+
+    manager.registerPartition(partition, topicId)
+
+    // Then the partition advances to SendingToController despite no explicit
+    // HW listener callback, because the post-listener re-evaluation catches it
+    assertState[SendingToController](tp0)
+
+    // And the flow completes normally
+    fireLinger()
+    pollAndComplete(makeSuccessResponse(topicId, 0))
+    assertState[AwaitingMetadata](tp0)
+  }
+
+  @Test
   def testStaleListenerCallbackDoesNotRegressState(): Unit = {
     // Given a partition registered with HW < LEO (WaitingForReplication)
     val partition = mockPartition(hw = 50, leo = 100)

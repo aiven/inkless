@@ -90,8 +90,13 @@ class InitDisklessLogManager(
     if (inserted) {
       Option(tracked.get(tp)).foreach {
         case waitingForReplication: WaitingForReplication =>
-          // Listener is only needed while still waiting for HW advancement.
           partition.maybeAddListener(waitingForReplication)
+          // Re-evaluate after adding the listener to catch HW updates that
+          // occurred between the initial maybeAdvanceState() and addListener().
+          tracked.computeIfPresent(tp, (_, currentState) => currentState match {
+            case w: WaitingForReplication => handleWaitingOutcome(tp, w.maybeAdvanceState())
+            case other => other
+          })
         case _ =>
       }
     }
