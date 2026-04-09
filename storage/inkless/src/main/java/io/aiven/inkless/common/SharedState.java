@@ -27,7 +27,6 @@ import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
-
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
