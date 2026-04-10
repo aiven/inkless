@@ -20,6 +20,7 @@ package kafka.server
 import com.yammer.metrics.core.{Gauge, Meter, Timer}
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
+import io.aiven.inkless.consolidation.ConsolidationFetcherManager
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse}
 import kafka.server.metadata.InklessMetadataView
@@ -7065,6 +7066,118 @@ class ReplicaManagerTest {
       assertEquals(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET, partitionResult.endOffset())
     }
 
+    @Test
+    def testConsolidationFetcherManagerConstructedWhenRemoteStorageConsolidationEnabled(): Unit = {
+      val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager])
+      try {
+        val replicaManager = createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          disklessRemoteStorageConsolidationEnabled = true,
+        )
+        try {
+          assertEquals(1, consolidationCtor.constructed().size())
+        } finally {
+          replicaManager.shutdown(checkpointHW = false)
+        }
+      } finally {
+        consolidationCtor.close()
+      }
+    }
+
+    @Test
+    def testConsolidationFetcherManagerWiredOnConsolidatingDisklessBecomeLeader(): Unit = {
+      val consolidatingTopic = disklessTopicPartition.topic()
+      val tp = disklessTopicPartition.topicPartition()
+      val leaderBrokerEndpoint = ClusterImageTest.IMAGE1.broker(1).listeners().get("PLAINTEXT")
+
+      val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+        case (mock, _) =>
+          when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+      }
+      val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+      try {
+        val replicaManager = createReplicaManager(
+          List(consolidatingTopic),
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(consolidatingTopic),
+        )
+        try {
+          val mockCfm = consolidationCtor.constructed().get(0)
+          val oneReplica = Seq[Integer](1).asJava
+          val delta = createLeaderDelta(
+            disklessTopicPartition.topicId,
+            tp,
+            1,
+            oneReplica,
+            oneReplica,
+          )
+          replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+          verify(mockCfm, atLeastOnce()).shutdownIdleFetcherThreads()
+          verify(mockCfm).removeFetcherForPartitions(Set(tp))
+          verify(mockCfm).addFetcherForPartitions(
+            Map(tp -> InitialFetchState(
+              topicId = Some(disklessTopicPartition.topicId),
+              leader = new BrokerEndPoint(1, leaderBrokerEndpoint.host(), leaderBrokerEndpoint.port()),
+              currentLeaderEpoch = 0,
+              initOffset = 0
+            ))
+          )
+        } finally {
+          replicaManager.shutdown(checkpointHW = false)
+          verify(consolidationCtor.constructed().get(0)).shutdown()
+        }
+      } finally {
+        consolidationCtor.close()
+      }
+    }
+
+    @Test
+    def testConsolidationFetcherManagerWiredOnConsolidatingDisklessBecomeFollower(): Unit = {
+      val consolidatingTopic = disklessTopicPartition.topic()
+      val tp = disklessTopicPartition.topicPartition()
+      val remoteLeaderEndpoint = ClusterImageTest.IMAGE1.broker(2).listeners().get("PLAINTEXT")
+
+      val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+        case (mock, _) =>
+          when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+      }
+      val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+      try {
+        val replicaManager = createReplicaManager(
+          List(consolidatingTopic),
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(consolidatingTopic),
+        )
+        try {
+          val mockCfm = consolidationCtor.constructed().get(0)
+          val delta = createFollowerDelta(
+            disklessTopicPartition.topicId,
+            tp,
+            followerId = 1,
+            leaderId = 2,
+          )
+          replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+          verify(mockCfm, atLeastOnce()).shutdownIdleFetcherThreads()
+          verify(mockCfm).removeFetcherForPartitions(Set(tp))
+          verify(mockCfm).addFetcherForPartitions(
+            Map(tp -> InitialFetchState(
+              topicId = Some(disklessTopicPartition.topicId),
+              leader = new BrokerEndPoint(2, remoteLeaderEndpoint.host(), remoteLeaderEndpoint.port()),
+              currentLeaderEpoch = 0,
+              initOffset = 0
+            ))
+          )
+        } finally {
+          replicaManager.shutdown(checkpointHW = false)
+          verify(consolidationCtor.constructed().get(0)).shutdown()
+        }
+      } finally {
+        consolidationCtor.close()
+      }
+    }
+
     private def mockFetchHandler(disklessResponse: Map[TopicIdPartition, FetchPartitionData]) = {
       // We use constructor mocking here to inject a FetchHandler mock into ReplicaManager,
       // because ReplicaManager internally constructs its own FetchHandler instance and does not
@@ -7084,13 +7197,22 @@ class ReplicaManagerTest {
       disklessTopics: Seq[String],
       controlPlane: Option[ControlPlane] = None,
       topicIdMapping: Map[String, Uuid] = Map.empty,
-      disklessManagedReplicasEnabled: Boolean = false
+      disklessManagedReplicasEnabled: Boolean = false,
+      disklessRemoteStorageConsolidationEnabled: Boolean = false,
+      consolidatingDisklessTopics: Set[String] = Set.empty
     ): ReplicaManager = {
       val props = TestUtils.createBrokerConfig(1, logDirCount = 2)
-      if (disklessManagedReplicasEnabled) {
+      if (disklessManagedReplicasEnabled || disklessRemoteStorageConsolidationEnabled) {
         props.put(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
       }
-      props.put(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, disklessManagedReplicasEnabled.toString)
+      if (disklessRemoteStorageConsolidationEnabled) {
+        props.put(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, "true")
+        props.put(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
+      }
+      props.put(
+        ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG,
+        (disklessManagedReplicasEnabled || disklessRemoteStorageConsolidationEnabled).toString
+      )
       val config = KafkaConfig.fromProps(props)
       val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
       val sharedState = mock(classOf[SharedState], Answers.RETURNS_DEEP_STUBS)
@@ -7104,6 +7226,7 @@ class ReplicaManagerTest {
         topicIdMapping.getOrElse(topicName, Uuid.ZERO_UUID)
       }
       disklessTopics.foreach(t => when(inklessMetadata.isDisklessTopic(t)).thenReturn(true))
+      consolidatingDisklessTopics.foreach(t => when(inklessMetadata.isConsolidatingDisklessTopic(t)).thenReturn(true))
       when(sharedState.metadata()).thenReturn(inklessMetadata)
 
       val logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size)

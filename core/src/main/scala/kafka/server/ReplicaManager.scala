@@ -2857,7 +2857,6 @@ class ReplicaManager(val config: KafkaConfig,
 
             changedPartitions.add(partition)
             if (isConsolidatingDisklessTopic) {
-              partition.createLogIfNotExists(isNew = true, isFutureReplica = false, offsetCheckpoints = offsetCheckpoints, topicId = partition.topicId, targetLogDirectoryId = partitionAssignedDirectoryId)
               consolidatingDisklessPartitionsToStartFetching.put(tp, partition)
             }
           } catch {
