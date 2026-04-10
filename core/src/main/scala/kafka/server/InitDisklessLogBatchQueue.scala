@@ -237,8 +237,10 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
     }
   }
 
-  private def completeAndRemovePromise(tp: TopicPartition, accepted: Boolean): Unit = {
-    Option(resultPromiseByTp.remove(tp)).foreach(_.trySuccess(accepted))
+  private def completeAndRemovePromise(tp: TopicPartition, accepted: Boolean): Unit = withQueueLock {
+    if (!queuedByTp.containsKey(tp)) {
+      Option(resultPromiseByTp.remove(tp)).foreach(_.trySuccess(accepted))
+    }
   }
 
   private def computeRetryDelayMs(): Long = {
