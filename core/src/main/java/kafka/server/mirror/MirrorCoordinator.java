@@ -355,10 +355,11 @@ public class MirrorCoordinator {
 
         log.info("Starting up.");
         numPartitions = brokerConfig.mirrorConfig().topicNumPartitions();
-        metadataManager.setStateTransitioner((mirrorName, tp, state) -> transitionTo(mirrorName, Set.of(tp), state));
-        metadataManager.setMirrorDeletionHandler(this::tombstoneMirrorRecords);
-        metadataManager.setCoordinatorPartitionByKeyFinder(key -> getCoordinatorPartitionByKey(key));
-        metadataManager.setCoordinatorPartitionByNameFinder(mirrorName -> getCoordinatorPartitionByName(mirrorName));
+        metadataManager.initialize(
+                (mirrorName, tp, state) -> transitionTo(mirrorName, Set.of(tp), state),
+                this::tombstoneMirrorRecords,
+                key -> getCoordinatorPartitionByKey(key),
+                mirrorName -> getCoordinatorPartitionByName(mirrorName));
 
         scheduler.startup();
 
