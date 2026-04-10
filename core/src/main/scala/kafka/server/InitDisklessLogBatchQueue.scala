@@ -114,8 +114,11 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
   }
 
   def remove(tp: TopicPartition): Unit = {
-    withQueueLock { queuedByTp.remove(tp) }
-    completeAndRemovePromise(tp, accepted = false)
+    val promise = withQueueLock {
+      queuedByTp.remove(tp)
+      Option(resultPromiseByTp.remove(tp))
+    }
+    promise.foreach(_.trySuccess(false))
   }
   
   private def task(): Unit = {
