@@ -122,6 +122,8 @@ import org.apache.kafka.common.message.HeartbeatRequestDataJsonConverter;
 import org.apache.kafka.common.message.HeartbeatResponseDataJsonConverter;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestDataJsonConverter;
 import org.apache.kafka.common.message.IncrementalAlterConfigsResponseDataJsonConverter;
+import org.apache.kafka.common.message.InitDisklessLogRequestDataJsonConverter;
+import org.apache.kafka.common.message.InitDisklessLogResponseDataJsonConverter;
 import org.apache.kafka.common.message.InitProducerIdRequestDataJsonConverter;
 import org.apache.kafka.common.message.InitProducerIdResponseDataJsonConverter;
 import org.apache.kafka.common.message.InitializeShareGroupStateRequestDataJsonConverter;
@@ -304,6 +306,8 @@ import org.apache.kafka.common.requests.HeartbeatRequest;
 import org.apache.kafka.common.requests.HeartbeatResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsResponse;
+import org.apache.kafka.common.requests.InitDisklessLogRequest;
+import org.apache.kafka.common.requests.InitDisklessLogResponse;
 import org.apache.kafka.common.requests.InitProducerIdRequest;
 import org.apache.kafka.common.requests.InitProducerIdResponse;
 import org.apache.kafka.common.requests.InitializeShareGroupStateRequest;
@@ -571,6 +575,8 @@ public class RequestConvertToJson {
                 return WriteShareGroupStateRequestDataJsonConverter.write(((WriteShareGroupStateRequest) request).data(), request.version());
             case WRITE_TXN_MARKERS:
                 return WriteTxnMarkersRequestDataJsonConverter.write(((WriteTxnMarkersRequest) request).data(), request.version());
+            case INIT_DISKLESS_LOG:
+                return InitDisklessLogRequestDataJsonConverter.write(((InitDisklessLogRequest) request).data(), request.version());
             default:
                 throw new IllegalStateException("ApiKey " + request.apiKey() + " is not currently handled in `request`, the " +
                     "code should be updated to do so.");
@@ -757,6 +763,8 @@ public class RequestConvertToJson {
                 return WriteShareGroupStateResponseDataJsonConverter.write(((WriteShareGroupStateResponse) response).data(), version);
             case WRITE_TXN_MARKERS:
                 return WriteTxnMarkersResponseDataJsonConverter.write(((WriteTxnMarkersResponse) response).data(), version);
+            case INIT_DISKLESS_LOG:
+                return InitDisklessLogResponseDataJsonConverter.write(((InitDisklessLogResponse) response).data(), version);
             default:
                 throw new IllegalStateException("ApiKey " + response.apiKey() + " is not currently handled in `response`, the " +
                     "code should be updated to do so.");
