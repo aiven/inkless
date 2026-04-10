@@ -223,3 +223,7 @@ LATEST_4_0 = V_4_0_0
 # 4.1.x version
 V_4_1_0 = KafkaVersion("4.1.0")
 LATEST_4_1 = V_4_1_0
+
+# Cluster Mirroring
+CLUSTER_MIRRORING_METADATA_VERSION = "4.2-IV2"
+CLUSTER_MIRRORING_VERSION = 1
