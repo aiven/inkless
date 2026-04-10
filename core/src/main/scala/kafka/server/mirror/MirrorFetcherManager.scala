@@ -29,6 +29,7 @@ import org.apache.kafka.server.config.MirrorConfig
 import org.apache.kafka.server.network.BrokerEndPoint
 
 import scala.collection.{Map, mutable}
+import scala.collection.concurrent.TrieMap
 
 /**
  * Manages replica fetcher threads for cluster mirroring, assigning partitions from different
@@ -47,7 +48,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
       clientId = "MirrorReplica",
       numFetchers = brokerConfig.mirrorConfig.numReplicaFetchers) {
   private val mirrorFetcherThreadMap = new mutable.HashMap[FetcherKey, MirrorFetcherThread]
-  private val lagInfo = new mutable.HashMap[PartitionLagKey, LagInfo]
+  private val lagInfo = new TrieMap[PartitionLagKey, LagInfo]
 
   override def deadThreadCount: Int = lock synchronized { mirrorFetcherThreadMap.values.count(_.isThreadFailed) }
 
@@ -201,16 +202,12 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   }
 
   def updatePartitionLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long): Unit = {
-    // TODO: This is a temporary workaround to avoid deadlock. We should fix the root cause of the deadlock.
-    // this.synchronized {
     val key = PartitionLagKey(mirrorName, topicPartition)
     val lag = Math.max(0, sourceOffset - destinationOffset)
     lagInfo.put(key, LagInfo(sourceOffset, destinationOffset, lag, time.milliseconds()))
   }
 
   def getMirrorLagInfo(mirrorName: String): Map[TopicPartition, LagInfo] = {
-    // TODO: This is a temporary workaround to avoid deadlock. We should fix the root cause of the deadlock.
-    // this.synchronized {
     lagInfo.collect {
       case (key, lagInfo) if key.mirrorName == mirrorName => key.topicPartition -> lagInfo
     }.toMap
