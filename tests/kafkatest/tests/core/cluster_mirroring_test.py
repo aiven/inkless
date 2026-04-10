@@ -115,6 +115,7 @@ class ClusterMirroringTest(Test):
         self.producer.start()
 
     def teardown(self):
+        self.producer.stop()
         self.dest_kafka.stop()
         self.source_kafka.stop()
 
@@ -216,7 +217,7 @@ class ClusterMirroringTest(Test):
         self.producer.stop()
 
         wait_until(
-            lambda: all_satisfy_in_mirror(mirror_cfg["name"], lambda p: p["lag"] == 0),
+            lambda: all_satisfy_in_mirror(mirror_cfg["name"], lambda p: p["lag"] == 0 and p["state"] == "MIRRORING"),
             timeout_sec=60,
             backoff_sec=2,
             err_msg="Failed to start mirrors",
