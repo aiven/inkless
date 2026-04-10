@@ -60,7 +60,7 @@ class InitDisklessLogManager(
     scheduler = scheduler,
     brokerId = brokerId,
     brokerEpochSupplier = brokerEpochSupplier,
-    lingerMs = 0L,
+    lingerMs = lingerMs,
     retryPeriodMs = retryPeriodMs,
     maxRetryTimeMs = maxRetryTimeMs
   )

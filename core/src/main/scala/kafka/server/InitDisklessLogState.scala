@@ -215,7 +215,7 @@ final case class AwaitingMetadata(
   }
 }
 
-/** Terminal state used for observability once metadata init succeeds. */
+/** Terminal state once metadata init succeeds. */
 final case class Done(
   partition: Partition,
   topicId: Uuid
@@ -287,6 +287,7 @@ object AwaitingMetadata {
             retriable(state)
           case Right(_) =>
             (if (responseIterator.hasNext) Some(responseIterator.next()) else None) match {
+              // INVALID_REQUEST = partition already initialized (idempotent success)
               case Some(r) if r.error() == Errors.NONE || r.error() == Errors.INVALID_REQUEST =>
                 ParsedResponse(state.topicId, state.tp.partition(), r.error(), InitDisklessLogBatchQueue.Success)
               case Some(r) =>

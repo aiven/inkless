@@ -120,6 +120,7 @@ class InitDisklessLogFlowTest {
       pcrDelta.replay(pcr)
       val pcrImage = withClusterBrokers(pcrDelta.apply(MetadataProvenance.EMPTY))
       ctx.metadataPublisher.onMetadataUpdate(pcrDelta, pcrImage, metadataManifest())
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
       ctx.scheduler.tick()
 
       // Final check: metadata-triggered control-plane init executed.
@@ -605,6 +606,7 @@ class InitDisklessLogFlowTest {
       val pcrImage = withClusterBrokers(pcrDelta.apply(MetadataProvenance.EMPTY))
       ctx.metadataPublisher.onMetadataUpdate(pcrDelta, pcrImage, metadataManifest())
 
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
       ctx.scheduler.tick()
 
       verify(ctx.controlPlane, times(1)).initDisklessLog(any())
@@ -674,6 +676,8 @@ class InitDisklessLogFlowTest {
       broker0Ctx.metadataPublisher.onMetadataUpdate(pcrDelta, pcrImage, metadataManifest())
       broker1Ctx.metadataPublisher.onMetadataUpdate(pcrDelta, pcrImage, metadataManifest())
 
+      broker0Ctx.time.sleep(broker0Ctx.initDisklessLogManager.lingerMs)
+      broker1Ctx.time.sleep(broker1Ctx.initDisklessLogManager.lingerMs)
       broker0Ctx.scheduler.tick()
       broker1Ctx.scheduler.tick()
 

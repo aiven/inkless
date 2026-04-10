@@ -931,7 +931,7 @@ class InitDisklessLogManagerTest {
       producerStates = util.List.of(new CpProducerState(1L, 0.toShort, 0, 1, 100L, 1000L))
     )
 
-    scheduler.tick()
+    fireLinger()
 
     verify(controlPlane).initDisklessLog(any())
     assertTrue(manager.getTrackedPartitions.isEmpty)
@@ -950,7 +950,7 @@ class InitDisklessLogManagerTest {
       producerStates = util.List.of()
     )
 
-    scheduler.tick()
+    fireLinger()
 
     verify(controlPlane).initDisklessLog(any())
     assertTrue(manager.getTrackedPartitions.isEmpty)
@@ -971,7 +971,7 @@ class InitDisklessLogManagerTest {
       producerStates = util.List.of()
     )
 
-    scheduler.tick()
+    fireLinger()
     assertState[AwaitingMetadata](tp0)
     verify(controlPlane, times(1)).initDisklessLog(any())
 
@@ -981,7 +981,7 @@ class InitDisklessLogManagerTest {
   }
 
   @Test
-  def testMetadataAppliedRepeatedCallbackIsIdempotent(): Unit = {
+  def testMetadataAppliedRepeatedCallbacksAreDeduplicated(): Unit = {
     val partition = mockPartition(hw = 100, leo = 100)
     when(controlPlane.initDisklessLog(any())).thenReturn(util.List.of(CpInitResponse.success()))
 
@@ -1000,9 +1000,9 @@ class InitDisklessLogManagerTest {
       producerStates = util.List.of()
     )
 
-    scheduler.tick()
+    fireLinger()
 
-    verify(controlPlane, atLeastOnce()).initDisklessLog(any())
+    verify(controlPlane, times(1)).initDisklessLog(any())
     assertTrue(manager.getTrackedPartitions.isEmpty)
   }
 }
