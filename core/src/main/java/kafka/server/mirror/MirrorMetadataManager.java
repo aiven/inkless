@@ -176,7 +176,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Optional<Function<String, Integer>> coordinatorPartitionByNameFinder = Optional.empty();
 
     // cache
-    // thread-safe maps for concurrent access from metadata, scheduler, and fetcher threads
     private final Map<String, Uuid> sourceClusterIds = new ConcurrentHashMap<>();
     private final Map<String, List<MirrorSourceSender>> sourceSenders = new ConcurrentHashMap<>();
     private final Map<String, Map<TopicPartition, Node>> sourceLeaders = new ConcurrentHashMap<>();
@@ -184,13 +183,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Map<MirrorPartitionState, AtomicLong> partitionStateCounts = new ConcurrentHashMap<>();
     private final Map<MirrorUtils.PartitionKey, Integer> lastMirroredEpochs = new ConcurrentHashMap<>();
 
-    // because bump leader epoch needs to send request to the controller, and wait for metadata log fetch from broker
-    // to get the leader epoch update, we have to make sure the leader epoch has bumpped in the broker side before we can
-    // write the PID reset record
-    private Set<MirrorUtils.BumpLeaderEpoch> bumpLeaderEpoch = ConcurrentHashMap.newKeySet();
+    // Leader epoch bumps require a request to the controller followed by a metadata log fetch.
+    // The bump must be confirmed on the broker side before we can write the PID reset record.
+    private final Set<MirrorUtils.LeaderEpochBump> pendingLeaderEpochBumps = ConcurrentHashMap.newKeySet();
 
-    // the inflight state processes partitions. This is used to let the transition handler know that the current state is still inflight, to avoid duplicate process.
-    private final Map<TopicPartition, MirrorPartitionState> inflightStateProcesses = new ConcurrentHashMap<>();
+    // lets the transition handler skip partitions that are already being processed
+    private final Map<TopicPartition, MirrorPartitionState> pendingPartitionStates = new ConcurrentHashMap<>();
 
     // metrics
     private KafkaMetricsGroup metricsGroup;
@@ -350,7 +348,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     // Check if all partitions in bumpLeaderEpoch are updated to the higher leader epoch, then complete the future
     public void maybeCompleteBumpLeaderEpochFuture() {
-        bumpLeaderEpoch.removeIf(bumpLeaderEpoch -> {
+        pendingLeaderEpochBumps.removeIf(bumpLeaderEpoch -> {
             Set<TopicPartition> incompletedTps = bumpLeaderEpoch.partitionToEpoch().entrySet().stream().filter(entry -> {
                 TopicPartition tp = entry.getKey();
                 int epoch = entry.getValue();
@@ -372,8 +370,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         closeSourceSenders();
     }
 
-    public Map<TopicPartition, MirrorPartitionState> inflightStateProcesses() {
-        return inflightStateProcesses;
+    public Map<TopicPartition, MirrorPartitionState> pendingPartitionStates() {
+        return pendingPartitionStates;
     }
 
     /** Returns mirror partitions led by this broker, detecting both leadership and config changes */
@@ -392,15 +390,15 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 }
             });
 
-            // remove the inflight state from this node because it is not the leader anymore
+            // remove the pending state from this node because it is not the leader anymore
             delta.topicsDelta().localChanges(nodeId).followers().keySet().forEach(tp -> {
                 Properties props = image.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic()));
                 if (props.containsKey(TopicConfig.MIRROR_NAME_CONFIG)) {
                     String mirrorName = (String) props.get(TopicConfig.MIRROR_NAME_CONFIG);
                     if (mirrorName != null && !mirrorName.isBlank()) {
-                        inflightStateProcesses.remove(tp);
-                        bumpLeaderEpoch.removeIf(bumpLeaderEpoch -> {
-                            bumpLeaderEpoch.future().completeExceptionally(new IllegalStateException("not leader anymore"));
+                        pendingPartitionStates.remove(tp);
+                        pendingLeaderEpochBumps.removeIf(bumpLeaderEpoch -> {
+                            bumpLeaderEpoch.future().completeExceptionally(new IllegalStateException("Not leader anymore"));
                             return true;
                         });
                     }
@@ -1015,7 +1013,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             topicStates.add(topicState);
         });
 
-        bumpLeaderEpoch.add(new MirrorUtils.BumpLeaderEpoch(future, partitionEpochs));
+        pendingLeaderEpochBumps.add(new MirrorUtils.LeaderEpochBump(future, partitionEpochs));
 
         channelManager.sendRequest(new BumpLeaderEpochsRequest.Builder(
                 new BumpLeaderEpochsRequestData().setTopics(topicStates)
@@ -1577,8 +1575,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         sourceClusterIds.clear();
         closeSourceSenders();
         sourceLeaders.clear();
-        bumpLeaderEpoch.clear();
-        inflightStateProcesses.clear();
+        pendingLeaderEpochBumps.clear();
+        pendingPartitionStates.clear();
     }
 
     private void closeSourceSenders() {

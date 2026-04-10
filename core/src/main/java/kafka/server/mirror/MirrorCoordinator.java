@@ -202,9 +202,9 @@ public class MirrorCoordinator {
                                         // if this partition has state process inflight, don't need to handle state transition
                                         // For mirroring, because the mirror fetcher will be removed when becoming the leader, we should re-run it.
                                         // (and it's idempotent operation)
-                                        MirrorPartitionState inflightState = metadataManager.inflightStateProcesses().get(tp1);
+                                        MirrorPartitionState inflightState = metadataManager.pendingPartitionStates().get(tp1);
                                         if (inflightState == MirrorPartitionState.MIRRORING || inflightState != newState) {
-                                            metadataManager.inflightStateProcesses().put(tp1, newState);
+                                            metadataManager.pendingPartitionStates().put(tp1, newState);
                                             handleStateTransition(mirrorName, Set.of(tp1), newState);
                                         } else {
                                             log.debug("State transition for partition {} is already inflight, skipping.", tp1);

@@ -89,7 +89,7 @@ public final class MirrorUtils {
 
     public record PartitionKey(String mirrorName, String topic, int partition) { }
 
-    public record BumpLeaderEpoch(CompletableFuture<Void> future, Map<TopicPartition, Integer> partitionToEpoch) { }
+    public record LeaderEpochBump(CompletableFuture<Void> future, Map<TopicPartition, Integer> partitionToEpoch) { }
 
     interface StateTransitioner {
         void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorPartitionState state);
