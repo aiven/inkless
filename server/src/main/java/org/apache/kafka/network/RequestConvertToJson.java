@@ -122,6 +122,8 @@ import org.apache.kafka.common.message.HeartbeatRequestDataJsonConverter;
 import org.apache.kafka.common.message.HeartbeatResponseDataJsonConverter;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestDataJsonConverter;
 import org.apache.kafka.common.message.IncrementalAlterConfigsResponseDataJsonConverter;
+import org.apache.kafka.common.message.InitDisklessLogRequestDataJsonConverter;
+import org.apache.kafka.common.message.InitDisklessLogResponseDataJsonConverter;
 import org.apache.kafka.common.message.InitProducerIdRequestDataJsonConverter;
 import org.apache.kafka.common.message.InitProducerIdResponseDataJsonConverter;
 import org.apache.kafka.common.message.InitializeShareGroupStateRequestDataJsonConverter;
@@ -304,6 +306,8 @@ import org.apache.kafka.common.requests.HeartbeatRequest;
 import org.apache.kafka.common.requests.HeartbeatResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsResponse;
+import org.apache.kafka.common.requests.InitDisklessLogRequest;
+import org.apache.kafka.common.requests.InitDisklessLogResponse;
 import org.apache.kafka.common.requests.InitProducerIdRequest;
 import org.apache.kafka.common.requests.InitProducerIdResponse;
 import org.apache.kafka.common.requests.InitializeShareGroupStateRequest;
@@ -497,6 +501,8 @@ public class RequestConvertToJson {
                 HeartbeatRequestDataJsonConverter.write(((HeartbeatRequest) request).data(), request.version());
             case INCREMENTAL_ALTER_CONFIGS ->
                 IncrementalAlterConfigsRequestDataJsonConverter.write(((IncrementalAlterConfigsRequest) request).data(), request.version());
+            case INIT_DISKLESS_LOG ->
+                InitDisklessLogRequestDataJsonConverter.write(((InitDisklessLogRequest) request).data(), request.version());
             case INITIALIZE_SHARE_GROUP_STATE ->
                 InitializeShareGroupStateRequestDataJsonConverter.write(((InitializeShareGroupStateRequest) request).data(), request.version());
             case INIT_PRODUCER_ID ->
@@ -678,6 +684,8 @@ public class RequestConvertToJson {
             case HEARTBEAT -> HeartbeatResponseDataJsonConverter.write(((HeartbeatResponse) response).data(), version);
             case INCREMENTAL_ALTER_CONFIGS ->
                 IncrementalAlterConfigsResponseDataJsonConverter.write(((IncrementalAlterConfigsResponse) response).data(), version);
+            case INIT_DISKLESS_LOG ->
+                InitDisklessLogResponseDataJsonConverter.write(((InitDisklessLogResponse) response).data(), version);
             case INITIALIZE_SHARE_GROUP_STATE ->
                 InitializeShareGroupStateResponseDataJsonConverter.write(((InitializeShareGroupStateResponse) response).data(), version);
             case INIT_PRODUCER_ID ->
