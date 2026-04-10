@@ -255,7 +255,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // caching the image for query purpose
         this.metadataImage = newImage;
 
-        maybeRecreateConnectionToSource(delta, newImage);
+        maybeRecreateConnection(delta, newImage);
 
         // get all mirror partition leaders on this node based on the delta
         Set<TopicPartition> mirrorLeaders = getMirrorLeaders(delta, newImage);
@@ -348,7 +348,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         initialized = true;
     }
 
-    private void maybeRecreateConnectionToSource(MetadataDelta delta, MetadataImage newImage) {
+    private void maybeRecreateConnection(MetadataDelta delta, MetadataImage newImage) {
         // detect config changes and close stale connections and fetchers to trigger reconnection
         if (delta.configsDelta() != null) {
             delta.configsDelta().changes().entrySet().stream()
