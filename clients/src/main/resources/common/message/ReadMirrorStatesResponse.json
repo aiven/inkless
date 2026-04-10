@@ -35,8 +35,8 @@
         "about": "The results for the partitions.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0",
           "about": "The partition index." },
-        { "name": "LastMirroredEpoch", "type": "int32", "versions": "0",
-          "about": "The last mirrored epoch." },
+        { "name": "LastMirroredEpoch", "type": "int32", "versions": "0", "default": "-1",
+          "about": "The last mirrored leader epoch, or -1 if not available." },
         { "name": "State", "type": "int8", "versions": "0+",
           "about": "The mirror partition state." },
         { "name": "ErrorCode", "type": "int16", "versions": "0",

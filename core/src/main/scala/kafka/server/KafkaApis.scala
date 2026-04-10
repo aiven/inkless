@@ -348,16 +348,16 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
       val lastMirroredOffsetRequest = request.body[LastMirroredEpochsRequest]
       val responseData = new LastMirroredEpochsResponseData()
-      val mirrorName = lastMirroredOffsetRequest.data().mirrorName()
+      //val mirrorName = lastMirroredOffsetRequest.data().mirrorName()
       val topicResults = new util.ArrayList[LastMirroredEpochsResponseData.TopicResult]()
       lastMirroredOffsetRequest.data().topics().forEach(topic => {
         val topicResult = new LastMirroredEpochsResponseData.TopicResult()
         val partitionResults = new util.ArrayList[LastMirroredEpochsResponseData.PartitionResult]()
         topic.partitions().forEach(par => {
-          val partition = new TopicPartition(topic.name(), par.partitionIndex())
+          //val partition = new TopicPartition(topic.name(), par.partitionIndex())
           val partitionResult = new LastMirroredEpochsResponseData.PartitionResult()
-          partitionResult.setPartitionIndex(par.partitionIndex())
-            .setLastMirroredEpoch(mirrorCoordinator.getLastMirroredEpoch(mirrorName, partition))
+          //partitionResult.setPartitionIndex(par.partitionIndex())
+            //.setLastMirroredEpoch(mirrorCoordinator.getLastMirroredEpoch(mirrorName, partition))
           partitionResults.add(partitionResult)
         })
         topicResult.setName(topic.name())

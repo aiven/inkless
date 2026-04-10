@@ -880,14 +880,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-     Map<TopicPartition, Integer> getLastMirroredEpochs(String clusterName) {
-         Map<TopicPartition, Integer> result = new HashMap<>();
-             lastMirroredEpochs.forEach((key, epoch) -> {
-             if (key.mirrorName().equals(clusterName)) {
-                 result.put(new TopicPartition(key.topic(), key.partition()), epoch);
-             }
-         });
-         return result;
+    Map<TopicPartition, Integer> getLastMirroredEpochs(String clusterName) {
+        Map<TopicPartition, Integer> result = new HashMap<>();
+        lastMirroredEpochs.forEach((key, epoch) -> {
+            if (key.mirrorName().equals(clusterName)) {
+                result.put(new TopicPartition(key.topic(), key.partition()), epoch);
+            }
+        });
+        return result;
     }
 
     Map<MirrorUtils.PartitionKey, Integer> updateLastMirroredEpochs(String clusterName,
