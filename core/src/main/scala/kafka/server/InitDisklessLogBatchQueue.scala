@@ -220,6 +220,12 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
     taskStatus = TaskScheduled(scheduler.scheduleOnce("init-diskless-log-batch-queue", () => task(), delayMs))
   }
 
+  private def completeAndRemovePromise(tp: TopicPartition, accepted: Boolean): Unit = withQueueLock {
+    if (!queuedByTp.containsKey(tp)) {
+      Option(resultPromiseByTp.remove(tp)).foreach(_.trySuccess(accepted))
+    }
+  }
+
   private def enqueueRetryOrFail(tp: TopicPartition, attempt: Attempt): Unit = withQueueLock {
     val retryAttemptNumber = attempt.attemptNumber + 1
     Option(queuedByTp.get(tp)) match {
@@ -229,10 +235,6 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
       case None =>
         queuedByTp.put(tp, Attempt(attempt.state, retryAttemptNumber))
     }
-  }
-
-  private def completeAndRemovePromise(tp: TopicPartition, accepted: Boolean): Unit = withQueueLock {
-    Option(resultPromiseByTp.remove(tp)).foreach(_.trySuccess(accepted))
   }
 
   private def computeRetryDelayMs(): Long = {
