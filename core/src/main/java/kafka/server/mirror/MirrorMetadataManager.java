@@ -110,6 +110,7 @@ import org.apache.kafka.server.util.RequestAndCompletionHandler;
 import org.slf4j.Logger;
 
 import java.net.InetAddress;
+import java.util.Collections;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -1013,7 +1014,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             topicStates.add(topicState);
         });
 
-        pendingLeaderEpochBumps.add(new MirrorUtils.LeaderEpochBump(future, partitionEpochs));
+        pendingLeaderEpochBumps.add(new MirrorUtils.LeaderEpochBump(future, Collections.unmodifiableMap(partitionEpochs)));
 
         channelManager.sendRequest(new BumpLeaderEpochsRequest.Builder(
                 new BumpLeaderEpochsRequestData().setTopics(topicStates)

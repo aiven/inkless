@@ -199,12 +199,18 @@ public class MirrorCoordinator {
                                 // successfully writes data into internal log
                                 try {
                                     optTp.ifPresent(tp1 -> {
-                                        // if this partition has state process inflight, don't need to handle state transition
-                                        // For mirroring, because the mirror fetcher will be removed when becoming the leader, we should re-run it.
-                                        // (and it's idempotent operation)
-                                        MirrorPartitionState inflightState = metadataManager.pendingPartitionStates().get(tp1);
-                                        if (inflightState == MirrorPartitionState.MIRRORING || inflightState != newState) {
-                                            metadataManager.pendingPartitionStates().put(tp1, newState);
+                                        // Atomically check-and-update to prevent duplicate transitions under concurrent calls.
+                                        // MIRRORING is always re-run because the fetcher may have been removed on leadership
+                                        // change and must be re-added (the operation is idempotent).
+                                        boolean[] shouldTransition = {false};
+                                        metadataManager.pendingPartitionStates().compute(tp1, (key, pendingState) -> {
+                                            if (pendingState == MirrorPartitionState.MIRRORING || pendingState != newState) {
+                                                shouldTransition[0] = true;
+                                                return newState;
+                                            }
+                                            return pendingState;
+                                        });
+                                        if (shouldTransition[0]) {
                                             handleStateTransition(mirrorName, Set.of(tp1), newState);
                                         } else {
                                             log.debug("State transition for partition {} is already inflight, skipping.", tp1);
@@ -416,6 +422,7 @@ public class MirrorCoordinator {
     /**
      * After bump epoch and last-mirrored updates, writes the PID reset barrier per partition and transition to STOPPED state.
      * Retry the failed partitions until success.
+     * TODO: handle failure, we can't retry forever
      */
     private void finishStoppingAfterPidBarrierWritten(String mirrorName, Set<TopicPartition> topicPartitions) {
         long retryDelayMs = brokerConfig.mirrorConfig().truncationBackoffMs();
