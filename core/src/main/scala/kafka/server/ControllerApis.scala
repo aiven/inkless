@@ -31,7 +31,7 @@ import kafka.server.mirror.MirrorUtils
 import kafka.utils.Logging
 import org.apache.kafka.clients.admin.{AlterConfigOp, EndpointType}
 import org.apache.kafka.common.Uuid.ZERO_UUID
-import org.apache.kafka.common.acl.AclOperation.{ALTER, ALTER_CONFIGS, CLUSTER_ACTION, CREATE, CREATE_TOKENS, DELETE, DESCRIBE, DESCRIBE_CONFIGS, READ}
+import org.apache.kafka.common.acl.AclOperation.{ALTER, ALTER_CONFIGS, CLUSTER_ACTION, CREATE, CREATE_TOKENS, DELETE, DESCRIBE, DESCRIBE_CONFIGS}
 import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors.{ApiException, ClusterAuthorizationException, InvalidRequestException, MirrorAuthorizationException, TopicAuthorizationException, TopicDeletionDisabledException, UnsupportedVersionException}
 import org.apache.kafka.common.internals.{FatalExitError, Plugin, Topic}
@@ -269,7 +269,7 @@ class ControllerApis(
         topics.add(topic.topicName())
     })
     val unauthorizedTopics = topics.asScala.filterNot(topic =>
-      authHelper.authorize(request.context, READ, TOPIC, topic, logIfDenied = false))
+      authHelper.authorize(request.context, ALTER_CONFIGS, TOPIC, topic, logIfDenied = false))
     if (unauthorizedTopics.nonEmpty)
       throw new TopicAuthorizationException(unauthorizedTopics.asJava)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
@@ -299,7 +299,7 @@ class ControllerApis(
         topics.add(topic.topicName())
     })
     val unauthorizedTopics = topics.asScala.filterNot(topic =>
-      authHelper.authorize(request.context, READ, TOPIC, topic, logIfDenied = false))
+      authHelper.authorize(request.context, ALTER_CONFIGS, TOPIC, topic, logIfDenied = false))
     if (unauthorizedTopics.nonEmpty)
       throw new TopicAuthorizationException(unauthorizedTopics.asJava)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
@@ -327,7 +327,7 @@ class ControllerApis(
     val topics: util.Set[String] = new util.HashSet[String]()
     pauseRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
     val unauthorizedTopics = topics.asScala.filterNot(topic =>
-      authHelper.authorize(request.context, READ, TOPIC, topic, logIfDenied = false))
+      authHelper.authorize(request.context, ALTER_CONFIGS, TOPIC, topic, logIfDenied = false))
     if (unauthorizedTopics.nonEmpty)
       throw new TopicAuthorizationException(unauthorizedTopics.asJava)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
@@ -354,7 +354,7 @@ class ControllerApis(
     val topics: util.Set[String] = new util.HashSet[String]()
     resumeRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
     val unauthorizedTopics = topics.asScala.filterNot(topic =>
-      authHelper.authorize(request.context, READ, TOPIC, topic, logIfDenied = false))
+      authHelper.authorize(request.context, ALTER_CONFIGS, TOPIC, topic, logIfDenied = false))
     if (unauthorizedTopics.nonEmpty)
       throw new TopicAuthorizationException(unauthorizedTopics.asJava)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
