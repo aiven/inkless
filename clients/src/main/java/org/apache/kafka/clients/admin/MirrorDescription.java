@@ -78,20 +78,20 @@ public class MirrorDescription {
         private final long destinationOffset;
         private final long lag;
         private final String state;
-        private final int lastMirroredEpoch;
+        private final int lastMirrorEpoch;
 
         public LeaderState(TopicPartition topicPartition,
                            long sourceOffset,
                            long destinationOffset,
                            long lag,
                            String state,
-                           int lastMirroredEpoch) {
+                           int lastMirrorEpoch) {
             this.topicPartition = topicPartition;
             this.sourceOffset = sourceOffset;
             this.destinationOffset = destinationOffset;
             this.lag = lag;
             this.state = state;
-            this.lastMirroredEpoch = lastMirroredEpoch;
+            this.lastMirrorEpoch = lastMirrorEpoch;
         }
 
         public TopicPartition topicPartition() {
@@ -114,8 +114,8 @@ public class MirrorDescription {
             return state;
         }
 
-        public int lastMirroredEpoch() {
-            return lastMirroredEpoch;
+        public int lastMirrorEpoch() {
+            return lastMirrorEpoch;
         }
 
         @Override
@@ -126,14 +126,14 @@ public class MirrorDescription {
             return sourceOffset == that.sourceOffset &&
                    destinationOffset == that.destinationOffset &&
                    lag == that.lag &&
-                   lastMirroredEpoch == that.lastMirroredEpoch &&
+                   lastMirrorEpoch == that.lastMirrorEpoch &&
                    Objects.equals(topicPartition, that.topicPartition) &&
                    Objects.equals(state, that.state);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(topicPartition, sourceOffset, destinationOffset, lag, state, lastMirroredEpoch);
+            return Objects.hash(topicPartition, sourceOffset, destinationOffset, lag, state, lastMirrorEpoch);
         }
 
         @Override
@@ -144,7 +144,7 @@ public class MirrorDescription {
                    ", destinationOffset=" + destinationOffset +
                    ", lag=" + lag +
                    ", state='" + state + '\'' +
-                   ", lastMirroredEpoch=" + lastMirroredEpoch +
+                   ", lastMirrorEpoch=" + lastMirrorEpoch +
                    '}';
         }
     }

@@ -362,7 +362,7 @@ public abstract class MirrorCommand {
                             state.destinationOffset(),
                             state.lag(),
                             state.state(),
-                            state.lastMirroredEpoch()
+                            state.lastMirrorEpoch()
                         ));
                     }
                 }
@@ -419,7 +419,7 @@ public abstract class MirrorCommand {
         }
 
         private record PartitionInfo(String mirror, String topic, int partition,
-                                     long sourceOffset, long destinationOffset, long lag, String state, int lastMirroredEpoch) { }
+                                     long sourceOffset, long destinationOffset, long lag, String state, int lastMirrorEpoch) { }
     }
 
     private static final class MirrorCommandOptions extends CommandDefaultOptions {
