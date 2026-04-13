@@ -50,7 +50,7 @@
           { "name": "State", "type": "string", "versions": "0+",
             "about": "The partition state." },
           { "name": "LastMirroredEpoch", "type": "int32", "versions": "0+", "default": "-1",
-            "about": "The last mirrored leader epoch, or -1 if not yet available.."
+            "about": "The last mirrored leader epoch, or -1 if not available."
           }
         ]}
       ]}

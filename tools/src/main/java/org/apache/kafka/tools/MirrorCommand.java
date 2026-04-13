@@ -371,18 +371,17 @@ public abstract class MirrorCommand {
 
             // Only print header and results if there are partitions to display
             if (!partitionInfos.isEmpty()) {
-                System.out.printf("%-30s %-40s %-10s %-15s %-18s %-10s %-12s %-10s%n",
-                    "MIRROR", "TOPIC", "PARTITION", "SOURCE-OFFSET", "DESTINATION-OFFSET", "LAG", "STATE", "LAST-MIRRORED-EPOCH");
+                System.out.printf("%-30s %-40s %-10s %-15s %-18s %-10s %-12s%n",
+                    "MIRROR", "TOPIC", "PARTITION", "SOURCE-OFFSET", "DESTINATION-OFFSET", "LAG", "STATE");
                 for (PartitionInfo info : partitionInfos) {
-                    System.out.printf("%-30s %-40s %-10d %-15s %-18s %-10s %-12s %-10s%n",
+                    System.out.printf("%-30s %-40s %-10d %-15s %-18s %-10s %-12s%n",
                         truncateLeft(info.mirror(), 30),
                         truncateLeft(info.topic(), 40),
                         info.partition(),
                         formatOffset(info.sourceOffset()),
                         formatOffset(info.destinationOffset()),
                         formatOffset(info.lag()),
-                        info.state(),
-                        info.lastMirroredEpoch());
+                        info.state());
                 }
             }
         }
