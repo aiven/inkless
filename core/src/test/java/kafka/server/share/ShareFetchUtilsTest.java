@@ -133,10 +133,10 @@ public class ShareFetchUtilsTest {
         List<ShareFetchPartitionData> responseData = List.of(
             new ShareFetchPartitionData(tp0, 0, new FetchPartitionData(Errors.NONE, 0L, 0L,
                 records, Optional.empty(), OptionalLong.empty(), Optional.empty(),
-                OptionalInt.empty(), false)),
+                OptionalInt.empty(), false, Optional.empty())),
             new ShareFetchPartitionData(tp1, 0, new FetchPartitionData(Errors.NONE, 0L, 100L,
                 records1, Optional.empty(), OptionalLong.empty(), Optional.empty(),
-                OptionalInt.empty(), false))
+                OptionalInt.empty(), false, Optional.empty()))
         );
         Map<TopicIdPartition, ShareFetchResponseData.PartitionData> resultData =
                 ShareFetchUtils.processFetchResponse(shareFetch, responseData, sharePartitions, mock(ReplicaManager.class), EXCEPTION_HANDLER);
@@ -182,10 +182,10 @@ public class ShareFetchUtilsTest {
         List<ShareFetchPartitionData> responseData = List.of(
             new ShareFetchPartitionData(tp0, 0, new FetchPartitionData(Errors.NONE, 0L, 0L,
                 MemoryRecords.EMPTY, Optional.empty(), OptionalLong.empty(), Optional.empty(),
-                OptionalInt.empty(), false)),
+                OptionalInt.empty(), false, Optional.empty())),
             new ShareFetchPartitionData(tp1, 0, new FetchPartitionData(Errors.NONE, 0L, 0L,
                 MemoryRecords.EMPTY, Optional.empty(), OptionalLong.empty(), Optional.empty(),
-                OptionalInt.empty(), false))
+                OptionalInt.empty(), false, Optional.empty()))
         );
         Map<TopicIdPartition, ShareFetchResponseData.PartitionData> resultData =
             ShareFetchUtils.processFetchResponse(shareFetch, responseData, sharePartitions, mock(ReplicaManager.class), EXCEPTION_HANDLER);
@@ -245,10 +245,10 @@ public class ShareFetchUtilsTest {
         List<ShareFetchPartitionData> responseData1 = List.of(
             new ShareFetchPartitionData(tp0, 0, new FetchPartitionData(Errors.OFFSET_OUT_OF_RANGE, 0L, 0L,
                 MemoryRecords.EMPTY, Optional.empty(), OptionalLong.empty(), Optional.empty(),
-                OptionalInt.empty(), false)),
+                OptionalInt.empty(), false, Optional.empty())),
             new ShareFetchPartitionData(tp1, 0, new FetchPartitionData(Errors.NONE, 0L, 0L,
                 records1, Optional.empty(), OptionalLong.empty(), Optional.empty(),
-                OptionalInt.empty(), false))
+                OptionalInt.empty(), false, Optional.empty()))
         );
         Map<TopicIdPartition, ShareFetchResponseData.PartitionData> resultData1 =
             ShareFetchUtils.processFetchResponse(shareFetch, responseData1, sharePartitions, replicaManager, EXCEPTION_HANDLER);
@@ -275,10 +275,10 @@ public class ShareFetchUtilsTest {
         List<ShareFetchPartitionData> responseData2 = List.of(
             new ShareFetchPartitionData(tp0, 0, new FetchPartitionData(Errors.NONE, 0L, 0L,
                 records2, Optional.empty(), OptionalLong.empty(), Optional.empty(),
-                OptionalInt.empty(), false)),
+                OptionalInt.empty(), false, Optional.empty())),
             new ShareFetchPartitionData(tp1, 0, new FetchPartitionData(Errors.NONE, 0L, 0L,
                 MemoryRecords.EMPTY, Optional.empty(), OptionalLong.empty(), Optional.empty(),
-                OptionalInt.empty(), false))
+                OptionalInt.empty(), false, Optional.empty()))
         );
         Map<TopicIdPartition, ShareFetchResponseData.PartitionData> resultData2 =
             ShareFetchUtils.processFetchResponse(shareFetch, responseData2, sharePartitions, replicaManager, EXCEPTION_HANDLER);
@@ -327,7 +327,7 @@ public class ShareFetchUtilsTest {
         List<ShareFetchPartitionData> responseData = List.of(
             new ShareFetchPartitionData(tp0, 0, new FetchPartitionData(Errors.NONE, 0L, 0L,
                 records, Optional.empty(), OptionalLong.empty(), Optional.empty(),
-                OptionalInt.empty(), false)));
+                OptionalInt.empty(), false, Optional.empty())));
 
         Map<TopicIdPartition, ShareFetchResponseData.PartitionData> resultData =
             ShareFetchUtils.processFetchResponse(shareFetch, responseData, sharePartitions, replicaManager, EXCEPTION_HANDLER);
@@ -343,7 +343,7 @@ public class ShareFetchUtilsTest {
         responseData = List.of(
             new ShareFetchPartitionData(tp0, 0, new FetchPartitionData(Errors.OFFSET_OUT_OF_RANGE, 0L, 0L,
                 records, Optional.empty(), OptionalLong.empty(), Optional.empty(),
-                OptionalInt.empty(), false)));
+                OptionalInt.empty(), false, Optional.empty())));
 
         resultData = ShareFetchUtils.processFetchResponse(shareFetch, responseData, sharePartitions, replicaManager, EXCEPTION_HANDLER);
 
@@ -391,10 +391,10 @@ public class ShareFetchUtilsTest {
 
         FetchPartitionData fetchPartitionData1 = new FetchPartitionData(Errors.NONE, 0L, 0L,
             records1, Optional.empty(), OptionalLong.empty(), Optional.empty(),
-            OptionalInt.empty(), false);
+            OptionalInt.empty(), false, Optional.empty());
         FetchPartitionData fetchPartitionData2 = new FetchPartitionData(Errors.NONE, 0L, 0L,
             records2, Optional.empty(), OptionalLong.empty(), Optional.empty(),
-            OptionalInt.empty(), false);
+            OptionalInt.empty(), false, Optional.empty());
 
         when(sp0.acquire(memberId.toString(), BATCH_SIZE, 10, 0, fetchPartitionData1, FetchIsolation.HIGH_WATERMARK)).thenReturn(
             createShareAcquiredRecords(new ShareFetchResponseData.AcquiredRecords()
@@ -456,7 +456,7 @@ public class ShareFetchUtilsTest {
         List<ShareFetchPartitionData> responseData = List.of(
             new ShareFetchPartitionData(tp0, 0, new FetchPartitionData(Errors.OFFSET_OUT_OF_RANGE, 0L, 0L,
                 MemoryRecords.EMPTY, Optional.empty(), OptionalLong.empty(), Optional.empty(),
-                OptionalInt.empty(), false)));
+                OptionalInt.empty(), false, Optional.empty())));
 
         BiConsumer<SharePartitionKey, Throwable> exceptionHandler = mock(BiConsumer.class);
         Map<TopicIdPartition, ShareFetchResponseData.PartitionData> resultData =

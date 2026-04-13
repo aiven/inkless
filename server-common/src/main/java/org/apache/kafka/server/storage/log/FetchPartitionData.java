@@ -35,6 +35,7 @@ public class FetchPartitionData {
     public final Optional<List<FetchResponseData.AbortedTransaction>> abortedTransactions;
     public final OptionalInt preferredReadReplica;
     public final boolean isReassignmentFetch;
+    public final Optional<Integer> currentMirrorLeaderEpoch;
 
     public FetchPartitionData(Errors error,
                               long highWatermark,
@@ -44,7 +45,8 @@ public class FetchPartitionData {
                               OptionalLong lastStableOffset,
                               Optional<List<FetchResponseData.AbortedTransaction>> abortedTransactions,
                               OptionalInt preferredReadReplica,
-                              boolean isReassignmentFetch) {
+                              boolean isReassignmentFetch,
+                              Optional<Integer> currentMirrorLeaderEpoch) {
         this.error = error;
         this.highWatermark = highWatermark;
         this.logStartOffset = logStartOffset;
@@ -54,5 +56,6 @@ public class FetchPartitionData {
         this.abortedTransactions = abortedTransactions;
         this.preferredReadReplica = preferredReadReplica;
         this.isReassignmentFetch = isReassignmentFetch;
+        this.currentMirrorLeaderEpoch = currentMirrorLeaderEpoch;
     }
 }

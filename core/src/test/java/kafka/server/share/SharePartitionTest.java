@@ -8027,12 +8027,12 @@ public class SharePartitionTest {
 
     private FetchPartitionData fetchPartitionData(Records records, long logStartOffset) {
         return new FetchPartitionData(Errors.NONE, 5, logStartOffset, records,
-            Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false);
+            Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty());
     }
 
     private FetchPartitionData fetchPartitionData(Records records, long logStartOffset, List<FetchResponseData.AbortedTransaction> abortedTransactions) {
         return new FetchPartitionData(Errors.NONE, 5, logStartOffset, records,
-            Optional.empty(), OptionalLong.empty(), Optional.of(abortedTransactions), OptionalInt.empty(), false);
+            Optional.empty(), OptionalLong.empty(), Optional.of(abortedTransactions), OptionalInt.empty(), false, Optional.empty());
     }
 
     private List<AcquiredRecords> fetchAcquiredRecords(SharePartition sharePartition, Records records, long logStartOffset, int expectedOffsetCount) {

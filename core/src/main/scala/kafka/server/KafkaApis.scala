@@ -49,7 +49,6 @@ import org.apache.kafka.common.protocol.{ApiKeys, ApiMessage, Errors}
 import org.apache.kafka.common.record._
 import org.apache.kafka.common.replica.ClientMetadata
 import org.apache.kafka.common.replica.ClientMetadata.DefaultClientMetadata
-import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.FindCoordinatorRequest.CoordinatorType
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
 import org.apache.kafka.common.requests._
@@ -260,7 +259,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.DELETE_MIRROR => handleDeleteMirror(request)
         case ApiKeys.LIST_MIRRORS => handleListMirrorsRequest(request)
         case ApiKeys.DESCRIBE_MIRRORS => handleDescribeMirrorsRequest(request)
-        case ApiKeys.LAST_MIRRORED_EPOCHS => handleLastMirroredEpoch(request)
         case ApiKeys.WRITE_MIRROR_STATES => handleWriteMirrorStates(request)
         case ApiKeys.READ_MIRROR_STATES => handleReadMirrorStates(request)
         case ApiKeys.BUMP_LEADER_EPOCHS => forwardToController(request)
@@ -338,38 +336,6 @@ class KafkaApis(val requestChannel: RequestChannel,
     } else {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring read mirror states request")
       requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
-    }
-  }
-
-  def handleLastMirroredEpoch(request: RequestChannel.Request): Unit = {
-    if (isClusterMirroringEnabled) {
-      if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
-        requestHelper.sendMaybeThrottle(request, new LastMirroredEpochsResponse(new LastMirroredEpochsResponseData().setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)))
-        return
-      }
-      val lastMirroredEpochsRequest = request.body[LastMirroredEpochsRequest]
-      val responseData = new LastMirroredEpochsResponseData()
-      val mirrorName = lastMirroredEpochsRequest.data().mirrorName()
-      val topicResults = new util.ArrayList[LastMirroredEpochsResponseData.TopicResult]()
-      lastMirroredEpochsRequest.data().topics().forEach(topic => {
-        val topicResult = new LastMirroredEpochsResponseData.TopicResult()
-        val partitionResults = new util.ArrayList[LastMirroredEpochsResponseData.PartitionResult]()
-        topic.partitions().forEach(par => {
-          val partition = new TopicPartition(topic.name(), par.partitionIndex())
-          val partitionResult = new LastMirroredEpochsResponseData.PartitionResult()
-          partitionResult.setPartitionIndex(par.partitionIndex())
-            .setLastMirroredEpoch(mirrorCoordinator.getLastMirroredEpoch(mirrorName, partition))
-          partitionResults.add(partitionResult)
-        })
-        topicResult.setName(topic.name())
-        topicResult.setPartitions(partitionResults)
-        topicResults.add(topicResult)
-      })
-      responseData.setTopics(topicResults)
-      requestHelper.sendMaybeThrottle(request, new LastMirroredEpochsResponse(responseData))
-    } else {
-      logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring last mirrored offset request")
-      requestHelper.sendMaybeThrottle(request, new LastMirroredEpochsResponse(new LastMirroredEpochsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
     }
   }
 
@@ -462,6 +428,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         // Each broker reports partitions it's responsible for to avoid duplicates
           val lagInfoMap = replicaManager.getMirrorLagInfo(mirrorName)
           val partitionStates = mirrorCoordinator.getMirrorStates(mirrorName).asScala
+          val lastMirroredEpoch = mirrorCoordinator.getLastMirroredEpochs(mirrorName)
 
           // Report partition if: (1) we have lag info, OR (2) we're the partition leader and have no lag info
           val partitionsToReport = (lagInfoMap.keySet ++ partitionStates.keySet.filter { tp =>
@@ -490,6 +457,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 .setDestinationOffset(lagInfoMap.get(topicPartition).map(_.destinationOffset).getOrElse(-1L))
                 .setLag(lagInfoMap.get(topicPartition).map(_.lag).getOrElse(-1L))
                 .setState(partitionStates.getOrElse(topicPartition, MirrorPartitionState.UNKNOWN).name())
+                .setLastMirroredEpoch(lastMirroredEpoch.getOrDefault(topicPartition, -1))
 
               topicPartitions.partitions().add(partitionDetail)
             }
@@ -905,8 +873,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           else if (!metadataCache.contains(topicIdPartition.topicPartition))
             erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
           else {
-            interesting += topicIdPartition -> new PartitionData(data.topicId, data.fetchOffset, data.logStartOffset,
-              data.maxBytes, data.currentLeaderEpoch, data.lastFetchedEpoch)
+            interesting += topicIdPartition -> data
           }
         }
       } else {
@@ -964,6 +931,12 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setAbortedTransactions(abortedTransactions)
           .setRecords(data.records)
           .setPreferredReadReplica(data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID))
+
+        // For mirror follower partitions, set mirrorLeaderEpoch to the log's latest epoch
+        // The currentMirrorLeaderEpoch is set in [[Partition.readFromLog]]
+        if (versionId >= 19 && data.currentMirrorLeaderEpoch.isPresent) {
+          partitionData.setMirrorLeaderEpoch(data.currentMirrorLeaderEpoch.get())
+        }
 
         if (versionId >= 16) {
           data.error match {

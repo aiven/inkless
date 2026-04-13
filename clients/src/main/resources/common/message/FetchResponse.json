@@ -50,7 +50,9 @@
   // Version 17 no changes to the response (KIP-853).
   //
   // Version 18 no changes to the response (KIP-1166)
-  "validVersions": "4-18",
+  //
+  // version 19 adds MirrorLeaderEpoch from KIP-1279
+  "validVersions": "4-19",
   "flexibleVersions": "12+",
   "fields": [
     { "name": "ThrottleTimeMs", "type": "int32", "versions": "1+", "ignorable": true,
@@ -83,6 +85,9 @@
           { "name": "EndOffset", "type": "int64", "versions": "12+", "default": "-1",
             "about": "The end offset of the epoch." }
         ]},
+        { "name": "MirrorLeaderEpoch", "type": "int32", "versions": "19+", "default": "-1", "taggedVersions": "19+",
+          "tag": 3, "ignorable": true,
+          "about": "The latest known mirror leader epoch." },
         { "name": "CurrentLeader", "type": "LeaderIdAndEpoch",
           "versions": "12+", "taggedVersions": "12+", "tag": 1,
           "about": "The current leader of the partition.", "fields": [

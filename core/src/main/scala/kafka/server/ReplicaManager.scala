@@ -26,6 +26,7 @@ import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrU
 import kafka.server.mirror.{LagInfo, MirrorFetcherManager, MirrorMetadataManager, MirrorPartitionState}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
@@ -1201,8 +1202,13 @@ class ReplicaManager(val config: KafkaConfig,
             val futureLog = futureLocalLogOrException(topicPartition)
             logManager.abortAndPauseCleaning(topicPartition)
 
+            // because this is the future log, so it must be the follower, the mirrorName must be empty
+            // the mirrorLeaderEpoch should be set depends on the mirrorName
+            val mirrorName = partition.getMirrorName()
+            val mirrorLeaderEpoch: Optional[Integer] = if (mirrorName.isEmpty) Optional.empty() else Optional.of(0)
+
             val initialFetchState = InitialFetchState(topicId.toScala, new BrokerEndPoint(config.brokerId, "localhost", -1),
-              partition.getLeaderEpoch, futureLog.highWatermark)
+              partition.getLeaderEpoch, futureLog.highWatermark, "", mirrorLeaderEpoch)
             replicaAlterLogDirsManager.addFetcherForPartitions(Map(topicPartition -> initialFetchState))
           }
 
@@ -1680,9 +1686,19 @@ class ReplicaManager(val config: KafkaConfig,
       getLog(tp).map(log => {
         val endOffsetForEpoch = log.endOffsetForEpoch(leaderEpoch)
         val offsetToTruncate = if (endOffsetForEpoch.isPresent) endOffsetForEpoch.get().offset() else 0L
-        log.truncateTo(offsetToTruncate)
+        val onCaughtupCallback: Optional[Consumer[TopicPartition]] = if (log.logEndOffset() <= offsetToTruncate) {
+          Optional.empty()
+        } else {
+          Optional.of((tp: TopicPartition) => {
+            log.truncateTo(offsetToTruncate)
+          })
+        }
         val partition = getPartitionOrException(tp)
-        partition.maybeCompleteIsrTruncation(log, onCompleteCallback = Optional.of(callback))
+        val mirrorUncleanLeaderElection = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic())).get(TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG).asInstanceOf[String]
+        val waitForAllReplicas = mirrorUncleanLeaderElection != null && mirrorUncleanLeaderElection.toBoolean
+
+        partition.maybeCompleteTruncation(log, waitForAllReplicas = waitForAllReplicas, onCompleteCallback = Optional.of(callback),
+          onCaughtupCallback = onCaughtupCallback)
       })
     })
   }
@@ -1692,7 +1708,7 @@ class ReplicaManager(val config: KafkaConfig,
       getLog(tp).map(log => {
         log.truncateTo(offset)
         val partition = getPartitionOrException(tp)
-        partition.maybeCompleteIsrTruncation(log, onCompleteCallback = Optional.of(callback))
+        partition.maybeCompleteTruncation(log, onCompleteCallback = Optional.of(callback))
       })
     })
   }
@@ -1848,9 +1864,12 @@ class ReplicaManager(val config: KafkaConfig,
             -1L,
             OptionalLong.of(offsetSnapshot.lastStableOffset.messageOffset),
             if (preferredReadReplica.isDefined) OptionalInt.of(preferredReadReplica.get) else OptionalInt.empty(),
-            Optional.empty())
+            Optional.empty(),
+            Optional.empty()
+            )
         } else {
           log = partition.localLogWithEpochOrThrow(fetchInfo.currentLeaderEpoch, params.fetchOnlyLeader())
+          val currentMirrorLeaderEpoch: Optional[Integer] = if (fetchInfo.mirrorLeaderEpoch.isPresent) log.latestEpoch() else Optional.empty()
 
           // Try the read first, this tells us whether we need all of adjustedFetchSize for this partition
           val readInfo: LogReadInfo = partition.fetchRecords(
@@ -1872,7 +1891,8 @@ class ReplicaManager(val config: KafkaConfig,
             fetchTimeMs,
             OptionalLong.of(readInfo.lastStableOffset),
             if (preferredReadReplica.isDefined) OptionalInt.of(preferredReadReplica.get) else OptionalInt.empty(),
-            Optional.empty()
+            Optional.empty(),
+            currentMirrorLeaderEpoch
           )
         }
       } catch {
@@ -2105,8 +2125,13 @@ class ReplicaManager(val config: KafkaConfig,
             logManager.abortAndPauseCleaning(topicPartition)
           }
 
+          // because this is the future log, so it must be the follower, the mirrorName must be empty
+          // the mirrorLeaderEpoch should be set depends on the mirrorName
+          val mirrorName = partition.getMirrorName()
+          val mirrorLeaderEpoch: Optional[Integer] = if (mirrorName.isEmpty) Optional.empty() else Optional.of(0)
+
           futureReplicasAndInitialOffset.put(topicPartition, InitialFetchState(topicIds(topicPartition.topic), leader,
-            partition.getLeaderEpoch, futureLog.highWatermark))
+            partition.getLeaderEpoch, futureLog.highWatermark, "", mirrorLeaderEpoch))
         }
       }
     }
@@ -2569,11 +2594,15 @@ class ReplicaManager(val config: KafkaConfig,
           case Some(node) =>
             val log = partition.localLogOrException
 
+            // Set the mirrorLeaderEpoch only when the follower nodes have mirrorName set.
+            // But the mirrorName is put as empty (default value) because only the node using mirrorFetcher should set the mirrorName.
+            val mirrorLeaderEpoch: Optional[Integer] = if (partition.getMirrorName().isEmpty) Optional.empty() else Optional.of(0)
             partitionAndOffsets.put(topicPartition, InitialFetchState(
               log.topicId.toScala,
               new BrokerEndPoint(node.id, node.host, node.port),
               partition.getLeaderEpoch,
-              initialFetchOffset(log)))
+              initialFetchOffset(log),
+              mirrorLeaderEpoch = mirrorLeaderEpoch))
           case None =>
             stateChangeLogger.trace(s"Unable to start fetching $topicPartition with topic ID ${partition.topicId} " +
               s"from leader ${partition.leaderReplicaIdOpt} because it is not alive.")
@@ -2625,7 +2654,8 @@ class ReplicaManager(val config: KafkaConfig,
                 leader = leaderEndpoint,
                 currentLeaderEpoch = 0, // this will trigger source epoch discovery through fencing
                 initOffset = partition.localLogOrException.logEndOffset,
-                mirrorName = mirrorName
+                mirrorName = mirrorName,
+                mirrorLeaderEpoch = Optional.empty()
               )
               partitionAndOffsets.put(tp, fetchState)
 

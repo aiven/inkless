@@ -343,6 +343,7 @@ class Partition(val topicPartition: TopicPartition,
   @volatile private[cluster] var partitionState: PartitionState = CommittedPartitionState(Set.empty, LeaderRecoveryState.RECOVERED)
   @volatile var assignmentState: AssignmentState = SimpleAssignmentState(Seq.empty)
   @volatile var onComplete: Optional[Consumer[TopicPartition]] = Optional.empty()
+  @volatile var onCaughtup: Optional[Consumer[TopicPartition]] = Optional.empty()
 
   // Logs belonging to this partition. Majority of time it will be only one log, but if log directory
   // is getting changed (as a result of ReplicaAlterLogDirs command), we may have two logs until copy
@@ -827,7 +828,7 @@ class Partition(val topicPartition: TopicPartition,
       partitionEpoch = partitionState.partitionEpoch
       leaderReplicaIdOpt = Some(localBrokerId)
 
-      maybeCompleteIsrTruncation(leaderLog)
+      maybeCompleteTruncation(leaderLog)
       // We may need to increment high watermark since ISR could be down to 1.
       (maybeIncrementLeaderHW(leaderLog, currentTimeMs = currentTimeMs), isNewLeader)
     }
@@ -955,7 +956,7 @@ class Partition(val topicPartition: TopicPartition,
       // leaderIsrUpdateLock to prevent adding new hw to invalid log.
       inReadLock(leaderIsrUpdateLock) {
         leaderLogIfLocal.exists(leaderLog => {
-          maybeCompleteIsrTruncation(leaderLog, followerFetchTimeMs)
+          maybeCompleteTruncation(leaderLog, followerFetchTimeMs)
           maybeIncrementLeaderHW(leaderLog, followerFetchTimeMs)
         })
       }
@@ -1229,12 +1230,16 @@ class Partition(val topicPartition: TopicPartition,
    *
    * @param leaderLog the leader's unified log
    * @param currentTimeMs the current time in milliseconds
-   * @param onComplete optional callback to invoke when truncation completes
+   * @param waitForAllReplicas true if we should wait for all replicas to catch up for unclean leader election support
+   * @param onCompleteCallback optional callback to invoke when truncation completes
+   * @param onCaughtupCallback optional callback to invoke when all ISRs are caught up
    * @return true if the transition occurred, false if validation failed or no callback was registered
    */
-  def maybeCompleteIsrTruncation(leaderLog: UnifiedLog,
-                                  currentTimeMs: Long = time.milliseconds,
-                                  onCompleteCallback: Optional[Consumer[TopicPartition]] = Optional.empty()): Boolean = {
+  def maybeCompleteTruncation(leaderLog: UnifiedLog,
+                              currentTimeMs: Long = time.milliseconds,
+                              waitForAllReplicas: Boolean = false,
+                              onCompleteCallback: Optional[Consumer[TopicPartition]] = Optional.empty(),
+                              onCaughtupCallback: Optional[Consumer[TopicPartition]] = Optional.empty()): Boolean = {
     if (onCompleteCallback.isPresent) {
       onComplete = onCompleteCallback
     }
@@ -1244,8 +1249,18 @@ class Partition(val topicPartition: TopicPartition,
       return false
     }
 
+    if (onCaughtupCallback.isPresent) {
+      onCaughtup = onCaughtupCallback
+    }
+
+    if (waitForAllReplicas && assignmentState.replicationFactor > partitionState.isr.size) {
+        info(s"Not completing truncation because 'mirror.support.unclean.leader.election' is enabled and" +
+          s" partition ISR doesn't contain all replicas (ISR=${partitionState.isr}, replicationFactor=${assignmentState.replicationFactor})")
+        return false
+    }
+
     if (isUnderMinIsr) {
-      trace(s"Not increasing HWM because partition is under min ISR (ISR=${partitionState.isr})")
+      trace(s"Not completing truncation because partition is under min ISR (ISR=${partitionState.isr})")
       return false
     }
 
@@ -1270,12 +1285,26 @@ class Partition(val topicPartition: TopicPartition,
       }
     }
 
-    // move state if truncation are done for all ISR
-    onComplete.ifPresent(callback => {
-      callback.accept(topicPartition)
-      onComplete = Optional.empty()
-    })
-    true
+    // two phase truncation:
+    // 1. check if all replicas are caught up to the leader's LEO. If so, then the leader starts to truncate the log using onCaughtup callback
+    // 2. check if all replicas have truncated to the expected offset. If so, then the partition is ready to move to next state
+    // The reason is that we may have truncated the leader's log to an offset where it is in the middle of the batch,
+    // and then the follower cannot sync up with the leader. This can happen in unclean leader election case.
+    if (onCaughtup.isPresent) {
+      onCaughtup.get().accept(topicPartition)
+      onCaughtup = Optional.empty()
+      // We are not yet done truncating, so return false
+      false
+    } else {
+      // move state if truncation are done for all ISR or all replicas
+      onComplete.ifPresent(callback => {
+        callback.accept(topicPartition)
+        onComplete = Optional.empty()
+      })
+      true
+    }
+
+
   }
 
   /**
@@ -2048,7 +2077,7 @@ class Partition(val topicPartition: TopicPartition,
 
       // we may need to increment high watermark since ISR could be down to 1
       leaderLogIfLocal.exists(log => {
-        maybeCompleteIsrTruncation(log)
+        maybeCompleteTruncation(log)
         maybeIncrementLeaderHW(log)
       })
     }

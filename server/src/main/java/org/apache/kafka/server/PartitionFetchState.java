@@ -39,6 +39,8 @@ import java.util.Optional;
  * @param lastFetchedEpoch The last fetched epoch from the log
  * @param dueMs The time when this partition is due for fetch (if delayed)
  * @param mirrorName non-empty if this is a mirroring fetch
+ * @param mirrorLeaderEpoch The current mirror leader epoch known for this partition in the cluster.
+ *                          Used for validation for the batch leader epoch from the fetch response.
  */
 public record PartitionFetchState(
         Optional<Uuid> topicId,
@@ -49,7 +51,8 @@ public record PartitionFetchState(
         ReplicaState state,
         Optional<Integer> lastFetchedEpoch,
         Optional<Long> dueMs,
-        String mirrorName
+        String mirrorName,
+        Optional<Integer> mirrorLeaderEpoch
 ) {
     public PartitionFetchState(
             Optional<Uuid> topicId,
@@ -70,9 +73,9 @@ public record PartitionFetchState(
             ReplicaState state,
             Optional<Integer> lastFetchedEpoch,
             String mirrorName,
-            long dueMs) {
+            Optional<Integer> mirrorLeaderEpoch) {
         this(topicId, fetchOffset, lag, currentLeaderEpoch,
-                Optional.empty(), state, lastFetchedEpoch, Optional.empty(), mirrorName);
+                Optional.empty(), state, lastFetchedEpoch, Optional.empty(), mirrorName, mirrorLeaderEpoch);
     }
 
     public PartitionFetchState(
@@ -85,7 +88,7 @@ public record PartitionFetchState(
             Optional<Integer> lastFetchedEpoch) {
         this(topicId, fetchOffset, lag, currentLeaderEpoch,
                 delay, state, lastFetchedEpoch,
-                delay.map(aLong -> aLong + Time.SYSTEM.milliseconds()), "");
+                delay.map(aLong -> aLong + Time.SYSTEM.milliseconds()), "", Optional.empty());
     }
 
     public boolean isReadyForFetch() {
@@ -117,12 +120,13 @@ public record PartitionFetchState(
                 ", state=" + state +
                 ", lag=" + lag +
                 ", delay=" + delay.orElse(0L) + "ms)" +
-                ", mirrorName=" + mirrorName + ")";
+                ", mirrorName=" + mirrorName +
+                ", mirrorLeaderEpoch=" + mirrorLeaderEpoch + ")";
     }
 
     public PartitionFetchState updateTopicId(Optional<Uuid> newTopicId) {
         return new PartitionFetchState(newTopicId, this.fetchOffset, this.lag,
                 this.currentLeaderEpoch, this.delay,
-                this.state, this.lastFetchedEpoch, this.dueMs, this.mirrorName);
+                this.state, this.lastFetchedEpoch, this.dueMs, this.mirrorName, this.mirrorLeaderEpoch);
     }
 }

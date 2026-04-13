@@ -29,6 +29,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 import static org.apache.kafka.controller.ConfigurationControlManager.PAUSED_TOPIC_SUFFIX;
 import static org.apache.kafka.controller.ConfigurationControlManager.REMOVED_TOPIC_SUFFIX;
@@ -87,6 +88,8 @@ public final class MirrorUtils {
     public record PartitionStateLogEntry(String topic, int partition, MirrorPartitionState state) { }
 
     public record PartitionKey(String mirrorName, String topic, int partition) { }
+
+    public record LeaderEpochBump(CompletableFuture<Void> future, Map<TopicPartition, Integer> partitionToEpoch) { }
 
     interface StateTransitioner {
         void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorPartitionState state);

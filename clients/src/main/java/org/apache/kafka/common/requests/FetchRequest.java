@@ -61,6 +61,7 @@ public class FetchRequest extends AbstractRequest {
         public final int maxBytes;
         public final Optional<Integer> currentLeaderEpoch;
         public final Optional<Integer> lastFetchedEpoch;
+        public final Optional<Integer> mirrorLeaderEpoch;
 
         public PartitionData(
             Uuid topicId,
@@ -80,12 +81,25 @@ public class FetchRequest extends AbstractRequest {
                 Optional<Integer> currentLeaderEpoch,
                 Optional<Integer> lastFetchedEpoch
         ) {
+            this(topicId, fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch, lastFetchedEpoch, Optional.empty());
+        }
+
+        public PartitionData(
+                Uuid topicId,
+                long fetchOffset,
+                long logStartOffset,
+                int maxBytes,
+                Optional<Integer> currentLeaderEpoch,
+                Optional<Integer> lastFetchedEpoch,
+                Optional<Integer> mirrorLeaderEpoch
+        ) {
             this.topicId = topicId;
             this.fetchOffset = fetchOffset;
             this.logStartOffset = logStartOffset;
             this.maxBytes = maxBytes;
             this.currentLeaderEpoch = currentLeaderEpoch;
             this.lastFetchedEpoch = lastFetchedEpoch;
+            this.mirrorLeaderEpoch = mirrorLeaderEpoch;
         }
 
         @Override
@@ -98,12 +112,13 @@ public class FetchRequest extends AbstractRequest {
                 logStartOffset == that.logStartOffset &&
                 maxBytes == that.maxBytes &&
                 Objects.equals(currentLeaderEpoch, that.currentLeaderEpoch) &&
-                Objects.equals(lastFetchedEpoch, that.lastFetchedEpoch);
+                Objects.equals(lastFetchedEpoch, that.lastFetchedEpoch) &&
+                Objects.equals(mirrorLeaderEpoch, that.mirrorLeaderEpoch);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(topicId, fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch, lastFetchedEpoch);
+            return Objects.hash(topicId, fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch, lastFetchedEpoch, mirrorLeaderEpoch);
         }
 
         @Override
@@ -115,6 +130,7 @@ public class FetchRequest extends AbstractRequest {
                 ", maxBytes=" + maxBytes +
                 ", currentLeaderEpoch=" + currentLeaderEpoch +
                 ", lastFetchedEpoch=" + lastFetchedEpoch +
+                ", mirrorLeaderEpoch=" + mirrorLeaderEpoch +
                 ')';
         }
     }
@@ -295,6 +311,7 @@ public class FetchRequest extends AbstractRequest {
                     .setPartition(topicPartition.partition())
                     .setCurrentLeaderEpoch(partitionData.currentLeaderEpoch.orElse(RecordBatch.NO_PARTITION_LEADER_EPOCH))
                     .setLastFetchedEpoch(partitionData.lastFetchedEpoch.orElse(RecordBatch.NO_PARTITION_LEADER_EPOCH))
+                    .setMirrorLeaderEpoch(partitionData.mirrorLeaderEpoch.orElse(RecordBatch.NO_PARTITION_LEADER_EPOCH))
                     .setFetchOffset(partitionData.fetchOffset)
                     .setLogStartOffset(partitionData.logStartOffset)
                     .setPartitionMaxBytes(partitionData.maxBytes);
@@ -411,7 +428,8 @@ public class FetchRequest extends AbstractRequest {
                         fetchPartition.logStartOffset(),
                         fetchPartition.partitionMaxBytes(),
                         optionalEpoch(fetchPartition.currentLeaderEpoch()),
-                        optionalEpoch(fetchPartition.lastFetchedEpoch())
+                        optionalEpoch(fetchPartition.lastFetchedEpoch()),
+                        optionalEpoch(fetchPartition.mirrorLeaderEpoch())
                     )
                 )
             );
