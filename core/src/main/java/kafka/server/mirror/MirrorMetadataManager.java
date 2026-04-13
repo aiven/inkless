@@ -168,10 +168,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private volatile MetadataImage metadataImage;
     private final MetadataCache metadataCache;
     private volatile MirrorStateSender mirrorStateSender;
+    private volatile boolean initialized = false;
     private final NodeToControllerChannelManager channelManager;
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
     private final Supplier<MirrorFetcherManager> mirrorFetcherManagerSupplier;
     private Optional<MirrorUtils.StateTransitioner> stateTransitioner = Optional.empty();
+    private Optional<Consumer<String>> mirrorDeletionHandler = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatorPartitionFinder = Optional.empty();
     private Optional<Function<String, Integer>> coordinatorPartitionByNameFinder = Optional.empty();
     private volatile Admin adminClient;
@@ -254,32 +256,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      */
     @Override
     public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage, LoaderManifest manifest) {
-        if (mirrorStateSender == null) {
-            mirrorStateSender = new MirrorStateSender(MirrorStateSender.class.getSimpleName(),
-                    NetworkUtils.buildNetworkClient(MirrorMetadataManager.class.getSimpleName(), brokerConfig, metrics, time, new LogContext(name())),
-                    brokerConfig.requestTimeoutMs(), Time.SYSTEM);
-            mirrorStateSender.start();
+        if (!initialized) {
+            return;
         }
-
         // caching the image for query purpose
         this.metadataImage = newImage;
 
-        // detect config changes and close stale connections and fetchers to trigger reconnection
-        if (delta.configsDelta() != null) {
-            delta.configsDelta().changes().entrySet().stream()
-                .filter(e -> e.getKey().type() == ConfigResource.Type.MIRROR)
-                .forEach(e -> {
-                    String mirrorName = e.getKey().name();
-                    sourceLeaders.remove(mirrorName);
-                    List<MirrorSourceSender> senders = sourceSenders.remove(mirrorName);
-                    if (senders != null) {
-                        log.info("Mirror config changed for '{}'. Closing existing connections "
-                            + "to trigger reconnection with updated configuration.", mirrorName);
-                        senders.forEach(MirrorSourceSender::close);
-                    }
-                    mirrorFetcherManagerSupplier.get().removeFetchersForMirror(mirrorName);
-                });
-        }
+        maybeRecreateConnection(delta, newImage);
 
         // get all mirror partition leaders on this node based on the delta
         Set<TopicPartition> mirrorLeaders = getMirrorLeadersAndClearFollowerStates(delta, newImage);
@@ -373,6 +356,50 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     public Map<TopicPartition, MirrorPartitionState> pendingPartitionStates() {
         return pendingPartitionStates;
+    }
+
+    public void initialize(MirrorUtils.StateTransitioner stateTransitioner,
+                           Consumer<String> tombStoneHandler,
+                           Function<MirrorRecordKey, Integer> coordinatorPartitionByKeyFinder,
+                           Function<String, Integer> coordinatorPartitionByNameFinder) {
+        if (mirrorStateSender == null) {
+            mirrorStateSender = new MirrorStateSender(MirrorStateSender.class.getSimpleName(),
+                    NetworkUtils.buildNetworkClient(MirrorMetadataManager.class.getSimpleName(), brokerConfig, metrics, time, new LogContext(name())),
+                    brokerConfig.requestTimeoutMs(), Time.SYSTEM);
+            mirrorStateSender.start();
+        }
+
+        this.stateTransitioner = Optional.of(stateTransitioner);
+        this.mirrorDeletionHandler = Optional.of(tombStoneHandler);
+        this.coordinatorPartitionFinder = Optional.of(coordinatorPartitionByKeyFinder);
+        this.coordinatorPartitionByNameFinder = Optional.of(coordinatorPartitionByNameFinder);
+
+        initialized = true;
+    }
+
+    private void maybeRecreateConnection(MetadataDelta delta, MetadataImage newImage) {
+        // detect config changes and close stale connections and fetchers to trigger reconnection
+        if (delta.configsDelta() != null) {
+            delta.configsDelta().changes().entrySet().stream()
+                .filter(e -> e.getKey().type() == ConfigResource.Type.MIRROR)
+                .forEach(e -> {
+                    String mirrorName = e.getKey().name();
+                    boolean mirrorDeleted = newImage.configs()
+                            .configProperties(e.getKey()).isEmpty();
+                    if (mirrorDeleted) {
+                        log.info("Mirror '{}' has been deleted. Writing tombstone records.", mirrorName);
+                        mirrorDeletionHandler.ifPresent(h -> h.accept(mirrorName));
+                    }
+                    sourceLeaders.remove(mirrorName);
+                    List<MirrorSourceSender> senders = sourceSenders.remove(mirrorName);
+                    if (senders != null) {
+                        log.info("Mirror config changed for '{}'. Closing existing connections "
+                                + "to trigger reconnection with updated configuration.", mirrorName);
+                        senders.forEach(MirrorSourceSender::close);
+                    }
+                    mirrorFetcherManagerSupplier.get().removeFetchersForMirror(mirrorName);
+                });
+        }
     }
 
     /** Returns mirror partitions led by this broker, detecting both leadership and config changes */
@@ -557,6 +584,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     void setStateTransitioner(MirrorUtils.StateTransitioner function) {
         this.stateTransitioner = Optional.of(function);
+    }
+
+    void setMirrorDeletionHandler(Consumer<String> handler) {
+        this.mirrorDeletionHandler = Optional.of(handler);
     }
 
     void setCoordinatorPartitionByKeyFinder(Function<MirrorRecordKey, Integer> function) {
@@ -824,11 +855,15 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     // atomic remove + counter decrement to keep partition state counts consistent
-    private void removePartitionState(MirrorUtils.PartitionKey key) {
+    void removePartitionState(MirrorUtils.PartitionKey key) {
         partitionStates.computeIfPresent(key, (k, oldState) -> {
             partitionStateCounts.computeIfAbsent(oldState, s -> new AtomicLong()).decrementAndGet();
             return null;
         });
+    }
+
+    void removeLastMirroredEpochs(String mirrorName) {
+        lastMirroredEpochs.keySet().removeIf(key -> key.mirrorName().equals(mirrorName));
     }
 
     private long partitionStateCount(MirrorPartitionState state) {

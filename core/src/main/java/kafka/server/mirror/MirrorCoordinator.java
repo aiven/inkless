@@ -386,9 +386,11 @@ public class MirrorCoordinator {
 
         log.info("Starting up.");
         numPartitions = brokerConfig.mirrorConfig().topicNumPartitions();
-        metadataManager.setStateTransitioner((mirrorName, tp, state) -> transitionTo(mirrorName, Set.of(tp), state));
-        metadataManager.setCoordinatorPartitionByKeyFinder(key -> getCoordinatorPartitionByKey(key));
-        metadataManager.setCoordinatorPartitionByNameFinder(mirrorName -> getCoordinatorPartitionByName(mirrorName));
+        metadataManager.initialize(
+                (mirrorName, tp, state) -> transitionTo(mirrorName, Set.of(tp), state),
+                this::tombstoneMirrorRecords,
+                key -> getCoordinatorPartitionByKey(key),
+                mirrorName -> getCoordinatorPartitionByName(mirrorName));
 
         scheduler.startup();
 
@@ -407,7 +409,7 @@ public class MirrorCoordinator {
     /** Schedules truncation with retry on failure, using mirror.truncation.backoff.ms as retry delay. */
     private void scheduleTruncation(String mirrorName, Set<TopicPartition> topicPartitions, long delayMs) {
         long retryDelayMs = brokerConfig.mirrorConfig().truncationBackoffMs();
-        scheduler.scheduleOnce("LastMirroredOffsetTruncation",
+        scheduler.scheduleOnce("LastMirroredEpochsTruncation",
             () -> {
                 try {
                     metadataManager.truncateToLastMirroredEpochs(mirrorName, topicPartitions)
@@ -630,6 +632,49 @@ public class MirrorCoordinator {
         val.setTopics(topics);
         var apiVersion = new ApiMessageAndVersion(val, LastMirroredEpochsValue.HIGHEST_SUPPORTED_VERSION);
         return CoordinatorRecord.record(key, apiVersion);
+    }
+
+    private void tombstoneMirrorRecords(String mirrorName) {
+        Map<TopicPartition, MirrorPartitionState> states = metadataManager.getMirrorStates(mirrorName);
+        // Collect local coordinator partitions that need tombstones
+        Set<Integer> localCoordPartitions = new HashSet<>();
+        states.forEach((tp, state) -> {
+            if (isLocalCoordinator(mirrorName, tp.topic(), tp.partition())) {
+                localCoordPartitions.add(getCoordinatorPartitionByKey(
+                    new MirrorRecordKey(mirrorName, metadataCache.getTopicId(tp.topic()), tp.partition())));
+            }
+        });
+
+        // Write one partition state tombstone and one offset tombstone per coordinator partition
+        var timestamp = time.milliseconds();
+        var stateTombstone = CoordinatorRecord.tombstone(new MirrorPartitionStateKey().setMirrorName(mirrorName));
+        var offsetTombstone = CoordinatorRecord.tombstone(new LastMirroredEpochsKey().setMirrorName(mirrorName));
+
+        for (int coordPartition : localCoordPartitions) {
+            var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, coordPartition);
+            var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
+            var memRecord = MemoryRecords.withRecords(Compression.NONE,
+                new SimpleRecord(timestamp, serde.serializeKey(stateTombstone), serde.serializeValue(stateTombstone)),
+                new SimpleRecord(timestamp, serde.serializeKey(offsetTombstone), serde.serializeValue(offsetTombstone))
+            );
+            replicaManager.appendRecords(
+                Duration.ofSeconds(5).toMillis(),
+                (short) -1,
+                true,
+                AppendOrigin.COORDINATOR,
+                CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
+                partitionResponses -> null,
+                ignored -> null,
+                RequestLocal.noCaching(),
+                CollectionConverters.asScala(Map.of())
+            );
+        }
+
+        // Clean up in-memory caches
+        states.keySet().forEach(tp ->
+            metadataManager.removePartitionState(
+                new MirrorUtils.PartitionKey(mirrorName, tp.topic(), tp.partition())));
+        metadataManager.removeLastMirroredEpochs(mirrorName);
     }
 
     private String readMirrorNameFromKey(ByteBuffer buffer) {

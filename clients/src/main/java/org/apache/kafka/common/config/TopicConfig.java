@@ -222,7 +222,7 @@ public class TopicConfig {
     public static final String MIRROR_NAME_CONFIG = "mirror.name";
     public static final String MIRROR_NAME_DOC = "Identifies the mirror that manages this topic. " +
             "Topics with this configuration set are read-only and can only be modified through mirror management APIs. " +
-            "This property is hidden from DescribeConfigs responses to avoid exposing internal state to users.";
+            "This property is filtered out from DescribeConfigs responses to avoid exposing internal state to users.";
 
     public static final String MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG = "mirror.support.unclean.leader.election";
     public static final String MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_DOC = "When enabled, " +

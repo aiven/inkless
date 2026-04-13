@@ -16,6 +16,8 @@
  */
 package org.apache.kafka.tools;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.admin.AddTopicsToMirrorOptions;
 import org.apache.kafka.clients.admin.AddTopicsToMirrorResult;
 import org.apache.kafka.clients.admin.Admin;
@@ -111,6 +113,8 @@ public abstract class MirrorCommand {
     }
 
     private static class MirrorService implements AutoCloseable {
+        private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
         private final Admin adminClient;
         private final Properties mirrorConfigs;
 
@@ -369,6 +373,15 @@ public abstract class MirrorCommand {
                 .thenComparing(PartitionInfo::topic)
                 .thenComparing(PartitionInfo::partition));
 
+            if (opts.hasJsonOption()) {
+                try {
+                    System.out.printf(OBJECT_MAPPER.writeValueAsString(partitionInfos));
+                    return;
+                } catch (JsonProcessingException e) {
+                    throw new RuntimeException("Failed to serialize JSON", e);
+                }
+            }
+
             // Only print header and results if there are partitions to display
             if (!partitionInfos.isEmpty()) {
                 System.out.printf("%-30s %-40s %-10s %-15s %-18s %-10s %-12s%n",
@@ -425,6 +438,7 @@ public abstract class MirrorCommand {
         private final ArgumentAcceptingOptionSpec<String> mirrorOpt;
         private final ArgumentAcceptingOptionSpec<String> topicOpt;
         private final ArgumentAcceptingOptionSpec<Short> replicationFactorOpt;
+        private final OptionSpecBuilder jsonOpt;
 
         MirrorCommandOptions(String[] args) {
             super(args);
@@ -470,6 +484,8 @@ public abstract class MirrorCommand {
                 .describedAs("replication-factor")
                 .ofType(Short.class);
 
+            jsonOpt = parser.accepts("json", "Output description in JSON format");
+
             options = parser.parse(args);
             checkArgs();
         }
@@ -512,6 +528,10 @@ public abstract class MirrorCommand {
 
         private boolean hasListOption() {
             return has(listOpt);
+        }
+
+        private boolean hasJsonOption() {
+            return has(jsonOpt);
         }
 
         private boolean hasDescribeOption() {
@@ -589,6 +609,9 @@ public abstract class MirrorCommand {
 
             if (has(resumeOpt) && !has(topicOpt))
                 throw new IllegalArgumentException("--topic must be specified when resuming mirror topic(s)");
+
+            if (has(jsonOpt) && !has(describeOpt))
+                throw new IllegalArgumentException("--json is only supported for describing mirrors");
         }
     }
 }
