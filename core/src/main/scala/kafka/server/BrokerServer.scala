@@ -127,6 +127,8 @@ class BrokerServer(
 
   var mirrorCoordinator: MirrorCoordinator = _
 
+  var mirrorMetadataManager: MirrorMetadataManager = _
+
   var shareCoordinator: ShareCoordinator = _
 
   var clientToControllerChannelManager: NodeToControllerChannelManager = _
@@ -339,7 +341,7 @@ class BrokerServer(
        */
       val defaultActionQueue = new DelayedActionQueue
 
-      val mirrorMetadataManager = new MirrorMetadataManager(
+      mirrorMetadataManager = new MirrorMetadataManager(
         config,
         metrics,
         time,
@@ -803,6 +805,9 @@ class BrokerServer(
 
       if (mirrorCoordinator != null)
         CoreUtils.swallow(mirrorCoordinator.shutdown(), this)
+
+      if (mirrorMetadataManager != null)
+        CoreUtils.swallow(mirrorMetadataManager.close(), this)
 
       if (assignmentsManager != null)
         CoreUtils.swallow(assignmentsManager.close(), this)
