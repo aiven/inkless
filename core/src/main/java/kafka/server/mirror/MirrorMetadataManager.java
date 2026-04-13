@@ -23,8 +23,11 @@ import kafka.server.ReplicaManager;
 
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
+import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.DescribeMirrorsResult;
+import org.apache.kafka.clients.admin.MirrorDescription;
 import org.apache.kafka.common.GroupState;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Node;
@@ -41,7 +44,6 @@ import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
-import org.apache.kafka.common.message.LastMirroredEpochsRequestData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
 import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.message.OffsetCommitRequestData;
@@ -56,8 +58,6 @@ import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.AbstractRequest;
-import org.apache.kafka.common.requests.ApiVersionsRequest;
-import org.apache.kafka.common.requests.ApiVersionsResponse;
 import org.apache.kafka.common.requests.BumpLeaderEpochsRequest;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
@@ -67,8 +67,6 @@ import org.apache.kafka.common.requests.DescribeAclsResponse;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
-import org.apache.kafka.common.requests.LastMirroredEpochsRequest;
-import org.apache.kafka.common.requests.LastMirroredEpochsResponse;
 import org.apache.kafka.common.requests.ListGroupsRequest;
 import org.apache.kafka.common.requests.ListGroupsResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
@@ -113,6 +111,7 @@ import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -122,6 +121,7 @@ import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -174,15 +174,22 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Optional<MirrorUtils.StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatorPartitionFinder = Optional.empty();
     private Optional<Function<String, Integer>> coordinatorPartitionByNameFinder = Optional.empty();
+    private volatile Admin adminClient;
 
     // cache
-    // thread-safe maps for concurrent access from metadata, scheduler, and fetcher threads
     private final Map<String, Uuid> sourceClusterIds = new ConcurrentHashMap<>();
     private final Map<String, List<MirrorSourceSender>> sourceSenders = new ConcurrentHashMap<>();
     private final Map<String, Map<TopicPartition, Node>> sourceLeaders = new ConcurrentHashMap<>();
     private final Map<MirrorUtils.PartitionKey, MirrorPartitionState> partitionStates = new ConcurrentHashMap<>();
     private final Map<MirrorPartitionState, AtomicLong> partitionStateCounts = new ConcurrentHashMap<>();
     private final Map<MirrorUtils.PartitionKey, Integer> lastMirroredEpochs = new ConcurrentHashMap<>();
+
+    // Leader epoch bumps require a request to the controller followed by a metadata log fetch.
+    // The bump must be confirmed on the broker side before we can write the PID reset record.
+    private final Set<MirrorUtils.LeaderEpochBump> pendingLeaderEpochBumps = ConcurrentHashMap.newKeySet();
+
+    // lets the transition handler skip partitions that are already being processed
+    private final Map<TopicPartition, MirrorPartitionState> pendingPartitionStates = new ConcurrentHashMap<>();
 
     // metrics
     private KafkaMetricsGroup metricsGroup;
@@ -275,7 +282,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
 
         // get all mirror partition leaders on this node based on the delta
-        Set<TopicPartition> mirrorLeaders = getMirrorLeaders(delta, newImage);
+        Set<TopicPartition> mirrorLeaders = getMirrorLeadersAndClearFollowerStates(delta, newImage);
         if (mirrorLeaders.isEmpty()) {
             return;
         }
@@ -337,6 +344,25 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         if (delta.topicsDelta() != null) {
             clearFollowersState(delta.topicsDelta().localChanges(nodeId).followers().keySet(), newImage);
         }
+        maybeCompleteBumpLeaderEpochFuture();
+    }
+
+    // Check if all partitions in bumpLeaderEpoch are updated to the higher leader epoch, then complete the future
+    public void maybeCompleteBumpLeaderEpochFuture() {
+        pendingLeaderEpochBumps.removeIf(bumpLeaderEpoch -> {
+            Set<TopicPartition> incompletedTps = bumpLeaderEpoch.partitionToEpoch().entrySet().stream().filter(entry -> {
+                TopicPartition tp = entry.getKey();
+                int epoch = entry.getValue();
+                return metadataImage.topics().getPartition(metadataImage.topics().getTopic(tp.topic()).id(), tp.partition()).leaderEpoch < epoch;
+            }).map(Map.Entry::getKey).collect(Collectors.toSet());
+            if (incompletedTps.isEmpty()) {
+                bumpLeaderEpoch.future().complete(null);
+                return true;
+            } else {
+                log.info("bumpLeaderEpoch future is not completed for partitions: {}, all: {}", incompletedTps, bumpLeaderEpoch.partitionToEpoch().keySet());
+                return false;
+            }
+        });
     }
 
     @Override
@@ -345,18 +371,37 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         closeSourceSenders();
     }
 
+    public Map<TopicPartition, MirrorPartitionState> pendingPartitionStates() {
+        return pendingPartitionStates;
+    }
+
     /** Returns mirror partitions led by this broker, detecting both leadership and config changes */
-    private Set<TopicPartition> getMirrorLeaders(MetadataDelta delta, MetadataImage image) {
+    private Set<TopicPartition> getMirrorLeadersAndClearFollowerStates(MetadataDelta delta, MetadataImage image) {
         Set<TopicPartition> mirrorLeaderPartitions = new HashSet<>();
 
-        // new partition leader in topicsDelta that has mirror.name not empty
         if (delta.topicsDelta() != null) {
+            // new partition leader in topicsDelta that has mirror.name not empty
             delta.topicsDelta().localChanges(nodeId).leaders().keySet().forEach(tp -> {
                 Properties props = image.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic()));
                 if (props.containsKey(TopicConfig.MIRROR_NAME_CONFIG)) {
                     String mirrorName = (String) props.get(TopicConfig.MIRROR_NAME_CONFIG);
                     if (mirrorName != null && !mirrorName.isBlank()) {
                         mirrorLeaderPartitions.add(tp);
+                    }
+                }
+            });
+
+            // remove the pending state from this node because it is not the leader anymore
+            delta.topicsDelta().localChanges(nodeId).followers().keySet().forEach(tp -> {
+                Properties props = image.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic()));
+                if (props.containsKey(TopicConfig.MIRROR_NAME_CONFIG)) {
+                    String mirrorName = (String) props.get(TopicConfig.MIRROR_NAME_CONFIG);
+                    if (mirrorName != null && !mirrorName.isBlank()) {
+                        pendingPartitionStates.remove(tp);
+                        pendingLeaderEpochBumps.removeIf(bumpLeaderEpoch -> {
+                            bumpLeaderEpoch.future().completeExceptionally(new IllegalStateException("Not leader anymore"));
+                            return true;
+                        });
                     }
                 }
             });
@@ -834,12 +879,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-    int getLastMirroredEpoch(String clusterName, TopicPartition topicPartition) {
-        MirrorUtils.PartitionKey key = new MirrorUtils.PartitionKey(clusterName, topicPartition.topic(), topicPartition.partition());
-        if (lastMirroredEpochs.containsKey(key)) {
-            return lastMirroredEpochs.get(key);
-        }
-        return -1;
+    Map<TopicPartition, Integer> getLastMirroredEpochs(String clusterName) {
+        Map<TopicPartition, Integer> result = new HashMap<>();
+        lastMirroredEpochs.forEach((key, epoch) -> {
+            if (key.mirrorName().equals(clusterName)) {
+                result.put(new TopicPartition(key.topic(), key.partition()), epoch);
+            }
+        });
+        return result;
     }
 
     Map<MirrorUtils.PartitionKey, Integer> updateLastMirroredEpochs(String clusterName,
@@ -858,56 +905,17 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return lastMirroredEpochs;
     }
 
-    /** Fetches last mirrored epochs from source cluster and truncates local replicas to those offsets. */
-    void truncateToLastMirroredEpochs(ReplicaManager replicaManager,
-                                      String mirrorName,
-                                      Set<TopicPartition> topicPartitionSet,
-                                      Consumer<TopicPartition> callback) {
-        log.info("Truncating to last mirrored epochs for mirror {}: {}", mirrorName, topicPartitionSet);
-        ensureConnection(mirrorName);
-
-        // get api versions of the source cluster
-        var apiResponse = trySendRequest(mirrorName, new ApiVersionsRequest.Builder());
-
-        if (apiResponse.responseBody() instanceof ApiVersionsResponse apiVersionsResponse) {
-            if (apiVersionsResponse.apiVersion(ApiKeys.LAST_MIRRORED_EPOCHS.id) == null) {
-                log.debug("The LastMirroredEpochs API is not supported in source cluster, truncating to offset 0");
-                Map<TopicPartition, Integer> epochs = new HashMap<>();
-                topicPartitionSet.forEach(tp -> epochs.put(tp, 0));
-                replicaManager.maybeTruncateForLeaderEpoch(epochs, callback);
-                return;
-            }
+    /** Truncates local replicas using last mirrored leader epochs from this broker's coordinator cache. */
+    CompletionStage<Map<String, MirrorDescription>> truncateToLastMirroredEpochs(String mirrorName,
+                                                                                 Set<TopicPartition> topicPartitionSet) {
+        log.info("Truncating to last mirrored epochs from local state for mirror {}: {}", mirrorName, topicPartitionSet);
+        if (adminClient == null) {
+            Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName));
+            adminClient = Admin.create(props);
         }
 
-        List<LastMirroredEpochsRequestData.TopicData> topicDataList = new ArrayList<>();
-        groupPartitionsByTopic(topicPartitionSet).forEach((topic, partitions) -> {
-            List<LastMirroredEpochsRequestData.PartitionData> partitionDataList = new ArrayList<>();
-            partitions.forEach(partition -> {
-                LastMirroredEpochsRequestData.PartitionData partitionData = new LastMirroredEpochsRequestData.PartitionData();
-                partitionData.setPartitionIndex(partition);
-                partitionDataList.add(partitionData);
-            });
-            LastMirroredEpochsRequestData.TopicData topicData = new LastMirroredEpochsRequestData.TopicData()
-                    .setName(topic).setPartitions(partitionDataList);
-            topicDataList.add(topicData);
-        });
-
-        var response = trySendRequest(mirrorName,
-                new LastMirroredEpochsRequest.Builder(
-                        new LastMirroredEpochsRequestData().setMirrorName(mirrorName).setTopics(topicDataList))
-        );
-
-        if (response.responseBody() instanceof LastMirroredEpochsResponse lastMirroredOffsetResponse) {
-            log.debug("Received last mirrored epoch response: {}", lastMirroredOffsetResponse);
-            Map<TopicPartition, Integer> epochs = new HashMap<>();
-            lastMirroredOffsetResponse.data().topics().forEach(topic -> {
-                String name = topic.name();
-                topic.partitions().forEach(partition -> {
-                    epochs.put(new TopicPartition(name, partition.partitionIndex()), partition.lastMirroredEpoch());
-                });
-            });
-            replicaManager.maybeTruncateForLeaderEpoch(epochs, callback);
-        }
+        DescribeMirrorsResult result = adminClient.describeMirrors(List.of(mirrorName));
+        return result.allDescriptions().toCompletionStage();
     }
 
     /** Syncs metadata from all source clusters. */
@@ -933,8 +941,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         metadataRefreshError.incrementAndGet();
     }
 
-    public CompletableFuture<Void> sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions) {
-        CompletableFuture<Void> future = new CompletableFuture<>();
+    public void sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions, CompletableFuture<Void> future) {
+        Map<TopicPartition, Integer> partitionEpochs = new HashMap<>();
+
         List<BumpLeaderEpochsRequestData.TopicState> topicStates = new ArrayList<>();
         Map<String, Set<Integer>> partitions = new HashMap<>();
         topicPartitions.forEach(tp -> {
@@ -945,11 +954,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             List<BumpLeaderEpochsRequestData.LeaderEpochState> topicLeaderEpoch = new ArrayList<>();
             parts.forEach(partitionId -> {
                 int epoch = logManager.getLog(new TopicPartition(topic, partitionId), false).get().latestEpoch().orElse(-1);
+                partitionEpochs.put(new TopicPartition(topic, partitionId), epoch);
                 topicLeaderEpoch.add(new BumpLeaderEpochsRequestData.LeaderEpochState().setMinLeaderEpoch(epoch).setPartitionIndex(partitionId));
             });
             topicState.setTopicId(metadataCache.getTopicId(topic)).setPartitions(topicLeaderEpoch);
             topicStates.add(topicState);
         });
+
+        pendingLeaderEpochBumps.add(new MirrorUtils.LeaderEpochBump(future, Collections.unmodifiableMap(partitionEpochs)));
 
         channelManager.sendRequest(new BumpLeaderEpochsRequest.Builder(
                 new BumpLeaderEpochsRequestData().setTopics(topicStates)
@@ -957,7 +969,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             @Override
             public void onComplete(ClientResponse response) {
                 log.debug("Bump leader epoch response: {}", response);
-                future.complete(null);
             }
 
             @Override
@@ -965,8 +976,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 log.warn("BumpLeaderEpoch request timed out");
             }
         });
-
-        return future;
     }
 
     /**
@@ -1514,6 +1523,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         sourceClusterIds.clear();
         closeSourceSenders();
         sourceLeaders.clear();
+        pendingLeaderEpochBumps.clear();
+        pendingPartitionStates.clear();
     }
 
     private void closeSourceSenders() {

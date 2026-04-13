@@ -1686,12 +1686,19 @@ class ReplicaManager(val config: KafkaConfig,
       getLog(tp).map(log => {
         val endOffsetForEpoch = log.endOffsetForEpoch(leaderEpoch)
         val offsetToTruncate = if (endOffsetForEpoch.isPresent) endOffsetForEpoch.get().offset() else 0L
-        log.truncateTo(offsetToTruncate)
+        val onCaughtupCallback: Optional[Consumer[TopicPartition]] = if (log.logEndOffset() <= offsetToTruncate) {
+          Optional.empty()
+        } else {
+          Optional.of((tp: TopicPartition) => {
+            log.truncateTo(offsetToTruncate)
+          })
+        }
         val partition = getPartitionOrException(tp)
         val mirrorUncleanLeaderElection = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic())).get(TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG).asInstanceOf[String]
         val waitForAllReplicas = mirrorUncleanLeaderElection != null && mirrorUncleanLeaderElection.toBoolean
 
-        partition.maybeCompleteTruncation(log, waitForAllReplicas = waitForAllReplicas, onCompleteCallback = Optional.of(callback))
+        partition.maybeCompleteTruncation(log, waitForAllReplicas = waitForAllReplicas, onCompleteCallback = Optional.of(callback),
+          onCaughtupCallback = onCaughtupCallback)
       })
     })
   }
