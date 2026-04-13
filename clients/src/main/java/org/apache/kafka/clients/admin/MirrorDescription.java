@@ -78,17 +78,20 @@ public class MirrorDescription {
         private final long destinationOffset;
         private final long lag;
         private final String state;
+        private final int lastMirroredEpoch;
 
         public LeaderState(TopicPartition topicPartition,
                            long sourceOffset,
                            long destinationOffset,
                            long lag,
-                           String state) {
+                           String state,
+                           int lastMirroredEpoch) {
             this.topicPartition = topicPartition;
             this.sourceOffset = sourceOffset;
             this.destinationOffset = destinationOffset;
             this.lag = lag;
             this.state = state;
+            this.lastMirroredEpoch = lastMirroredEpoch;
         }
 
         public TopicPartition topicPartition() {
@@ -111,6 +114,10 @@ public class MirrorDescription {
             return state;
         }
 
+        public int lastMirroredEpoch() {
+            return lastMirroredEpoch;
+        }
+
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
@@ -119,13 +126,14 @@ public class MirrorDescription {
             return sourceOffset == that.sourceOffset &&
                    destinationOffset == that.destinationOffset &&
                    lag == that.lag &&
+                   lastMirroredEpoch == that.lastMirroredEpoch &&
                    Objects.equals(topicPartition, that.topicPartition) &&
                    Objects.equals(state, that.state);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(topicPartition, sourceOffset, destinationOffset, lag, state);
+            return Objects.hash(topicPartition, sourceOffset, destinationOffset, lag, state, lastMirroredEpoch);
         }
 
         @Override
@@ -136,6 +144,7 @@ public class MirrorDescription {
                    ", destinationOffset=" + destinationOffset +
                    ", lag=" + lag +
                    ", state='" + state + '\'' +
+                   ", lastMirroredEpoch=" + lastMirroredEpoch +
                    '}';
         }
     }

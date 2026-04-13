@@ -23,8 +23,11 @@ import kafka.server.ReplicaManager;
 
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
+import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.DescribeMirrorsResult;
+import org.apache.kafka.clients.admin.MirrorDescription;
 import org.apache.kafka.common.GroupState;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Node;
@@ -41,7 +44,6 @@ import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
-import org.apache.kafka.common.message.LastMirroredEpochsRequestData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
 import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.message.OffsetCommitRequestData;
@@ -56,8 +58,6 @@ import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.AbstractRequest;
-import org.apache.kafka.common.requests.ApiVersionsRequest;
-import org.apache.kafka.common.requests.ApiVersionsResponse;
 import org.apache.kafka.common.requests.BumpLeaderEpochsRequest;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
@@ -67,8 +67,6 @@ import org.apache.kafka.common.requests.DescribeAclsResponse;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
-import org.apache.kafka.common.requests.LastMirroredEpochsRequest;
-import org.apache.kafka.common.requests.LastMirroredEpochsResponse;
 import org.apache.kafka.common.requests.ListGroupsRequest;
 import org.apache.kafka.common.requests.ListGroupsResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
@@ -123,6 +121,7 @@ import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -175,6 +174,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Optional<MirrorUtils.StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatorPartitionFinder = Optional.empty();
     private Optional<Function<String, Integer>> coordinatorPartitionByNameFinder = Optional.empty();
+    private volatile Admin adminClient;
 
     // cache
     private final Map<String, Uuid> sourceClusterIds = new ConcurrentHashMap<>();
@@ -879,28 +879,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-    CompletableFuture<Integer> getLastMirroredEpoch(String clusterName, TopicPartition topicPartition) {
-        CompletableFuture<Integer> future = new CompletableFuture<>();
-        MirrorUtils.PartitionKey key = new MirrorUtils.PartitionKey(clusterName, topicPartition.topic(), topicPartition.partition());
-        if (lastMirroredEpochs.containsKey(key)) {
-            future.complete(lastMirroredEpochs.get(key));
-        } else {
-            // if there is no data in the cache, try to read from the remote coordinator
-            // but if the internal topic is not available, it means the coordinator is not enabled. Return -1 directly
-            if (metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME) != null && !isLocalCoordinator(clusterName, topicPartition.topic(), topicPartition.partition())) {
-                readStatesFromRemoteCoordinator(clusterName, Map.of(topicPartition.topic(), Set.of(topicPartition.partition())), res ->
-                        res.data().topics().forEach(topic ->
-                                topic.partitions().forEach(partition -> {
-                                    log.info("remote returned LME:" + partition.lastMirroredEpoch());
-                                    future.complete(partition.lastMirroredEpoch());
-                                })));
-            } else {
-                log.info("no record: -1");
-                // it means there is no LME record for this partition
-                future.complete(-1);
+    Map<TopicPartition, Integer> getLastMirroredEpochs(String clusterName) {
+        Map<TopicPartition, Integer> result = new HashMap<>();
+        lastMirroredEpochs.forEach((key, epoch) -> {
+            if (key.mirrorName().equals(clusterName)) {
+                result.put(new TopicPartition(key.topic(), key.partition()), epoch);
             }
-        }
-        return future;
+        });
+        return result;
     }
 
     Map<MirrorUtils.PartitionKey, Integer> updateLastMirroredEpochs(String clusterName,
@@ -919,56 +905,17 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return lastMirroredEpochs;
     }
 
-    /** Fetches last mirrored epochs from source cluster and truncates local replicas to those offsets. */
-    void truncateToLastMirroredEpochs(ReplicaManager replicaManager,
-                                      String mirrorName,
-                                      Set<TopicPartition> topicPartitionSet,
-                                      Consumer<TopicPartition> callback) {
-        log.info("Truncating to last mirrored epochs for mirror {}: {}", mirrorName, topicPartitionSet);
-        ensureConnection(mirrorName);
-
-        // get api versions of the source cluster
-        var apiResponse = trySendRequest(mirrorName, new ApiVersionsRequest.Builder());
-
-        if (apiResponse.responseBody() instanceof ApiVersionsResponse apiVersionsResponse) {
-            if (apiVersionsResponse.apiVersion(ApiKeys.LAST_MIRRORED_EPOCHS.id) == null) {
-                log.debug("The LastMirroredEpochs API is not supported in source cluster, truncating to offset 0");
-                Map<TopicPartition, Integer> epochs = new HashMap<>();
-                topicPartitionSet.forEach(tp -> epochs.put(tp, 0));
-                replicaManager.maybeTruncateForLeaderEpoch(epochs, callback);
-                return;
-            }
+    /** Truncates local replicas using last mirrored leader epochs from this broker's coordinator cache. */
+    CompletionStage<Map<String, MirrorDescription>> truncateToLastMirroredEpochs(String mirrorName,
+                                                                                 Set<TopicPartition> topicPartitionSet) {
+        log.info("Truncating to last mirrored epochs from local state for mirror {}: {}", mirrorName, topicPartitionSet);
+        if (adminClient == null) {
+            Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName));
+            adminClient = Admin.create(props);
         }
 
-        List<LastMirroredEpochsRequestData.TopicData> topicDataList = new ArrayList<>();
-        groupPartitionsByTopic(topicPartitionSet).forEach((topic, partitions) -> {
-            List<LastMirroredEpochsRequestData.PartitionData> partitionDataList = new ArrayList<>();
-            partitions.forEach(partition -> {
-                LastMirroredEpochsRequestData.PartitionData partitionData = new LastMirroredEpochsRequestData.PartitionData();
-                partitionData.setPartitionIndex(partition);
-                partitionDataList.add(partitionData);
-            });
-            LastMirroredEpochsRequestData.TopicData topicData = new LastMirroredEpochsRequestData.TopicData()
-                    .setName(topic).setPartitions(partitionDataList);
-            topicDataList.add(topicData);
-        });
-
-        var response = trySendRequest(mirrorName,
-                new LastMirroredEpochsRequest.Builder(
-                        new LastMirroredEpochsRequestData().setMirrorName(mirrorName).setTopics(topicDataList))
-        );
-
-        if (response.responseBody() instanceof LastMirroredEpochsResponse lastMirroredOffsetResponse) {
-            log.debug("Received last mirrored epoch response: {}", lastMirroredOffsetResponse);
-            Map<TopicPartition, Integer> epochs = new HashMap<>();
-            lastMirroredOffsetResponse.data().topics().forEach(topic -> {
-                String name = topic.name();
-                topic.partitions().forEach(partition -> {
-                    epochs.put(new TopicPartition(name, partition.partitionIndex()), partition.lastMirroredEpoch());
-                });
-            });
-            replicaManager.maybeTruncateForLeaderEpoch(epochs, callback);
-        }
+        DescribeMirrorsResult result = adminClient.describeMirrors(List.of(mirrorName));
+        return result.allDescriptions().toCompletionStage();
     }
 
     /** Syncs metadata from all source clusters. */

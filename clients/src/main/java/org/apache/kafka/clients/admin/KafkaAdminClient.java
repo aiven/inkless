@@ -5289,7 +5289,8 @@ public class KafkaAdminClient extends AdminClient {
                                         partition.sourceOffset(),
                                         partition.destinationOffset(),
                                         partition.lag(),
-                                        partition.state()
+                                        partition.state(),
+                                        partition.lastMirroredEpoch()
                                 );
                         partitions.add(leaderState);
                     }

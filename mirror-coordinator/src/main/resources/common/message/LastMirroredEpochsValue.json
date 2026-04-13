@@ -33,7 +33,7 @@
         { "name": "PartitionIndex", "type": "int32", "versions": "0+",
           "about": "The partition index." },
         { "name": "LastMirroredEpoch", "type": "int32", "versions": "0+",
-          "about": "The last mirrored epoch for this partition." }
+          "about": "The last mirror leader epoch for this partition." }
       ]}
     ]}
   ]

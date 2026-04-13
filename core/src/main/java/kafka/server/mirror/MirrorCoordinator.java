@@ -19,6 +19,7 @@ package kafka.server.mirror;
 import kafka.server.KafkaConfig;
 import kafka.server.ReplicaManager;
 
+import org.apache.kafka.clients.admin.MirrorDescription;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
@@ -70,7 +71,6 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -410,8 +410,32 @@ public class MirrorCoordinator {
         scheduler.scheduleOnce("LastMirroredOffsetTruncation",
             () -> {
                 try {
-                    metadataManager.truncateToLastMirroredEpochs(replicaManager, mirrorName, topicPartitions,
-                            partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING));
+                    metadataManager.truncateToLastMirroredEpochs(mirrorName, topicPartitions)
+                        .whenComplete((descriptions, error) -> {
+                            if (error != null) {
+                                log.warn("Failed to truncate to last mirrored offsets for mirror {}, retrying in {} ms", mirrorName, retryDelayMs, error);
+                                scheduleTruncation(mirrorName, topicPartitions, retryDelayMs);
+                            }
+                            Map<TopicPartition, Integer> epochs = new HashMap<>();
+                            MirrorDescription description = descriptions.get(mirrorName);
+                            description.topics().forEach((topicName, leaderState) -> {
+                                leaderState.forEach(leaderStateEntry -> {
+                                    epochs.put(leaderStateEntry.topicPartition(), leaderStateEntry.lastMirroredEpoch());
+                                });
+                            });
+
+                            // if the source cluster doesn't have mirror info, no result will be returned.
+                            if (epochs.size() != topicPartitions.size()) {
+                                topicPartitions.forEach(partition -> {
+                                    if (!epochs.containsKey(partition)) {
+                                        epochs.put(partition, -1);
+                                    }
+                                });
+                            }
+
+                            replicaManager.maybeTruncateForLeaderEpoch(epochs,
+                                    partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING));
+                        });
                 } catch (Exception e) {
                     log.warn("Failed to truncate to last mirrored offsets for mirror {}, retrying in {} ms", mirrorName, retryDelayMs, e);
                     scheduleTruncation(mirrorName, topicPartitions, retryDelayMs);
@@ -525,12 +549,8 @@ public class MirrorCoordinator {
         return results;
     }
 
-    public int getLastMirroredEpoch(String mirrorName, TopicPartition topicPartition) {
-        try {
-            return metadataManager.getLastMirroredEpoch(mirrorName, topicPartition).get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
-        } catch (Exception e) {
-            throw new RuntimeException("Cannot get the last mirror epochs from the source cluster in time.", e);
-        }
+    public Map<TopicPartition, Integer> getLastMirroredEpochs(String mirrorName) {
+        return metadataManager.getLastMirroredEpochs(mirrorName);
     }
 
     /** Persists offsets to local or remote coordinators, optionally transitioning to STOPPED. */
