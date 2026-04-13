@@ -226,7 +226,7 @@ public class TopicConfig {
 
     public static final String MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG = "mirror.support.unclean.leader.election";
     public static final String MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_DOC = "When enabled, " +
-            "LastMirroredEpoch log truncation waits for all replicas (not just ISR members) to join the ISR and complete the truncation.";
+            "LastMirrorEpoch log truncation waits for all replicas (not just ISR members) to join the ISR and complete the truncation.";
 
     /**
      * @deprecated down-conversion is not possible in Apache Kafka 4.0 and newer, hence this configuration is a no-op,

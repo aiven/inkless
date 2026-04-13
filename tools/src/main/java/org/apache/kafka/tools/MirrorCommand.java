@@ -16,8 +16,6 @@
  */
 package org.apache.kafka.tools;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.admin.AddTopicsToMirrorOptions;
 import org.apache.kafka.clients.admin.AddTopicsToMirrorResult;
 import org.apache.kafka.clients.admin.Admin;
@@ -49,6 +47,9 @@ import org.apache.kafka.common.utils.Exit;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.util.CommandDefaultOptions;
 import org.apache.kafka.server.util.CommandLineUtils;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -362,7 +363,7 @@ public abstract class MirrorCommand {
                             state.destinationOffset(),
                             state.lag(),
                             state.state(),
-                            state.lastMirroredEpoch()
+                            state.lastMirrorEpoch()
                         ));
                     }
                 }
@@ -419,7 +420,7 @@ public abstract class MirrorCommand {
         }
 
         private record PartitionInfo(String mirror, String topic, int partition,
-                                     long sourceOffset, long destinationOffset, long lag, String state, int lastMirroredEpoch) { }
+                                     long sourceOffset, long destinationOffset, long lag, String state, int lastMirrorEpoch) { }
     }
 
     private static final class MirrorCommandOptions extends CommandDefaultOptions {

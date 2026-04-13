@@ -304,7 +304,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       writeMirrorStatesRequest.data().topics().forEach(topic => {
         val partMetadata = new util.HashSet[PartitionStateInfo]()
         topic.partitions().forEach(part => {
-          partMetadata.add(new PartitionStateInfo(part.partitionIndex(), MirrorPartitionState.fromValue(part.state()), part.lastMirroredEpoch()))
+          partMetadata.add(new PartitionStateInfo(part.partitionIndex(), MirrorPartitionState.fromValue(part.state()), part.lastMirrorEpoch()))
         })
         partitionMetadata.put(topic.name(), partMetadata)
       })
@@ -428,7 +428,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         // Each broker reports partitions it's responsible for to avoid duplicates
           val lagInfoMap = replicaManager.getMirrorLagInfo(mirrorName)
           val partitionStates = mirrorCoordinator.getMirrorStates(mirrorName).asScala
-          val lastMirroredEpoch = mirrorCoordinator.getLastMirroredEpochs(mirrorName)
+          val lastMirrorEpoch = mirrorCoordinator.getLastMirrorEpochs(mirrorName)
 
           // Report partition if: (1) we have lag info, OR (2) we're the partition leader and have no lag info
           val partitionsToReport = (lagInfoMap.keySet ++ partitionStates.keySet.filter { tp =>
@@ -457,7 +457,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 .setDestinationOffset(lagInfoMap.get(topicPartition).map(_.destinationOffset).getOrElse(-1L))
                 .setLag(lagInfoMap.get(topicPartition).map(_.lag).getOrElse(-1L))
                 .setState(partitionStates.getOrElse(topicPartition, MirrorPartitionState.UNKNOWN).name())
-                .setLastMirroredEpoch(lastMirroredEpoch.getOrDefault(topicPartition, -1))
+                .setLastMirrorEpoch(lastMirrorEpoch.getOrDefault(topicPartition, -1))
 
               topicPartitions.partitions().add(partitionDetail)
             }
