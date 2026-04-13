@@ -259,7 +259,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.DELETE_MIRROR => handleDeleteMirror(request)
         case ApiKeys.LIST_MIRRORS => handleListMirrorsRequest(request)
         case ApiKeys.DESCRIBE_MIRRORS => handleDescribeMirrorsRequest(request)
-        case ApiKeys.LAST_MIRRORED_EPOCHS => handleLastMirroredEpoch(request)
         case ApiKeys.WRITE_MIRROR_STATES => handleWriteMirrorStates(request)
         case ApiKeys.READ_MIRROR_STATES => handleReadMirrorStates(request)
         case ApiKeys.BUMP_LEADER_EPOCHS => forwardToController(request)
@@ -337,38 +336,6 @@ class KafkaApis(val requestChannel: RequestChannel,
     } else {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring read mirror states request")
       requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
-    }
-  }
-
-  def handleLastMirroredEpoch(request: RequestChannel.Request): Unit = {
-    if (isClusterMirroringEnabled) {
-      if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
-        requestHelper.sendMaybeThrottle(request, new LastMirroredEpochsResponse(new LastMirroredEpochsResponseData().setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)))
-        return
-      }
-      val lastMirroredOffsetRequest = request.body[LastMirroredEpochsRequest]
-      val responseData = new LastMirroredEpochsResponseData()
-      //val mirrorName = lastMirroredOffsetRequest.data().mirrorName()
-      val topicResults = new util.ArrayList[LastMirroredEpochsResponseData.TopicResult]()
-      lastMirroredOffsetRequest.data().topics().forEach(topic => {
-        val topicResult = new LastMirroredEpochsResponseData.TopicResult()
-        val partitionResults = new util.ArrayList[LastMirroredEpochsResponseData.PartitionResult]()
-        topic.partitions().forEach(par => {
-          //val partition = new TopicPartition(topic.name(), par.partitionIndex())
-          val partitionResult = new LastMirroredEpochsResponseData.PartitionResult()
-          //partitionResult.setPartitionIndex(par.partitionIndex())
-            //.setLastMirroredEpoch(mirrorCoordinator.getLastMirroredEpoch(mirrorName, partition))
-          partitionResults.add(partitionResult)
-        })
-        topicResult.setName(topic.name())
-        topicResult.setPartitions(partitionResults)
-        topicResults.add(topicResult)
-      })
-      responseData.setTopics(topicResults)
-      requestHelper.sendMaybeThrottle(request, new LastMirroredEpochsResponse(responseData))
-    } else {
-      logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring last mirrored offset request")
-      requestHelper.sendMaybeThrottle(request, new LastMirroredEpochsResponse(new LastMirroredEpochsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
     }
   }
 

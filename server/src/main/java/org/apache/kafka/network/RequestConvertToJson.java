@@ -136,8 +136,6 @@ import org.apache.kafka.common.message.InitializeShareGroupStateRequestDataJsonC
 import org.apache.kafka.common.message.InitializeShareGroupStateResponseDataJsonConverter;
 import org.apache.kafka.common.message.JoinGroupRequestDataJsonConverter;
 import org.apache.kafka.common.message.JoinGroupResponseDataJsonConverter;
-import org.apache.kafka.common.message.LastMirroredEpochsRequestDataJsonConverter;
-import org.apache.kafka.common.message.LastMirroredEpochsResponseDataJsonConverter;
 import org.apache.kafka.common.message.LeaveGroupRequestDataJsonConverter;
 import org.apache.kafka.common.message.LeaveGroupResponseDataJsonConverter;
 import org.apache.kafka.common.message.ListConfigResourcesRequestDataJsonConverter;
@@ -334,8 +332,6 @@ import org.apache.kafka.common.requests.InitializeShareGroupStateRequest;
 import org.apache.kafka.common.requests.InitializeShareGroupStateResponse;
 import org.apache.kafka.common.requests.JoinGroupRequest;
 import org.apache.kafka.common.requests.JoinGroupResponse;
-import org.apache.kafka.common.requests.LastMirroredEpochsRequest;
-import org.apache.kafka.common.requests.LastMirroredEpochsResponse;
 import org.apache.kafka.common.requests.LeaveGroupRequest;
 import org.apache.kafka.common.requests.LeaveGroupResponse;
 import org.apache.kafka.common.requests.ListConfigResourcesRequest;
@@ -610,8 +606,6 @@ public class RequestConvertToJson {
                 return AddTopicsToMirrorRequestDataJsonConverter.write(((AddTopicsToMirrorRequest) request).data(), request.version());
             case REMOVE_TOPICS_FROM_MIRROR:
                 return RemoveTopicsFromMirrorRequestDataJsonConverter.write(((RemoveTopicsFromMirrorRequest) request).data(), request.version());
-            case LAST_MIRRORED_EPOCHS:
-                return LastMirroredEpochsRequestDataJsonConverter.write(((LastMirroredEpochsRequest) request).data(), request.version());
             case WRITE_MIRROR_STATES:
                 return WriteMirrorStatesRequestDataJsonConverter.write(((WriteMirrorStatesRequest) request).data(), request.version());
             case READ_MIRROR_STATES:
@@ -812,8 +806,6 @@ public class RequestConvertToJson {
                 return AddTopicsToMirrorResponseDataJsonConverter.write(((AddTopicsToMirrorResponse) response).data(), version);
             case REMOVE_TOPICS_FROM_MIRROR:
                 return RemoveTopicsFromMirrorResponseDataJsonConverter.write(((RemoveTopicsFromMirrorResponse) response).data(), version);
-            case LAST_MIRRORED_EPOCHS:
-                return LastMirroredEpochsResponseDataJsonConverter.write(((LastMirroredEpochsResponse) response).data(), version);
             case WRITE_MIRROR_STATES:
                 return WriteMirrorStatesResponseDataJsonConverter.write(((WriteMirrorStatesResponse) response).data(), version);
             case READ_MIRROR_STATES:
