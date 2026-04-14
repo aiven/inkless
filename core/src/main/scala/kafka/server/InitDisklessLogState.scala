@@ -16,13 +16,13 @@
  */
 package kafka.server
 
-import kafka.cluster.Partition
+import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogProducerState => CpProducerState, InitDisklessLogRequest => CpInitRequest, InitDisklessLogResponse => CpInitResponse}
+import kafka.cluster.{Partition, PartitionListener}
 import kafka.server.InitDisklessLogBatchQueue.ParsedResponse
 import kafka.utils.Logging
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.common.message.{InitDisklessLogRequestData, InitDisklessLogResponseData}
 import org.apache.kafka.common.protocol.Errors
-import org.apache.kafka.server.partition.PartitionListener
 import org.apache.kafka.storage.internals.log.UnifiedLog
 
 import java.util
@@ -33,6 +33,12 @@ sealed trait InitDisklessLogState extends Logging {
   val topicId: Uuid
   val tp: TopicPartition = partition.topicPartition
 }
+
+final case class DisklessInitMetadata(
+  topicName: String,
+  disklessStartOffset: Long,
+  producerStates: util.List[CpProducerState]
+)
 
 final case class Failed(partition: Partition, topicId: Uuid) extends WaitingForReplicationOutcome
 
@@ -108,7 +114,7 @@ final case class SendingToController(
 
   def onSuccess: AwaitingMetadata = {
     info(s"Request successful. Advancing to AwaitingMetadata.")
-    AwaitingMetadata(partition, topicId)
+    AwaitingMetadata(partition, topicId, metadataPayload = None)
   }
 }
 
@@ -197,8 +203,103 @@ object SendingToController {
 /** Controller accepted the request; waiting for the PartitionChangeRecord with disklessStartOffset to propagate. */
 final case class AwaitingMetadata(
   partition: Partition,
-  topicId: Uuid
+  topicId: Uuid,
+  metadataPayload: Option[DisklessInitMetadata] = None
 ) extends InitDisklessLogState {
   logIdent = s"[InitDisklessLog->AwaitingMetadata $tp] "
 
-}   
+  def onSuccess: Done = {
+    info(s"Metadata application successful. Advancing to Done.")
+    Done(partition, topicId)
+  }
+}
+
+/** Terminal state once metadata init succeeds. */
+final case class Done(
+  partition: Partition,
+  topicId: Uuid
+) extends InitDisklessLogState {
+  logIdent = s"[InitDisklessLog->Done $tp] "
+}
+
+object AwaitingMetadata {
+
+  def sendBatch(
+    states: Iterable[AwaitingMetadata],
+    destination: ControlPlane,
+    brokerId: Int,
+    brokerEpoch: Long,
+    onBatchComplete: Either[String, Iterable[ParsedResponse]] => Unit
+  ): Unit = {
+    def retriable(state: AwaitingMetadata): ParsedResponse =
+      ParsedResponse(state.topicId, state.tp.partition(), Errors.NOT_CONTROLLER, InitDisklessLogBatchQueue.RetriableFailure)
+
+    // Keep stable ordering to align final outcomes with input states.
+    val stateSeq = states.toSeq
+    // Retry outcomes computed locally (without a control-plane round-trip), keyed by input index.
+    val retryOutcomeByIndex = scala.collection.mutable.Map[Int, ParsedResponse]()
+    // Batched control-plane requests for states that are ready to be applied.
+    val requests = new util.ArrayList[CpInitRequest]()
+
+    // Validate each state and either precompute a retry outcome or queue a batched request.
+    stateSeq.zipWithIndex.foreach { case (state, index) =>
+      state.metadataPayload match {
+        case None =>
+          state.warn(s"Missing metadata payload for ${state.tp} while awaiting metadata; scheduling retry")
+          retryOutcomeByIndex += index -> retriable(state)
+        case Some(metadata) =>
+          state.partition.log match {
+            case None =>
+              state.warn(s"Partition ${state.tp} has no log while applying diskless metadata, scheduling retry")
+              retryOutcomeByIndex += index -> retriable(state)
+            case Some(log) =>
+              requests.add(new CpInitRequest(
+                state.topicId,
+                metadata.topicName,
+                state.tp.partition(),
+                log.logStartOffset,
+                metadata.disklessStartOffset,
+                metadata.producerStates
+              ))
+          }
+      }
+    }
+
+    // Issue one Control Plane call for the whole batch (if any requests exist).
+    val responseResult: Either[Throwable, Seq[CpInitResponse]] =
+      if (requests.isEmpty) Right(Seq.empty)
+      else {
+        try Right(Option(destination.initDisklessLog(requests)).map(_.asScala.toSeq).getOrElse(Seq.empty))
+        catch {
+          case t: Throwable => Left(t)
+        }
+      }
+
+    // Rebuild outcomes in original order.
+    val responseIterator = responseResult.getOrElse(Seq.empty).iterator
+    val outcomes = stateSeq.zipWithIndex.map { case (state, index) =>
+      retryOutcomeByIndex.getOrElse(index, {
+        responseResult match {
+          case Left(t) =>
+            // If the single batched call fails, retry all.
+            state.warn(s"Control-plane InitDisklessLog for ${state.tp} failed, scheduling retry", t)
+            retriable(state)
+          case Right(_) =>
+            (if (responseIterator.hasNext) Some(responseIterator.next()) else None) match {
+              // INVALID_REQUEST = partition already initialized (idempotent success)
+              case Some(r) if r.error() == Errors.NONE || r.error() == Errors.INVALID_REQUEST =>
+                ParsedResponse(state.topicId, state.tp.partition(), r.error(), InitDisklessLogBatchQueue.Success)
+              case Some(r) =>
+                ParsedResponse(state.topicId, state.tp.partition(), r.error(), InitDisklessLogBatchQueue.RetriableFailure)
+              case None =>
+                // Missing response entry is treated as retriable to avoid dropping work.
+                state.warn(s"Control-plane InitDisklessLog response missing for ${state.tp}, scheduling retry")
+                retriable(state)
+            }
+        }
+      })
+    }
+
+    onBatchComplete(Right(outcomes))
+  }
+}

@@ -16,14 +16,14 @@
  */
 package kafka.server
 
-import kafka.cluster.Partition
+import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogProducerState => CpProducerState, InitDisklessLogResponse => CpInitResponse}
+import kafka.cluster.{Partition, PartitionListener}
 import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.common.message.{InitDisklessLogRequestData, InitDisklessLogResponseData}
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.{AbstractRequest, InitDisklessLogRequest, InitDisklessLogResponse, RequestHeader}
 import org.apache.kafka.common.protocol.ApiKeys
-import org.apache.kafka.server.partition.PartitionListener
 import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.util.MockScheduler
 import org.apache.kafka.common.utils.MockTime
@@ -47,6 +47,7 @@ class InitDisklessLogManagerTest {
   private val tp0 = new TopicPartition("test-topic", 0)
 
   private var channelManager: MockInitDisklessLogChannelManager = _
+  private var controlPlane: ControlPlane = _
   private var mockTime: MockTime = _
   private var scheduler: MockScheduler = _
   private var manager: InitDisklessLogManager = _
@@ -55,11 +56,13 @@ class InitDisklessLogManagerTest {
   @BeforeEach
   def setUp(): Unit = {
     channelManager = new MockInitDisklessLogChannelManager()
+    controlPlane = mock(classOf[ControlPlane])
     mockTime = new MockTime()
     scheduler = new MockScheduler(mockTime)
     listenersByTp = mutable.Map.empty
     manager = new InitDisklessLogManager(
       controllerChannelManager = channelManager,
+      controlPlane = controlPlane,
       scheduler = scheduler,
       brokerId = brokerId,
       brokerEpochSupplier = () => brokerEpoch
@@ -1002,6 +1005,94 @@ class InitDisklessLogManagerTest {
             .setErrorCode(error.code())
         ))
     ))
+  }
+
+  @Test
+  def testMetadataAppliedCallsControlPlaneAndRemovesTracking(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    when(controlPlane.initDisklessLog(any())).thenReturn(util.List.of(CpInitResponse.success()))
+
+    manager.initOnControlPlane(
+      partition = partition,
+      topicId = topicId,
+      topicName = tp0.topic(),
+      disklessStartOffset = 100L,
+      producerStates = util.List.of(new CpProducerState(1L, 0.toShort, 0, 1, 100L, 1000L))
+    )
+
+    fireLinger()
+
+    verify(controlPlane).initDisklessLog(any())
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+  }
+
+  @Test
+  def testMetadataAppliedAlreadyInitializedIsTerminalSuccess(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    when(controlPlane.initDisklessLog(any())).thenReturn(util.List.of(CpInitResponse.alreadyInitialized()))
+
+    manager.initOnControlPlane(
+      partition = partition,
+      topicId = topicId,
+      topicName = tp0.topic(),
+      disklessStartOffset = 100L,
+      producerStates = util.List.of()
+    )
+
+    fireLinger()
+
+    verify(controlPlane).initDisklessLog(any())
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+  }
+
+  @Test
+  def testMetadataAppliedRetriableErrorSchedulesRetry(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    when(controlPlane.initDisklessLog(any()))
+      .thenReturn(util.List.of(new CpInitResponse(Errors.NOT_CONTROLLER)))
+      .thenReturn(util.List.of(CpInitResponse.success()))
+
+    manager.initOnControlPlane(
+      partition = partition,
+      topicId = topicId,
+      topicName = tp0.topic(),
+      disklessStartOffset = 100L,
+      producerStates = util.List.of()
+    )
+
+    fireLinger()
+    assertState[AwaitingMetadata](tp0)
+    verify(controlPlane, times(1)).initDisklessLog(any())
+
+    fireRetry()
+    verify(controlPlane, times(2)).initDisklessLog(any())
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+  }
+
+  @Test
+  def testMetadataAppliedRepeatedCallbacksAreDeduplicated(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    when(controlPlane.initDisklessLog(any())).thenReturn(util.List.of(CpInitResponse.success()))
+
+    manager.initOnControlPlane(
+      partition = partition,
+      topicId = topicId,
+      topicName = tp0.topic(),
+      disklessStartOffset = 100L,
+      producerStates = util.List.of()
+    )
+    manager.initOnControlPlane(
+      partition = partition,
+      topicId = topicId,
+      topicName = tp0.topic(),
+      disklessStartOffset = 100L,
+      producerStates = util.List.of()
+    )
+
+    fireLinger()
+
+    verify(controlPlane, times(1)).initDisklessLog(any())
+    assertTrue(manager.getTrackedPartitions.isEmpty)
   }
 }
 

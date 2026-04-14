@@ -369,9 +369,10 @@ class BrokerServer(
         retryTimeoutMs = 60000
       )
       initDisklessLogChannelManager.start()
-      maybeInitDisklessLogManager = sharedServer.inklessControlPlane.map { _ =>
+      maybeInitDisklessLogManager = sharedServer.inklessControlPlane.map { controlPlane =>
         new InitDisklessLogManager(
           controllerChannelManager = initDisklessLogChannelManager,
+          controlPlane = controlPlane,
           scheduler = kafkaScheduler,
           brokerId = config.brokerId,
           brokerEpochSupplier = () => lifecycleManager.brokerEpoch

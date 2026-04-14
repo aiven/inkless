@@ -6605,7 +6605,7 @@ class ReplicaManagerTest {
         doReturn(Seq(disklessTopicPartition ->
           new LogReadResult(
             new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
-            Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+            Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
           ))
         ).when(replicaManager).readFromLog(any(), any(), any(), any())
 

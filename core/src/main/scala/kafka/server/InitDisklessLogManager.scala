@@ -16,6 +16,7 @@
  */
 package kafka.server
 
+import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogProducerState => CpProducerState}
 import kafka.cluster.Partition
 import kafka.utils.Logging
 import org.apache.kafka.common.{TopicPartition, Uuid}
@@ -28,6 +29,7 @@ import scala.jdk.CollectionConverters._
 
 class InitDisklessLogManager(
   controllerChannelManager: NodeToControllerChannelManager,
+  controlPlane: ControlPlane,
   scheduler: Scheduler,
   brokerId: Int,
   brokerEpochSupplier: () => Long
@@ -53,13 +55,49 @@ class InitDisklessLogManager(
     retryPeriodMs = retryPeriodMs,
     maxRetryTimeMs = maxRetryTimeMs
   )
+  private val awaitingMetadataQueue = new AwaitingMetadataBatchQueue(
+    controlPlane = controlPlane,
+    scheduler = scheduler,
+    brokerId = brokerId,
+    brokerEpochSupplier = brokerEpochSupplier,
+    lingerMs = lingerMs,
+    retryPeriodMs = retryPeriodMs,
+    maxRetryTimeMs = maxRetryTimeMs
+  )
 
   private[server] def getTrackedPartitions: Set[TopicPartition] = tracked.keySet().asScala.toSet
 
   private[server] def getInitState(tp: TopicPartition): Option[InitDisklessLogState] = Option(tracked.get(tp))
 
   /**
-   * Register a sealed partition for migration. If HW already
+   * Handles already-applied diskless init metadata for a partition.
+   * This keeps/moves the partition to AwaitingMetadata and triggers a prompt
+   * control-plane init send, since metadata is committed and visible.
+   */
+  def initOnControlPlane(
+    partition: Partition,
+    topicId: Uuid,
+    topicName: String,
+    disklessStartOffset: Long,
+    producerStates: java.util.List[CpProducerState]
+  ): Unit = {
+    if (disklessStartOffset < 0) {
+      warn(s"Received negative disklessStartOffset ($disklessStartOffset) for $topicName:${partition.topicPartition}, skipping control-plane init")
+      return
+    }
+
+    val tp = partition.topicPartition
+    val payload = DisklessInitMetadata(topicName, disklessStartOffset, producerStates)
+    val newState = AwaitingMetadata(partition, topicId, Some(payload))
+    if (tracked.putIfAbsent(tp, newState) != null) {
+      tracked.computeIfPresent(tp, (_, _) => newState)
+    }
+    enqueueAwaitingMetadata(tp, newState)
+  }
+
+  /**
+   * Register a sealed partition for migration. Registers this manager as a
+   * PartitionListener to receive HW advancement notifications. If HW already
    * equals LEO, immediately marks the partition ready and schedules a batch
    * send. Otherwise, waits for HW advancement notifications.
    */
@@ -84,6 +122,7 @@ class InitDisklessLogManager(
         enqueueSendingToController(tp, sendingToController)
         sendingToController
       case awaitingMetadata: AwaitingMetadata => awaitingMetadata
+      case done: Done => done
       case _: Failed => null
     })
 
@@ -128,13 +167,30 @@ class InitDisklessLogManager(
     }(ExecutionContext.parasitic)
   }
 
+  private def enqueueAwaitingMetadata(tp: TopicPartition, state: AwaitingMetadata): Unit = {
+    awaitingMetadataQueue.enqueue(tp, state).foreach { accepted =>
+      if (accepted) {
+        tracked.computeIfPresent(tp, (_, initDisklessLogState) =>
+          initDisklessLogState match {
+            case awaitingMetadata: AwaitingMetadata => awaitingMetadata.onSuccess
+            case other => other
+          }
+        )
+        tracked.remove(tp)
+      } else {
+        tracked.remove(tp)
+      }
+    }(ExecutionContext.parasitic)
+  }
+
   /**
    * Remove a partition from tracking (e.g., when leadership is lost).
    */
   def removePartition(tp: TopicPartition): Unit = {
     if (tracked.remove(tp) != null) {
       sendingToControllerQueue.remove(tp)
-      info(s"Removed partition $tp from diskless init log tracking")
+      awaitingMetadataQueue.remove(tp)
+      info(s"Removed partition $tp from diskless init tracking")
     }
   }
 }
