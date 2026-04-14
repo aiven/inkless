@@ -52,6 +52,6 @@ public final class ControlRecordTest {
         // If this test fails then it means that ControlRecordType was changed. Please review the
         // implementation for ControlRecord to see if it needs to be updated based on the changes
         // to ControlRecordType.
-        assertEquals(8, ControlRecordType.values().length);
+        assertEquals(9, ControlRecordType.values().length);
     }
 }

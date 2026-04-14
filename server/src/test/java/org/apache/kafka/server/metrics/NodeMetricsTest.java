@@ -58,7 +58,9 @@ public class NodeMetricsTest {
 
         Set<MetricName> unstableFeatureMetrics = Set.of(
             new MetricName("maximum-supported-level", expectedGroup, "", Map.of("feature-name", "streams-version")),
-            new MetricName("minimum-supported-level", expectedGroup, "", Map.of("feature-name", "streams-version"))
+            new MetricName("minimum-supported-level", expectedGroup, "", Map.of("feature-name", "streams-version")),
+            new MetricName("maximum-supported-level", expectedGroup, "", Map.of("feature-name", "mirror-version")),
+            new MetricName("minimum-supported-level", expectedGroup, "", Map.of("feature-name", "mirror-version"))
         );
 
         Set<MetricName> expectedMetrics = enableUnstableVersions
