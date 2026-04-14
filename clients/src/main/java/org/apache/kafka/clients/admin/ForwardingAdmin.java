@@ -281,8 +281,8 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
-    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
-        return delegate.removeTopicsFromMirror(mirrorName, topics, options);
+    public StopMirrorTopicsResult stopMirrorTopics(String mirrorName, Set<String> topics, StopMirrorTopicsOptions options) {
+        return delegate.stopMirrorTopics(mirrorName, topics, options);
     }
 
     @Override
@@ -296,8 +296,8 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
-    public AddTopicsToMirrorResult addTopicsToMirror(String mirrorName, Set<String> topics, AddTopicsToMirrorOptions options) {
-        return delegate.addTopicsToMirror(mirrorName, topics, options);
+    public StartMirrorTopicsResult startMirrorTopics(String mirrorName, Set<String> topics, StartMirrorTopicsOptions options) {
+        return delegate.startMirrorTopics(mirrorName, topics, options);
     }
 
     @Override

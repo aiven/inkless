@@ -1677,33 +1677,33 @@ public interface Admin extends AutoCloseable {
     CreateMirrorResult createMirror(String mirrorName, Map<String, String> configs, CreateMirrorOptions options);
 
     /**
-     * Add topics to an existing cluster mirror for cross-cluster replication.
+     * Start mirroring for the specified topics.
      *
-     * When topics are added to a mirror, they become read-only on the destination cluster and start
+     * When topics are started in a mirror, they become read-only on the destination cluster and start
      * replicating data from the source cluster. This operation marks the specified topics with the
      * mirror name, preventing local writes and enabling the MirrorFetcherThread to begin replication.
      *
-     * @param mirrorName The mirror name to add the topics to
-     * @param topics Set of topic names to add to mirroring
-     * @param options Options for the add topics to mirror operation
-     * @return The AddTopicsToMirrorResult containing futures for each topic addition
+     * @param mirrorName The cluster mirror name
+     * @param topics Set of topic names to start mirroring
+     * @param options Options for the start mirror topics operation
+     * @return The StartMirrorTopicsResult containing futures for each topic
      */
-    AddTopicsToMirrorResult addTopicsToMirror(String mirrorName, Set<String> topics, AddTopicsToMirrorOptions options);
+    StartMirrorTopicsResult startMirrorTopics(String mirrorName, Set<String> topics, StartMirrorTopicsOptions options);
 
     /**
-     * Remove topics from cluster mirror, making them writable on the destination cluster.
+     * Stop mirroring for the specified topics.
      *
      * This operation is typically used during failover scenarios when the destination cluster needs to
-     * be promoted from passive (read-only mirror) to active (accepting writes). Removing topics from
-     * the mirror clears the mirrorName field from partition metadata, which allows producers to write
+     * be promoted from passive (read-only mirror) to active (accepting writes). Stopping mirror topics
+     * clears the mirrorName field from partition metadata, which allows producers to write
      * to these partitions.
      *
-     * @param mirrorName The mirror name to remove the topics from
-     * @param topics Set of topic names to remove from mirroring
-     * @param options Options for the remove topics from mirror operation
-     * @return The RemoveTopicsFromMirrorResult containing futures for each topic removal
+     * @param mirrorName The cluster mirror name
+     * @param topics Set of topic names to stop mirroring
+     * @param options Options for the stop mirror topics operation
+     * @return The StopMirrorTopicsResult containing futures for each topic
      */
-    RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options);
+    StopMirrorTopicsResult stopMirrorTopics(String mirrorName, Set<String> topics, StopMirrorTopicsOptions options);
 
     /**
      * Pause mirroring for the specified topics.
@@ -1712,8 +1712,8 @@ public interface Admin extends AutoCloseable {
      * source cluster. The mirror fetcher threads are removed for these partitions, preserving the
      * current replicated state. Mirroring can be resumed later with {@link #resumeMirrorTopics}.
      *
-     * @param mirrorName The mirror name to pause the topics for
-     * @param topics Set of topic names to pause mirroring for
+     * @param mirrorName The cluster mirror name
+     * @param topics Set of topic names to pause mirroring
      * @param options Options for the pause mirror topics operation
      * @return The PauseMirrorTopicsResult containing futures for each topic
      */
@@ -1726,8 +1726,8 @@ public interface Admin extends AutoCloseable {
      * left off. New mirror fetcher threads are created and the partitions transition back to the
      * MIRRORING state.
      *
-     * @param mirrorName The mirror name to resume the topics for
-     * @param topics Set of topic names to resume mirroring for
+     * @param mirrorName The cluster mirror name
+     * @param topics Set of topic names to resume mirroring
      * @param options Options for the resume mirror topics operation
      * @return The ResumeMirrorTopicsResult containing futures for each topic
      */
@@ -1739,7 +1739,7 @@ public interface Admin extends AutoCloseable {
      * The mirror must be empty (no topics) or all its topics must have been removed (in STOPPED
      * state). After deletion, all mirror metadata are tombstoned and failback is no longer possible.
      *
-     * @param mirrorName The name of the cluster mirror to delete
+     * @param mirrorName The cluster mirror name
      * @param options Options for the delete mirror operation
      * @return The DeleteMirrorResult
      */

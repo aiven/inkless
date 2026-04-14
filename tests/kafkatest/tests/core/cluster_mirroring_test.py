@@ -28,7 +28,6 @@ from kafkatest.version import (
 )
 import itertools
 
-
 class ClusterMirrorConfig:
     def __init__(
         self,
@@ -151,14 +150,14 @@ class ClusterMirroringTest(Test):
 
         wait_until(
             lambda: (
-                "Added"
-                in self.dest_kafka.add_topics_to_cluster_mirror(
+                "Started"
+                in self.dest_kafka.start_cluster_mirror_topics(
                     kafka_node, mirror_cfg["name"], self.topics.keys()
                 )
             ),
             timeout_sec=20,
             backoff_sec=2,
-            err_msg="Failed to add topics cluster mirror",
+            err_msg="Failed to start mirror topics",
         )
 
         def all_satisfy_in_mirror(mirror_name, per_partition_condition):

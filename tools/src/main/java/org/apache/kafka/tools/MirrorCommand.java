@@ -16,8 +16,6 @@
  */
 package org.apache.kafka.tools;
 
-import org.apache.kafka.clients.admin.AddTopicsToMirrorOptions;
-import org.apache.kafka.clients.admin.AddTopicsToMirrorResult;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.AlterConfigOp;
@@ -36,8 +34,10 @@ import org.apache.kafka.clients.admin.MirrorListing;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.PauseMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.PauseMirrorTopicsResult;
-import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorOptions;
-import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorResult;
+import org.apache.kafka.clients.admin.StartMirrorTopicsOptions;
+import org.apache.kafka.clients.admin.StartMirrorTopicsResult;
+import org.apache.kafka.clients.admin.StopMirrorTopicsOptions;
+import org.apache.kafka.clients.admin.StopMirrorTopicsResult;
 import org.apache.kafka.clients.admin.ResumeMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.ResumeMirrorTopicsResult;
 import org.apache.kafka.clients.admin.TopicDescription;
@@ -95,10 +95,10 @@ public abstract class MirrorCommand {
                 mirrorService.createMirror(opts);
             } else if (opts.hasAlterOption()) {
                 mirrorService.alterMirror(opts);
-            } else if (opts.hasAddOption()) {
-                mirrorService.addTopicsToMirror(opts);
-            } else if (opts.hasRemoveOption()) {
-                mirrorService.removeTopicsFromMirror(opts);
+            } else if (opts.hasStartOption()) {
+                mirrorService.startMirrorTopics(opts);
+            } else if (opts.hasStopOption()) {
+                mirrorService.stopMirrorTopics(opts);
             } else if (opts.hasDeleteOption()) {
                 mirrorService.deleteMirror(opts);
             } else if (opts.hasPauseOption()) {
@@ -169,7 +169,7 @@ public abstract class MirrorCommand {
             System.out.printf("Altered mirror %s%n", opts.mirror().get());
         }
 
-        private void addTopicsToMirror(MirrorCommandOptions opts) throws Exception {
+        private void startMirrorTopics(MirrorCommandOptions opts) throws Exception {
             String topicPattern = opts.topic().get();
             String mirrorName = opts.mirror().get();
 
@@ -231,7 +231,7 @@ public abstract class MirrorCommand {
                     createResult.values().get(topicName).get();
                 } catch (ExecutionException e) {
                     if (!(e.getCause() instanceof TopicExistsException)) {
-                        System.err.printf("Failed to add topic %s: %s%n", topicName, e.getCause().getMessage());
+                        System.err.printf("Failed to start topic %s: %s%n", topicName, e.getCause().getMessage());
                     }
                 } finally {
                     topics.put(topicName, mirrorName);
@@ -241,13 +241,13 @@ public abstract class MirrorCommand {
             // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
             Thread.sleep(1000);
             // Ensures the mirror.name config is properly set even when topics already exist
-            AddTopicsToMirrorResult addResult = adminClient.addTopicsToMirror(mirrorName, topics.keySet(), new AddTopicsToMirrorOptions());
-            addResult.all().get();
+            StartMirrorTopicsResult startResult = adminClient.startMirrorTopics(mirrorName, topics.keySet(), new StartMirrorTopicsOptions());
+            startResult.all().get();
 
-            System.out.printf("Added %d topic(s) to mirror %s: %s%n", topics.size(), mirrorName, topics.keySet());
+            System.out.printf("Started %d mirror topic(s) in mirror %s: %s%n", topics.size(), mirrorName, topics.keySet());
         }
 
-        private void removeTopicsFromMirror(MirrorCommandOptions opts) throws Exception {
+        private void stopMirrorTopics(MirrorCommandOptions opts) throws Exception {
             String topicPattern = opts.topic().get();
             String mirrorName = opts.mirror().get();
 
@@ -257,19 +257,11 @@ public abstract class MirrorCommand {
             var allTopics = adminClient.listTopics().names().get();
             matchingTopics = matchTopics(allTopics, topicPattern);
 
-            // Remove all matching topics from the mirror
-            RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = adminClient.removeTopicsFromMirror(
-                mirrorName, matchingTopics, new RemoveTopicsFromMirrorOptions());
-            removeTopicsFromMirrorResult.all().get();
-            System.out.printf("Removed %d topic(s) from mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
-        }
-
-        private void deleteMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
-            String mirrorName = opts.mirror().get();
-            DeleteMirrorResult result = adminClient.deleteMirror(
-                mirrorName, new DeleteMirrorOptions());
-            result.all().get();
-            System.out.printf("Deleted mirror %s%n", mirrorName);
+            // Stop mirroring for all matching topics
+            StopMirrorTopicsResult stopResult = adminClient.stopMirrorTopics(
+                mirrorName, matchingTopics, new StopMirrorTopicsOptions());
+            stopResult.all().get();
+            System.out.printf("Stopped %d mirror topic(s) in mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
         }
 
         private void pauseMirrorTopics(MirrorCommandOptions opts) throws Exception {
@@ -400,6 +392,14 @@ public abstract class MirrorCommand {
             }
         }
 
+        private void deleteMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
+            String mirrorName = opts.mirror().get();
+            DeleteMirrorResult result = adminClient.deleteMirror(
+                    mirrorName, new DeleteMirrorOptions());
+            result.all().get();
+            System.out.printf("Deleted mirror %s%n", mirrorName);
+        }
+
         // Truncate string from the left, keeping the rightmost characters
         // Example: truncateLeft("my-very-long-mirror-name", 10) -> "...or-name"
         private String truncateLeft(String str, int maxLength) {
@@ -429,8 +429,8 @@ public abstract class MirrorCommand {
         private final ArgumentAcceptingOptionSpec<String> mirrorConfigOpt;
         private final OptionSpecBuilder createOpt;
         private final OptionSpecBuilder alterOpt;
-        private final OptionSpecBuilder addOpt;
-        private final OptionSpecBuilder removeOpt;
+        private final OptionSpecBuilder startOpt;
+        private final OptionSpecBuilder stopOpt;
         private final OptionSpecBuilder deleteOpt;
         private final OptionSpecBuilder pauseOpt;
         private final OptionSpecBuilder resumeOpt;
@@ -461,13 +461,13 @@ public abstract class MirrorCommand {
 
             createOpt = parser.accepts("create", "Create a new cluster mirror from a source cluster.");
             alterOpt = parser.accepts("alter", "Alter the configuration of an existing cluster mirror.");
-            addOpt = parser.accepts("add", "Add topic(s) to an existing cluster mirror (supports regex).");
-            removeOpt = parser.accepts("remove", "Remove topic(s) from an existing cluster mirror (supports regex).");
-            deleteOpt = parser.accepts("delete", "Delete a cluster mirror.");
+            startOpt = parser.accepts("start", "Start mirroring topic(s) in an existing cluster mirror (supports regex).");
+            stopOpt = parser.accepts("stop", "Stop mirroring topic(s) in an existing cluster mirror (supports regex).");
             pauseOpt = parser.accepts("pause", "Pause mirroring for topic(s) matching the pattern (supports regex).");
             resumeOpt = parser.accepts("resume", "Resume mirroring for previously paused topic(s) matching the pattern (supports regex).");
             listOpt = parser.accepts("list", "List all cluster mirrors.");
             describeOpt = parser.accepts("describe", "Describe a cluster mirror including partition lag and state.");
+            deleteOpt = parser.accepts("delete", "Delete a cluster mirror.");
 
             mirrorOpt = parser.accepts("mirror", "The name of the cluster mirror.")
                 .withRequiredArg()
@@ -507,16 +507,12 @@ public abstract class MirrorCommand {
             return has(alterOpt);
         }
 
-        private boolean hasAddOption() {
-            return has(addOpt);
+        private boolean hasStartOption() {
+            return has(startOpt);
         }
 
-        private boolean hasRemoveOption() {
-            return has(removeOpt);
-        }
-
-        private boolean hasDeleteOption() {
-            return has(deleteOpt);
+        private boolean hasStopOption() {
+            return has(stopOpt);
         }
 
         private boolean hasPauseOption() {
@@ -525,6 +521,10 @@ public abstract class MirrorCommand {
 
         private boolean hasResumeOption() {
             return has(resumeOpt);
+        }
+
+        private boolean hasDeleteOption() {
+            return has(deleteOpt);
         }
 
         private boolean hasListOption() {
@@ -574,16 +574,16 @@ public abstract class MirrorCommand {
         @SuppressWarnings({"NPathComplexity", "CyclomaticComplexity"})
         private void checkArgs() {
             if (args.length == 0)
-                CommandLineUtils.printUsageAndExit(parser, "Create cluster mirrors and add topics to them.");
+                CommandLineUtils.printUsageAndExit(parser, "Create cluster mirrors and manage mirrored topics.");
 
-            CommandLineUtils.maybePrintHelpOrVersion(this, "This tool helps to create cluster mirrors and add topics to them.");
+            CommandLineUtils.maybePrintHelpOrVersion(this, "This tool helps to create cluster mirrors and manage mirrored topics.");
 
             // should have exactly one action
-            if ((has(createOpt) ? 1 : 0) + (has(alterOpt) ? 1 : 0) + (has(addOpt) ? 1 : 0) + (has(removeOpt) ? 1 : 0)
+            if ((has(createOpt) ? 1 : 0) + (has(alterOpt) ? 1 : 0) + (has(startOpt) ? 1 : 0) + (has(stopOpt) ? 1 : 0)
                     + (has(deleteOpt) ? 1 : 0) + (has(pauseOpt) ? 1 : 0) + (has(resumeOpt) ? 1 : 0)
                     + (has(listOpt) ? 1 : 0) + (has(describeOpt) ? 1 : 0) != 1)
-                CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create, --alter, --add, " +
-                        "--remove, --delete, --pause, --resume, --list, or --describe");
+                CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create, --alter, --start, " +
+                        "--stop, --delete, --pause, --resume, --list, or --describe");
 
             // check required args
             if (!has(bootstrapServerOpt))
@@ -599,11 +599,11 @@ public abstract class MirrorCommand {
             if (has(alterOpt) && !has(mirrorConfigOpt))
                 throw new IllegalArgumentException("--mirror-config must be specified when altering a mirror");
 
-            if (has(addOpt) && !has(topicOpt))
-                throw new IllegalArgumentException("--topic must be specified when adding topic(s) to a mirror");
+            if (has(startOpt) && !has(topicOpt))
+                throw new IllegalArgumentException("--topic must be specified when starting mirror topic(s)");
 
-            if (has(removeOpt) && !has(topicOpt))
-                throw new IllegalArgumentException("--topic must be specified when removing topic(s) from a mirror");
+            if (has(stopOpt) && !has(topicOpt))
+                throw new IllegalArgumentException("--topic must be specified when stopping mirror topic(s)");
 
             if (has(pauseOpt) && !has(topicOpt))
                 throw new IllegalArgumentException("--topic must be specified when pausing mirror topic(s)");

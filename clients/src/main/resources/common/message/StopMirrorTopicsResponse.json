@@ -14,9 +14,9 @@
 // limitations under the License.
 
 {
-  "apiKey": 95,
+  "apiKey": 96,
   "type": "response",
-  "name": "AddTopicsToMirrorResponse",
+  "name": "StopMirrorTopicsResponse",
   // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",

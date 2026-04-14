@@ -22,14 +22,14 @@ import org.apache.kafka.common.KafkaFuture;
 import java.util.Set;
 
 /**
- * The result of the {@link Admin#addTopicsToMirror(String, Set, AddTopicsToMirrorOptions)} call.
+ * The result of the {@link Admin#startMirrorTopics(String, Set, StartMirrorTopicsOptions)} call.
  *
  * The API of this class is evolving, see {@link Admin} for details.
  */
-public class AddTopicsToMirrorResult {
+public class StartMirrorTopicsResult {
     private final KafkaFuture<Void> future;
 
-    AddTopicsToMirrorResult(final KafkaFuture<Void> future) {
+    StartMirrorTopicsResult(final KafkaFuture<Void> future) {
         this.future = future;
     }
 

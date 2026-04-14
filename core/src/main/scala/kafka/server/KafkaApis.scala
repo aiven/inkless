@@ -252,8 +252,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.STREAMS_GROUP_HEARTBEAT => handleStreamsGroupHeartbeat(request).exceptionally(handleError)
         case ApiKeys.GET_REPLICA_LOG_INFO => handleGetReplicaLogInfo(request)
         case ApiKeys.CREATE_MIRROR => forwardToController(request)
-        case ApiKeys.ADD_TOPICS_TO_MIRROR => handleAddTopicsToMirror(request)
-        case ApiKeys.REMOVE_TOPICS_FROM_MIRROR => handleRemoveTopicsFromMirror(request)
+        case ApiKeys.START_MIRROR_TOPICS => handleStartMirrorTopics(request)
+        case ApiKeys.STOP_MIRROR_TOPICS => handleStopMirrorTopics(request)
         case ApiKeys.PAUSE_MIRROR_TOPICS => handlePauseMirrorTopics(request)
         case ApiKeys.RESUME_MIRROR_TOPICS => handleResumeMirrorTopics(request)
         case ApiKeys.DELETE_MIRROR => handleDeleteMirror(request)
@@ -339,20 +339,20 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
-  def handleAddTopicsToMirror(request: RequestChannel.Request): Unit = {
+  def handleStartMirrorTopics(request: RequestChannel.Request): Unit = {
     // TODO: do the mirror partition state validation before forwarding to controller
     if (!MirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
-      logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring add topics to mirror request")
-      requestHelper.sendMaybeThrottle(request, new AddTopicsToMirrorResponse(new AddTopicsToMirrorResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
+      logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring start mirror topics request")
+      requestHelper.sendMaybeThrottle(request, new StartMirrorTopicsResponse(new StartMirrorTopicsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
     forwardToController(request)
   }
 
-  def handleRemoveTopicsFromMirror(request: RequestChannel.Request): Unit = {
+  def handleStopMirrorTopics(request: RequestChannel.Request): Unit = {
     if (!MirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
-      logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring remove topics from mirror request")
-      requestHelper.sendMaybeThrottle(request, new RemoveTopicsFromMirrorResponse(new RemoveTopicsFromMirrorResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
+      logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring stop mirror topics request")
+      requestHelper.sendMaybeThrottle(request, new StopMirrorTopicsResponse(new StopMirrorTopicsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
     forwardToController(request)

@@ -17,36 +17,36 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.AddTopicsToMirrorRequestData;
-import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
 
 import java.util.Set;
 
-public class AddTopicsToMirrorRequest extends AbstractRequest {
-    public static class Builder extends AbstractRequest.Builder<AddTopicsToMirrorRequest> {
+public class StartMirrorTopicsRequest extends AbstractRequest {
+    public static class Builder extends AbstractRequest.Builder<StartMirrorTopicsRequest> {
 
-        private final AddTopicsToMirrorRequestData data;
+        private final StartMirrorTopicsRequestData data;
 
-        public Builder(AddTopicsToMirrorRequestData data) {
-            super(ApiKeys.ADD_TOPICS_TO_MIRROR);
+        public Builder(StartMirrorTopicsRequestData data) {
+            super(ApiKeys.START_MIRROR_TOPICS);
             this.data = data;
         }
 
         public Builder(String mirrorName, Set<String> topics) {
-            super(ApiKeys.ADD_TOPICS_TO_MIRROR, ApiKeys.ADD_TOPICS_TO_MIRROR.oldestVersion(),
-                    ApiKeys.ADD_TOPICS_TO_MIRROR.latestVersion());
-            AddTopicsToMirrorRequestData data = new AddTopicsToMirrorRequestData();
+            super(ApiKeys.START_MIRROR_TOPICS, ApiKeys.START_MIRROR_TOPICS.oldestVersion(),
+                    ApiKeys.START_MIRROR_TOPICS.latestVersion());
+            StartMirrorTopicsRequestData data = new StartMirrorTopicsRequestData();
             data.setMirrorName(mirrorName);
-            topics.forEach(topic -> data.topics().add(new AddTopicsToMirrorRequestData.TopicData().setTopicName(topic)));
+            topics.forEach(topic -> data.topics().add(new StartMirrorTopicsRequestData.TopicData().setTopicName(topic)));
             this.data = data;
         }
 
         @Override
-        public AddTopicsToMirrorRequest build(short version) {
-            return new AddTopicsToMirrorRequest(data, version);
+        public StartMirrorTopicsRequest build(short version) {
+            return new StartMirrorTopicsRequest(data, version);
         }
 
         @Override
@@ -55,30 +55,30 @@ public class AddTopicsToMirrorRequest extends AbstractRequest {
         }
     }
 
-    private final AddTopicsToMirrorRequestData data;
+    private final StartMirrorTopicsRequestData data;
 
-    public AddTopicsToMirrorRequest(AddTopicsToMirrorRequestData data, short version) {
-        super(ApiKeys.ADD_TOPICS_TO_MIRROR, version);
+    public StartMirrorTopicsRequest(StartMirrorTopicsRequestData data, short version) {
+        super(ApiKeys.START_MIRROR_TOPICS, version);
         this.data = data;
     }
 
     @Override
-    public AddTopicsToMirrorRequestData data() {
+    public StartMirrorTopicsRequestData data() {
         return data;
     }
 
     @Override
     public AbstractResponse getErrorResponse(int throttleTimeMs, Throwable e) {
         Errors error = Errors.forException(e);
-        AddTopicsToMirrorResponseData responseData = new AddTopicsToMirrorResponseData();
+        StartMirrorTopicsResponseData responseData = new StartMirrorTopicsResponseData();
         responseData.setErrorCode(error.code());
 
-        return new AddTopicsToMirrorResponse(responseData);
+        return new StartMirrorTopicsResponse(responseData);
     }
 
-    public static AddTopicsToMirrorRequest parse(Readable readable, short version) {
-        return new AddTopicsToMirrorRequest(
-                new AddTopicsToMirrorRequestData(readable, version),
+    public static StartMirrorTopicsRequest parse(Readable readable, short version) {
+        return new StartMirrorTopicsRequest(
+                new StartMirrorTopicsRequestData(readable, version),
                 version
         );
     }

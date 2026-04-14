@@ -17,7 +17,7 @@
   "apiKey": 96,
   "type": "request",
   "listeners": ["broker", "controller"],
-  "name": "RemoveTopicsFromMirrorRequest",
+  "name": "StopMirrorTopicsRequest",
   // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",

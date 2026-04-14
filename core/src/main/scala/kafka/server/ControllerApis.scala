@@ -136,8 +136,8 @@ class ControllerApis(
         case ApiKeys.REMOVE_RAFT_VOTER => handleRemoveRaftVoter(request)
         case ApiKeys.UPDATE_RAFT_VOTER => handleUpdateRaftVoter(request)
         case ApiKeys.CREATE_MIRROR => handleCreateMirror(request)
-        case ApiKeys.ADD_TOPICS_TO_MIRROR => handleAddTopicsToMirror(request)
-        case ApiKeys.REMOVE_TOPICS_FROM_MIRROR => handleRemoveTopicsFromMirror(request)
+        case ApiKeys.START_MIRROR_TOPICS => handleStartMirrorTopics(request)
+        case ApiKeys.STOP_MIRROR_TOPICS => handleStopMirrorTopics(request)
         case ApiKeys.BUMP_LEADER_EPOCHS => handleBumpLeaderEpoch(request)
         case ApiKeys.PAUSE_MIRROR_TOPICS => handlePauseMirrorTopics(request)
         case ApiKeys.RESUME_MIRROR_TOPICS => handleResumeMirrorTopics(request)
@@ -257,15 +257,15 @@ class ControllerApis(
     CompletableFuture.completedFuture[Unit](())
   }
 
-  def handleAddTopicsToMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    val addTopicsToMirrorRequest = request.body[AddTopicsToMirrorRequest]
-    val mirrorName = addTopicsToMirrorRequest.data().mirrorName()
+  def handleStartMirrorTopics(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    val startMirrorTopicsRequest = request.body[StartMirrorTopicsRequest]
+    val mirrorName = startMirrorTopicsRequest.data().mirrorName()
     if (!authHelper.authorize(request.context, ALTER, CLUSTER_MIRROR, mirrorName))
       throw new MirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!MirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
     val topics: util.Set[String] = new util.HashSet[String]()
-    addTopicsToMirrorRequest.data().topics().forEach( topic => {
+    startMirrorTopicsRequest.data().topics().forEach( topic => {
         topics.add(topic.topicName())
     })
     val unauthorizedTopics = topics.asScala.filterNot(topic =>
@@ -274,28 +274,28 @@ class ControllerApis(
       throw new TopicAuthorizationException(unauthorizedTopics.asJava)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    controller.addTopicsToMirror(context, mirrorName, topics)
+    controller.startMirrorTopics(context, mirrorName, topics)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
         } else {
           requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
-            new AddTopicsToMirrorResponse(response.setThrottleTimeMs(throttleMs)))
+            new StartMirrorTopicsResponse(response.setThrottleTimeMs(throttleMs)))
         }
       }
 
     CompletableFuture.completedFuture[Unit](())
   }
 
-  def handleRemoveTopicsFromMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    val removeTopicsFromMirrorRequest = request.body[RemoveTopicsFromMirrorRequest]
-    val mirrorName = removeTopicsFromMirrorRequest.data().mirrorName()
+  def handleStopMirrorTopics(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    val stopMirrorTopicsRequest = request.body[StopMirrorTopicsRequest]
+    val mirrorName = stopMirrorTopicsRequest.data().mirrorName()
     if (!authHelper.authorize(request.context, ALTER, CLUSTER_MIRROR, mirrorName))
       throw new MirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!MirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
     val topics: util.Set[String] = new util.HashSet[String]()
-    removeTopicsFromMirrorRequest.data().topics().forEach( topic => {
+    stopMirrorTopicsRequest.data().topics().forEach( topic => {
         topics.add(topic.topicName())
     })
     val unauthorizedTopics = topics.asScala.filterNot(topic =>
@@ -304,13 +304,13 @@ class ControllerApis(
       throw new TopicAuthorizationException(unauthorizedTopics.asJava)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    controller.removeTopicsFromMirror(context, mirrorName, topics)
+    controller.stopMirrorTopics(context, mirrorName, topics)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
         } else {
           requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
-            new RemoveTopicsFromMirrorResponse(response.setThrottleTimeMs(throttleMs)))
+            new StopMirrorTopicsResponse(response.setThrottleTimeMs(throttleMs)))
         }
       }
 

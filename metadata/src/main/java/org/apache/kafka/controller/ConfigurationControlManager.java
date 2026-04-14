@@ -25,11 +25,11 @@ import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.config.types.Password;
-import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
+import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
 import org.apache.kafka.common.message.CreateMirrorResponseData;
 import org.apache.kafka.common.message.DeleteMirrorResponseData;
 import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
-import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
+import org.apache.kafka.common.message.StopMirrorTopicsResponseData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
@@ -225,15 +225,15 @@ public class ConfigurationControlManager {
         return ControllerResult.atomicOf(outputRecords, outputResults);
     }
 
-    ControllerResult<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(String mirrorName, Set<String> topics) {
+    ControllerResult<StopMirrorTopicsResponseData> stopMirrorTopics(String mirrorName, Set<String> topics) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
-        RemoveTopicsFromMirrorResponseData data = new RemoveTopicsFromMirrorResponseData();
+        StopMirrorTopicsResponseData data = new StopMirrorTopicsResponseData();
         data.setMirrorName(mirrorName);
-        List<RemoveTopicsFromMirrorResponseData.TopicResult> topicResList = new ArrayList<>();
+        List<StopMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
         for (String topic : topics) {
             String mirrorNameConfig = TopicConfig.MIRROR_NAME_CONFIG;
 
-            RemoveTopicsFromMirrorResponseData.TopicResult topicRes = new RemoveTopicsFromMirrorResponseData.TopicResult();
+            StopMirrorTopicsResponseData.TopicResult topicRes = new StopMirrorTopicsResponseData.TopicResult();
 
             ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
 
@@ -396,13 +396,13 @@ public class ConfigurationControlManager {
         return ControllerResult.of(records, data);
     }
 
-    ControllerResult<AddTopicsToMirrorResponseData> addTopicsToMirror(String mirrorName, Set<String> topics) {
+    ControllerResult<StartMirrorTopicsResponseData> startMirrorTopics(String mirrorName, Set<String> topics) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
-        AddTopicsToMirrorResponseData data = new AddTopicsToMirrorResponseData();
+        StartMirrorTopicsResponseData data = new StartMirrorTopicsResponseData();
         data.setMirrorName(mirrorName);
-        List<AddTopicsToMirrorResponseData.TopicResult> topicResList = new ArrayList<>();
+        List<StartMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
         for (String topic : topics) {
-            AddTopicsToMirrorResponseData.TopicResult topicRes = new AddTopicsToMirrorResponseData.TopicResult();
+            StartMirrorTopicsResponseData.TopicResult topicRes = new StartMirrorTopicsResponseData.TopicResult();
             ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
 
             TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
