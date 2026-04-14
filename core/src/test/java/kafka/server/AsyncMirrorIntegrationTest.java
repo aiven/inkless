@@ -16,9 +16,9 @@
  */
 package kafka.server;
 
+import org.apache.kafka.clients.admin.AddTopicsToMirrorOptions;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.AddTopicsToMirrorOptions;
 import org.apache.kafka.clients.admin.CreateMirrorOptions;
 import org.apache.kafka.clients.admin.MirrorListing;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -35,6 +35,7 @@ import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.server.config.MirrorConfig;
 import org.apache.kafka.server.config.ServerConfigs;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,8 +46,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
