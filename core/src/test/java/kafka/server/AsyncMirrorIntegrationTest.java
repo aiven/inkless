@@ -60,7 +60,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 3. Create a mirror link on the destination cluster pointing to the source
  * 4. Add topics to the mirror (ASYNC replication)
  * 5. Wait for the destination to catch up
- * 8. Verify all data is present on the destination
+ * 6. Verify all data is present on the destination
  */
 @Timeout(value = 180, unit = TimeUnit.SECONDS)
 public class AsyncMirrorIntegrationTest {
@@ -223,7 +223,7 @@ public class AsyncMirrorIntegrationTest {
         // Final attempt with assertion
         List<ConsumerRecord<String, String>> records = consumeFromCluster(
                 destCluster, expectedRecords, Duration.ofSeconds(10));
-        assertEquals(records.size(), expectedRecords,
+        assertEquals(expectedRecords, records.size(),
                 "Destination did not catch up within timeout. Expected " +
                         expectedRecords + " records but got " + records.size());
     }
