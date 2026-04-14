@@ -17,11 +17,13 @@
 package kafka.server
 
 import kafka.server.InitDisklessLogBatchQueue.ParsedResponse
+import io.aiven.inkless.control_plane.ControlPlane
 import kafka.utils.Logging
 import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.message.InitDisklessLogResponseData
 import org.apache.kafka.common.requests.{InitDisklessLogRequest, InitDisklessLogResponse}
+import org.apache.kafka.common.utils.ExponentialBackoff
 import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.util.Scheduler
 
@@ -65,7 +67,8 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
 
   private case class Attempt(state: S, attemptNumber: Int)
   private var queuedByTp = new java.util.LinkedHashMap[TopicPartition, Attempt]()
-  private val resultPromiseByTp = new java.util.HashMap[TopicPartition, Promise[Boolean]]()
+  private val resultPromiseByTp = new java.util.concurrent.ConcurrentHashMap[TopicPartition, Promise[Boolean]]()
+  private val retryBackoff = new ExponentialBackoff(retryPeriodMs, 2, maxRetryTimeMs, 0.0)
   
   private sealed trait TaskStatus
   private case object NoTask extends TaskStatus
@@ -97,32 +100,25 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
 
   def enqueue(tp: TopicPartition, state: S): Future[Boolean] = {
     val promise = withQueueLock {
-      val preservedAttemptNumber = Option(queuedByTp.get(tp)).map(_.attemptNumber).getOrElse(0)
-      // Keep retry progression for already queued partitions, but always refresh the state payload.
-      queuedByTp.put(tp, Attempt(state, attemptNumber = preservedAttemptNumber))
       val currentPromise = resultPromiseByTp.computeIfAbsent(tp, _ => Promise[Boolean]())
-      
-      taskStatus match {
-        case NoTask =>
-          // Schedule a new run, allowing linger for additional ready partitions.
-          scheduleNewTask(lingerMs)
-        case TaskScheduled(scheduledTask) =>
-          // Re-schedule using linger so newly ready partitions can batch together.
-          scheduledTask.cancel(false)
-          scheduleNewTask(lingerMs)
-        case TaskRunning =>
-          // A task is in-flight. Newly queued work is already in queuedByTp
-          // and will be picked up by finishTask.
+      val existing = Option(queuedByTp.get(tp))
+      val isDuplicate = existing.exists(_.state == state)
+      if (!isDuplicate) {
+        val attemptNum = existing.map(_.attemptNumber).getOrElse(0)
+        queuedByTp.put(tp, Attempt(state, attemptNumber = attemptNum))
       }
+      maybeScheduleOrReschedule(lingerMs)
       currentPromise
     }
-    
     promise.future
   }
 
-  def remove(tp: TopicPartition): Unit = withQueueLock {
-    queuedByTp.remove(tp)
-    Option(resultPromiseByTp.remove(tp)).foreach(_.trySuccess(false))
+  def remove(tp: TopicPartition): Unit = {
+    val promise = withQueueLock {
+      queuedByTp.remove(tp)
+      Option(resultPromiseByTp.remove(tp))
+    }
+    promise.foreach(_.trySuccess(false))
   }
   
   private def task(): Unit = {
@@ -207,12 +203,22 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
   }
 
   private def finishTask(): Unit = withQueueLock {
-    if (queuedByTp.isEmpty) {
-      taskStatus = NoTask
-    } else {
+    taskStatus = NoTask
+    if (!queuedByTp.isEmpty) {
       val hasFreshAttempts = queuedByTp.values().asScala.exists(_.attemptNumber == 0)
       val delayMs = if (hasFreshAttempts) lingerMs else computeRetryDelayMs()
-      scheduleNewTask(delayMs)
+      maybeScheduleOrReschedule(delayMs)
+    }
+  }
+
+  private def maybeScheduleOrReschedule(delayMs: Long): Unit = {
+    taskStatus match {
+      case NoTask =>
+        scheduleNewTask(delayMs)
+      case TaskScheduled(scheduledTask) =>
+        scheduledTask.cancel(false)
+        scheduleNewTask(delayMs)
+      case TaskRunning =>
     }
   }
 
@@ -232,27 +238,16 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
   }
 
   private def completeAndRemovePromise(tp: TopicPartition, accepted: Boolean): Unit = withQueueLock {
-    Option(resultPromiseByTp.remove(tp)).foreach(_.trySuccess(accepted))
+    if (!queuedByTp.containsKey(tp)) {
+      Option(resultPromiseByTp.remove(tp)).foreach(_.trySuccess(accepted))
+    }
   }
 
   private def computeRetryDelayMs(): Long = {
     val maxAttemptNumber = queuedByTp.values().asScala.map(_.attemptNumber).maxOption.getOrElse(0)
-    if (maxAttemptNumber <= 0) {
-      retryPeriodMs
-    } else {
-      // First retry waits retryPeriodMs, then doubles exponentially up to maxRetryTimeMs.
-      var delay = retryPeriodMs
-      var exponent = maxAttemptNumber - 1
-      while (exponent > 0 && delay < maxRetryTimeMs) {
-        if (delay >= (maxRetryTimeMs + 1L) / 2L) {
-          delay = maxRetryTimeMs
-        } else {
-          delay = delay * 2L
-        }
-        exponent -= 1
-      }
-      Math.min(delay, maxRetryTimeMs)
-    }
+    // First retry waits retryPeriodMs, then doubles exponentially up to maxRetryTimeMs.
+    val attempts = Math.max(maxAttemptNumber - 1, 0)
+    retryBackoff.backoff(attempts)
   }
 
 }
@@ -317,3 +312,47 @@ class SendingToControllerBatchQueue(
     }
   }
 }
+
+class AwaitingMetadataBatchQueue(
+  controlPlane: ControlPlane,
+  scheduler: Scheduler,
+  brokerId: Int,
+  brokerEpochSupplier: () => Long,
+  lingerMs: Long,
+  retryPeriodMs: Long,
+  maxRetryTimeMs: Long
+) extends RetriableInitDisklessLogBatchQueue[AwaitingMetadata](
+  scheduler = scheduler,
+  brokerId = brokerId,
+  brokerEpochSupplier = brokerEpochSupplier,
+  lingerMs = lingerMs,
+  retryPeriodMs = retryPeriodMs,
+  maxRetryTimeMs = maxRetryTimeMs
+) {
+  logIdent = s"[AwaitingMetadataBatchQueue] "
+
+  override protected def shouldSend(state: AwaitingMetadata): Boolean = {
+    if (state.metadataPayload.isDefined) {
+      true
+    } else {
+      state.warn(s"Skipping InitDisklessLog control-plane request because metadata payload is missing for ${state.tp}")
+      false
+    }
+  }
+
+  override protected def sendBatch(
+    states: Iterable[AwaitingMetadata],
+    brokerId: Int,
+    brokerEpoch: Long,
+    onBatchComplete: Either[String, Iterable[ParsedResponse]] => Unit
+  ): Unit = {
+    AwaitingMetadata.sendBatch(
+      states = states,
+      destination = controlPlane,
+      brokerId = brokerId,
+      brokerEpoch = brokerEpoch,
+      onBatchComplete = onBatchComplete
+    )
+  }
+}
+

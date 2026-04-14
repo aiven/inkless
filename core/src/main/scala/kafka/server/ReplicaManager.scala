@@ -19,7 +19,7 @@ package kafka.server
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse}
+import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendHandler
@@ -3133,6 +3133,57 @@ class ReplicaManager(val config: KafkaConfig,
       if (metadataVersion.isDirectoryAssignmentSupported) {
         // We only want to update the directoryIds if DirectoryAssignment is supported!
         localChanges.directoryIds.forEach(maybeUpdateTopicAssignment)
+      }
+    }
+
+    initDisklessLogOnControlPlane(delta)
+  }
+
+  private def initDisklessLogOnControlPlane(delta: TopicsDelta): Unit = {
+    initDisklessLogManager.foreach { manager =>
+      delta.changedTopics().forEach { (topicId, topicDelta) =>
+        val topicName = topicDelta.name()
+        topicDelta.partitionChanges().forEach { (partitionId, partitionRegistration) =>
+          val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
+            Option(topicImage.partitions().get(partitionId))
+          }
+          val shouldInitOnControlPlane = previousPartition.exists { previous =>
+            previous.disklessStartOffset == PartitionRegistration.NO_DISKLESS_START_OFFSET &&
+              partitionRegistration.disklessStartOffset >= 0
+          }
+
+          val tp = new TopicPartition(topicName, partitionId)
+          if (shouldInitOnControlPlane) {
+            onlinePartition(tp) match {
+              case Some(partition) if partition.isLeader =>
+                val producerStates = partitionRegistration.disklessProducerStates.asScala.map { producerState =>
+                  new InitDisklessLogProducerState(
+                    producerState.producerId(),
+                    producerState.producerEpoch(),
+                    producerState.baseSequence(),
+                    producerState.lastSequence(),
+                    producerState.assignedOffset(),
+                    producerState.batchMaxTimestamp()
+                  )
+                }.asJava
+                manager.initOnControlPlane(
+                  partition = partition,
+                  topicId = topicId,
+                  topicName = topicName,
+                  disklessStartOffset = partitionRegistration.disklessStartOffset,
+                  producerStates = producerStates
+                )
+              case Some(_) =>
+                stateChangeLogger.info(
+                  s"Skipping diskless init on control plane for $tp because the partition is not a local leader."
+                )
+              case None =>
+                stateChangeLogger.info(
+                  s"Skipping diskless init on control plane for $tp because the partition is not online locally."
+                )
+            }
+          }
+        }
       }
     }
   }
