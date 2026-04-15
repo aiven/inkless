@@ -16,12 +16,12 @@
  */
 package kafka.server;
 
-import org.apache.kafka.clients.admin.AddTopicsToMirrorOptions;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.CreateMirrorOptions;
 import org.apache.kafka.clients.admin.MirrorListing;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.StartMirrorTopicsOptions;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -271,7 +271,7 @@ public class AsyncMirrorIntegrationTest {
         waitForMirror(0);
 
         // Add topic to mirror
-        destAdmin.addTopicsToMirror(MIRROR_NAME, Set.of(TOPIC), new AddTopicsToMirrorOptions())
+        destAdmin.startMirrorTopics(MIRROR_NAME, Set.of(TOPIC), new StartMirrorTopicsOptions())
                 .all().get(30, TimeUnit.SECONDS);
         waitForMirror(1);
 
@@ -303,7 +303,7 @@ public class AsyncMirrorIntegrationTest {
 
         waitForMirror(0);
 
-        destAdmin.addTopicsToMirror(MIRROR_NAME, Set.of(TOPIC), new AddTopicsToMirrorOptions())
+        destAdmin.startMirrorTopics(MIRROR_NAME, Set.of(TOPIC), new StartMirrorTopicsOptions())
                 .all().get(30, TimeUnit.SECONDS);
 
         // Wait for the topic to be auto-created on destination by the mirror coordinator
