@@ -40,6 +40,7 @@ import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.message.BumpLeaderEpochsRequestData;
 import org.apache.kafka.common.message.CreateAclsRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
+import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
@@ -60,6 +61,8 @@ import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.BumpLeaderEpochsRequest;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
+import org.apache.kafka.common.requests.CreateTopicsRequest;
+import org.apache.kafka.common.requests.CreateTopicsResponse;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DescribeAclsRequest;
 import org.apache.kafka.common.requests.DescribeAclsResponse;
@@ -190,6 +193,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     // lets the transition handler skip partitions that are already being processed
     private final Map<TopicPartition, MirrorPartitionState> pendingPartitionStates = new ConcurrentHashMap<>();
+    private final Set<Uuid> pendingTopicCreations = ConcurrentHashMap.newKeySet();
 
     // metrics
     private KafkaMetricsGroup metricsGroup;
@@ -259,6 +263,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
         // caching the image for query purpose
         this.metadataImage = newImage;
+
+        // clear pending topic creations for topics that now exist
+        if (delta.topicsDelta() != null) {
+            delta.topicsDelta().createdTopicIds().forEach(pendingTopicCreations::remove);
+        }
 
         maybeRecreateConnection(delta, newImage);
 
@@ -1101,6 +1110,51 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
+    /**
+     * Creates a mirror topic on the destination with the source's TopicId,
+     * preserving topic identity across clusters. Called during periodic metadata
+     * sync when a topic has mirror.name config but doesn't exist on the destination yet.
+     * Once created, onMetadataUpdate will detect it and start the mirror state machine.
+     */
+    private void createMirrorTopic(String topicName, org.apache.kafka.common.Uuid topicId, int numPartitions) {
+        if (!pendingTopicCreations.add(topicId)) {
+            log.debug("Skipping creation of mirror topic {} (topicId={}), request already in-flight", topicName, topicId);
+            return;
+        }
+        log.info("Creating mirror topic {} on destination (partitions={}, topicId={})",
+                topicName, numPartitions, topicId);
+        var creatableTopic = new CreateTopicsRequestData.CreatableTopic()
+                .setName(topicName)
+                .setNumPartitions(numPartitions)
+                .setReplicationFactor(CreateTopicsRequest.NO_REPLICATION_FACTOR)
+                .setMirrorInfo(new CreateTopicsRequestData.MirrorInfo().setTopicId(topicId));
+        var createTopicsData = new CreateTopicsRequestData().setTimeoutMs(brokerConfig.requestTimeoutMs());
+        createTopicsData.topics().add(creatableTopic);
+        ControllerRequestCompletionHandler requestCompletionHandler = new ControllerRequestCompletionHandler() {
+            @Override
+            public void onTimeout() {
+                pendingTopicCreations.remove(topicId);
+                log.warn("Create mirror topic timed out for {} (topicId={})", topicName, topicId);
+            }
+
+            @Override
+            public void onComplete(ClientResponse response) {
+                if (response.responseBody() instanceof CreateTopicsResponse createTopicsResponse) {
+                    createTopicsResponse.data().topics().forEach(topic -> {
+                        Errors error = Errors.forCode(topic.errorCode());
+                        if (error != Errors.NONE) {
+                            pendingTopicCreations.remove(topicId);
+                            log.warn("Failed to create mirror topic {} (topicId={}): {}", topicName, topicId, error.message());
+                        }
+                    });
+                }
+            }
+        };
+        channelManager.sendRequest(
+                new CreateTopicsRequest.Builder(createTopicsData),
+                requestCompletionHandler);
+    }
+
     /** Processes topic metadata and returns topics that need partition scaling */
     private CreatePartitionsRequestData.CreatePartitionsTopicCollection processTopicMetadata(
             String mirrorName, Collection<MetadataResponse.TopicMetadata> topicMetadata, Map<Integer, Node> brokerNodes) {
@@ -1130,6 +1184,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         .setCount(sourcePartitionCount)
                         .setAssignments(null)
                 );
+            } else if (metadataImage.topics().getTopic(tm.topicId()) == null &&
+                    tm.error() == Errors.NONE && sourcePartitionCount > 0) {
+                // create topic on destination using cluster default replication factor
+                this.createMirrorTopic(tm.topic(), tm.topicId(), sourcePartitionCount);
             }
         });
 
@@ -1475,15 +1533,17 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return getConfiguredTopics(mirrorName, false);
     }
 
-    /** Returns the set of topic names configured for the given mirror, optionally including paused topics. */
+    /** Returns the set of topic names configured for the given mirror even if not created yet by using metadataImage, optionally including paused topics. */
     Set<String> getConfiguredTopics(String mirrorName, boolean includePaused) {
-        return metadataCache.getAllTopics().stream()
-                .filter(topic -> {
-                    String topicMirrorName = (String) metadataCache.topicConfig(topic).get(TopicConfig.MIRROR_NAME_CONFIG);
+        return metadataImage.configs().resourceData().entrySet().stream()
+                .filter(configEntry -> {
+                    if (configEntry.getKey().type() != ConfigResource.Type.TOPIC) return false;
+                    String topicMirrorName = configEntry.getValue().data().get(TopicConfig.MIRROR_NAME_CONFIG);
                     if (topicMirrorName == null) return false;
                     if (!includePaused && topicMirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) return false;
                     return mirrorName.equals(MirrorUtils.originalMirrorName(topicMirrorName));
                 })
+                .map(configEntry -> configEntry.getKey().name())
                 .collect(Collectors.toSet());
     }
 

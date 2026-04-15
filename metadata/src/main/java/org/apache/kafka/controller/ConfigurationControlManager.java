@@ -415,7 +415,8 @@ public class ConfigurationControlManager {
                 }
             }
 
-            Map<String, Entry<OpType, String>> keyToOps = Map.of(TopicConfig.MIRROR_NAME_CONFIG, new AbstractMap.SimpleImmutableEntry<>(SET, mirrorName));
+            Map<String, Entry<OpType, String>> keyToOps = Map.of(
+                    TopicConfig.MIRROR_NAME_CONFIG, new AbstractMap.SimpleImmutableEntry<>(SET, mirrorName));
 
             ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
             if (configResult.response().isFailure()) {
