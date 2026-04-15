@@ -31,7 +31,7 @@ import org.apache.kafka.server.common.OffsetAndEpoch;
 public record MetadataImage(MetadataProvenance provenance, FeaturesImage features, ClusterImage cluster,
                             TopicsImage topics, ConfigurationsImage configs, ClientQuotasImage clientQuotas,
                             ProducerIdsImage producerIds, AclsImage acls, ScramImage scram,
-                            DelegationTokenImage delegationTokens) {
+                            DelegationTokenImage delegationTokens, VirtualClustersImage virtualClusters) {
     public static final MetadataImage EMPTY = new MetadataImage(
         MetadataProvenance.EMPTY,
         FeaturesImage.EMPTY,
@@ -42,7 +42,8 @@ public record MetadataImage(MetadataProvenance provenance, FeaturesImage feature
         ProducerIdsImage.EMPTY,
         AclsImage.EMPTY,
         ScramImage.EMPTY,
-        DelegationTokenImage.EMPTY);
+        DelegationTokenImage.EMPTY,
+        VirtualClustersImage.EMPTY);
 
     public boolean isEmpty() {
         return features.isEmpty() &&
@@ -53,7 +54,8 @@ public record MetadataImage(MetadataProvenance provenance, FeaturesImage feature
             producerIds.isEmpty() &&
             acls.isEmpty() &&
             scram.isEmpty() &&
-            delegationTokens.isEmpty();
+            delegationTokens.isEmpty() &&
+            virtualClusters.isEmpty();
     }
 
     public OffsetAndEpoch highestOffsetAndEpoch() {
@@ -76,6 +78,7 @@ public record MetadataImage(MetadataProvenance provenance, FeaturesImage feature
         acls.write(writer);
         scram.write(writer, options);
         delegationTokens.write(writer, options);
+        virtualClusters.write(writer);
         writer.close(true);
     }
 

@@ -1480,6 +1480,34 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
+    public CreateVirtualClustersResult createVirtualClusters(Collection<NewVirtualCluster> virtualClusters, CreateVirtualClustersOptions options) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
+    public AlterVirtualClustersResult alterVirtualClusters(
+        Map<String, ? extends Collection<VirtualClusterResourceAlteration>> alterations,
+        AlterVirtualClustersOptions options
+    ) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
+    public DeleteVirtualClustersResult deleteVirtualClusters(Collection<String> names, DeleteVirtualClustersOptions options) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
+    public ListVirtualClustersResult listVirtualClusters(ListVirtualClustersOptions options) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
+    public DescribeVirtualClustersResult describeVirtualClusters(Collection<String> names, DescribeVirtualClustersOptions options) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
     public synchronized void close(Duration timeout) {}
 
     public synchronized void updateBeginningOffsets(Map<TopicPartition, Long> newOffsets) {

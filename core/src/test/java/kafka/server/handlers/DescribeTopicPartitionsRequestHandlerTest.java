@@ -490,7 +490,8 @@ class DescribeTopicPartitionsRequestHandlerTest {
             image.producerIds(),
             image.acls(),
             image.scram(),
-            image.delegationTokens()
+            image.delegationTokens(),
+            image.virtualClusters()
         );
         MetadataDelta delta = new MetadataDelta.Builder().setImage(partialImage).build();
         records.forEach(delta::replay);

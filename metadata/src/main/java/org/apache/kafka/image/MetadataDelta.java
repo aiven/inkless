@@ -33,9 +33,17 @@ import org.apache.kafka.common.metadata.RegisterBrokerRecord;
 import org.apache.kafka.common.metadata.RegisterControllerRecord;
 import org.apache.kafka.common.metadata.RemoveAccessControlEntryRecord;
 import org.apache.kafka.common.metadata.RemoveDelegationTokenRecord;
+import org.apache.kafka.common.metadata.RemoveVirtualClusterGroupRecord;
+import org.apache.kafka.common.metadata.RemoveVirtualClusterRecord;
+import org.apache.kafka.common.metadata.RemoveVirtualClusterTopicLinkRecord;
+import org.apache.kafka.common.metadata.RemoveVirtualClusterUserRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
 import org.apache.kafka.common.metadata.RemoveUserScramCredentialRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
+import org.apache.kafka.common.metadata.VirtualClusterGroupRecord;
+import org.apache.kafka.common.metadata.VirtualClusterRecord;
+import org.apache.kafka.common.metadata.VirtualClusterTopicLinkRecord;
+import org.apache.kafka.common.metadata.VirtualClusterUserRecord;
 import org.apache.kafka.common.metadata.UnfenceBrokerRecord;
 import org.apache.kafka.common.metadata.UnregisterBrokerRecord;
 import org.apache.kafka.common.metadata.UserScramCredentialRecord;
@@ -48,6 +56,7 @@ import java.util.Optional;
 /**
  * A change to the broker metadata image.
  */
+@SuppressWarnings("ClassFanOutComplexity")
 public final class MetadataDelta {
     public static class Builder {
         private MetadataImage image = MetadataImage.EMPTY;
@@ -81,6 +90,8 @@ public final class MetadataDelta {
     private ScramDelta scramDelta = null;
 
     private DelegationTokenDelta delegationTokenDelta = null;
+
+    private VirtualClustersDelta virtualClustersDelta = null;
 
     public MetadataDelta(MetadataImage image) {
         this.image = image;
@@ -173,6 +184,15 @@ public final class MetadataDelta {
         return delegationTokenDelta;
     }
 
+    public VirtualClustersDelta virtualClustersDelta() {
+        return virtualClustersDelta;
+    }
+
+    public VirtualClustersDelta getOrCreateVirtualClustersDelta() {
+        if (virtualClustersDelta == null) virtualClustersDelta = new VirtualClustersDelta(image.virtualClusters());
+        return virtualClustersDelta;
+    }
+
     public Optional<MetadataVersion> metadataVersionChanged() {
         if (featuresDelta == null) {
             return Optional.empty();
@@ -257,6 +277,30 @@ public final class MetadataDelta {
             case REGISTER_CONTROLLER_RECORD:
                 replay((RegisterControllerRecord) record);
                 break;
+            case VIRTUAL_CLUSTER_RECORD:
+                replay((VirtualClusterRecord) record);
+                break;
+            case REMOVE_VIRTUAL_CLUSTER_RECORD:
+                replay((RemoveVirtualClusterRecord) record);
+                break;
+            case VIRTUAL_CLUSTER_TOPIC_LINK_RECORD:
+                replay((VirtualClusterTopicLinkRecord) record);
+                break;
+            case REMOVE_VIRTUAL_CLUSTER_TOPIC_LINK_RECORD:
+                replay((RemoveVirtualClusterTopicLinkRecord) record);
+                break;
+            case VIRTUAL_CLUSTER_USER_RECORD:
+                replay((VirtualClusterUserRecord) record);
+                break;
+            case REMOVE_VIRTUAL_CLUSTER_USER_RECORD:
+                replay((RemoveVirtualClusterUserRecord) record);
+                break;
+            case VIRTUAL_CLUSTER_GROUP_RECORD:
+                replay((VirtualClusterGroupRecord) record);
+                break;
+            case REMOVE_VIRTUAL_CLUSTER_GROUP_RECORD:
+                replay((RemoveVirtualClusterGroupRecord) record);
+                break;
             default:
                 throw new RuntimeException("Unknown metadata record type " + type);
         }
@@ -327,6 +371,7 @@ public final class MetadataDelta {
             getOrCreateAclsDelta().handleMetadataVersionChange(changedMetadataVersion);
             getOrCreateScramDelta().handleMetadataVersionChange(changedMetadataVersion);
             getOrCreateDelegationTokenDelta().handleMetadataVersionChange(changedMetadataVersion);
+            getOrCreateVirtualClustersDelta().handleMetadataVersionChange(changedMetadataVersion);
         });
     }
 
@@ -358,6 +403,38 @@ public final class MetadataDelta {
         getOrCreateClusterDelta().replay(record);
     }
 
+    public void replay(VirtualClusterRecord record) {
+        getOrCreateVirtualClustersDelta().replay(record);
+    }
+
+    public void replay(RemoveVirtualClusterRecord record) {
+        getOrCreateVirtualClustersDelta().replay(record);
+    }
+
+    public void replay(VirtualClusterTopicLinkRecord record) {
+        getOrCreateVirtualClustersDelta().replay(record);
+    }
+
+    public void replay(RemoveVirtualClusterTopicLinkRecord record) {
+        getOrCreateVirtualClustersDelta().replay(record);
+    }
+
+    public void replay(VirtualClusterUserRecord record) {
+        getOrCreateVirtualClustersDelta().replay(record);
+    }
+
+    public void replay(RemoveVirtualClusterUserRecord record) {
+        getOrCreateVirtualClustersDelta().replay(record);
+    }
+
+    public void replay(VirtualClusterGroupRecord record) {
+        getOrCreateVirtualClustersDelta().replay(record);
+    }
+
+    public void replay(RemoveVirtualClusterGroupRecord record) {
+        getOrCreateVirtualClustersDelta().replay(record);
+    }
+
     /**
      * Create removal deltas for anything which was in the base image, but which was not
      * referenced in the snapshot records we just applied.
@@ -372,6 +449,7 @@ public final class MetadataDelta {
         getOrCreateAclsDelta().finishSnapshot();
         getOrCreateScramDelta().finishSnapshot();
         getOrCreateDelegationTokenDelta().finishSnapshot();
+        getOrCreateVirtualClustersDelta().finishSnapshot();
     }
 
     public MetadataImage apply(MetadataProvenance provenance) {
@@ -429,6 +507,12 @@ public final class MetadataDelta {
         } else {
             newDelegationTokens = delegationTokenDelta.apply();
         }
+        VirtualClustersImage newVirtualClusters;
+        if (virtualClustersDelta == null) {
+            newVirtualClusters = image.virtualClusters();
+        } else {
+            newVirtualClusters = virtualClustersDelta.apply();
+        }
         return new MetadataImage(
             provenance,
             newFeatures,
@@ -439,7 +523,8 @@ public final class MetadataDelta {
             newProducerIds,
             newAcls,
             newScram,
-            newDelegationTokens
+            newDelegationTokens,
+            newVirtualClusters
         );
     }
 
@@ -455,6 +540,7 @@ public final class MetadataDelta {
             ", aclsDelta=" + aclsDelta +
             ", scramDelta=" + scramDelta +
             ", delegationTokenDelta=" + delegationTokenDelta +
+            ", virtualClustersDelta=" + virtualClustersDelta +
             ')';
     }
 }

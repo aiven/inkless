@@ -20,6 +20,7 @@ package org.apache.kafka.image.node;
 import org.apache.kafka.image.MetadataImage;
 
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
 
@@ -33,18 +34,23 @@ public record MetadataImageNode(MetadataImage image) implements MetadataNode {
      */
     public static final String NAME = "image";
 
-    private static final Map<String, Function<MetadataImage, MetadataNode>> CHILDREN = Map.of(
-        ProvenanceNode.NAME, image -> new ProvenanceNode(image.provenance()),
-        FeaturesImageNode.NAME, image -> new FeaturesImageNode(image.features()),
-        ClusterImageNode.NAME, image -> new ClusterImageNode(image.cluster()),
-        TopicsImageNode.NAME, image -> new TopicsImageNode(image.topics()),
-        ConfigurationsImageNode.NAME, image -> new ConfigurationsImageNode(image.configs()),
-        ClientQuotasImageNode.NAME, image -> new ClientQuotasImageNode(image.clientQuotas()),
-        ProducerIdsImageNode.NAME, image -> new ProducerIdsImageNode(image.producerIds()),
-        AclsImageNode.NAME, image -> new AclsImageNode(image.acls()),
-        ScramImageNode.NAME, image -> new ScramImageNode(image.scram()),
-        DelegationTokenImageNode.NAME, image -> new DelegationTokenImageNode(image.delegationTokens())
-    );
+    private static final Map<String, Function<MetadataImage, MetadataNode>> CHILDREN = createChildren();
+
+    private static Map<String, Function<MetadataImage, MetadataNode>> createChildren() {
+        Map<String, Function<MetadataImage, MetadataNode>> m = new HashMap<>();
+        m.put(ProvenanceNode.NAME, image -> new ProvenanceNode(image.provenance()));
+        m.put(FeaturesImageNode.NAME, image -> new FeaturesImageNode(image.features()));
+        m.put(ClusterImageNode.NAME, image -> new ClusterImageNode(image.cluster()));
+        m.put(TopicsImageNode.NAME, image -> new TopicsImageNode(image.topics()));
+        m.put(ConfigurationsImageNode.NAME, image -> new ConfigurationsImageNode(image.configs()));
+        m.put(ClientQuotasImageNode.NAME, image -> new ClientQuotasImageNode(image.clientQuotas()));
+        m.put(ProducerIdsImageNode.NAME, image -> new ProducerIdsImageNode(image.producerIds()));
+        m.put(AclsImageNode.NAME, image -> new AclsImageNode(image.acls()));
+        m.put(ScramImageNode.NAME, image -> new ScramImageNode(image.scram()));
+        m.put(DelegationTokenImageNode.NAME, image -> new DelegationTokenImageNode(image.delegationTokens()));
+        m.put(VirtualClustersImageNode.NAME, image -> new VirtualClustersImageNode(image.virtualClusters()));
+        return Map.copyOf(m);
+    }
 
     @Override
     public Collection<String> childNames() {

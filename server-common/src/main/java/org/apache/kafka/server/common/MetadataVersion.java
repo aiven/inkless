@@ -125,7 +125,10 @@ public enum MetadataVersion {
     IBP_4_2_IV0(28, "4.2", "IV0", false),
 
     // Enables "streams" groups by default for new clusters (KIP-1071).
-    IBP_4_2_IV1(29, "4.2", "IV1", false);
+    IBP_4_2_IV1(29, "4.2", "IV1", false),
+
+    // Virtual clusters (KIP-1134): new metadata records for virtual clusters, topic links, and assignments.
+    IBP_4_2_IV2(30, "4.2", "IV2", true);
 
     // NOTES when adding a new version:
     //   Update the default version in @ClusterTest annotation to point to the latest version
@@ -203,6 +206,13 @@ public enum MetadataVersion {
 
     public boolean isElrSupported() {
         return this.isAtLeast(IBP_4_0_IV1);
+    }
+
+    /**
+     * Returns true if virtual cluster metadata records (KIP-1134) are supported.
+     */
+    public boolean isVirtualClusterSupported() {
+        return this.isAtLeast(IBP_4_2_IV2);
     }
 
     public boolean isMigrationSupported() {

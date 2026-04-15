@@ -96,7 +96,8 @@ class InklessKRaftMetadataCacheTest {
             image.producerIds(),
             image.acls(),
             image.scram(),
-            image.delegationTokens());
+            image.delegationTokens(),
+            image.virtualClusters());
         var delta = new MetadataDelta.Builder().setImage(partialImage).build();
         configRecords.forEach(delta::replay);
         c.setImage(delta.apply(new MetadataProvenance(100L, 10, 1000L, true)));

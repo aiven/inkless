@@ -43,8 +43,17 @@ import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
+import org.apache.kafka.common.message.AlterVirtualClustersRequestData;
+import org.apache.kafka.common.message.AlterVirtualClustersResponseData;
+import org.apache.kafka.common.message.CreateVirtualClustersRequestData;
+import org.apache.kafka.common.message.CreateVirtualClustersResponseData;
+import org.apache.kafka.common.message.DeleteVirtualClustersRequestData;
+import org.apache.kafka.common.message.DeleteVirtualClustersResponseData;
+import org.apache.kafka.common.message.DescribeVirtualClustersRequestData;
+import org.apache.kafka.common.message.DescribeVirtualClustersResponseData;
 import org.apache.kafka.common.message.InitDisklessLogRequestData;
 import org.apache.kafka.common.message.InitDisklessLogResponseData;
+import org.apache.kafka.common.message.ListVirtualClustersResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
@@ -433,6 +442,45 @@ public interface Controller extends AclMutator, AutoCloseable {
     CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
         ControllerRequestContext context,
         InitDisklessLogRequestData request
+    );
+
+    /**
+     * Create virtual clusters (KIP-1134).
+     */
+    CompletableFuture<CreateVirtualClustersResponseData> createVirtualClusters(
+        ControllerRequestContext context,
+        CreateVirtualClustersRequestData request
+    );
+
+    /**
+     * Alter virtual clusters (KIP-1134).
+     */
+    CompletableFuture<AlterVirtualClustersResponseData> alterVirtualClusters(
+        ControllerRequestContext context,
+        AlterVirtualClustersRequestData request
+    );
+
+    /**
+     * Delete virtual clusters (KIP-1134).
+     */
+    CompletableFuture<DeleteVirtualClustersResponseData> deleteVirtualClusters(
+        ControllerRequestContext context,
+        DeleteVirtualClustersRequestData request
+    );
+
+    /**
+     * List virtual clusters (KIP-1134).
+     */
+    CompletableFuture<ListVirtualClustersResponseData> listVirtualClusters(
+        ControllerRequestContext context
+    );
+
+    /**
+     * Describe virtual clusters (KIP-1134).
+     */
+    CompletableFuture<DescribeVirtualClustersResponseData> describeVirtualClusters(
+        ControllerRequestContext context,
+        DescribeVirtualClustersRequestData request
     );
 
     /**

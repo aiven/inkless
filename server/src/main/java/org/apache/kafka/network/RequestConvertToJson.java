@@ -38,6 +38,8 @@ import org.apache.kafka.common.message.AlterShareGroupOffsetsRequestDataJsonConv
 import org.apache.kafka.common.message.AlterShareGroupOffsetsResponseDataJsonConverter;
 import org.apache.kafka.common.message.AlterUserScramCredentialsRequestDataJsonConverter;
 import org.apache.kafka.common.message.AlterUserScramCredentialsResponseDataJsonConverter;
+import org.apache.kafka.common.message.AlterVirtualClustersRequestDataJsonConverter;
+import org.apache.kafka.common.message.AlterVirtualClustersResponseDataJsonConverter;
 import org.apache.kafka.common.message.ApiVersionsRequestDataJsonConverter;
 import org.apache.kafka.common.message.ApiVersionsResponseDataJsonConverter;
 import org.apache.kafka.common.message.AssignReplicasToDirsRequestDataJsonConverter;
@@ -62,6 +64,8 @@ import org.apache.kafka.common.message.CreatePartitionsRequestDataJsonConverter;
 import org.apache.kafka.common.message.CreatePartitionsResponseDataJsonConverter;
 import org.apache.kafka.common.message.CreateTopicsRequestDataJsonConverter;
 import org.apache.kafka.common.message.CreateTopicsResponseDataJsonConverter;
+import org.apache.kafka.common.message.CreateVirtualClustersRequestDataJsonConverter;
+import org.apache.kafka.common.message.CreateVirtualClustersResponseDataJsonConverter;
 import org.apache.kafka.common.message.DeleteAclsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DeleteAclsResponseDataJsonConverter;
 import org.apache.kafka.common.message.DeleteGroupsRequestDataJsonConverter;
@@ -74,6 +78,8 @@ import org.apache.kafka.common.message.DeleteShareGroupStateRequestDataJsonConve
 import org.apache.kafka.common.message.DeleteShareGroupStateResponseDataJsonConverter;
 import org.apache.kafka.common.message.DeleteTopicsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DeleteTopicsResponseDataJsonConverter;
+import org.apache.kafka.common.message.DeleteVirtualClustersRequestDataJsonConverter;
+import org.apache.kafka.common.message.DeleteVirtualClustersResponseDataJsonConverter;
 import org.apache.kafka.common.message.DescribeAclsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DescribeAclsResponseDataJsonConverter;
 import org.apache.kafka.common.message.DescribeClientQuotasRequestDataJsonConverter;
@@ -100,6 +106,8 @@ import org.apache.kafka.common.message.DescribeTransactionsRequestDataJsonConver
 import org.apache.kafka.common.message.DescribeTransactionsResponseDataJsonConverter;
 import org.apache.kafka.common.message.DescribeUserScramCredentialsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DescribeUserScramCredentialsResponseDataJsonConverter;
+import org.apache.kafka.common.message.DescribeVirtualClustersRequestDataJsonConverter;
+import org.apache.kafka.common.message.DescribeVirtualClustersResponseDataJsonConverter;
 import org.apache.kafka.common.message.ElectLeadersRequestDataJsonConverter;
 import org.apache.kafka.common.message.ElectLeadersResponseDataJsonConverter;
 import org.apache.kafka.common.message.EndQuorumEpochRequestDataJsonConverter;
@@ -142,6 +150,8 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsRequestDataJson
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseDataJsonConverter;
 import org.apache.kafka.common.message.ListTransactionsRequestDataJsonConverter;
 import org.apache.kafka.common.message.ListTransactionsResponseDataJsonConverter;
+import org.apache.kafka.common.message.ListVirtualClustersRequestDataJsonConverter;
+import org.apache.kafka.common.message.ListVirtualClustersResponseDataJsonConverter;
 import org.apache.kafka.common.message.MetadataRequestDataJsonConverter;
 import org.apache.kafka.common.message.MetadataResponseDataJsonConverter;
 import org.apache.kafka.common.message.OffsetCommitRequestDataJsonConverter;
@@ -222,6 +232,8 @@ import org.apache.kafka.common.requests.AlterShareGroupOffsetsRequest;
 import org.apache.kafka.common.requests.AlterShareGroupOffsetsResponse;
 import org.apache.kafka.common.requests.AlterUserScramCredentialsRequest;
 import org.apache.kafka.common.requests.AlterUserScramCredentialsResponse;
+import org.apache.kafka.common.requests.AlterVirtualClustersRequest;
+import org.apache.kafka.common.requests.AlterVirtualClustersResponse;
 import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
 import org.apache.kafka.common.requests.AssignReplicasToDirsRequest;
@@ -246,6 +258,8 @@ import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsResponse;
 import org.apache.kafka.common.requests.CreateTopicsRequest;
 import org.apache.kafka.common.requests.CreateTopicsResponse;
+import org.apache.kafka.common.requests.CreateVirtualClustersRequest;
+import org.apache.kafka.common.requests.CreateVirtualClustersResponse;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
 import org.apache.kafka.common.requests.DeleteGroupsRequest;
@@ -258,6 +272,8 @@ import org.apache.kafka.common.requests.DeleteShareGroupStateRequest;
 import org.apache.kafka.common.requests.DeleteShareGroupStateResponse;
 import org.apache.kafka.common.requests.DeleteTopicsRequest;
 import org.apache.kafka.common.requests.DeleteTopicsResponse;
+import org.apache.kafka.common.requests.DeleteVirtualClustersRequest;
+import org.apache.kafka.common.requests.DeleteVirtualClustersResponse;
 import org.apache.kafka.common.requests.DescribeAclsRequest;
 import org.apache.kafka.common.requests.DescribeAclsResponse;
 import org.apache.kafka.common.requests.DescribeClientQuotasRequest;
@@ -284,6 +300,8 @@ import org.apache.kafka.common.requests.DescribeTransactionsRequest;
 import org.apache.kafka.common.requests.DescribeTransactionsResponse;
 import org.apache.kafka.common.requests.DescribeUserScramCredentialsRequest;
 import org.apache.kafka.common.requests.DescribeUserScramCredentialsResponse;
+import org.apache.kafka.common.requests.DescribeVirtualClustersRequest;
+import org.apache.kafka.common.requests.DescribeVirtualClustersResponse;
 import org.apache.kafka.common.requests.ElectLeadersRequest;
 import org.apache.kafka.common.requests.ElectLeadersResponse;
 import org.apache.kafka.common.requests.EndQuorumEpochRequest;
@@ -326,6 +344,8 @@ import org.apache.kafka.common.requests.ListPartitionReassignmentsRequest;
 import org.apache.kafka.common.requests.ListPartitionReassignmentsResponse;
 import org.apache.kafka.common.requests.ListTransactionsRequest;
 import org.apache.kafka.common.requests.ListTransactionsResponse;
+import org.apache.kafka.common.requests.ListVirtualClustersRequest;
+import org.apache.kafka.common.requests.ListVirtualClustersResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
 import org.apache.kafka.common.requests.OffsetCommitRequest;
@@ -501,6 +521,16 @@ public class RequestConvertToJson {
                 HeartbeatRequestDataJsonConverter.write(((HeartbeatRequest) request).data(), request.version());
             case INCREMENTAL_ALTER_CONFIGS ->
                 IncrementalAlterConfigsRequestDataJsonConverter.write(((IncrementalAlterConfigsRequest) request).data(), request.version());
+            case ALTER_VIRTUAL_CLUSTERS ->
+                AlterVirtualClustersRequestDataJsonConverter.write(((AlterVirtualClustersRequest) request).data(), request.version());
+            case CREATE_VIRTUAL_CLUSTERS ->
+                CreateVirtualClustersRequestDataJsonConverter.write(((CreateVirtualClustersRequest) request).data(), request.version());
+            case DELETE_VIRTUAL_CLUSTERS ->
+                DeleteVirtualClustersRequestDataJsonConverter.write(((DeleteVirtualClustersRequest) request).data(), request.version());
+            case DESCRIBE_VIRTUAL_CLUSTERS ->
+                DescribeVirtualClustersRequestDataJsonConverter.write(((DescribeVirtualClustersRequest) request).data(), request.version());
+            case LIST_VIRTUAL_CLUSTERS ->
+                ListVirtualClustersRequestDataJsonConverter.write(((ListVirtualClustersRequest) request).data(), request.version());
             case INIT_DISKLESS_LOG ->
                 InitDisklessLogRequestDataJsonConverter.write(((InitDisklessLogRequest) request).data(), request.version());
             case INITIALIZE_SHARE_GROUP_STATE ->
@@ -684,6 +714,16 @@ public class RequestConvertToJson {
             case HEARTBEAT -> HeartbeatResponseDataJsonConverter.write(((HeartbeatResponse) response).data(), version);
             case INCREMENTAL_ALTER_CONFIGS ->
                 IncrementalAlterConfigsResponseDataJsonConverter.write(((IncrementalAlterConfigsResponse) response).data(), version);
+            case ALTER_VIRTUAL_CLUSTERS ->
+                AlterVirtualClustersResponseDataJsonConverter.write(((AlterVirtualClustersResponse) response).data(), version);
+            case CREATE_VIRTUAL_CLUSTERS ->
+                CreateVirtualClustersResponseDataJsonConverter.write(((CreateVirtualClustersResponse) response).data(), version);
+            case DELETE_VIRTUAL_CLUSTERS ->
+                DeleteVirtualClustersResponseDataJsonConverter.write(((DeleteVirtualClustersResponse) response).data(), version);
+            case DESCRIBE_VIRTUAL_CLUSTERS ->
+                DescribeVirtualClustersResponseDataJsonConverter.write(((DescribeVirtualClustersResponse) response).data(), version);
+            case LIST_VIRTUAL_CLUSTERS ->
+                ListVirtualClustersResponseDataJsonConverter.write(((ListVirtualClustersResponse) response).data(), version);
             case INIT_DISKLESS_LOG ->
                 InitDisklessLogResponseDataJsonConverter.write(((InitDisklessLogResponse) response).data(), version);
             case INITIALIZE_SHARE_GROUP_STATE ->

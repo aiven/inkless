@@ -291,6 +291,16 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
                 return AlterShareGroupOffsetsResponse.parse(readable, version);
             case DELETE_SHARE_GROUP_OFFSETS:
                 return DeleteShareGroupOffsetsResponse.parse(readable, version);
+            case CREATE_VIRTUAL_CLUSTERS:
+                return CreateVirtualClustersResponse.parse(readable, version);
+            case ALTER_VIRTUAL_CLUSTERS:
+                return AlterVirtualClustersResponse.parse(readable, version);
+            case DELETE_VIRTUAL_CLUSTERS:
+                return DeleteVirtualClustersResponse.parse(readable, version);
+            case LIST_VIRTUAL_CLUSTERS:
+                return ListVirtualClustersResponse.parse(readable, version);
+            case DESCRIBE_VIRTUAL_CLUSTERS:
+                return DescribeVirtualClustersResponse.parse(readable, version);
             case INIT_DISKLESS_LOG:
                 return InitDisklessLogResponse.parse(readable, version);
             default:

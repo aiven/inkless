@@ -37,6 +37,7 @@ import org.apache.kafka.image.ProducerIdsImage;
 import org.apache.kafka.image.ScramImage;
 import org.apache.kafka.image.TopicImage;
 import org.apache.kafka.image.TopicsImage;
+import org.apache.kafka.image.VirtualClustersImage;
 import org.apache.kafka.image.loader.LoaderManifest;
 import org.apache.kafka.image.loader.LogDeltaManifest;
 import org.apache.kafka.image.loader.SnapshotManifest;
@@ -106,7 +107,8 @@ public class ControllerMetadataMetricsPublisherTest {
             ProducerIdsImage.EMPTY,
             AclsImage.EMPTY,
             ScramImage.EMPTY,
-            DelegationTokenImage.EMPTY);
+            DelegationTokenImage.EMPTY,
+            VirtualClustersImage.EMPTY);
     }
 
     static ConfigurationsImage fakeDisklessConfigsImage(TopicsImage topicsImage) {

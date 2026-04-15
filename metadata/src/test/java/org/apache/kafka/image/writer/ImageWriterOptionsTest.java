@@ -30,6 +30,7 @@ import org.apache.kafka.image.MetadataProvenance;
 import org.apache.kafka.image.ProducerIdsImageTest;
 import org.apache.kafka.image.ScramImageTest;
 import org.apache.kafka.image.TopicsImageTest;
+import org.apache.kafka.image.VirtualClustersImage;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
 import org.apache.kafka.server.common.MetadataVersion;
 
@@ -107,7 +108,8 @@ public class ImageWriterOptionsTest {
             ProducerIdsImageTest.IMAGE1,
             AclsImageTest.IMAGE1,
             ScramImageTest.IMAGE1,
-            DelegationTokenImageTest.IMAGE1
+            DelegationTokenImageTest.IMAGE1,
+            VirtualClustersImage.EMPTY
         );
 
         ImageWriterOptions options = new ImageWriterOptions.Builder(metadataImage).build();

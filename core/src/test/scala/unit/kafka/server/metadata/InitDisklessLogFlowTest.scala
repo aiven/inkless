@@ -27,7 +27,7 @@ import kafka.utils.TestUtils
 import org.apache.kafka.common.{Node, TopicPartition, Uuid}
 import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.metadata.{ConfigRecord, PartitionChangeRecord, PartitionRecord, TopicRecord}
-import org.apache.kafka.image.{AclsImage, ClientQuotasImage, ClusterImageTest, ConfigurationsImage, DelegationTokenImage, FeaturesImage, MetadataDelta, MetadataImage, MetadataProvenance, ProducerIdsImage, ScramImage, TopicsDelta, TopicsImage}
+import org.apache.kafka.image.{AclsImage, ClientQuotasImage, ClusterImageTest, ConfigurationsImage, DelegationTokenImage, FeaturesImage, MetadataDelta, MetadataImage, MetadataProvenance, ProducerIdsImage, ScramImage, TopicsDelta, TopicsImage, VirtualClustersImage}
 import org.apache.kafka.image.loader.LogDeltaManifest
 import org.apache.kafka.metadata.InitDisklessLogFields
 import org.apache.kafka.metadata.publisher.{AclPublisher, DelegationTokenPublisher, DynamicClientQuotaPublisher, ScramPublisher}
@@ -803,7 +803,8 @@ class InitDisklessLogFlowTest {
       image.producerIds(),
       image.acls(),
       image.scram(),
-      image.delegationTokens()
+      image.delegationTokens(),
+      image.virtualClusters()
     )
   }
 
@@ -821,7 +822,8 @@ class InitDisklessLogFlowTest {
       ProducerIdsImage.EMPTY,
       AclsImage.EMPTY,
       ScramImage.EMPTY,
-      DelegationTokenImage.EMPTY
+      DelegationTokenImage.EMPTY,
+      VirtualClustersImage.EMPTY
     )
   }
 }

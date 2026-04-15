@@ -1,0 +1,46 @@
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+{
+  "apiKey": 502,
+  "type": "request",
+  "listeners": ["broker", "controller"],
+  "name": "AlterVirtualClustersRequest",
+  "validVersions": "0",
+  "flexibleVersions": "0+",
+  "fields": [
+    { "name": "VirtualClusters", "type": "[]AlterableVirtualCluster", "versions": "0+",
+      "about": "The virtual clusters to alter.", "fields": [
+      { "name": "Name", "type": "string", "versions": "0+", "mapKey": true,
+        "about": "The name of the virtual cluster." },
+      { "name": "Resources", "type": "[]VirtualClusterResourceChange", "versions": "0+",
+        "about": "The updates for each resource.", "fields": [
+        { "name": "ResourceType", "type": "int8", "versions": "0+",
+          "about": "0=user, 1=topic link, 2=consumer group, 3=transactional id, 4=client id." },
+        { "name": "ResourceOperation", "type": "int8", "versions": "0+",
+          "about": "0=add, 1=remove." },
+        { "name": "ResourceName", "type": "string", "versions": "0+",
+          "about": "Principal, group id, transactional id, or client id; for topic links, the link name." },
+        { "name": "PhysicalTopicName", "type": "string", "versions": "0+", "nullableVersions": "0+", "ignorable": true,
+          "entityType": "topicName",
+          "about": "Physical topic name when ResourceType is topic link (add)." }
+      ]}
+    ]},
+    { "name": "timeoutMs", "type": "int32", "versions": "0+", "default": "60000",
+      "about": "How long to wait in milliseconds before timing out the request." },
+    { "name": "validateOnly", "type": "bool", "versions": "0+", "default": "false", "ignorable": false,
+      "about": "If true, validate only." }
+  ]
+}

@@ -367,6 +367,37 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
+    public CreateVirtualClustersResult createVirtualClusters(
+        Collection<NewVirtualCluster> virtualClusters,
+        CreateVirtualClustersOptions options
+    ) {
+        return delegate.createVirtualClusters(virtualClusters, options);
+    }
+
+    @Override
+    public AlterVirtualClustersResult alterVirtualClusters(
+        Map<String, ? extends Collection<VirtualClusterResourceAlteration>> alterations,
+        AlterVirtualClustersOptions options
+    ) {
+        return delegate.alterVirtualClusters(alterations, options);
+    }
+
+    @Override
+    public DeleteVirtualClustersResult deleteVirtualClusters(Collection<String> names, DeleteVirtualClustersOptions options) {
+        return delegate.deleteVirtualClusters(names, options);
+    }
+
+    @Override
+    public ListVirtualClustersResult listVirtualClusters(ListVirtualClustersOptions options) {
+        return delegate.listVirtualClusters(options);
+    }
+
+    @Override
+    public DescribeVirtualClustersResult describeVirtualClusters(Collection<String> names, DescribeVirtualClustersOptions options) {
+        return delegate.describeVirtualClusters(names, options);
+    }
+
+    @Override
     public void registerMetricForSubscription(KafkaMetric metric) {
         throw new UnsupportedOperationException();
     }

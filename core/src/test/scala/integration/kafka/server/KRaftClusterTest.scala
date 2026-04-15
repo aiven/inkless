@@ -1504,4 +1504,45 @@ class KRaftClusterTest {
       cluster.close()
     }
   }
+
+  @Test
+  def testKip1134VirtualClustersTopicLinkUserAndGroup(): Unit = {
+    val cluster = new KafkaClusterTestKit.Builder(
+      new TestKitNodes.Builder().
+        setNumBrokerNodes(1).
+        setNumControllerNodes(1).build()).build()
+    try {
+      cluster.format()
+      cluster.startup()
+      cluster.waitForReadyBrokers()
+      val admin = Admin.create(cluster.clientProperties())
+      try {
+        admin.createTopics(util.List.of(new NewTopic("vc-phys", 1, 1.toShort))).all().get()
+        waitForTopicListing(admin, Seq("vc-phys"), Seq())
+
+        admin.createVirtualClusters(util.List.of(new NewVirtualCluster("vc1"))).all().get()
+
+        val alts = new util.ArrayList[VirtualClusterResourceAlteration]()
+        alts.add(new VirtualClusterResourceAlteration(1, 0, "l1", "vc-phys"))
+        alts.add(new VirtualClusterResourceAlteration(0, 0, "User:Alice", null))
+        alts.add(new VirtualClusterResourceAlteration(2, 0, "mygroup", null))
+        val alterations = new util.HashMap[String, util.Collection[VirtualClusterResourceAlteration]]()
+        alterations.put("vc1", alts)
+        admin.alterVirtualClusters(alterations).all().get()
+
+        val desc = admin.describeVirtualClusters(util.List.of("vc1")).values().get("vc1").get()
+        assertEquals("vc1", desc.name())
+        assertEquals("vc-phys", desc.topicLinks().get("l1"))
+        assertTrue(desc.users().contains("User:Alice"))
+        assertTrue(desc.consumerGroups().contains("mygroup"))
+
+        val listed = admin.listVirtualClusters().names().get()
+        assertTrue(listed.contains("vc1"))
+      } finally {
+        admin.close()
+      }
+    } finally {
+      cluster.close()
+    }
+  }
 }

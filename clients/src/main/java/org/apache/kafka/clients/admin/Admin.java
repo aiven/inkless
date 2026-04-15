@@ -2144,4 +2144,60 @@ public interface Admin extends AutoCloseable {
      */
     TerminateTransactionResult forceTerminateTransaction(String transactionalId, 
                                                         TerminateTransactionOptions options);
+
+    /**
+     * Create virtual clusters (KIP-1134). Uses Admin API keys 501–505 in this fork.
+     */
+    default CreateVirtualClustersResult createVirtualClusters(Collection<NewVirtualCluster> virtualClusters) {
+        return createVirtualClusters(virtualClusters, new CreateVirtualClustersOptions());
+    }
+
+    CreateVirtualClustersResult createVirtualClusters(
+        Collection<NewVirtualCluster> virtualClusters,
+        CreateVirtualClustersOptions options
+    );
+
+    /**
+     * Alter virtual clusters: assign or remove users, consumer groups, and topic links (KIP-1134).
+     */
+    default AlterVirtualClustersResult alterVirtualClusters(
+        Map<String, ? extends Collection<VirtualClusterResourceAlteration>> alterations
+    ) {
+        return alterVirtualClusters(alterations, new AlterVirtualClustersOptions());
+    }
+
+    AlterVirtualClustersResult alterVirtualClusters(
+        Map<String, ? extends Collection<VirtualClusterResourceAlteration>> alterations,
+        AlterVirtualClustersOptions options
+    );
+
+    /**
+     * Delete empty virtual clusters (KIP-1134).
+     */
+    default DeleteVirtualClustersResult deleteVirtualClusters(Collection<String> names) {
+        return deleteVirtualClusters(names, new DeleteVirtualClustersOptions());
+    }
+
+    DeleteVirtualClustersResult deleteVirtualClusters(Collection<String> names, DeleteVirtualClustersOptions options);
+
+    /**
+     * List virtual cluster names (KIP-1134).
+     */
+    default ListVirtualClustersResult listVirtualClusters() {
+        return listVirtualClusters(new ListVirtualClustersOptions());
+    }
+
+    ListVirtualClustersResult listVirtualClusters(ListVirtualClustersOptions options);
+
+    /**
+     * Describe virtual clusters (KIP-1134).
+     */
+    default DescribeVirtualClustersResult describeVirtualClusters(Collection<String> names) {
+        return describeVirtualClusters(names, new DescribeVirtualClustersOptions());
+    }
+
+    DescribeVirtualClustersResult describeVirtualClusters(
+        Collection<String> names,
+        DescribeVirtualClustersOptions options
+    );
 }

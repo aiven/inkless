@@ -140,6 +140,11 @@ class ControllerApis(
         case ApiKeys.ADD_RAFT_VOTER => handleAddRaftVoter(request)
         case ApiKeys.REMOVE_RAFT_VOTER => handleRemoveRaftVoter(request)
         case ApiKeys.UPDATE_RAFT_VOTER => handleUpdateRaftVoter(request)
+        case ApiKeys.CREATE_VIRTUAL_CLUSTERS => handleCreateVirtualClustersRequest(request)
+        case ApiKeys.ALTER_VIRTUAL_CLUSTERS => handleAlterVirtualClustersRequest(request)
+        case ApiKeys.DELETE_VIRTUAL_CLUSTERS => handleDeleteVirtualClustersRequest(request)
+        case ApiKeys.LIST_VIRTUAL_CLUSTERS => handleListVirtualClustersRequest(request)
+        case ApiKeys.DESCRIBE_VIRTUAL_CLUSTERS => handleDescribeVirtualClustersRequest(request)
         case ApiKeys.INIT_DISKLESS_LOG => handleInitDisklessLogRequest(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
       }
@@ -683,6 +688,81 @@ class ControllerApis(
         initDisklessLogRequest.getErrorResponse(exception)
       } else {
         new InitDisklessLogResponse(result)
+      }
+      requestHelper.sendResponseExemptThrottle(request, response)
+    }
+  }
+
+  def handleCreateVirtualClustersRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    val req = request.body[CreateVirtualClustersRequest]
+    authHelper.authorizeClusterOperation(request, ALTER)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      requestTimeoutMsToDeadlineNs(time, req.data.timeoutMs))
+    controller.createVirtualClusters(context, req.data).handle[Unit] { (result, exception) =>
+      val response = if (exception != null) {
+        req.getErrorResponse(exception)
+      } else {
+        new CreateVirtualClustersResponse(result)
+      }
+      requestHelper.sendResponseExemptThrottle(request, response)
+    }
+  }
+
+  def handleAlterVirtualClustersRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    val req = request.body[AlterVirtualClustersRequest]
+    authHelper.authorizeClusterOperation(request, ALTER)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      requestTimeoutMsToDeadlineNs(time, req.data.timeoutMs))
+    controller.alterVirtualClusters(context, req.data).handle[Unit] { (result, exception) =>
+      val response = if (exception != null) {
+        req.getErrorResponse(exception)
+      } else {
+        new AlterVirtualClustersResponse(result)
+      }
+      requestHelper.sendResponseExemptThrottle(request, response)
+    }
+  }
+
+  def handleDeleteVirtualClustersRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    val req = request.body[DeleteVirtualClustersRequest]
+    authHelper.authorizeClusterOperation(request, ALTER)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      requestTimeoutMsToDeadlineNs(time, req.data.timeoutMs))
+    controller.deleteVirtualClusters(context, req.data).handle[Unit] { (result, exception) =>
+      val response = if (exception != null) {
+        req.getErrorResponse(exception)
+      } else {
+        new DeleteVirtualClustersResponse(result)
+      }
+      requestHelper.sendResponseExemptThrottle(request, response)
+    }
+  }
+
+  def handleListVirtualClustersRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    val req = request.body[ListVirtualClustersRequest]
+    authHelper.authorizeClusterOperation(request, DESCRIBE)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      OptionalLong.empty())
+    controller.listVirtualClusters(context).handle[Unit] { (result, exception) =>
+      val response = if (exception != null) {
+        req.getErrorResponse(exception)
+      } else {
+        new ListVirtualClustersResponse(result)
+      }
+      requestHelper.sendResponseExemptThrottle(request, response)
+    }
+  }
+
+  def handleDescribeVirtualClustersRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    val req = request.body[DescribeVirtualClustersRequest]
+    authHelper.authorizeClusterOperation(request, DESCRIBE)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      OptionalLong.empty())
+    controller.describeVirtualClusters(context, req.data).handle[Unit] { (result, exception) =>
+      val response = if (exception != null) {
+        req.getErrorResponse(exception)
+      } else {
+        new DescribeVirtualClustersResponse(result)
       }
       requestHelper.sendResponseExemptThrottle(request, response)
     }

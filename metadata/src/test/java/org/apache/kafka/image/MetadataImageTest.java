@@ -52,7 +52,8 @@ public class MetadataImageTest {
             ProducerIdsImageTest.IMAGE1,
             AclsImageTest.IMAGE1,
             ScramImageTest.IMAGE1,
-            DelegationTokenImageTest.IMAGE1);
+            DelegationTokenImageTest.IMAGE1,
+            VirtualClustersImage.EMPTY);
 
         DELTA1 = new MetadataDelta.Builder().
                 setImage(IMAGE1).
@@ -77,7 +78,8 @@ public class MetadataImageTest {
             ProducerIdsImageTest.IMAGE2,
             AclsImageTest.IMAGE2,
             ScramImageTest.IMAGE2,
-            DelegationTokenImageTest.IMAGE2);
+            DelegationTokenImageTest.IMAGE2,
+            VirtualClustersImage.EMPTY);
     }
 
     @Test
@@ -96,7 +98,8 @@ public class MetadataImageTest {
             ProducerIdsImage.EMPTY,
             AclsImage.EMPTY,
             ScramImage.EMPTY,
-            DelegationTokenImage.EMPTY);
+            DelegationTokenImage.EMPTY,
+            VirtualClustersImage.EMPTY);
         testToImage(expectedImage, getImageRecords(image, options));
     }
 

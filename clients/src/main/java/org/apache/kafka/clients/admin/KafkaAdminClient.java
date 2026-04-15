@@ -141,6 +141,16 @@ import org.apache.kafka.common.message.DeleteAclsResponseData.DeleteAclsMatching
 import org.apache.kafka.common.message.DeleteTopicsRequestData;
 import org.apache.kafka.common.message.DeleteTopicsRequestData.DeleteTopicState;
 import org.apache.kafka.common.message.DeleteTopicsResponseData.DeletableTopicResult;
+import org.apache.kafka.common.message.AlterVirtualClustersRequestData;
+import org.apache.kafka.common.message.AlterVirtualClustersResponseData;
+import org.apache.kafka.common.message.CreateVirtualClustersRequestData;
+import org.apache.kafka.common.message.CreateVirtualClustersResponseData;
+import org.apache.kafka.common.message.DeleteVirtualClustersRequestData;
+import org.apache.kafka.common.message.DeleteVirtualClustersResponseData;
+import org.apache.kafka.common.message.DescribeVirtualClustersRequestData;
+import org.apache.kafka.common.message.DescribeVirtualClustersResponseData;
+import org.apache.kafka.common.message.ListVirtualClustersRequestData;
+import org.apache.kafka.common.message.ListVirtualClustersResponseData;
 import org.apache.kafka.common.message.DescribeClusterRequestData;
 import org.apache.kafka.common.message.DescribeClusterResponseData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
@@ -197,6 +207,10 @@ import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreateAclsResponse;
+import org.apache.kafka.common.requests.AlterVirtualClustersRequest;
+import org.apache.kafka.common.requests.AlterVirtualClustersResponse;
+import org.apache.kafka.common.requests.CreateVirtualClustersRequest;
+import org.apache.kafka.common.requests.CreateVirtualClustersResponse;
 import org.apache.kafka.common.requests.CreateDelegationTokenRequest;
 import org.apache.kafka.common.requests.CreateDelegationTokenResponse;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
@@ -205,6 +219,10 @@ import org.apache.kafka.common.requests.CreateTopicsRequest;
 import org.apache.kafka.common.requests.CreateTopicsResponse;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
+import org.apache.kafka.common.requests.DeleteVirtualClustersRequest;
+import org.apache.kafka.common.requests.DeleteVirtualClustersResponse;
+import org.apache.kafka.common.requests.DescribeVirtualClustersRequest;
+import org.apache.kafka.common.requests.DescribeVirtualClustersResponse;
 import org.apache.kafka.common.requests.DeleteTopicsRequest;
 import org.apache.kafka.common.requests.DeleteTopicsResponse;
 import org.apache.kafka.common.requests.DescribeAclsRequest;
@@ -237,6 +255,8 @@ import org.apache.kafka.common.requests.ListConfigResourcesRequest;
 import org.apache.kafka.common.requests.ListConfigResourcesResponse;
 import org.apache.kafka.common.requests.ListGroupsRequest;
 import org.apache.kafka.common.requests.ListGroupsResponse;
+import org.apache.kafka.common.requests.ListVirtualClustersRequest;
+import org.apache.kafka.common.requests.ListVirtualClustersResponse;
 import org.apache.kafka.common.requests.ListOffsetsRequest;
 import org.apache.kafka.common.requests.ListPartitionReassignmentsRequest;
 import org.apache.kafka.common.requests.ListPartitionReassignmentsResponse;
@@ -3861,6 +3881,294 @@ public class KafkaAdminClient extends AdminClient {
         invokeDriver(handler, future, options.timeoutMs);
         return new DeleteShareGroupsResult(future.all().entrySet().stream()
             .collect(Collectors.toMap(entry -> entry.getKey().idValue, Map.Entry::getValue)));
+    }
+
+    @Override
+    public CreateVirtualClustersResult createVirtualClusters(
+        final Collection<NewVirtualCluster> virtualClusters,
+        final CreateVirtualClustersOptions options
+    ) {
+        final Map<String, KafkaFutureImpl<Void>> futures = new HashMap<>();
+        final CreateVirtualClustersRequestData.CreatableVirtualClusterCollection toCreate =
+            new CreateVirtualClustersRequestData.CreatableVirtualClusterCollection();
+        for (NewVirtualCluster vc : virtualClusters) {
+            if (!futures.containsKey(vc.name())) {
+                futures.put(vc.name(), new KafkaFutureImpl<>());
+                toCreate.add(new CreateVirtualClustersRequestData.CreatableVirtualCluster().setName(vc.name()));
+            }
+        }
+        if (toCreate.isEmpty()) {
+            return new CreateVirtualClustersResult(
+                futures.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue())));
+        }
+        final long now = time.milliseconds();
+        runnable.call(new Call("createVirtualClusters", calcDeadlineMs(now, options.timeoutMs()),
+            new ControllerNodeProvider()) {
+            @Override
+            public CreateVirtualClustersRequest.Builder createRequest(int timeoutMs) {
+                return new CreateVirtualClustersRequest.Builder(
+                    new CreateVirtualClustersRequestData()
+                        .setVirtualClusters(toCreate)
+                        .setTimeoutMs(timeoutMs)
+                        .setValidateOnly(options.shouldValidateOnly()));
+            }
+
+            @Override
+            public void handleResponse(AbstractResponse abstractResponse) {
+                handleNotControllerError(abstractResponse);
+                CreateVirtualClustersResponse response = (CreateVirtualClustersResponse) abstractResponse;
+                for (CreateVirtualClustersResponseData.CreatableVirtualClustersResult res : response.data().virtualClusters()) {
+                    KafkaFutureImpl<Void> future = futures.get(res.name());
+                    if (future != null) {
+                        ApiError error = new ApiError(res.errorCode(), res.errorMessage());
+                        if (error.isFailure()) {
+                            future.completeExceptionally(error.exception());
+                        } else {
+                            future.complete(null);
+                        }
+                    }
+                }
+                completeUnrealizedFutures(futures.entrySet().stream(),
+                    name -> "The controller response did not contain a result for virtual cluster " + name);
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                futures.values().forEach(f -> f.completeExceptionally(throwable));
+            }
+        }, now);
+        return new CreateVirtualClustersResult(
+            futures.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue())));
+    }
+
+    @Override
+    public AlterVirtualClustersResult alterVirtualClusters(
+        final Map<String, ? extends Collection<VirtualClusterResourceAlteration>> alterations,
+        final AlterVirtualClustersOptions options
+    ) {
+        final Map<String, KafkaFutureImpl<Void>> futures = new HashMap<>();
+        final AlterVirtualClustersRequestData.AlterableVirtualClusterCollection vcs =
+            new AlterVirtualClustersRequestData.AlterableVirtualClusterCollection();
+        for (Map.Entry<String, ? extends Collection<VirtualClusterResourceAlteration>> e : alterations.entrySet()) {
+            if (futures.containsKey(e.getKey())) {
+                continue;
+            }
+            futures.put(e.getKey(), new KafkaFutureImpl<>());
+            AlterVirtualClustersRequestData.AlterableVirtualCluster avc =
+                new AlterVirtualClustersRequestData.AlterableVirtualCluster().setName(e.getKey());
+            for (VirtualClusterResourceAlteration a : e.getValue()) {
+                avc.resources().add(new AlterVirtualClustersRequestData.VirtualClusterResourceChange()
+                    .setResourceType(a.resourceType())
+                    .setResourceOperation(a.resourceOperation())
+                    .setResourceName(a.resourceName())
+                    .setPhysicalTopicName(a.physicalTopicName() == null ? null : a.physicalTopicName()));
+            }
+            vcs.add(avc);
+        }
+        if (vcs.isEmpty()) {
+            return new AlterVirtualClustersResult(
+                futures.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue())));
+        }
+        final long now = time.milliseconds();
+        runnable.call(new Call("alterVirtualClusters", calcDeadlineMs(now, options.timeoutMs()),
+            new ControllerNodeProvider()) {
+            @Override
+            public AlterVirtualClustersRequest.Builder createRequest(int timeoutMs) {
+                return new AlterVirtualClustersRequest.Builder(
+                    new AlterVirtualClustersRequestData()
+                        .setVirtualClusters(vcs)
+                        .setTimeoutMs(timeoutMs)
+                        .setValidateOnly(options.shouldValidateOnly()));
+            }
+
+            @Override
+            public void handleResponse(AbstractResponse abstractResponse) {
+                handleNotControllerError(abstractResponse);
+                AlterVirtualClustersResponse response = (AlterVirtualClustersResponse) abstractResponse;
+                for (AlterVirtualClustersResponseData.AlterableVirtualClusterResult vcResult : response.data().virtualClusters()) {
+                    KafkaFutureImpl<Void> future = futures.get(vcResult.name());
+                    if (future == null) {
+                        continue;
+                    }
+                    ApiError failure = null;
+                    for (AlterVirtualClustersResponseData.VirtualClusterResourceResult rr : vcResult.resources()) {
+                        ApiError err = new ApiError(rr.errorCode(), rr.errorMessage());
+                        if (err.isFailure()) {
+                            failure = err;
+                            break;
+                        }
+                    }
+                    if (failure != null) {
+                        future.completeExceptionally(failure.exception());
+                    } else {
+                        future.complete(null);
+                    }
+                }
+                completeUnrealizedFutures(futures.entrySet().stream(),
+                    name -> "The controller response did not contain a result for virtual cluster " + name);
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                futures.values().forEach(f -> f.completeExceptionally(throwable));
+            }
+        }, now);
+        return new AlterVirtualClustersResult(
+            futures.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue())));
+    }
+
+    @Override
+    public DeleteVirtualClustersResult deleteVirtualClusters(
+        final Collection<String> names,
+        final DeleteVirtualClustersOptions options
+    ) {
+        final Map<String, KafkaFutureImpl<Void>> futures = new HashMap<>();
+        final DeleteVirtualClustersRequestData.DeletableVirtualClusterCollection toDelete =
+            new DeleteVirtualClustersRequestData.DeletableVirtualClusterCollection();
+        for (String name : names) {
+            if (!futures.containsKey(name)) {
+                futures.put(name, new KafkaFutureImpl<>());
+                toDelete.add(new DeleteVirtualClustersRequestData.DeletableVirtualCluster().setName(name));
+            }
+        }
+        if (toDelete.isEmpty()) {
+            return new DeleteVirtualClustersResult(
+                futures.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue())));
+        }
+        final long now = time.milliseconds();
+        runnable.call(new Call("deleteVirtualClusters", calcDeadlineMs(now, options.timeoutMs()),
+            new ControllerNodeProvider()) {
+            @Override
+            public DeleteVirtualClustersRequest.Builder createRequest(int timeoutMs) {
+                return new DeleteVirtualClustersRequest.Builder(
+                    new DeleteVirtualClustersRequestData()
+                        .setVirtualClusters(toDelete)
+                        .setTimeoutMs(timeoutMs)
+                        .setValidateOnly(options.shouldValidateOnly()));
+            }
+
+            @Override
+            public void handleResponse(AbstractResponse abstractResponse) {
+                handleNotControllerError(abstractResponse);
+                DeleteVirtualClustersResponse response = (DeleteVirtualClustersResponse) abstractResponse;
+                for (DeleteVirtualClustersResponseData.DeletableVirtualClusterResult res : response.data().responses()) {
+                    KafkaFutureImpl<Void> future = futures.get(res.name());
+                    if (future != null) {
+                        ApiError error = new ApiError(res.errorCode(), res.errorMessage());
+                        if (error.isFailure()) {
+                            future.completeExceptionally(error.exception());
+                        } else {
+                            future.complete(null);
+                        }
+                    }
+                }
+                completeUnrealizedFutures(futures.entrySet().stream(),
+                    name -> "The controller response did not contain a result for virtual cluster " + name);
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                futures.values().forEach(f -> f.completeExceptionally(throwable));
+            }
+        }, now);
+        return new DeleteVirtualClustersResult(
+            futures.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue())));
+    }
+
+    @Override
+    public ListVirtualClustersResult listVirtualClusters(final ListVirtualClustersOptions options) {
+        final KafkaFutureImpl<Collection<String>> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        runnable.call(new Call("listVirtualClusters", calcDeadlineMs(now, options.timeoutMs()),
+            new ControllerNodeProvider()) {
+            @Override
+            public ListVirtualClustersRequest.Builder createRequest(int timeoutMs) {
+                return new ListVirtualClustersRequest.Builder(new ListVirtualClustersRequestData());
+            }
+
+            @Override
+            public void handleResponse(AbstractResponse abstractResponse) {
+                handleNotControllerError(abstractResponse);
+                ListVirtualClustersResponse response = (ListVirtualClustersResponse) abstractResponse;
+                ListVirtualClustersResponseData data = response.data();
+                Errors top = Errors.forCode(data.errorCode());
+                if (top != Errors.NONE) {
+                    future.completeExceptionally(top.exception());
+                    return;
+                }
+                List<String> names = new ArrayList<>();
+                data.virtualClusters().forEach(v -> names.add(v.name()));
+                future.complete(names);
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        }, now);
+        return new ListVirtualClustersResult(future);
+    }
+
+    @Override
+    public DescribeVirtualClustersResult describeVirtualClusters(
+        final Collection<String> names,
+        final DescribeVirtualClustersOptions options
+    ) {
+        final Map<String, KafkaFutureImpl<VirtualClusterDescription>> futures = new HashMap<>();
+        final DescribeVirtualClustersRequestData.DescribableVirtualClusterCollection dvc =
+            new DescribeVirtualClustersRequestData.DescribableVirtualClusterCollection();
+        for (String name : names) {
+            if (!futures.containsKey(name)) {
+                futures.put(name, new KafkaFutureImpl<>());
+                dvc.add(new DescribeVirtualClustersRequestData.DescribableVirtualCluster().setName(name));
+            }
+        }
+        if (dvc.isEmpty()) {
+            return new DescribeVirtualClustersResult(
+                futures.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue())));
+        }
+        final long now = time.milliseconds();
+        runnable.call(new Call("describeVirtualClusters", calcDeadlineMs(now, options.timeoutMs()),
+            new ControllerNodeProvider()) {
+            @Override
+            public DescribeVirtualClustersRequest.Builder createRequest(int timeoutMs) {
+                return new DescribeVirtualClustersRequest.Builder(
+                    new DescribeVirtualClustersRequestData().setVirtualClusters(dvc));
+            }
+
+            @Override
+            public void handleResponse(AbstractResponse abstractResponse) {
+                handleNotControllerError(abstractResponse);
+                DescribeVirtualClustersResponse response = (DescribeVirtualClustersResponse) abstractResponse;
+                for (DescribeVirtualClustersResponseData.DescribedVirtualCluster d : response.data().virtualClusters()) {
+                    KafkaFutureImpl<VirtualClusterDescription> future = futures.get(d.name());
+                    if (future == null) {
+                        continue;
+                    }
+                    Errors err = Errors.forCode(d.errorCode());
+                    if (err != Errors.NONE) {
+                        future.completeExceptionally(err.exception());
+                    } else {
+                        Map<String, String> links = new HashMap<>();
+                        d.topicLinks().forEach(t -> links.put(t.linkName(), t.physicalName()));
+                        future.complete(new VirtualClusterDescription(
+                            d.name(),
+                            links,
+                            new HashSet<>(d.users()),
+                            new HashSet<>(d.consumerGroups())));
+                    }
+                }
+                completeUnrealizedFutures(futures.entrySet().stream(),
+                    name -> "The controller response did not contain a result for virtual cluster " + name);
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                futures.values().forEach(f -> f.completeExceptionally(throwable));
+            }
+        }, now);
+        return new DescribeVirtualClustersResult(
+            futures.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue())));
     }
 
     @Override

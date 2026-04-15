@@ -354,6 +354,16 @@ public abstract class AbstractRequest implements AbstractRequestResponse {
                 return AlterShareGroupOffsetsRequest.parse(readable, apiVersion);
             case DELETE_SHARE_GROUP_OFFSETS:
                 return DeleteShareGroupOffsetsRequest.parse(readable, apiVersion);
+            case CREATE_VIRTUAL_CLUSTERS:
+                return CreateVirtualClustersRequest.parse(readable, apiVersion);
+            case ALTER_VIRTUAL_CLUSTERS:
+                return AlterVirtualClustersRequest.parse(readable, apiVersion);
+            case DELETE_VIRTUAL_CLUSTERS:
+                return DeleteVirtualClustersRequest.parse(readable, apiVersion);
+            case LIST_VIRTUAL_CLUSTERS:
+                return ListVirtualClustersRequest.parse(readable, apiVersion);
+            case DESCRIBE_VIRTUAL_CLUSTERS:
+                return DescribeVirtualClustersRequest.parse(readable, apiVersion);
             case INIT_DISKLESS_LOG:
                 return InitDisklessLogRequest.parse(readable, apiVersion);
             default:

@@ -51,8 +51,17 @@ import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
+import org.apache.kafka.common.message.AlterVirtualClustersRequestData;
+import org.apache.kafka.common.message.AlterVirtualClustersResponseData;
+import org.apache.kafka.common.message.CreateVirtualClustersRequestData;
+import org.apache.kafka.common.message.CreateVirtualClustersResponseData;
+import org.apache.kafka.common.message.DeleteVirtualClustersRequestData;
+import org.apache.kafka.common.message.DeleteVirtualClustersResponseData;
+import org.apache.kafka.common.message.DescribeVirtualClustersRequestData;
+import org.apache.kafka.common.message.DescribeVirtualClustersResponseData;
 import org.apache.kafka.common.message.InitDisklessLogRequestData;
 import org.apache.kafka.common.message.InitDisklessLogResponseData;
+import org.apache.kafka.common.message.ListVirtualClustersResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
@@ -83,8 +92,16 @@ import org.apache.kafka.common.metadata.RemoveTopicRecord;
 import org.apache.kafka.common.metadata.RemoveUserScramCredentialRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.metadata.UnfenceBrokerRecord;
+import org.apache.kafka.common.metadata.RemoveVirtualClusterGroupRecord;
+import org.apache.kafka.common.metadata.RemoveVirtualClusterRecord;
+import org.apache.kafka.common.metadata.RemoveVirtualClusterTopicLinkRecord;
+import org.apache.kafka.common.metadata.RemoveVirtualClusterUserRecord;
 import org.apache.kafka.common.metadata.UnregisterBrokerRecord;
 import org.apache.kafka.common.metadata.UserScramCredentialRecord;
+import org.apache.kafka.common.metadata.VirtualClusterGroupRecord;
+import org.apache.kafka.common.metadata.VirtualClusterRecord;
+import org.apache.kafka.common.metadata.VirtualClusterTopicLinkRecord;
+import org.apache.kafka.common.metadata.VirtualClusterUserRecord;
 import org.apache.kafka.common.protocol.ApiMessage;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaEntity;
@@ -1317,8 +1334,49 @@ public final class QuorumController implements Controller {
             case CLEAR_ELR_RECORD:
                 replicationControl.replay((ClearElrRecord) message);
                 break;
+            case VIRTUAL_CLUSTER_RECORD:
+            case REMOVE_VIRTUAL_CLUSTER_RECORD:
+            case VIRTUAL_CLUSTER_TOPIC_LINK_RECORD:
+            case REMOVE_VIRTUAL_CLUSTER_TOPIC_LINK_RECORD:
+            case VIRTUAL_CLUSTER_USER_RECORD:
+            case REMOVE_VIRTUAL_CLUSTER_USER_RECORD:
+            case VIRTUAL_CLUSTER_GROUP_RECORD:
+            case REMOVE_VIRTUAL_CLUSTER_GROUP_RECORD:
+                replayVirtualClusterRecord(type, message);
+                break;
             default:
                 throw new RuntimeException("Unhandled record type " + type);
+        }
+    }
+
+    private void replayVirtualClusterRecord(MetadataRecordType type, ApiMessage message) {
+        switch (type) {
+            case VIRTUAL_CLUSTER_RECORD:
+                virtualClusterControl.replay((VirtualClusterRecord) message);
+                break;
+            case REMOVE_VIRTUAL_CLUSTER_RECORD:
+                virtualClusterControl.replay((RemoveVirtualClusterRecord) message);
+                break;
+            case VIRTUAL_CLUSTER_TOPIC_LINK_RECORD:
+                virtualClusterControl.replay((VirtualClusterTopicLinkRecord) message);
+                break;
+            case REMOVE_VIRTUAL_CLUSTER_TOPIC_LINK_RECORD:
+                virtualClusterControl.replay((RemoveVirtualClusterTopicLinkRecord) message);
+                break;
+            case VIRTUAL_CLUSTER_USER_RECORD:
+                virtualClusterControl.replay((VirtualClusterUserRecord) message);
+                break;
+            case REMOVE_VIRTUAL_CLUSTER_USER_RECORD:
+                virtualClusterControl.replay((RemoveVirtualClusterUserRecord) message);
+                break;
+            case VIRTUAL_CLUSTER_GROUP_RECORD:
+                virtualClusterControl.replay((VirtualClusterGroupRecord) message);
+                break;
+            case REMOVE_VIRTUAL_CLUSTER_GROUP_RECORD:
+                virtualClusterControl.replay((RemoveVirtualClusterGroupRecord) message);
+                break;
+            default:
+                throw new RuntimeException("Unhandled virtual cluster record type " + type);
         }
     }
 
@@ -1434,6 +1492,11 @@ public final class QuorumController implements Controller {
      * This must be accessed only by the event queue thread.
      */
     private final ReplicationControlManager replicationControl;
+
+    /**
+     * Manages KIP-1134 virtual clusters.
+     */
+    private final VirtualClusterControlManager virtualClusterControl;
 
     /**
      * Manages SCRAM credentials, if there are any.
@@ -1601,6 +1664,12 @@ public final class QuorumController implements Controller {
             setClusterControl(clusterControl).
             setCreateTopicPolicy(createTopicPolicy).
             setFeatureControl(featureControl).
+            build();
+        this.virtualClusterControl = new VirtualClusterControlManager.Builder().
+            setLogContext(logContext).
+            setSnapshotRegistry(snapshotRegistry).
+            setReplicationControlManager(replicationControl).
+            setFeatureControlManager(featureControl).
             build();
         this.scramControlManager = new ScramControlManager.Builder().
             setLogContext(logContext).
@@ -1778,6 +1847,62 @@ public final class QuorumController implements Controller {
         }
         return appendWriteEvent("initDisklessLog", context.deadlineNs(),
             () -> replicationControl.initDisklessLog(context, request));
+    }
+
+    @Override
+    public CompletableFuture<CreateVirtualClustersResponseData> createVirtualClusters(
+        ControllerRequestContext context,
+        CreateVirtualClustersRequestData request
+    ) {
+        if (request.virtualClusters().isEmpty()) {
+            return CompletableFuture.completedFuture(new CreateVirtualClustersResponseData());
+        }
+        return appendWriteEvent("createVirtualClusters", context.deadlineNs(),
+            () -> virtualClusterControl.createVirtualClusters(context, request));
+    }
+
+    @Override
+    public CompletableFuture<AlterVirtualClustersResponseData> alterVirtualClusters(
+        ControllerRequestContext context,
+        AlterVirtualClustersRequestData request
+    ) {
+        if (request.virtualClusters().isEmpty()) {
+            return CompletableFuture.completedFuture(new AlterVirtualClustersResponseData());
+        }
+        return appendWriteEvent("alterVirtualClusters", context.deadlineNs(),
+            () -> virtualClusterControl.alterVirtualClusters(context, request));
+    }
+
+    @Override
+    public CompletableFuture<DeleteVirtualClustersResponseData> deleteVirtualClusters(
+        ControllerRequestContext context,
+        DeleteVirtualClustersRequestData request
+    ) {
+        if (request.virtualClusters().isEmpty()) {
+            return CompletableFuture.completedFuture(new DeleteVirtualClustersResponseData());
+        }
+        return appendWriteEvent("deleteVirtualClusters", context.deadlineNs(),
+            () -> virtualClusterControl.deleteVirtualClusters(context, request));
+    }
+
+    @Override
+    public CompletableFuture<ListVirtualClustersResponseData> listVirtualClusters(
+        ControllerRequestContext context
+    ) {
+        return appendReadEvent("listVirtualClusters", context.deadlineNs(),
+            () -> virtualClusterControl.listVirtualClusters(context).response());
+    }
+
+    @Override
+    public CompletableFuture<DescribeVirtualClustersResponseData> describeVirtualClusters(
+        ControllerRequestContext context,
+        DescribeVirtualClustersRequestData request
+    ) {
+        if (request.virtualClusters().isEmpty()) {
+            return CompletableFuture.completedFuture(new DescribeVirtualClustersResponseData());
+        }
+        return appendReadEvent("describeVirtualClusters", context.deadlineNs(),
+            () -> virtualClusterControl.describeVirtualClusters(context, request).response());
     }
 
     @Override

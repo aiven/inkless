@@ -49,8 +49,17 @@ import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
+import org.apache.kafka.common.message.AlterVirtualClustersRequestData;
+import org.apache.kafka.common.message.AlterVirtualClustersResponseData;
+import org.apache.kafka.common.message.CreateVirtualClustersRequestData;
+import org.apache.kafka.common.message.CreateVirtualClustersResponseData;
+import org.apache.kafka.common.message.DeleteVirtualClustersRequestData;
+import org.apache.kafka.common.message.DeleteVirtualClustersResponseData;
+import org.apache.kafka.common.message.DescribeVirtualClustersRequestData;
+import org.apache.kafka.common.message.DescribeVirtualClustersResponseData;
 import org.apache.kafka.common.message.InitDisklessLogRequestData;
 import org.apache.kafka.common.message.InitDisklessLogResponseData;
+import org.apache.kafka.common.message.ListVirtualClustersResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
@@ -528,6 +537,45 @@ public class MockController implements Controller {
     public CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
         ControllerRequestContext context,
         InitDisklessLogRequestData request
+    ) {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
+    @Override
+    public CompletableFuture<CreateVirtualClustersResponseData> createVirtualClusters(
+        ControllerRequestContext context,
+        CreateVirtualClustersRequestData request
+    ) {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
+    @Override
+    public CompletableFuture<AlterVirtualClustersResponseData> alterVirtualClusters(
+        ControllerRequestContext context,
+        AlterVirtualClustersRequestData request
+    ) {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
+    @Override
+    public CompletableFuture<DeleteVirtualClustersResponseData> deleteVirtualClusters(
+        ControllerRequestContext context,
+        DeleteVirtualClustersRequestData request
+    ) {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
+    @Override
+    public CompletableFuture<ListVirtualClustersResponseData> listVirtualClusters(
+        ControllerRequestContext context
+    ) {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
+    @Override
+    public CompletableFuture<DescribeVirtualClustersResponseData> describeVirtualClusters(
+        ControllerRequestContext context,
+        DescribeVirtualClustersRequestData request
     ) {
         throw new UnsupportedOperationException("not implemented");
     }

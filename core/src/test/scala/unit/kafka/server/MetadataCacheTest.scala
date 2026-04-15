@@ -60,7 +60,8 @@ object MetadataCacheTest {
           image.producerIds(),
           image.acls(),
           image.scram(),
-          image.delegationTokens())
+          image.delegationTokens(),
+          image.virtualClusters())
         val delta = new MetadataDelta.Builder().setImage(partialImage).build()
         records.foreach(record => delta.replay(record))
         c.setImage(delta.apply(new MetadataProvenance(100L, 10, 1000L, true)))
