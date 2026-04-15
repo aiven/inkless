@@ -1545,4 +1545,37 @@ class KRaftClusterTest {
       cluster.close()
     }
   }
+
+  @Test
+  def testKip1134VirtualClustersTopicLinkUserAndGroup2(): Unit = {
+    val props = new Properties()
+    val topicName = "vc-topic"
+    props.put("bootstrap.servers", "localhost:9092")
+    val admin = Admin.create(props)
+    try {
+      admin.createTopics(util.List.of(new NewTopic(topicName, 1, 1.toShort))).all().get()
+      waitForTopicListing(admin, Seq(topicName), Seq())
+
+      admin.createVirtualClusters(util.List.of(new NewVirtualCluster("vc1"))).all().get()
+
+      val alts = new util.ArrayList[VirtualClusterResourceAlteration]()
+      alts.add(new VirtualClusterResourceAlteration(1, 0, "l1", topicName))
+      alts.add(new VirtualClusterResourceAlteration(0, 0, "User:Alice", null))
+      alts.add(new VirtualClusterResourceAlteration(2, 0, "mygroup", null))
+      val alterations = new util.HashMap[String, util.Collection[VirtualClusterResourceAlteration]]()
+      alterations.put("vc1", alts)
+      admin.alterVirtualClusters(alterations).all().get()
+
+      val desc = admin.describeVirtualClusters(util.List.of("vc1")).values().get("vc1").get()
+      assertEquals("vc1", desc.name())
+      assertEquals(topicName, desc.topicLinks().get("l1"))
+      assertTrue(desc.users().contains("User:Alice"))
+      assertTrue(desc.consumerGroups().contains("mygroup"))
+
+      val listed = admin.listVirtualClusters().names().get()
+      assertTrue(listed.contains("vc1"))
+    } finally {
+      admin.close()
+    }
+  }
 }
