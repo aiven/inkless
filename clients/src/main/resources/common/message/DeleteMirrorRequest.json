@@ -18,7 +18,6 @@
   "type": "request",
   "listeners": ["broker", "controller"],
   "name": "DeleteMirrorRequest",
-  "latestVersionUnstable": true,
   // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",
