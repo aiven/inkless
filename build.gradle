@@ -1854,6 +1854,36 @@ project(':examples') {
   }
 }
 
+project(':kip1134-demo-ui') {
+  base {
+    archivesName = "kafka-kip1134-demo-ui"
+  }
+
+  dependencies {
+    implementation project(':clients')
+    implementation libs.jacksonDatabind
+  }
+
+  javadoc {
+    enabled = false
+  }
+
+  checkstyle {
+    configProperties = checkstyleConfigProperties("import-control-kip1134-demo-ui.xml")
+  }
+
+  tasks.register('runKip1134DemoUi', JavaExec) {
+    group = 'application'
+    description = 'Run the KIP-1134 virtual cluster demo web UI (developer-only).'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.apache.kafka.kip1134.demo.Kip1134DemoMain'
+    standardInput = System.in
+    if (project.hasProperty('kip1134DemoPort')) {
+      args project.property('kip1134DemoPort').toString()
+    }
+  }
+}
+
 project(':generator') {
   dependencies {
     implementation libs.argparse4j

@@ -1,0 +1,129 @@
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements.  See the NOTICE file distributed with
+  this work for additional information regarding copyright ownership.
+  The ASF licenses this file to You under the Apache License, Version 2.0
+  (the "License"); you may not use this file except in compliance with
+  the License.  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>KIP-1134 virtual cluster demo</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; line-height: 1.4; }
+    body { margin: 0 auto; max-width: 52rem; padding: 1rem 1.25rem 3rem; color: #1a1a1a; }
+    h1 { font-size: 1.35rem; margin-top: 0; }
+    h2 { font-size: 1.05rem; margin: 1.5rem 0 0.5rem; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; }
+    section { margin-bottom: 1.25rem; }
+    label { display: block; margin: 0.35rem 0 0.15rem; font-weight: 600; font-size: 0.85rem; }
+    input[type="text"], input[type="number"], textarea, select {
+      width: 100%; max-width: 28rem; box-sizing: border-box; padding: 0.35rem 0.5rem;
+    }
+    textarea { min-height: 4rem; font-family: ui-monospace, monospace; font-size: 0.85rem; }
+    button { margin: 0.25rem 0.5rem 0.25rem 0; padding: 0.35rem 0.65rem; cursor: pointer; }
+    .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.35rem 0; }
+    .muted { color: #555; font-size: 0.85rem; }
+    .err { color: #a40000; white-space: pre-wrap; font-size: 0.9rem; }
+    .ok { color: #0a6e3e; font-size: 0.9rem; }
+    ul.topic-list, ul.vc-list { list-style: none; padding: 0; margin: 0.25rem 0; max-height: 14rem; overflow: auto; border: 1px solid #e0e0e0; }
+    ul.topic-list li, ul.vc-list li { padding: 0.25rem 0.5rem; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 0.5rem; }
+    ul.topic-list li:last-child, ul.vc-list li:last-child { border-bottom: none; }
+    pre.dump { background: #f6f6f6; padding: 0.75rem; overflow: auto; font-size: 0.8rem; max-height: 18rem; }
+    .hint { background: #f0f7ff; border-left: 3px solid #38f; padding: 0.5rem 0.75rem; margin: 0.5rem 0; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>KIP-1134 virtual cluster demo</h1>
+  <p class="muted">Developer-only UI for <code>Admin</code> topic and virtual cluster APIs (keys 501–505). Not for production.</p>
+
+  <div class="hint">
+    Virtual cluster admin RPCs require <code>CLUSTER</code> ACLs on <code>kafka-cluster</code> or on the named VC
+    (see <code>Admin#createAcls</code>). Clusters must use a metadata version that includes virtual clusters.
+  </div>
+
+  <section id="conn">
+    <h2>Connection</h2>
+    <label for="bootstrap">Bootstrap servers</label>
+    <input id="bootstrap" type="text" placeholder="localhost:9092" autocomplete="off"/>
+    <label for="clientProps">Optional client properties (JSON object)</label>
+    <textarea id="clientProps" placeholder='{ "security.protocol": "PLAINTEXT" }'></textarea>
+    <div class="row">
+      <button type="button" id="btnConnect">Connect</button>
+      <button type="button" id="btnDisconnect">Disconnect</button>
+      <button type="button" id="btnConnStatus">Refresh status</button>
+    </div>
+    <p id="connMsg" class="muted"></p>
+  </section>
+
+  <section id="topics">
+    <h2>Topics</h2>
+    <div class="row">
+      <button type="button" id="btnListTopics">List topics</button>
+    </div>
+    <ul id="topicList" class="topic-list"></ul>
+    <label for="newTopicName">Create topic — name</label>
+    <input id="newTopicName" type="text" placeholder="my-topic"/>
+    <div class="row">
+      <label>Partitions <input id="newTopicParts" type="number" min="1" value="1" style="width:5rem"/></label>
+      <label>Replication <input id="newTopicRf" type="number" min="1" value="1" style="width:5rem"/></label>
+      <button type="button" id="btnCreateTopic">Create</button>
+    </div>
+    <label for="deleteTopicNames">Delete topics (comma-separated)</label>
+    <input id="deleteTopicNames" type="text" placeholder="t1, t2"/>
+    <button type="button" id="btnDeleteTopics">Delete</button>
+    <p id="topicMsg"></p>
+  </section>
+
+  <section id="vcs">
+    <h2>Virtual clusters</h2>
+    <div class="row">
+      <button type="button" id="btnListVc">List</button>
+      <button type="button" id="btnDescribeVc">Describe all listed</button>
+    </div>
+    <ul id="vcList" class="vc-list"></ul>
+    <label for="newVcName">Create virtual cluster — name</label>
+    <input id="newVcName" type="text"/>
+    <button type="button" id="btnCreateVc">Create</button>
+    <label for="deleteVcNames">Delete virtual clusters (comma-separated)</label>
+    <input id="deleteVcNames" type="text"/>
+    <button type="button" id="btnDeleteVc">Delete</button>
+
+    <h3 style="font-size:0.95rem;margin-top:1rem">Alter virtual cluster</h3>
+    <label for="alterVcName">Target VC name</label>
+    <input id="alterVcName" type="text"/>
+    <label for="alterType">Resource type</label>
+    <select id="alterType">
+      <option value="user">user (principal string)</option>
+      <option value="topicLink">topic link</option>
+      <option value="group">consumer group</option>
+    </select>
+    <label for="alterOp">Operation</label>
+    <select id="alterOp">
+      <option value="add">add</option>
+      <option value="remove">remove</option>
+    </select>
+    <label for="alterName">Resource name (link name, principal, or group id)</label>
+    <input id="alterName" type="text"/>
+    <label for="alterPhysical">Physical topic (required for topic link add)</label>
+    <input id="alterPhysical" type="text" placeholder="physical topic name"/>
+    <button type="button" id="btnAlterVc">Apply single change</button>
+    <p id="vcMsg"></p>
+    <pre id="vcDescribe" class="dump" hidden></pre>
+  </section>
+
+  <p id="globalErr" class="err"></p>
+
+  <script src="/app.js"></script>
+</body>
+</html>
