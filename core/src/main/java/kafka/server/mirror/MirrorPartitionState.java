@@ -51,7 +51,7 @@ public enum MirrorPartitionState {
     PAUSED((byte) 3),
 
     /**
-     * Triggered by RemoveTopicsFromMirror API (fail over) or topic deletion on the source.
+     * Triggered by StopMirrorTopics API (failover) or topic deletion on the source.
      * The system records the last mirrored offset to the internal topic.
      * Valid from: PREPARING, MIRRORING, PAUSING (race guard), PAUSED, FAILED.
      */

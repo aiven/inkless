@@ -20,7 +20,7 @@ package org.apache.kafka.clients.admin;
 import java.util.Set;
 
 /**
- * Options for {@link Admin#addTopicsToMirror(String, Set, AddTopicsToMirrorOptions)}.
+ * Options for {@link Admin#startMirrorTopics(String, Set, StartMirrorTopicsOptions)}.
  */
-public class AddTopicsToMirrorOptions extends AbstractOptions<AddTopicsToMirrorOptions> {
+public class StartMirrorTopicsOptions extends AbstractOptions<StartMirrorTopicsOptions> {
 }

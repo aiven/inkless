@@ -24,7 +24,6 @@ import org.apache.kafka.common.acl.AclBindingFilter;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.NotControllerException;
 import org.apache.kafka.common.errors.ThrottlingQuotaExceededException;
-import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
@@ -56,10 +55,11 @@ import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
-import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
+import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
+import org.apache.kafka.common.message.StopMirrorTopicsResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData;
 import org.apache.kafka.common.protocol.Errors;
@@ -120,7 +120,7 @@ public class MockController implements Controller {
     }
 
     @Override
-    public CompletableFuture<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(
+    public CompletableFuture<StopMirrorTopicsResponseData> stopMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
             Set<String> topics) {
@@ -128,7 +128,7 @@ public class MockController implements Controller {
     }
 
     @Override
-    public CompletableFuture<AddTopicsToMirrorResponseData> addTopicsToMirror(
+    public CompletableFuture<StartMirrorTopicsResponseData> startMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
             Set<String> topics

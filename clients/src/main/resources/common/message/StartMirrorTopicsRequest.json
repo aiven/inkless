@@ -14,27 +14,21 @@
 // limitations under the License.
 
 {
-  "apiKey": 96,
-  "type": "response",
-  "name": "RemoveTopicsFromMirrorResponse",
+  "apiKey": 95,
+  "type": "request",
+  "listeners": ["broker", "controller"],
+  "name": "StartMirrorTopicsRequest",
   // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "ThrottleTimeMs", "type": "int32", "versions": "0+",
-      "about": "The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota." },
-    { "name": "ErrorCode", "type": "int16", "versions": "0+",
-      "about": "The error code, or 0 if there was no error." },
-    { "name": "ErrorMessage", "type": "string", "versions": "0+", "nullableVersions": "0+", "default": "null",
-      "about": "The top-level error message, or null if there was no error." },
     { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName",
       "about": "The cluster mirror name." },
-    { "name": "Topics", "type": "[]TopicResult", "versions": "0",
-      "about": "The results for the topics.", "fields": [
-      { "name": "Name", "type": "string", "versions": "0", "entityType": "topicName",
-        "about": "The topic name." },
-      { "name": "ErrorCode", "type": "int16", "versions": "0",
-        "about": "The error code, or 0 if there was no error." }
-    ]}
+    { "name": "Topics", "type": "[]TopicData", "versions": "0+", "about": "The data for the topics.",
+      "fields": [
+        { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
+        { "name": "TopicName", "type": "string", "versions": "0+", "mapKey": true, "entityType": "topicName",
+          "about": "The topic name." }
+      ]}
   ]
 }

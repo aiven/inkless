@@ -17,7 +17,7 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
+import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
@@ -25,16 +25,16 @@ import org.apache.kafka.common.protocol.Readable;
 import java.util.HashMap;
 import java.util.Map;
 
-public class RemoveTopicsFromMirrorResponse extends AbstractResponse {
-    private final RemoveTopicsFromMirrorResponseData data;
+public class StartMirrorTopicsResponse extends AbstractResponse {
+    private final StartMirrorTopicsResponseData data;
 
-    public RemoveTopicsFromMirrorResponse(RemoveTopicsFromMirrorResponseData data) {
-        super(ApiKeys.REMOVE_TOPICS_FROM_MIRROR);
+    public StartMirrorTopicsResponse(StartMirrorTopicsResponseData data) {
+        super(ApiKeys.START_MIRROR_TOPICS);
         this.data = data;
     }
 
     @Override
-    public RemoveTopicsFromMirrorResponseData data() {
+    public StartMirrorTopicsResponseData data() {
         return data;
     }
 
@@ -55,7 +55,7 @@ public class RemoveTopicsFromMirrorResponse extends AbstractResponse {
         return errorCounts;
     }
 
-    public static RemoveTopicsFromMirrorResponse parse(Readable readable, short version) {
-        return new RemoveTopicsFromMirrorResponse(new RemoveTopicsFromMirrorResponseData(readable, version));
+    public static StartMirrorTopicsResponse parse(Readable readable, short version) {
+        return new StartMirrorTopicsResponse(new StartMirrorTopicsResponseData(readable, version));
     }
 }

@@ -2065,8 +2065,8 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
                 topic_names)
         return self.run_cli_tool(node, cmd)
 
-    def add_topics_to_cluster_mirror(self, node, mirror_name, topics):
-        return self._cluster_mirror_action(node, mirror_name, topics, 'add')
+    def start_cluster_mirror_topics(self, node, mirror_name, topics):
+        return self._cluster_mirror_action(node, mirror_name, topics, 'start')
 
     def delete_topics_from_cluster_mirror(self, node, mirror_name, topics):
         return self._cluster_mirror_action(node, mirror_name, topics, 'delete')

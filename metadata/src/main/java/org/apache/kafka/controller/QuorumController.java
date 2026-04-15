@@ -29,7 +29,6 @@ import org.apache.kafka.common.errors.BrokerIdNotRegisteredException;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.errors.StaleBrokerEpochException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
-import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
@@ -59,10 +58,11 @@ import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
-import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
+import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
+import org.apache.kafka.common.message.StopMirrorTopicsResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData;
 import org.apache.kafka.common.metadata.AbortTransactionRecord;
@@ -1793,23 +1793,23 @@ public final class QuorumController implements Controller {
     }
 
     @Override
-    public CompletableFuture<AddTopicsToMirrorResponseData> addTopicsToMirror(
+    public CompletableFuture<StartMirrorTopicsResponseData> startMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
             Set<String> topics
     ) {
-        return appendWriteEvent("addTopicsToMirror", context.deadlineNs(),
-                () -> configurationControl.addTopicsToMirror(mirrorName, topics));
+        return appendWriteEvent("startMirrorTopics", context.deadlineNs(),
+                () -> configurationControl.startMirrorTopics(mirrorName, topics));
     }
 
     @Override
-    public CompletableFuture<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(
+    public CompletableFuture<StopMirrorTopicsResponseData> stopMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
             Set<String> topics
     ) {
-        return appendWriteEvent("removeTopicsFromMirror", context.deadlineNs(),
-                () -> configurationControl.removeTopicsFromMirror(mirrorName, topics));
+        return appendWriteEvent("stopMirrorTopics", context.deadlineNs(),
+                () -> configurationControl.stopMirrorTopics(mirrorName, topics));
     }
 
     @Override

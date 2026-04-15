@@ -466,7 +466,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * Applies the appropriate state transition based on current state and stop flag.
      *
      * Possible cases:
-     * stopRequested: it means the partition should head to STOPPED state. When it is true (i.e. users removeTopicsFromMirror):
+     * stopRequested: it means the partition should head to STOPPED state. When it is true (i.e. users stopMirrorTopics):
      *   1. if it's already in STOPPED state, then keep the state
      *   2. else, move the state to STOPPING state
      * pauseRequested: it means the partition should head to PAUSED state. When it is true (i.e. users pause it):
@@ -474,7 +474,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      *   2. else, move the state to PAUSING state
      * When stopRequested=false and pauseRequested=false:
      *   1. if it's in PAUSED state, we should move it to MIRRORING state. It will happen when users resume mirroring
-     *   2. if it's in UNKNOWN or STOPPED state, we should move it to PREPARING state. It will happen when users addTopicsToMirror.
+     *   2. if it's in UNKNOWN or STOPPED state, we should move it to PREPARING state. It will happen when users startMirrorTopics.
      *   3. else, keep the same state as is. This could happen like leadership change, and the new leader should continue to complete the process in previous leader.
      */
     private void applyMirrorStateTransition(String mirrorName, TopicPartition tp,

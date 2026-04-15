@@ -190,8 +190,6 @@ import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.AbstractResponse;
 import org.apache.kafka.common.requests.AddRaftVoterRequest;
 import org.apache.kafka.common.requests.AddRaftVoterResponse;
-import org.apache.kafka.common.requests.AddTopicsToMirrorRequest;
-import org.apache.kafka.common.requests.AddTopicsToMirrorResponse;
 import org.apache.kafka.common.requests.AlterClientQuotasRequest;
 import org.apache.kafka.common.requests.AlterClientQuotasResponse;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsRequest;
@@ -264,12 +262,14 @@ import org.apache.kafka.common.requests.PauseMirrorTopicsRequest;
 import org.apache.kafka.common.requests.PauseMirrorTopicsResponse;
 import org.apache.kafka.common.requests.RemoveRaftVoterRequest;
 import org.apache.kafka.common.requests.RemoveRaftVoterResponse;
-import org.apache.kafka.common.requests.RemoveTopicsFromMirrorRequest;
-import org.apache.kafka.common.requests.RemoveTopicsFromMirrorResponse;
 import org.apache.kafka.common.requests.RenewDelegationTokenRequest;
 import org.apache.kafka.common.requests.RenewDelegationTokenResponse;
 import org.apache.kafka.common.requests.ResumeMirrorTopicsRequest;
 import org.apache.kafka.common.requests.ResumeMirrorTopicsResponse;
+import org.apache.kafka.common.requests.StartMirrorTopicsRequest;
+import org.apache.kafka.common.requests.StartMirrorTopicsResponse;
+import org.apache.kafka.common.requests.StopMirrorTopicsRequest;
+import org.apache.kafka.common.requests.StopMirrorTopicsResponse;
 import org.apache.kafka.common.requests.UnregisterBrokerRequest;
 import org.apache.kafka.common.requests.UnregisterBrokerResponse;
 import org.apache.kafka.common.requests.UpdateFeaturesRequest;
@@ -4918,21 +4918,21 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public AddTopicsToMirrorResult addTopicsToMirror(String mirrorName, Set<String> topics, AddTopicsToMirrorOptions options) {
+    public StartMirrorTopicsResult startMirrorTopics(String mirrorName, Set<String> topics, StartMirrorTopicsOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
-        final Call call = new Call("addTopicsToMirror", calcDeadlineMs(now, options.timeoutMs()),
+        final Call call = new Call("startMirrorTopics", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedNodeProvider()) {
 
             @Override
-            AddTopicsToMirrorRequest.Builder createRequest(int timeoutMs) {
-                return new AddTopicsToMirrorRequest.Builder(mirrorName, topics);
+            StartMirrorTopicsRequest.Builder createRequest(int timeoutMs) {
+                return new StartMirrorTopicsRequest.Builder(mirrorName, topics);
             }
 
             @Override
             void handleResponse(AbstractResponse abstractResponse) {
-                final AddTopicsToMirrorResponse response =
-                        (AddTopicsToMirrorResponse) abstractResponse;
+                final StartMirrorTopicsResponse response =
+                        (StartMirrorTopicsResponse) abstractResponse;
                 Errors error = Errors.forCode(response.data().errorCode());
                 switch (error) {
                     case NONE:
@@ -4953,25 +4953,25 @@ public class KafkaAdminClient extends AdminClient {
             }
         };
         runnable.call(call, now);
-        return new AddTopicsToMirrorResult(future);
+        return new StartMirrorTopicsResult(future);
     }
 
     @Override
-    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
+    public StopMirrorTopicsResult stopMirrorTopics(String mirrorName, Set<String> topics, StopMirrorTopicsOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
-        final Call call = new Call("removeTopicsFromMirror", calcDeadlineMs(now, options.timeoutMs()),
+        final Call call = new Call("stopMirrorTopics", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
 
             @Override
-            RemoveTopicsFromMirrorRequest.Builder createRequest(int timeoutMs) {
-                return new RemoveTopicsFromMirrorRequest.Builder(mirrorName, topics);
+            StopMirrorTopicsRequest.Builder createRequest(int timeoutMs) {
+                return new StopMirrorTopicsRequest.Builder(mirrorName, topics);
             }
 
             @Override
             void handleResponse(AbstractResponse abstractResponse) {
-                final RemoveTopicsFromMirrorResponse response =
-                        (RemoveTopicsFromMirrorResponse) abstractResponse;
+                final StopMirrorTopicsResponse response =
+                        (StopMirrorTopicsResponse) abstractResponse;
                 Errors error = Errors.forCode(response.data().errorCode());
                 switch (error) {
                     case NONE:
@@ -4992,7 +4992,7 @@ public class KafkaAdminClient extends AdminClient {
             }
         };
         runnable.call(call, now);
-        return new RemoveTopicsFromMirrorResult(future);
+        return new StopMirrorTopicsResult(future);
     }
 
     @Override
