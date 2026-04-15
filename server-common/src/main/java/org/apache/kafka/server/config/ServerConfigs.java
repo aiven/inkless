@@ -76,6 +76,12 @@ public class ServerConfigs {
     public static final String DELETE_TOPIC_ENABLE_DOC = "When set to true, topics can be deleted by the admin client. " +
             "When set to false, deletion requests will be explicitly rejected by the broker.";
 
+    /** KIP-1134: restrict principals assigned to a virtual cluster to that cluster's linked topics and groups. */
+    public static final String VIRTUAL_CLUSTER_ENFORCEMENT_ENABLE_CONFIG = "virtual.cluster.enforcement.enable";
+    public static final boolean VIRTUAL_CLUSTER_ENFORCEMENT_ENABLE_DEFAULT = false;
+    public static final String VIRTUAL_CLUSTER_ENFORCEMENT_ENABLE_DOC = "When true, principals assigned to a virtual cluster in metadata " +
+            "may only access topics and consumer groups linked to that virtual cluster (in addition to normal ACL checks).";
+
     public static final String COMPRESSION_TYPE_CONFIG = ServerTopicConfigSynonyms.serverSynonym(TopicConfig.COMPRESSION_TYPE_CONFIG);
     public static final String COMPRESSION_TYPE_DOC = "Specify the final compression type for a given topic. This configuration accepts the standard compression codecs " +
             "('gzip', 'snappy', 'lz4', 'zstd'). It additionally accepts 'uncompressed' which is equivalent to no compression; and " +
@@ -199,6 +205,8 @@ public class ServerConfigs {
             /** ********* Controlled shutdown configuration ***********/
             .define(CONTROLLED_SHUTDOWN_ENABLE_CONFIG, BOOLEAN, CONTROLLED_SHUTDOWN_ENABLE_DEFAULT, MEDIUM, CONTROLLED_SHUTDOWN_ENABLE_DOC)
             .define(DELETE_TOPIC_ENABLE_CONFIG, BOOLEAN, DELETE_TOPIC_ENABLE_DEFAULT, HIGH, DELETE_TOPIC_ENABLE_DOC)
+            .define(VIRTUAL_CLUSTER_ENFORCEMENT_ENABLE_CONFIG, BOOLEAN, VIRTUAL_CLUSTER_ENFORCEMENT_ENABLE_DEFAULT, MEDIUM,
+                VIRTUAL_CLUSTER_ENFORCEMENT_ENABLE_DOC)
             .define(COMPRESSION_TYPE_CONFIG, STRING, ServerLogConfigs.COMPRESSION_TYPE_DEFAULT, ConfigDef.ValidString.in(BrokerCompressionType.names().toArray(new String[0])), HIGH, COMPRESSION_TYPE_DOC)
             .define(COMPRESSION_GZIP_LEVEL_CONFIG, INT, CompressionType.GZIP.defaultLevel(), CompressionType.GZIP.levelValidator(), MEDIUM, COMPRESSION_GZIP_LEVEL_DOC)
             .define(COMPRESSION_LZ4_LEVEL_CONFIG, INT, CompressionType.LZ4.defaultLevel(), CompressionType.LZ4.levelValidator(), MEDIUM, COMPRESSION_LZ4_LEVEL_DOC)

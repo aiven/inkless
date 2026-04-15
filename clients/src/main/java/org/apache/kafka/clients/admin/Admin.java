@@ -2147,11 +2147,24 @@ public interface Admin extends AutoCloseable {
 
     /**
      * Create virtual clusters (KIP-1134). Uses Admin API keys 501–505 in this fork.
+     * <p>
+     * Authorization uses {@link org.apache.kafka.common.resource.ResourceType#CLUSTER} ACLs (see also
+     * {@link #createAcls(Collection)}): a principal may create a named virtual cluster if it has {@code CREATE}
+     * on {@code ResourcePattern} {@code (CLUSTER, "kafka-cluster", LITERAL)} (global cluster admin) or
+     * {@code CREATE} on {@code (CLUSTER, "&lt;virtualClusterName&gt;", LITERAL)}. The same global-or-named pattern
+     * applies to other virtual cluster admin RPCs with {@code ALTER}, {@code DELETE}, and {@code DESCRIBE} on the
+     * corresponding operation (alter, delete, describe; list returns names visible under {@code DESCRIBE}).
      */
     default CreateVirtualClustersResult createVirtualClusters(Collection<NewVirtualCluster> virtualClusters) {
         return createVirtualClusters(virtualClusters, new CreateVirtualClustersOptions());
     }
 
+    /**
+     * Create virtual clusters (KIP-1134). See {@link #createVirtualClusters(Collection)} for authorization.
+     *
+     * @param virtualClusters Virtual clusters to create
+     * @param options         Options for the request
+     */
     CreateVirtualClustersResult createVirtualClusters(
         Collection<NewVirtualCluster> virtualClusters,
         CreateVirtualClustersOptions options
@@ -2159,6 +2172,7 @@ public interface Admin extends AutoCloseable {
 
     /**
      * Alter virtual clusters: assign or remove users, consumer groups, and topic links (KIP-1134).
+     * Requires {@code ALTER} on {@code CLUSTER} + {@code kafka-cluster} or {@code CLUSTER} + the target VC name.
      */
     default AlterVirtualClustersResult alterVirtualClusters(
         Map<String, ? extends Collection<VirtualClusterResourceAlteration>> alterations
@@ -2173,6 +2187,7 @@ public interface Admin extends AutoCloseable {
 
     /**
      * Delete empty virtual clusters (KIP-1134).
+     * Requires {@code DELETE} on {@code CLUSTER} + {@code kafka-cluster} or {@code CLUSTER} + the VC name.
      */
     default DeleteVirtualClustersResult deleteVirtualClusters(Collection<String> names) {
         return deleteVirtualClusters(names, new DeleteVirtualClustersOptions());
@@ -2181,7 +2196,8 @@ public interface Admin extends AutoCloseable {
     DeleteVirtualClustersResult deleteVirtualClusters(Collection<String> names, DeleteVirtualClustersOptions options);
 
     /**
-     * List virtual cluster names (KIP-1134).
+     * List virtual cluster names (KIP-1134). Results are filtered to names the principal may {@code DESCRIBE}
+     * on {@code CLUSTER} + name or globally via {@code kafka-cluster}.
      */
     default ListVirtualClustersResult listVirtualClusters() {
         return listVirtualClusters(new ListVirtualClustersOptions());
@@ -2191,6 +2207,7 @@ public interface Admin extends AutoCloseable {
 
     /**
      * Describe virtual clusters (KIP-1134).
+     * Requires {@code DESCRIBE} on {@code CLUSTER} + {@code kafka-cluster} or {@code CLUSTER} + each requested name.
      */
     default DescribeVirtualClustersResult describeVirtualClusters(Collection<String> names) {
         return describeVirtualClusters(names, new DescribeVirtualClustersOptions());

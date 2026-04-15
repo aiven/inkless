@@ -695,59 +695,144 @@ class ControllerApis(
 
   def handleCreateVirtualClustersRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
     val req = request.body[CreateVirtualClustersRequest]
-    authHelper.authorizeClusterOperation(request, ALTER)
-    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
-      requestTimeoutMsToDeadlineNs(time, req.data.timeoutMs))
-    controller.createVirtualClusters(context, req.data).handle[Unit] { (result, exception) =>
-      val response = if (exception != null) {
-        req.getErrorResponse(exception)
-      } else {
-        new CreateVirtualClustersResponse(result)
+    val data = req.data
+    val ctx = request.context
+    val (authorized, deniedResults) = data.virtualClusters.asScala.toSeq.partition { vc =>
+      authHelper.authorizeVirtualClusterOperation(ctx, CREATE, vc.name())
+    }
+    val denied = deniedResults.map { vc =>
+      new CreateVirtualClustersResponseData.CreatableVirtualClustersResult()
+        .setName(vc.name())
+        .setErrorCode(CLUSTER_AUTHORIZATION_FAILED.code)
+        .setErrorMessage("Principal is not authorized to create this virtual cluster.")
+    }
+    if (authorized.isEmpty) {
+      val responseData = new CreateVirtualClustersResponseData().setThrottleTimeMs(0)
+      denied.foreach(r => responseData.virtualClusters().add(r))
+      requestHelper.sendResponseExemptThrottle(request, new CreateVirtualClustersResponse(responseData))
+      CompletableFuture.completedFuture(())
+    } else {
+      val subRequest = new CreateVirtualClustersRequestData()
+        .setTimeoutMs(data.timeoutMs)
+        .setValidateOnly(data.validateOnly)
+      // Duplicate entries: ImplicitLinkedHashMultiCollection nodes cannot be shared across collections.
+      authorized.foreach(vc => subRequest.virtualClusters().add(vc.duplicate()))
+      val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+        requestTimeoutMsToDeadlineNs(time, data.timeoutMs))
+      controller.createVirtualClusters(context, subRequest).handle[Unit] { (result, exception) =>
+        val response = if (exception != null) {
+          req.getErrorResponse(exception)
+        } else {
+          denied.foreach(r => result.virtualClusters().add(r))
+          new CreateVirtualClustersResponse(result)
+        }
+        requestHelper.sendResponseExemptThrottle(request, response)
       }
-      requestHelper.sendResponseExemptThrottle(request, response)
     }
   }
 
   def handleAlterVirtualClustersRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
     val req = request.body[AlterVirtualClustersRequest]
-    authHelper.authorizeClusterOperation(request, ALTER)
-    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
-      requestTimeoutMsToDeadlineNs(time, req.data.timeoutMs))
-    controller.alterVirtualClusters(context, req.data).handle[Unit] { (result, exception) =>
-      val response = if (exception != null) {
-        req.getErrorResponse(exception)
-      } else {
-        new AlterVirtualClustersResponse(result)
+    val data = req.data
+    val ctx = request.context
+    val (authorized, denied) = data.virtualClusters.asScala.toSeq.partition { avc =>
+      authHelper.authorizeVirtualClusterOperation(ctx, ALTER, avc.name())
+    }
+    val deniedResults = denied.map { avc =>
+      val rr = new AlterVirtualClustersResponseData.VirtualClusterResourceResult()
+        .setResourceType(0.toByte)
+        .setResourceOperation(0.toByte)
+        .setResourceName("")
+        .setErrorCode(CLUSTER_AUTHORIZATION_FAILED.code)
+        .setErrorMessage("Principal is not authorized to alter this virtual cluster.")
+      new AlterVirtualClustersResponseData.AlterableVirtualClusterResult()
+        .setName(avc.name())
+        .setResources(Collections.singletonList(rr))
+    }
+    if (authorized.isEmpty) {
+      val responseData = new AlterVirtualClustersResponseData().setThrottleTimeMs(0)
+      deniedResults.foreach(r => responseData.virtualClusters().add(r))
+      requestHelper.sendResponseExemptThrottle(request, new AlterVirtualClustersResponse(responseData))
+      CompletableFuture.completedFuture(())
+    } else {
+      val subRequest = new AlterVirtualClustersRequestData()
+        .setTimeoutMs(data.timeoutMs)
+        .setValidateOnly(data.validateOnly)
+      authorized.foreach(vc => subRequest.virtualClusters().add(vc.duplicate()))
+      val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+        requestTimeoutMsToDeadlineNs(time, data.timeoutMs))
+      controller.alterVirtualClusters(context, subRequest).handle[Unit] { (result, exception) =>
+        val response = if (exception != null) {
+          req.getErrorResponse(exception)
+        } else {
+          deniedResults.foreach(r => result.virtualClusters().add(r))
+          new AlterVirtualClustersResponse(result)
+        }
+        requestHelper.sendResponseExemptThrottle(request, response)
       }
-      requestHelper.sendResponseExemptThrottle(request, response)
     }
   }
 
   def handleDeleteVirtualClustersRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
     val req = request.body[DeleteVirtualClustersRequest]
-    authHelper.authorizeClusterOperation(request, ALTER)
-    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
-      requestTimeoutMsToDeadlineNs(time, req.data.timeoutMs))
-    controller.deleteVirtualClusters(context, req.data).handle[Unit] { (result, exception) =>
-      val response = if (exception != null) {
-        req.getErrorResponse(exception)
-      } else {
-        new DeleteVirtualClustersResponse(result)
+    val data = req.data
+    val ctx = request.context
+    val (authorized, denied) = data.virtualClusters.asScala.toSeq.partition { dvc =>
+      authHelper.authorizeVirtualClusterOperation(ctx, DELETE, dvc.name())
+    }
+    val deniedResults = denied.map { dvc =>
+      new DeleteVirtualClustersResponseData.DeletableVirtualClusterResult()
+        .setName(dvc.name())
+        .setErrorCode(CLUSTER_AUTHORIZATION_FAILED.code)
+        .setErrorMessage("Principal is not authorized to delete this virtual cluster.")
+    }
+    if (authorized.isEmpty) {
+      val responseData = new DeleteVirtualClustersResponseData().setThrottleTimeMs(0)
+      deniedResults.foreach(r => responseData.responses().add(r))
+      requestHelper.sendResponseExemptThrottle(request, new DeleteVirtualClustersResponse(responseData))
+      CompletableFuture.completedFuture(())
+    } else {
+      val subRequest = new DeleteVirtualClustersRequestData()
+        .setTimeoutMs(data.timeoutMs)
+        .setValidateOnly(data.validateOnly)
+      authorized.foreach(vc => subRequest.virtualClusters().add(vc.duplicate()))
+      val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+        requestTimeoutMsToDeadlineNs(time, data.timeoutMs))
+      controller.deleteVirtualClusters(context, subRequest).handle[Unit] { (result, exception) =>
+        val response = if (exception != null) {
+          req.getErrorResponse(exception)
+        } else {
+          deniedResults.foreach(r => result.responses().add(r))
+          new DeleteVirtualClustersResponse(result)
+        }
+        requestHelper.sendResponseExemptThrottle(request, response)
       }
-      requestHelper.sendResponseExemptThrottle(request, response)
     }
   }
 
   def handleListVirtualClustersRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
     val req = request.body[ListVirtualClustersRequest]
-    authHelper.authorizeClusterOperation(request, DESCRIBE)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
+    val ctx = request.context
     controller.listVirtualClusters(context).handle[Unit] { (result, exception) =>
       val response = if (exception != null) {
         req.getErrorResponse(exception)
       } else {
-        new ListVirtualClustersResponse(result)
+        val allNames = result.virtualClusters.asScala.map(_.name()).toSeq
+        val visible = allNames.filter { n =>
+          authHelper.authorizeVirtualClusterOperation(ctx, DESCRIBE, n)
+        }
+        val responseData = new ListVirtualClustersResponseData().setThrottleTimeMs(result.throttleTimeMs)
+        if (allNames.nonEmpty && visible.isEmpty) {
+          responseData.setErrorCode(CLUSTER_AUTHORIZATION_FAILED.code)
+        } else {
+          responseData.setErrorCode(NONE.code)
+        }
+        visible.foreach { n =>
+          responseData.virtualClusters().add(new ListVirtualClustersResponseData.ListedVirtualCluster().setName(n))
+        }
+        new ListVirtualClustersResponse(responseData)
       }
       requestHelper.sendResponseExemptThrottle(request, response)
     }
@@ -755,16 +840,35 @@ class ControllerApis(
 
   def handleDescribeVirtualClustersRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
     val req = request.body[DescribeVirtualClustersRequest]
-    authHelper.authorizeClusterOperation(request, DESCRIBE)
-    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
-      OptionalLong.empty())
-    controller.describeVirtualClusters(context, req.data).handle[Unit] { (result, exception) =>
-      val response = if (exception != null) {
-        req.getErrorResponse(exception)
-      } else {
-        new DescribeVirtualClustersResponse(result)
+    val data = req.data
+    val ctx = request.context
+    val (authorized, deniedDesc) = data.virtualClusters.asScala.toSeq.partition { d =>
+      authHelper.authorizeVirtualClusterOperation(ctx, DESCRIBE, d.name())
+    }
+    val deniedResults = deniedDesc.map { d =>
+      new DescribeVirtualClustersResponseData.DescribedVirtualCluster()
+        .setName(d.name())
+        .setErrorCode(CLUSTER_AUTHORIZATION_FAILED.code)
+    }
+    if (authorized.isEmpty) {
+      val responseData = new DescribeVirtualClustersResponseData().setThrottleTimeMs(0)
+      deniedResults.foreach(d => responseData.virtualClusters().add(d))
+      requestHelper.sendResponseExemptThrottle(request, new DescribeVirtualClustersResponse(responseData))
+      CompletableFuture.completedFuture(())
+    } else {
+      val subRequest = new DescribeVirtualClustersRequestData()
+      authorized.foreach(d => subRequest.virtualClusters().add(d.duplicate()))
+      val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+        OptionalLong.empty())
+      controller.describeVirtualClusters(context, subRequest).handle[Unit] { (result, exception) =>
+        val response = if (exception != null) {
+          req.getErrorResponse(exception)
+        } else {
+          deniedResults.foreach(d => result.virtualClusters().add(d))
+          new DescribeVirtualClustersResponse(result)
+        }
+        requestHelper.sendResponseExemptThrottle(request, response)
       }
-      requestHelper.sendResponseExemptThrottle(request, response)
     }
   }
 

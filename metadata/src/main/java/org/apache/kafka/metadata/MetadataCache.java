@@ -30,6 +30,7 @@ import org.apache.kafka.common.message.DescribeUserScramCredentialsResponseData;
 import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.image.MetadataImage;
+import org.apache.kafka.image.VirtualClustersImage;
 import org.apache.kafka.server.common.FinalizedFeatures;
 import org.apache.kafka.server.common.MetadataVersion;
 
@@ -123,6 +124,13 @@ public interface MetadataCache extends ConfigRepository {
     DescribeClientQuotasResponseData describeClientQuotas(DescribeClientQuotasRequestData request);
 
     DescribeUserScramCredentialsResponseData describeScramCredentials(DescribeUserScramCredentialsRequestData request);
+
+    /**
+     * Virtual cluster metadata (KIP-1134). Default empty for caches that do not track virtual clusters.
+     */
+    default VirtualClustersImage virtualClusters() {
+        return VirtualClustersImage.EMPTY;
+    }
 
     /**
      * Get the topic metadata for the given topics.

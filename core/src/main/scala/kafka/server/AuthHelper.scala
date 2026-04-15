@@ -59,6 +59,22 @@ class AuthHelper(authorizer: Option[Plugin[Authorizer]]) {
       throw new ClusterAuthorizationException(s"Request $request needs $operation permission.")
   }
 
+  /**
+   * KIP-1134: authorize an operation on a named virtual cluster or the global cluster resource
+   * (`kafka-cluster`). Principals with the operation on `kafka-cluster` have full VC access;
+   * otherwise the operation must be allowed on `CLUSTER` with literal name `virtualClusterName`.
+   */
+  def authorizeVirtualClusterOperation(
+    requestContext: RequestContext,
+    operation: AclOperation,
+    virtualClusterName: String,
+    logIfAllowed: Boolean = true,
+    logIfDenied: Boolean = true
+  ): Boolean = {
+    authorize(requestContext, operation, CLUSTER, CLUSTER_NAME, logIfAllowed, logIfDenied) ||
+      authorize(requestContext, operation, CLUSTER, virtualClusterName, logIfAllowed, logIfDenied)
+  }
+
   def authorizedOperations(request: RequestChannel.Request, resource: Resource): Int = {
     val supportedOps = AclEntry.supportedOperations(resource.resourceType).asScala.toList
     val authorizedOps = authorizer match {

@@ -61,7 +61,7 @@ import org.apache.kafka.common.utils.{ProducerIdAndEpoch, Time}
 import org.apache.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.coordinator.group.{Group, GroupConfig, GroupConfigManager, GroupCoordinator}
 import org.apache.kafka.coordinator.share.ShareCoordinator
-import org.apache.kafka.metadata.{ConfigRepository, MetadataCache}
+import org.apache.kafka.metadata.{ConfigRepository, MetadataCache, VirtualClusterAccess}
 import org.apache.kafka.security.DelegationTokenManager
 import org.apache.kafka.server.{ApiVersionManager, ClientMetricsManager, ProcessRole}
 import org.apache.kafka.server.authorizer._
@@ -126,6 +126,26 @@ class KafkaApis(val requestChannel: RequestChannel,
     metadataCache, authHelper, config)
 
   val inklessTopicMetadataTransformer = inklessSharedState.map(s => new InklessTopicMetadataTransformer(s.metadata()))
+
+  /** KIP-1134: when [[KafkaConfig.virtualClusterEnforcementEnable]] is true, restrict VC-assigned principals to linked topics. */
+  private def virtualClusterTopicAllowed(request: RequestChannel.Request, topic: String): Boolean = {
+    if (!config.virtualClusterEnforcementEnable) true
+    else VirtualClusterAccess.isTopicAllowedForPrincipal(
+      metadataCache.virtualClusters(),
+      request.context.principal.toString,
+      topic
+    )
+  }
+
+  /** KIP-1134: when enforcement is enabled, restrict VC-assigned principals to groups registered for their VC. */
+  private def virtualClusterGroupAllowed(request: RequestChannel.Request, groupId: String): Boolean = {
+    if (!config.virtualClusterEnforcementEnable) true
+    else VirtualClusterAccess.isGroupAllowedForPrincipal(
+      metadataCache.virtualClusters(),
+      request.context.principal.toString,
+      groupId
+    )
+  }
 
   def close(): Unit = {
     aclApis.close()
@@ -290,6 +310,9 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (!authHelper.authorize(request.context, READ, GROUP, offsetCommitRequest.data.groupId)) {
       requestHelper.sendMaybeThrottle(request, offsetCommitRequest.getErrorResponse(Errors.GROUP_AUTHORIZATION_FAILED.exception))
       CompletableFuture.completedFuture[Unit](())
+    } else if (!virtualClusterGroupAllowed(request, offsetCommitRequest.data.groupId)) {
+      requestHelper.sendMaybeThrottle(request, offsetCommitRequest.getErrorResponse(Errors.GROUP_AUTHORIZATION_FAILED.exception))
+      CompletableFuture.completedFuture[Unit](())
     } else {
       val useTopicIds = OffsetCommitResponse.useTopicIds(request.header.apiVersion)
 
@@ -319,6 +342,9 @@ class KafkaApis(val requestChannel: RequestChannel,
         } else if (!authorizedTopics.contains(topic.name)) {
           // If the topic is not authorized, we add the topic and all its partitions
           // to the response with TOPIC_AUTHORIZATION_FAILED.
+          responseBuilder.addPartitions[OffsetCommitRequestData.OffsetCommitRequestPartition](
+            topic.topicId, topic.name, topic.partitions, _.partitionIndex, Errors.TOPIC_AUTHORIZATION_FAILED)
+        } else if (!virtualClusterTopicAllowed(request, topic.name)) {
           responseBuilder.addPartitions[OffsetCommitRequestData.OffsetCommitRequestPartition](
             topic.topicId, topic.name, topic.partitions, _.partitionIndex, Errors.TOPIC_AUTHORIZATION_FAILED)
         } else if (!metadataCache.contains(topic.name)) {
@@ -444,6 +470,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       // https://issues.apache.org/jira/browse/KAFKA-10698
       val memoryRecords = partition.records.asInstanceOf[MemoryRecords]
       if (!authorizedTopics.contains(topicIdPartition.topic))
+        unauthorizedTopicResponses += topicIdPartition -> new PartitionResponse(Errors.TOPIC_AUTHORIZATION_FAILED)
+      else if (!virtualClusterTopicAllowed(request, topicIdPartition.topic))
         unauthorizedTopicResponses += topicIdPartition -> new PartitionResponse(Errors.TOPIC_AUTHORIZATION_FAILED)
       else if (!metadataCache.contains(topicIdPartition.topicPartition))
         nonExistingTopicResponses += topicIdPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION)
@@ -619,6 +647,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       val authorizedTopics = authHelper.filterByAuthorized(request.context, READ, TOPIC, partitionDatas)(_._1.topicPartition.topic)
       partitionDatas.foreach { case (topicIdPartition, data) =>
         if (!authorizedTopics.contains(topicIdPartition.topic))
+          erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.TOPIC_AUTHORIZATION_FAILED)
+        else if (!virtualClusterTopicAllowed(request, topicIdPartition.topic))
           erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.TOPIC_AUTHORIZATION_FAILED)
         else if (!metadataCache.contains(topicIdPartition.topicPartition))
           erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
@@ -801,10 +831,18 @@ class KafkaApis(val requestChannel: RequestChannel,
         .setOffset(ListOffsetsResponse.UNKNOWN_OFFSET)
     }
 
-    val (authorizedRequestInfo, unauthorizedRequestInfo) = authHelper.partitionSeqByAuthorized(request.context,
+    val (aclAuthorizedTopics, unauthorizedRequestInfo) = authHelper.partitionSeqByAuthorized(request.context,
         DESCRIBE, TOPIC, offsetRequest.topics.asScala.toSeq)(_.name)
+    val (authorizedRequestInfo, vcUnauthorizedTopics) = aclAuthorizedTopics.partition(t => virtualClusterTopicAllowed(request, t.name))
 
     val unauthorizedResponseStatus = unauthorizedRequestInfo.map(topic =>
+      new ListOffsetsTopicResponse()
+        .setName(topic.name)
+        .setPartitions(topic.partitions.asScala.map(partition =>
+          buildErrorResponse(Errors.TOPIC_AUTHORIZATION_FAILED, partition)).asJava)
+    ).asJava
+
+    val vcUnauthorizedResponseStatus = vcUnauthorizedTopics.map(topic =>
       new ListOffsetsTopicResponse()
         .setName(topic.name)
         .setPartitions(topic.partitions.asScala.map(partition =>
@@ -814,6 +852,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     def sendResponseCallback(response: util.Collection[ListOffsetsTopicResponse]): Void = {
       val mergedResponses = new util.ArrayList(response)
       mergedResponses.addAll(unauthorizedResponseStatus)
+      mergedResponses.addAll(vcUnauthorizedResponseStatus)
       requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
         new ListOffsetsResponse(new ListOffsetsResponseData()
           .setThrottleTimeMs(requestThrottleMs)
@@ -1395,6 +1434,9 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (!authHelper.authorize(request.context, READ, GROUP, joinGroupRequest.data.groupId)) {
       requestHelper.sendMaybeThrottle(request, joinGroupRequest.getErrorResponse(Errors.GROUP_AUTHORIZATION_FAILED.exception))
       CompletableFuture.completedFuture[Unit](())
+    } else if (!virtualClusterGroupAllowed(request, joinGroupRequest.data.groupId)) {
+      requestHelper.sendMaybeThrottle(request, joinGroupRequest.getErrorResponse(Errors.GROUP_AUTHORIZATION_FAILED.exception))
+      CompletableFuture.completedFuture[Unit](())
     } else {
       groupCoordinator.joinGroup(
         request.context,
@@ -1421,6 +1463,9 @@ class KafkaApis(val requestChannel: RequestChannel,
       requestHelper.sendMaybeThrottle(request, syncGroupRequest.getErrorResponse(Errors.INCONSISTENT_GROUP_PROTOCOL.exception))
       CompletableFuture.completedFuture[Unit](())
     } else if (!authHelper.authorize(request.context, READ, GROUP, syncGroupRequest.data.groupId)) {
+      requestHelper.sendMaybeThrottle(request, syncGroupRequest.getErrorResponse(Errors.GROUP_AUTHORIZATION_FAILED.exception))
+      CompletableFuture.completedFuture[Unit](())
+    } else if (!virtualClusterGroupAllowed(request, syncGroupRequest.data.groupId)) {
       requestHelper.sendMaybeThrottle(request, syncGroupRequest.getErrorResponse(Errors.GROUP_AUTHORIZATION_FAILED.exception))
       CompletableFuture.completedFuture[Unit](())
     } else {
@@ -1482,6 +1527,9 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (!authHelper.authorize(request.context, READ, GROUP, heartbeatRequest.data.groupId)) {
       requestHelper.sendMaybeThrottle(request, heartbeatRequest.getErrorResponse(Errors.GROUP_AUTHORIZATION_FAILED.exception))
       CompletableFuture.completedFuture[Unit](())
+    } else if (!virtualClusterGroupAllowed(request, heartbeatRequest.data.groupId)) {
+      requestHelper.sendMaybeThrottle(request, heartbeatRequest.getErrorResponse(Errors.GROUP_AUTHORIZATION_FAILED.exception))
+      CompletableFuture.completedFuture[Unit](())
     } else {
       groupCoordinator.heartbeat(
         request.context,
@@ -1500,6 +1548,9 @@ class KafkaApis(val requestChannel: RequestChannel,
     val leaveGroupRequest = request.body[LeaveGroupRequest]
 
     if (!authHelper.authorize(request.context, READ, GROUP, leaveGroupRequest.data.groupId)) {
+      requestHelper.sendMaybeThrottle(request, leaveGroupRequest.getErrorResponse(Errors.GROUP_AUTHORIZATION_FAILED.exception))
+      CompletableFuture.completedFuture[Unit](())
+    } else if (!virtualClusterGroupAllowed(request, leaveGroupRequest.data.groupId)) {
       requestHelper.sendMaybeThrottle(request, leaveGroupRequest.getErrorResponse(Errors.GROUP_AUTHORIZATION_FAILED.exception))
       CompletableFuture.completedFuture[Unit](())
     } else {

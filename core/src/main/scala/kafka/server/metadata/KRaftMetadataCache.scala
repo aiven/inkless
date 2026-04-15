@@ -28,7 +28,7 @@ import org.apache.kafka.common.message._
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.MetadataResponse
-import org.apache.kafka.image.MetadataImage
+import org.apache.kafka.image.{MetadataImage, VirtualClustersImage}
 import org.apache.kafka.metadata.{BrokerRegistration, LeaderAndIsr, MetadataCache, PartitionRegistration, Replicas}
 import org.apache.kafka.server.common.{FinalizedFeatures, KRaftVersion, MetadataVersion}
 
@@ -460,6 +460,8 @@ class KRaftMetadataCache(
   override def describeScramCredentials(request: DescribeUserScramCredentialsRequestData): DescribeUserScramCredentialsResponseData = {
     _currentImage.scram().describe(request)
   }
+
+  override def virtualClusters(): VirtualClustersImage = _currentImage.virtualClusters()
 
   override def metadataVersion(): MetadataVersion = _currentImage.features().metadataVersionOrThrow()
 

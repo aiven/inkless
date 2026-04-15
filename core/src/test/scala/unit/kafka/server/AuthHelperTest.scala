@@ -29,7 +29,7 @@ import org.apache.kafka.common.message.DescribeClusterResponseData.DescribeClust
 import org.apache.kafka.common.network.{ClientInformation, ListenerName}
 import org.apache.kafka.common.protocol.{ApiKeys, Errors}
 import org.apache.kafka.common.requests.{DescribeClusterRequest, RequestContext, RequestHeader}
-import org.apache.kafka.common.resource.{PatternType, ResourcePattern, ResourceType}
+import org.apache.kafka.common.resource.{PatternType, Resource, ResourcePattern, ResourceType}
 import org.apache.kafka.common.security.auth.{KafkaPrincipal, SecurityProtocol}
 import org.apache.kafka.server.authorizer.{Action, AuthorizationResult, Authorizer}
 import org.junit.jupiter.api.Assertions._
@@ -37,6 +37,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.argThat
 import org.mockito.ArgumentMatchers
 import org.mockito.Mockito.{mock, verify, when}
+import org.mockito.invocation.InvocationOnMock
 
 import scala.collection.Seq
 import scala.jdk.CollectionConverters._
@@ -258,5 +259,63 @@ class AuthHelperTest {
       setClusterAuthorizedOperations(Int.MinValue).
       setBrokers(nodes).
       setEndpointType(2.toByte), responseData)
+  }
+
+  @Test
+  def testAuthorizeVirtualClusterOperationGlobalCluster(): Unit = {
+    val authorizer: Authorizer = mock(classOf[Authorizer])
+    val authorizerPlugin = Plugin.wrapInstance(authorizer, null, "authorizer.class.name")
+    val requestHeader = new RequestHeader(ApiKeys.METADATA, ApiKeys.METADATA.latestVersion, clientId, 0)
+    val requestContext = new RequestContext(requestHeader, "1", InetAddress.getLocalHost,
+      KafkaPrincipal.ANONYMOUS, ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT),
+      SecurityProtocol.PLAINTEXT, ClientInformation.EMPTY, false)
+    when(authorizer.authorize(
+      ArgumentMatchers.any(classOf[RequestContext]),
+      ArgumentMatchers.any(classOf[util.List[Action]])
+    )).thenAnswer((invocation: InvocationOnMock) => {
+      val actions = invocation.getArgument(1, classOf[util.List[Action]])
+      val name = actions.get(0).resourcePattern.name
+      util.Collections.singletonList(
+        if (Resource.CLUSTER_NAME == name) AuthorizationResult.ALLOWED else AuthorizationResult.DENIED)
+    })
+    val ah = new AuthHelper(Some(authorizerPlugin))
+    assertTrue(ah.authorizeVirtualClusterOperation(requestContext, AclOperation.DESCRIBE, "tenant-vc"))
+  }
+
+  @Test
+  def testAuthorizeVirtualClusterOperationNamedCluster(): Unit = {
+    val authorizer: Authorizer = mock(classOf[Authorizer])
+    val authorizerPlugin = Plugin.wrapInstance(authorizer, null, "authorizer.class.name")
+    val requestHeader = new RequestHeader(ApiKeys.METADATA, ApiKeys.METADATA.latestVersion, clientId, 0)
+    val requestContext = new RequestContext(requestHeader, "1", InetAddress.getLocalHost,
+      KafkaPrincipal.ANONYMOUS, ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT),
+      SecurityProtocol.PLAINTEXT, ClientInformation.EMPTY, false)
+    when(authorizer.authorize(
+      ArgumentMatchers.any(classOf[RequestContext]),
+      ArgumentMatchers.any(classOf[util.List[Action]])
+    )).thenAnswer((invocation: InvocationOnMock) => {
+      val actions = invocation.getArgument(1, classOf[util.List[Action]])
+      val name = actions.get(0).resourcePattern.name
+      util.Collections.singletonList(
+        if ("tenant-vc" == name) AuthorizationResult.ALLOWED else AuthorizationResult.DENIED)
+    })
+    val ah = new AuthHelper(Some(authorizerPlugin))
+    assertTrue(ah.authorizeVirtualClusterOperation(requestContext, AclOperation.CREATE, "tenant-vc"))
+  }
+
+  @Test
+  def testAuthorizeVirtualClusterOperationDenied(): Unit = {
+    val authorizer: Authorizer = mock(classOf[Authorizer])
+    val authorizerPlugin = Plugin.wrapInstance(authorizer, null, "authorizer.class.name")
+    val requestHeader = new RequestHeader(ApiKeys.METADATA, ApiKeys.METADATA.latestVersion, clientId, 0)
+    val requestContext = new RequestContext(requestHeader, "1", InetAddress.getLocalHost,
+      KafkaPrincipal.ANONYMOUS, ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT),
+      SecurityProtocol.PLAINTEXT, ClientInformation.EMPTY, false)
+    when(authorizer.authorize(
+      ArgumentMatchers.any(classOf[RequestContext]),
+      ArgumentMatchers.any(classOf[util.List[Action]])
+    )).thenReturn(util.Collections.singletonList(AuthorizationResult.DENIED))
+    val ah = new AuthHelper(Some(authorizerPlugin))
+    assertFalse(ah.authorizeVirtualClusterOperation(requestContext, AclOperation.DELETE, "tenant-vc"))
   }
 }

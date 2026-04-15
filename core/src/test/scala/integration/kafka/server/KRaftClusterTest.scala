@@ -19,6 +19,8 @@ package kafka.server
 
 import kafka.network.SocketServer
 import kafka.utils.TestUtils
+import org.apache.kafka.clients.producer.ProducerRecord
+import org.apache.kafka.common.errors.TopicAuthorizationException
 import org.apache.kafka.server.IntegrationTestUtils.connectAndReceive
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin._
@@ -1576,6 +1578,54 @@ class KRaftClusterTest {
       assertTrue(listed.contains("vc1"))
     } finally {
       admin.close()
+    }
+  }
+
+  @Test
+  def testKip1134VirtualClusterLinkEnforcement(): Unit = {
+    val cluster = new KafkaClusterTestKit.Builder(
+      new TestKitNodes.Builder()
+        .setNumBrokerNodes(1)
+        .setNumControllerNodes(1)
+        .build()
+    ).setConfigProp(ServerConfigs.VIRTUAL_CLUSTER_ENFORCEMENT_ENABLE_CONFIG, "true")
+      .build()
+    try {
+      cluster.format()
+      cluster.startup()
+      cluster.waitForReadyBrokers()
+      val admin = Admin.create(cluster.clientProperties())
+      try {
+        admin.createTopics(util.List.of(
+          new NewTopic("allowed-t", 1, 1.toShort),
+          new NewTopic("denied-t", 1, 1.toShort)
+        )).all().get()
+        waitForTopicListing(admin, Seq("allowed-t", "denied-t"), Seq())
+
+        admin.createVirtualClusters(util.List.of(new NewVirtualCluster("vc1"))).all().get()
+        val alts = new util.ArrayList[VirtualClusterResourceAlteration]()
+        alts.add(new VirtualClusterResourceAlteration(1, 0, "link1", "allowed-t"))
+        alts.add(new VirtualClusterResourceAlteration(0, 0, "User:ANONYMOUS", null))
+        val alterations = new util.HashMap[String, util.Collection[VirtualClusterResourceAlteration]]()
+        alterations.put("vc1", alts)
+        admin.alterVirtualClusters(alterations).all().get()
+
+        val producer = TestUtils.createProducer(cluster.bootstrapServers())
+        try {
+          producer.send(new ProducerRecord("allowed-t", "k".getBytes(StandardCharsets.UTF_8), "v".getBytes(StandardCharsets.UTF_8)))
+            .get(60, TimeUnit.SECONDS)
+          val ex = assertThrows(classOf[ExecutionException], () =>
+            producer.send(new ProducerRecord("denied-t", "k".getBytes(StandardCharsets.UTF_8), "v".getBytes(StandardCharsets.UTF_8)))
+              .get(60, TimeUnit.SECONDS))
+          assertTrue(ex.getCause.isInstanceOf[TopicAuthorizationException])
+        } finally {
+          producer.close()
+        }
+      } finally {
+        admin.close()
+      }
+    } finally {
+      cluster.close()
     }
   }
 }
