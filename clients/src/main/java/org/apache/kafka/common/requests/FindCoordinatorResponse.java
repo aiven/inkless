@@ -96,14 +96,15 @@ public class FindCoordinatorResponse extends AbstractResponse {
 
     @Override
     public Map<Errors, Integer> errorCounts() {
-        Map<Errors, Integer> errorCounts = new EnumMap<>(Errors.class);
-        updateErrorCounts(errorCounts, error());
         if (!data.coordinators().isEmpty()) {
+            Map<Errors, Integer> errorCounts = new EnumMap<>(Errors.class);
             for (Coordinator coordinator : data.coordinators()) {
                 updateErrorCounts(errorCounts, Errors.forCode(coordinator.errorCode()));
             }
+            return errorCounts;
+        } else {
+            return errorCounts(error());
         }
-        return errorCounts;
     }
 
     public static FindCoordinatorResponse parse(Readable readable, short version) {
