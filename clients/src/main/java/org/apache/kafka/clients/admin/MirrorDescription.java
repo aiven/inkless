@@ -18,6 +18,7 @@
 package org.apache.kafka.clients.admin;
 
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.acl.AclOperation;
 import org.apache.kafka.common.annotation.InterfaceStability;
 
 import java.util.Collections;
@@ -32,11 +33,14 @@ import java.util.Set;
 public class MirrorDescription {
     private final String mirrorName;
     private final Map<String, Set<LeaderState>> topics;
+    private final Set<AclOperation> authorizedOperations;
 
     public MirrorDescription(String mirrorName,
-                             Map<String, Set<LeaderState>> topics) {
+                             Map<String, Set<LeaderState>> topics,
+                             Set<AclOperation> authorizedOperations) {
         this.mirrorName = mirrorName;
         this.topics = Collections.unmodifiableMap(topics);
+        this.authorizedOperations = authorizedOperations;
     }
 
     public String mirrorName() {
@@ -47,18 +51,26 @@ public class MirrorDescription {
         return topics;
     }
 
+    /**
+     * Returns the authorized operations for this mirror, or null if not requested.
+     */
+    public Set<AclOperation> authorizedOperations() {
+        return authorizedOperations;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         MirrorDescription that = (MirrorDescription) o;
         return Objects.equals(mirrorName, that.mirrorName) &&
-               Objects.equals(topics, that.topics);
+               Objects.equals(topics, that.topics) &&
+               Objects.equals(authorizedOperations, that.authorizedOperations);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(mirrorName, topics);
+        return Objects.hash(mirrorName, topics, authorizedOperations);
     }
 
     @Override
@@ -66,6 +78,7 @@ public class MirrorDescription {
         return "MirrorDescription{" +
                "mirrorName='" + mirrorName + '\'' +
                ", topics=" + topics +
+               ", authorizedOperations=" + authorizedOperations +
                '}';
     }
 

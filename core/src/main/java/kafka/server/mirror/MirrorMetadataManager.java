@@ -1469,9 +1469,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             }
         });
 
-        // collect remove acls list
+        // collect remove acls list (skip CLUSTER_MIRROR ACLs as they are destination-specific)
         metadataImage.acls().acls().values().forEach(acl -> {
-            if (!allRemoteAcls.contains(acl.toBinding())) {
+            if (acl.resourceType() != ResourceType.CLUSTER_MIRROR && !allRemoteAcls.contains(acl.toBinding())) {
                 deleteACLsList.add(acl.toBinding());
             }
         });
