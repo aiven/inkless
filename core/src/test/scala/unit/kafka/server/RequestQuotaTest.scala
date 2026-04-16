@@ -763,7 +763,40 @@ class RequestQuotaTest extends BaseRequestTest {
         case ApiKeys.GET_REPLICA_LOG_INFO =>
           new GetReplicaLogInfoRequest.Builder(new GetReplicaLogInfoRequestData())
 
-        case _ =>
+        case ApiKeys.LIST_MIRRORS =>
+          new ListMirrorsRequest.Builder(new ListMirrorsRequestData())
+
+        case ApiKeys.CREATE_MIRROR =>
+          new CreateMirrorRequest.Builder(new CreateMirrorRequestData())
+
+        case ApiKeys.START_MIRROR_TOPICS =>
+          new StartMirrorTopicsRequest.Builder(new StartMirrorTopicsRequestData())
+
+        case ApiKeys.STOP_MIRROR_TOPICS =>
+          new StopMirrorTopicsRequest.Builder(new StopMirrorTopicsRequestData())
+
+        case ApiKeys.DESCRIBE_MIRRORS =>
+          new DescribeMirrorsRequest.Builder(new DescribeMirrorsRequestData())
+
+        case ApiKeys.READ_MIRROR_STATES =>
+          new ReadMirrorStatesRequest.Builder(new ReadMirrorStatesRequestData())
+
+        case ApiKeys.WRITE_MIRROR_STATES =>
+          new WriteMirrorStatesRequest.Builder(new WriteMirrorStatesRequestData())
+
+        case ApiKeys.PAUSE_MIRROR_TOPICS =>
+          new PauseMirrorTopicsRequest.Builder(new PauseMirrorTopicsRequestData())
+
+        case ApiKeys.RESUME_MIRROR_TOPICS =>
+          new ResumeMirrorTopicsRequest.Builder(new ResumeMirrorTopicsRequestData())
+
+        case ApiKeys.DELETE_MIRROR =>
+          new DeleteMirrorRequest.Builder(new DeleteMirrorRequestData())
+
+        case ApiKeys.BUMP_LEADER_EPOCHS =>
+          new BumpLeaderEpochsRequest.Builder(new BumpLeaderEpochsRequestData())
+
+      case _ =>
           throw new IllegalArgumentException("Unsupported API key " + apiKey)
     }
   }
