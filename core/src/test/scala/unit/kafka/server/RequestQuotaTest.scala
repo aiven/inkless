@@ -769,11 +769,11 @@ class RequestQuotaTest extends BaseRequestTest {
         case ApiKeys.CREATE_MIRROR =>
           new CreateMirrorRequest.Builder(new CreateMirrorRequestData())
 
-        case ApiKeys.ADD_TOPICS_TO_MIRROR =>
-          new AddTopicsToMirrorRequest.Builder(new AddTopicsToMirrorRequestData())
+        case ApiKeys.START_MIRROR_TOPICS =>
+          new StartMirrorTopicsRequest.Builder(new StartMirrorTopicsRequestData())
 
-        case ApiKeys.REMOVE_TOPICS_FROM_MIRROR =>
-          new RemoveTopicsFromMirrorRequest.Builder(new RemoveTopicsFromMirrorRequestData())
+        case ApiKeys.STOP_MIRROR_TOPICS =>
+          new StopMirrorTopicsRequest.Builder(new StopMirrorTopicsRequestData())
 
         case ApiKeys.DESCRIBE_MIRRORS =>
           new DescribeMirrorsRequest.Builder(new DescribeMirrorsRequestData())
