@@ -357,7 +357,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        mirrorStateSender.shutdown();
+        if (mirrorStateSender != null) {
+            mirrorStateSender.shutdown();
+        }
         closeSourceSenders();
     }
 
