@@ -75,6 +75,8 @@ import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerHeartbeatResponseData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationResponseData;
+import org.apache.kafka.common.message.BumpLeaderEpochsRequestData;
+import org.apache.kafka.common.message.BumpLeaderEpochsResponseData;
 import org.apache.kafka.common.message.ConsumerGroupDescribeRequestData;
 import org.apache.kafka.common.message.ConsumerGroupDescribeResponseData;
 import org.apache.kafka.common.message.ConsumerGroupHeartbeatRequestData;
@@ -108,6 +110,8 @@ import org.apache.kafka.common.message.DeleteGroupsRequestData;
 import org.apache.kafka.common.message.DeleteGroupsResponseData;
 import org.apache.kafka.common.message.DeleteGroupsResponseData.DeletableGroupResult;
 import org.apache.kafka.common.message.DeleteGroupsResponseData.DeletableGroupResultCollection;
+import org.apache.kafka.common.message.DeleteMirrorRequestData;
+import org.apache.kafka.common.message.DeleteMirrorResponseData;
 import org.apache.kafka.common.message.DeleteRecordsRequestData;
 import org.apache.kafka.common.message.DeleteRecordsResponseData;
 import org.apache.kafka.common.message.DeleteShareGroupOffsetsRequestData;
@@ -134,6 +138,8 @@ import org.apache.kafka.common.message.DescribeGroupsResponseData;
 import org.apache.kafka.common.message.DescribeGroupsResponseData.DescribedGroup;
 import org.apache.kafka.common.message.DescribeLogDirsRequestData;
 import org.apache.kafka.common.message.DescribeLogDirsResponseData;
+import org.apache.kafka.common.message.DescribeMirrorsRequestData;
+import org.apache.kafka.common.message.DescribeMirrorsResponseData;
 import org.apache.kafka.common.message.DescribeProducersRequestData;
 import org.apache.kafka.common.message.DescribeProducersResponseData;
 import org.apache.kafka.common.message.DescribeQuorumRequestData;
@@ -183,6 +189,8 @@ import org.apache.kafka.common.message.ListConfigResourcesRequestData;
 import org.apache.kafka.common.message.ListConfigResourcesResponseData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
 import org.apache.kafka.common.message.ListGroupsResponseData;
+import org.apache.kafka.common.message.ListMirrorsRequestData;
+import org.apache.kafka.common.message.ListMirrorsResponseData;
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition;
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic;
 import org.apache.kafka.common.message.ListOffsetsResponseData;
@@ -211,10 +219,14 @@ import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.OffsetFor
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData;
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset;
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.OffsetForLeaderTopicResult;
+import org.apache.kafka.common.message.PauseMirrorTopicsRequestData;
+import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.ProduceRequestData;
 import org.apache.kafka.common.message.ProduceResponseData;
 import org.apache.kafka.common.message.PushTelemetryRequestData;
 import org.apache.kafka.common.message.PushTelemetryResponseData;
+import org.apache.kafka.common.message.ReadMirrorStatesRequestData;
+import org.apache.kafka.common.message.ReadMirrorStatesResponseData;
 import org.apache.kafka.common.message.ReadShareGroupStateRequestData;
 import org.apache.kafka.common.message.ReadShareGroupStateResponseData;
 import org.apache.kafka.common.message.ReadShareGroupStateSummaryRequestData;
@@ -223,6 +235,8 @@ import org.apache.kafka.common.message.RemoveRaftVoterRequestData;
 import org.apache.kafka.common.message.RemoveRaftVoterResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsRequestData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
 import org.apache.kafka.common.message.SaslAuthenticateRequestData;
 import org.apache.kafka.common.message.SaslAuthenticateResponseData;
 import org.apache.kafka.common.message.SaslHandshakeRequestData;
@@ -235,6 +249,10 @@ import org.apache.kafka.common.message.ShareGroupDescribeRequestData;
 import org.apache.kafka.common.message.ShareGroupDescribeResponseData;
 import org.apache.kafka.common.message.ShareGroupHeartbeatRequestData;
 import org.apache.kafka.common.message.ShareGroupHeartbeatResponseData;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
+import org.apache.kafka.common.message.StopMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StopMirrorTopicsResponseData;
 import org.apache.kafka.common.message.StreamsGroupDescribeRequestData;
 import org.apache.kafka.common.message.StreamsGroupDescribeResponseData;
 import org.apache.kafka.common.message.StreamsGroupHeartbeatRequestData;
@@ -250,6 +268,8 @@ import org.apache.kafka.common.message.UpdateRaftVoterRequestData;
 import org.apache.kafka.common.message.UpdateRaftVoterResponseData;
 import org.apache.kafka.common.message.VoteRequestData;
 import org.apache.kafka.common.message.VoteResponseData;
+import org.apache.kafka.common.message.WriteMirrorStatesRequestData;
+import org.apache.kafka.common.message.WriteMirrorStatesResponseData;
 import org.apache.kafka.common.message.WriteShareGroupStateRequestData;
 import org.apache.kafka.common.message.WriteShareGroupStateResponseData;
 import org.apache.kafka.common.network.Send;
@@ -1081,6 +1101,16 @@ public class RequestResponseTest {
             case ALTER_SHARE_GROUP_OFFSETS: return createAlterShareGroupOffsetsRequest(version);
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsRequest(version);
             case GET_REPLICA_LOG_INFO: return createGetReplicaLogInfoRequest(version);
+            case START_MIRROR_TOPICS: return createStartMirrorTopicsRequest(version);
+            case STOP_MIRROR_TOPICS: return createStopMirrorTopicsRequest(version);
+            case LIST_MIRRORS: return createListMirrorsRequest(version);
+            case DESCRIBE_MIRRORS: return createDescribeMirrorsRequest(version);
+            case READ_MIRROR_STATES: return createReadMirrorStatesRequest(version);
+            case WRITE_MIRROR_STATES: return createWriteMirrorStatesRequest(version);
+            case PAUSE_MIRROR_TOPICS: return createPauseMirrorTopicsRequest(version);
+            case RESUME_MIRROR_TOPICS: return createResumeMirrorTopicsRequest(version);
+            case DELETE_MIRROR: return createDeleteMirrorRequest(version);
+            case BUMP_LEADER_EPOCHS: return createBumpLeaderEpochsRequest(version);
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
     }
@@ -1178,8 +1208,209 @@ public class RequestResponseTest {
             case ALTER_SHARE_GROUP_OFFSETS: return createAlterShareGroupOffsetsResponse();
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsResponse();
             case GET_REPLICA_LOG_INFO: return createGetReplicaLogInfoResponse();
+            case START_MIRROR_TOPICS: return createStartMirrorTopicsResponse();
+            case STOP_MIRROR_TOPICS: return createStopMirrorTopicsResponse();
+            case LIST_MIRRORS: return createListMirrorsResponse();
+            case DESCRIBE_MIRRORS: return createDescribeMirrorsResponse();
+            case READ_MIRROR_STATES: return createReadMirrorStatesResponse();
+            case WRITE_MIRROR_STATES: return createWriteMirrorStatesResponse();
+            case PAUSE_MIRROR_TOPICS: return createPauseMirrorTopicsResponse();
+            case RESUME_MIRROR_TOPICS: return createResumeMirrorTopicsResponse();
+            case DELETE_MIRROR: return createDeleteMirrorResponse();
+            case BUMP_LEADER_EPOCHS: return createBumpLeaderEpochsResponse();
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
+    }
+
+    private StartMirrorTopicsRequest createStartMirrorTopicsRequest(short version) {
+        StartMirrorTopicsRequestData.TopicDataCollection topics = new StartMirrorTopicsRequestData.TopicDataCollection();
+        topics.add(new StartMirrorTopicsRequestData.TopicData()
+                .setTopicId(Uuid.randomUuid())
+                .setTopicName("topic")
+        );
+        StartMirrorTopicsRequestData data = new StartMirrorTopicsRequestData()
+                .setMirrorName("mirror")
+                .setTopics(topics);
+        return new StartMirrorTopicsRequest.Builder(data).build(version);
+    }
+
+    private StartMirrorTopicsResponse createStartMirrorTopicsResponse() {
+        StartMirrorTopicsResponseData data = new StartMirrorTopicsResponseData()
+                .setMirrorName("mirror")
+                .setTopics(List.of(new StartMirrorTopicsResponseData.TopicResult().setName("topic")));
+        return new StartMirrorTopicsResponse(data);
+    }
+
+    private StopMirrorTopicsRequest createStopMirrorTopicsRequest(short version) {
+        StopMirrorTopicsRequestData.TopicDataCollection topics = new StopMirrorTopicsRequestData.TopicDataCollection();
+        topics.add(new StopMirrorTopicsRequestData.TopicData()
+                .setTopicId(Uuid.randomUuid())
+                .setTopicName("topic")
+        );
+        StopMirrorTopicsRequestData data = new StopMirrorTopicsRequestData()
+                .setMirrorName("mirror")
+                .setTopics(topics);
+        return new StopMirrorTopicsRequest.Builder(data).build(version);
+    }
+
+    private StopMirrorTopicsResponse createStopMirrorTopicsResponse() {
+        StopMirrorTopicsResponseData data = new StopMirrorTopicsResponseData()
+                .setTopics(List.of(new StopMirrorTopicsResponseData.TopicResult().setName("topic")))
+                .setMirrorName("mirror");
+        return new StopMirrorTopicsResponse(data);
+    }
+
+    public ListMirrorsRequest createListMirrorsRequest(short version) {
+        ListMirrorsRequestData data = new ListMirrorsRequestData();
+        return new ListMirrorsRequest.Builder(data).build(version);
+    }
+
+    public ListMirrorsResponse createListMirrorsResponse() {
+        ListMirrorsResponseData data = new ListMirrorsResponseData()
+                .setMirrors(List.of(new ListMirrorsResponseData.ListedMirror()
+                        .setMirrorName("mirror")
+                        .setSourceBootstrap("bootstrap")
+                        .setSourceClusterId("clusterId")
+                ));
+        return new ListMirrorsResponse(data);
+    }
+
+    public DescribeMirrorsRequest createDescribeMirrorsRequest(short version) {
+        DescribeMirrorsRequestData data = new DescribeMirrorsRequestData()
+                .setMirrorNames(List.of("mirror"))
+                .setIncludeAuthorizedOperations(true);
+        return new DescribeMirrorsRequest.Builder(data).build(version);
+    }
+
+    public DescribeMirrorsResponse createDescribeMirrorsResponse() {
+        DescribeMirrorsResponseData data = new DescribeMirrorsResponseData()
+                .setMirrors(List.of(new DescribeMirrorsResponseData.DescribedMirror()
+                        .setMirrorName("mirror")
+                        .setTopics(List.of(new DescribeMirrorsResponseData.TopicPartitions()
+                                .setTopicName("topic")
+                                .setPartitions(List.of(new DescribeMirrorsResponseData.PartitionDetail()
+                                        .setPartitionIndex(0)
+                                        .setState("MIRRORING")
+                                        .setLag(100L)
+                                        .setLastMirrorEpoch(0)
+                                        .setDestinationOffset(0)
+                                        .setSourceOffset(100)
+                                ))
+                        ))));
+        return new DescribeMirrorsResponse(data);
+    }
+
+    public ReadMirrorStatesRequest createReadMirrorStatesRequest(short version) {
+        ReadMirrorStatesRequestData data = new ReadMirrorStatesRequestData()
+                .setMirrorName("mirror")
+                .setTopics(List.of(new ReadMirrorStatesRequestData.TopicData()
+                        .setName("topic")
+                        .setPartitions(List.of(new ReadMirrorStatesRequestData.PartitionData().setPartitionIndex(0)))
+                ));
+        return new ReadMirrorStatesRequest.Builder(data).build(version);
+    }
+
+    public ReadMirrorStatesResponse createReadMirrorStatesResponse() {
+        ReadMirrorStatesResponseData data = new ReadMirrorStatesResponseData()
+                .setTopics(List.of(new ReadMirrorStatesResponseData.TopicResult()
+                        .setName("topic")
+                        .setPartitions(List.of(new ReadMirrorStatesResponseData.PartitionResult()
+                                .setState((byte) 0)
+                                .setPartitionIndex(0)
+                                .setLastMirrorEpoch(0)
+                        ))));
+        return new ReadMirrorStatesResponse(data);
+    }
+
+    public WriteMirrorStatesRequest createWriteMirrorStatesRequest(short version) {
+        WriteMirrorStatesRequestData data = new WriteMirrorStatesRequestData()
+                .setMirrorName("mirror")
+                .setTopics(List.of(new WriteMirrorStatesRequestData.TopicData()
+                        .setName("topic")
+                        .setPartitions(List.of(new WriteMirrorStatesRequestData.PartitionData()
+                                .setPartitionIndex(0)
+                                .setLastMirrorEpoch(0)
+                                .setState((byte) 0)
+                        ))
+                ));
+        return new WriteMirrorStatesRequest.Builder(data).build(version);
+    }
+
+    public WriteMirrorStatesResponse createWriteMirrorStatesResponse() {
+        WriteMirrorStatesResponseData data = new WriteMirrorStatesResponseData()
+                .setTopics(List.of(new WriteMirrorStatesResponseData.TopicResult()
+                        .setName("topic")
+                        .setPartitions(List.of(new WriteMirrorStatesResponseData.PartitionResult().setPartitionIndex(0)))
+                ));
+        return new WriteMirrorStatesResponse(data);
+    }
+
+    public PauseMirrorTopicsRequest createPauseMirrorTopicsRequest(short version) {
+        PauseMirrorTopicsRequestData.TopicDataCollection topics = new PauseMirrorTopicsRequestData.TopicDataCollection();
+        topics.add(new PauseMirrorTopicsRequestData.TopicData()
+                .setTopicId(Uuid.randomUuid())
+                .setTopicName("topic")
+        );
+        PauseMirrorTopicsRequestData data = new PauseMirrorTopicsRequestData()
+                .setMirrorName("mirror")
+                .setTopics(topics);
+        return new PauseMirrorTopicsRequest.Builder(data).build(version);
+    }
+
+    public PauseMirrorTopicsResponse createPauseMirrorTopicsResponse() {
+        PauseMirrorTopicsResponseData data = new PauseMirrorTopicsResponseData()
+                .setMirrorName("mirror")
+                .setTopics(List.of(new PauseMirrorTopicsResponseData.TopicResult()
+                        .setName("topic")));
+        return new PauseMirrorTopicsResponse(data);
+    }
+
+    public ResumeMirrorTopicsRequest createResumeMirrorTopicsRequest(short version) {
+        ResumeMirrorTopicsRequestData.TopicDataCollection topics = new ResumeMirrorTopicsRequestData.TopicDataCollection();
+        topics.add(new ResumeMirrorTopicsRequestData.TopicData()
+                .setTopicId(Uuid.randomUuid())
+                .setTopicName("topic")
+        );
+        ResumeMirrorTopicsRequestData data = new ResumeMirrorTopicsRequestData()
+                .setMirrorName("mirror")
+                .setTopics(topics);
+        return new ResumeMirrorTopicsRequest.Builder(data).build(version);
+    }
+
+    public ResumeMirrorTopicsResponse createResumeMirrorTopicsResponse() {
+        ResumeMirrorTopicsResponseData data = new ResumeMirrorTopicsResponseData()
+                .setMirrorName("mirror")
+                .setTopics(List.of(new ResumeMirrorTopicsResponseData.TopicResult()
+                        .setName("topic")
+                ));
+        return new ResumeMirrorTopicsResponse(data);
+    }
+
+    public DeleteMirrorRequest createDeleteMirrorRequest(short version) {
+        DeleteMirrorRequestData data = new DeleteMirrorRequestData()
+                .setMirrorName("mirror");
+        return new DeleteMirrorRequest.Builder(data).build(version);
+    }
+
+    public DeleteMirrorResponse createDeleteMirrorResponse() {
+        DeleteMirrorResponseData data = new DeleteMirrorResponseData();
+        return new DeleteMirrorResponse(data);
+    }
+
+    public BumpLeaderEpochsRequest createBumpLeaderEpochsRequest(short version) {
+        BumpLeaderEpochsRequestData data = new BumpLeaderEpochsRequestData()
+                .setTopics(List.of(new BumpLeaderEpochsRequestData.TopicState()
+                        .setTopicId(Uuid.randomUuid())
+                        .setPartitions(List.of(new BumpLeaderEpochsRequestData.LeaderEpochState()
+                                .setMinLeaderEpoch(1)
+                                .setPartitionIndex(1)
+                        ))));
+        return new BumpLeaderEpochsRequest.Builder(data).build(version);
+    }
+
+    public BumpLeaderEpochsResponse createBumpLeaderEpochsResponse() {
+        BumpLeaderEpochsResponseData data = new BumpLeaderEpochsResponseData();
+        return new BumpLeaderEpochsResponse(data);
     }
 
     private GetReplicaLogInfoRequest createGetReplicaLogInfoRequest(short version) {

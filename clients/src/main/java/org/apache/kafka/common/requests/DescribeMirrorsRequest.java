@@ -19,6 +19,7 @@ package org.apache.kafka.common.requests;
 import org.apache.kafka.common.message.DescribeMirrorsRequestData;
 import org.apache.kafka.common.message.DescribeMirrorsResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
 
 import java.util.Collections;
@@ -61,7 +62,9 @@ public class DescribeMirrorsRequest extends AbstractRequest {
     public DescribeMirrorsResponse getErrorResponse(int throttleTimeMs, Throwable e) {
         DescribeMirrorsResponseData describeMirrorsResponseData = new DescribeMirrorsResponseData()
             .setMirrors(Collections.emptyList())
-            .setThrottleTimeMs(throttleTimeMs);
+            .setThrottleTimeMs(throttleTimeMs)
+            .setErrorCode(Errors.forException(e).code());
+
         return new DescribeMirrorsResponse(describeMirrorsResponseData);
     }
 

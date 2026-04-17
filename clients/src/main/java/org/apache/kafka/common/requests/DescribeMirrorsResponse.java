@@ -51,6 +51,7 @@ public class DescribeMirrorsResponse extends AbstractResponse {
     @Override
     public Map<Errors, Integer> errorCounts() {
         Map<Errors, Integer> errorCounts = new HashMap<>();
+        updateErrorCounts(errorCounts, Errors.forCode(data().errorCode()));
         data.mirrors().forEach(mirror ->
             updateErrorCounts(errorCounts, Errors.forCode(mirror.errorCode()))
         );
