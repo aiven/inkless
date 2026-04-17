@@ -47,8 +47,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -287,6 +289,12 @@ public class ProducerStateManager {
      */
     public Map<Long, ProducerStateEntry> activeProducers() {
         return Collections.unmodifiableMap(producers);
+    }
+
+    public Set<ProducerStateEntry> ongoingTransactionProducers() {
+        return ongoingTxns.values().stream()
+                .map(txn -> producers.get(txn.producerId))
+                .collect(Collectors.toSet());
     }
 
     public boolean isEmpty() {

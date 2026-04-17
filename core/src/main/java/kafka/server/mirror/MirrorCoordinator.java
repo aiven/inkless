@@ -20,6 +20,7 @@ import kafka.server.KafkaConfig;
 import kafka.server.ReplicaManager;
 
 import org.apache.kafka.clients.admin.MirrorDescription;
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
@@ -29,6 +30,7 @@ import org.apache.kafka.common.message.WriteMirrorStatesResponseData;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.CompressionType;
 import org.apache.kafka.common.record.ControlRecordUtils;
 import org.apache.kafka.common.record.DefaultRecordBatch;
 import org.apache.kafka.common.record.FileRecords;
@@ -57,6 +59,7 @@ import org.apache.kafka.server.util.Scheduler;
 import org.apache.kafka.storage.internals.log.AppendOrigin;
 import org.apache.kafka.storage.internals.log.FetchDataInfo;
 
+import org.apache.kafka.storage.internals.log.UnifiedLog;
 import org.slf4j.Logger;
 
 import java.nio.ByteBuffer;
@@ -74,6 +77,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
+import scala.Option;
 import scala.jdk.javaapi.CollectionConverters;
 
 import static org.apache.kafka.common.utils.Utils.require;
@@ -154,9 +158,12 @@ public class MirrorCoordinator {
                 CompletableFuture<Void> bumpLeaderEpochFuture = new CompletableFuture<>();
                 metadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions, bumpLeaderEpochFuture);
                 CompletableFuture<Void> updateLastMirrorEpochsFuture = new CompletableFuture<>();
-                truncateToLastStableOffset(topicPartitions, tp -> {
-                    updateLastMirrorEpochs(mirrorName, Set.of(tp));
-                    updateLastMirrorEpochsFuture.complete(null);
+
+                bumpLeaderEpochFuture.whenComplete((v, ex) -> {
+                    appendAbortRecordsForOngoingTxns(topicPartitions, tp -> {
+                        updateLastMirrorEpochs(mirrorName, Set.of(tp));
+                        updateLastMirrorEpochsFuture.complete(null);
+                    });
                 });
                 // Wait until (1) bump leader epoch and (2) update last mirror epoch completes, then write mirror pid reset barrier record
                 CompletableFuture.allOf(bumpLeaderEpochFuture, updateLastMirrorEpochsFuture)
@@ -228,20 +235,74 @@ public class MirrorCoordinator {
         });
     }
 
-    private void truncateToLastStableOffset(Set<TopicPartition> topicPartitions,
-                                            Consumer<TopicPartition> callback) {
-        Map<TopicPartition, Long> offsets = new HashMap<>();
+    /**
+     * {@link kafka.server.ReplicaManager#appendRecords} allows only one record batch per partition per call,
+     * otherwise, the LogValidator#getFirstBatchAndMaybeValidateNoMoreBatches will throw exception.
+     * So we append in multiple rounds when needed.
+     */
+    private void appendAbortRecordsForOngoingTxns(Set<TopicPartition> topicPartitions,
+                                                  Consumer<TopicPartition> callback) {
+        Map<TopicPartition, List<MemoryRecords>> recordsByPartition = new HashMap<>();
         topicPartitions.forEach(tp -> {
-            if (replicaManager.getLog(tp).isDefined()) {
-                offsets.put(tp, replicaManager.getLog(tp).get().lastStableOffset());
-            } else {
-                log.warn("Cannot get the log for partition: {}. Skipping log truncation.", tp);
-                callback.accept(tp);
+            Option<List<MemoryRecords>> record = replicaManager.getLog(tp).map(UnifiedLog::buildEndTransactionRecords);
+            if (record.isDefined() && !record.get().isEmpty()) {
+                recordsByPartition.put(tp, record.get());
             }
         });
-        if (!offsets.isEmpty()) {
-            replicaManager.maybeTruncate(offsets, callback);
+
+        log.info("appending abort: {}", recordsByPartition);
+        while (!recordsByPartition.isEmpty()) {
+            Set<TopicPartition> partitionsToComplete = new HashSet<>();
+            Map<TopicIdPartition, MemoryRecords> records = new HashMap<>();
+            recordsByPartition.entrySet().removeIf(entry -> {
+               TopicPartition tp = entry.getKey();
+               List<MemoryRecords> recordsList = entry.getValue();
+               Iterator<MemoryRecords> it = recordsList.iterator();
+               if (it.hasNext()) {
+                   MemoryRecords record = it.next();
+                   records.put(replicaManager.topicIdPartition(tp), record);
+                   it.remove();
+               }
+
+               if (recordsList.isEmpty()) {
+                   partitionsToComplete.add(tp);
+                   return true;
+               }
+               return false;
+            });
+
+            log.info("run: appending abort: {}", records);
+            appendAbortTxnMarker(records, partitionsToComplete, callback);
         }
+    }
+
+    private void appendAbortTxnMarker(Map<TopicIdPartition, MemoryRecords> records,
+                                      Set<TopicPartition> partitionsToComplete,
+                                      Consumer<TopicPartition> callback) {
+        replicaManager.appendRecords(
+            // TODO: replace this with Cluster Mirror specific timeout
+            Duration.ofSeconds(5).toMillis(),
+            (short) -1,
+            true,
+            AppendOrigin.COORDINATOR,
+            CollectionConverters.asScala(records),
+            partitionResponses -> {
+                partitionResponses.foreach(partitionRes -> {
+                    TopicPartition tp = partitionRes._1.topicPartition();
+                    ProduceResponse.PartitionResponse pr = partitionRes._2;
+                    if (pr.error.code() != Errors.NONE.code()) {
+                        log.error("Failed to append end transaction marker for {}: {}", tp, pr.error.message());
+                    } else {
+                        partitionsToComplete.forEach(callback::accept);
+                    }
+                    return null;
+                });
+                return null;
+            },
+            ignored -> null,
+            RequestLocal.noCaching(),
+            CollectionConverters.asScala(Map.of())
+        );
     }
 
     /** Writes partition state and offset updates to the internal topic. */

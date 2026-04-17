@@ -33,6 +33,8 @@ import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.DescribeProducersResponseData;
 import org.apache.kafka.common.record.CompressionType;
 import org.apache.kafka.common.record.ControlRecordType;
+import org.apache.kafka.common.record.DefaultRecordBatch;
+import org.apache.kafka.common.record.EndTransactionMarker;
 import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
@@ -73,13 +75,16 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledFuture;
@@ -816,6 +821,19 @@ public class UnifiedLog implements AutoCloseable {
 
     public int producerIdCount() {
         return producerStateManager.producerIdCount();
+    }
+
+    public List<MemoryRecords> buildEndTransactionRecords() {
+        Set<ProducerStateEntry> ongoingTxns = producerStateManager.ongoingTransactionProducers();
+        List<MemoryRecords> records = new LinkedList<>();
+
+        ongoingTxns.forEach((producerStateEntry) -> {
+            records.add(MemoryRecords.withEndTransactionMarker(producerStateEntry.producerId(),
+                    producerStateEntry.producerEpoch(),
+                new EndTransactionMarker(ControlRecordType.ABORT, producerStateEntry.coordinatorEpoch())));
+        });
+
+        return records;
     }
 
     public List<DescribeProducersResponseData.ProducerState> activeProducers() {

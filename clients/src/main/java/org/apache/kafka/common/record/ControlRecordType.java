@@ -146,4 +146,18 @@ public enum ControlRecordType {
         }
         return false;
     }
+
+    public static boolean isAbortTxnBatch(RecordBatch batch) {
+        if (!batch.isControlBatch()) {
+            return false;
+        }
+        Iterator<Record> iterator = batch.iterator();
+        if (iterator.hasNext()) {
+            Record record = iterator.next();
+            if (record.hasKey()) {
+                return parse(record.key()) == ABORT;
+            }
+        }
+        return false;
+    }
 }
