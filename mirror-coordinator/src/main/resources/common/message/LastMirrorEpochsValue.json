@@ -25,11 +25,11 @@
   "flexibleVersions": "0+",
   "fields": [
     { "name": "Topics", "type": "[]Topic", "versions": "0+",
-      "about": "The mirror topics for which we want to store the last mirrored epochs.",  "fields": [
+      "about": "The mirror topics for which we want to store the last mirror epochs.",  "fields": [
       { "name": "Name", "type": "string", "versions": "0",
         "about": "The topic name." },
       { "name": "Partitions", "type": "[]Partition", "versions": "0+",
-        "about": "Each partition to record the last mirrored epochs.", "fields": [
+        "about": "Each partition to record the last mirror epochs.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0+",
           "about": "The partition index." },
         { "name": "LastMirrorEpoch", "type": "int32", "versions": "0+",
