@@ -33,6 +33,8 @@
         "about": "The error code, or 0 if there was no error." },
       { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName",
         "about": "The cluster mirror name." },
+      { "name": "AuthorizedOperations", "type": "int32", "versions": "0+", "default": "-2147483648",
+        "about": "32-bit bitfield to represent authorized operations for this mirror." },
       { "name": "Topics", "type": "[]TopicPartitions", "versions": "0+",
         "about": "Each topic in the mirror.", "fields": [
         { "name": "TopicName", "type": "string", "versions": "0+",

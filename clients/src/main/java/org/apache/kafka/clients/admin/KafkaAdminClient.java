@@ -5236,16 +5236,22 @@ public class KafkaAdminClient extends AdminClient {
         private synchronized void tryComplete() {
             if (remaining.isEmpty()) {
                 Map<String, MirrorDescription> descriptions = new HashMap<>(partialDescriptions.size());
+                Throwable firstError = null;
                 for (Map.Entry<String, PartialMirrorDescription> entry : partialDescriptions.entrySet()) {
                     PartialMirrorDescription partial = entry.getValue();
                     if (partial.error != null) {
-                        // If there was an error for this mirror, we could either skip it or throw
-                        // For now, we'll skip mirrors with errors
+                        if (firstError == null) {
+                            firstError = partial.error;
+                        }
                         continue;
                     }
                     descriptions.put(entry.getKey(), partial.toMirrorDescription());
                 }
-                allFuture.complete(descriptions);
+                if (descriptions.isEmpty() && firstError != null) {
+                    allFuture.completeExceptionally(firstError);
+                } else {
+                    allFuture.complete(descriptions);
+                }
             }
         }
 
@@ -5259,21 +5265,35 @@ public class KafkaAdminClient extends AdminClient {
         private static class PartialMirrorDescription {
             final String mirrorName;
             final Map<String, Set<MirrorDescription.LeaderState>> topicPartitions;
+            int authorizedOperations;
+            boolean hasSuccess;
             Throwable error;
 
             PartialMirrorDescription(String mirrorName) {
                 this.mirrorName = mirrorName;
                 this.topicPartitions = new HashMap<>();
+                this.authorizedOperations = MetadataResponse.AUTHORIZED_OPERATIONS_OMITTED;
+                this.hasSuccess = false;
                 this.error = null;
             }
 
+            // DescribeMirrors fans out to all brokers. During ACL propagation, some brokers
+            // may deny while others allow. A success from any broker is authoritative, so we
+            // only retain the error if no broker has returned a successful response.
             void merge(DescribeMirrorsResponseData.DescribedMirror mirror) {
                 Errors errorCode = Errors.forCode(mirror.errorCode());
                 if (errorCode != Errors.NONE) {
-                    if (this.error == null) {
+                    if (!this.hasSuccess && this.error == null) {
                         this.error = errorCode.exception();
                     }
                     return;
+                }
+
+                this.hasSuccess = true;
+                this.error = null;
+
+                if (mirror.authorizedOperations() != MetadataResponse.AUTHORIZED_OPERATIONS_OMITTED) {
+                    this.authorizedOperations = mirror.authorizedOperations();
                 }
 
                 // Merge topic partitions
@@ -5301,7 +5321,8 @@ public class KafkaAdminClient extends AdminClient {
             MirrorDescription toMirrorDescription() {
                 return new MirrorDescription(
                         mirrorName,
-                        topicPartitions
+                        topicPartitions,
+                        validAclOperations(authorizedOperations)
                 );
             }
         }

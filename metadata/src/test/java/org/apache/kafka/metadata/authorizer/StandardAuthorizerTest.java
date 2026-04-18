@@ -729,4 +729,29 @@ public class StandardAuthorizerTest {
         // StandardAuthorizer has 4 metrics
         assertEquals(5, metrics.metrics().size());
     }
+
+    @Test
+    public void testClusterMirrorAuthorization() throws Exception {
+        StandardAuthorizer authorizer = createAndInitializeStandardAuthorizer();
+        StandardAcl mirrorAcl = new StandardAcl(
+            ResourceType.CLUSTER_MIRROR, "my-mirror", LITERAL,
+            "User:alice", WILDCARD, DESCRIBE, ALLOW);
+        StandardAclWithId aclWithId = withId(mirrorAcl);
+        authorizer.addAcl(aclWithId.id(), aclWithId.acl());
+
+        // alice should be allowed DESCRIBE on CLUSTER_MIRROR my-mirror
+        assertEquals(List.of(ALLOWED),
+            authorizer.authorize(newRequestContext("alice"),
+                List.of(newAction(DESCRIBE, ResourceType.CLUSTER_MIRROR, "my-mirror"))));
+
+        // bob should be denied (no ACL for bob)
+        assertEquals(List.of(DENIED),
+            authorizer.authorize(newRequestContext("bob"),
+                List.of(newAction(DESCRIBE, ResourceType.CLUSTER_MIRROR, "my-mirror"))));
+
+        // alice should be denied for a different mirror
+        assertEquals(List.of(DENIED),
+            authorizer.authorize(newRequestContext("alice"),
+                List.of(newAction(DESCRIBE, ResourceType.CLUSTER_MIRROR, "other-mirror"))));
+    }
 }
