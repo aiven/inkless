@@ -30,7 +30,6 @@ import org.apache.kafka.common.message.WriteMirrorStatesResponseData;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.CompressionType;
 import org.apache.kafka.common.record.ControlRecordUtils;
 import org.apache.kafka.common.record.DefaultRecordBatch;
 import org.apache.kafka.common.record.FileRecords;
@@ -58,8 +57,8 @@ import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.server.util.Scheduler;
 import org.apache.kafka.storage.internals.log.AppendOrigin;
 import org.apache.kafka.storage.internals.log.FetchDataInfo;
-
 import org.apache.kafka.storage.internals.log.UnifiedLog;
+
 import org.slf4j.Logger;
 
 import java.nio.ByteBuffer;
@@ -255,20 +254,20 @@ public class MirrorCoordinator {
             Set<TopicPartition> partitionsToComplete = new HashSet<>();
             Map<TopicIdPartition, MemoryRecords> records = new HashMap<>();
             recordsByPartition.entrySet().removeIf(entry -> {
-               TopicPartition tp = entry.getKey();
-               List<MemoryRecords> recordsList = entry.getValue();
-               Iterator<MemoryRecords> it = recordsList.iterator();
-               if (it.hasNext()) {
-                   MemoryRecords record = it.next();
-                   records.put(replicaManager.topicIdPartition(tp), record);
-                   it.remove();
-               }
+                TopicPartition tp = entry.getKey();
+                List<MemoryRecords> recordsList = entry.getValue();
+                Iterator<MemoryRecords> it = recordsList.iterator();
+                if (it.hasNext()) {
+                    MemoryRecords record = it.next();
+                    records.put(replicaManager.topicIdPartition(tp), record);
+                    it.remove();
+                }
 
-               if (recordsList.isEmpty()) {
-                   partitionsToComplete.add(tp);
-                   return true;
-               }
-               return false;
+                if (recordsList.isEmpty()) {
+                    partitionsToComplete.add(tp);
+                    return true;
+                }
+                return false;
             });
 
             log.info("run: appending abort: {}", records);

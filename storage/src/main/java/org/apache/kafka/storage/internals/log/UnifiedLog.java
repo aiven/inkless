@@ -33,7 +33,6 @@ import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.DescribeProducersResponseData;
 import org.apache.kafka.common.record.CompressionType;
 import org.apache.kafka.common.record.ControlRecordType;
-import org.apache.kafka.common.record.DefaultRecordBatch;
 import org.apache.kafka.common.record.EndTransactionMarker;
 import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
@@ -75,7 +74,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -827,7 +825,7 @@ public class UnifiedLog implements AutoCloseable {
         Set<ProducerStateEntry> ongoingTxns = producerStateManager.ongoingTransactionProducers();
         List<MemoryRecords> records = new LinkedList<>();
 
-        ongoingTxns.forEach((producerStateEntry) -> {
+        ongoingTxns.forEach(producerStateEntry -> {
             // coordinator epoch is used to validate if the same producerId is committed/aborted by an epoch >= known epoch in ProducerAppendInfo#checkCoordinatorEpoch.
             // Setting it to 0 if the coordinator epoch in the leader node has no coordinator epoch info (-1).
             // This could happen when this PID has not committed/aborted yet. Setting it to 0 can pass the validation
