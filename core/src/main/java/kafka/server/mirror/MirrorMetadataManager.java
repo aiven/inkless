@@ -985,7 +985,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         metadataRefreshError.incrementAndGet();
     }
 
-    public void sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions, CompletableFuture<Void> future) {
+    public CompletableFuture<Void> sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
         Map<TopicPartition, Integer> partitionEpochs = new HashMap<>();
 
         List<BumpLeaderEpochsRequestData.TopicState> topicStates = new ArrayList<>();
@@ -1020,6 +1021,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 log.warn("BumpLeaderEpoch request timed out");
             }
         });
+        return future;
     }
 
     /**

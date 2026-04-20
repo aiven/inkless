@@ -154,34 +154,14 @@ public class MirrorCoordinator {
             case STOPPING:
                 log.debug("STOPPING for topics {}.", topicPartitions);
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
-                CompletableFuture<Void> bumpLeaderEpochFuture = new CompletableFuture<>();
-                metadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions, bumpLeaderEpochFuture);
-                CompletableFuture<TopicPartition> updateLastMirrorEpochsFuture = new CompletableFuture<>();
-
-                // Wait until bump leader epoch completes before aborting the ongoing transactions.
-                bumpLeaderEpochFuture.whenComplete((v, ex) -> {
-                    if (ex == null) {
-                        abortOngoingTransactions(topicPartitions, tp -> {
-                            // When all transactions are decided, we can safely write the LME to the mirror metadata log.
-                            updateLastMirrorEpochs(mirrorName, Set.of(tp), updateLastMirrorEpochsFuture);
-                        });
-                    } else {
-                        // TODO: error handling
-                        log.error("Failed to complete the STOPPING state for partition: {}", topicPartitions, ex);
-                    }
-
-                });
-
-                // After LME is stored, we can write the pid reset barrier record to the data logs.
-                updateLastMirrorEpochsFuture
-                    .whenComplete((v, ex) -> {
-                        if (ex == null) {
-                            writeMirrorPidResetAndStop(mirrorName, topicPartitions);
-                        } else {
-                            log.error("Failed to complete the STOPPING state for partition: {}", topicPartitions, ex);
-                        }
+                metadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions)
+                    .thenCompose(v -> abortOngoingTransactions(topicPartitions))
+                    .thenRun(() -> collectAndUpdateLastMirrorEpochs(mirrorName, topicPartitions))
+                    .thenAccept(v -> writeMirrorPidResetAndStop(mirrorName, topicPartitions))
+                    .exceptionally(ex -> {
+                        log.error("Failed STOPPING transition for {}", topicPartitions, ex);
+                        return null;
                     });
-
                 break;
             case STOPPED:
                 log.debug("STOPPED for topics {}.", topicPartitions);
@@ -247,24 +227,22 @@ public class MirrorCoordinator {
      * otherwise, the LogValidator#getFirstBatchAndMaybeValidateNoMoreBatches will throw exception.
      * So we append in multiple rounds when needed.
      */
-    private void abortOngoingTransactions(Set<TopicPartition> topicPartitions,
-                                          Consumer<TopicPartition> callback) {
+    private CompletableFuture<Void> abortOngoingTransactions(Set<TopicPartition> topicPartitions) {
         Map<TopicPartition, List<MemoryRecords>> recordsByPartition = new HashMap<>();
-        Set<TopicPartition> partitionsWithoutOngoingTxn = new HashSet<>();
         topicPartitions.forEach(tp -> {
             Option<List<MemoryRecords>> record = replicaManager.getLog(tp).map(UnifiedLog::buildEndTransactionRecords);
             if (record.isDefined() && !record.get().isEmpty()) {
                 recordsByPartition.put(tp, record.get());
-            } else {
-                partitionsWithoutOngoingTxn.add(tp);
             }
         });
 
-        partitionsWithoutOngoingTxn.forEach(callback::accept);
+        if (recordsByPartition.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
 
-        log.info("appending abort: {}", recordsByPartition);
+        log.debug("Appending abort markers for partitions: {}", recordsByPartition.keySet());
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
         while (!recordsByPartition.isEmpty()) {
-            Set<TopicPartition> partitionsToComplete = new HashSet<>();
             Map<TopicIdPartition, MemoryRecords> records = new HashMap<>();
             recordsByPartition.entrySet().removeIf(entry -> {
                 TopicPartition tp = entry.getKey();
@@ -275,22 +253,15 @@ public class MirrorCoordinator {
                     records.put(replicaManager.topicIdPartition(tp), record);
                     it.remove();
                 }
-
-                if (recordsList.isEmpty()) {
-                    partitionsToComplete.add(tp);
-                    return true;
-                }
-                return false;
+                return recordsList.isEmpty();
             });
-
-            log.info("run: appending abort: {}", records);
-            appendAbortMarkers(records, partitionsToComplete, callback);
+            futures.add(appendAbortMarkers(records));
         }
+        return CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new));
     }
 
-    private void appendAbortMarkers(Map<TopicIdPartition, MemoryRecords> records,
-                                    Set<TopicPartition> partitionsToComplete,
-                                    Consumer<TopicPartition> callback) {
+    private CompletableFuture<Void> appendAbortMarkers(Map<TopicIdPartition, MemoryRecords> records) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
         replicaManager.appendRecords(
             // TODO: replace this with Cluster Mirror specific timeout
             Duration.ofSeconds(5).toMillis(),
@@ -307,13 +278,14 @@ public class MirrorCoordinator {
                     }
                     return null;
                 });
-                partitionsToComplete.forEach(callback::accept);
+                future.complete(null);
                 return null;
             },
             ignored -> null,
             RequestLocal.noCaching(),
             CollectionConverters.asScala(Map.of())
         );
+        return future;
     }
 
     /** Writes partition state and offset updates to the internal topic. */
@@ -339,8 +311,7 @@ public class MirrorCoordinator {
             tps.put(topic, partitionIndices);
         });
 
-        // do last mirror epochs update in parallel
-        updateLastMirrorEpochs(updatedMirrorName, offsets, new CompletableFuture<>());
+        updateLastMirrorEpochs(updatedMirrorName, offsets);
 
         WriteMirrorStatesResponseData data = new WriteMirrorStatesResponseData();
         List<WriteMirrorStatesResponseData.TopicResult> topicResults = new ArrayList<>();
@@ -365,7 +336,7 @@ public class MirrorCoordinator {
         metadataManager.getCachedPartitionMetadata(mirrorName, partitions, callback);
     }
 
-    private void updateLastMirrorEpochs(String mirrorName, Set<TopicPartition> topicPartitions, CompletableFuture<TopicPartition> updateLastMirrorEpochsFuture) {
+    private void collectAndUpdateLastMirrorEpochs(String mirrorName, Set<TopicPartition> topicPartitions) {
         Map<String, Map<Integer, Integer>> partitionOffsets = new HashMap<>();
         MirrorUtils.groupPartitionsByTopic(topicPartitions).forEach((topic, parts) -> {
             Map<Integer, Integer> offsets = new HashMap<>();
@@ -378,7 +349,7 @@ public class MirrorCoordinator {
             partitionOffsets.put(topic, offsets);
         });
 
-        updateLastMirrorEpochs(mirrorName, partitionOffsets, updateLastMirrorEpochsFuture);
+        updateLastMirrorEpochs(mirrorName, partitionOffsets);
     }
 
     private CompletableFuture<Optional<TopicPartition>> updateMirrorPartitionState(String mirrorName,
@@ -628,8 +599,8 @@ public class MirrorCoordinator {
         return metadataManager.getLastMirrorEpochs(mirrorName);
     }
 
-    /** Persists offsets to local or remote coordinators, optionally transitioning to STOPPED. */
-    public void updateLastMirrorEpochs(String mirrorName, Map<String, Map<Integer, Integer>> partitionOffsets, CompletableFuture<TopicPartition> updateLastMirrorEpochsFuture) {
+    /** Persists offsets to local or remote coordinators. */
+    public void updateLastMirrorEpochs(String mirrorName, Map<String, Map<Integer, Integer>> partitionOffsets) {
         // Separate partitions into local and remote coordinator groups
         Map<Integer, Set<TopicPartition>> localByCoordPartition = new HashMap<>();
         Map<String, Set<MirrorUtils.PartitionStateInfo>> remoteTopicMetadata = new HashMap<>();
@@ -670,21 +641,7 @@ public class MirrorCoordinator {
                     true,
                     AppendOrigin.COORDINATOR,
                     CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
-                    response -> {
-                        response.foreach(res -> {
-                            TopicPartition tp = res._1.topicPartition();
-                            ProduceResponse.PartitionResponse partitionRes = res._2;
-                            if (partitionRes.error.code() != Errors.NONE.code()) {
-                                // TODO: retry logic
-                                log.error("Failed to write last mirrored offsets to coordinator: {}", partitionRes.error.message());
-                                updateLastMirrorEpochsFuture.completeExceptionally(partitionRes.error.exception());
-                            } else {
-                                updateLastMirrorEpochsFuture.complete(tp);
-                            }
-                            return null;
-                        });
-                        return null;
-                    },
+                    ignored -> null,
                     ignored -> null,
                     RequestLocal.noCaching(),
                     CollectionConverters.asScala(Map.of())
@@ -693,20 +650,7 @@ public class MirrorCoordinator {
 
         // Write to remote coordinator (batched by coordinator node internally)
         if (!remoteTopicMetadata.isEmpty()) {
-            metadataManager.writeStatesToRemoteCoordinator(mirrorName, remoteTopicMetadata, Set.of(), res -> {
-                res.data().topics().forEach(topicResult -> {
-                    String name = topicResult.name();
-                    topicResult.partitions().forEach(partitionResult -> {
-                        TopicPartition tp = new TopicPartition(name, partitionResult.partitionIndex());
-                        if (partitionResult.errorCode() != Errors.NONE.code()) {
-                            log.error("Failed to write last mirrored offsets to remote coordinator: {}", partitionResult.errorCode());
-                            updateLastMirrorEpochsFuture.completeExceptionally(Errors.forCode(partitionResult.errorCode()).exception());
-                        } else {
-                            updateLastMirrorEpochsFuture.complete(tp);
-                        }
-                    });
-                });
-            });
+            metadataManager.writeStatesToRemoteCoordinator(mirrorName, remoteTopicMetadata, Set.of(), res -> { });
         }
     }
 
