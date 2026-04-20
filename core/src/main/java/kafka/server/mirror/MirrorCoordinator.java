@@ -158,12 +158,11 @@ public class MirrorCoordinator {
                 metadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions, bumpLeaderEpochFuture);
                 CompletableFuture<TopicPartition> updateLastMirrorEpochsFuture = new CompletableFuture<>();
 
-                // Wait until bump leader epoch completes to abort the on-going transaction records.
-                // After the transaction aborting completion, all the txn should be committed or aborted.
-                // So we're safe to update the last mirrored epochs now.
+                // Wait until bump leader epoch completes before aborting the ongoing transactions.
                 bumpLeaderEpochFuture.whenComplete((v, ex) -> {
                     if (ex == null) {
                         abortOngoingTransactions(topicPartitions, tp -> {
+                            // When all transactions are decided, we can safely write the LME to the mirror metadata log.
                             updateLastMirrorEpochs(mirrorName, Set.of(tp), updateLastMirrorEpochsFuture);
                         });
                     } else {
@@ -173,11 +172,11 @@ public class MirrorCoordinator {
 
                 });
 
-                // After last mirror epoch updated, writing mirror pid reset barrier record
+                // After LME is stored, we can write the pid reset barrier record to the data logs.
                 updateLastMirrorEpochsFuture
                     .whenComplete((v, ex) -> {
                         if (ex == null) {
-                            finishStoppingAfterPidBarrierWritten(mirrorName, topicPartitions);
+                            writeMirrorPidResetAndStop(mirrorName, topicPartitions);
                         } else {
                             log.error("Failed to complete the STOPPING state for partition: {}", topicPartitions, ex);
                         }
@@ -186,7 +185,7 @@ public class MirrorCoordinator {
                 break;
             case STOPPED:
                 log.debug("STOPPED for topics {}.", topicPartitions);
-                // topic is writable
+                // Topic is writable.
                 break;
             case FAILED:
                 log.debug("FAILED for topics {}.", topicPartitions);
@@ -261,11 +260,7 @@ public class MirrorCoordinator {
             }
         });
 
-        // complete the partitions without on-going txn records.
-        if (!partitionsWithoutOngoingTxn.isEmpty()) {
-            topicPartitions.forEach(callback::accept);
-            return;
-        }
+        partitionsWithoutOngoingTxn.forEach(callback::accept);
 
         log.info("appending abort: {}", recordsByPartition);
         while (!recordsByPartition.isEmpty()) {
@@ -305,18 +300,14 @@ public class MirrorCoordinator {
             CollectionConverters.asScala(records),
             partitionResponses -> {
                 partitionResponses.foreach(partitionRes -> {
-                    TopicPartition tp = partitionRes._1.topicPartition();
                     ProduceResponse.PartitionResponse pr = partitionRes._2;
                     if (pr.error.code() != Errors.NONE.code()) {
                         // TODO: retry logic
-                        log.error("Failed to append end transaction marker for {}: {}", tp, pr.error.message());
-                    } else {
-                        if (partitionsToComplete.contains(tp)) {
-                            callback.accept(tp);
-                        }
+                        log.error("Failed to append abort marker for {}: {}", partitionRes._1.topicPartition(), pr.error.message());
                     }
                     return null;
                 });
+                partitionsToComplete.forEach(callback::accept);
                 return null;
             },
             ignored -> null,
@@ -532,13 +523,13 @@ public class MirrorCoordinator {
      * Retry the failed partitions until success.
      * TODO: handle failure, we can't retry forever
      */
-    private void finishStoppingAfterPidBarrierWritten(String mirrorName, Set<TopicPartition> topicPartitions) {
+    private void writeMirrorPidResetAndStop(String mirrorName, Set<TopicPartition> topicPartitions) {
         long retryDelayMs = brokerConfig.mirrorConfig().truncationBackoffMs();
         writeMirrorPidResetBarrier(mirrorName, topicPartitions).whenComplete((responses, ex) -> {
             if (ex != null) {
                 log.error("Failed to write PID reset barrier for partitions {} in mirror {}", topicPartitions, mirrorName, ex);
                 scheduler.scheduleOnce("MirrorPidResetBarrierRetry",
-                    () -> finishStoppingAfterPidBarrierWritten(mirrorName, topicPartitions),
+                    () -> writeMirrorPidResetAndStop(mirrorName, topicPartitions),
                     retryDelayMs);
                 return;
             }
@@ -562,7 +553,7 @@ public class MirrorCoordinator {
             }
             if (!failed.isEmpty()) {
                 scheduler.scheduleOnce("MirrorPidResetBarrierRetry",
-                    () -> finishStoppingAfterPidBarrierWritten(mirrorName, failed),
+                    () -> writeMirrorPidResetAndStop(mirrorName, failed),
                     retryDelayMs);
             }
         });
