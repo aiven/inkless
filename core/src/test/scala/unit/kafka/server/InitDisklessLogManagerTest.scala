@@ -1016,7 +1016,7 @@ class InitDisklessLogManagerTest {
       partition = partition,
       topicId = topicId,
       topicName = tp0.topic(),
-      disklessStartOffset = 100L,
+      classicToDisklessStartOffset = 100L,
       producerStates = util.List.of(new CpProducerState(1L, 0.toShort, 0, 1, 100L, 1000L))
     )
 
@@ -1035,7 +1035,7 @@ class InitDisklessLogManagerTest {
       partition = partition,
       topicId = topicId,
       topicName = tp0.topic(),
-      disklessStartOffset = 100L,
+      classicToDisklessStartOffset = 100L,
       producerStates = util.List.of()
     )
 
@@ -1056,7 +1056,7 @@ class InitDisklessLogManagerTest {
       partition = partition,
       topicId = topicId,
       topicName = tp0.topic(),
-      disklessStartOffset = 100L,
+      classicToDisklessStartOffset = 100L,
       producerStates = util.List.of()
     )
 
@@ -1078,14 +1078,14 @@ class InitDisklessLogManagerTest {
       partition = partition,
       topicId = topicId,
       topicName = tp0.topic(),
-      disklessStartOffset = 100L,
+      classicToDisklessStartOffset = 100L,
       producerStates = util.List.of()
     )
     manager.initOnControlPlane(
       partition = partition,
       topicId = topicId,
       topicName = tp0.topic(),
-      disklessStartOffset = 100L,
+      classicToDisklessStartOffset = 100L,
       producerStates = util.List.of()
     )
 

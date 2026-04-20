@@ -910,7 +910,7 @@ public class TopicsImageTest {
             .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
             .setLeaderEpoch(0)
             .setPartitionEpoch(0)
-            .setDisklessStartOffset(42L)
+            .setClassicToDisklessStartOffset(42L)
             .setDisklessProducerStates(producerStates)
             .build();
         Uuid topicId = Uuid.randomUuid();
@@ -921,7 +921,7 @@ public class TopicsImageTest {
         testToImage(image, records);
 
         PartitionRegistration restored = image.getPartition(topicId, 0);
-        assertEquals(42L, restored.disklessStartOffset);
+        assertEquals(42L, restored.classicToDisklessStartOffset);
         assertEquals(producerStates, restored.disklessProducerStates);
     }
 }

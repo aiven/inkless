@@ -5655,7 +5655,7 @@ public class ReplicationControlManagerTest {
             long brokerEpoch,
             Uuid topicId,
             int partitionId,
-            long disklessStartOffset,
+            long classicToDisklessStartOffset,
             int leaderEpoch,
             List<InitDisklessLogRequestData.ProducerState> producerStates
         ) {
@@ -5666,7 +5666,7 @@ public class ReplicationControlManagerTest {
                 .setTopicId(topicId);
             InitDisklessLogRequestData.PartitionData partitionData = new InitDisklessLogRequestData.PartitionData()
                 .setPartitionId(partitionId)
-                .setDisklessStartOffset(disklessStartOffset)
+                .setDisklessStartOffset(classicToDisklessStartOffset)
                 .setLeaderEpoch(leaderEpoch);
             partitionData.producerStates().addAll(producerStates);
             topicData.partitions().add(partitionData);
@@ -5685,7 +5685,7 @@ public class ReplicationControlManagerTest {
 
             Uuid topicId = createTopicResult.topicId();
             PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
-            assertEquals(PartitionRegistration.NO_DISKLESS_START_OFFSET, partition.disklessStartOffset);
+            assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, partition.classicToDisklessStartOffset);
 
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
             InitDisklessLogRequestData request = singlePartitionRequest(
@@ -5713,7 +5713,7 @@ public class ReplicationControlManagerTest {
             PartitionChangeRecord record = (PartitionChangeRecord) result.records().get(0).message();
             assertEquals(topicId, record.topicId());
             assertEquals(0, record.partitionId());
-            assertEquals(100L, InitDisklessLogFields.decodeDisklessStartOffset(record.unknownTaggedFields()));
+            assertEquals(100L, InitDisklessLogFields.decodeClassicToDisklessStartOffset(record.unknownTaggedFields()));
 
             List<InitDisklessLogFields.ProducerStateEntry> producerStates =
                 InitDisklessLogFields.decodeProducerStates(record.unknownTaggedFields());
@@ -5754,7 +5754,7 @@ public class ReplicationControlManagerTest {
             ctx.replay(result.records());
 
             PartitionRegistration updatedPartition = replicationControl.getPartition(topicId, 0);
-            assertEquals(42L, updatedPartition.disklessStartOffset);
+            assertEquals(42L, updatedPartition.classicToDisklessStartOffset);
             assertTrue(updatedPartition.disklessProducerStates.isEmpty());
         }
 
@@ -5977,7 +5977,7 @@ public class ReplicationControlManagerTest {
                 firstResult.response().topics().get(0).partitions().get(0).errorCode());
             ctx.replay(firstResult.records());
 
-            // Try to re-initialize partition 0 — should be rejected because disklessStartOffset is already set
+            // Try to re-initialize partition 0 — should be rejected because classicToDisklessStartOffset is already set
             PartitionRegistration updatedPartition0 = replicationControl.getPartition(topicId, 0);
             InitDisklessLogRequestData secondRequest = singlePartitionRequest(
                 leader0, defaultBrokerEpoch(leader0), topicId, 0, 200L, updatedPartition0.leaderEpoch, List.of());
@@ -6069,7 +6069,7 @@ public class ReplicationControlManagerTest {
 
             assertEquals(1, result.records().size());
             PartitionChangeRecord record = (PartitionChangeRecord) result.records().get(0).message();
-            assertEquals(50L, InitDisklessLogFields.decodeDisklessStartOffset(record.unknownTaggedFields()));
+            assertEquals(50L, InitDisklessLogFields.decodeClassicToDisklessStartOffset(record.unknownTaggedFields()));
             List<InitDisklessLogFields.ProducerStateEntry> decodedStates =
                 InitDisklessLogFields.decodeProducerStates(record.unknownTaggedFields());
             assertEquals(3, decodedStates.size());
@@ -6078,7 +6078,7 @@ public class ReplicationControlManagerTest {
 
             ctx.replay(result.records());
             PartitionRegistration updatedPartition = replicationControl.getPartition(topicId, 0);
-            assertEquals(50L, updatedPartition.disklessStartOffset);
+            assertEquals(50L, updatedPartition.classicToDisklessStartOffset);
             assertEquals(3, updatedPartition.disklessProducerStates.size());
             assertEquals(1L, updatedPartition.disklessProducerStates.get(0).producerId());
             assertEquals((short) 0, updatedPartition.disklessProducerStates.get(0).producerEpoch());

@@ -31,26 +31,26 @@ import java.util.List;
  */
 public final class InitDisklessLogFields {
 
-    public static final int DISKLESS_START_OFFSET_TAG = 100;
+    public static final int CLASSIC_TO_DISKLESS_START_OFFSET_TAG = 100;
     public static final int PRODUCER_STATES_TAG = 101;
 
     private InitDisklessLogFields() {}
 
-    // --- disklessStartOffset (tag 100): a single int64 ---
+    // --- classicToDisklessStartOffset (tag 100): a single int64 ---
 
-    public static RawTaggedField encodeDisklessStartOffset(long disklessStartOffset) {
+    public static RawTaggedField encodeClassicToDisklessStartOffset(long classicToDisklessStartOffset) {
         byte[] data = new byte[8];
-        ByteBuffer.wrap(data).putLong(disklessStartOffset);
-        return new RawTaggedField(DISKLESS_START_OFFSET_TAG, data);
+        ByteBuffer.wrap(data).putLong(classicToDisklessStartOffset);
+        return new RawTaggedField(CLASSIC_TO_DISKLESS_START_OFFSET_TAG, data);
     }
 
-    public static long decodeDisklessStartOffset(List<RawTaggedField> taggedFields) {
+    public static long decodeClassicToDisklessStartOffset(List<RawTaggedField> taggedFields) {
         for (RawTaggedField field : taggedFields) {
-            if (field.tag() == DISKLESS_START_OFFSET_TAG) {
+            if (field.tag() == CLASSIC_TO_DISKLESS_START_OFFSET_TAG) {
                 return ByteBuffer.wrap(field.data()).getLong();
             }
         }
-        return PartitionRegistration.NO_DISKLESS_START_OFFSET;
+        return PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET;
     }
 
     // --- producerStates (tag 101): count + fixed-size entries ---
