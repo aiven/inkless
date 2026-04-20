@@ -291,7 +291,7 @@ public class ProducerStateManager {
         return Collections.unmodifiableMap(producers);
     }
 
-    public Set<ProducerStateEntry> ongoingTransactionProducers() {
+    public Set<ProducerStateEntry> producersWithOngoingTxns() {
         return ongoingTxns.values().stream()
                 .map(txn -> producers.get(txn.producerId))
                 .collect(Collectors.toSet());

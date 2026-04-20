@@ -822,14 +822,14 @@ public class UnifiedLog implements AutoCloseable {
     }
 
     public List<MemoryRecords> buildEndTransactionRecords() {
-        Set<ProducerStateEntry> ongoingTxns = producerStateManager.ongoingTransactionProducers();
+        Set<ProducerStateEntry> ongoingTxns = producerStateManager.producersWithOngoingTxns();
         List<MemoryRecords> records = new LinkedList<>();
 
         ongoingTxns.forEach(producerStateEntry -> {
             // coordinator epoch is used to validate if the same producerId is committed/aborted by an epoch >= known epoch in ProducerAppendInfo#checkCoordinatorEpoch.
             // Setting it to 0 if the coordinator epoch in the leader node has no coordinator epoch info (-1).
             // This could happen when this PID has not committed/aborted yet. Setting it to 0 can pass the validation
-            // and also align with the implementation in TansactionsCommand#buildAbortSpec when we want to force aborting a pending txn record.
+            // and also align with the implementation in TransactionsCommand#buildAbortSpec when we want to force aborting a pending txn record.
             int coordinatorEpoch = producerStateEntry.coordinatorEpoch() < 0 ? 0 : producerStateEntry.coordinatorEpoch();
             records.add(MemoryRecords.withEndTransactionMarker(producerStateEntry.producerId(),
                     producerStateEntry.producerEpoch(),
