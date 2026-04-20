@@ -34,7 +34,7 @@
         { "name": "PartitionId", "type": "int32", "versions": "0+",
           "about": "The partition ID." },
         { "name": "DisklessStartOffset", "type": "int64", "versions": "0+",
-          "about": "The first offset retained for diskless reads." },
+          "about": "The first offset that will be used for storing messages in diskless format." },
         { "name": "LeaderEpoch", "type": "int32", "versions": "0+",
           "about": "The leader epoch seen by the broker." },
         { "name": "ProducerStates", "type": "[]ProducerState", "versions": "0+",
