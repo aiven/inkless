@@ -280,12 +280,16 @@ class ReplicaManager(val config: KafkaConfig,
   // FIXME: FileMerger is having issues with hanging queries. Disabling until fixed.
   private val inklessFileMerger: Option[FileMerger] = None // inklessSharedState.map(new FileMerger(_))
   private val consolidationFetcherManager: Option[ConsolidationFetcherManager] =
-    if (config.disklessRemoteStorageConsolidationEnabled)
+    if (config.disklessRemoteStorageConsolidationEnabled) {
+      if (inklessFetchHandler.isEmpty || inklessFetchOffsetHandler.isEmpty) {
+        logger.warn("Remote storage consolidation is enabled, however Inkless doesn't seem to be configured properly.")
+      }
       inklessFetchHandler.zip(inklessFetchOffsetHandler).map { case (fetchHandler, fetchOffsetHandler) =>
         new ConsolidationFetcherManager(config, this, quotaManagers.follower, fetchHandler, fetchOffsetHandler)
       }
-    else
+    } else {
       None
+    }
 
   /* epoch of the controller that last changed the leader */
   protected val localBrokerId = config.brokerId
