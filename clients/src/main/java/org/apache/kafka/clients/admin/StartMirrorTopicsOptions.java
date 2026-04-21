@@ -17,10 +17,31 @@
 
 package org.apache.kafka.clients.admin;
 
+import java.util.List;
 import java.util.Set;
 
 /**
  * Options for {@link Admin#startMirrorTopics(String, Set, StartMirrorTopicsOptions)}.
  */
 public class StartMirrorTopicsOptions extends AbstractOptions<StartMirrorTopicsOptions> {
+    private List<String> includePatterns = List.of();
+    private List<String> excludePatterns = List.of();
+
+    public StartMirrorTopicsOptions includePatterns(List<String> patterns) {
+        this.includePatterns = patterns;
+        return this;
+    }
+
+    public StartMirrorTopicsOptions excludePatterns(List<String> patterns) {
+        this.excludePatterns = patterns;
+        return this;
+    }
+
+    public List<String> includePatterns() {
+        return includePatterns;
+    }
+
+    public List<String> excludePatterns() {
+        return excludePatterns;
+    }
 }

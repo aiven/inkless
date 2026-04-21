@@ -302,6 +302,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -4920,6 +4921,16 @@ public class KafkaAdminClient extends AdminClient {
     @Override
     public StartMirrorTopicsResult startMirrorTopics(String mirrorName, Set<String> topics, StartMirrorTopicsOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+
+        if (!options.includePatterns().isEmpty() || !options.excludePatterns().isEmpty()) {
+            try {
+                updateMirrorTopicsConfig(mirrorName, options.includePatterns(), options.excludePatterns(), options.timeoutMs());
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+                return new StartMirrorTopicsResult(future);
+            }
+        }
+
         final long now = time.milliseconds();
         final Call call = new Call("startMirrorTopics", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedNodeProvider()) {
@@ -4959,6 +4970,16 @@ public class KafkaAdminClient extends AdminClient {
     @Override
     public StopMirrorTopicsResult stopMirrorTopics(String mirrorName, Set<String> topics, StopMirrorTopicsOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+
+        if (!options.patterns().isEmpty()) {
+            try {
+                updateMirrorTopicsConfigForStop(mirrorName, options.patterns(), options.timeoutMs());
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+                return new StopMirrorTopicsResult(future);
+            }
+        }
+
         final long now = time.milliseconds();
         final Call call = new Call("stopMirrorTopics", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
@@ -4993,6 +5014,65 @@ public class KafkaAdminClient extends AdminClient {
         };
         runnable.call(call, now);
         return new StopMirrorTopicsResult(future);
+    }
+
+    private void updateMirrorTopicsConfig(String mirrorName, List<String> includePatterns,
+                                          List<String> excludePatterns, Integer timeoutMs) throws Exception {
+        long effectiveTimeoutMs = timeoutMs != null ? timeoutMs : defaultApiTimeoutMs;
+        ConfigResource mirrorResource = new ConfigResource(ConfigResource.Type.MIRROR, mirrorName);
+        var configResult = describeConfigs(List.of(mirrorResource)).all().get(effectiveTimeoutMs, TimeUnit.MILLISECONDS);
+        var mirrorConfig = configResult.get(mirrorResource);
+
+        Set<String> include = readConfigSet(mirrorConfig, "mirror.topics.include");
+        Set<String> exclude = readConfigSet(mirrorConfig, "mirror.topics.exclude");
+
+        for (String pattern : includePatterns) {
+            include.add(pattern);
+            exclude.remove(pattern);
+        }
+        for (String pattern : excludePatterns) {
+            exclude.add(pattern);
+            include.remove(pattern);
+        }
+
+        List<AlterConfigOp> ops = List.of(
+                new AlterConfigOp(new ConfigEntry("mirror.topics.include", String.join(",", include)), AlterConfigOp.OpType.SET),
+                new AlterConfigOp(new ConfigEntry("mirror.topics.exclude", String.join(",", exclude)), AlterConfigOp.OpType.SET));
+        incrementalAlterConfigs(Map.of(mirrorResource, ops)).all().get(effectiveTimeoutMs, TimeUnit.MILLISECONDS);
+    }
+
+    private void updateMirrorTopicsConfigForStop(String mirrorName, List<String> patterns, Integer timeoutMs) throws Exception {
+        long effectiveTimeoutMs = timeoutMs != null ? timeoutMs : defaultApiTimeoutMs;
+        ConfigResource mirrorResource = new ConfigResource(ConfigResource.Type.MIRROR, mirrorName);
+        var configResult = describeConfigs(List.of(mirrorResource)).all().get(effectiveTimeoutMs, TimeUnit.MILLISECONDS);
+        var mirrorConfig = configResult.get(mirrorResource);
+
+        Set<String> include = readConfigSet(mirrorConfig, "mirror.topics.include");
+        Set<String> exclude = readConfigSet(mirrorConfig, "mirror.topics.exclude");
+
+        for (String pattern : patterns) {
+            if (include.contains(pattern)) {
+                include.remove(pattern);
+            } else {
+                exclude.add(pattern);
+            }
+        }
+
+        List<AlterConfigOp> ops = List.of(
+                new AlterConfigOp(new ConfigEntry("mirror.topics.include", String.join(",", include)), AlterConfigOp.OpType.SET),
+                new AlterConfigOp(new ConfigEntry("mirror.topics.exclude", String.join(",", exclude)), AlterConfigOp.OpType.SET));
+        incrementalAlterConfigs(Map.of(mirrorResource, ops)).all().get(effectiveTimeoutMs, TimeUnit.MILLISECONDS);
+    }
+
+    private static Set<String> readConfigSet(Config config, String key) {
+        ConfigEntry entry = config.get(key);
+        if (entry == null || entry.value() == null || entry.value().isEmpty()) {
+            return new LinkedHashSet<>();
+        }
+        return Arrays.stream(entry.value().split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     @Override

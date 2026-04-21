@@ -79,6 +79,7 @@ import org.apache.kafka.common.requests.ReadMirrorStatesRequest;
 import org.apache.kafka.common.requests.ReadMirrorStatesResponse;
 import org.apache.kafka.common.requests.RequestContext;
 import org.apache.kafka.common.requests.RequestHeader;
+import org.apache.kafka.common.requests.StartMirrorTopicsRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesResponse;
 import org.apache.kafka.common.resource.PatternType;
@@ -1239,6 +1240,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 syncTopicConfigurations(mirrorName, mirrorConfig);
                 syncConsumerGroupOffsets(mirrorName, mirrorConfig);
                 syncAccessControlLists(mirrorName, mirrorConfig);
+                discoverTopicsByPattern(mirrorName, mirrorConfig);
             } catch (Exception e) {
                 log.error("Failed to sync mirror metadata for mirror {}", mirrorName, e);
             }
@@ -1522,6 +1524,43 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private record ACLChanges(List<AclBinding> aclsToAdd, List<AclBinding> aclsToDelete) { }
+
+    /** Discovers new topics on the source cluster matching the mirror.topics.include pattern and adds them to the mirror. */
+    private void discoverTopicsByPattern(String mirrorName, MirrorConfig mirrorConfig) {
+        final Pattern topicsIncludePattern = mirrorConfig.topicsIncludePattern();
+        if (topicsIncludePattern == null) {
+            return;
+        }
+
+        var response = trySendRequest(mirrorName, MetadataRequest.Builder.allTopics());
+        if (!(response.responseBody() instanceof MetadataResponse metadataResponse)) {
+            log.warn("Unexpected metadata response type from source cluster for topic discovery: {}", response);
+            return;
+        }
+
+        Set<String> configuredTopics = getConfiguredTopics(mirrorName, true);
+        final Pattern topicsExcludePattern = mirrorConfig.topicsExcludePattern();
+
+        Set<String> newTopics = metadataResponse.topicMetadata().stream()
+                .filter(tm -> tm.error() == Errors.NONE)
+                .map(MetadataResponse.TopicMetadata::topic)
+                .filter(topic -> topicsIncludePattern.matcher(topic).matches())
+                .filter(topic -> topicsExcludePattern == null || !topicsExcludePattern.matcher(topic).matches())
+                .filter(topic -> !configuredTopics.contains(topic))
+                .collect(Collectors.toSet());
+
+        if (newTopics.isEmpty()) {
+            return;
+        }
+
+        log.info("Discovered {} new topic(s) matching mirror.topics.include pattern for mirror {}: {}",
+                newTopics.size(), mirrorName, newTopics);
+
+        channelManager.sendRequest(
+                new StartMirrorTopicsRequest.Builder(mirrorName, newTopics),
+                new TimeoutHandler(log)
+        );
+    }
 
     Set<String> getConfiguredMirrors() {
         return metadataImage.configs().resourceData().keySet().stream()

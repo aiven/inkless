@@ -23,11 +23,11 @@ import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateMirrorOptions;
 import org.apache.kafka.clients.admin.CreateMirrorResult;
 import org.apache.kafka.clients.admin.CreateTopicsOptions;
-import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.DeleteMirrorOptions;
 import org.apache.kafka.clients.admin.DeleteMirrorResult;
 import org.apache.kafka.clients.admin.DescribeMirrorsOptions;
 import org.apache.kafka.clients.admin.DescribeMirrorsResult;
+import org.apache.kafka.clients.admin.StopMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.ListMirrorsResult;
 import org.apache.kafka.clients.admin.MirrorDescription;
 import org.apache.kafka.clients.admin.MirrorListing;
@@ -37,14 +37,11 @@ import org.apache.kafka.clients.admin.PauseMirrorTopicsResult;
 import org.apache.kafka.clients.admin.ResumeMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.ResumeMirrorTopicsResult;
 import org.apache.kafka.clients.admin.StartMirrorTopicsOptions;
-import org.apache.kafka.clients.admin.StartMirrorTopicsResult;
-import org.apache.kafka.clients.admin.StopMirrorTopicsOptions;
-import org.apache.kafka.clients.admin.StopMirrorTopicsResult;
-import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.TopicExistsException;
 import org.apache.kafka.common.utils.Exit;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.server.config.MirrorConfig;
 import org.apache.kafka.server.util.CommandDefaultOptions;
 import org.apache.kafka.server.util.CommandLineUtils;
 
@@ -53,6 +50,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -64,6 +62,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import joptsimple.ArgumentAcceptingOptionSpec;
 import joptsimple.OptionSpec;
@@ -129,20 +128,6 @@ public abstract class MirrorCommand {
             return Admin.create(commandConfig);
         }
 
-        private Set<String> matchTopics(Set<String> allTopics, String topicPattern) {
-            Set<String> matchingTopics = new HashSet<>();
-            Pattern pattern = Pattern.compile(topicPattern);
-            for (String topic : allTopics) {
-                if (topic.equals(topicPattern) || pattern.matcher(topic).matches()) {
-                    matchingTopics.add(topic);
-                }
-            }
-            if (matchingTopics.isEmpty()) {
-                throw new RuntimeException("No topics matching pattern '" + topicPattern + "' found");
-            }
-            return matchingTopics;
-        }
-
         private void createMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
             Map<String, String> configMap = new HashMap<>();
             mirrorConfigs.forEach((k, v) -> configMap.put(k.toString(), v.toString()));
@@ -170,10 +155,55 @@ public abstract class MirrorCommand {
         }
 
         private void startMirrorTopics(MirrorCommandOptions opts) throws Exception {
-            String topicPattern = opts.topic().get();
             String mirrorName = opts.mirror().get();
+            List<String> topicPatterns = opts.topics();
+            List<String> excludePatterns = opts.exclude();
 
-            // Retrieve the full mirror configuration from the coordinator
+            var mirrorConfigEntries = describeMirrorConfig(mirrorName);
+            Properties sourceConfig = toProperties(mirrorConfigEntries);
+
+            // Resolve currently matching topics from source and pre-create on destination
+            Set<String> matchingTopics;
+            try (Admin sourceAdmin = Admin.create(sourceConfig)) {
+                Set<String> allSourceTopics = sourceAdmin.listTopics().names().get();
+                Pattern includePattern = MirrorConfig.compilePatternList(topicPatterns);
+                Pattern excludePattern = MirrorConfig.compilePatternList(excludePatterns);
+                matchingTopics = allSourceTopics.stream()
+                        .filter(t -> includePattern != null && includePattern.matcher(t).matches())
+                        .filter(t -> excludePattern == null || !excludePattern.matcher(t).matches())
+                        .collect(Collectors.toSet());
+
+                if (!matchingTopics.isEmpty()) {
+                    preCreateTopics(sourceAdmin, matchingTopics);
+                }
+            }
+
+            if (!matchingTopics.isEmpty()) {
+                Thread.sleep(1000);
+                adminClient.startMirrorTopics(mirrorName, matchingTopics,
+                        new StartMirrorTopicsOptions()
+                                .includePatterns(topicPatterns)
+                                .excludePatterns(excludePatterns))
+                        .all().get();
+                System.out.printf("Started %d mirror topic(s) in mirror %s: %s%n",
+                        matchingTopics.size(), mirrorName, matchingTopics);
+            }
+        }
+
+        private void stopMirrorTopics(MirrorCommandOptions opts) throws Exception {
+            String mirrorName = opts.mirror().get();
+            List<String> patterns = opts.topics();
+
+            // Resolve topics on destination that match the patterns
+            Set<String> topics = resolveTopicsOnDestination(patterns);
+
+            adminClient.stopMirrorTopics(mirrorName, topics,
+                    new StopMirrorTopicsOptions().patterns(patterns))
+                    .all().get();
+            System.out.printf("Stopped mirroring for topics %s in mirror %s%n", topics, mirrorName);
+        }
+
+        private org.apache.kafka.clients.admin.Config describeMirrorConfig(String mirrorName) throws Exception {
             ConfigResource mirrorConfigResource = new ConfigResource(ConfigResource.Type.MIRROR, mirrorName);
             var configResult = adminClient.describeConfigs(List.of(mirrorConfigResource)).all().get();
             var mirrorConfigEntries = configResult.get(mirrorConfigResource);
@@ -181,111 +211,72 @@ public abstract class MirrorCommand {
             if (mirrorConfigEntries == null || mirrorConfigEntries.entries().isEmpty()) {
                 throw new RuntimeException("Mirror '" + mirrorName + "' not found or has no configuration");
             }
-
-            // Convert config entries to Properties for creating source Admin client
-            Properties sourceConfig = new Properties();
-            for (var entry : mirrorConfigEntries.entries()) {
-                sourceConfig.put(entry.name(), entry.value());
-            }
-
-            // Connect to source cluster and get matching topics
-            Set<String> matchingTopics;
-            Map<String, String> topicIds = new HashMap<>();
-            Map<String, Integer> partNums = new HashMap<>();
-
-            try (Admin sourceAdmin = Admin.create(sourceConfig)) {
-                // List all topics from source cluster and match against the pattern
-                var allTopics = sourceAdmin.listTopics().names().get();
-                matchingTopics = matchTopics(allTopics, topicPattern);
-
-                // Fetch topic IDs for all matching topics
-                var topicDescriptions = sourceAdmin.describeTopics(matchingTopics).allTopicNames().get();
-                for (var entry : topicDescriptions.entrySet()) {
-                    String topic = entry.getKey();
-                    TopicDescription desc = entry.getValue();
-                    topicIds.put(topic, desc.topicId().toString());
-                    partNums.put(topic, desc.partitions().size());
-                }
-            }
-
-            // Prepare all NewTopic objects for batch creation
-            Set<NewTopic> newTopics = new HashSet<>();
-            for (String topicName : matchingTopics) {
-                String topicId = topicIds.get(topicName);
-                int partNum = partNums.get(topicName);
-                NewTopic newTopic = new NewTopic(topicName,
-                    Optional.of(partNum), // use source topic partitions
-                    opts.replicationFactor(), // use provided replicationFactor or cluster default
-                    Optional.of(topicId));
-                newTopics.add(newTopic);
-            }
-
-            // Try to create all matching topics
-            CreateTopicsResult createResult = adminClient.createTopics(newTopics,
-                new CreateTopicsOptions().retryOnQuotaViolation(false));
-
-            // Attach created and existing topic to the mirror
-            Map<String, String> topics = new HashMap<>();
-            for (String topicName : matchingTopics) {
-                try {
-                    createResult.values().get(topicName).get();
-                } catch (ExecutionException e) {
-                    if (!(e.getCause() instanceof TopicExistsException)) {
-                        System.err.printf("Failed to start topic %s: %s%n", topicName, e.getCause().getMessage());
-                    }
-                } finally {
-                    topics.put(topicName, mirrorName);
-                }
-            }
-
-            // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
-            Thread.sleep(1000);
-            // Ensures the mirror.name config is properly set even when topics already exist
-            StartMirrorTopicsResult startResult = adminClient.startMirrorTopics(mirrorName, topics.keySet(), new StartMirrorTopicsOptions());
-            startResult.all().get();
-
-            System.out.printf("Started %d mirror topic(s) in mirror %s: %s%n", topics.size(), mirrorName, topics.keySet());
+            return mirrorConfigEntries;
         }
 
-        private void stopMirrorTopics(MirrorCommandOptions opts) throws Exception {
-            String topicPattern = opts.topic().get();
+        private static Properties toProperties(org.apache.kafka.clients.admin.Config config) {
+            Properties props = new Properties();
+            for (var entry : config.entries()) {
+                props.put(entry.name(), entry.value());
+            }
+            return props;
+        }
+
+        private void preCreateTopics(Admin sourceAdmin, Set<String> topics) throws Exception {
+            var descriptions = sourceAdmin.describeTopics(topics).allTopicNames().get();
+            Set<NewTopic> newTopics = new HashSet<>();
+            for (var desc : descriptions.entrySet()) {
+                newTopics.add(new NewTopic(desc.getKey(),
+                        Optional.of(desc.getValue().partitions().size()),
+                        Optional.empty(),
+                        Optional.of(desc.getValue().topicId().toString())));
+            }
+            var createResult = adminClient.createTopics(newTopics,
+                    new CreateTopicsOptions().retryOnQuotaViolation(false));
+            for (String topic : topics) {
+                try {
+                    createResult.values().get(topic).get();
+                } catch (ExecutionException e) {
+                    if (!(e.getCause() instanceof TopicExistsException)) {
+                        System.err.printf("Failed to create topic %s: %s%n", topic, e.getCause().getMessage());
+                    }
+                }
+            }
+        }
+
+        private void deleteMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
             String mirrorName = opts.mirror().get();
-
-            Set<String> matchingTopics;
-
-            // List all topics from destination cluster and match against the pattern
-            var allTopics = adminClient.listTopics().names().get();
-            matchingTopics = matchTopics(allTopics, topicPattern);
-
-            // Stop mirroring for all matching topics
-            StopMirrorTopicsResult stopResult = adminClient.stopMirrorTopics(
-                mirrorName, matchingTopics, new StopMirrorTopicsOptions());
-            stopResult.all().get();
-            System.out.printf("Stopped %d mirror topic(s) in mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
+            DeleteMirrorResult result = adminClient.deleteMirror(
+                    mirrorName, new DeleteMirrorOptions());
+            result.all().get();
+            System.out.printf("Deleted mirror %s%n", mirrorName);
         }
 
         private void pauseMirrorTopics(MirrorCommandOptions opts) throws Exception {
-            String topicPattern = opts.topic().get();
             String mirrorName = opts.mirror().get();
+            Set<String> topics = resolveTopicsOnDestination(opts.topics());
 
-            var allTopics = adminClient.listTopics().names().get();
-            Set<String> matchingTopics = matchTopics(allTopics, topicPattern);
-
-            PauseMirrorTopicsResult result = adminClient.pauseMirrorTopics(mirrorName, matchingTopics, new PauseMirrorTopicsOptions());
+            PauseMirrorTopicsResult result = adminClient.pauseMirrorTopics(mirrorName, topics, new PauseMirrorTopicsOptions());
             result.all().get();
-            System.out.printf("Paused mirroring for %d topic(s) in mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
+            System.out.printf("Paused mirroring for %d topic(s) in mirror %s: %s%n", topics.size(), mirrorName, topics);
         }
 
         private void resumeMirrorTopics(MirrorCommandOptions opts) throws Exception {
-            String topicPattern = opts.topic().get();
             String mirrorName = opts.mirror().get();
+            Set<String> topics = resolveTopicsOnDestination(opts.topics());
 
-            var allTopics = adminClient.listTopics().names().get();
-            Set<String> matchingTopics = matchTopics(allTopics, topicPattern);
-
-            ResumeMirrorTopicsResult result = adminClient.resumeMirrorTopics(mirrorName, matchingTopics, new ResumeMirrorTopicsOptions());
+            ResumeMirrorTopicsResult result = adminClient.resumeMirrorTopics(mirrorName, topics, new ResumeMirrorTopicsOptions());
             result.all().get();
-            System.out.printf("Resumed mirroring for %d topic(s) in mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
+            System.out.printf("Resumed mirroring for %d topic(s) in mirror %s: %s%n", topics.size(), mirrorName, topics);
+        }
+
+        private Set<String> resolveTopicsOnDestination(List<String> patterns) throws Exception {
+            Set<String> allTopics = adminClient.listTopics().names().get();
+            Pattern compiled = MirrorConfig.compilePatternList(patterns);
+            if (compiled == null) return Set.of();
+            return allTopics.stream()
+                    .filter(t -> compiled.matcher(t).matches())
+                    .collect(Collectors.toSet());
         }
 
         private void listMirrors() throws ExecutionException, InterruptedException {
@@ -392,14 +383,6 @@ public abstract class MirrorCommand {
             }
         }
 
-        private void deleteMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
-            String mirrorName = opts.mirror().get();
-            DeleteMirrorResult result = adminClient.deleteMirror(
-                    mirrorName, new DeleteMirrorOptions());
-            result.all().get();
-            System.out.printf("Deleted mirror %s%n", mirrorName);
-        }
-
         // Truncate string from the left, keeping the rightmost characters
         // Example: truncateLeft("my-very-long-mirror-name", 10) -> "...or-name"
         private String truncateLeft(String str, int maxLength) {
@@ -437,8 +420,8 @@ public abstract class MirrorCommand {
         private final OptionSpecBuilder listOpt;
         private final OptionSpecBuilder describeOpt;
         private final ArgumentAcceptingOptionSpec<String> mirrorOpt;
-        private final ArgumentAcceptingOptionSpec<String> topicOpt;
-        private final ArgumentAcceptingOptionSpec<Short> replicationFactorOpt;
+        private final ArgumentAcceptingOptionSpec<String> topicsOpt;
+        private final ArgumentAcceptingOptionSpec<String> excludeOpt;
         private final OptionSpecBuilder jsonOpt;
 
         MirrorCommandOptions(String[] args) {
@@ -461,10 +444,10 @@ public abstract class MirrorCommand {
 
             createOpt = parser.accepts("create", "Create a new cluster mirror from a source cluster.");
             alterOpt = parser.accepts("alter", "Alter the configuration of an existing cluster mirror.");
-            startOpt = parser.accepts("start", "Start mirroring topic(s) in an existing cluster mirror (supports regex).");
-            stopOpt = parser.accepts("stop", "Stop mirroring topic(s) in an existing cluster mirror (supports regex).");
-            pauseOpt = parser.accepts("pause", "Pause mirroring for topic(s) matching the pattern (supports regex).");
-            resumeOpt = parser.accepts("resume", "Resume mirroring for previously paused topic(s) matching the pattern (supports regex).");
+            startOpt = parser.accepts("start", "Start mirroring topics matching the given patterns.");
+            stopOpt = parser.accepts("stop", "Stop mirroring topics matching the given patterns.");
+            pauseOpt = parser.accepts("pause", "Pause mirroring for topics matching the given patterns.");
+            resumeOpt = parser.accepts("resume", "Resume mirroring for previously paused topics matching the given patterns.");
             listOpt = parser.accepts("list", "List all cluster mirrors.");
             describeOpt = parser.accepts("describe", "Describe a cluster mirror including partition lag and state.");
             deleteOpt = parser.accepts("delete", "Delete a cluster mirror.");
@@ -474,16 +457,16 @@ public abstract class MirrorCommand {
                 .describedAs("mirror")
                 .ofType(String.class);
 
-            topicOpt = parser.accepts("topic", "Topic name or regex pattern to match topics (e.g., 'my-topic' or 'test-.*').")
+            topicsOpt = parser.accepts("topics", "Comma-separated list of topic names or regex patterns (e.g., 'my-topic,orders-.*,payments').")
                 .withRequiredArg()
-                .describedAs("topic")
+                .describedAs("topics")
                 .ofType(String.class);
 
-            replicationFactorOpt = parser.accepts("replication-factor", "The replication factor to use for the mirror topic. " +
-                            "If not specified, uses the destination cluster's default.")
+            excludeOpt = parser.accepts("exclude", "Comma-separated list of topic names or regex patterns to exclude from mirroring. " +
+                            "Only valid with --start.")
                 .withRequiredArg()
-                .describedAs("replication-factor")
-                .ofType(Short.class);
+                .describedAs("exclude patterns")
+                .ofType(String.class);
 
             jsonOpt = parser.accepts("json", "Output description in JSON format");
 
@@ -563,12 +546,20 @@ public abstract class MirrorCommand {
             return valueAsOption(mirrorOpt);
         }
 
-        private Optional<String> topic() {
-            return valueAsOption(topicOpt);
+        private List<String> topics() {
+            if (!has(topicsOpt)) return List.of();
+            return Arrays.stream(options.valueOf(topicsOpt).split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .toList();
         }
 
-        private Optional<Short> replicationFactor() {
-            return valueAsOption(replicationFactorOpt);
+        private List<String> exclude() {
+            if (!has(excludeOpt)) return List.of();
+            return Arrays.stream(options.valueOf(excludeOpt).split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .toList();
         }
 
         @SuppressWarnings({"NPathComplexity", "CyclomaticComplexity"})
@@ -599,17 +590,20 @@ public abstract class MirrorCommand {
             if (has(alterOpt) && !has(mirrorConfigOpt))
                 throw new IllegalArgumentException("--mirror-config must be specified when altering a mirror");
 
-            if (has(startOpt) && !has(topicOpt))
-                throw new IllegalArgumentException("--topic must be specified when starting mirror topic(s)");
+            if (has(startOpt) && !has(topicsOpt))
+                throw new IllegalArgumentException("--topics must be specified when starting mirror topic(s)");
 
-            if (has(stopOpt) && !has(topicOpt))
-                throw new IllegalArgumentException("--topic must be specified when stopping mirror topic(s)");
+            if (has(stopOpt) && !has(topicsOpt))
+                throw new IllegalArgumentException("--topics must be specified when stopping mirror topic(s)");
 
-            if (has(pauseOpt) && !has(topicOpt))
-                throw new IllegalArgumentException("--topic must be specified when pausing mirror topic(s)");
+            if (has(pauseOpt) && !has(topicsOpt))
+                throw new IllegalArgumentException("--topics must be specified when pausing mirror topic(s)");
 
-            if (has(resumeOpt) && !has(topicOpt))
-                throw new IllegalArgumentException("--topic must be specified when resuming mirror topic(s)");
+            if (has(resumeOpt) && !has(topicsOpt))
+                throw new IllegalArgumentException("--topics must be specified when resuming mirror topic(s)");
+
+            if (has(excludeOpt) && !has(startOpt))
+                throw new IllegalArgumentException("--exclude is only valid with --start");
 
             if (has(jsonOpt) && !has(describeOpt))
                 throw new IllegalArgumentException("--json is only supported for describing mirrors");
