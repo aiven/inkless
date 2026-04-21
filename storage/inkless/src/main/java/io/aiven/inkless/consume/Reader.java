@@ -38,6 +38,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
@@ -102,6 +104,9 @@ public class Reader implements AutoCloseable {
      * <p>Trade-off: Doubles connection pools (~500KB) but prevents hot path degradation.
      */
     private final ObjectFetcher laggingConsumerObjectFetcher;
+    private final ScheduledExecutorService hedgeScheduler;
+    private final long hedgeTtfbThresholdMs;
+    private final long hedgeTotalTimeThresholdMs;
     private final InklessFetchMetrics fetchMetrics;
     private final BrokerTopicStats brokerTopicStats;
     private final Bucket rateLimiter;
@@ -123,6 +128,8 @@ public class Reader implements AutoCloseable {
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
         int laggingConsumerThreadPoolSize,
+        long hedgeTtfbThresholdMs,
+        long hedgeTotalTimeThresholdMs,
         int maxBatchesPerPartitionToFind
     ) {
         this(
@@ -146,9 +153,31 @@ public class Reader implements AutoCloseable {
             laggingConsumerThreadPoolSize > 0
                 ? createBoundedThreadPool(laggingConsumerThreadPoolSize)
                 : null,
+            // Only create hedge scheduler when any hedging trigger is enabled (threshold > 0).
+            // Single-threaded: only schedules timer tasks, actual fetches run on data executors.
+            (hedgeTtfbThresholdMs > 0 || hedgeTotalTimeThresholdMs > 0)
+                ? createHedgeScheduler()
+                : null,
+            hedgeTtfbThresholdMs,
+            hedgeTotalTimeThresholdMs,
             new InklessFetchMetrics(time, cache),
             brokerTopicStats
         );
+    }
+
+    private static ScheduledExecutorService createHedgeScheduler() {
+        final var scheduler = new ScheduledThreadPoolExecutor(
+            1, new InklessThreadFactory("inkless-hedge-scheduler-", true));
+        // Remove cancelled tasks from the queue immediately to prevent accumulation
+        // under high QPS with large hedge thresholds (most timer tasks are cancelled
+        // when the primary completes before the threshold).
+        scheduler.setRemoveOnCancelPolicy(true);
+        // Note on shutdown: executeExistingDelayedTasksAfterShutdownPolicy defaults to true,
+        // so already-scheduled timers may still fire after shutdown() is called. This is harmless:
+        // tryFireHedge guards with hedgeFired CAS and catches RejectedExecutionException from
+        // data executors that are shutting down concurrently. At worst, a timer fires, the CAS
+        // succeeds, the data executor rejects the hedge submission, and it's silently discarded.
+        return scheduler;
     }
 
     private static ExecutorService createBoundedThreadPool(int poolSize) {
@@ -182,6 +211,9 @@ public class Reader implements AutoCloseable {
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
         ExecutorService laggingFetchDataExecutor,
+        ScheduledExecutorService hedgeScheduler,
+        long hedgeTtfbThresholdMs,
+        long hedgeTotalTimeThresholdMs,
         InklessFetchMetrics fetchMetrics,
         BrokerTopicStats brokerTopicStats
     ) {
@@ -197,6 +229,9 @@ public class Reader implements AutoCloseable {
         this.laggingFetchDataExecutor = laggingFetchDataExecutor;
         this.laggingConsumerThresholdMs = laggingConsumerThresholdMs;
         this.laggingConsumerObjectFetcher = laggingConsumerObjectFetcher;
+        this.hedgeScheduler = hedgeScheduler;
+        this.hedgeTtfbThresholdMs = hedgeTtfbThresholdMs;
+        this.hedgeTotalTimeThresholdMs = hedgeTotalTimeThresholdMs;
 
         // Validate that lagging consumer resources are consistently configured:
         // both executor and fetcher must be null (feature disabled) or both must be non-null (feature enabled).
@@ -313,6 +348,9 @@ public class Reader implements AutoCloseable {
                     laggingConsumerThresholdMs,
                     rateLimiter,
                     laggingFetchDataExecutor,
+                    hedgeScheduler,
+                    hedgeTtfbThresholdMs,
+                    hedgeTotalTimeThresholdMs,
                     coordinates,
                     fetchMetrics
                 ).get();
@@ -429,6 +467,8 @@ public class Reader implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
+        // Shut down hedge scheduler first to prevent it from submitting new tasks to executors being shut down
+        ThreadUtils.shutdownExecutorServiceQuietly(hedgeScheduler, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         ThreadUtils.shutdownExecutorServiceQuietly(metadataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         ThreadUtils.shutdownExecutorServiceQuietly(fetchDataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         ThreadUtils.shutdownExecutorServiceQuietly(laggingFetchDataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
