@@ -46,6 +46,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -75,6 +76,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -1047,6 +1049,9 @@ public class FetchPlannerTest {
                             threshold,
                             null, // No rate limiter
                             saturatedExecutor, // Saturated executor
+                            null, // no hedge scheduler
+                            0, // TTFB hedging disabled
+                            0, // total-time hedging disabled
                             coordinates,
                             metrics
                         );
@@ -1122,6 +1127,9 @@ public class FetchPlannerTest {
                         threshold,
                         null, // No rate limiter
                         shutdownExecutor, // Shutdown executor
+                        null, // no hedge scheduler
+                        0, // TTFB hedging disabled
+                        0, // total-time hedging disabled
                         coordinates,
                         metrics
                     );
@@ -1241,6 +1249,9 @@ public class FetchPlannerTest {
                             threshold,
                             null, // No rate limiter
                             coldExecutor, // Cold path executor
+                            null, // no hedge scheduler
+                            0, // TTFB hedging disabled
+                            0, // total-time hedging disabled
                             coordinates,
                             metrics
                         );
@@ -1589,6 +1600,9 @@ public class FetchPlannerTest {
             thresholdMs,
             rateLimiter,
             laggingConsumerExecutor,
+            null, // no hedge scheduler
+            0, // TTFB hedging disabled
+            0, // total-time hedging disabled
             batchCoordinatesFuture,
             metrics
         );
@@ -1630,5 +1644,618 @@ public class FetchPlannerTest {
         FetchPlanner planner = createFetchPlannerHotPathOnly(keyAlignmentStrategy, cache, coordinates);
         List<ObjectFetchRequest> actualJobs = planner.planJobs(coordinates);
         assertThat(new HashSet<>(actualJobs)).isEqualTo(expectedJobs);
+    }
+
+    @Nested
+    class HedgingTests {
+        private final long hedgeThresholdMs = 50;
+        private final java.util.concurrent.ScheduledExecutorService hedgeScheduler =
+            Executors.newSingleThreadScheduledExecutor(new InklessThreadFactory("test-hedge-", true));
+
+        @AfterEach
+        void shutdownHedgeScheduler() {
+            hedgeScheduler.shutdownNow();
+        }
+
+        private FetchPlanner createHedgingPlanner(
+            ObjectCache cache,
+            Map<TopicIdPartition, FindBatchResponse> coordinates
+        ) {
+            return new FetchPlanner(
+                time,
+                OBJECT_KEY_CREATOR,
+                keyAlignmentStrategy,
+                cache,
+                fetcher,
+                fetchDataExecutor,
+                fetcher,
+                60 * 1000L,
+                null, // no rate limiter
+                laggingFetchDataExecutor,
+                hedgeScheduler,
+                0, // TTFB hedging disabled by default
+                hedgeThresholdMs,
+                coordinates,
+                metrics
+            );
+        }
+
+        @Test
+        void hedgeNotTriggeredWhenDisabled() throws Exception {
+            // Setup: hedging disabled (null scheduler, threshold=0)
+            final long recentTimestamp = time.milliseconds();
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(new byte[]{1, 2, 3}));
+
+            // Use planner WITHOUT hedging
+            final FetchPlanner planner = createFetchPlannerHotPathOnly(
+                keyAlignmentStrategy, new NullCache(), coordinates);
+
+            final List<FetchPlanner.FetchRequestWithFuture> results = planner.get();
+            assertThat(results).hasSize(1);
+
+            final FileExtent result = results.get(0).future().get(5, TimeUnit.SECONDS);
+            assertThat(result.object()).isEqualTo(OBJECT_KEY_A.value());
+
+            // No hedge metrics should be recorded
+            verify(metrics, never()).recordHedgeRequest();
+            verify(metrics, never()).recordHedgeTtfbTriggered();
+            verify(metrics, never()).recordHedgeTotalTimeTriggered();
+            verify(metrics, never()).recordHedgeWon();
+        }
+
+        @Test
+        void hedgeTriggeredWhenPrimaryIsSlow() throws Exception {
+            // Setup: primary fetch blocks, hedge should fire and win
+            final long recentTimestamp = time.milliseconds();
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final CountDownLatch primaryBlocked = new CountDownLatch(1);
+            final CountDownLatch hedgeCanProceed = new CountDownLatch(1);
+            final byte[] data = {1, 2, 3};
+
+            // First call (primary) blocks; second call (hedge) returns immediately
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any()))
+                .thenAnswer(invocation -> {
+                    primaryBlocked.countDown();
+                    // Block primary until test releases it
+                    hedgeCanProceed.await(10, TimeUnit.SECONDS);
+                    return ByteBuffer.wrap(data);
+                })
+                .thenAnswer(invocation -> ByteBuffer.wrap(data));
+
+            // Use a multi-threaded executor so primary and hedge can run concurrently
+            final ExecutorService multiExecutor = Executors.newFixedThreadPool(2);
+            try {
+                final FetchPlanner planner = new FetchPlanner(
+                    time,
+                    OBJECT_KEY_CREATOR,
+                    keyAlignmentStrategy,
+                    new NullCache(),
+                    fetcher,
+                    multiExecutor,
+                    fetcher,
+                    60 * 1000L,
+                    null,
+                    laggingFetchDataExecutor,
+                    hedgeScheduler,
+                    0, // TTFB hedging disabled
+                    hedgeThresholdMs,
+                    coordinates,
+                    metrics
+                );
+
+                final List<FetchPlanner.FetchRequestWithFuture> results = planner.get();
+                assertThat(results).hasSize(1);
+
+                // Wait for primary to start blocking
+                assertThat(primaryBlocked.await(5, TimeUnit.SECONDS)).isTrue();
+
+                // The result should complete via hedge (after threshold)
+                final FileExtent result = results.get(0).future().get(5, TimeUnit.SECONDS);
+                assertThat(result.object()).isEqualTo(OBJECT_KEY_A.value());
+
+                // Hedge metrics should be recorded (total-time triggered since TTFB is disabled)
+                verify(metrics).recordHedgeRequest();
+                verify(metrics).recordHedgeTotalTimeTriggered();
+                verify(metrics, never()).recordHedgeTtfbTriggered();
+                verify(metrics).recordHedgeWon();
+            } finally {
+                hedgeCanProceed.countDown();
+                multiExecutor.shutdownNow();
+            }
+        }
+
+        @Test
+        void primaryWinsBeforeHedge() throws Exception {
+            // Setup: primary returns fast, before hedge threshold
+            final long recentTimestamp = time.milliseconds();
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(new byte[]{1, 2, 3}));
+
+            final FetchPlanner planner = createHedgingPlanner(new NullCache(), coordinates);
+            final List<FetchPlanner.FetchRequestWithFuture> results = planner.get();
+            assertThat(results).hasSize(1);
+
+            final FileExtent result = results.get(0).future().get(5, TimeUnit.SECONDS);
+            assertThat(result.object()).isEqualTo(OBJECT_KEY_A.value());
+
+            // Primary completed before hedge fired, so no hedge metrics
+            verify(metrics, never()).recordHedgeRequest();
+            verify(metrics, never()).recordHedgeTtfbTriggered();
+            verify(metrics, never()).recordHedgeTotalTimeTriggered();
+            verify(metrics, never()).recordHedgeWon();
+        }
+
+        @Test
+        void hedgeRejectedWhenExecutorFull() throws Exception {
+            // Setup: saturated executor, hedge submission should fail gracefully
+            final long recentTimestamp = time.milliseconds();
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final CountDownLatch primaryBlocked = new CountDownLatch(1);
+            final CountDownLatch primaryRelease = new CountDownLatch(1);
+            final byte[] data = {1, 2, 3};
+
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any())).thenAnswer(invocation -> {
+                primaryBlocked.countDown();
+                primaryRelease.await(10, TimeUnit.SECONDS);
+                return ByteBuffer.wrap(data);
+            });
+
+            // 1 thread + SynchronousQueue (zero capacity): primary occupies the sole thread,
+            // so the hedge submission is guaranteed to be rejected (SynchronousQueue.offer fails
+            // when no thread is waiting to take, and max pool size is already reached).
+            final ExecutorService tinyExecutor = new ThreadPoolExecutor(
+                1, 1, 0L, TimeUnit.MILLISECONDS,
+                new SynchronousQueue<>(),
+                new ThreadPoolExecutor.AbortPolicy()
+            );
+
+            try {
+                final FetchPlanner planner = new FetchPlanner(
+                    time,
+                    OBJECT_KEY_CREATOR,
+                    keyAlignmentStrategy,
+                    new NullCache(),
+                    fetcher,
+                    tinyExecutor,
+                    fetcher,
+                    60 * 1000L,
+                    null,
+                    laggingFetchDataExecutor,
+                    hedgeScheduler,
+                    0, // TTFB hedging disabled
+                    hedgeThresholdMs,
+                    coordinates,
+                    metrics
+                );
+
+                final List<FetchPlanner.FetchRequestWithFuture> results = planner.get();
+                assertThat(results).hasSize(1);
+
+                // Wait for primary to start
+                assertThat(primaryBlocked.await(5, TimeUnit.SECONDS)).isTrue();
+
+                // Wait for hedge attempt (rejected) — use Mockito timeout instead of Thread.sleep
+                verify(metrics, timeout(5000)).recordHedgeRequest();
+
+                // Release primary so it can complete
+                primaryRelease.countDown();
+
+                // Should still get a result from the primary
+                final FileExtent result = results.get(0).future().get(5, TimeUnit.SECONDS);
+                assertThat(result.object()).isEqualTo(OBJECT_KEY_A.value());
+
+                // Hedge was never submitted successfully, so no hedgeWon
+                verify(metrics, never()).recordHedgeWon();
+            } finally {
+                primaryRelease.countDown();
+                tinyExecutor.shutdownNow();
+            }
+        }
+
+        @Test
+        void primaryFailsFastErrorPropagatesBeforeHedge() throws Exception {
+            // Setup: primary throws immediately — error propagates before hedge threshold
+            final long recentTimestamp = time.milliseconds();
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final byte[] data = {1, 2, 3};
+
+            // Primary fails immediately — error propagates before hedge threshold elapses
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any()))
+                .thenThrow(new RuntimeException("primary storage error"))
+                .thenReturn(ByteBuffer.wrap(data));
+
+            final ExecutorService multiExecutor = Executors.newFixedThreadPool(2);
+            try {
+                final FetchPlanner planner = new FetchPlanner(
+                    time,
+                    OBJECT_KEY_CREATOR,
+                    keyAlignmentStrategy,
+                    new NullCache(),
+                    fetcher,
+                    multiExecutor,
+                    fetcher,
+                    60 * 1000L,
+                    null,
+                    laggingFetchDataExecutor,
+                    hedgeScheduler,
+                    0, // TTFB hedging disabled
+                    hedgeThresholdMs,
+                    coordinates,
+                    metrics
+                );
+
+                final List<FetchPlanner.FetchRequestWithFuture> results = planner.get();
+                assertThat(results).hasSize(1);
+
+                // Primary fails fast, result future should complete exceptionally
+                // (primary error propagates before hedge can fire)
+                assertThatThrownBy(() -> results.get(0).future().get(5, TimeUnit.SECONDS))
+                    .isInstanceOf(ExecutionException.class)
+                    .hasCauseInstanceOf(FileFetchException.class);
+            } finally {
+                multiExecutor.shutdownNow();
+            }
+        }
+
+        @Test
+        void bothFailPrimaryErrorPropagates() throws Exception {
+            // Setup: both primary and hedge fail — primary is slow enough for hedge to fire,
+            // but both throw. Primary error should propagate.
+            final long recentTimestamp = time.milliseconds();
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final CountDownLatch primaryBlocked = new CountDownLatch(1);
+            final CountDownLatch primaryRelease = new CountDownLatch(1);
+
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any()))
+                .thenAnswer(invocation -> {
+                    // Primary: block until released by test (after hedge fires), then fail
+                    primaryBlocked.countDown();
+                    primaryRelease.await(10, TimeUnit.SECONDS);
+                    throw new RuntimeException("primary storage error");
+                })
+                .thenThrow(new RuntimeException("hedge storage error"));
+
+            final ExecutorService multiExecutor = Executors.newFixedThreadPool(2);
+            try {
+                final FetchPlanner planner = new FetchPlanner(
+                    time,
+                    OBJECT_KEY_CREATOR,
+                    keyAlignmentStrategy,
+                    new NullCache(),
+                    fetcher,
+                    multiExecutor,
+                    fetcher,
+                    60 * 1000L,
+                    null,
+                    laggingFetchDataExecutor,
+                    hedgeScheduler,
+                    0, // TTFB hedging disabled
+                    hedgeThresholdMs,
+                    coordinates,
+                    metrics
+                );
+
+                final List<FetchPlanner.FetchRequestWithFuture> results = planner.get();
+                assertThat(results).hasSize(1);
+
+                assertThat(primaryBlocked.await(5, TimeUnit.SECONDS)).isTrue();
+
+                // Wait for hedge to fire, then release primary
+                verify(metrics, timeout(5000)).recordHedgeRequest();
+                primaryRelease.countDown();
+
+                // Both fail — primary error should propagate
+                assertThatThrownBy(() -> results.get(0).future().get(10, TimeUnit.SECONDS))
+                    .isInstanceOf(ExecutionException.class)
+                    .hasCauseInstanceOf(FileFetchException.class);
+
+                // Hedge did not win (it also failed)
+                verify(metrics, never()).recordHedgeWon();
+            } finally {
+                primaryRelease.countDown();
+                multiExecutor.shutdownNow();
+            }
+        }
+
+        @Test
+        void hedgeTriggeredOnColdPath() throws Exception {
+            // Verify hedging works on the cold (lagging consumer) path, not just hot path.
+            // Cold path is triggered when batch timestamp is older than the threshold.
+            final long oldTimestamp = time.milliseconds() - 120_000L; // 2 minutes ago, well past 60s threshold
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, oldTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final CountDownLatch primaryBlocked = new CountDownLatch(1);
+            final CountDownLatch hedgeCanProceed = new CountDownLatch(1);
+            final byte[] data = {1, 2, 3};
+
+            // First call (primary) blocks; second call (hedge) returns immediately
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any()))
+                .thenAnswer(invocation -> {
+                    primaryBlocked.countDown();
+                    hedgeCanProceed.await(10, TimeUnit.SECONDS);
+                    return ByteBuffer.wrap(data);
+                })
+                .thenAnswer(invocation -> ByteBuffer.wrap(data));
+
+            // Use a multi-threaded executor for the lagging path so primary and hedge can run concurrently
+            final ExecutorService multiExecutor = Executors.newFixedThreadPool(2);
+            try {
+                final FetchPlanner planner = new FetchPlanner(
+                    time,
+                    OBJECT_KEY_CREATOR,
+                    keyAlignmentStrategy,
+                    new NullCache(),
+                    fetcher,
+                    fetchDataExecutor, // hot path executor (not used for this request)
+                    fetcher,
+                    60 * 1000L, // lagging threshold
+                    null, // no rate limiter
+                    multiExecutor, // cold path executor
+                    hedgeScheduler,
+                    0, // TTFB hedging disabled
+                    hedgeThresholdMs,
+                    coordinates,
+                    metrics
+                );
+
+                final List<FetchPlanner.FetchRequestWithFuture> results = planner.get();
+                assertThat(results).hasSize(1);
+
+                // Wait for primary to start blocking
+                assertThat(primaryBlocked.await(5, TimeUnit.SECONDS)).isTrue();
+
+                // The result should complete via hedge (after threshold)
+                final FileExtent result = results.get(0).future().get(5, TimeUnit.SECONDS);
+                assertThat(result.object()).isEqualTo(OBJECT_KEY_A.value());
+
+                // Hedge metrics should be recorded (total-time triggered)
+                verify(metrics).recordHedgeRequest();
+                verify(metrics).recordHedgeTotalTimeTriggered();
+                verify(metrics, never()).recordHedgeTtfbTriggered();
+                verify(metrics).recordHedgeWon();
+            } finally {
+                hedgeCanProceed.countDown();
+                multiExecutor.shutdownNow();
+            }
+        }
+
+        @Test
+        void hedgeTriggeredByTtfbThreshold() throws Exception {
+            // Setup: primary fetch blocks before receiving first byte,
+            // TTFB threshold fires hedge while total-time threshold is set much higher.
+            final long recentTimestamp = time.milliseconds();
+            final long ttfbThreshold = 30; // short TTFB threshold
+            final long totalTimeThreshold = 10_000; // long total-time threshold (won't fire)
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final CountDownLatch primaryBlocked = new CountDownLatch(1);
+            final CountDownLatch hedgeCanProceed = new CountDownLatch(1);
+            final byte[] data = {1, 2, 3};
+
+            // First call (primary) blocks before first byte; second call (hedge) returns immediately
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any()))
+                .thenAnswer(invocation -> {
+                    primaryBlocked.countDown();
+                    hedgeCanProceed.await(10, TimeUnit.SECONDS);
+                    return ByteBuffer.wrap(data);
+                })
+                .thenAnswer(invocation -> ByteBuffer.wrap(data));
+
+            final ExecutorService multiExecutor = Executors.newFixedThreadPool(2);
+            try {
+                final FetchPlanner planner = new FetchPlanner(
+                    time,
+                    OBJECT_KEY_CREATOR,
+                    keyAlignmentStrategy,
+                    new NullCache(),
+                    fetcher,
+                    multiExecutor,
+                    fetcher,
+                    60 * 1000L,
+                    null,
+                    laggingFetchDataExecutor,
+                    hedgeScheduler,
+                    ttfbThreshold,
+                    totalTimeThreshold,
+                    coordinates,
+                    metrics
+                );
+
+                final List<FetchPlanner.FetchRequestWithFuture> results = planner.get();
+                assertThat(results).hasSize(1);
+
+                // Wait for primary to start blocking
+                assertThat(primaryBlocked.await(5, TimeUnit.SECONDS)).isTrue();
+
+                // TTFB threshold fires hedge (primary hasn't received first byte)
+                final FileExtent result = results.get(0).future().get(5, TimeUnit.SECONDS);
+                assertThat(result.object()).isEqualTo(OBJECT_KEY_A.value());
+
+                // Hedge was triggered by TTFB threshold and won
+                verify(metrics).recordHedgeRequest();
+                verify(metrics).recordHedgeTtfbTriggered();
+                verify(metrics, never()).recordHedgeTotalTimeTriggered();
+                verify(metrics).recordHedgeWon();
+            } finally {
+                hedgeCanProceed.countDown();
+                multiExecutor.shutdownNow();
+            }
+        }
+
+        @Test
+        void ttfbHedgeNotTriggeredWhenFirstByteArrived() throws Exception {
+            // Setup: primary receives first byte quickly (before TTFB threshold),
+            // but transfer is slow. TTFB hedge should NOT fire.
+            final long recentTimestamp = time.milliseconds();
+            final long ttfbThreshold = 30;
+            final long totalTimeThreshold = 10_000; // won't fire either
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final byte[] data = {1, 2, 3};
+
+            // Primary returns quickly (first byte arrives before TTFB threshold)
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(data));
+
+            final FetchPlanner planner = new FetchPlanner(
+                time,
+                OBJECT_KEY_CREATOR,
+                keyAlignmentStrategy,
+                new NullCache(),
+                fetcher,
+                fetchDataExecutor,
+                fetcher,
+                60 * 1000L,
+                null,
+                laggingFetchDataExecutor,
+                hedgeScheduler,
+                ttfbThreshold,
+                totalTimeThreshold,
+                coordinates,
+                metrics
+            );
+
+            final List<FetchPlanner.FetchRequestWithFuture> results = planner.get();
+            assertThat(results).hasSize(1);
+
+            final FileExtent result = results.get(0).future().get(5, TimeUnit.SECONDS);
+            assertThat(result.object()).isEqualTo(OBJECT_KEY_A.value());
+
+            // No hedge should have fired — primary completed before any threshold
+            verify(metrics, never()).recordHedgeRequest();
+            verify(metrics, never()).recordHedgeWon();
+        }
+
+        @Test
+        void totalTimeHedgeFiresWhenTtfbDisabled() throws Exception {
+            // Setup: TTFB hedging disabled, only total-time threshold configured.
+            // Verifies total-time trigger metric is recorded correctly.
+            final long recentTimestamp = time.milliseconds();
+            final long ttfbThreshold = 0;          // TTFB disabled
+            final long totalTimeThreshold = 60;    // total-time threshold — will fire
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final CountDownLatch primaryBlocked = new CountDownLatch(1);
+            final CountDownLatch hedgeCanProceed = new CountDownLatch(1);
+            final byte[] data = {1, 2, 3};
+
+            // Primary blocks; hedge returns immediately
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any()))
+                .thenAnswer(invocation -> {
+                    primaryBlocked.countDown();
+                    hedgeCanProceed.await(10, TimeUnit.SECONDS);
+                    return ByteBuffer.wrap(data);
+                })
+                .thenAnswer(invocation -> ByteBuffer.wrap(data));
+
+            final ExecutorService multiExecutor = Executors.newFixedThreadPool(2);
+            try {
+                final FetchPlanner planner = new FetchPlanner(
+                    time,
+                    OBJECT_KEY_CREATOR,
+                    keyAlignmentStrategy,
+                    new NullCache(),
+                    fetcher,
+                    multiExecutor,
+                    fetcher,
+                    60 * 1000L,
+                    null,
+                    laggingFetchDataExecutor,
+                    hedgeScheduler,
+                    ttfbThreshold,
+                    totalTimeThreshold,
+                    coordinates,
+                    metrics
+                );
+
+                final List<FetchPlanner.FetchRequestWithFuture> results = planner.get();
+                assertThat(results).hasSize(1);
+
+                // Wait for primary to start blocking
+                assertThat(primaryBlocked.await(5, TimeUnit.SECONDS)).isTrue();
+
+                // Total-time threshold fires hedge
+                final FileExtent result = results.get(0).future().get(5, TimeUnit.SECONDS);
+                assertThat(result.object()).isEqualTo(OBJECT_KEY_A.value());
+
+                // Hedge was triggered by total-time and won
+                verify(metrics).recordHedgeRequest();
+                verify(metrics).recordHedgeTotalTimeTriggered();
+                verify(metrics, never()).recordHedgeTtfbTriggered();
+                verify(metrics).recordHedgeWon();
+            } finally {
+                hedgeCanProceed.countDown();
+                multiExecutor.shutdownNow();
+            }
+        }
     }
 }
