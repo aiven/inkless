@@ -95,6 +95,12 @@ public final class MirrorConfig {
     public static final String MIRROR_GROUPS_INCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to include in offset synchronization. "
             + "Only consumer groups whose IDs match at least one of the patterns will have their offsets replicated from the source cluster.";
 
+    // Consumer group exclude filter (regex patterns)
+    public static final String MIRROR_GROUPS_EXCLUDE_CONFIG = "mirror.groups.exclude";
+    public static final String MIRROR_GROUPS_EXCLUDE_DEFAULT = "";
+    public static final String MIRROR_GROUPS_EXCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to exclude from offset synchronization. "
+            + "Groups matching the exclude pattern are not replicated even if they match mirror.groups.include.";
+
     // ACL include filter (semicolon-separated rules)
     public static final String MIRROR_ACL_INCLUDE_CONFIG = "mirror.acl.include";
     public static final String MIRROR_ACL_INCLUDE_DEFAULT = "*";
@@ -228,6 +234,7 @@ public final class MirrorConfig {
             .define(MIRROR_TOPICS_INCLUDE_CONFIG, LIST, MIRROR_TOPICS_INCLUDE_DEFAULT, LOW, MIRROR_TOPICS_INCLUDE_DOC)
             .define(MIRROR_TOPICS_EXCLUDE_CONFIG, LIST, MIRROR_TOPICS_EXCLUDE_DEFAULT, LOW, MIRROR_TOPICS_EXCLUDE_DOC)
             .define(MIRROR_GROUPS_INCLUDE_CONFIG, LIST, MIRROR_GROUPS_INCLUDE_DEFAULT, LOW, MIRROR_GROUPS_INCLUDE_DOC)
+            .define(MIRROR_GROUPS_EXCLUDE_CONFIG, LIST, MIRROR_GROUPS_EXCLUDE_DEFAULT, LOW, MIRROR_GROUPS_EXCLUDE_DOC)
             .define(MIRROR_ACL_INCLUDE_CONFIG, LIST, MIRROR_ACL_INCLUDE_DEFAULT, LOW, MIRROR_ACL_INCLUDE_DOC)
             .define(BOOTSTRAP_SERVERS_CONFIG, LIST, null, HIGH, BOOTSTRAP_SERVERS_DOC)
             .define(SECURITY_PROTOCOL_CONFIG, STRING, SECURITY_PROTOCOL_DEFAULT, ConfigDef.ValidString.in(SecurityProtocol.PLAINTEXT.name, SecurityProtocol.SSL.name,
@@ -263,6 +270,7 @@ public final class MirrorConfig {
     private final Pattern topicsIncludePattern;
     private final Pattern topicsExcludePattern;
     private final Pattern groupsIncludePattern;
+    private final Pattern groupsExcludePattern;
     private final List<AclRule> aclIncludeRules;
     private final String securityProtocol;
     private final String saslMechanism;
@@ -279,6 +287,7 @@ public final class MirrorConfig {
         this.topicsIncludePattern = null;
         this.topicsExcludePattern = compilePatternList(List.of(MIRROR_TOPICS_EXCLUDE_DEFAULT));
         this.groupsIncludePattern = compilePatternList(List.of(MIRROR_GROUPS_INCLUDE_DEFAULT));
+        this.groupsExcludePattern = null;
         this.aclIncludeRules = parseAclRules(List.of(MIRROR_ACL_INCLUDE_DEFAULT));
     }
 
@@ -296,6 +305,7 @@ public final class MirrorConfig {
                 config.getList(MIRROR_TOPICS_INCLUDE_CONFIG),
                 config.getList(MIRROR_TOPICS_EXCLUDE_CONFIG),
                 config.getList(MIRROR_GROUPS_INCLUDE_CONFIG),
+                config.getList(MIRROR_GROUPS_EXCLUDE_CONFIG),
                 config.getList(MIRROR_ACL_INCLUDE_CONFIG));
     }
 
@@ -304,6 +314,7 @@ public final class MirrorConfig {
                          List<String> topicsInclude,
                          List<String> topicsExclude,
                          List<String> groupsInclude,
+                         List<String> groupsExclude,
                          List<String> aclInclude) {
         this.config = config;
         this.securityProtocol = config.getString(SECURITY_PROTOCOL_CONFIG);
@@ -312,6 +323,7 @@ public final class MirrorConfig {
         this.topicsIncludePattern = compilePatternList(topicsInclude);
         this.topicsExcludePattern = compilePatternList(topicsExclude);
         this.groupsIncludePattern = compilePatternList(groupsInclude);
+        this.groupsExcludePattern = compilePatternList(groupsExclude);
         this.aclIncludeRules = parseAclRules(aclInclude);
     }
 
@@ -329,6 +341,10 @@ public final class MirrorConfig {
 
     public Pattern groupsIncludePattern() {
         return groupsIncludePattern;
+    }
+
+    public Pattern groupsExcludePattern() {
+        return groupsExcludePattern;
     }
 
     public List<AclRule> aclIncludeRules() {

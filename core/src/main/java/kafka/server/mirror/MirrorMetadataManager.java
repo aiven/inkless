@@ -1342,6 +1342,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
         consumerGroupOffsetSyncError.incrementAndGet();
         Pattern groupsIncludePattern = mirrorConfig.groupsIncludePattern();
+        Pattern groupsExcludePattern = mirrorConfig.groupsExcludePattern();
         // 1. list group
         ListGroupsRequest.Builder builder = new ListGroupsRequest.Builder(new ListGroupsRequestData()
                 // TODO: if the source cluster is in old version, it won't support types filter
@@ -1353,7 +1354,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
             // Filter groups by include pattern
             var matchingGroups = listGroupsRes.data().groups().stream()
-                    .filter(group -> groupsIncludePattern.matcher(group.groupId()).matches())
+                    .filter(group -> groupsIncludePattern.matcher(group.groupId()).matches()
+                            && (groupsExcludePattern == null || !groupsExcludePattern.matcher(group.groupId()).matches()))
                     .toList();
 
             if (matchingGroups.isEmpty()) {
