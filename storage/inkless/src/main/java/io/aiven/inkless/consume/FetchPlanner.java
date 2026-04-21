@@ -314,7 +314,8 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                 fetcher,
                 request.objectKey(),
                 request.byteRange(),
-                metrics::fetchFileFinished
+                metrics::fetchFileFinished,
+                metrics::fetchFirstByteFinished
             );
             final FileExtent fileExtent = job.call();
 

@@ -42,6 +42,7 @@ import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -57,7 +58,7 @@ public class FileFetchJobTest {
 
     @Test
     public void testOversizeFileFetch() {
-        assertThrows(IllegalArgumentException.class, () -> new FileFetchJob(time, fetcher, objectA, ByteRange.maxRange(), durationMs -> {}));
+        assertThrows(IllegalArgumentException.class, () -> new FileFetchJob(time, fetcher, objectA, ByteRange.maxRange(), durationMs -> {}, ttfbMs -> {}));
     }
 
     @Test
@@ -68,15 +69,45 @@ public class FileFetchJobTest {
             array[i] = (byte) i;
         }
         ByteRange range = new ByteRange(0, size);
-        FileFetchJob job = new FileFetchJob(time, fetcher, objectA, range, durationMs -> { });
+        FileFetchJob job = new FileFetchJob(time, fetcher, objectA, range, durationMs -> { }, ttfbMs -> { });
         FileExtent expectedFile = FileFetchJob.createFileExtent(objectA, range, ByteBuffer.wrap(array));
 
         final ReadableByteChannel channel = mock(ReadableByteChannel.class);
         when(fetcher.fetch(objectA, range)).thenReturn(channel);
-        when(fetcher.readToByteBuffer(channel)).thenReturn(ByteBuffer.wrap(array));
+        // readToByteBuffer receives a TimingReadableByteChannel wrapper, so match with any()
+        when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(array));
         FileExtent actualFile = job.call();
 
         assertThat(actualFile).isEqualTo(expectedFile);
+    }
+
+    @Test
+    public void testTtfbCallbackInvoked() throws Exception {
+        int size = 10;
+        byte[] array = new byte[size];
+        ByteRange range = new ByteRange(0, size);
+        final List<Long> ttfbValues = new ArrayList<>();
+        FileFetchJob job = new FileFetchJob(time, fetcher, objectA, range, durationMs -> { }, ttfbValues::add);
+
+        final ReadableByteChannel channel = mock(ReadableByteChannel.class);
+        when(fetcher.fetch(objectA, range)).thenReturn(channel);
+        // Stub readToByteBuffer to actually read from the TimingReadableByteChannel wrapper,
+        // which triggers the TTFB callback on first read() returning data.
+        when(fetcher.readToByteBuffer(any())).thenAnswer(invocation -> {
+            final ReadableByteChannel timingChannel = invocation.getArgument(0);
+            time.sleep(123);
+            final ByteBuffer buf = ByteBuffer.allocate(size);
+            when(channel.read(any(ByteBuffer.class))).thenAnswer(readInvocation -> {
+                ByteBuffer dst = readInvocation.getArgument(0);
+                dst.put(array);
+                return size;
+            }).thenReturn(-1);
+            timingChannel.read(buf);
+            return ByteBuffer.wrap(array);
+        });
+        job.call();
+
+        assertThat(ttfbValues).containsExactly(123L);
     }
 
     private List<FileExtent> createCacheAlignedFileExtents(int fileSize, int blockSize) {
