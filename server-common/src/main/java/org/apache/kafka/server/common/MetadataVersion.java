@@ -225,6 +225,10 @@ public enum MetadataVersion {
         return this.isAtLeast(IBP_4_0_IV1);
     }
 
+    public boolean isClusterMirrorSupported() {
+        return this.isAtLeast(IBP_4_2_IV2);
+    }
+
     public boolean isMigrationSupported() {
         return this.isAtLeast(MetadataVersion.IBP_3_4_IV0);
     }
@@ -255,7 +259,9 @@ public enum MetadataVersion {
     }
 
     public short partitionChangeRecordVersion() {
-        if (isElrSupported()) {
+        if (isClusterMirrorSupported()) {
+            return (short) 3;
+        } else if (isElrSupported()) {
             return (short) 2;
         } else if (isDirectoryAssignmentSupported()) {
             return (short) 1;
