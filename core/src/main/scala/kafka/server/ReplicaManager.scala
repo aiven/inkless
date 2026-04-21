@@ -2842,8 +2842,9 @@ class ReplicaManager(val config: KafkaConfig,
   ): Unit = {
     stateChangeLogger.info(s"Transitioning ${localLeaders.size} partition(s) to " +
       "local leaders.")
-    val classicLocalLeaders = localLeaders.keySet.filter(tp => !_inklessMetadataView.isDisklessTopic(tp.topic))
-    replicaFetcherManager.removeFetcherForPartitions(classicLocalLeaders)
+    replicaFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
+    consolidationFetcherManager.foreach(_.removeFetcherForPartitions(localLeaders.keySet))
+
     val consolidatingDisklessPartitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     localLeaders.foreachEntry { (tp, info) =>
       val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic())
@@ -2892,9 +2893,6 @@ class ReplicaManager(val config: KafkaConfig,
     }
 
     if (consolidatingDisklessPartitionsToStartFetching.nonEmpty) {
-      consolidationFetcherManager.foreach(_.removeFetcherForPartitions(consolidatingDisklessPartitionsToStartFetching.keySet))
-      stateChangeLogger.info(s"Stopped consolidating diskless fetchers as part of become-leader for ${consolidatingDisklessPartitionsToStartFetching.size} partitions")
-
       val listenerName = config.interBrokerListenerName.value
       val consolidatingPartitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
 
