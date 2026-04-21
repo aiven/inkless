@@ -1095,6 +1095,8 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                     logFileName, copySegmentFinishedRlsm.remoteLogSegmentId());
 
             recordLagStats(log);
+
+            // update diskless start offset and delete batches
         }
 
         private void recordLagStats(UnifiedLog log) {
