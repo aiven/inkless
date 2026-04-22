@@ -569,7 +569,7 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
-  def sealTopicPartitions(topic: String): Unit = {
+  private def sealTopicPartitions(topic: String): Unit = {
     if (initDisklessLogManager.isEmpty) {
       error(s"Cannot seal partitions for topic $topic: InitDisklessLogManager is not enabled.")
       return
@@ -580,8 +580,15 @@ class ReplicaManager(val config: KafkaConfig,
           case HostedPartition.Online(partition) if partition.isLeader =>
             partition.topicId match {
               case Some(id) =>
-                partition.seal()
-                initDisklessLogManager.foreach(_.registerPartition(partition, id))
+                try {
+                  partition.seal()
+                  initDisklessLogManager.foreach(_.registerPartition(partition, id))
+                } catch {
+                  case e: KafkaStorageException =>
+                    stateChangeLogger.error(s"Failed to seal partition ${partition.topicPartition} " +
+                      s"for diskless migration due to a storage error ${e.getMessage}")
+                    markPartitionOffline(tp)
+                }
               case None =>
                 error(s"Partition ${partition.topicPartition} has no topic ID, skipping seal and migration registration")
             }

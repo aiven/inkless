@@ -4232,4 +4232,115 @@ class PartitionTest extends AbstractPartitionTest {
     assertThrows(classOf[ReplicaNotAvailableException], () =>
       partition.appendRecordsToLeader(records, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal))
   }
+
+  private def appendTransactionalRecords(
+    log: UnifiedLog,
+    leaderEpoch: Int,
+    producerId: Long,
+    producerEpoch: Short,
+    sequence: Int,
+    records: SimpleRecord*
+  ): Unit = {
+    val guard = log.maybeStartTransactionVerification(producerId, sequence, producerEpoch, false)
+    val txnRecords = MemoryRecords.withTransactionalRecords(
+      Compression.NONE, producerId, producerEpoch, sequence, records: _*
+    )
+    log.appendAsLeader(txnRecords, leaderEpoch, AppendOrigin.CLIENT,
+      RequestLocal.noCaching(), guard)
+  }
+
+  @Test
+  def testSealAbortsOngoingTransactions(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+    val log = partition.localLogOrException
+
+    val producerId = 137L
+    val producerEpoch: Short = 5
+
+    appendTransactionalRecords(log, leaderEpoch, producerId, producerEpoch, 0,
+      new SimpleRecord("k1".getBytes, "v1".getBytes),
+      new SimpleRecord("k2".getBytes, "v2".getBytes)
+    )
+
+    assertTrue(log.hasOngoingTransaction(producerId, producerEpoch))
+    assertTrue(log.firstUnstableOffset().isPresent)
+
+    partition.seal()
+
+    assertTrue(partition.isSealed)
+    assertFalse(log.hasOngoingTransaction(producerId, producerEpoch),
+      "Ongoing transaction should have been aborted by seal")
+    assertTrue(log.producerStateManager().firstUndecidedOffset().isEmpty,
+      "There should be no undecided transactions after aborting")
+  }
+
+  @Test
+  def testSealAbortsMultipleOngoingTransactions(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+    val log = partition.localLogOrException
+
+    val pid1 = 137L
+    val pid2 = 983L
+    val epoch: Short = 5
+
+    appendTransactionalRecords(log, leaderEpoch, pid1, epoch, 0,
+      new SimpleRecord("a".getBytes, "b".getBytes)
+    )
+
+    appendTransactionalRecords(log, leaderEpoch, pid2, epoch, 0,
+      new SimpleRecord("c".getBytes, "d".getBytes)
+    )
+
+    assertTrue(log.hasOngoingTransaction(pid1, epoch))
+    assertTrue(log.hasOngoingTransaction(pid2, epoch))
+
+    partition.seal()
+
+    assertTrue(partition.isSealed)
+    assertFalse(log.hasOngoingTransaction(pid1, epoch))
+    assertFalse(log.hasOngoingTransaction(pid2, epoch))
+    assertTrue(log.producerStateManager().firstUndecidedOffset().isEmpty,
+      "There should be no undecided transactions after aborting")
+  }
+
+  @Test
+  def testSealWithNoOngoingTransactions(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+    val log = partition.localLogOrException
+
+    val records = TestUtils.records(List(new SimpleRecord("k".getBytes, "v".getBytes)))
+    partition.appendRecordsToLeader(records, origin = AppendOrigin.CLIENT, requiredAcks = 0,
+      RequestLocal.withThreadConfinedCaching)
+
+    val leoBefore = log.logEndOffset
+
+    partition.seal()
+
+    assertTrue(partition.isSealed)
+    assertEquals(leoBefore, log.logEndOffset, "LEO should not change when there are no transactions to abort")
+  }
+
+  @Test
+  def testSealAbortsTransactionAndIncreasesLeo(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+    val log = partition.localLogOrException
+
+    val producerId = 42L
+    val producerEpoch: Short = 1
+
+    appendTransactionalRecords(log, leaderEpoch, producerId, producerEpoch, 0,
+      new SimpleRecord("k".getBytes, "v".getBytes)
+    )
+
+    val leoBeforeSeal = log.logEndOffset
+
+    partition.seal()
+
+    assertTrue(log.logEndOffset > leoBeforeSeal,
+      "LEO should have increased due to the ABORT marker appended during seal")
+  }
 }
