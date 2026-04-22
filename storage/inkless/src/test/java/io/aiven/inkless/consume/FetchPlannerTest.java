@@ -33,6 +33,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -72,6 +73,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -353,9 +355,9 @@ public class FetchPlannerTest {
                 // Mock the fetcher's two-step process: fetch() is called first, then readToByteBuffer()
                 // For this test, we only care about the final data returned by readToByteBuffer()
                 when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
-                    .thenReturn(null); // Return value doesn't matter, readToByteBuffer() is also mocked
+                    .thenReturn(mock(ReadableByteChannel.class));
                 when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class)))
-                    .thenReturn(null); // Return value doesn't matter, readToByteBuffer() is also mocked
+                    .thenReturn(mock(ReadableByteChannel.class));
 
                 // Mock readToByteBuffer to return the test data we want to verify
                 // Order matters: first call returns dataA, second call returns dataB
@@ -421,7 +423,7 @@ public class FetchPlannerTest {
 
                 // Mock the fetcher to return data via ByteBuffer
                 when(fetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
-                    .thenReturn(null); // channel not used directly
+                    .thenReturn(mock(ReadableByteChannel.class));
                 when(fetcher.readToByteBuffer(any()))
                     .thenReturn(byteBuffer);
 
@@ -552,7 +554,7 @@ public class FetchPlannerTest {
                 // First call fails, second call succeeds
                 when(fetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
                     .thenThrow(new RuntimeException("Transient S3 error"))
-                    .thenReturn(null);
+                    .thenReturn(mock(ReadableByteChannel.class));
                 when(fetcher.readToByteBuffer(any()))
                     .thenReturn(ByteBuffer.wrap(expectedData));
 
@@ -605,7 +607,7 @@ public class FetchPlannerTest {
 
                 // Mock fetcher to return data
                 when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
-                    .thenReturn(null);
+                    .thenReturn(mock(ReadableByteChannel.class));
                 when(fetcher.readToByteBuffer(any()))
                     .thenReturn(ByteBuffer.wrap(expectedData));
 
@@ -653,8 +655,8 @@ public class FetchPlannerTest {
                 final byte[] dataA = "data-a".getBytes();
                 final byte[] dataB = "data-bb".getBytes();
 
-                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class))).thenReturn(null);
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
                 when(fetcher.readToByteBuffer(any()))
                     .thenReturn(ByteBuffer.wrap(dataA))
                     .thenReturn(ByteBuffer.wrap(dataB));
@@ -700,7 +702,7 @@ public class FetchPlannerTest {
             try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                 final byte[] expectedData = "old-data-but-hot-path".getBytes();
 
-                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
                 when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                 // Very old timestamp - would be "lagging" if feature was enabled
@@ -782,7 +784,7 @@ public class FetchPlannerTest {
                         .addLimit(limit -> limit.capacity(1).refillGreedy(1, java.time.Duration.ofSeconds(1)))
                         .build();
 
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
+                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
                     when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long recentTimestamp = time.milliseconds() - 30000L; // 30 seconds ago (recent)
@@ -822,7 +824,7 @@ public class FetchPlannerTest {
                     final byte[] expectedData = "boundary-data".getBytes();
                     final long threshold = 60 * 1000L;
 
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
+                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
                     when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long exactThresholdTimestamp = time.milliseconds() - threshold;
@@ -864,7 +866,7 @@ public class FetchPlannerTest {
                         .addLimit(limit -> limit.capacity(10).refillGreedy(10, java.time.Duration.ofSeconds(1)))
                         .build();
 
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
+                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
                     when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long oldTimestamp = time.milliseconds() - 120000L; // 2 minutes ago (old)
@@ -904,7 +906,7 @@ public class FetchPlannerTest {
                 try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] expectedData = "old-data-no-limit".getBytes();
 
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
+                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
                     when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long oldTimestamp = time.milliseconds() - 120000L;
@@ -1159,8 +1161,8 @@ public class FetchPlannerTest {
                     final byte[] oldData = "old".getBytes();
                     final long threshold = 60 * 1000L;
 
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class))).thenReturn(null);
+                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                    when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
                     when(fetcher.readToByteBuffer(any()))
                         .thenReturn(ByteBuffer.wrap(recentData))
                         .thenReturn(ByteBuffer.wrap(oldData));
@@ -1210,8 +1212,8 @@ public class FetchPlannerTest {
                     final ExecutorService coldExecutor = Executors.newFixedThreadPool(2);
 
                     try {
-                        when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                        when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class))).thenReturn(null);
+                        when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                        when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
                         when(fetcher.readToByteBuffer(any()))
                             .thenReturn(ByteBuffer.wrap(recentData))
                             .thenReturn(ByteBuffer.wrap(oldData));
@@ -1287,7 +1289,7 @@ public class FetchPlannerTest {
                 // Validates: laggingConsumerExecutor = null → feature disabled, all use hot path
                 try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] expectedData = "all-recent".getBytes();
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
+                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
                     when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long oldTimestamp = time.milliseconds() - 120000L; // Would be lagging if feature enabled
@@ -1320,7 +1322,7 @@ public class FetchPlannerTest {
                 // Validates: rateLimiter = null → cold path without rate limiting
                 try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] expectedData = "cold-no-limit".getBytes();
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
+                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
                     when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long oldTimestamp = time.milliseconds() - 120000L;
@@ -1357,7 +1359,7 @@ public class FetchPlannerTest {
                     final Bucket rateLimiter = Bucket.builder()
                         .addLimit(limit -> limit.capacity(10).refillGreedy(10, java.time.Duration.ofSeconds(1)))
                         .build();
-                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
+                    when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
                     when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long oldTimestamp = time.milliseconds() - 120000L;

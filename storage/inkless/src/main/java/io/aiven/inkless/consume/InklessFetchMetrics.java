@@ -45,6 +45,7 @@ public class InklessFetchMetrics {
     private static final String CACHE_MISS_COUNT = "CacheMissCount";
     private static final String CACHE_ENTRY_SIZE = "CacheEntrySize";
     private static final String CACHE_SIZE = "CacheSize";
+    private static final String FETCH_FIRST_BYTE_TIME = "FetchFirstByteTime";
     private static final String FETCH_FILE_TIME = "FetchFileTime";
     private static final String FETCH_COMPLETION_TIME = "FetchCompletionTime";
     private static final String FETCH_RATE = "FetchRate";
@@ -77,6 +78,7 @@ public class InklessFetchMetrics {
     private final Gauge<Long> cacheSize;
     private final Meter cacheHits;
     private final Meter cacheMisses;
+    private final Histogram fetchFirstByteTimeHistogram;
     private final Histogram fetchFileTimeHistogram;
     private final Histogram fetchCompletionTimeHistogram;
     private final Meter fetchRate;
@@ -101,6 +103,7 @@ public class InklessFetchMetrics {
         cacheStoreTimeHistogram = metricsGroup.newHistogram(CACHE_STORE_TIME, true, Map.of());
         cacheHits = metricsGroup.newMeter(CACHE_HIT_COUNT, "hits", TimeUnit.SECONDS, Map.of());
         cacheMisses = metricsGroup.newMeter(CACHE_MISS_COUNT, "misses", TimeUnit.SECONDS, Map.of());
+        fetchFirstByteTimeHistogram = metricsGroup.newHistogram(FETCH_FIRST_BYTE_TIME, true, Map.of());
         fetchFileTimeHistogram = metricsGroup.newHistogram(FETCH_FILE_TIME, true, Map.of());
         fetchCompletionTimeHistogram = metricsGroup.newHistogram(FETCH_COMPLETION_TIME, true, Map.of());
         fetchRate = metricsGroup.newMeter(FETCH_RATE, "fetches", TimeUnit.SECONDS, Map.of());
@@ -152,6 +155,10 @@ public class InklessFetchMetrics {
         cacheEntrySize.update(size);
     }
 
+    public void fetchFirstByteFinished(final long durationMs) {
+        fetchFirstByteTimeHistogram.update(durationMs);
+    }
+
     public void fetchFileFinished(final long durationMs) {
         fetchFileTimeHistogram.update(durationMs);
     }
@@ -178,6 +185,7 @@ public class InklessFetchMetrics {
 
     public void close() {
         metricsGroup.removeMetric(FETCH_TOTAL_TIME);
+        metricsGroup.removeMetric(FETCH_FIRST_BYTE_TIME);
         metricsGroup.removeMetric(FETCH_FILE_TIME);
         metricsGroup.removeMetric(FETCH_PLAN_TIME);
         metricsGroup.removeMetric(CACHE_QUERY_TIME);
