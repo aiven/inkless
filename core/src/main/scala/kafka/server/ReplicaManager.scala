@@ -1895,7 +1895,7 @@ class ReplicaManager(val config: KafkaConfig,
       } else {
         val classicToDisklessStartOffset = _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition())
         val shouldReadFromUnifiedLog =
-          classicToDisklessStartOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET &&
+          classicToDisklessStartOffset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET ||
             partitionData.fetchOffset < classicToDisklessStartOffset
 
         (shouldReadFromUnifiedLog, config.disklessManagedReplicasEnabled) match {
