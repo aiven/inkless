@@ -20,6 +20,8 @@ package io.aiven.inkless.consume;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.network.TransferableChannel;
 import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.MutableRecordBatch;
+import org.apache.kafka.common.record.Record;
 import org.apache.kafka.common.record.SimpleRecord;
 
 import org.junit.jupiter.api.Test;
@@ -33,6 +35,7 @@ import org.mockito.quality.Strictness;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -202,5 +205,46 @@ class ConcatenatedRecordsTest {
         position = records.get(0).sizeInBytes() + 1;
         concatenatedRecords.writeTo(mockChannel, position, length);
         verify(mockChannel, times(3)).write(any(ByteBuffer.class));
+    }
+
+    @Test
+    public void testToMemoryRecordsEmpty() throws IOException {
+        ConcatenatedRecords records = new ConcatenatedRecords(List.of());
+        assertEquals(MemoryRecords.EMPTY, records.toMemoryRecords());
+    }
+
+    @Test
+    public void testToMemoryRecordsSingleRecord() throws IOException {
+        MemoryRecords records1 = mock(MemoryRecords.class);
+        ConcatenatedRecords records = new ConcatenatedRecords(List.of(records1));
+        assertEquals(records1, records.toMemoryRecords());
+    }
+
+    @Test
+    public void testToMemoryRecordsMultipleRecords() throws IOException {
+        List<MemoryRecords> parts = List.of(
+                MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("record1".getBytes())),
+                MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("record2".getBytes())));
+        ConcatenatedRecords concatenated = new ConcatenatedRecords(parts);
+        MemoryRecords result = concatenated.toMemoryRecords();
+
+        assertEquals(concatenated.sizeInBytes(), result.sizeInBytes());
+        List<byte[]> values = recordValues(result);
+        assertThat(values).hasSize(2);
+        assertThat(values.get(0)).isEqualTo("record1".getBytes());
+        assertThat(values.get(1)).isEqualTo("record2".getBytes());
+    }
+
+    private static List<byte[]> recordValues(MemoryRecords records) {
+        List<byte[]> values = new ArrayList<>();
+        for (MutableRecordBatch batch : records.batches()) {
+            for (Record record : batch) {
+                ByteBuffer value = record.value();
+                byte[] copy = new byte[value.remaining()];
+                value.duplicate().get(copy);
+                values.add(copy);
+            }
+        }
+        return values;
     }
 }

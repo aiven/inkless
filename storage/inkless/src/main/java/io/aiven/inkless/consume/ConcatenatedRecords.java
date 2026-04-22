@@ -26,6 +26,7 @@ import org.apache.kafka.common.utils.AbstractIterator;
 import org.apache.kafka.common.utils.FlattenedIterator;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Objects;
 
@@ -86,5 +87,20 @@ public class ConcatenatedRecords extends AbstractRecords {
     @Override
     public int sizeInBytes() {
         return sizeInBytes;
+    }
+
+    public MemoryRecords toMemoryRecords() {
+        if (backingRecords.isEmpty()) {
+            return MemoryRecords.EMPTY;
+        } else if (backingRecords.size() == 1) {
+            return backingRecords.get(0);
+        } else {
+            var buffer = ByteBuffer.allocate(sizeInBytes());
+            for (MemoryRecords records : backingRecords) {
+                records.batches().forEach(b -> b.writeTo(buffer));
+            }
+            buffer.flip();
+            return MemoryRecords.readableRecords(buffer);
+        }
     }
 }

@@ -37,6 +37,8 @@ public interface MetadataView {
 
     boolean isRemoteStorageEnabled(String topicName);
 
+    boolean isConsolidatingDisklessTopic(String topicName);
+
     LogConfig getTopicConfig(String topicName);
 
     Set<TopicIdPartition> getDisklessTopicPartitions();
