@@ -656,7 +656,6 @@ public class MirrorCoordinator {
                     CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
                     response -> {
                         response.foreach(res -> {
-                            TopicPartition tp = res._1.topicPartition();
                             ProduceResponse.PartitionResponse partitionRes = res._2;
                             if (partitionRes.error.code() != Errors.NONE.code()) {
                                 // TODO: retry logic
@@ -679,9 +678,7 @@ public class MirrorCoordinator {
         if (!remoteTopicMetadata.isEmpty()) {
             metadataManager.writeStatesToRemoteCoordinator(mirrorName, remoteTopicMetadata, Set.of(), res -> {
                 res.data().topics().forEach(topicResult -> {
-                    String name = topicResult.name();
                     topicResult.partitions().forEach(partitionResult -> {
-                        TopicPartition tp = new TopicPartition(name, partitionResult.partitionIndex());
                         if (partitionResult.errorCode() != Errors.NONE.code()) {
                             log.error("Failed to write last mirrored offsets to remote coordinator: {}", partitionResult.errorCode());
                             future.completeExceptionally(Errors.forCode(partitionResult.errorCode()).exception());
