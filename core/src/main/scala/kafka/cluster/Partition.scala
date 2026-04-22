@@ -261,6 +261,10 @@ class Partition(val topicPartition: TopicPartition,
 
   def isSealed: Boolean = _sealed
 
+  /**
+   * Seal this Partition so that no more records can be appended locally.
+   * @throws KafkaStorageException If transaction abortion fails due to an I/O error.
+   */
   def seal(): Unit = inWriteLock(leaderIsrUpdateLock) {
     if (!_sealed) {
       val leaderLog = localLogOrException
@@ -276,6 +280,7 @@ class Partition(val topicPartition: TopicPartition,
    * Abort all ongoing transactions by appending ABORT markers directly to the log.
    * Diskless topics do not support transactions, so any in-flight transaction must
    * be resolved before migration proceeds.
+   * @throws KafkaStorageException If transaction abortion fails due to an I/O error.
    */
   private def abortOngoingTransactions(leaderLog: UnifiedLog): Unit = {
     val producerStateManager = leaderLog.producerStateManager()
