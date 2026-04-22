@@ -32,7 +32,7 @@ import org.apache.kafka.common.message.{DescribeProducersResponseData, FetchResp
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
-import org.apache.kafka.common.record.{FileRecords, MemoryRecords, RecordBatch}
+import org.apache.kafka.common.record.{ControlRecordType, EndTransactionMarker, FileRecords, MemoryRecords, RecordBatch}
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.{UNDEFINED_EPOCH, UNDEFINED_EPOCH_OFFSET}
 import org.apache.kafka.common.utils.Time
@@ -261,10 +261,50 @@ class Partition(val topicPartition: TopicPartition,
 
   def isSealed: Boolean = _sealed
 
+  /**
+   * Seal this Partition so that no more records can be appended locally.
+   * @throws KafkaStorageException If transaction abortion fails due to an I/O error.
+   */
   def seal(): Unit = inWriteLock(leaderIsrUpdateLock) {
     if (!_sealed) {
+      val leaderLog = localLogOrException
+      if (leaderLog.producerStateManager().firstUndecidedOffset().isPresent) {
+        abortOngoingTransactions(leaderLog)
+      }
       _sealed = true
-      stateChangeLogger.info(s"Sealed partition $topicPartition for diskless migration with LEO ${localLogOrException.logEndOffset}")
+      stateChangeLogger.info(s"Sealed partition $topicPartition for diskless migration with LEO ${leaderLog.logEndOffset}")
+    }
+  }
+
+  /**
+   * Abort all ongoing transactions by appending ABORT markers directly to the log.
+   * Diskless topics do not support transactions, so any in-flight transaction must
+   * be resolved before migration proceeds.
+   * @throws KafkaStorageException If transaction abortion fails due to an I/O error.
+   */
+  private def abortOngoingTransactions(leaderLog: UnifiedLog): Unit = {
+    val producerStateManager = leaderLog.producerStateManager()
+    val toAbort = new java.util.ArrayList[(Long, Short, Int, Long)]()
+    producerStateManager.activeProducers().forEach { (producerId, entry) =>
+      if (entry.currentTxnFirstOffset().isPresent) {
+        toAbort.add((producerId, entry.producerEpoch(), entry.coordinatorEpoch(), entry.currentTxnFirstOffset().getAsLong))
+      }
+    }
+    toAbort.forEach { case (producerId, producerEpoch, coordinatorEpoch, txnFirstOffset) =>
+      val abortMarker = MemoryRecords.withEndTransactionMarker(
+        producerId,
+        producerEpoch,
+        new EndTransactionMarker(ControlRecordType.ABORT, coordinatorEpoch)
+      )
+      // Use TV_0 because its epoch validation (markerEpoch >= currentEpoch) allows
+      // writing the abort marker with the producer's current epoch. Higher transaction
+      // versions require a bumped epoch, which only the transaction coordinator can
+      // perform.
+      leaderLog.appendAsLeader(abortMarker, leaderEpoch, AppendOrigin.COORDINATOR,
+        RequestLocal.noCaching(), VerificationGuard.SENTINEL, TransactionVersion.TV_0.featureLevel())
+      stateChangeLogger.info(s"Aborted ongoing transaction for producer $producerId " +
+        s"(epoch=$producerEpoch, txnFirstOffset=$txnFirstOffset) " +
+        s"on partition $topicPartition before sealing for diskless migration")
     }
   }
 
