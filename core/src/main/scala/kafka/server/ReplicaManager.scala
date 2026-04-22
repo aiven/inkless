@@ -2848,7 +2848,9 @@ class ReplicaManager(val config: KafkaConfig,
     val consolidatingDisklessPartitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     localLeaders.foreachEntry { (tp, info) =>
       val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic())
-      val isConsolidatingDisklessTopic = _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
+      val isConsolidatingDisklessTopic =
+        config.disklessRemoteStorageConsolidationEnabled &&
+          _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
       val existingPartition = onlinePartition(tp)
       if (!isDiskless || isConsolidatingDisklessTopic) {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
