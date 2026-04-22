@@ -31,6 +31,7 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
+import io.aiven.inkless.storage_backend.common.TimingReadableByteChannel;
 
 public class FileFetchJob implements Callable<FileExtent> {
 
@@ -40,17 +41,20 @@ public class FileFetchJob implements Callable<FileExtent> {
     private final ByteRange range;
     private final int size;
     private final Consumer<Long> durationCallback;
+    private final Consumer<Long> ttfbCallback;
 
     public FileFetchJob(Time time,
                         ObjectFetcher objectFetcher,
                         ObjectKey key,
                         ByteRange range,
-                        Consumer<Long> durationCallback) {
+                        Consumer<Long> durationCallback,
+                        Consumer<Long> ttfbCallback) {
         this.time = time;
         this.objectFetcher = objectFetcher;
         this.key = key;
         this.range = range;
         this.durationCallback = durationCallback;
+        this.ttfbCallback = ttfbCallback;
         this.size = range.bufferSize();
     }
 
@@ -70,8 +74,11 @@ public class FileFetchJob implements Callable<FileExtent> {
     }
 
     private FileExtent doWork() throws IOException, StorageBackendException {
-        final ByteBuffer byteBuffer = objectFetcher.readToByteBuffer(objectFetcher.fetch(key, range));
-        return createFileExtent(key, range, byteBuffer);
+        final var startTime = TimeUtils.durationMeasurementNow(time);
+        try (final var channel = new TimingReadableByteChannel(objectFetcher.fetch(key, range), time, startTime, ttfbCallback)) {
+            final ByteBuffer byteBuffer = objectFetcher.readToByteBuffer(channel);
+            return createFileExtent(key, range, byteBuffer);
+        }
     }
 
 
