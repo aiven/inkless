@@ -22,6 +22,8 @@ import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -29,7 +31,8 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
-import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
@@ -50,8 +53,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.nio.file.Files;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -94,6 +100,8 @@ public class InklessConsolidatedDisklessTopicsTest {
     protected static MinioContainer s3Container = S3TestContainer.minio();
 
     private KafkaClusterTestKit cluster;
+    private String topicName = "consolidated-diskless-topic";
+    private int numPartitions = 2;
 
     @BeforeEach
     public void setup(final TestInfo testInfo) throws Exception {
@@ -173,11 +181,8 @@ public class InklessConsolidatedDisklessTopicsTest {
     public void testNewConsolidatedDisklessTopics() throws Exception {
         Map<String, Object> clientConfigs = new HashMap<>();
         clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
-        clientConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
-        clientConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
-
-        String topicName = "consolidated-diskless-topic";
-        int numPartitions = 2;
+        clientConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        clientConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
 
         Map<String, String> topicConfigs = Map.of(
             DISKLESS_ENABLE_CONFIG, "true",
@@ -219,10 +224,14 @@ public class InklessConsolidatedDisklessTopicsTest {
             }
         }
 
-        produceRecords(clientConfigs, 50, i -> {
-            byte[] value = TestUtils.randomBytes(104_857);
+        int recordsToSendAndReceive = 50;
+
+        var producedValues = produceRecords(clientConfigs, recordsToSendAndReceive, i -> {
+            String value = TestUtils.randomString(104_857);
             return new ProducerRecord<>(topicName, i % numPartitions, null, value);
         });
+
+        assertEquals(recordsToSendAndReceive, producedValues.size());
 
         try (S3Client s3 = s3Container.getS3Client()) {
             final String bucket = s3Container.getBucketName();
@@ -230,21 +239,50 @@ public class InklessConsolidatedDisklessTopicsTest {
                 120_000,
                 () -> "Expected at least one tiered object in the Minio bucket after produce");
         }
+
+        consumeAndVerify(clientConfigs, producedValues);
     }
 
-    private void produceRecords(Map<String, Object> configs, int numRecords,
-                                IntFunction<ProducerRecord<byte[], byte[]>> recordFactory) {
+    private List<String> produceRecords(Map<String, Object> configs, int numRecords,
+                                        IntFunction<ProducerRecord<String, String>> recordFactory) {
         long totalSize = 0;
-        try (Producer<byte[], byte[]> producer = new KafkaProducer<>(configs)) {
+        var producedValues = new ArrayList<String>();
+        try (Producer<String, String> producer = new KafkaProducer<>(configs)) {
             for (int i = 0; i < numRecords; i++) {
                 var record = recordFactory.apply(i);
                 var metadata = producer.send(record).get();
+                producedValues.add(record.value());
                 totalSize += metadata.serializedValueSize();
             }
         } catch (ExecutionException | InterruptedException e) {
             throw new RuntimeException(e);
         }
         log.info("Produced {} records in total size {}", numRecords, totalSize);
+        return producedValues;
+    }
+
+    private void consumeAndVerify(Map<String, Object> configs, List<String> producedValues) {
+        configs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        configs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        configs.put(ConsumerConfig.GROUP_ID_CONFIG, "test-group-id");
+        configs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        var consumedRecordCount = 0L;
+        var recordsToConsumeCount = producedValues.size();
+        try (var consumer = new KafkaConsumer<>(configs)) {
+            consumer.subscribe(Collections.singletonList(topicName));
+            // consume every record to verify that the consumer works
+            for  (int i = 0; i < recordsToConsumeCount; i++) {
+                var records = consumer.poll(Duration.ofMillis(1000));
+                records.forEach(record -> {
+                    producedValues.remove(record.value());
+                });
+                consumedRecordCount += records.count();
+            }
+            // verify that we consumed exactly as much as we needed to, not more, not less
+            assertEquals(recordsToConsumeCount, consumedRecordCount);
+            // verify value-wise correctness
+            assertEquals(0, producedValues.size());
+        }
     }
 
     private static int countObjectsWithPrefix(S3Client s3, String bucket, String prefix) {

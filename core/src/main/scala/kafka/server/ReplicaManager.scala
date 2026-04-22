@@ -1912,14 +1912,22 @@ class ReplicaManager(val config: KafkaConfig,
 
     fetchInfos.foreach { case (tp, partitionData) =>
       val fetchInfo = tp -> partitionData
-      if (!_inklessMetadataView.isDisklessTopic(tp.topic())) {
+      val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic)
+      if (!isDiskless) {
         classicFetchInfos += fetchInfo
       } else {
         val classicToDisklessStartOffset = _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition())
-        val migrationPending =
-          classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING
-        val shouldReadFromUnifiedLog = migrationPending || (
-          classicToDisklessStartOffset >= 0 && partitionData.fetchOffset < classicToDisklessStartOffset)
+        var shouldReadFromUnifiedLog = classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING
+        val isConsolidatingPartition =
+          _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic) &&
+            config.disklessRemoteStorageConsolidationEnabled
+        if (isConsolidatingPartition) {
+          shouldReadFromUnifiedLog = shouldReadFromUnifiedLog ||
+            getPartitionOrException(tp).log.exists(partitionData.fetchOffset < _.logEndOffset)
+        } else {
+          shouldReadFromUnifiedLog = shouldReadFromUnifiedLog ||
+            (classicToDisklessStartOffset >= 0 && partitionData.fetchOffset < classicToDisklessStartOffset)
+        }
 
         if (params.isFromFollower && !shouldReadFromUnifiedLog && classicToDisklessStartOffset >= 0) {
           // The partition has fully migrated to diskless and the follower is asking for an offset at or beyond it.
