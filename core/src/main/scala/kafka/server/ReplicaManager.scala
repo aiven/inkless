@@ -2937,7 +2937,9 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
-      val isConsolidatingDisklessTopic = _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
+      val isConsolidatingDisklessTopic =
+        config.disklessRemoteStorageConsolidationEnabled &&
+          _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
       if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
         // Clean up migration tracking since only the leader drives classic -> diskless migration.
         initDisklessLogManager.foreach(_.removePartition(tp))
