@@ -3892,6 +3892,7 @@ public class ReplicationControlManagerTest {
                     .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
                     .setLeaderEpoch(0)
                     .setPartitionEpoch(0)
+                    .setFirstDisklessOffset(0)
                     .build(),
                 replicationControl.getPartition(((TopicRecord) result3.records().get(0).message()).topicId(), 0));
 
@@ -4000,6 +4001,7 @@ public class ReplicationControlManagerTest {
                     .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
                     .setLeaderEpoch(0)
                     .setPartitionEpoch(0)
+                    .setFirstDisklessOffset(0)
                     .build(),
                 replicationControl.getPartition(((TopicRecord) result3.records().get(0).message()).topicId(), 0));
 
@@ -4891,6 +4893,7 @@ public class ReplicationControlManagerTest {
                     .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
                     .setLeaderEpoch(0)
                     .setPartitionEpoch(0)
+                    .setFirstDisklessOffset(0)
                     .build(),
                 replicationControl.getPartition(((TopicRecord) result3.records().get(0).message()).topicId(), 0));
 
@@ -5981,7 +5984,7 @@ public class ReplicationControlManagerTest {
         }
 
         @Test
-        public void testInitDisklessLogNonClassicTopicPartiallyInitialized() {
+        public void testInitDisklessLogOnClassicTopic() {
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setDisklessStorageSystemEnabled(true)
                 .build();
@@ -5992,41 +5995,35 @@ public class ReplicationControlManagerTest {
                 "foo", 2, (short) 1, Map.of(DISKLESS_ENABLE_CONFIG, "true"), NONE.code());
 
             Uuid topicId = createTopicResult.topicId();
+
+            // Full diskless topics already have firstDisklessOffset=0 at creation,
+            // so all partitions should reject initDisklessLog requests.
             PartitionRegistration partition0 = replicationControl.getPartition(topicId, 0);
+            assertEquals(0, partition0.firstDisklessOffset);
             int leader0 = partition0.leader;
 
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
 
-            // Initialize partition 0
+            // Attempt to initialize partition 0 — should be rejected because firstDisklessOffset is already set
             InitDisklessLogRequestData firstRequest = singlePartitionRequest(
                 leader0, defaultBrokerEpoch(leader0), topicId, 0, 100L, partition0.leaderEpoch, List.of());
             ControllerResult<InitDisklessLogResponseData> firstResult =
                 replicationControl.initDisklessLog(requestContext, firstRequest);
-            assertEquals(1, firstResult.records().size());
-            assertEquals(NONE.code(),
+            assertEquals(0, firstResult.records().size());
+            assertEquals(INVALID_REQUEST.code(),
                 firstResult.response().topics().get(0).partitions().get(0).errorCode());
-            ctx.replay(firstResult.records());
 
-            // Try to re-initialize partition 0 — should be rejected because firstDisklessOffset is already set
-            PartitionRegistration updatedPartition0 = replicationControl.getPartition(topicId, 0);
+            // Partition 1 also has firstDisklessOffset=0 — should also be rejected
+            PartitionRegistration partition1 = replicationControl.getPartition(topicId, 1);
+            assertEquals(0, partition1.firstDisklessOffset);
+            int leader1 = partition1.leader;
             InitDisklessLogRequestData secondRequest = singlePartitionRequest(
-                leader0, defaultBrokerEpoch(leader0), topicId, 0, 200L, updatedPartition0.leaderEpoch, List.of());
+                leader1, defaultBrokerEpoch(leader1), topicId, 1, 300L, partition1.leaderEpoch, List.of());
             ControllerResult<InitDisklessLogResponseData> secondResult =
                 replicationControl.initDisklessLog(requestContext, secondRequest);
             assertEquals(0, secondResult.records().size());
             assertEquals(INVALID_REQUEST.code(),
                 secondResult.response().topics().get(0).partitions().get(0).errorCode());
-
-            // Partition 1 has not been initialized yet — should be accepted
-            PartitionRegistration partition1 = replicationControl.getPartition(topicId, 1);
-            int leader1 = partition1.leader;
-            InitDisklessLogRequestData thirdRequest = singlePartitionRequest(
-                leader1, defaultBrokerEpoch(leader1), topicId, 1, 300L, partition1.leaderEpoch, List.of());
-            ControllerResult<InitDisklessLogResponseData> thirdResult =
-                replicationControl.initDisklessLog(requestContext, thirdRequest);
-            assertEquals(1, thirdResult.records().size());
-            assertEquals(NONE.code(),
-                thirdResult.response().topics().get(0).partitions().get(0).errorCode());
         }
 
         @Test

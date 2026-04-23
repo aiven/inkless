@@ -937,10 +937,11 @@ public class ReplicationControlManager {
                             "Unable to replicate the partition " + replicationFactor +
                                 " time(s): All brokers are currently fenced or in controlled shutdown.");
                     }
-                    newParts.put(
-                        partitionId,
-                        buildPartitionRegistration(partitionAssignment, isr)
-                    );
+                    PartitionRegistration reg = buildPartitionRegistration(partitionAssignment, isr);
+                    if (disklessEnabled) {
+                        reg = reg.withFirstDisklessOffset(0);
+                    }
+                    newParts.put(partitionId, reg);
                 }
             } catch (InvalidReplicationFactorException e) {
                 return new ApiError(Errors.INVALID_REPLICATION_FACTOR,
@@ -2312,8 +2313,11 @@ public class ReplicationControlManager {
                     "Unable to replicate the partition " + replicationFactor +
                         " time(s): All brokers are currently fenced or in controlled shutdown.");
             }
-            records.add(buildPartitionRegistration(partitionAssignment, isr)
-                .toRecord(topicId, partitionId, new ImageWriterOptions.Builder(featureControl.metadataVersionOrThrow()).
+            PartitionRegistration reg = buildPartitionRegistration(partitionAssignment, isr);
+            if (isDiskless) {
+                reg = reg.withFirstDisklessOffset(0);
+            }
+            records.add(reg.toRecord(topicId, partitionId, new ImageWriterOptions.Builder(featureControl.metadataVersionOrThrow()).
                         setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled()).
                         build()));
             partitionId++;
