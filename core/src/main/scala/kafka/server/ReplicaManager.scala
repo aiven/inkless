@@ -1894,9 +1894,14 @@ class ReplicaManager(val config: KafkaConfig,
         classicFetchInfos += fetchInfo
       } else {
         val firstDisklessOffset = _inklessMetadataView.getFirstDisklessOffset(tp.topicPartition())
+        // UNSET (-1) means no firstDisklessOffset has been written to Kraft yet.
+        // With managed replicas enabled this indicates a classic-to-diskless migration in progress,
+        // so we read from the local UnifiedLog. Without managed replicas this can only be a legacy
+        // full-diskless topic created before firstDisklessOffset was set at creation time, so we
+        // fall through to the diskless log.
         val shouldReadFromUnifiedLog =
-          firstDisklessOffset == PartitionRegistration.UNSET_FIRST_DISKLESS_OFFSET ||
-            partitionData.fetchOffset < firstDisklessOffset
+          (firstDisklessOffset == PartitionRegistration.UNSET_FIRST_DISKLESS_OFFSET && config.disklessManagedReplicasEnabled) ||
+            (firstDisklessOffset != PartitionRegistration.UNSET_FIRST_DISKLESS_OFFSET && partitionData.fetchOffset < firstDisklessOffset)
 
         (shouldReadFromUnifiedLog, config.disklessManagedReplicasEnabled) match {
           case (false, _) =>
