@@ -1629,86 +1629,21 @@ class ReplicaManager(val config: KafkaConfig,
           statusByPartition += topicPartition ->
             ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.UNSUPPORTED_VERSION, partition))).build()
         } else if (maybeFetchOffsetJob.exists(_.mustHandle(topic.name()))) {
-          statusByPartition += topicPartition ->
-            disklessFetchOffset(maybeFetchOffsetJob.get, topicPartition, partition)
-        } else {
-          try {
-            val fetchOnlyFromLeader = replicaId != ListOffsetsRequest.DEBUGGING_REPLICA_ID
-            val isClientRequest = replicaId == ListOffsetsRequest.CONSUMER_REPLICA_ID
-            val isolationLevelOpt = if (isClientRequest)
-              Some(isolationLevel)
-            else
-              None
+          val migrationPending =
+            _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition) == PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING
 
-            val resultHolder = fetchOffsetForTimestamp(topicPartition,
-              partition.timestamp,
-              isolationLevelOpt,
-              if (partition.currentLeaderEpoch == ListOffsetsResponse.UNKNOWN_EPOCH) Optional.empty() else Optional.of(partition.currentLeaderEpoch),
-              fetchOnlyFromLeader)
-
-            val status = {
-              if (resultHolder.timestampAndOffsetOpt().isPresent) {
-                // This case is for normal topic that does not have remote storage.
-                val timestampAndOffsetOpt = resultHolder.timestampAndOffsetOpt.get
-                var partitionResponse = buildErrorResponse(Errors.NONE, partition)
-                if (resultHolder.lastFetchableOffset.isPresent &&
-                  timestampAndOffsetOpt.offset >= resultHolder.lastFetchableOffset.get) {
-                  resultHolder.maybeOffsetsError.map(e => throw e)
-                } else {
-                  partitionResponse = new ListOffsetsPartitionResponse()
-                    .setPartitionIndex(partition.partitionIndex)
-                    .setErrorCode(Errors.NONE.code)
-                    .setTimestamp(timestampAndOffsetOpt.timestamp)
-                    .setOffset(timestampAndOffsetOpt.offset)
-                  if (timestampAndOffsetOpt.leaderEpoch.isPresent && version >= 4)
-                    partitionResponse.setLeaderEpoch(timestampAndOffsetOpt.leaderEpoch.get)
-                }
-                ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(partitionResponse)).build()
-              } else if (resultHolder.timestampAndOffsetOpt.isEmpty && resultHolder.futureHolderOpt.isEmpty) {
-                // This is an empty offset response scenario
-                resultHolder.maybeOffsetsError.map(e => throw e)
-                ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.NONE, partition))).build()
-              } else if (resultHolder.timestampAndOffsetOpt.isEmpty && resultHolder.futureHolderOpt.isPresent) {
-                // This case is for topic enabled with remote storage and we want to search the timestamp in
-                // remote storage using async fashion.
-                ListOffsetsPartitionStatus.builder()
-                  .futureHolderOpt(resultHolder.futureHolderOpt())
-                  .lastFetchableOffset(resultHolder.lastFetchableOffset)
-                  .maybeOffsetsError(resultHolder.maybeOffsetsError)
-                  .build()
-              } else {
-                throw new IllegalStateException(s"Unexpected result holder state $resultHolder")
-              }
-            }
-            statusByPartition += topicPartition -> status
-          } catch {
-            // NOTE: These exceptions are special cases since these error messages are typically transient or the client
-            // would have received a clear exception and there is no value in logging the entire stack trace for the same
-            case e @ (_ : UnknownTopicOrPartitionException |
-                      _ : NotLeaderOrFollowerException |
-                      _ : UnknownLeaderEpochException |
-                      _ : FencedLeaderEpochException |
-                      _ : KafkaStorageException |
-                      _ : UnsupportedForMessageFormatException) =>
-              debug(s"Offset request with correlation id $correlationId from client $clientId on " +
-                s"partition $topicPartition failed due to ${e.getMessage}")
-              statusByPartition += topicPartition ->
-                ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.forException(e), partition))).build()
-            // Only V5 and newer ListOffset calls should get OFFSET_NOT_AVAILABLE
-            case e: OffsetNotAvailableException =>
-              if (version >= 5) {
-                statusByPartition += topicPartition ->
-                  ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.forException(e), partition))).build()
-              } else {
-                statusByPartition += topicPartition ->
-                  ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.LEADER_NOT_AVAILABLE, partition))).build()
-              }
-
-            case e: Throwable =>
-              error("Error while responding to offset request", e)
-              statusByPartition += topicPartition ->
-                ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.forException(e), partition))).build()
+          if (migrationPending) {
+            statusByPartition += topicPartition ->
+              classicFetchOffset(topicPartition, partition, replicaId, isolationLevel, version,
+                correlationId, clientId, buildErrorResponse)
+          } else {
+            statusByPartition += topicPartition ->
+              disklessFetchOffset(maybeFetchOffsetJob.get, topicPartition, partition)
           }
+        } else {
+          statusByPartition += topicPartition ->
+            classicFetchOffset(topicPartition, partition, replicaId, isolationLevel, version,
+              correlationId, clientId, buildErrorResponse)
         }
       }
     }
@@ -1748,6 +1683,86 @@ class ReplicaManager(val config: KafkaConfig,
     ListOffsetsPartitionStatus.builder()
       .futureHolderOpt(Optional.of(futureHolder))
       .build()
+  }
+
+  private def classicFetchOffset(topicPartition: TopicPartition,
+                                 partition: ListOffsetsPartition,
+                                 replicaId: Int,
+                                 isolationLevel: IsolationLevel,
+                                 version: Short,
+                                 correlationId: Int,
+                                 clientId: String,
+                                 buildErrorResponse: (Errors, ListOffsetsPartition) => ListOffsetsPartitionResponse
+                                ): ListOffsetsPartitionStatus = {
+    try {
+      val fetchOnlyFromLeader = replicaId != ListOffsetsRequest.DEBUGGING_REPLICA_ID
+      val isClientRequest = replicaId == ListOffsetsRequest.CONSUMER_REPLICA_ID
+      val isolationLevelOpt = if (isClientRequest)
+        Some(isolationLevel)
+      else
+        None
+
+      val resultHolder = fetchOffsetForTimestamp(topicPartition,
+        partition.timestamp,
+        isolationLevelOpt,
+        if (partition.currentLeaderEpoch == ListOffsetsResponse.UNKNOWN_EPOCH) Optional.empty() else Optional.of(partition.currentLeaderEpoch),
+        fetchOnlyFromLeader)
+
+      if (resultHolder.timestampAndOffsetOpt().isPresent) {
+        // This case is for normal topic that does not have remote storage.
+        val timestampAndOffsetOpt = resultHolder.timestampAndOffsetOpt.get
+        var partitionResponse = buildErrorResponse(Errors.NONE, partition)
+        if (resultHolder.lastFetchableOffset.isPresent &&
+          timestampAndOffsetOpt.offset >= resultHolder.lastFetchableOffset.get) {
+          resultHolder.maybeOffsetsError.map(e => throw e)
+        } else {
+          partitionResponse = new ListOffsetsPartitionResponse()
+            .setPartitionIndex(partition.partitionIndex)
+            .setErrorCode(Errors.NONE.code)
+            .setTimestamp(timestampAndOffsetOpt.timestamp)
+            .setOffset(timestampAndOffsetOpt.offset)
+          if (timestampAndOffsetOpt.leaderEpoch.isPresent && version >= 4)
+            partitionResponse.setLeaderEpoch(timestampAndOffsetOpt.leaderEpoch.get)
+        }
+        ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(partitionResponse)).build()
+      } else if (resultHolder.timestampAndOffsetOpt.isEmpty && resultHolder.futureHolderOpt.isEmpty) {
+        // This is an empty offset response scenario
+        resultHolder.maybeOffsetsError.map(e => throw e)
+        ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.NONE, partition))).build()
+      } else if (resultHolder.timestampAndOffsetOpt.isEmpty && resultHolder.futureHolderOpt.isPresent) {
+        // This case is for topic enabled with remote storage and we want to search the timestamp in
+        // remote storage using async fashion.
+        ListOffsetsPartitionStatus.builder()
+          .futureHolderOpt(resultHolder.futureHolderOpt())
+          .lastFetchableOffset(resultHolder.lastFetchableOffset)
+          .maybeOffsetsError(resultHolder.maybeOffsetsError)
+          .build()
+      } else {
+        throw new IllegalStateException(s"Unexpected result holder state $resultHolder")
+      }
+    } catch {
+      // NOTE: These exceptions are special cases since these error messages are typically transient or the client
+      // would have received a clear exception and there is no value in logging the entire stack trace for the same
+      case e @ (_ : UnknownTopicOrPartitionException |
+                _ : NotLeaderOrFollowerException |
+                _ : UnknownLeaderEpochException |
+                _ : FencedLeaderEpochException |
+                _ : KafkaStorageException |
+                _ : UnsupportedForMessageFormatException) =>
+        debug(s"Offset request with correlation id $correlationId from client $clientId on " +
+          s"partition $topicPartition failed due to ${e.getMessage}")
+        ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.forException(e), partition))).build()
+      // Only V5 and newer ListOffset calls should get OFFSET_NOT_AVAILABLE
+      case e: OffsetNotAvailableException =>
+        if (version >= 5) {
+          ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.forException(e), partition))).build()
+        } else {
+          ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.LEADER_NOT_AVAILABLE, partition))).build()
+        }
+      case e: Throwable =>
+        error("Error while responding to offset request", e)
+        ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.forException(e), partition))).build()
+    }
   }
 
   private def delayedRemoteListOffsetsRequired(responseByPartition: Map[TopicPartition, ListOffsetsPartitionStatus]): Boolean = {
