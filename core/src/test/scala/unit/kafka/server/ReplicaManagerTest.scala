@@ -6346,8 +6346,8 @@ class ReplicaManagerTest {
         // Given managed replicas enabled
         val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp), disklessManagedReplicasEnabled = true))
         
-        // Given a diskless topic with classicToDisklessStartOffset = 100
-        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition())).thenReturn(100L)
+        // Given a diskless topic with firstDisklessOffset = 100
+        when(replicaManager.inklessMetadataView().getFirstDisklessOffset(disklessTopicPartition.topicPartition())).thenReturn(100L)
 
         // Given a classic log read result for offsets below diskless start offset
         doReturn(Seq(disklessTopicPartition ->
@@ -6396,8 +6396,8 @@ class ReplicaManagerTest {
           disklessManagedReplicasEnabled = false,
         ))
         
-        // Given a diskless topic with classicToDisklessStartOffset = 100
-        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition())).thenReturn(100L)
+        // Given a diskless topic with firstDisklessOffset = 100
+        when(replicaManager.inklessMetadataView().getFirstDisklessOffset(disklessTopicPartition.topicPartition())).thenReturn(100L)
 
         // When fetching messages below the diskless start offset
         val fetchParams = new FetchParams(
@@ -6460,7 +6460,7 @@ class ReplicaManagerTest {
 
     @ParameterizedTest(name = "testFetchDisklessAtOrAboveStartOffsetUsesDiskless with managedReplicasEnabled: {0}")
     @ValueSource(booleans = Array(true, false))
-    def testFetchDisklessAtOrAboveClassicToDisklessStartOffset(managedReplicasEnabled: Boolean): Unit = {
+    def testFetchDisklessAtOrAboveFirstDisklessOffset(managedReplicasEnabled: Boolean): Unit = {
       val disklessResponse = Map(disklessTopicPartition ->
         new FetchPartitionData(
           Errors.NONE,
@@ -6487,8 +6487,8 @@ class ReplicaManagerTest {
           disklessManagedReplicasEnabled = managedReplicasEnabled,
         ))
         
-        // Given a diskless topic with classicToDisklessStartOffset = 100
-        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition())).thenReturn(100L)
+        // Given a diskless topic with firstDisklessOffset = 100
+        when(replicaManager.inklessMetadataView().getFirstDisklessOffset(disklessTopicPartition.topicPartition())).thenReturn(100L)
 
         // When fetching messages at the diskless start offset
         val fetchParams = new FetchParams(

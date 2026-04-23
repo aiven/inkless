@@ -87,11 +87,11 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
       .collect(Collectors.toSet[TopicIdPartition]())
   }
 
-  def getClassicToDisklessStartOffset(topicPartition: TopicPartition): Long = {
+  def getFirstDisklessOffset(topicPartition: TopicPartition): Long = {
     Option(metadataCache.currentImage().topics().getTopic(topicPartition.topic()))
       .flatMap(topicImage => Option(topicImage.partitions().get(topicPartition.partition())))
-      .map(_.classicToDisklessStartOffset)
-      .getOrElse(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      .map(_.firstDisklessOffset)
+      .getOrElse(PartitionRegistration.UNSET_FIRST_DISKLESS_OFFSET)
   }
 
   override def getTopicConfig(topicName: String): LogConfig = topicConfigs.computeIfAbsent(topicName, t => {

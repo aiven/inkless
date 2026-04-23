@@ -1515,10 +1515,10 @@ public class ReplicationControlManager {
                     continue;
                 }
 
-                if (partition.classicToDisklessStartOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+                if (partition.firstDisklessOffset != PartitionRegistration.UNSET_FIRST_DISKLESS_OFFSET) {
                     log.info("Rejecting InitDisklessLog request from node {} for {}-{} because " +
-                            "the partition is already initialized with classicToDisklessStartOffset={}.",
-                        request.brokerId(), topic.name, partitionId, partition.classicToDisklessStartOffset);
+                            "the partition is already initialized with firstDisklessOffset={}.",
+                        request.brokerId(), topic.name, partitionId, partition.firstDisklessOffset);
                     partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
                         .setPartitionId(partitionId)
                         .setErrorCode(INVALID_REQUEST.code()));
@@ -1540,7 +1540,7 @@ public class ReplicationControlManager {
                     .setTopicId(topicId)
                     .setPartitionId(partitionId);
                 record.unknownTaggedFields().add(
-                    InitDisklessLogFields.encodeClassicToDisklessStartOffset(partitionData.disklessStartOffset()));
+                    InitDisklessLogFields.encodeFirstDisklessOffset(partitionData.disklessStartOffset()));
                 if (!producerStates.isEmpty()) {
                     record.unknownTaggedFields().add(
                         InitDisklessLogFields.encodeProducerStates(producerStates));
@@ -1548,7 +1548,7 @@ public class ReplicationControlManager {
 
                 records.add(new ApiMessageAndVersion(record, (short) 0));
 
-                log.info("InitDisklessLog for {}-{}: classicToDisklessStartOffset={}, producerStates.size={}",
+                log.info("InitDisklessLog for {}-{}: firstDisklessOffset={}, producerStates.size={}",
                     topic.name, partitionId, partitionData.disklessStartOffset(),
                     producerStates.size());
 

@@ -1893,10 +1893,10 @@ class ReplicaManager(val config: KafkaConfig,
       if (!_inklessMetadataView.isDisklessTopic(tp.topic())) {
         classicFetchInfos += fetchInfo
       } else {
-        val classicToDisklessStartOffset = _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition())
+        val firstDisklessOffset = _inklessMetadataView.getFirstDisklessOffset(tp.topicPartition())
         val shouldReadFromUnifiedLog =
-          classicToDisklessStartOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET &&
-            partitionData.fetchOffset < classicToDisklessStartOffset
+          firstDisklessOffset == PartitionRegistration.UNSET_FIRST_DISKLESS_OFFSET ||
+            partitionData.fetchOffset < firstDisklessOffset
 
         (shouldReadFromUnifiedLog, config.disklessManagedReplicasEnabled) match {
           case (false, _) =>
@@ -2850,8 +2850,8 @@ class ReplicaManager(val config: KafkaConfig,
             Option(topicImage.partitions().get(partitionId))
           }
           val shouldInitOnControlPlane = previousPartition.exists { previous =>
-            previous.classicToDisklessStartOffset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET &&
-              partitionRegistration.classicToDisklessStartOffset >= 0
+            previous.firstDisklessOffset == PartitionRegistration.UNSET_FIRST_DISKLESS_OFFSET &&
+              partitionRegistration.firstDisklessOffset >= 0
           }
 
           val tp = new TopicPartition(topicName, partitionId)
@@ -2872,7 +2872,7 @@ class ReplicaManager(val config: KafkaConfig,
                   partition = partition,
                   topicId = topicId,
                   topicName = topicName,
-                  classicToDisklessStartOffset = partitionRegistration.classicToDisklessStartOffset,
+                  firstDisklessOffset = partitionRegistration.firstDisklessOffset,
                   producerStates = producerStates
                 )
               case Some(_) =>

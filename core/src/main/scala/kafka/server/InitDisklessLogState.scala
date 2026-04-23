@@ -37,7 +37,7 @@ sealed trait InitDisklessLogState extends Logging {
 
 final case class DisklessInitMetadata(
   topicName: String,
-  classicToDisklessStartOffset: Long,
+  firstDisklessOffset: Long,
   producerStates: util.List[CpProducerState]
 )
 
@@ -201,7 +201,7 @@ object SendingToController {
 
 }
 
-/** Controller accepted the request; waiting for the PartitionChangeRecord with classicToDisklessStartOffset to propagate. */
+/** Controller accepted the request; waiting for the PartitionChangeRecord with firstDisklessOffset to propagate. */
 final case class AwaitingMetadata(
   partition: Partition,
   topicId: Uuid,
@@ -259,7 +259,7 @@ object AwaitingMetadata {
                 metadata.topicName,
                 state.tp.partition(),
                 log.logStartOffset,
-                metadata.classicToDisklessStartOffset,
+                metadata.firstDisklessOffset,
                 metadata.producerStates
               ))
           }

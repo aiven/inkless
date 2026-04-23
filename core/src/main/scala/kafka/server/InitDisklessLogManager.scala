@@ -78,16 +78,16 @@ class InitDisklessLogManager(
     partition: Partition,
     topicId: Uuid,
     topicName: String,
-    classicToDisklessStartOffset: Long,
+    firstDisklessOffset: Long,
     producerStates: java.util.List[CpProducerState]
   ): Unit = {
-    if (classicToDisklessStartOffset < 0) {
-      warn(s"Received negative classicToDisklessStartOffset ($classicToDisklessStartOffset) for $topicName:${partition.topicPartition}, skipping control-plane init")
+    if (firstDisklessOffset < 0) {
+      warn(s"Received negative firstDisklessOffset ($firstDisklessOffset) for $topicName:${partition.topicPartition}, skipping control-plane init")
       return
     }
 
     val tp = partition.topicPartition
-    val payload = DisklessInitMetadata(topicName, classicToDisklessStartOffset, producerStates)
+    val payload = DisklessInitMetadata(topicName, firstDisklessOffset, producerStates)
     val newState = AwaitingMetadata(partition, topicId, Some(payload))
     if (tracked.putIfAbsent(tp, newState) != null) {
       tracked.computeIfPresent(tp, (_, _) => newState)
