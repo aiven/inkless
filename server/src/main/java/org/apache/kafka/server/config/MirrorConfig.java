@@ -27,6 +27,7 @@ import org.apache.kafka.common.config.SslConfigs;
 import org.apache.kafka.common.resource.ResourceType;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
@@ -283,7 +284,7 @@ public final class MirrorConfig {
         this.config = config;
         this.securityProtocol = null;
         this.saslMechanism = null;
-        this.topicPropertiesExcludePattern = compilePatternList(List.of(MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT));
+        this.topicPropertiesExcludePattern = compilePatternList(Arrays.asList(MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT.split(",")));
         this.topicsIncludePattern = null;
         this.topicsExcludePattern = compilePatternList(List.of(MIRROR_TOPICS_EXCLUDE_DEFAULT));
         this.groupsIncludePattern = compilePatternList(List.of(MIRROR_GROUPS_INCLUDE_DEFAULT));
@@ -404,7 +405,7 @@ public final class MirrorConfig {
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.joining("|"));
-        return combined.isEmpty() ? null : Pattern.compile(combined);
+        return combined.isEmpty() ? null : Pattern.compile("^(" + combined + ")$");
     }
 
     /**

@@ -39,6 +39,7 @@ import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.server.config.MirrorConfig;
 import org.apache.kafka.server.config.ServerConfigs;
+import org.apache.kafka.server.config.ServerLogConfigs;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -106,6 +107,7 @@ public class AsyncMirrorIntegrationTest {
                 .setConfigProp(ServerConfigs.UNSTABLE_API_VERSIONS_ENABLE_CONFIG, "true")
                 .setConfigProp(ServerConfigs.UNSTABLE_FEATURE_VERSIONS_ENABLE_CONFIG, "true")
                 .setConfigProp(MirrorConfig.METADATA_REFRESH_INTERVAL_MS_CONFIG, "5000")
+                .setConfigProp(ServerLogConfigs.AUTO_CREATE_TOPICS_ENABLE_CONFIG, "false")
                 .build();
         destCluster.format();
         destCluster.startup();
@@ -217,6 +219,21 @@ public class AsyncMirrorIntegrationTest {
         }
     }
 
+    private Map<String, org.apache.kafka.clients.admin.TopicDescription> describeTopicsWithRetry(
+            Admin admin, List<String> topics) throws Exception {
+        long deadline = System.currentTimeMillis() + 30_000;
+        while (true) {
+            try {
+                return admin.describeTopics(topics).allTopicNames().get(5, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                if (System.currentTimeMillis() >= deadline) {
+                    throw e;
+                }
+                Thread.sleep(500);
+            }
+        }
+    }
+
     /**
      * Test that mirrors the MirrorCommand flow: pre-create topics on the destination
      * with the source's TopicId before adding them to the mirror.
@@ -230,7 +247,7 @@ public class AsyncMirrorIntegrationTest {
         )).all().get(30, TimeUnit.SECONDS);
 
         // Get source topic description (TopicId)
-        var topicDesc = sourceAdmin.describeTopics(List.of(TOPIC)).allTopicNames().get(30, TimeUnit.SECONDS);
+        var topicDesc = describeTopicsWithRetry(sourceAdmin, List.of(TOPIC));
         String sourceTopicId = topicDesc.get(TOPIC).topicId().toString();
 
         // Produce data to source
@@ -313,8 +330,7 @@ public class AsyncMirrorIntegrationTest {
         produceRecords(sourceCluster, eventsTopic, 0, 20);
 
         // Get source topic descriptions for pre-creation on destination
-        var sourceDescs = sourceAdmin.describeTopics(List.of(ordersTopic, eventsTopic))
-                .allTopicNames().get(30, TimeUnit.SECONDS);
+        var sourceDescs = describeTopicsWithRetry(sourceAdmin, List.of(ordersTopic, eventsTopic));
 
         // Pre-create topics on destination with source TopicIds
         destAdmin.createTopics(List.of(
@@ -386,8 +402,7 @@ public class AsyncMirrorIntegrationTest {
         produceRecords(sourceCluster, excludedTopic, 0, 20);
 
         // Pre-create both topics on destination
-        var sourceDescs = sourceAdmin.describeTopics(List.of(includedTopic, excludedTopic))
-                .allTopicNames().get(30, TimeUnit.SECONDS);
+        var sourceDescs = describeTopicsWithRetry(sourceAdmin, List.of(includedTopic, excludedTopic));
         destAdmin.createTopics(List.of(
                 new NewTopic(includedTopic,
                         Optional.of(sourceDescs.get(includedTopic).partitions().size()),
@@ -464,8 +479,7 @@ public class AsyncMirrorIntegrationTest {
         produceRecords(sourceCluster, internalTopic, 0, 10);
 
         // Pre-create both on destination
-        var sourceDescs = sourceAdmin.describeTopics(List.of(userTopic, internalTopic))
-                .allTopicNames().get(30, TimeUnit.SECONDS);
+        var sourceDescs = describeTopicsWithRetry(sourceAdmin, List.of(userTopic, internalTopic));
         destAdmin.createTopics(List.of(
                 new NewTopic(userTopic,
                         Optional.of(sourceDescs.get(userTopic).partitions().size()),
@@ -510,8 +524,7 @@ public class AsyncMirrorIntegrationTest {
 
         produceRecords(sourceCluster, topic, 0, 40);
 
-        var sourceDescs = sourceAdmin.describeTopics(List.of(topic))
-                .allTopicNames().get(30, TimeUnit.SECONDS);
+        var sourceDescs = describeTopicsWithRetry(sourceAdmin, List.of(topic));
         destAdmin.createTopics(List.of(
                 new NewTopic(topic,
                         Optional.of(sourceDescs.get(topic).partitions().size()),
@@ -548,8 +561,7 @@ public class AsyncMirrorIntegrationTest {
         produceRecords(sourceCluster, regexMatchedTopic, 0, 15);
         produceRecords(sourceCluster, unmatchedTopic, 0, 10);
 
-        var sourceDescs = sourceAdmin.describeTopics(List.of(literalTopic, regexMatchedTopic, unmatchedTopic))
-                .allTopicNames().get(30, TimeUnit.SECONDS);
+        var sourceDescs = describeTopicsWithRetry(sourceAdmin, List.of(literalTopic, regexMatchedTopic, unmatchedTopic));
         destAdmin.createTopics(List.of(
                 new NewTopic(literalTopic,
                         Optional.of(sourceDescs.get(literalTopic).partitions().size()),
@@ -602,8 +614,7 @@ public class AsyncMirrorIntegrationTest {
         produceRecords(sourceCluster, topicA, 0, 20);
         produceRecords(sourceCluster, topicB, 0, 20);
 
-        var sourceDescs = sourceAdmin.describeTopics(List.of(topicA, topicB))
-                .allTopicNames().get(30, TimeUnit.SECONDS);
+        var sourceDescs = describeTopicsWithRetry(sourceAdmin, List.of(topicA, topicB));
         destAdmin.createTopics(List.of(
                 new NewTopic(topicA,
                         Optional.of(sourceDescs.get(topicA).partitions().size()),
@@ -650,8 +661,7 @@ public class AsyncMirrorIntegrationTest {
 
         produceRecords(sourceCluster, topic, 0, 30);
 
-        var sourceDescs = sourceAdmin.describeTopics(List.of(topic))
-                .allTopicNames().get(30, TimeUnit.SECONDS);
+        var sourceDescs = describeTopicsWithRetry(sourceAdmin, List.of(topic));
         destAdmin.createTopics(List.of(
                 new NewTopic(topic,
                         Optional.of(sourceDescs.get(topic).partitions().size()),

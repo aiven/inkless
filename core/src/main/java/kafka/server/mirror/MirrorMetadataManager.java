@@ -1188,9 +1188,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         .setAssignments(null)
                 );
             } else if (metadataImage.topics().getTopic(tm.topicId()) == null &&
+                    metadataImage.topics().getTopic(tm.topic()) == null &&
                     tm.error() == Errors.NONE && sourcePartitionCount > 0) {
                 // create topic on destination using cluster default replication factor
                 this.createMirrorTopic(tm.topic(), tm.topicId(), sourcePartitionCount);
+            } else if (metadataImage.topics().getTopic(tm.topicId()) == null &&
+                    metadataImage.topics().getTopic(tm.topic()) != null &&
+                    tm.error() == Errors.NONE) {
+                log.error("Mirror topic {} exists on destination with TopicId {} but source has TopicId {}. "
+                        + "Delete the topic on destination and let auto-creation recreate it with the correct TopicId.",
+                        tm.topic(), metadataImage.topics().getTopic(tm.topic()).id(), tm.topicId());
             }
         });
 
@@ -1286,7 +1293,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     // by source cluster configs (which wouldn't have this config set)
                     if (con.configSource() == DescribeConfigsResponse.ConfigSource.TOPIC_CONFIG.id()
                             && !con.name().equals(TopicConfig.MIRROR_NAME_CONFIG)
-                            && !excludePattern.matcher(con.name()).matches()) {
+                            && (excludePattern == null || !excludePattern.matcher(con.name()).matches())) {
                         if (props.containsKey(con.name())) {
                             if (!props.get(con.name()).equals(con.value())) {
                                 conChange.put(con.name(), con.value());
