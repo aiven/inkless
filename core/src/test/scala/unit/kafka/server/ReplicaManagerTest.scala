@@ -7221,6 +7221,111 @@ class ReplicaManagerTest {
     }
 
     @Test
+    def testApplyDeltaSkipsPartitionForConsolidatingDisklessTopicWithLocalLogOnLeader(): Unit = {
+      val topicName = "consolidating-topic"
+      val topicId = Uuid.randomUuid()
+      val tp = new TopicPartition(topicName, 0)
+      val brokerId = 1
+
+      val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+        case (mock, _) =>
+          when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+      }
+      val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+      try {
+        val replicaManager = createReplicaManager(
+          List(topicName),
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(topicName),
+        )
+        try {
+          replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+          assertTrue(replicaManager.logManager.getLog(tp).isDefined)
+
+          assertEquals(HostedPartition.None, replicaManager.getPartition(tp))
+
+          val delta = new TopicsDelta(TopicsImage.EMPTY)
+          delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+          delta.replay(new PartitionRecord()
+            .setPartitionId(0)
+            .setTopicId(topicId)
+            .setReplicas(util.Arrays.asList(brokerId, brokerId + 1))
+            .setIsr(util.Arrays.asList(brokerId, brokerId + 1))
+            .setLeader(brokerId)
+            .setLeaderEpoch(0)
+            .setPartitionEpoch(0)
+          )
+          replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+          // No sealed partition should be created for a consolidating diskless topic,
+          // even though a local log exists.
+          val partition = replicaManager.getPartition(tp)
+          assertTrue(partition.isInstanceOf[HostedPartition.Online], "Partition should be online")
+          val onlinePartition = partition.asInstanceOf[HostedPartition.Online].partition
+          assertTrue(onlinePartition.isLeader, "Partition should be leader")
+          assertFalse(onlinePartition.isSealed, "Partition should NOT be sealed")
+        } finally {
+          replicaManager.shutdown(checkpointHW = false)
+        }
+      } finally {
+        consolidationCtor.close()
+      }
+    }
+
+    @Test
+    def testApplyDeltaSkipsPartitionForConsolidatingDisklessTopicWithLocalLogOnFollower(): Unit = {
+      val topicName = "consolidating-topic"
+      val topicId = Uuid.randomUuid()
+      val tp = new TopicPartition(topicName, 0)
+      val brokerId = 1
+      val leaderId = 2
+
+      val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+        case (mock, _) =>
+          when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+      }
+      val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+      try {
+        val replicaManager = createReplicaManager(
+          List(topicName),
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(topicName),
+        )
+        try {
+          replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+          assertTrue(replicaManager.logManager.getLog(tp).isDefined)
+
+          assertEquals(HostedPartition.None, replicaManager.getPartition(tp))
+
+          val delta = new TopicsDelta(TopicsImage.EMPTY)
+          delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+          delta.replay(new PartitionRecord()
+            .setPartitionId(0)
+            .setTopicId(topicId)
+            .setReplicas(util.Arrays.asList(brokerId, leaderId))
+            .setIsr(util.Arrays.asList(brokerId, leaderId))
+            .setLeader(leaderId)
+            .setLeaderEpoch(0)
+            .setPartitionEpoch(0)
+          )
+          replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+          // No sealed partition should be created for a consolidating diskless topic on a follower,
+          // even though a local log exists.
+          val partition = replicaManager.getPartition(tp)
+          assertTrue(partition.isInstanceOf[HostedPartition.Online], "Partition should be online")
+          val onlinePartition = partition.asInstanceOf[HostedPartition.Online].partition
+          assertFalse(onlinePartition.isLeader, "Partition should be follower")
+          assertFalse(onlinePartition.isSealed, "Partition should NOT be sealed")
+        } finally {
+          replicaManager.shutdown(checkpointHW = false)
+        }
+      } finally {
+        consolidationCtor.close()
+      }
+    }
+
+    @Test
     def testApplyDeltaCreatesPartitionForDisklessTopicWithLocalLogOnFollower(): Unit = {
       val topicName = "migrated-topic"
       val topicId = Uuid.randomUuid()

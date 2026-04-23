@@ -2949,7 +2949,7 @@ class ReplicaManager(val config: KafkaConfig,
               s"with topic id ${info.topicId} due to a storage error ${e.getMessage}")
             markPartitionOffline(tp)
         }
-      } else if (logManager.getLog(tp).isDefined) {
+      } else if (logManager.getLog(tp).isDefined && !isConsolidatingDisklessTopic) {
         // Post-restart: diskless topic still has classic data on local disk (offsets < disklessStartOffset).
         // Create the Partition so classic data remains accessible for reads.
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
@@ -3019,7 +3019,7 @@ class ReplicaManager(val config: KafkaConfig,
         initDisklessLogManager.foreach(_.removePartition(tp))
         // Post-restart: diskless topic still has classic data on local disk.
         // Create the Partition so classic data remains accessible for reads.
-        if (logManager.getLog(tp).isDefined) {
+        if (logManager.getLog(tp).isDefined && !isConsolidatingDisklessTopic) {
           getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
             try {
               val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
