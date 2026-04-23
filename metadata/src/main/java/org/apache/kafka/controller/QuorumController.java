@@ -129,6 +129,7 @@ import org.apache.kafka.timeline.SnapshotRegistry;
 
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -1929,6 +1930,13 @@ public final class QuorumController implements Controller {
             if (validateOnly) {
                 return result.withoutRecords();
             } else {
+                List<ApiMessageAndVersion> migrationRecords =
+                    replicationControl.markClassicToDisklessMigrationStarted(configChanges);
+                if (!migrationRecords.isEmpty()) {
+                    List<ApiMessageAndVersion> allRecords = new ArrayList<>(result.records());
+                    allRecords.addAll(migrationRecords);
+                    return ControllerResult.of(allRecords, result.response());
+                }
                 return result;
             }
         });
