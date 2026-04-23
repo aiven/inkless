@@ -71,7 +71,7 @@ public class PartitionChangeBuilderTest {
          * to update changeRecordIsNoOp to take into account the new schema or tagged fields.
          */
         // Check that the supported versions haven't changed
-        assertEquals(2, PartitionChangeRecord.HIGHEST_SUPPORTED_VERSION);
+        assertEquals(3, PartitionChangeRecord.HIGHEST_SUPPORTED_VERSION);
         assertEquals(0, PartitionChangeRecord.LOWEST_SUPPORTED_VERSION);
         // For the latest version check that the number of tagged fields hasn't changed
         TaggedFields taggedFields = (TaggedFields) PartitionChangeRecord.SCHEMA_0.get(2).def.type;
@@ -1041,7 +1041,7 @@ public class PartitionChangeBuilderTest {
                                 DirectoryId.LOST,
                                 Uuid.fromString("pN1VKs9zRzK4APflpegAVg")
                         )),
-                (short) 2
+                (short) 3
         ));
         assertEquals(expected, built);
     }

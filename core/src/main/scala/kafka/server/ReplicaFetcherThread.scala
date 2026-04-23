@@ -77,7 +77,7 @@ class ReplicaFetcherThread(name: String,
   }
 
   override protected def shouldUpdateMirrorLeaderEpoch(topicPartition: TopicPartition): Boolean = {
-    replicaMgr.getPartitionOrException(topicPartition).getMirrorName().nonEmpty
+    replicaMgr.getPartitionOrException(topicPartition).getMirrorName().isPresent
   }
 
   override def initiateShutdown(): Boolean = {
