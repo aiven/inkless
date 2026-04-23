@@ -129,6 +129,7 @@ import org.apache.kafka.timeline.SnapshotRegistry;
 
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -1177,12 +1178,16 @@ public final class QuorumController implements Controller {
         @Override
         public ControllerResult<Void> generateRecordsAndResult() {
             try {
-                return ActivationRecordsGenerator.generate(
+                ControllerResult<Void> activationResult = ActivationRecordsGenerator.generate(
                     log::warn,
                     offsetControl.transactionStartOffset(),
                     bootstrapMetadata,
                     featureControl.metadataVersion(),
                     configurationControl.getStaticallyConfiguredMinInsyncReplicas());
+                List<ApiMessageAndVersion> records = new ArrayList<>(activationResult.records());
+                records.addAll(
+                    replicationControl.generateFirstDisklessOffsetBackfillRecords());
+                return ControllerResult.of(records, null);
             } catch (Throwable t) {
                 throw fatalFaultHandler.handleFault("exception while completing controller " +
                     "activation", t);

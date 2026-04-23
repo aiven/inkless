@@ -6116,6 +6116,116 @@ public class ReplicationControlManagerTest {
             assertEquals(2L, updatedPartition.disklessProducerStates.get(1).producerId());
             assertEquals(3L, updatedPartition.disklessProducerStates.get(2).producerId());
         }
+
+        @Test
+        public void testBackfillFirstDisklessOffsetForLegacyTopics() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Create a classic topic, then manually mark it as diskless via config record
+            // to simulate a legacy diskless topic (firstDisklessOffset remains UNSET).
+            CreatableTopicResult legacyDiskless = ctx.createTestTopic(
+                "legacy-diskless", 2, (short) 1, NONE.code());
+            Uuid legacyId = legacyDiskless.topicId();
+            ctx.replay(List.of(new ApiMessageAndVersion(new ConfigRecord()
+                .setResourceType(ConfigResource.Type.TOPIC.id())
+                .setResourceName("legacy-diskless")
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue("true"), (short) 0)));
+
+            // Create a new diskless topic (firstDisklessOffset=0 set at creation).
+            CreatableTopicResult newDiskless = ctx.createTestTopic(
+                "new-diskless", 1, (short) 1, Map.of(DISKLESS_ENABLE_CONFIG, "true"), NONE.code());
+            Uuid newId = newDiskless.topicId();
+
+            // Create a classic topic (not diskless).
+            ctx.createTestTopic("classic", 1, (short) 1, NONE.code());
+
+            // Verify initial state
+            assertEquals(PartitionRegistration.UNSET_FIRST_DISKLESS_OFFSET,
+                replicationControl.getPartition(legacyId, 0).firstDisklessOffset);
+            assertEquals(PartitionRegistration.UNSET_FIRST_DISKLESS_OFFSET,
+                replicationControl.getPartition(legacyId, 1).firstDisklessOffset);
+            assertEquals(0, replicationControl.getPartition(newId, 0).firstDisklessOffset);
+
+            // Run backfill
+            List<ApiMessageAndVersion> backfillRecords =
+                replicationControl.generateFirstDisklessOffsetBackfillRecords();
+
+            // Only the 2 legacy diskless partitions should be backfilled
+            assertEquals(2, backfillRecords.size());
+            for (ApiMessageAndVersion record : backfillRecords) {
+                PartitionChangeRecord changeRecord = (PartitionChangeRecord) record.message();
+                assertEquals(legacyId, changeRecord.topicId());
+                assertEquals(0L, InitDisklessLogFields.decodeFirstDisklessOffset(
+                    changeRecord.unknownTaggedFields()));
+            }
+
+            // Replay the records and verify
+            ctx.replay(backfillRecords);
+            assertEquals(0, replicationControl.getPartition(legacyId, 0).firstDisklessOffset);
+            assertEquals(0, replicationControl.getPartition(legacyId, 1).firstDisklessOffset);
+            assertEquals(0, replicationControl.getPartition(newId, 0).firstDisklessOffset);
+
+            // Running backfill again should produce no records
+            List<ApiMessageAndVersion> secondBackfill =
+                replicationControl.generateFirstDisklessOffsetBackfillRecords();
+            assertEquals(0, secondBackfill.size());
+        }
+
+        @Test
+        public void testBackfillSkipsMigratingPartitions() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Create a classic topic and mark it diskless, simulating a migration.
+            CreatableTopicResult migratingTopic = ctx.createTestTopic(
+                "migrating", 2, (short) 1, NONE.code());
+            Uuid topicId = migratingTopic.topicId();
+            ctx.replay(List.of(new ApiMessageAndVersion(new ConfigRecord()
+                .setResourceType(ConfigResource.Type.TOPIC.id())
+                .setResourceName("migrating")
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue("true"), (short) 0)));
+
+            // Simulate that partition 0 has already been initialized via initDisklessLog
+            PartitionRegistration partition0 = replicationControl.getPartition(topicId, 0);
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
+            InitDisklessLogRequestData initRequest = singlePartitionRequest(
+                partition0.leader, defaultBrokerEpoch(partition0.leader),
+                topicId, 0, 500L, partition0.leaderEpoch, List.of());
+            ControllerResult<InitDisklessLogResponseData> initResult =
+                replicationControl.initDisklessLog(requestContext, initRequest);
+            assertEquals(NONE.code(),
+                initResult.response().topics().get(0).partitions().get(0).errorCode());
+            ctx.replay(initResult.records());
+
+            // Partition 0 now has firstDisklessOffset=500, partition 1 still has UNSET
+            assertEquals(500L, replicationControl.getPartition(topicId, 0).firstDisklessOffset);
+            assertEquals(PartitionRegistration.UNSET_FIRST_DISKLESS_OFFSET,
+                replicationControl.getPartition(topicId, 1).firstDisklessOffset);
+
+            // Backfill should only touch partition 1 (UNSET), not partition 0 (already set to 500)
+            List<ApiMessageAndVersion> backfillRecords =
+                replicationControl.generateFirstDisklessOffsetBackfillRecords();
+            assertEquals(1, backfillRecords.size());
+            PartitionChangeRecord changeRecord = (PartitionChangeRecord) backfillRecords.get(0).message();
+            assertEquals(1, changeRecord.partitionId());
+            assertEquals(0L, InitDisklessLogFields.decodeFirstDisklessOffset(
+                changeRecord.unknownTaggedFields()));
+
+            ctx.replay(backfillRecords);
+            assertEquals(500L, replicationControl.getPartition(topicId, 0).firstDisklessOffset);
+            assertEquals(0, replicationControl.getPartition(topicId, 1).firstDisklessOffset);
+        }
     }
 
 }

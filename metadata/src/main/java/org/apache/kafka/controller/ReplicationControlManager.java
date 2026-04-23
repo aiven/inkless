@@ -2885,6 +2885,36 @@ public class ReplicationControlManager {
                 .getOrDefault(DISKLESS_ENABLE_CONFIG, "false"));
     }
 
+    /**
+     * Generate PartitionChangeRecords that backfill firstDisklessOffset=0 for all diskless topic
+     * partitions where it is still UNSET. This handles legacy full-diskless topics created before
+     * firstDisklessOffset was set at topic creation time.
+     */
+    List<ApiMessageAndVersion> generateFirstDisklessOffsetBackfillRecords() {
+        List<ApiMessageAndVersion> records = new ArrayList<>();
+        for (TopicControlInfo topic : topics.values()) {
+            if (!isDisklessTopic(topic.name)) {
+                continue;
+            }
+            for (var entry : topic.parts.entrySet()) {
+                PartitionRegistration partition = entry.getValue();
+                if (partition.firstDisklessOffset == PartitionRegistration.UNSET_FIRST_DISKLESS_OFFSET) {
+                    PartitionChangeRecord record = new PartitionChangeRecord()
+                        .setTopicId(topic.id)
+                        .setPartitionId(entry.getKey());
+                    record.unknownTaggedFields().add(
+                        InitDisklessLogFields.encodeFirstDisklessOffset(0));
+                    records.add(new ApiMessageAndVersion(record, (short) 0));
+                }
+            }
+        }
+        if (!records.isEmpty()) {
+            log.info("Backfilling firstDisklessOffset=0 for {} diskless partition(s) " +
+                "that were created before the field was set at creation time.", records.size());
+        }
+        return records;
+    }
+
     private record IneligibleReplica(int replicaId, String reason) {
 
         @Override
