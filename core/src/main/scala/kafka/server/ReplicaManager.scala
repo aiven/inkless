@@ -1422,7 +1422,7 @@ class ReplicaManager(val config: KafkaConfig,
         val allowed = state == MirrorPartitionState.STOPPED ||
           (state == MirrorPartitionState.STOPPING &&
             (origin == AppendOrigin.COORDINATOR || origin == AppendOrigin.REPLICATION) &&
-            records.batches().asScala.exists(ControlRecordType.isMirrorPidResetBatch))
+            records.batches().asScala.exists(b => ControlRecordType.isMirrorPidResetBatch(b) || ControlRecordType.isAbortTxnBatch(b)))
         if (!allowed) {
           throw new ReadOnlyTopicException("Cannot append to read-only partition %s on broker %d (mirrorName=%s)"
             .format(partition.topicPartition, localBrokerId, mirrorName))

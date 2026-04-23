@@ -2076,7 +2076,10 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
 
     def delete_topics_from_cluster_mirror(self, node, mirror_name, topics):
         return self._cluster_mirror_action(node, mirror_name, topics, 'resume')
-    
+
+    def stop_cluster_mirror_topics(self, node, mirror_name, topics):
+        return self._cluster_mirror_action(node, mirror_name, topics, 'stop')
+
     def parse_describe_cluster_mirror(self, cluster_mirror_description):
         """Parse output of kafka-mirrors.sh --describe (or describe_cluster_mirror() method above), which is a string of form
         """

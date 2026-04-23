@@ -33,6 +33,7 @@ import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.DescribeProducersResponseData;
 import org.apache.kafka.common.record.CompressionType;
 import org.apache.kafka.common.record.ControlRecordType;
+import org.apache.kafka.common.record.EndTransactionMarker;
 import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
@@ -75,11 +76,13 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledFuture;
@@ -816,6 +819,24 @@ public class UnifiedLog implements AutoCloseable {
 
     public int producerIdCount() {
         return producerStateManager.producerIdCount();
+    }
+
+    public List<MemoryRecords> buildEndTransactionRecords() {
+        Set<ProducerStateEntry> producers = producerStateManager.producersWithOngoingTxns();
+        List<MemoryRecords> records = new LinkedList<>();
+
+        producers.forEach(producerStateEntry -> {
+            // Coordinator epoch is used to validate if the same producerId is committed/aborted by an epoch >= known epoch in ProducerAppendInfo#checkCoordinatorEpoch.
+            // Setting it to 0 if the coordinator epoch in the leader node has no coordinator epoch info (-1).
+            // This could happen when this PID has not committed/aborted yet. Setting it to 0 can pass the validation
+            // and also align with the implementation in TransactionsCommand#buildAbortSpec when we want to force aborting a pending txn record.
+            int coordinatorEpoch = producerStateEntry.coordinatorEpoch() < 0 ? 0 : producerStateEntry.coordinatorEpoch();
+            records.add(MemoryRecords.withEndTransactionMarker(producerStateEntry.producerId(),
+                    producerStateEntry.producerEpoch(),
+                new EndTransactionMarker(ControlRecordType.ABORT, coordinatorEpoch)));
+        });
+
+        return records;
     }
 
     public List<DescribeProducersResponseData.ProducerState> activeProducers() {

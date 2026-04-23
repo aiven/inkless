@@ -343,7 +343,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             Set<TopicPartition> incompletedTps = bumpLeaderEpoch.partitionToEpoch().entrySet().stream().filter(entry -> {
                 TopicPartition tp = entry.getKey();
                 int epoch = entry.getValue();
-                return metadataImage.topics().getPartition(metadataImage.topics().getTopic(tp.topic()).id(), tp.partition()).leaderEpoch < epoch;
+                return metadataImage.topics().getPartition(metadataImage.topics().getTopic(tp.topic()).id(), tp.partition()).leaderEpoch <= epoch;
             }).map(Map.Entry::getKey).collect(Collectors.toSet());
             if (incompletedTps.isEmpty()) {
                 bumpLeaderEpoch.future().complete(null);
@@ -985,7 +985,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         metadataRefreshError.incrementAndGet();
     }
 
-    public void sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions, CompletableFuture<Void> future) {
+    public CompletableFuture<Void> sendBumpLeaderEpoch(LogManager logManager, Set<TopicPartition> topicPartitions) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
         Map<TopicPartition, Integer> partitionEpochs = new HashMap<>();
 
         List<BumpLeaderEpochsRequestData.TopicState> topicStates = new ArrayList<>();
@@ -1020,6 +1021,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 log.warn("BumpLeaderEpoch request timed out");
             }
         });
+        return future;
     }
 
     /**
