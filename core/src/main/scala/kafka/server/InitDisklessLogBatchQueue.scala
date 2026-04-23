@@ -237,10 +237,18 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
     }
   }
 
-  private def completeAndRemovePromise(tp: TopicPartition, accepted: Boolean): Unit = withQueueLock {
-    if (!queuedByTp.containsKey(tp)) {
-      Option(resultPromiseByTp.remove(tp)).foreach(_.trySuccess(accepted))
+  private def completeAndRemovePromise(tp: TopicPartition, accepted: Boolean): Unit = {
+    val promiseOpt = withQueueLock {
+      if (!queuedByTp.containsKey(tp)) {
+        Option(resultPromiseByTp.remove(tp))
+      } else {
+        None
+      }
     }
+    // Complete the promise outside queueLock to avoid deadlock:
+    // the parasitic callback on the promise may call ConcurrentHashMap.computeIfPresent,
+    // while another thread may hold the ConcurrentHashMap bin lock and try to acquire queueLock.
+    promiseOpt.foreach(_.trySuccess(accepted))
   }
 
   private def computeRetryDelayMs(): Long = {
