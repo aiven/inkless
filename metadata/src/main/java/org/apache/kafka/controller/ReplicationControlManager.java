@@ -1509,7 +1509,7 @@ public class ReplicationControlManager {
                     continue;
                 }
 
-                if (partition.classicToDisklessStartOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+                if (partition.classicToDisklessStartOffset >= 0) {
                     log.info("Rejecting InitDisklessLog request from node {} for {}-{} because " +
                             "the partition is already initialized with classicToDisklessStartOffset={}.",
                         request.brokerId(), topic.name, partitionId, partition.classicToDisklessStartOffset);
@@ -2868,6 +2868,47 @@ public class ReplicationControlManager {
             throw new InvalidReplicationFactorException("The replication factor is changed from " +
                     currentReassignmentSetSize + " to " + target.replicas().size());
         }
+    }
+
+    List<ApiMessageAndVersion> markClassicToDisklessMigrationStarted(
+        Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
+        Map<ConfigResource, ApiError> configResults
+    ) {
+        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        for (Entry<ConfigResource, Map<String, Entry<OpType, String>>> entry : configChanges.entrySet()) {
+            ConfigResource resource = entry.getKey();
+            if (resource.type() != TOPIC) continue;
+            ApiError error = configResults.get(resource);
+            if (error != null && error != ApiError.NONE) continue;
+            Map<String, Entry<OpType, String>> changes = entry.getValue();
+            Entry<OpType, String> disklessChange = changes.get(DISKLESS_ENABLE_CONFIG);
+            if (disklessChange == null) continue;
+            if (disklessChange.getKey() != SET || !Boolean.parseBoolean(disklessChange.getValue())) continue;
+            if (isDisklessTopic(resource.name())) continue;
+
+            String topicName = resource.name();
+            Uuid topicId = topicsByName.get(topicName);
+            if (topicId == null) continue;
+            TopicControlInfo topicInfo = topics.get(topicId);
+            if (topicInfo == null) continue;
+
+            int sizeBefore = records.size();
+            for (Entry<Integer, PartitionRegistration> partEntry : topicInfo.parts.entrySet()) {
+                PartitionRegistration partition = partEntry.getValue();
+                if (partition.classicToDisklessStartOffset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+                    PartitionChangeRecord record = new PartitionChangeRecord()
+                        .setTopicId(topicId)
+                        .setPartitionId(partEntry.getKey());
+                    record.unknownTaggedFields().add(
+                        InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+                            PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING));
+                    records.add(new ApiMessageAndVersion(record, (short) 0));
+                }
+            }
+            log.info("Marked {} partition(s) for topic {} as classic-to-diskless migration pending",
+                records.size() - sizeBefore, topicName);
+        }
+        return records;
     }
 
     private boolean isDisklessTopic(String topicName) {

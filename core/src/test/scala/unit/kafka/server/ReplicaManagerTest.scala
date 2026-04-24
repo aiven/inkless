@@ -63,7 +63,7 @@ import org.apache.kafka.common.utils.{LogContext, Time, Utils}
 import org.apache.kafka.coordinator.transaction.{AddPartitionsToTxnConfig, TransactionLogConfig}
 import org.apache.kafka.image._
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
-import org.apache.kafka.metadata.{LeaderAndIsr, MetadataCache}
+import org.apache.kafka.metadata.{LeaderAndIsr, MetadataCache, PartitionRegistration}
 import org.apache.kafka.metadata.properties.{MetaProperties, MetaPropertiesEnsemble, MetaPropertiesVersion, PropertiesUtils}
 import org.apache.kafka.server.common.{DirectoryEventHandler, KRaftVersion, MetadataVersion, OffsetAndEpoch, RequestLocal, StopPartition}
 import org.apache.kafka.server.config.{KRaftConfigs, ReplicationConfigs, ServerConfigs, ServerLogConfigs}
@@ -6675,6 +6675,148 @@ class ReplicaManagerTest {
         verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
         verify(cp, never()).findBatches(any(), any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFetchDisklessMigrationPendingReadsFromClassicLogWhenManagedReplicasEnabled(): Unit = {
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        val cp = mock(classOf[ControlPlane])
+        val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp), disklessManagedReplicasEnabled = true))
+
+        // Given a diskless topic with classicToDisklessStartOffset = -2 (migration pending)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+
+        doReturn(Seq(disklessTopicPartition ->
+          new LogReadResult(
+            new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+            Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
+          ))
+        ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        // Then the request is served from the unified log (classic path) because migration is still pending
+        assertNotNull(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+        verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+        verify(cp, never()).findBatches(any(), any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFetchDisklessMigrationPendingFailsWhenManagedReplicasDisabled(): Unit = {
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        val cp = mock(classOf[ControlPlane])
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = false,
+        ))
+
+        // Given a diskless topic with classicToDisklessStartOffset = -2 (migration pending)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        // Then the request fails because managed replicas are disabled and data is still in UnifiedLog
+        assertNotNull(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(Errors.INVALID_REQUEST, responseData(disklessTopicPartition).error)
+        verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+        verify(cp, never()).findBatches(any(), any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFetchFullDisklessTopicRoutesDiskless(): Unit = {
+      val disklessResponse = Map(disklessTopicPartition ->
+        new FetchPartitionData(
+          Errors.NONE,
+          110L, 100L,
+          RECORDS,
+          Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      )
+      val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+      try {
+        val batchMetadata = mock(classOf[BatchMetadata])
+        when(batchMetadata.topicIdPartition()).thenReturn(disklessTopicPartition)
+        val batch = mock(classOf[BatchInfo])
+        when(batch.metadata()).thenReturn(batchMetadata)
+        val findBatchResponse = mock(classOf[FindBatchResponse])
+        when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+        when(findBatchResponse.highWatermark()).thenReturn(110L)
+        when(findBatchResponse.estimatedByteSize(50L)).thenReturn(RECORDS.sizeInBytes())
+        when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+        val cp = mock(classOf[ControlPlane])
+        when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = true,
+        ))
+
+        // Given a full diskless topic with classicToDisklessStartOffset = -1 (never migrated)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        // Then the request is served from diskless path (not from UnifiedLog)
+        assertNotNull(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(Errors.NONE, responseData(disklessTopicPartition).error)
+        verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
       } finally {
         fetchHandlerCtor.close()
       }
