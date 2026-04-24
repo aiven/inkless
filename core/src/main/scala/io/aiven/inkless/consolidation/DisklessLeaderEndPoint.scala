@@ -18,103 +18,231 @@
 
 package io.aiven.inkless.consolidation
 
+import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
+import kafka.server.{KafkaConfig, ReplicaManager, ReplicaQuota}
+import org.apache.kafka.common.Uuid
+import org.apache.kafka.common.errors.KafkaStorageException
+import org.apache.kafka.common.message.{FetchResponseData, OffsetForLeaderEpochRequestData}
+import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition
+import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
+import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
+import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, ListOffsetsRequest, OffsetsForLeaderEpochResponse}
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.common.message.{FetchResponseData, OffsetForLeaderEpochRequestData, OffsetForLeaderEpochResponseData}
-import org.apache.kafka.common.requests.FetchRequest
-import org.apache.kafka.server.common.OffsetAndEpoch
+import org.apache.kafka.metadata.LeaderAndIsr
+import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.network.BrokerEndPoint
+import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams}
 import org.apache.kafka.server.{LeaderEndPoint, PartitionFetchState, ReplicaFetch, ResultWithPartitions}
+import org.apache.kafka.storage.internals.log.OffsetResultHolder.FileRecordsOrError
 
 import java.util
 import java.util.Optional
+import java.util.concurrent.CompletableFuture
+import scala.collection.mutable
+import scala.jdk.CollectionConverters._
 
-class DisklessLeaderEndPoint(brokerEndPoint: BrokerEndPoint) extends LeaderEndPoint {
+/**
+ * Leader endpoint for consolidation fetching from Inkless (object storage) on this broker.
+ * [[FetchHandler]] performs the same diskless fetch path as the broker’s main fetch pipeline;
+ * [[FetchOffsetHandler]] backs list-offsets style APIs used by [[kafka.server.AbstractFetcherThread]].
+ *
+ * Fetch and offset handler instances are owned by [[kafka.server.ReplicaManager]]; this class does not close them.
+ */
+class DisklessLeaderEndPoint(
+  brokerEndPoint: BrokerEndPoint,
+  fetchHandler: FetchHandler,
+  fetchOffsetHandler: FetchOffsetHandler,
+  replicaManager: ReplicaManager,
+  brokerConfig: KafkaConfig,
+  quota: ReplicaQuota,
+  metadataVersionSupplier: () => MetadataVersion,
+  brokerEpochSupplier: () => Long
+) extends LeaderEndPoint {
 
-  /**
-   * A boolean specifying if truncation when fetching from the leader is supported
-   */
+  private val replicaId = brokerConfig.brokerId
+  private val maxWait = brokerConfig.replicaFetchWaitMaxMs
+  private val minBytes = brokerConfig.replicaFetchMinBytes
+  private val maxBytes = brokerConfig.replicaFetchResponseMaxBytes
+  private val fetchSize = brokerConfig.replicaFetchMaxBytes
+
   override def isTruncationOnFetchSupported: Boolean = false
 
-  /**
-   * Initiate closing access to fetches from leader.
-   */
-  override def initiateClose(): Unit = {
+  override def initiateClose(): Unit = ()
+
+  override def close(): Unit = ()
+
+  override def brokerEndPoint(): BrokerEndPoint = brokerEndPoint
+
+  override def fetch(fetchRequest: FetchRequest.Builder): util.Map[TopicPartition, FetchResponseData.PartitionData] = {
+    val request = fetchRequest.build()
+    val topicNames = new mutable.HashMap[Uuid, String]()
+    request.data.topics.forEach { topic =>
+      topicNames.put(topic.topicId, topic.topic)
+    }
+    val fetchInfos = request.fetchData(topicNames.asJava)
+
+    val fetchParams = new FetchParams(
+      FetchRequest.FUTURE_LOCAL_REPLICA_ID,
+      -1,
+      0L,
+      request.minBytes,
+      request.maxBytes,
+      FetchIsolation.LOG_END,
+      Optional.empty()
+    )
+
+    val response = fetchHandler.handle(fetchParams, fetchInfos).get()
+    response.asScala.map { case (tp, data) =>
+      val abortedTransactions = data.abortedTransactions.orElse(null)
+      val lastStableOffset: Long = data.lastStableOffset.orElse(FetchResponse.INVALID_LAST_STABLE_OFFSET)
+      tp.topicPartition -> new FetchResponseData.PartitionData()
+        .setPartitionIndex(tp.topicPartition.partition)
+        .setErrorCode(data.error.code)
+        .setHighWatermark(data.highWatermark)
+        .setLastStableOffset(lastStableOffset)
+        .setLogStartOffset(data.logStartOffset)
+        .setAbortedTransactions(abortedTransactions)
+        .setRecords(data.records)
+    }.toMap.asJava
   }
 
-  /**
-   * Closes access to fetches from leader.
-   * `initiateClose` must be called prior to invoking `close`.
-   */
-  override def close(): Unit = {
+  override def fetchEarliestOffset(topicPartition: TopicPartition, currentLeaderEpoch: Int): OffsetAndEpoch =
+    listDisklessOffset(topicPartition, currentLeaderEpoch, ListOffsetsRequest.EARLIEST_TIMESTAMP)
+
+  override def fetchLatestOffset(topicPartition: TopicPartition, currentLeaderEpoch: Int): OffsetAndEpoch =
+    listDisklessOffset(topicPartition, currentLeaderEpoch, ListOffsetsRequest.LATEST_TIMESTAMP)
+
+  override def fetchEarliestLocalOffset(topicPartition: TopicPartition, currentLeaderEpoch: Int): OffsetAndEpoch =
+    listDisklessOffset(topicPartition, currentLeaderEpoch, ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP)
+
+  private def listDisklessOffset(topicPartition: TopicPartition, currentLeaderEpoch: Int, timestamp: Long): OffsetAndEpoch = {
+    val job = fetchOffsetHandler.createJob()
+    if (!job.mustHandle(topicPartition.topic)) {
+      throw Errors.UNKNOWN_TOPIC_OR_PARTITION.exception()
+    }
+    val partitionRequest = new ListOffsetsPartition()
+      .setPartitionIndex(topicPartition.partition)
+      .setCurrentLeaderEpoch(currentLeaderEpoch)
+      .setTimestamp(timestamp)
+    val future = job.add(topicPartition, partitionRequest)
+    job.start()
+    val holder = future.get()
+    if (holder.hasException) {
+      throw Errors.forException(holder.exception().get()).exception()
+    }
+    val tao: TimestampAndOffset = holder.timestampAndOffset().get()
+    new OffsetAndEpoch(tao.offset, tao.leaderEpoch.orElse(0))
   }
 
-  /**
-   * The specific broker (host:port) we want to connect to.
-   */
-  override def brokerEndPoint(): BrokerEndPoint = {
-    brokerEndPoint
+  override def fetchEpochEndOffsets(
+    partitions: util.Map[TopicPartition, OffsetForLeaderEpochRequestData.OffsetForLeaderPartition]
+  ): util.Map[TopicPartition, EpochEndOffset] = {
+    if (partitions.isEmpty) {
+      return util.Map.of()
+    }
+
+    val job = fetchOffsetHandler.createJob()
+    val futures = mutable.Map.empty[TopicPartition, CompletableFuture[FileRecordsOrError]]
+
+    // TODO: POD-2419, offsets for leader epoch needs to be implemented for proper truncation
+    partitions.forEach { (tp, epochData) =>
+      if (epochData.leaderEpoch != OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH && job.mustHandle(tp.topic)) {
+        val partitionRequest = new ListOffsetsPartition()
+          .setPartitionIndex(tp.partition)
+          .setCurrentLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH)
+          .setTimestamp(ListOffsetsRequest.LATEST_TIMESTAMP)
+        futures.put(tp, job.add(tp, partitionRequest))
+      }
+    }
+
+    job.start()
+
+    partitions.asScala.map { case (tp, epochData) =>
+      if (epochData.leaderEpoch == OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH) {
+        tp -> new EpochEndOffset()
+          .setPartition(tp.partition)
+          .setErrorCode(Errors.NONE.code)
+      } else if (!futures.contains(tp)) {
+        tp -> new EpochEndOffset()
+          .setPartition(tp.partition)
+          .setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code)
+      } else {
+        try {
+          val holder = futures(tp).get()
+          val leaderEpoch = epochData.leaderEpoch
+          if (holder.hasException) {
+            val err = Errors.forException(holder.exception().get())
+            tp -> new EpochEndOffset()
+              .setPartition(tp.partition)
+              .setErrorCode(err.code)
+          } else {
+            val endOffset = holder.timestampAndOffset().get().offset
+            tp -> new EpochEndOffset()
+              .setPartition(tp.partition)
+              .setErrorCode(Errors.NONE.code)
+              .setLeaderEpoch(leaderEpoch)
+              .setEndOffset(endOffset)
+          }
+        } catch {
+          case t: Throwable =>
+            tp -> new EpochEndOffset()
+              .setPartition(tp.partition)
+              .setErrorCode(Errors.forException(t).code)
+        }
+      }
+    }.toMap.asJava
   }
 
-  /**
-   * Given a fetchRequest, carries out the expected request and returns
-   * the results from fetching from the leader.
-   *
-   * @param fetchRequest The fetch request we want to carry out
-   * @return A map of topic partition -> fetch data
-   */
-  override def fetch(fetchRequest: FetchRequest.Builder): util.Map[TopicPartition, FetchResponseData.PartitionData] =
-    util.Map.of[TopicPartition, FetchResponseData.PartitionData]
-
-  /**
-   * Fetches the epoch and log start offset of the given topic partition from the leader.
-   *
-   * @param topicPartition     The topic partition that we want to fetch from
-   * @param currentLeaderEpoch An int representing the current leader epoch of the requester
-   * @return An OffsetAndEpoch object representing the earliest offset and epoch in the leader's topic partition.
-   */
-  override def fetchEarliestOffset(topicPartition: TopicPartition, currentLeaderEpoch: Int): OffsetAndEpoch = {
-    return new OffsetAndEpoch(0, 0)
-  }
-
-  /**
-   * Fetches the epoch and log end offset of the given topic partition from the leader.
-   *
-   * @param topicPartition     The topic partition that we want to fetch from
-   * @param currentLeaderEpoch An int representing the current leader epoch of the requester
-   * @return An OffsetAndEpoch object representing the latest offset and epoch in the leader's topic partition.
-   */
-  override def fetchLatestOffset(topicPartition: TopicPartition, currentLeaderEpoch: Int): OffsetAndEpoch = {
-    return new OffsetAndEpoch(0, 0)
-  }
-
-  /**
-   * Fetches offset for leader epoch from the leader for each given topic partition
-   *
-   * @param partitions A map of topic partition -> leader epoch of the replica
-   * @return A map of topic partition -> end offset for a requested leader epoch
-   */
-  override def fetchEpochEndOffsets(partitions: util.Map[TopicPartition, OffsetForLeaderEpochRequestData.OffsetForLeaderPartition]): util.Map[TopicPartition, OffsetForLeaderEpochResponseData.EpochEndOffset] = {
-    util.Map.of[TopicPartition, OffsetForLeaderEpochResponseData.EpochEndOffset]()
-  }
-
-  /**
-   * Fetches the epoch and local log start offset from the leader for the given partition and the current leader-epoch
-   *
-   * @param topicPartition     The topic partition that we want to fetch from
-   * @param currentLeaderEpoch An int representing the current leader epoch of the requester
-   * @return An OffsetAndEpoch object representing the earliest local offset and epoch in the leader's topic partition.
-   */
-  override def fetchEarliestLocalOffset(topicPartition: TopicPartition, currentLeaderEpoch: Int): OffsetAndEpoch = {
-    new OffsetAndEpoch(0, 0)
-  }
-
-  /**
-   * Builds a fetch request, given a partition map.
-   *
-   * @param partitions A map of topic partitions to their respective partition fetch state
-   * @return A ResultWithPartitions, used to create the fetchRequest for fetch.
-   */
   override def buildFetch(partitions: util.Map[TopicPartition, PartitionFetchState]): ResultWithPartitions[Optional[ReplicaFetch]] = {
-    new ResultWithPartitions[Optional[ReplicaFetch]](Optional.empty(), util.Set.of())
+    if (quota.isQuotaExceeded) {
+      new ResultWithPartitions(Optional.empty(), util.Set.of())
+    } else {
+      val partitionsWithError = mutable.Set[TopicPartition]()
+      val requestMap = new util.LinkedHashMap[TopicPartition, FetchRequest.PartitionData]()
+
+      partitions.forEach { (topicPartition, fetchState) =>
+        if (fetchState.isReadyForFetch && !shouldFollowerThrottle(quota, fetchState, topicPartition)) {
+          try {
+            val logStartOffset = replicaManager.localLogOrException(topicPartition).logStartOffset
+            val lastFetchedEpoch = Optional.empty[Integer]()
+            requestMap.put(
+              topicPartition,
+              new FetchRequest.PartitionData(
+                fetchState.topicId().orElse(Uuid.ZERO_UUID),
+                fetchState.fetchOffset(),
+                logStartOffset,
+                fetchSize,
+                Optional.of(fetchState.currentLeaderEpoch()),
+                lastFetchedEpoch
+              )
+            )
+          } catch {
+            case _: KafkaStorageException =>
+              partitionsWithError += topicPartition
+          }
+        }
+      }
+
+      val fetchRequestOpt = if (requestMap.isEmpty) {
+        Optional.empty[ReplicaFetch]()
+      } else {
+        val metadataVersion = metadataVersionSupplier()
+        val canUseTopicIds = requestMap.asScala.values.forall(_.topicId != Uuid.ZERO_UUID)
+        val version: Short =
+          if (!canUseTopicIds) 12
+          else metadataVersion.fetchRequestVersion
+        val requestBuilder = FetchRequest.Builder
+          .forReplica(version, replicaId, brokerEpochSupplier(), maxWait, minBytes, requestMap)
+          .setMaxBytes(maxBytes)
+        Optional.of(new ReplicaFetch(requestMap, requestBuilder))
+      }
+
+      new ResultWithPartitions(fetchRequestOpt, partitionsWithError.asJava)
+    }
+  }
+
+  private def shouldFollowerThrottle(quota: ReplicaQuota, fetchState: PartitionFetchState, topicPartition: TopicPartition): Boolean = {
+    !fetchState.isReplicaInSync() && quota.isThrottled(topicPartition) && quota.isQuotaExceeded
   }
 }
