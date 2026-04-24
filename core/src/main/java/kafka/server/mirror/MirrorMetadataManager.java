@@ -1361,7 +1361,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
             // Filter groups by include pattern
             var matchingGroups = listGroupsRes.data().groups().stream()
-                    .filter(group -> groupsIncludePattern.matcher(group.groupId()).matches()
+                    .filter(group -> groupsIncludePattern == null || groupsIncludePattern.matcher(group.groupId()).matches()
                             && (groupsExcludePattern == null || !groupsExcludePattern.matcher(group.groupId()).matches()))
                     .toList();
 
