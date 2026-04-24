@@ -2876,12 +2876,15 @@ public class ReplicationControlManager {
     }
 
     List<ApiMessageAndVersion> markClassicToDisklessMigrationStarted(
-        Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges
+        Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
+        Map<ConfigResource, ApiError> configResults
     ) {
-        List<ApiMessageAndVersion> records = new ArrayList<>();
+        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         for (Entry<ConfigResource, Map<String, Entry<OpType, String>>> entry : configChanges.entrySet()) {
             ConfigResource resource = entry.getKey();
             if (resource.type() != TOPIC) continue;
+            ApiError error = configResults.get(resource);
+            if (error != null && error != ApiError.NONE) continue;
             Map<String, Entry<OpType, String>> changes = entry.getValue();
             Entry<OpType, String> disklessChange = changes.get(DISKLESS_ENABLE_CONFIG);
             if (disklessChange == null) continue;
@@ -2894,6 +2897,7 @@ public class ReplicationControlManager {
             TopicControlInfo topicInfo = topics.get(topicId);
             if (topicInfo == null) continue;
 
+            int sizeBefore = records.size();
             for (Entry<Integer, PartitionRegistration> partEntry : topicInfo.parts.entrySet()) {
                 PartitionRegistration partition = partEntry.getValue();
                 if (partition.classicToDisklessStartOffset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
@@ -2907,7 +2911,7 @@ public class ReplicationControlManager {
                 }
             }
             log.info("Marked {} partition(s) for topic {} as classic-to-diskless migration pending",
-                records.size(), topicName);
+                records.size() - sizeBefore, topicName);
         }
         return records;
     }

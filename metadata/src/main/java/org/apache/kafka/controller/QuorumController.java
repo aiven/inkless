@@ -121,6 +121,7 @@ import org.apache.kafka.server.common.KRaftVersion;
 import org.apache.kafka.server.common.OffsetAndEpoch;
 import org.apache.kafka.server.fault.FaultHandler;
 import org.apache.kafka.server.fault.FaultHandlerException;
+import org.apache.kafka.server.mutable.BoundedList;
 import org.apache.kafka.server.policy.AlterConfigPolicy;
 import org.apache.kafka.server.policy.CreateTopicPolicy;
 import org.apache.kafka.snapshot.SnapshotReader;
@@ -129,7 +130,6 @@ import org.apache.kafka.timeline.SnapshotRegistry;
 
 import org.slf4j.Logger;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -1931,9 +1931,10 @@ public final class QuorumController implements Controller {
                 return result.withoutRecords();
             } else {
                 List<ApiMessageAndVersion> migrationRecords =
-                    replicationControl.markClassicToDisklessMigrationStarted(configChanges);
+                    replicationControl.markClassicToDisklessMigrationStarted(configChanges, result.response());
                 if (!migrationRecords.isEmpty()) {
-                    List<ApiMessageAndVersion> allRecords = new ArrayList<>(result.records());
+                    List<ApiMessageAndVersion> allRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+                    allRecords.addAll(result.records());
                     allRecords.addAll(migrationRecords);
                     return ControllerResult.of(allRecords, result.response());
                 }
