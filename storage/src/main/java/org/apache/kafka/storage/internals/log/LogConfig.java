@@ -637,9 +637,9 @@ public class LogConfig extends AbstractConfig {
                 throw new ConfigException(name, null);
             }
             String mirrorName = (String) value;
-            if (mirrorName.endsWith(".removed") || mirrorName.endsWith(".paused")) {
+            if (mirrorName.endsWith(".stopped") || mirrorName.endsWith(".paused")) {
                 throw new ConfigException(name, value, "Invalid value `" + name + "` for configuration " +
-                        name + ". The value must not end with a suffix of `.removed` or `.paused`.");
+                        name + ". The value must not end with a suffix of `.stopped` or `.paused`.");
             }
         }
 

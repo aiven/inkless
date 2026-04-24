@@ -73,7 +73,7 @@ import static org.apache.kafka.controller.QuorumController.MAX_RECORDS_PER_USER_
 
 public class ConfigurationControlManager {
     public static final ConfigResource DEFAULT_NODE = new ConfigResource(Type.BROKER, "");
-    public static final String REMOVED_TOPIC_SUFFIX = ".removed";
+    public static final String STOPPED_TOPIC_SUFFIX = ".stopped";
     public static final String PAUSED_TOPIC_SUFFIX = ".paused";
 
     private final Logger log;
@@ -258,7 +258,7 @@ public class ConfigurationControlManager {
                     continue;
                 }
 
-                String newMirrorName = curVal.endsWith(REMOVED_TOPIC_SUFFIX) ? "" : curVal + REMOVED_TOPIC_SUFFIX;
+                String newMirrorName = curVal.endsWith(STOPPED_TOPIC_SUFFIX) ? "" : curVal + STOPPED_TOPIC_SUFFIX;
                 Map<String, Entry<OpType, String>> keyToOps = Map.of(mirrorNameConfig, new AbstractMap.SimpleImmutableEntry<>(SET, newMirrorName));
 
                 ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
@@ -310,8 +310,8 @@ public class ConfigurationControlManager {
                     continue;
                 }
 
-                if (curVal.endsWith(REMOVED_TOPIC_SUFFIX)) {
-                    topicRes.setErrorCode(Errors.MIRROR_TOPIC_BEING_REMOVED.code()).setName(topic);
+                if (curVal.endsWith(STOPPED_TOPIC_SUFFIX)) {
+                    topicRes.setErrorCode(Errors.MIRROR_TOPIC_BEING_STOPPED.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -408,7 +408,7 @@ public class ConfigurationControlManager {
             TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
             if (currentConfigs != null) {
                 String currMirrorNameValue = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
-                if (currMirrorNameValue != null && (currMirrorNameValue.isBlank() || !currMirrorNameValue.endsWith(REMOVED_TOPIC_SUFFIX))) {
+                if (currMirrorNameValue != null && (currMirrorNameValue.isBlank() || !currMirrorNameValue.endsWith(STOPPED_TOPIC_SUFFIX))) {
                     topicRes.setErrorCode(Errors.TOPIC_ALREADY_IN_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
@@ -444,10 +444,10 @@ public class ConfigurationControlManager {
         for (Entry<ConfigResource, Map<String, Entry<OpType, String>>> resourceEntry :
                 configChanges.entrySet()) {
             String mirrorName = resourceEntry.getKey().name();
-            if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX) || mirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) {
+            if (mirrorName.endsWith(STOPPED_TOPIC_SUFFIX) || mirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) {
                 data.setErrorCode(Errors.INVALID_MIRROR_NAME.code());
                 data.setErrorMessage("Mirror name must not end with '"
-                    + REMOVED_TOPIC_SUFFIX + "' or '" + PAUSED_TOPIC_SUFFIX + "'");
+                    + STOPPED_TOPIC_SUFFIX + "' or '" + PAUSED_TOPIC_SUFFIX + "'");
                 return ControllerResult.of(List.of(), data);
             }
             ApiError apiError = incrementalAlterConfigResource(resourceEntry.getKey(),
@@ -478,7 +478,7 @@ public class ConfigurationControlManager {
         }
 
         // Precondition: no active/paused topics
-        String removedSuffix = mirrorName + REMOVED_TOPIC_SUFFIX;
+        String stoppedSuffix = mirrorName + STOPPED_TOPIC_SUFFIX;
         for (Entry<ConfigResource, TimelineHashMap<String, String>> entry : configData.entrySet()) {
             if (entry.getKey().type() != Type.TOPIC) continue;
             String mirrorNameValue = entry.getValue().get(TopicConfig.MIRROR_NAME_CONFIG);
@@ -491,11 +491,11 @@ public class ConfigurationControlManager {
             }
         }
 
-        // Clear removed topic associations
+        // Clear stopped topic associations
         for (Entry<ConfigResource, TimelineHashMap<String, String>> entry : configData.entrySet()) {
             if (entry.getKey().type() != Type.TOPIC) continue;
             String mirrorNameValue = entry.getValue().get(TopicConfig.MIRROR_NAME_CONFIG);
-            if (removedSuffix.equals(mirrorNameValue)) {
+            if (stoppedSuffix.equals(mirrorNameValue)) {
                 Map<String, Entry<OpType, String>> keyToOps = Map.of(
                     TopicConfig.MIRROR_NAME_CONFIG, new AbstractMap.SimpleImmutableEntry<>(DELETE, null));
                 ControllerResult<ApiError> configResult = incrementalAlterConfig(entry.getKey(), keyToOps, true);

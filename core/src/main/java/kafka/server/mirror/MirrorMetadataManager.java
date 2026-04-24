@@ -137,7 +137,7 @@ import static kafka.server.mirror.MirrorUtils.originalMirrorName;
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
 import static org.apache.kafka.common.internals.Topic.MIRROR_STATE_TOPIC_NAME;
 import static org.apache.kafka.controller.ConfigurationControlManager.PAUSED_TOPIC_SUFFIX;
-import static org.apache.kafka.controller.ConfigurationControlManager.REMOVED_TOPIC_SUFFIX;
+import static org.apache.kafka.controller.ConfigurationControlManager.STOPPED_TOPIC_SUFFIX;
 
 /**
  * Bridges the local destination cluster and remote source clusters for Cluster Mirroring.
@@ -287,7 +287,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         mirrorLeaders.forEach(tp -> {
             String rawMirrorName = (String) newImage.configs().configProperties(
                     new ConfigResource(ConfigResource.Type.TOPIC, tp.topic())).get(TopicConfig.MIRROR_NAME_CONFIG);
-            boolean stopRequested = rawMirrorName.endsWith(REMOVED_TOPIC_SUFFIX);
+            boolean stopRequested = rawMirrorName.endsWith(STOPPED_TOPIC_SUFFIX);
             boolean pauseRequested = rawMirrorName.endsWith(PAUSED_TOPIC_SUFFIX);
             String mirrorName = MirrorUtils.originalMirrorName(rawMirrorName);
 
@@ -610,9 +610,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     /** Writes partition states to remote coordinators, batching requests per coordinator node. */
     void writeStatesToRemoteCoordinator(String mirrorName,
                                         Map<String, Set<MirrorUtils.PartitionStateInfo>> topicMetadata,
-                                        Set<String> removedTopics,
+                                        Set<String> stoppedTopics,
                                         Consumer<WriteMirrorStatesResponse> callback) {
-        log.debug("Writing states to remote coordinator: {} {} {}", mirrorName, topicMetadata, removedTopics);
+        log.debug("Writing states to remote coordinator: {} {} {}", mirrorName, topicMetadata, stoppedTopics);
 
         // Group partitions by coordinator node for batching
         Map<Node, Map<String, List<WriteMirrorStatesRequestData.PartitionData>>> nodeToTopicPartitions = new HashMap<>();
@@ -649,7 +649,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     .setPartitions(partitionDataList)));
 
             data.setTopics(topicDataList);
-            data.setRemovedTopics(new ArrayList<>(removedTopics));
+            data.setStoppedTopics(new ArrayList<>(stoppedTopics));
 
             mirrorStateSender.enqueue(new RequestAndCompletionHandler(
                 time.milliseconds(),
@@ -794,7 +794,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /** Sends a request to the source cluster, iterating available senders with fallback on failure. */
-    private ClientResponse trySendRequest(String mirrorName, AbstractRequest.Builder<?> requestBuilder) {
+    private ClientResponse trySendSourceClusterRequest(String mirrorName, AbstractRequest.Builder<?> requestBuilder) {
         // snapshot sender list to avoid concurrent modification during iteration
         List<MirrorSourceSender> senders = List.copyOf(sourceSenders.getOrDefault(mirrorName, List.of()));
         if (senders.isEmpty()) {
@@ -879,7 +879,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return partitionStateCounts.computeIfAbsent(state, s -> new AtomicLong()).get();
     }
 
-    /** Strips REMOVED_TOPIC_SUFFIX before lookup. */
+    /** Strips STOPPED_TOPIC_SUFFIX before lookup. */
     public MirrorPartitionState getPartitionState(String mirrorName, TopicPartition topicPartition) {
         String updatedMirrorName = originalMirrorName(mirrorName);
         return partitionStates.get(new MirrorUtils.PartitionKey(updatedMirrorName, topicPartition.topic(), topicPartition.partition()));
@@ -935,8 +935,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     Map<MirrorUtils.PartitionKey, Integer> updateLastMirrorEpochs(String clusterName,
                                                                   Map<String, Map<Integer, Integer>> addedEpochs,
-                                                                  Map<String, Map<Integer, Integer>> removedEpochs) {
-        removedEpochs.forEach((topic, partitionOffsets) -> {
+                                                                  Map<String, Map<Integer, Integer>> stoppedEpochs) {
+        stoppedEpochs.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
                 lastMirrorEpochs.remove(new MirrorUtils.PartitionKey(clusterName, topic, partition));
             });
@@ -1029,7 +1029,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * Sender cleanup only happens via {@link #onMetadataUpdate} or {@link #clear}.
      */
     private void discoverSourceBrokers(String mirrorName) {
-        var response = trySendRequest(mirrorName, MetadataRequest.Builder.allTopics());
+        var response = trySendSourceClusterRequest(mirrorName, MetadataRequest.Builder.allTopics());
         if (!(response.responseBody() instanceof MetadataResponse metadataResponse)) {
             return;
         }
@@ -1100,7 +1100,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         if (topics.isEmpty()) {
             return;
         }
-        var response = trySendRequest(mirrorName,
+        var response = trySendSourceClusterRequest(mirrorName,
                 MetadataRequest.Builder.forTopicNames(topics.stream().toList(), false)
         );
 
@@ -1263,7 +1263,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         DescribeConfigsRequest.Builder describeConfigsRequest =
             new DescribeConfigsRequest.Builder(new DescribeConfigsRequestData().setResources(describeConfigsResources));
 
-        var describeConfigResponse = trySendRequest(mirrorName, describeConfigsRequest);
+        var describeConfigResponse = trySendSourceClusterRequest(mirrorName, describeConfigsRequest);
         if (describeConfigResponse.responseBody() instanceof DescribeConfigsResponse describeConfigsRes) {
             log.debug("Periodic describe config response: {}", describeConfigsRes);
             Map<String, Map<String, String>> configsToChange = detectConfigurationChanges(describeConfigsRes, mirrorConfig);
@@ -1347,7 +1347,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 // TODO: if the source cluster is in old version, it won't support types filter
                 .setTypesFilter(List.of(Group.GroupType.CLASSIC.name(), Group.GroupType.CONSUMER.name()))
                 .setStatesFilter(singletonList(GroupState.STABLE.name())));
-        var listGroupResponse = trySendRequest(mirrorName, builder);
+        var listGroupResponse = trySendSourceClusterRequest(mirrorName, builder);
         if (listGroupResponse.responseBody() instanceof ListGroupsResponse listGroupsRes) {
             log.debug("List groups response for mirror {}: {}", mirrorName, listGroupsRes);
 
@@ -1367,7 +1367,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                             .setGroups(matchingGroups.stream().map(group -> new OffsetFetchRequestData.OffsetFetchRequestGroup()
                                     .setGroupId(group.groupId())
                                     .setTopics(null)).toList()), false);
-            var offsetFetchResponse = trySendRequest(mirrorName, offsetFetchBuilder);
+            var offsetFetchResponse = trySendSourceClusterRequest(mirrorName, offsetFetchBuilder);
             if (offsetFetchResponse.responseBody() instanceof OffsetFetchResponse offsetFetchRes) {
                 log.debug("Periodic offset fetch response: {}", offsetFetchRes);
 
@@ -1444,7 +1444,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         // list remote acls
         var describeAclsRequest = new DescribeAclsRequest.Builder(ANY_RESOURCE_ACL);
-        var describeAclsResponse = trySendRequest(mirrorName, describeAclsRequest);
+        var describeAclsResponse = trySendSourceClusterRequest(mirrorName, describeAclsRequest);
         if (!(describeAclsResponse.responseBody() instanceof DescribeAclsResponse aclsResponse)) {
             log.warn("Unexpected ACL response type from remote cluster: {}", describeAclsResponse);
             return;
@@ -1576,7 +1576,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // cache miss: resolve by sending a synchronous metadata request
         ensureConnection(mirrorName);
         try {
-            var response = trySendRequest(mirrorName, MetadataRequest.Builder.allTopics());
+            var response = trySendSourceClusterRequest(mirrorName, MetadataRequest.Builder.allTopics());
             if (response.responseBody() instanceof MetadataResponse metadataResponse) {
                 String clusterId = metadataResponse.clusterId();
                 if (clusterId != null && !clusterId.isEmpty()) {

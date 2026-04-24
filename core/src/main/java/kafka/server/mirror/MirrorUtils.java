@@ -33,7 +33,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import static org.apache.kafka.controller.ConfigurationControlManager.PAUSED_TOPIC_SUFFIX;
-import static org.apache.kafka.controller.ConfigurationControlManager.REMOVED_TOPIC_SUFFIX;
+import static org.apache.kafka.controller.ConfigurationControlManager.STOPPED_TOPIC_SUFFIX;
 
 /**
  * Shared data types and utility methods for cluster mirroring components.
@@ -73,15 +73,15 @@ public final class MirrorUtils {
     }
 
     /**
-     * Removes the REMOVED_TOPIC_SUFFIX from a mirror name if present.
-     * This suffix is appended to mirror names when topics are being removed from mirroring.
+     * Removes the STOPPED_TOPIC_SUFFIX from a mirror name if present.
+     * This suffix is appended to mirror names when topics are being stopped from mirroring.
      */
     public static String originalMirrorName(String mirrorName) {
         if (mirrorName == null) {
             return "";
         }
-        if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
-            return mirrorName.substring(0, mirrorName.length() - REMOVED_TOPIC_SUFFIX.length());
+        if (mirrorName.endsWith(STOPPED_TOPIC_SUFFIX)) {
+            return mirrorName.substring(0, mirrorName.length() - STOPPED_TOPIC_SUFFIX.length());
         }
         if (mirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) {
             return mirrorName.substring(0, mirrorName.length() - PAUSED_TOPIC_SUFFIX.length());

@@ -244,7 +244,7 @@ public abstract class MirrorCommand {
             StartMirrorTopicsResult startResult = adminClient.startMirrorTopics(mirrorName, topics.keySet(), new StartMirrorTopicsOptions());
             startResult.all().get();
 
-            System.out.printf("Started %d mirror topic(s) in mirror %s: %s%n", topics.size(), mirrorName, topics.keySet());
+            System.out.printf("Started mirroring for %d topic(s) in mirror %s: %s%n", topics.size(), mirrorName, topics.keySet());
         }
 
         private void stopMirrorTopics(MirrorCommandOptions opts) throws Exception {
@@ -261,7 +261,7 @@ public abstract class MirrorCommand {
             StopMirrorTopicsResult stopResult = adminClient.stopMirrorTopics(
                 mirrorName, matchingTopics, new StopMirrorTopicsOptions());
             stopResult.all().get();
-            System.out.printf("Stopped %d mirror topic(s) in mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
+            System.out.printf("Stopped mirroring for %d topic(s) in mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
         }
 
         private void pauseMirrorTopics(MirrorCommandOptions opts) throws Exception {

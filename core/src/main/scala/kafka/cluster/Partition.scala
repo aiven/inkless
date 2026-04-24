@@ -798,7 +798,7 @@ class Partition(val topicPartition: TopicPartition,
 
         // don't update the leader epoch if the partition is a mirrored leader, we'll update it when receiving batches
         // from source cluster leader
-        if (getMirrorName().isEmpty || getMirrorName().get().endsWith(ConfigurationControlManager.REMOVED_TOPIC_SUFFIX)) {
+        if (getMirrorName().isEmpty || getMirrorName().get().endsWith(ConfigurationControlManager.STOPPED_TOPIC_SUFFIX)) {
           leaderLog.assignEpochStartOffset(partitionState.leaderEpoch, leaderEpochStartOffset)
         }
 
