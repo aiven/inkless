@@ -70,6 +70,31 @@ final class ClassicTopicRemoteStorageForcePolicy {
         }
     }
 
+    void validateCompactedToDeleteCleanupPolicyTransition(
+        final String topicName,
+        final Map<String, String> targetConfigs,
+        final Map<String, String> existingConfigs
+    ) {
+        if (!enabled
+            || isInternalTopic(topicName)
+            || topicExcludedByRegex(topicName)) {
+            return;
+        }
+        if (!cleanupPolicyContainsCompact(existingConfigs)) {
+            return;
+        }
+        if (!cleanupPolicyIsDeleteOnly(targetConfigs)) {
+            return;
+        }
+        final boolean disklessEnabled = Boolean.parseBoolean(targetConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+        final boolean remoteStorageEnabled = Boolean.parseBoolean(targetConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+        if (!disklessEnabled && !remoteStorageEnabled) {
+            throw new org.apache.kafka.common.errors.InvalidConfigurationException(
+                "It is invalid to change cleanup.policy from compact to delete without enabling remote.storage.enable " +
+                    "when classic.remote.storage.force.enable is enabled.");
+        }
+    }
+
     private boolean shouldForceRemoteStorageEnable(
         final String topicName,
         final boolean disklessEnabled,
@@ -98,6 +123,25 @@ final class ClassicTopicRemoteStorageForcePolicy {
             }
         }
         return false;
+    }
+
+    private boolean cleanupPolicyIsDeleteOnly(final Map<String, String> topicConfigs) {
+        final String cleanupPolicy = topicConfigs.get(TopicConfig.CLEANUP_POLICY_CONFIG);
+        if (cleanupPolicy == null) {
+            return false;
+        }
+        int nonEmptyPolicies = 0;
+        for (String policy : cleanupPolicy.split(",")) {
+            final String trimmedPolicy = policy.trim();
+            if (trimmedPolicy.isEmpty()) {
+                continue;
+            }
+            nonEmptyPolicies++;
+            if (!TopicConfig.CLEANUP_POLICY_DELETE.equals(trimmedPolicy)) {
+                return false;
+            }
+        }
+        return nonEmptyPolicies == 1;
     }
 
     private boolean topicExcludedByRegex(final String topicName) {

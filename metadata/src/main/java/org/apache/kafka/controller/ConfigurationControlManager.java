@@ -78,6 +78,7 @@ public class ConfigurationControlManager {
     private final Map<String, Object> staticConfig;
     private final ConfigResource currentController;
     private final FeatureControlManager featureControl;
+    private final ClassicTopicRemoteStorageForcePolicy classicTopicRemoteStorageForcePolicy;
 
     static class Builder {
         private LogContext logContext = null;
@@ -89,6 +90,8 @@ public class ConfigurationControlManager {
         private Map<String, Object> staticConfig = Map.of();
         private int nodeId = 0;
         private FeatureControlManager featureControl = null;
+        private boolean classicRemoteStorageForceEnabled = false;
+        private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
 
         Builder setLogContext(LogContext logContext) {
             this.logContext = logContext;
@@ -135,6 +138,16 @@ public class ConfigurationControlManager {
             return this;
         }
 
+        Builder setClassicRemoteStorageForceEnabled(boolean classicRemoteStorageForceEnabled) {
+            this.classicRemoteStorageForceEnabled = classicRemoteStorageForceEnabled;
+            return this;
+        }
+
+        Builder setClassicRemoteStorageForceExcludeTopicRegexes(List<String> classicRemoteStorageForceExcludeTopicRegexes) {
+            this.classicRemoteStorageForceExcludeTopicRegexes = classicRemoteStorageForceExcludeTopicRegexes;
+            return this;
+        }
+
         ConfigurationControlManager build() {
             if (logContext == null) logContext = new LogContext();
             if (snapshotRegistry == null) snapshotRegistry = new SnapshotRegistry(logContext);
@@ -153,7 +166,9 @@ public class ConfigurationControlManager {
                 validator,
                 staticConfig,
                 nodeId,
-                featureControl);
+                featureControl,
+                classicRemoteStorageForceEnabled,
+                classicRemoteStorageForceExcludeTopicRegexes);
         }
     }
 
@@ -165,7 +180,9 @@ public class ConfigurationControlManager {
             ConfigurationValidator validator,
             Map<String, Object> staticConfig,
             int nodeId,
-            FeatureControlManager featureControl
+            FeatureControlManager featureControl,
+            boolean classicRemoteStorageForceEnabled,
+            List<String> classicRemoteStorageForceExcludeTopicRegexes
     ) {
         this.log = logContext.logger(ConfigurationControlManager.class);
         this.snapshotRegistry = snapshotRegistry;
@@ -178,6 +195,10 @@ public class ConfigurationControlManager {
         this.staticConfig = Map.copyOf(staticConfig);
         this.currentController = new ConfigResource(Type.BROKER, Integer.toString(nodeId));
         this.featureControl = featureControl;
+        this.classicTopicRemoteStorageForcePolicy = new ClassicTopicRemoteStorageForcePolicy(
+            classicRemoteStorageForceEnabled,
+            classicRemoteStorageForceExcludeTopicRegexes
+        );
     }
 
     SnapshotRegistry snapshotRegistry() {
@@ -377,6 +398,13 @@ public class ConfigurationControlManager {
             // in the list passed to the policy in order to maintain backwards compatibility
         }
         try {
+            if (configResource.type() == Type.TOPIC) {
+                classicTopicRemoteStorageForcePolicy.validateCompactedToDeleteCleanupPolicyTransition(
+                    configResource.name(),
+                    allConfigs,
+                    existingConfigsMap
+                );
+            }
             validator.validate(configResource, allConfigs, existingConfigsMap);
             if (!newlyCreatedResource) {
                 existenceChecker.accept(configResource);
