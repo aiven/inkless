@@ -3330,6 +3330,23 @@ class ReplicaManager(val config: KafkaConfig,
               s"with topic id ${info.topicId} due to a storage error ${e.getMessage}")
             markPartitionOffline(tp)
         }
+      } else if (logManager.getLog(tp).isDefined && !isConsolidatingDisklessTopic) {
+        // Post-restart: diskless topic still has classic data on local disk (offsets < disklessStartOffset).
+        // Create the Partition so classic data remains accessible for reads.
+        getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
+          try {
+            val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
+            val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+            partition.makeLeader(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+            partition.seal()
+            changedPartitions.add(partition)
+          } catch {
+            case e: KafkaStorageException =>
+              stateChangeLogger.info(s"Skipped the become-leader state change for migrated partition $tp " +
+                s"with topic id ${info.topicId} due to a storage error ${e.getMessage}")
+              markPartitionOffline(tp)
+          }
+        }
       }
     }
 
@@ -3382,6 +3399,24 @@ class ReplicaManager(val config: KafkaConfig,
       if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
         // Clean up migration tracking since only the leader drives classic -> diskless migration.
         initDisklessLogManager.foreach(_.removePartition(tp))
+        // Post-restart: diskless topic still has classic data on local disk.
+        // Create the Partition so classic data remains accessible for reads.
+        if (logManager.getLog(tp).isDefined && !isConsolidatingDisklessTopic) {
+          getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
+            try {
+              val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
+              val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+              partition.makeFollower(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+              partition.seal()
+              changedPartitions.add(partition)
+            } catch {
+              case e: KafkaStorageException =>
+                stateChangeLogger.error(s"Unable to create follower for migrated partition $tp " +
+                  s"with topic ID ${info.topicId} due to a storage error ${e.getMessage}", e)
+                markPartitionOffline(tp)
+            }
+          }
+        }
       }
       if (!_inklessMetadataView.isDisklessTopic(tp.topic()) || isConsolidatingDisklessTopic) {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
