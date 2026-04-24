@@ -18,13 +18,16 @@
 
 package io.aiven.inkless.consolidation
 
+import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import kafka.server.{AbstractFetcherManager, KafkaConfig, ReplicaManager, ReplicationQuotaManager}
 import org.apache.kafka.common.utils.LogContext
 import org.apache.kafka.server.network.BrokerEndPoint
 
 class ConsolidationFetcherManager(brokerConfig: KafkaConfig,
                                   replicaManager: ReplicaManager,
-                                  quotaManager: ReplicationQuotaManager)
+                                  quotaManager: ReplicationQuotaManager,
+                                  fetchHandler: FetchHandler,
+                                  fetchOffsetHandler: FetchOffsetHandler)
   extends AbstractFetcherManager[ConsolidationFetcherThread](name = "ConsolidationFetcherManager on broker " + brokerConfig.brokerId,
     clientId = "Consolidation",
     numFetchers = brokerConfig.numReplicaFetchers) {
@@ -33,7 +36,16 @@ class ConsolidationFetcherManager(brokerConfig: KafkaConfig,
     val threadName = s"ConsolidationFetcherThread-$fetcherId-${sourceBroker.id}"
     val logContext = new LogContext(s"[ConsolidationFetcher replicaId=${brokerConfig.brokerId}, leaderId=${sourceBroker.id}, " +
       s"fetcherId=$fetcherId] ")
-    val disklessLeaderEndPoint = new DisklessLeaderEndPoint(sourceBroker)
+    val disklessLeaderEndPoint = new DisklessLeaderEndPoint(
+      sourceBroker,
+      fetchHandler,
+      fetchOffsetHandler,
+      replicaManager,
+      brokerConfig,
+      quotaManager,
+      () => replicaManager.metadataCache.metadataVersion(),
+      replicaManager.brokerEpochSupplier
+    )
     new ConsolidationFetcherThread(threadName, disklessLeaderEndPoint, brokerConfig, failedPartitions, replicaManager,
       quotaManager, logContext.logPrefix)
   }
