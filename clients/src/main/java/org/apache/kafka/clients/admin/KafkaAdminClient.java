@@ -5018,6 +5018,8 @@ public class KafkaAdminClient extends AdminClient {
 
     private void updateMirrorTopicsConfig(String mirrorName, List<String> includePatterns,
                                           List<String> excludePatterns, Integer timeoutMs) throws Exception {
+        validateRegexPatterns(includePatterns);
+        validateRegexPatterns(excludePatterns);
         long effectiveTimeoutMs = timeoutMs != null ? timeoutMs : defaultApiTimeoutMs;
         ConfigResource mirrorResource = new ConfigResource(ConfigResource.Type.MIRROR, mirrorName);
         var configResult = describeConfigs(List.of(mirrorResource)).all().get(effectiveTimeoutMs, TimeUnit.MILLISECONDS);
@@ -5042,6 +5044,7 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     private void updateMirrorTopicsConfigForStop(String mirrorName, List<String> patterns, Integer timeoutMs) throws Exception {
+        validateRegexPatterns(patterns);
         long effectiveTimeoutMs = timeoutMs != null ? timeoutMs : defaultApiTimeoutMs;
         ConfigResource mirrorResource = new ConfigResource(ConfigResource.Type.MIRROR, mirrorName);
         var configResult = describeConfigs(List.of(mirrorResource)).all().get(effectiveTimeoutMs, TimeUnit.MILLISECONDS);
@@ -5073,6 +5076,16 @@ public class KafkaAdminClient extends AdminClient {
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private static void validateRegexPatterns(List<String> patterns) {
+        for (String pattern : patterns) {
+            try {
+                java.util.regex.Pattern.compile(pattern);
+            } catch (java.util.regex.PatternSyntaxException e) {
+                throw new IllegalArgumentException("Invalid regex pattern: " + pattern, e);
+            }
+        }
     }
 
     @Override

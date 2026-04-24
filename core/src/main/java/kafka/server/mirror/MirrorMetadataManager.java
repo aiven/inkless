@@ -1534,7 +1534,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     private record ACLChanges(List<AclBinding> aclsToAdd, List<AclBinding> aclsToDelete) { }
 
-    /** Discovers new topics on the source cluster matching the mirror.topics.include pattern and adds them to the mirror. */
     private void discoverTopicsByPattern(String mirrorName, MirrorConfig mirrorConfig) {
         final Pattern topicsIncludePattern = mirrorConfig.topicsIncludePattern();
         if (topicsIncludePattern == null) {
