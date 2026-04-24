@@ -258,7 +258,7 @@ public class ConfigurationControlManager {
                     continue;
                 }
 
-                String newMirrorName = curVal.endsWith(STOPPED_TOPIC_SUFFIX) ? "" : curVal + STOPPED_TOPIC_SUFFIX;
+                String newMirrorName = curVal.endsWith(STOPPED_TOPIC_SUFFIX) ? "" : originalName + STOPPED_TOPIC_SUFFIX;
                 Map<String, Entry<OpType, String>> keyToOps = Map.of(mirrorNameConfig, new AbstractMap.SimpleImmutableEntry<>(SET, newMirrorName));
 
                 ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
