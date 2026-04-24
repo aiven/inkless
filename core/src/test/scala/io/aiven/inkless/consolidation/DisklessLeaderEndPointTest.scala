@@ -200,9 +200,7 @@ class DisklessLeaderEndPointTest {
     when(fetchOffsetHandler.createJob()).thenReturn(job)
     when(job.mustHandle(topicPartition.topic())).thenReturn(true)
     when(job.add(eqTo(topicPartition), any())).thenReturn(CompletableFuture.completedFuture(holder))
-    when(job.start()).thenAnswer { _ =>
-      ()
-    }
+    doNothing().when(job).start()
 
     val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
     val result = invoke(endPoint)
