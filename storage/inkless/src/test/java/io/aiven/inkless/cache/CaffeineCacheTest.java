@@ -19,6 +19,8 @@ package io.aiven.inkless.cache;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 
@@ -52,6 +54,22 @@ class CaffeineCacheTest {
 
             // With 100 bytes max and 50 bytes per entry, at most 2 entries should remain
             assertThat(cache.size()).isLessThanOrEqualTo(2);
+        }
+    }
+
+    @Test
+    void negativeMaxIdleDisablesExpireAfterAccess() throws Exception {
+        // -1 means "disabled" per InklessConfig docs: no expireAfterAccess policy should be set.
+        try (CaffeineCache cache = new CaffeineCache(2, 0, 3600, -1)) {
+            assertThat(cache.policy().expireAfterAccess()).isEmpty();
+        }
+    }
+
+    @Test
+    void positiveMaxIdleSetsExpireAfterAccess() throws Exception {
+        try (CaffeineCache cache = new CaffeineCache(2, 0, 3600, 180)) {
+            assertThat(cache.policy().expireAfterAccess())
+                .hasValueSatisfying(p -> assertThat(p.getExpiresAfter()).isEqualTo(Duration.ofSeconds(180)));
         }
     }
 
