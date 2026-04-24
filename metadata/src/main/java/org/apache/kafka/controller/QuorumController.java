@@ -1936,7 +1936,7 @@ public final class QuorumController implements Controller {
                     List<ApiMessageAndVersion> allRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
                     allRecords.addAll(result.records());
                     allRecords.addAll(migrationRecords);
-                    return ControllerResult.of(allRecords, result.response());
+                    return ControllerResult.atomicOf(allRecords, result.response());
                 }
                 return result;
             }
