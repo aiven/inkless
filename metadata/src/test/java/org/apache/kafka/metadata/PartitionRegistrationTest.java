@@ -497,4 +497,52 @@ public class PartitionRegistrationTest {
         assertNotEquals(a, c);
         assertNotEquals(a, d);
     }
+
+    @Test
+    public void testMigrationPendingRoundTrip() {
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).
+            setClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING).build();
+
+        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING, original.classicToDisklessStartOffset);
+
+        Uuid topicId = Uuid.randomUuid();
+        ApiMessageAndVersion record = original.toRecord(topicId, 0,
+            new ImageWriterOptions.Builder(MetadataVersion.latestTesting()).build());
+        PartitionRecord partitionRecord = (PartitionRecord) record.message();
+        PartitionRegistration restored = new PartitionRegistration(partitionRecord);
+        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING, restored.classicToDisklessStartOffset);
+    }
+
+    @Test
+    public void testMergeFromMigrationPendingToActualOffset() {
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).
+            setClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING).build();
+
+        PartitionChangeRecord changeRecord = new PartitionChangeRecord();
+        changeRecord.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L));
+
+        PartitionRegistration merged = original.merge(changeRecord);
+        assertEquals(100L, merged.classicToDisklessStartOffset);
+    }
+
+    @Test
+    public void testMergePreservesMigrationPending() {
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).
+            setClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING).build();
+
+        PartitionRegistration merged = original.merge(new PartitionChangeRecord().
+            setLeader(2).setIsr(List.of(2, 3)));
+
+        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING, merged.classicToDisklessStartOffset);
+    }
 }

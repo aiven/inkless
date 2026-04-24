@@ -6119,6 +6119,179 @@ public class ReplicationControlManagerTest {
             assertEquals(2L, updatedPartition.disklessProducerStates.get(1).producerId());
             assertEquals(3L, updatedPartition.disklessProducerStates.get(2).producerId());
         }
+
+        @Test
+        public void testInitDisklessLogAcceptsMigrationPendingPartition() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            CreatableTopicResult createTopicResult = ctx.createTestTopic("foo",
+                new int[][] {new int[] {0, 1, 2}});
+
+            Uuid topicId = createTopicResult.topicId();
+
+            // Simulate migration pending by replaying a PartitionChangeRecord with -2
+            PartitionChangeRecord migrationPendingRecord = new PartitionChangeRecord()
+                .setTopicId(topicId)
+                .setPartitionId(0);
+            migrationPendingRecord.unknownTaggedFields().add(
+                InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+                    PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING));
+            ctx.replay(List.of(new ApiMessageAndVersion(migrationPendingRecord, (short) 0)));
+
+            PartitionRegistration pendingPartition = replicationControl.getPartition(topicId, 0);
+            assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING, pendingPartition.classicToDisklessStartOffset);
+
+            // InitDisklessLog should succeed even though classicToDisklessStartOffset is -2
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
+            InitDisklessLogRequestData request = singlePartitionRequest(
+                0, defaultBrokerEpoch(0), topicId, 0, 100L, pendingPartition.leaderEpoch, List.of());
+
+            ControllerResult<InitDisklessLogResponseData> result =
+                replicationControl.initDisklessLog(requestContext, request);
+
+            assertEquals(1, result.records().size());
+            assertEquals(NONE.code(),
+                result.response().topics().get(0).partitions().get(0).errorCode());
+
+            ctx.replay(result.records());
+            PartitionRegistration updatedPartition = replicationControl.getPartition(topicId, 0);
+            assertEquals(100L, updatedPartition.classicToDisklessStartOffset);
+        }
+
+        @Test
+        public void testMarkClassicToDisklessMigrationStartedSuccess() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            CreatableTopicResult createTopicResult = ctx.createTestTopic("foo",
+                new int[][] {new int[] {0, 1, 2}, new int[] {1, 2, 0}});
+
+            Uuid topicId = createTopicResult.topicId();
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            Map<ConfigResource, ApiError> configResults = Map.of(resource, ApiError.NONE);
+
+            List<ApiMessageAndVersion> records =
+                replicationControl.markClassicToDisklessMigrationStarted(configChanges, configResults);
+
+            assertEquals(2, records.size());
+            for (int i = 0; i < 2; i++) {
+                assertInstanceOf(PartitionChangeRecord.class, records.get(i).message());
+                PartitionChangeRecord record = (PartitionChangeRecord) records.get(i).message();
+                assertEquals(topicId, record.topicId());
+                assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING,
+                    InitDisklessLogFields.decodeClassicToDisklessStartOffset(record.unknownTaggedFields()));
+            }
+
+            ctx.replay(records);
+            for (int i = 0; i < 2; i++) {
+                PartitionRegistration partition = replicationControl.getPartition(topicId, i);
+                assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING,
+                    partition.classicToDisklessStartOffset);
+            }
+        }
+
+        @Test
+        public void testMarkClassicToDisklessMigrationStartedSkipsIneligibleChanges() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("classic-topic", new int[][] {new int[] {0, 1, 2}});
+            ctx.createTestTopic("already-diskless", 1, (short) 1,
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"), NONE.code());
+
+            ConfigResource classicTopic = new ConfigResource(ConfigResource.Type.TOPIC, "classic-topic");
+            ConfigResource alreadyDiskless = new ConfigResource(ConfigResource.Type.TOPIC, "already-diskless");
+            ConfigResource brokerResource = new ConfigResource(ConfigResource.Type.BROKER, "0");
+            ConfigResource unknownTopic = new ConfigResource(ConfigResource.Type.TOPIC, "no-such-topic");
+
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = new java.util.HashMap<>();
+            // Config error on the topic
+            configChanges.put(classicTopic, Map.of(DISKLESS_ENABLE_CONFIG,
+                new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            // Already-diskless topic
+            configChanges.put(alreadyDiskless, Map.of(DISKLESS_ENABLE_CONFIG,
+                new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            // Non-TOPIC resource
+            configChanges.put(brokerResource, Map.of(DISKLESS_ENABLE_CONFIG,
+                new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            // Unknown topic
+            configChanges.put(unknownTopic, Map.of(DISKLESS_ENABLE_CONFIG,
+                new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            Map<ConfigResource, ApiError> configResults = new java.util.HashMap<>();
+            configResults.put(classicTopic, new ApiError(Errors.INVALID_REQUEST, "bad config"));
+            configResults.put(alreadyDiskless, ApiError.NONE);
+            configResults.put(brokerResource, ApiError.NONE);
+            configResults.put(unknownTopic, ApiError.NONE);
+
+            List<ApiMessageAndVersion> records =
+                replicationControl.markClassicToDisklessMigrationStarted(configChanges, configResults);
+            assertEquals(0, records.size());
+
+            // Also verify DELETE op and SET to "false" are skipped
+            configChanges.clear();
+            configResults.clear();
+            configChanges.put(classicTopic, Map.of(DISKLESS_ENABLE_CONFIG,
+                new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.DELETE, "true")));
+            configResults.put(classicTopic, ApiError.NONE);
+
+            records = replicationControl.markClassicToDisklessMigrationStarted(configChanges, configResults);
+            assertEquals(0, records.size());
+
+            configChanges.put(classicTopic, Map.of(DISKLESS_ENABLE_CONFIG,
+                new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "false")));
+
+            records = replicationControl.markClassicToDisklessMigrationStarted(configChanges, configResults);
+            assertEquals(0, records.size());
+        }
+
+        @Test
+        public void testMarkClassicToDisklessMigrationStartedSkipsAlreadyInitializedPartitions() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            CreatableTopicResult createTopicResult = ctx.createTestTopic("foo",
+                new int[][] {new int[] {0, 1, 2}, new int[] {1, 2, 0}});
+
+            Uuid topicId = createTopicResult.topicId();
+            PartitionRegistration partition0 = replicationControl.getPartition(topicId, 0);
+
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
+            InitDisklessLogRequestData initRequest = singlePartitionRequest(
+                0, defaultBrokerEpoch(0), topicId, 0, 100L, partition0.leaderEpoch, List.of());
+            ControllerResult<InitDisklessLogResponseData> initResult =
+                replicationControl.initDisklessLog(requestContext, initRequest);
+            ctx.replay(initResult.records());
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            Map<ConfigResource, ApiError> configResults = Map.of(resource, ApiError.NONE);
+
+            List<ApiMessageAndVersion> records =
+                replicationControl.markClassicToDisklessMigrationStarted(configChanges, configResults);
+
+            // Only partition 1 should be marked — partition 0 was already initialized
+            assertEquals(1, records.size());
+            PartitionChangeRecord record = (PartitionChangeRecord) records.get(0).message();
+            assertEquals(topicId, record.topicId());
+            assertEquals(1, record.partitionId());
+            assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING,
+                InitDisklessLogFields.decodeClassicToDisklessStartOffset(record.unknownTaggedFields()));
+        }
+
     }
 
 }
