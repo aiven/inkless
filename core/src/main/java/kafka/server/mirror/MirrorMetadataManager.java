@@ -81,6 +81,7 @@ import org.apache.kafka.common.requests.ReadMirrorStatesResponse;
 import org.apache.kafka.common.requests.RequestContext;
 import org.apache.kafka.common.requests.RequestHeader;
 import org.apache.kafka.common.requests.StartMirrorTopicsRequest;
+import org.apache.kafka.common.requests.StopMirrorTopicsRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesResponse;
 import org.apache.kafka.common.resource.PatternType;
@@ -1251,6 +1252,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 syncConsumerGroupOffsets(mirrorName, mirrorConfig);
                 syncAccessControlLists(mirrorName, mirrorConfig);
                 discoverTopicsByPattern(mirrorName, mirrorConfig);
+                enforceExcludePatterns(mirrorName, mirrorConfig);
             } catch (Exception e) {
                 log.error("Failed to sync mirror metadata for mirror {}", mirrorName, e);
             }
@@ -1574,6 +1576,31 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         //  Add per-topic status tracking so describeMirror can surface failed topics to users.
         channelManager.sendRequest(
                 new StartMirrorTopicsRequest.Builder(mirrorName, newTopics, List.of(), List.of()),
+                new TimeoutHandler(log)
+        );
+    }
+
+    /**
+     * Checks if any active mirroring topics now match the exclude pattern and sends
+     * StopMirrorTopicsRequest to stop them. Catches cases where exclude was updated
+     * via incrementalAlterConfigs outside of the startMirrorTopics/stopMirrorTopics flow.
+     */
+    private void enforceExcludePatterns(String mirrorName, MirrorConfig mirrorConfig) {
+        Pattern excludePattern = mirrorConfig.topicsExcludePattern();
+        if (excludePattern == null) return;
+
+        Set<String> activeTopics = getConfiguredTopics(mirrorName);
+        Set<String> excludedTopics = activeTopics.stream()
+                .filter(topic -> excludePattern.matcher(topic).matches())
+                .collect(Collectors.toSet());
+
+        if (excludedTopics.isEmpty()) return;
+
+        log.info("Stopping {} topic(s) matching mirror.topics.exclude for mirror {}: {}",
+                excludedTopics.size(), mirrorName, excludedTopics);
+
+        channelManager.sendRequest(
+                new StopMirrorTopicsRequest.Builder(mirrorName, excludedTopics),
                 new TimeoutHandler(log)
         );
     }

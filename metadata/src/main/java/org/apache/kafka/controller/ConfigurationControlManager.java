@@ -64,6 +64,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.APPEND;
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.DELETE;
@@ -275,23 +276,18 @@ public class ConfigurationControlManager {
                 }
 
                 String newMirrorName = curVal.endsWith(STOPPED_TOPIC_SUFFIX) ? "" : curVal + STOPPED_TOPIC_SUFFIX;
-                Map<String, Entry<OpType, String>> keyToOps = Map.of(TopicConfig.MIRROR_NAME_CONFIG, new AbstractMap.SimpleImmutableEntry<>(SET, newMirrorName));
-
-                ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
-                if (configResult.response().isFailure()) {
-                    topicRes.setErrorCode(configResult.response().error().code()).setName(topic);
-                    topicResList.add(topicRes);
-                    continue;
-                }
-
-                records.addAll(configResult.records());
+                records.add(new ApiMessageAndVersion(new ConfigRecord()
+                        .setResourceType(configResource.type().id())
+                        .setResourceName(configResource.name())
+                        .setName(TopicConfig.MIRROR_NAME_CONFIG)
+                        .setValue(newMirrorName), (short) 0));
                 topicRes.setName(topic);
                 topicResList.add(topicRes);
             }
         }
         data.setTopics(topicResList);
 
-        return ControllerResult.atomicOf(records, data);
+        return ControllerResult.of(records, data);
     }
 
     ControllerResult<PauseMirrorTopicsResponseData> pauseMirrorTopics(String mirrorName, Set<String> topics) {
@@ -339,17 +335,11 @@ public class ConfigurationControlManager {
                 }
 
                 String pausedMirrorName = curVal + PAUSED_TOPIC_SUFFIX;
-                Map<String, Entry<OpType, String>> keyToOps = Map.of(TopicConfig.MIRROR_NAME_CONFIG,
-                    new AbstractMap.SimpleImmutableEntry<>(SET, pausedMirrorName));
-
-                ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
-                if (configResult.response().isFailure()) {
-                    topicRes.setErrorCode(configResult.response().error().code()).setName(topic);
-                    topicResList.add(topicRes);
-                    continue;
-                }
-
-                records.addAll(configResult.records());
+                records.add(new ApiMessageAndVersion(new ConfigRecord()
+                        .setResourceType(configResource.type().id())
+                        .setResourceName(configResource.name())
+                        .setName(TopicConfig.MIRROR_NAME_CONFIG)
+                        .setValue(pausedMirrorName), (short) 0));
                 topicRes.setName(topic);
                 topicResList.add(topicRes);
             }
@@ -392,17 +382,11 @@ public class ConfigurationControlManager {
                     continue;
                 }
 
-                Map<String, Entry<OpType, String>> keyToOps = Map.of(TopicConfig.MIRROR_NAME_CONFIG,
-                    new AbstractMap.SimpleImmutableEntry<>(SET, originalMirrorName));
-
-                ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
-                if (configResult.response().isFailure()) {
-                    topicRes.setErrorCode(configResult.response().error().code()).setName(topic);
-                    topicResList.add(topicRes);
-                    continue;
-                }
-
-                records.addAll(configResult.records());
+                records.add(new ApiMessageAndVersion(new ConfigRecord()
+                        .setResourceType(configResource.type().id())
+                        .setResourceName(configResource.name())
+                        .setName(TopicConfig.MIRROR_NAME_CONFIG)
+                        .setValue(originalMirrorName), (short) 0));
                 topicRes.setName(topic);
                 topicResList.add(topicRes);
             }
@@ -481,7 +465,7 @@ public class ConfigurationControlManager {
         }
         data.setTopics(topicResList);
 
-        return ControllerResult.atomicOf(records, data);
+        return ControllerResult.of(records, data);
     }
 
     private static Set<String> parseCsvToSet(String csv) {
@@ -517,7 +501,34 @@ public class ConfigurationControlManager {
             return result.response();
         }
         records.addAll(result.records());
+
+        stopExcludedTopics(mirrorName, excludeSet, records);
         return ApiError.NONE;
+    }
+
+    /**
+     * Scans active topics for the given mirror and stops any that match the current exclude pattern.
+     * Called after pattern updates to enforce exclusion on already-mirroring topics.
+     */
+    private void stopExcludedTopics(String mirrorName, Set<String> excludePatterns, List<ApiMessageAndVersion> records) {
+        if (excludePatterns.isEmpty()) return;
+
+        String combined = String.join("|", excludePatterns);
+        Pattern excludePattern = Pattern.compile("^(" + combined + ")$");
+
+        for (Entry<ConfigResource, TimelineHashMap<String, String>> entry : configData.entrySet()) {
+            if (entry.getKey().type() != Type.TOPIC) continue;
+            String topicMirrorName = entry.getValue().get(TopicConfig.MIRROR_NAME_CONFIG);
+            if (topicMirrorName == null || !topicMirrorName.equals(mirrorName)) continue;
+            String topicName = entry.getKey().name();
+            if (excludePattern.matcher(topicName).matches()) {
+                records.add(new ApiMessageAndVersion(new ConfigRecord()
+                        .setResourceType(Type.TOPIC.id())
+                        .setResourceName(topicName)
+                        .setName(TopicConfig.MIRROR_NAME_CONFIG)
+                        .setValue(mirrorName + STOPPED_TOPIC_SUFFIX), (short) 0));
+            }
+        }
     }
 
     ControllerResult<CreateMirrorResponseData> addMirrorConfig(

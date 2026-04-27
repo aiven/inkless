@@ -273,7 +273,7 @@ class ControllerApis(
     val excludePatterns = startMirrorTopicsRequest.data().excludePatterns()
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    controller.startMirrorTopics(context, mirrorName, topics.asScala.toList.asJava,
+    controller.startMirrorTopics(context, mirrorName, new java.util.ArrayList(topics),
         includePatterns, excludePatterns)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {

@@ -599,7 +599,7 @@ public class AsyncMirrorIntegrationTest {
 
     /**
      * Test that a stopped topic is not re-discovered by discoverTopicsByPattern,
-     * because mirror.name with REMOVED_TOPIC_SUFFIX keeps it in getConfiguredTopics.
+     * because mirror.name with STOPPED_TOPIC_SUFFIX keeps it in getConfiguredTopics.
      */
     @Test
     void testStopMirrorTopicPreventsRediscovery() throws Exception {
