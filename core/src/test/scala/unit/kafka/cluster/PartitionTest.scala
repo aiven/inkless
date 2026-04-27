@@ -3438,9 +3438,9 @@ class PartitionTest extends AbstractPartitionTest {
     false,
     LogOffsetsListener.NO_OP_OFFSETS_LISTENER) {
 
-    override def appendAsFollower(records: MemoryRecords, epoch: Int): LogAppendInfo = {
+    override def appendAsFollower(records: MemoryRecords, epoch: Int, isMirrorLeader: Boolean): LogAppendInfo = {
       appendSemaphore.acquire()
-      val appendInfo = super.appendAsFollower(records, epoch)
+      val appendInfo = super.appendAsFollower(records, epoch, isMirrorLeader)
       appendInfo
     }
   }

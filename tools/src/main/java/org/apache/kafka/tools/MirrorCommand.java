@@ -56,7 +56,6 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -233,14 +232,6 @@ public abstract class MirrorCommand {
             return props;
         }
 
-        private void deleteMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
-            String mirrorName = opts.mirror().get();
-            DeleteMirrorResult result = adminClient.deleteMirror(
-                    mirrorName, new DeleteMirrorOptions());
-            result.all().get();
-            System.out.printf("Deleted mirror %s%n", mirrorName);
-        }
-
         private void pauseMirrorTopics(MirrorCommandOptions opts) throws Exception {
             String mirrorName = opts.mirror().get();
             Set<String> topics = resolveTopicsOnDestination(opts.topics());
@@ -370,6 +361,14 @@ public abstract class MirrorCommand {
                         info.state());
                 }
             }
+        }
+
+        private void deleteMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
+            String mirrorName = opts.mirror().get();
+            DeleteMirrorResult result = adminClient.deleteMirror(
+                    mirrorName, new DeleteMirrorOptions());
+            result.all().get();
+            System.out.printf("Deleted mirror %s%n", mirrorName);
         }
 
         // Truncate string from the left, keeping the rightmost characters

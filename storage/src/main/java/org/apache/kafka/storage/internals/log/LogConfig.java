@@ -252,7 +252,7 @@ public class LogConfig extends AbstractConfig {
                 .define(TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_COPY_DISABLE_DOC)
                 .define(TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_DOC)
                 .define(TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_DOC)
-                .defineInternal(MIRROR_NAME_CONFIG, STRING, "", null, MEDIUM, MIRROR_NAME_DOC)
+                .defineInternal(MIRROR_NAME_CONFIG, STRING, "", new MirrorNameValidator(), MEDIUM, MIRROR_NAME_DOC)
                 .defineInternal(INTERNAL_SEGMENT_BYTES_CONFIG, INT, null, null, MEDIUM, INTERNAL_SEGMENT_BYTES_DOC);
     }
 
@@ -627,6 +627,25 @@ public class LogConfig extends AbstractConfig {
             combinedConfigs.putAll(props);
             Map<?, ?> valueMaps = CONFIG.parse(combinedConfigs);
             validateTopicLogConfigValues(existingConfigs, valueMaps, isRemoteLogStorageSystemEnabled);
+        }
+    }
+
+    public static class MirrorNameValidator implements ConfigDef.Validator {
+        @Override
+        public void ensureValid(String name, Object value) {
+            if (value == null) {
+                throw new ConfigException(name, null);
+            }
+            String mirrorName = (String) value;
+            if (mirrorName.endsWith(".stopped") || mirrorName.endsWith(".paused")) {
+                throw new ConfigException(name, value, "Invalid value `" + name + "` for configuration " +
+                        name + ". The value must not end with a suffix of `.stopped` or `.paused`.");
+            }
+        }
+
+        @Override
+        public String toString() {
+            return "non-empty list";
         }
     }
 

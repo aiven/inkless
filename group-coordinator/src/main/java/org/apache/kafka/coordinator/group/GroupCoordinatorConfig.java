@@ -91,7 +91,7 @@ public class GroupCoordinatorConfig {
         "or this timeout is reached. This is similar to the producer request timeout. This is applied to all the writes made by the coordinator.";
 
     public static final String OFFSETS_TOPIC_PARTITIONS_CONFIG = "offsets.topic.num.partitions";
-    public static final int OFFSETS_TOPIC_PARTITIONS_DEFAULT = 3;
+    public static final int OFFSETS_TOPIC_PARTITIONS_DEFAULT = 50;
     public static final String OFFSETS_TOPIC_PARTITIONS_DOC = "The number of partitions for the offset commit topic (should not change after deployment).";
 
     public static final String OFFSETS_TOPIC_SEGMENT_BYTES_CONFIG = "offsets.topic.segment.bytes";

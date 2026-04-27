@@ -38,6 +38,6 @@
           "about": "The mirror partition state." }
       ]}
     ]},
-    { "name": "RemovedTopics", "type": "[]string", "versions": "0+", "about": "The topic names to be removed." }
+    { "name": "StoppedTopics", "type": "[]string", "versions": "0+", "about": "The topic names to be stopped." }
   ]
 }

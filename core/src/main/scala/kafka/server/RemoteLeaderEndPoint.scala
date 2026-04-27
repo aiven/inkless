@@ -243,7 +243,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
       // Use different fetch request types based on whether we're doing cross-cluster mirroring.
       val requestBuilder = if (isClusterMirror) {
         // Cross-cluster mirroring (MirrorFetcherThread): Use consumer fetch to skip ISR logic on source cluster.
-        FetchRequest.Builder.forConsumer(version, maxWait, minBytes, fetchData.toSend).isolationLevel(IsolationLevel.READ_COMMITTED)
+        FetchRequest.Builder.forConsumer(version, maxWait, minBytes, fetchData.toSend).isolationLevel(IsolationLevel.READ_UNCOMMITTED)
       } else {
         // Intra-cluster replication (ReplicaFetcherThread): Use replica fetch even when fetching to enable proper epoch validation.
         FetchRequest.Builder.forReplica(version, brokerConfig.brokerId, brokerEpochSupplier(), maxWait, minBytes, fetchData.toSend)

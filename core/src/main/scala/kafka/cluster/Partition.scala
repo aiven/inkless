@@ -798,7 +798,7 @@ class Partition(val topicPartition: TopicPartition,
 
         // don't update the leader epoch if the partition is a mirrored leader, we'll update it when receiving batches
         // from source cluster leader
-        if (getMirrorName().isEmpty || getMirrorName().endsWith(ConfigurationControlManager.REMOVED_TOPIC_SUFFIX)) {
+        if (getMirrorName().isEmpty || getMirrorName().get().endsWith(ConfigurationControlManager.STOPPED_TOPIC_SUFFIX)) {
           leaderLog.assignEpochStartOffset(partitionState.leaderEpoch, leaderEpochStartOffset)
         }
 
@@ -1419,9 +1419,10 @@ class Partition(val topicPartition: TopicPartition,
     }
   }
 
-  def getMirrorName(): String = {
-    val mirrorName = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topic)).get(TopicConfig.MIRROR_NAME_CONFIG).asInstanceOf[String]
-    if (mirrorName == null) "" else mirrorName
+  def getMirrorName(): Optional[String] = {
+    Option(metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topic)))
+      .flatMap(config => Option(config.get(TopicConfig.MIRROR_NAME_CONFIG).asInstanceOf[String]))
+      .toJava
   }
 
   private def doAppendRecordsToFollowerOrFutureReplica(
