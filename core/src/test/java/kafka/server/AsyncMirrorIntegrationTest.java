@@ -350,8 +350,6 @@ public class AsyncMirrorIntegrationTest {
                 MirrorConfig.MIRROR_TOPICS_INCLUDE_CONFIG, "orders-.*"
         ), new CreateMirrorOptions()).all().get(30, TimeUnit.SECONDS);
 
-        waitForMirror(0);
-
         // Auto-discovery should find orders-us and start replication
         waitForMirror(1);
         consumeFromCluster(destCluster, ordersTopic, 30);
@@ -420,8 +418,6 @@ public class AsyncMirrorIntegrationTest {
                 MirrorConfig.MIRROR_TOPICS_INCLUDE_CONFIG, "orders-.*",
                 MirrorConfig.MIRROR_TOPICS_EXCLUDE_CONFIG, "orders-internal"
         ), new CreateMirrorOptions()).all().get(30, TimeUnit.SECONDS);
-
-        waitForMirror(0);
 
         // Only orders-us should be discovered — orders-internal is excluded
         waitForMirror(1);
@@ -497,8 +493,6 @@ public class AsyncMirrorIntegrationTest {
                 MirrorConfig.MIRROR_TOPICS_INCLUDE_CONFIG, ".*"
         ), new CreateMirrorOptions()).all().get(30, TimeUnit.SECONDS);
 
-        waitForMirror(0);
-
         // user-events should be discovered and replicated
         waitForMirror(1);
         consumeFromCluster(destCluster, userTopic, 25);
@@ -537,7 +531,6 @@ public class AsyncMirrorIntegrationTest {
                 MirrorConfig.MIRROR_TOPICS_INCLUDE_CONFIG, "payments"
         ), new CreateMirrorOptions()).all().get(30, TimeUnit.SECONDS);
 
-        waitForMirror(0);
         waitForMirror(1);
         consumeFromCluster(destCluster, topic, 40);
     }
@@ -583,7 +576,6 @@ public class AsyncMirrorIntegrationTest {
                 MirrorConfig.MIRROR_TOPICS_INCLUDE_CONFIG, "payments,orders-.*"
         ), new CreateMirrorOptions()).all().get(30, TimeUnit.SECONDS);
 
-        waitForMirror(0);
         waitForMirror(2);
 
         consumeFromCluster(destCluster, literalTopic, 20);
@@ -636,16 +628,24 @@ public class AsyncMirrorIntegrationTest {
         consumeFromCluster(destCluster, topicA, 20);
         consumeFromCluster(destCluster, topicB, 20);
 
-        // Stop orders-eu — sets mirror.name to test-mirror.removed
+        // Stop orders-eu — sets mirror.name to test-mirror.stopped
         destAdmin.stopMirrorTopics(MIRROR_NAME, Set.of(topicB), new StopMirrorTopicsOptions())
                 .all().get(30, TimeUnit.SECONDS);
 
         waitForMirror(1);
 
-        // Produce more data — only orders-us should receive new records
+        // Produce more data to both topics — only orders-us should receive new records
         produceRecords(sourceCluster, topicA, 20, 20);
+        produceRecords(sourceCluster, topicB, 20, 20);
 
         consumeFromCluster(destCluster, topicA, 40);
+
+        // Verify orders-eu did NOT receive new data (still at 20, not 40)
+        Thread.sleep(15_000);
+        List<ConsumerRecord<String, String>> stoppedRecords = tryConsumeFromCluster(
+                destCluster, topicB, Duration.ofSeconds(5));
+        assertEquals(20, stoppedRecords.size(),
+                "Stopped topic should not have received new mirrored records");
     }
 
     /**
