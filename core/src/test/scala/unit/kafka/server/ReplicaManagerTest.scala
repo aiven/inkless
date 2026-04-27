@@ -87,7 +87,7 @@ import org.apache.kafka.server.util.timer.{MockTimer, SystemTimer}
 import org.apache.kafka.server.util.{MockScheduler, MockTime, Scheduler}
 import org.apache.kafka.storage.internals.checkpoint.LazyOffsetCheckpoints
 import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache
-import org.apache.kafka.storage.internals.log.{AppendOrigin, CleanerConfig, FetchDataInfo, LocalLog, LogAppendInfo, LogConfig, LogDirFailureChannel, LogLoader, LogOffsetMetadata, LogOffsetSnapshot, LogOffsetsListener, LogReadResult, LogSegments, OffsetResultHolder, ProducerStateManager, ProducerStateManagerConfig, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog, VerificationGuard}
+import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, CleanerConfig, FetchDataInfo, LocalLog, LogAppendInfo, LogConfig, LogDirFailureChannel, LogLoader, LogOffsetMetadata, LogOffsetSnapshot, LogOffsetsListener, LogReadResult, LogSegments, OffsetResultHolder, ProducerStateManager, ProducerStateManagerConfig, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog, VerificationGuard}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterAll, AfterEach, BeforeEach, Nested, Test}
@@ -7988,6 +7988,906 @@ class ReplicaManagerTest {
 
       verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
       verify(replicaManager, never()).fetchOffsetForTimestamp(any(), anyLong(), any(), any(), anyBoolean())
+    }
+
+    @Test
+    def testFetchOffsetEarliestUsesClassicPathWhenMigrationCompleteAndClassicHasData(): Unit = {
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      // Stub the local log so classicHasData is true (logStartOffset < classicToDisklessStartOffset).
+      val unifiedLogMock = mock(classOf[UnifiedLog])
+      when(unifiedLogMock.logStartOffset).thenReturn(0L)
+      val logManagerMock = mock(classOf[LogManager])
+      when(logManagerMock.getLog(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyBoolean()))
+        .thenReturn(Some(unifiedLogMock))
+      doReturn(logManagerMock).when(replicaManager).logManager
+
+      val resultHolder = new OffsetResultHolder(
+        Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 0L, Optional.of[Integer](0))))
+      doReturn(resultHolder).when(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(ListOffsetsRequest.EARLIEST_TIMESTAMP)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 1.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, partitionResponse.errorCode())
+      assertEquals(0L, partitionResponse.offset())
+
+      verify(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+      verify(jobMock, never()).add(any(), any())
+    }
+
+    @Test
+    def testFetchOffsetEarliestLocalAlwaysUsesClassicWhenMigrationComplete(): Unit = {
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      val resultHolder = new OffsetResultHolder(
+        Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 0L, Optional.of[Integer](0))))
+      doReturn(resultHolder).when(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 8.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, partitionResponse.errorCode())
+      assertEquals(0L, partitionResponse.offset())
+
+      verify(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+      verify(jobMock, never()).add(any(), any())
+    }
+
+    @Test
+    def testFetchOffsetLatestTieredAlwaysUsesClassicWhenMigrationComplete(): Unit = {
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      val resultHolder = new OffsetResultHolder(
+        Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 0L, Optional.of[Integer](0))))
+      doReturn(resultHolder).when(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(ListOffsetsRequest.LATEST_TIERED_TIMESTAMP)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 9.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, partitionResponse.errorCode())
+      assertEquals(0L, partitionResponse.offset())
+
+      verify(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+      verify(jobMock, never()).add(any(), any())
+    }
+
+    @Test
+    def testFetchOffsetSpecificTimestampUsesClassicPathOnMatch(): Unit = {
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      // Classic returns a real match at offset 42 for the requested timestamp.
+      val resultHolder = new OffsetResultHolder(
+        Optional.of(new FileRecords.TimestampAndOffset(123L, 42L, Optional.of[Integer](0))))
+      doReturn(resultHolder).when(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(123L)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 1.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, partitionResponse.errorCode())
+      assertEquals(42L, partitionResponse.offset())
+
+      verify(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+      verify(jobMock, never()).add(any(), any())
+    }
+
+    @Test
+    def testFetchOffsetSpecificTimestampFallsBackToDisklessOnNoMatch(): Unit = {
+      val disklessSuccess = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.of(new FileRecords.TimestampAndOffset(456L, 200L, Optional.of[Integer](1))))
+
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(disklessSuccess))
+      when(jobMock.cancelHandler()).thenReturn(new CompletableFuture[Void]())
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      // Classic returns no match (empty result, no error).
+      val emptyResultHolder = new OffsetResultHolder(Optional.empty[FileRecords.TimestampAndOffset]())
+      doReturn(emptyResultHolder).when(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(123L)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 1.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, partitionResponse.errorCode())
+      assertEquals(200L, partitionResponse.offset())
+      assertEquals(456L, partitionResponse.timestamp())
+
+      verify(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+      verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+    }
+
+    @Test
+    def testFetchOffsetSpecificTimestampPropagatesClassicError(): Unit = {
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      // Classic raises NotLeaderOrFollower (a real error). classicFetchOffset converts it to a
+      // response with errorCode = NOT_LEADER_OR_FOLLOWER which must be propagated to the client.
+      doThrow(new org.apache.kafka.common.errors.NotLeaderOrFollowerException("not leader"))
+        .when(replicaManager).fetchOffsetForTimestamp(
+          ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(123L)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 1.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, partitionResponse.errorCode())
+
+      verify(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+      verify(jobMock, never()).add(any(), any())
+    }
+
+    @Test
+    def testFetchOffsetSpecificTimestampBatchesDisklessFallbackWhenClassicRemoteSyncEmpty(): Unit = {
+      // Classic delegates to a remote/tiered lookup whose taskFuture is *already complete* by the
+      // time route() inspects it (e.g. RLM short-circuits or hits a metadata cache). withFallback's
+      // thenCompose then runs the fallback factory synchronously on the request thread, before
+      // ReplicaManager.fetchOffset has called job.start(), so the diskless fallback can be added
+      // to the existing per-request job and batched with the rest of the request — no fresh job
+      // and no extra control-plane RPC are needed.
+      val emptyClassicRemoteResult = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.empty())
+      val classicRemoteTaskFuture =
+        CompletableFuture.completedFuture[OffsetResultHolder.FileRecordsOrError](emptyClassicRemoteResult)
+      val classicRemoteJobFuture = new CompletableFuture[Void]()
+      val classicRemoteHolder = new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+        classicRemoteJobFuture, classicRemoteTaskFuture)
+
+      val disklessSuccess = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.of(new FileRecords.TimestampAndOffset(456L, 200L, Optional.of[Integer](1))))
+
+      val batchJobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(batchJobMock.mustHandle(any())).thenReturn(true)
+      when(batchJobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(disklessSuccess))
+      when(batchJobMock.cancelHandler()).thenReturn(new CompletableFuture[Void]())
+      doNothing().when(batchJobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(batchJobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      // Classic returns a holder pointing at a pre-completed async remote-storage lookup.
+      val resultHolder = new OffsetResultHolder(
+        Optional.empty[FileRecords.TimestampAndOffset](),
+        Optional.of(classicRemoteHolder))
+      doReturn(resultHolder).when(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(123L)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 7.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, partitionResponse.errorCode())
+      assertEquals(200L, partitionResponse.offset())
+      assertEquals(456L, partitionResponse.timestamp())
+
+      verify(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+      // The diskless fallback was batched into the per-request job rather than into a fresh one;
+      // exactly one job (the outer batch) was created and started exactly once.
+      verify(batchJobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+      verify(batchJobMock).start()
+    }
+
+    @Test
+    def testFetchOffsetSpecificTimestampFallsBackToDisklessOnNewJobWhenClassicRemoteAsync(): Unit = {
+      // Classic delegates to an async remote/tiered lookup whose taskFuture is *not yet complete*
+      // when route() inspects it. withFallback's thenCompose lambda will therefore fire later, on
+      // the thread that completes the classic future, by which point the per-request job has
+      // already been started by ReplicaManager.fetchOffset. The diskless fallback must use a
+      // fresh, independently-started job.
+      val classicRemoteTaskFuture = new CompletableFuture[OffsetResultHolder.FileRecordsOrError]()
+      val classicRemoteJobFuture = new CompletableFuture[Void]()
+      val classicRemoteHolder = new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+        classicRemoteJobFuture, classicRemoteTaskFuture)
+
+      val disklessSuccess = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.of(new FileRecords.TimestampAndOffset(456L, 200L, Optional.of[Integer](1))))
+
+      val batchJobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(batchJobMock.mustHandle(any())).thenReturn(true)
+      doNothing().when(batchJobMock).start()
+
+      // Fallback job created on demand once the async classic future completes empty.
+      val fallbackJobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(fallbackJobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(disklessSuccess))
+      when(fallbackJobMock.cancelHandler()).thenReturn(new CompletableFuture[Void]())
+      doNothing().when(fallbackJobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          // First createJob() is the outer batch; second is the diskless fallback created when
+          // the async classic remote future eventually completes empty.
+          when(handlerMock.createJob()).thenReturn(batchJobMock, fallbackJobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      val resultHolder = new OffsetResultHolder(
+        Optional.empty[FileRecords.TimestampAndOffset](),
+        Optional.of(classicRemoteHolder))
+      doReturn(resultHolder).when(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(123L)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 7.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      // Classic future hasn't completed yet → response is parked in the purgatory and the
+      // fallback hasn't fired. The outer batch job was started; the fallback job has not been
+      // created yet.
+      assertNull(responseTopics)
+      verify(batchJobMock, never()).add(any(), any())
+      verify(batchJobMock).start()
+      verify(fallbackJobMock, never()).add(any(), any())
+      verify(fallbackJobMock, never()).start()
+
+      // Now complete the classic remote future as empty. This drives the fallback chain
+      // synchronously on this thread, which creates and starts the fresh fallback job and
+      // ultimately fires the response callback via the purgatory's checkAndComplete hook.
+      val emptyClassicRemoteResult = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.empty())
+      classicRemoteTaskFuture.complete(emptyClassicRemoteResult)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, partitionResponse.errorCode())
+      assertEquals(200L, partitionResponse.offset())
+      assertEquals(456L, partitionResponse.timestamp())
+
+      verify(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+      // The outer batch job was never used to add a partition because classic returned async.
+      verify(batchJobMock, never()).add(any(), any())
+      // The diskless fallback was issued on a fresh job created on demand.
+      verify(fallbackJobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+      verify(fallbackJobMock).start()
+    }
+
+    @Test
+    def testFetchOffsetSpecificTimestampForwardsClassicRemoteHit(): Unit = {
+      // Classic delegates to an async (remote/tiered) lookup that resolves with a real
+      // timestamp/offset hit. The wrapper must forward it as-is and never touch diskless.
+      val classicRemoteHit = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.of(new FileRecords.TimestampAndOffset(789L, 42L, Optional.of[Integer](3))))
+      val classicRemoteTaskFuture =
+        CompletableFuture.completedFuture[OffsetResultHolder.FileRecordsOrError](classicRemoteHit)
+      val classicRemoteJobFuture = new CompletableFuture[Void]()
+      val classicRemoteHolder = new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+        classicRemoteJobFuture, classicRemoteTaskFuture)
+
+      val batchJobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(batchJobMock.mustHandle(any())).thenReturn(true)
+      doNothing().when(batchJobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(batchJobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      val resultHolder = new OffsetResultHolder(
+        Optional.empty[FileRecords.TimestampAndOffset](),
+        Optional.of(classicRemoteHolder))
+      doReturn(resultHolder).when(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(123L)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 7.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, partitionResponse.errorCode())
+      assertEquals(42L, partitionResponse.offset())
+      assertEquals(789L, partitionResponse.timestamp())
+
+      verify(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+      // No diskless fallback should fire when classic remote answered authoritatively.
+      verify(batchJobMock, never()).add(any(), any())
+    }
+
+    @Test
+    def testFetchOffsetMaxTimestampFallsBackToClassicWhenDisklessEmpty(): Unit = {
+      // Diskless reports a genuine empty result (no exception, no offset) → fall back to classic.
+      val emptyDisklessResult = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.empty())
+
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(emptyDisklessResult))
+      when(jobMock.cancelHandler()).thenReturn(new CompletableFuture[Void]())
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      // Classic returns a successful timestamp/offset that the helper substitutes into the
+      // wrapped diskless future before completing the purgatory.
+      val resultHolder = new OffsetResultHolder(
+        Optional.of(new FileRecords.TimestampAndOffset(123L, 7L, Optional.of[Integer](2))))
+      doReturn(resultHolder).when(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(ListOffsetsRequest.MAX_TIMESTAMP)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 7.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, partitionResponse.errorCode())
+      assertEquals(7L, partitionResponse.offset())
+      assertEquals(123L, partitionResponse.timestamp())
+
+      verify(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+      verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+    }
+
+    @Test
+    def testFetchOffsetFallsBackToClassicRemoteStorageWhenDisklessEmpty(): Unit = {
+      // Diskless reports a genuine empty result. Classic delegates to an async remote-storage lookup
+      // (e.g. the matching offset has been tiered). The wrapper must chain the remote future into
+      // the wrapped future so the offset is surfaced to the client.
+      val emptyDisklessResult = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.empty())
+
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(emptyDisklessResult))
+      when(jobMock.cancelHandler()).thenReturn(new CompletableFuture[Void]())
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      // Classic returns a holder that points at an async remote-storage task already resolved with a
+      // successful timestamp/offset; the wrapper must chain it through.
+      val remoteResult = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.of(new FileRecords.TimestampAndOffset(789L, 42L, Optional.of[Integer](3))))
+      val remoteTaskFuture = CompletableFuture.completedFuture[OffsetResultHolder.FileRecordsOrError](remoteResult)
+      val remoteJobFuture = new CompletableFuture[Void]()
+      val remoteHolder = new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+        remoteJobFuture, remoteTaskFuture)
+      val resultHolder = new OffsetResultHolder(
+        Optional.empty[FileRecords.TimestampAndOffset](),
+        Optional.of(remoteHolder))
+      doReturn(resultHolder).when(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(ListOffsetsRequest.MAX_TIMESTAMP)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 7.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, partitionResponse.errorCode())
+      assertEquals(42L, partitionResponse.offset())
+      assertEquals(789L, partitionResponse.timestamp())
+
+      verify(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+      verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+    }
+
+    @Test
+    def testFetchOffsetMaxTimestampClassicRemoteEmptyWithMaybeOffsetsErrorSurfacesError(): Unit = {
+      // Diskless empty → fall back to classic. Classic delegates to an async remote-storage lookup
+      // that completes empty AND carries a pending maybeOffsetsError. The wrapper must apply the
+      // same semantics as DelayedRemoteListOffsets and surface the version-mapped error in the
+      // response, even though the classic metadata is no longer attached to the wrapped status.
+      val emptyDisklessResult = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(), Optional.empty())
+      val emptyClassicRemoteResult = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(), Optional.empty())
+
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(emptyDisklessResult))
+      when(jobMock.cancelHandler()).thenReturn(new CompletableFuture[Void]())
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      val classicRemoteTaskFuture =
+        CompletableFuture.completedFuture[OffsetResultHolder.FileRecordsOrError](emptyClassicRemoteResult)
+      val classicRemoteHolder = new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+        new CompletableFuture[Void](), classicRemoteTaskFuture)
+
+      val pendingError = new org.apache.kafka.common.errors.OffsetNotAvailableException("retry later")
+      val resultHolder = new OffsetResultHolder(
+        Optional.empty[FileRecords.TimestampAndOffset](),
+        Optional.of(classicRemoteHolder))
+      resultHolder.maybeOffsetsError(Optional.of(pendingError))
+      doReturn(resultHolder).when(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(ListOffsetsRequest.MAX_TIMESTAMP)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 7.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.OFFSET_NOT_AVAILABLE.code, partitionResponse.errorCode())
+    }
+
+    @Test
+    def testFetchOffsetMaxTimestampClassicRemoteHitBeyondLastFetchableOffsetSurfacesError(): Unit = {
+      // Diskless empty → fall back to classic. Classic returns a remote async lookup with a
+      // lastFetchableOffset clamp AND a pending maybeOffsetsError. The remote completes with a hit
+      // beyond the clamp, which must be surfaced as the pending error rather than as the offset.
+      val emptyDisklessResult = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(), Optional.empty())
+      // Classic remote returns a hit at offset 100, but lastFetchableOffset is 50 → clamped.
+      val classicRemoteHit = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.of(new FileRecords.TimestampAndOffset(123L, 100L, Optional.of[Integer](2))))
+
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(emptyDisklessResult))
+      when(jobMock.cancelHandler()).thenReturn(new CompletableFuture[Void]())
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      val classicRemoteTaskFuture =
+        CompletableFuture.completedFuture[OffsetResultHolder.FileRecordsOrError](classicRemoteHit)
+      val classicRemoteHolder = new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+        new CompletableFuture[Void](), classicRemoteTaskFuture)
+
+      val pendingError = new org.apache.kafka.common.errors.OffsetNotAvailableException("not yet")
+      val resultHolder = new OffsetResultHolder(
+        Optional.empty[FileRecords.TimestampAndOffset](),
+        Optional.of(classicRemoteHolder))
+      resultHolder.lastFetchableOffset(Optional.of(50L))
+      resultHolder.maybeOffsetsError(Optional.of(pendingError))
+      doReturn(resultHolder).when(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(ListOffsetsRequest.MAX_TIMESTAMP)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 7.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.OFFSET_NOT_AVAILABLE.code, partitionResponse.errorCode())
+    }
+
+    @Test
+    def testFetchOffsetSpecificTimestampClassicRemoteHitBeyondLastFetchableOffsetFallsBackToDiskless(): Unit = {
+      // Specific timestamp: classic delegates to an async remote-storage lookup with a
+      // lastFetchableOffset clamp but no pending maybeOffsetsError. The remote returns a hit
+      // beyond the clamp, which translates to "no match" — and the wrapper must then fall back to
+      // diskless instead of returning the clamped offset. The classic remote future is already
+      // complete at routing time, so the diskless fallback batches into the per-request job
+      // rather than creating a fresh one.
+      val disklessSuccess = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.of(new FileRecords.TimestampAndOffset(456L, 200L, Optional.of[Integer](1))))
+      // Classic remote returns a hit at offset 100, but lastFetchableOffset is 50 → clamped.
+      val classicRemoteHit = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.of(new FileRecords.TimestampAndOffset(123L, 100L, Optional.of[Integer](2))))
+
+      val batchJobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(batchJobMock.mustHandle(any())).thenReturn(true)
+      when(batchJobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(disklessSuccess))
+      when(batchJobMock.cancelHandler()).thenReturn(new CompletableFuture[Void]())
+      doNothing().when(batchJobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(batchJobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true))
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      val classicRemoteTaskFuture =
+        CompletableFuture.completedFuture[OffsetResultHolder.FileRecordsOrError](classicRemoteHit)
+      val classicRemoteHolder = new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+        new CompletableFuture[Void](), classicRemoteTaskFuture)
+
+      val resultHolder = new OffsetResultHolder(
+        Optional.empty[FileRecords.TimestampAndOffset](),
+        Optional.of(classicRemoteHolder))
+      resultHolder.lastFetchableOffset(Optional.of(50L))
+      doReturn(resultHolder).when(replicaManager).fetchOffsetForTimestamp(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
+
+      val topics = Seq(new ListOffsetsTopic()
+        .setName(disklessTopicPartition.topic())
+        .setPartitions(util.List.of(new ListOffsetsPartition()
+          .setPartitionIndex(disklessTopicPartition.partition())
+          .setTimestamp(123L)
+          .setCurrentLeaderEpoch(0))))
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      val callback: Consumer[util.Collection[ListOffsetsTopicResponse]] = (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r
+
+      replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 7.toShort,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        callback)
+
+      assertNotNull(responseTopics)
+      val partitionResponse = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, partitionResponse.errorCode())
+      // The diskless fallback's hit must be surfaced (offset 200 / timestamp 456), not the
+      // clamped classic remote hit (offset 100 / timestamp 123).
+      assertEquals(200L, partitionResponse.offset())
+      assertEquals(456L, partitionResponse.timestamp())
+      verify(batchJobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+      verify(batchJobMock).start()
     }
 
     @Test
