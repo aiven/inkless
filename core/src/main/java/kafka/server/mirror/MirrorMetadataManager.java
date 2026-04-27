@@ -79,6 +79,7 @@ import org.apache.kafka.common.requests.ReadMirrorStatesRequest;
 import org.apache.kafka.common.requests.ReadMirrorStatesResponse;
 import org.apache.kafka.common.requests.RequestContext;
 import org.apache.kafka.common.requests.RequestHeader;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
 import org.apache.kafka.common.requests.StartMirrorTopicsRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesResponse;
@@ -1549,23 +1550,28 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         Set<String> configuredTopics = getConfiguredTopics(mirrorName, true);
         final Pattern topicsExcludePattern = mirrorConfig.topicsExcludePattern();
 
-        Set<String> newTopics = metadataResponse.topicMetadata().stream()
+        List<StartMirrorTopicsRequestData.TopicData> newTopics = metadataResponse.topicMetadata().stream()
                 .filter(tm -> tm.error() == Errors.NONE)
-                .map(MetadataResponse.TopicMetadata::topic)
-                .filter(topic -> topicsIncludePattern.matcher(topic).matches())
-                .filter(topic -> topicsExcludePattern == null || !topicsExcludePattern.matcher(topic).matches())
-                .filter(topic -> !configuredTopics.contains(topic))
-                .collect(Collectors.toSet());
+                .filter(tm -> topicsIncludePattern.matcher(tm.topic()).matches())
+                .filter(tm -> topicsExcludePattern == null || !topicsExcludePattern.matcher(tm.topic()).matches())
+                .filter(tm -> !configuredTopics.contains(tm.topic()))
+                .map(tm -> new StartMirrorTopicsRequestData.TopicData()
+                        .setTopicName(tm.topic())
+                        .setTopicId(tm.topicId())
+                        .setNumPartitions(tm.partitionMetadata().size()))
+                .toList();
 
         if (newTopics.isEmpty()) {
             return;
         }
 
         log.info("Discovered {} new topic(s) matching mirror.topics.include pattern for mirror {}: {}",
-                newTopics.size(), mirrorName, newTopics);
+                newTopics.size(), mirrorName, newTopics.stream().map(StartMirrorTopicsRequestData.TopicData::topicName).toList());
 
+        // TODO: creation failures from auto-discovery are silently lost here (fire-and-forget).
+        //  Add per-topic status tracking so describeMirror can surface failed topics to users.
         channelManager.sendRequest(
-                new StartMirrorTopicsRequest.Builder(mirrorName, newTopics),
+                new StartMirrorTopicsRequest.Builder(mirrorName, newTopics, List.of(), List.of()),
                 new TimeoutHandler(log)
         );
     }
@@ -1579,21 +1585,29 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     /** Returns the set of topic names configured for the given mirror, excluding paused topics. */
     Set<String> getConfiguredTopics(String mirrorName) {
-        return getConfiguredTopics(mirrorName, false);
+        return getConfiguredTopics(mirrorName, false, true);
     }
 
-    /** Returns the set of topic names configured for the given mirror even if not created yet by using metadataImage, optionally including paused topics. */
     Set<String> getConfiguredTopics(String mirrorName, boolean includePaused) {
+        return getConfiguredTopics(mirrorName, includePaused, true);
+    }
+
+    Set<String> getConfiguredTopics(String mirrorName, boolean includePaused, boolean includeRemoved) {
         return metadataImage.configs().resourceData().entrySet().stream()
                 .filter(configEntry -> {
                     if (configEntry.getKey().type() != ConfigResource.Type.TOPIC) return false;
                     String topicMirrorName = configEntry.getValue().data().get(TopicConfig.MIRROR_NAME_CONFIG);
                     if (topicMirrorName == null) return false;
+                    if (!includeRemoved && topicMirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) return false;
                     if (!includePaused && topicMirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) return false;
                     return mirrorName.equals(MirrorUtils.originalMirrorName(topicMirrorName));
                 })
                 .map(configEntry -> configEntry.getKey().name())
                 .collect(Collectors.toSet());
+    }
+
+    int getActiveTopicCount(String mirrorName) {
+        return getConfiguredTopics(mirrorName, false, false).size();
     }
 
     String getSourceBootstrap(String mirrorName) {

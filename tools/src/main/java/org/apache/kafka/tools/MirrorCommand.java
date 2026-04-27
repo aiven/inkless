@@ -22,7 +22,7 @@ import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateMirrorOptions;
 import org.apache.kafka.clients.admin.CreateMirrorResult;
-import org.apache.kafka.clients.admin.CreateTopicsOptions;
+
 import org.apache.kafka.clients.admin.DeleteMirrorOptions;
 import org.apache.kafka.clients.admin.DeleteMirrorResult;
 import org.apache.kafka.clients.admin.DescribeMirrorsOptions;
@@ -31,14 +31,16 @@ import org.apache.kafka.clients.admin.StopMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.ListMirrorsResult;
 import org.apache.kafka.clients.admin.MirrorDescription;
 import org.apache.kafka.clients.admin.MirrorListing;
-import org.apache.kafka.clients.admin.NewTopic;
+
 import org.apache.kafka.clients.admin.PauseMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.PauseMirrorTopicsResult;
 import org.apache.kafka.clients.admin.ResumeMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.ResumeMirrorTopicsResult;
 import org.apache.kafka.clients.admin.StartMirrorTopicsOptions;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
+
 import org.apache.kafka.common.config.ConfigResource;
-import org.apache.kafka.common.errors.TopicExistsException;
+
 import org.apache.kafka.common.utils.Exit;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.config.MirrorConfig;
@@ -162,31 +164,40 @@ public abstract class MirrorCommand {
             var mirrorConfigEntries = describeMirrorConfig(mirrorName);
             Properties sourceConfig = toProperties(mirrorConfigEntries);
 
-            // Resolve currently matching topics from source and pre-create on destination
-            Set<String> matchingTopics;
+            // Resolve currently matching topics from source with metadata
+            Map<String, StartMirrorTopicsRequestData.TopicData> topicMetadata;
+            Set<String> matchingTopicNames;
             try (Admin sourceAdmin = Admin.create(sourceConfig)) {
                 Set<String> allSourceTopics = sourceAdmin.listTopics().names().get();
                 Pattern includePattern = MirrorConfig.compilePatternList(topicPatterns);
                 Pattern excludePattern = MirrorConfig.compilePatternList(excludePatterns);
-                matchingTopics = allSourceTopics.stream()
+                matchingTopicNames = allSourceTopics.stream()
                         .filter(t -> includePattern != null && includePattern.matcher(t).matches())
                         .filter(t -> excludePattern == null || !excludePattern.matcher(t).matches())
                         .collect(Collectors.toSet());
 
-                if (!matchingTopics.isEmpty()) {
-                    preCreateTopics(sourceAdmin, matchingTopics);
+                if (matchingTopicNames.isEmpty()) {
+                    topicMetadata = Map.of();
+                } else {
+                    var descriptions = sourceAdmin.describeTopics(matchingTopicNames).allTopicNames().get();
+                    topicMetadata = new HashMap<>();
+                    descriptions.forEach((name, desc) ->
+                            topicMetadata.put(name, new StartMirrorTopicsRequestData.TopicData()
+                                    .setTopicName(name)
+                                    .setTopicId(desc.topicId())
+                                    .setNumPartitions(desc.partitions().size())));
                 }
             }
 
-            if (!matchingTopics.isEmpty()) {
-                Thread.sleep(1000);
-                adminClient.startMirrorTopics(mirrorName, matchingTopics,
+            if (!matchingTopicNames.isEmpty()) {
+                adminClient.startMirrorTopics(mirrorName, matchingTopicNames,
                         new StartMirrorTopicsOptions()
                                 .includePatterns(topicPatterns)
-                                .excludePatterns(excludePatterns))
+                                .excludePatterns(excludePatterns)
+                                .topicMetadata(topicMetadata))
                         .all().get();
                 System.out.printf("Started %d mirror topic(s) in mirror %s: %s%n",
-                        matchingTopics.size(), mirrorName, matchingTopics);
+                        matchingTopicNames.size(), mirrorName, matchingTopicNames);
             }
         }
 
@@ -220,28 +231,6 @@ public abstract class MirrorCommand {
                 props.put(entry.name(), entry.value());
             }
             return props;
-        }
-
-        private void preCreateTopics(Admin sourceAdmin, Set<String> topics) throws Exception {
-            var descriptions = sourceAdmin.describeTopics(topics).allTopicNames().get();
-            Set<NewTopic> newTopics = new HashSet<>();
-            for (var desc : descriptions.entrySet()) {
-                newTopics.add(new NewTopic(desc.getKey(),
-                        Optional.of(desc.getValue().partitions().size()),
-                        Optional.empty(),
-                        Optional.of(desc.getValue().topicId().toString())));
-            }
-            var createResult = adminClient.createTopics(newTopics,
-                    new CreateTopicsOptions().retryOnQuotaViolation(false));
-            for (String topic : topics) {
-                try {
-                    createResult.values().get(topic).get();
-                } catch (ExecutionException e) {
-                    if (!(e.getCause() instanceof TopicExistsException)) {
-                        System.err.printf("Failed to create topic %s: %s%n", topic, e.getCause().getMessage());
-                    }
-                }
-            }
         }
 
         private void deleteMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {

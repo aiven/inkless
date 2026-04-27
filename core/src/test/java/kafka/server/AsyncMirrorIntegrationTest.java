@@ -631,7 +631,6 @@ public class AsyncMirrorIntegrationTest {
                 MirrorConfig.MIRROR_TOPICS_INCLUDE_CONFIG, "orders-.*"
         ), new CreateMirrorOptions()).all().get(30, TimeUnit.SECONDS);
 
-        waitForMirror(0);
         waitForMirror(2);
 
         consumeFromCluster(destCluster, topicA, 20);
@@ -640,6 +639,8 @@ public class AsyncMirrorIntegrationTest {
         // Stop orders-eu — sets mirror.name to test-mirror.removed
         destAdmin.stopMirrorTopics(MIRROR_NAME, Set.of(topicB), new StopMirrorTopicsOptions())
                 .all().get(30, TimeUnit.SECONDS);
+
+        waitForMirror(1);
 
         // Produce more data — only orders-us should receive new records
         produceRecords(sourceCluster, topicA, 20, 20);

@@ -23,6 +23,7 @@ import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
 
+import java.util.List;
 import java.util.Set;
 
 public class StartMirrorTopicsRequest extends AbstractRequest {
@@ -41,6 +42,21 @@ public class StartMirrorTopicsRequest extends AbstractRequest {
             StartMirrorTopicsRequestData data = new StartMirrorTopicsRequestData();
             data.setMirrorName(mirrorName);
             topics.forEach(topic -> data.topics().add(new StartMirrorTopicsRequestData.TopicData().setTopicName(topic)));
+            this.data = data;
+        }
+
+        /**
+         * V1 constructor: includes topic metadata and include/exclude patterns
+         * for atomic topic creation and config update in the controller.
+         */
+        public Builder(String mirrorName, List<StartMirrorTopicsRequestData.TopicData> topics,
+                       List<String> includePatterns, List<String> excludePatterns) {
+            super(ApiKeys.START_MIRROR_TOPICS, (short) 1, (short) 1);
+            StartMirrorTopicsRequestData data = new StartMirrorTopicsRequestData();
+            data.setMirrorName(mirrorName);
+            topics.forEach(topic -> data.topics().add(topic));
+            data.setIncludePatterns(includePatterns);
+            data.setExcludePatterns(excludePatterns);
             this.data = data;
         }
 

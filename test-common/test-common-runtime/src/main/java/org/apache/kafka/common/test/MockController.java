@@ -58,6 +58,7 @@ import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
 import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
 import org.apache.kafka.common.message.StopMirrorTopicsResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
@@ -123,7 +124,8 @@ public class MockController implements Controller {
     public CompletableFuture<StopMirrorTopicsResponseData> stopMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
-            Set<String> topics) {
+            Set<String> topics,
+            List<String> patterns) {
         throw new UnsupportedOperationException();
     }
 
@@ -131,7 +133,9 @@ public class MockController implements Controller {
     public CompletableFuture<StartMirrorTopicsResponseData> startMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
-            Set<String> topics
+            List<StartMirrorTopicsRequestData.TopicData> topics,
+            List<String> includePatterns,
+            List<String> excludePatterns
     ) {
         throw new UnsupportedOperationException();
     }

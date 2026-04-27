@@ -266,6 +266,8 @@ import org.apache.kafka.common.requests.RenewDelegationTokenRequest;
 import org.apache.kafka.common.requests.RenewDelegationTokenResponse;
 import org.apache.kafka.common.requests.ResumeMirrorTopicsRequest;
 import org.apache.kafka.common.requests.ResumeMirrorTopicsResponse;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StopMirrorTopicsRequestData;
 import org.apache.kafka.common.requests.StartMirrorTopicsRequest;
 import org.apache.kafka.common.requests.StartMirrorTopicsResponse;
 import org.apache.kafka.common.requests.StopMirrorTopicsRequest;
@@ -302,7 +304,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -4922,14 +4923,8 @@ public class KafkaAdminClient extends AdminClient {
     public StartMirrorTopicsResult startMirrorTopics(String mirrorName, Set<String> topics, StartMirrorTopicsOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
 
-        if (!options.includePatterns().isEmpty() || !options.excludePatterns().isEmpty()) {
-            try {
-                updateMirrorTopicsConfig(mirrorName, options.includePatterns(), options.excludePatterns(), options.timeoutMs());
-            } catch (Exception e) {
-                future.completeExceptionally(e);
-                return new StartMirrorTopicsResult(future);
-            }
-        }
+        validateRegexPatterns(options.includePatterns());
+        validateRegexPatterns(options.excludePatterns());
 
         final long now = time.milliseconds();
         final Call call = new Call("startMirrorTopics", calcDeadlineMs(now, options.timeoutMs()),
@@ -4937,7 +4932,18 @@ public class KafkaAdminClient extends AdminClient {
 
             @Override
             StartMirrorTopicsRequest.Builder createRequest(int timeoutMs) {
-                return new StartMirrorTopicsRequest.Builder(mirrorName, topics);
+                Map<String, StartMirrorTopicsRequestData.TopicData> metadata = options.topicMetadata();
+                List<StartMirrorTopicsRequestData.TopicData> topicData = topics.stream()
+                        .map(t -> {
+                            StartMirrorTopicsRequestData.TopicData existing = metadata.get(t);
+                            if (existing != null) {
+                                return existing;
+                            }
+                            return new StartMirrorTopicsRequestData.TopicData().setTopicName(t);
+                        })
+                        .collect(Collectors.toList());
+                return new StartMirrorTopicsRequest.Builder(mirrorName, topicData,
+                        options.includePatterns(), options.excludePatterns());
             }
 
             @Override
@@ -4971,14 +4977,7 @@ public class KafkaAdminClient extends AdminClient {
     public StopMirrorTopicsResult stopMirrorTopics(String mirrorName, Set<String> topics, StopMirrorTopicsOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
 
-        if (!options.patterns().isEmpty()) {
-            try {
-                updateMirrorTopicsConfigForStop(mirrorName, options.patterns(), options.timeoutMs());
-            } catch (Exception e) {
-                future.completeExceptionally(e);
-                return new StopMirrorTopicsResult(future);
-            }
-        }
+        validateRegexPatterns(options.patterns());
 
         final long now = time.milliseconds();
         final Call call = new Call("stopMirrorTopics", calcDeadlineMs(now, options.timeoutMs()),
@@ -4986,7 +4985,11 @@ public class KafkaAdminClient extends AdminClient {
 
             @Override
             StopMirrorTopicsRequest.Builder createRequest(int timeoutMs) {
-                return new StopMirrorTopicsRequest.Builder(mirrorName, topics);
+                StopMirrorTopicsRequestData data = new StopMirrorTopicsRequestData();
+                data.setMirrorName(mirrorName);
+                topics.forEach(t -> data.topics().add(new StopMirrorTopicsRequestData.TopicData().setTopicName(t)));
+                data.setPatterns(options.patterns());
+                return new StopMirrorTopicsRequest.Builder(data);
             }
 
             @Override
@@ -5014,68 +5017,6 @@ public class KafkaAdminClient extends AdminClient {
         };
         runnable.call(call, now);
         return new StopMirrorTopicsResult(future);
-    }
-
-    private void updateMirrorTopicsConfig(String mirrorName, List<String> includePatterns,
-                                          List<String> excludePatterns, Integer timeoutMs) throws Exception {
-        validateRegexPatterns(includePatterns);
-        validateRegexPatterns(excludePatterns);
-        long effectiveTimeoutMs = timeoutMs != null ? timeoutMs : defaultApiTimeoutMs;
-        ConfigResource mirrorResource = new ConfigResource(ConfigResource.Type.MIRROR, mirrorName);
-        var configResult = describeConfigs(List.of(mirrorResource)).all().get(effectiveTimeoutMs, TimeUnit.MILLISECONDS);
-        var mirrorConfig = configResult.get(mirrorResource);
-
-        Set<String> include = readConfigSet(mirrorConfig, "mirror.topics.include");
-        Set<String> exclude = readConfigSet(mirrorConfig, "mirror.topics.exclude");
-
-        for (String pattern : includePatterns) {
-            include.add(pattern);
-            exclude.remove(pattern);
-        }
-        for (String pattern : excludePatterns) {
-            exclude.add(pattern);
-            include.remove(pattern);
-        }
-
-        List<AlterConfigOp> ops = List.of(
-                new AlterConfigOp(new ConfigEntry("mirror.topics.include", String.join(",", include)), AlterConfigOp.OpType.SET),
-                new AlterConfigOp(new ConfigEntry("mirror.topics.exclude", String.join(",", exclude)), AlterConfigOp.OpType.SET));
-        incrementalAlterConfigs(Map.of(mirrorResource, ops)).all().get(effectiveTimeoutMs, TimeUnit.MILLISECONDS);
-    }
-
-    private void updateMirrorTopicsConfigForStop(String mirrorName, List<String> patterns, Integer timeoutMs) throws Exception {
-        validateRegexPatterns(patterns);
-        long effectiveTimeoutMs = timeoutMs != null ? timeoutMs : defaultApiTimeoutMs;
-        ConfigResource mirrorResource = new ConfigResource(ConfigResource.Type.MIRROR, mirrorName);
-        var configResult = describeConfigs(List.of(mirrorResource)).all().get(effectiveTimeoutMs, TimeUnit.MILLISECONDS);
-        var mirrorConfig = configResult.get(mirrorResource);
-
-        Set<String> include = readConfigSet(mirrorConfig, "mirror.topics.include");
-        Set<String> exclude = readConfigSet(mirrorConfig, "mirror.topics.exclude");
-
-        for (String pattern : patterns) {
-            if (include.contains(pattern)) {
-                include.remove(pattern);
-            } else {
-                exclude.add(pattern);
-            }
-        }
-
-        List<AlterConfigOp> ops = List.of(
-                new AlterConfigOp(new ConfigEntry("mirror.topics.include", String.join(",", include)), AlterConfigOp.OpType.SET),
-                new AlterConfigOp(new ConfigEntry("mirror.topics.exclude", String.join(",", exclude)), AlterConfigOp.OpType.SET));
-        incrementalAlterConfigs(Map.of(mirrorResource, ops)).all().get(effectiveTimeoutMs, TimeUnit.MILLISECONDS);
-    }
-
-    private static Set<String> readConfigSet(Config config, String key) {
-        ConfigEntry entry = config.get(key);
-        if (entry == null || entry.value() == null || entry.value().isEmpty()) {
-            return new LinkedHashSet<>();
-        }
-        return Arrays.stream(entry.value().split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private static void validateRegexPatterns(List<String> patterns) {

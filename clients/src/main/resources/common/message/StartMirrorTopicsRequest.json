@@ -19,7 +19,8 @@
   "listeners": ["broker", "controller"],
   "name": "StartMirrorTopicsRequest",
   // Version 0 is the initial version.
-  "validVersions": "0",
+  // Version 1 adds NumPartitions to TopicData and IncludePatterns/ExcludePatterns for atomic topic creation and config update.
+  "validVersions": "0-1",
   "flexibleVersions": "0+",
   "fields": [
     { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName",
@@ -28,7 +29,13 @@
       "fields": [
         { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
         { "name": "TopicName", "type": "string", "versions": "0+", "mapKey": true, "entityType": "topicName",
-          "about": "The topic name." }
-      ]}
+          "about": "The topic name." },
+        { "name": "NumPartitions", "type": "int32", "versions": "1+",
+          "about": "The number of partitions for the topic. Must match the source topic." }
+      ]},
+    { "name": "IncludePatterns", "type": "[]string", "versions": "1+",
+      "about": "Regex patterns to add to mirror.topics.include." },
+    { "name": "ExcludePatterns", "type": "[]string", "versions": "1+",
+      "about": "Regex patterns to add to mirror.topics.exclude." }
   ]
 }

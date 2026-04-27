@@ -264,17 +264,17 @@ class ControllerApis(
       throw new MirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!MirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
-    val topics: util.Set[String] = new util.HashSet[String]()
-    startMirrorTopicsRequest.data().topics().forEach( topic => {
-        topics.add(topic.topicName())
-    })
-    val unauthorizedTopics = topics.asScala.filterNot(topic =>
-      authHelper.authorize(request.context, ALTER_CONFIGS, TOPIC, topic, logIfDenied = false))
+    val topics = startMirrorTopicsRequest.data().topics()
+    val unauthorizedTopics = topics.asScala.map(_.topicName()).filterNot(topic =>
+      authHelper.authorize(request.context, ALTER_CONFIGS, TOPIC, topic, logIfDenied = false)).toSet
     if (unauthorizedTopics.nonEmpty)
       throw new TopicAuthorizationException(unauthorizedTopics.asJava)
+    val includePatterns = startMirrorTopicsRequest.data().includePatterns()
+    val excludePatterns = startMirrorTopicsRequest.data().excludePatterns()
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    controller.startMirrorTopics(context, mirrorName, topics)
+    controller.startMirrorTopics(context, mirrorName, topics.asScala.toList.asJava,
+        includePatterns, excludePatterns)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
@@ -302,9 +302,10 @@ class ControllerApis(
       authHelper.authorize(request.context, ALTER_CONFIGS, TOPIC, topic, logIfDenied = false))
     if (unauthorizedTopics.nonEmpty)
       throw new TopicAuthorizationException(unauthorizedTopics.asJava)
+    val patterns = stopMirrorTopicsRequest.data().patterns()
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    controller.stopMirrorTopics(context, mirrorName, topics)
+    controller.stopMirrorTopics(context, mirrorName, topics, patterns)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)

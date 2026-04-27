@@ -20,6 +20,7 @@ package org.apache.kafka.controller;
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.FeatureUpdate;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
@@ -29,6 +30,7 @@ import org.apache.kafka.common.message.CreateMirrorResponseData;
 import org.apache.kafka.common.message.DeleteMirrorResponseData;
 import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
 import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
 import org.apache.kafka.common.message.StopMirrorTopicsResponseData;
 import org.apache.kafka.common.metadata.ClearElrRecord;
@@ -52,6 +54,7 @@ import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -59,6 +62,7 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.APPEND;
@@ -225,16 +229,28 @@ public class ConfigurationControlManager {
         return ControllerResult.atomicOf(outputRecords, outputResults);
     }
 
-    ControllerResult<StopMirrorTopicsResponseData> stopMirrorTopics(String mirrorName, Set<String> topics) {
+    ControllerResult<StopMirrorTopicsResponseData> stopMirrorTopics(String mirrorName, Set<String> topics, List<String> patterns) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         StopMirrorTopicsResponseData data = new StopMirrorTopicsResponseData();
         data.setMirrorName(mirrorName);
+
+        if (!patterns.isEmpty()) {
+            ApiError patternError = updateMirrorPatterns(mirrorName, records, (includeSet, excludeSet) -> {
+                for (String pattern : patterns) {
+                    if (!includeSet.remove(pattern)) {
+                        excludeSet.add(pattern);
+                    }
+                }
+            });
+            if (patternError.isFailure()) {
+                data.setErrorCode(patternError.error().code());
+                return ControllerResult.of(records, data);
+            }
+        }
+
         List<StopMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
         for (String topic : topics) {
-            String mirrorNameConfig = TopicConfig.MIRROR_NAME_CONFIG;
-
             StopMirrorTopicsResponseData.TopicResult topicRes = new StopMirrorTopicsResponseData.TopicResult();
-
             ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
 
             TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
@@ -242,7 +258,7 @@ public class ConfigurationControlManager {
             if (currentConfigs == null) {
                 topicRes.setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code());
             } else {
-                curVal = currentConfigs.get(mirrorNameConfig);
+                curVal = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
                 if (curVal == null || curVal.isBlank()) {
                     topicRes.setErrorCode(Errors.UNKNOWN_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
@@ -259,7 +275,7 @@ public class ConfigurationControlManager {
                 }
 
                 String newMirrorName = curVal.endsWith(REMOVED_TOPIC_SUFFIX) ? "" : curVal + REMOVED_TOPIC_SUFFIX;
-                Map<String, Entry<OpType, String>> keyToOps = Map.of(mirrorNameConfig, new AbstractMap.SimpleImmutableEntry<>(SET, newMirrorName));
+                Map<String, Entry<OpType, String>> keyToOps = Map.of(TopicConfig.MIRROR_NAME_CONFIG, new AbstractMap.SimpleImmutableEntry<>(SET, newMirrorName));
 
                 ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
                 if (configResult.response().isFailure()) {
@@ -275,7 +291,7 @@ public class ConfigurationControlManager {
         }
         data.setTopics(topicResList);
 
-        return ControllerResult.of(records, data);
+        return ControllerResult.atomicOf(records, data);
     }
 
     ControllerResult<PauseMirrorTopicsResponseData> pauseMirrorTopics(String mirrorName, Set<String> topics) {
@@ -396,20 +412,55 @@ public class ConfigurationControlManager {
         return ControllerResult.of(records, data);
     }
 
-    ControllerResult<StartMirrorTopicsResponseData> startMirrorTopics(String mirrorName, Set<String> topics) {
+    ControllerResult<StartMirrorTopicsResponseData> startMirrorTopics(
+            String mirrorName,
+            List<StartMirrorTopicsRequestData.TopicData> topics,
+            List<String> includePatterns,
+            List<String> excludePatterns,
+            ReplicationControlManager replicationControl) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         StartMirrorTopicsResponseData data = new StartMirrorTopicsResponseData();
         data.setMirrorName(mirrorName);
+
+        if (!includePatterns.isEmpty() || !excludePatterns.isEmpty()) {
+            ApiError patternError = updateMirrorPatterns(mirrorName, records, (includeSet, excludeSet) -> {
+                for (String pattern : includePatterns) {
+                    includeSet.add(pattern);
+                    excludeSet.remove(pattern);
+                }
+                for (String pattern : excludePatterns) {
+                    excludeSet.add(pattern);
+                    includeSet.remove(pattern);
+                }
+            });
+            if (patternError.isFailure()) {
+                data.setErrorCode(patternError.error().code());
+                return ControllerResult.of(records, data);
+            }
+        }
+
         List<StartMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
-        for (String topic : topics) {
+        for (StartMirrorTopicsRequestData.TopicData topic : topics) {
             StartMirrorTopicsResponseData.TopicResult topicRes = new StartMirrorTopicsResponseData.TopicResult();
-            ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
+            String topicName = topic.topicName();
+            ConfigResource configResource = new ConfigResource(Type.TOPIC, topicName);
 
             TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
             if (currentConfigs != null) {
                 String currMirrorNameValue = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
-                if (currMirrorNameValue != null && (currMirrorNameValue.isBlank() || !currMirrorNameValue.endsWith(REMOVED_TOPIC_SUFFIX))) {
-                    topicRes.setErrorCode(Errors.TOPIC_ALREADY_IN_MIRROR.code()).setName(topic);
+                if (currMirrorNameValue != null && !currMirrorNameValue.isBlank() && !currMirrorNameValue.endsWith(REMOVED_TOPIC_SUFFIX)) {
+                    topicRes.setErrorCode(Errors.TOPIC_ALREADY_IN_MIRROR.code()).setName(topicName);
+                    topicResList.add(topicRes);
+                    continue;
+                }
+            }
+
+            if (!topic.topicId().equals(Uuid.ZERO_UUID) && topic.numPartitions() > 0) {
+                ApiError createError = replicationControl.createMirrorTopic(
+                        topicName, topic.topicId(), topic.numPartitions(), records);
+                if (createError.isFailure() && createError.error() != Errors.TOPIC_ALREADY_EXISTS) {
+                    // TODO: emit metric for mirror topic creation failure with error type (e.g. INVALID_REPLICATION_FACTOR)
+                    topicRes.setErrorCode(createError.error().code()).setName(topicName);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -417,21 +468,56 @@ public class ConfigurationControlManager {
 
             Map<String, Entry<OpType, String>> keyToOps = Map.of(
                     TopicConfig.MIRROR_NAME_CONFIG, new AbstractMap.SimpleImmutableEntry<>(SET, mirrorName));
-
             ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
             if (configResult.response().isFailure()) {
-                topicRes.setErrorCode(configResult.response().error().code()).setName(topic);
+                topicRes.setErrorCode(configResult.response().error().code()).setName(topicName);
                 topicResList.add(topicRes);
                 continue;
             }
 
             records.addAll(configResult.records());
-            topicRes.setName(topic);
+            topicRes.setName(topicName);
             topicResList.add(topicRes);
         }
         data.setTopics(topicResList);
 
-        return ControllerResult.of(records, data);
+        return ControllerResult.atomicOf(records, data);
+    }
+
+    private static Set<String> parseCsvToSet(String csv) {
+        Set<String> result = new LinkedHashSet<>();
+        if (csv != null && !csv.isEmpty()) {
+            for (String s : csv.split(",")) {
+                String trimmed = s.trim();
+                if (!trimmed.isEmpty()) {
+                    result.add(trimmed);
+                }
+            }
+        }
+        return result;
+    }
+
+    private ApiError updateMirrorPatterns(String mirrorName, List<ApiMessageAndVersion> records,
+                                          BiConsumer<Set<String>, Set<String>> mutator) {
+        ConfigResource mirrorResource = new ConfigResource(Type.MIRROR, mirrorName);
+        TimelineHashMap<String, String> mirrorConfigs = configData.get(mirrorResource);
+
+        String currentInclude = mirrorConfigs != null ? mirrorConfigs.getOrDefault("mirror.topics.include", "") : "";
+        String currentExclude = mirrorConfigs != null ? mirrorConfigs.getOrDefault("mirror.topics.exclude", "") : "";
+
+        Set<String> includeSet = parseCsvToSet(currentInclude);
+        Set<String> excludeSet = parseCsvToSet(currentExclude);
+        mutator.accept(includeSet, excludeSet);
+
+        Map<String, Entry<OpType, String>> ops = Map.of(
+                "mirror.topics.include", new AbstractMap.SimpleImmutableEntry<>(SET, String.join(",", includeSet)),
+                "mirror.topics.exclude", new AbstractMap.SimpleImmutableEntry<>(SET, String.join(",", excludeSet)));
+        ControllerResult<ApiError> result = incrementalAlterConfig(mirrorResource, ops, false);
+        if (result.response().isFailure()) {
+            return result.response();
+        }
+        records.addAll(result.records());
+        return ApiError.NONE;
     }
 
     ControllerResult<CreateMirrorResponseData> addMirrorConfig(
