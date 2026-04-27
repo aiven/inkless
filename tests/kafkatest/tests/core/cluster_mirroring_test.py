@@ -312,19 +312,17 @@ class ClusterMirroringTest(Test):
 
         def send_interleaving_txns(topic):
             """Send interleaved transactional and non-transactional records, leaving 2 txns pending."""
-            kafka = self.source_kafka
-            run_producer(kafka, topic, topic + "-a", "commit", waiting_ms=5000, background=True)
-            run_producer(kafka, topic)
-            run_producer(kafka, topic, topic + "-b", "pending")
-            run_producer(kafka, topic, topic + "-d", "pending")
-            run_producer(kafka, topic, topic + "-c", "abort", waiting_ms=5000, background=True)
-            run_producer(kafka, topic, topic + "-d", "pending")
-            run_producer(kafka, topic)
-
-            ongoing = count_ongoing_txns(kafka, topic)
-            assert ongoing == 2, "Expected 2 ongoing transactions, got %d" % ongoing
+            run_producer(self.source_kafka, topic, topic + "-a", "commit", waiting_ms=5000, background=True)
+            run_producer(self.source_kafka, topic)
+            run_producer(self.source_kafka, topic, topic + "-b", "pending")
+            run_producer(self.source_kafka, topic, topic + "-d", "pending")
+            run_producer(self.source_kafka, topic, topic + "-c", "abort", waiting_ms=5000, background=True)
+            run_producer(self.source_kafka, topic, topic + "-d", "pending")
+            run_producer(self.source_kafka, topic)
 
         send_interleaving_txns(topic)
+        ongoing = count_ongoing_txns(self.source_kafka, topic)
+        assert ongoing == 2, "Expected 2 ongoing transactions, got %d" % ongoing
 
         self.producer.stop()
 

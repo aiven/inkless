@@ -40,7 +40,6 @@ import java.util.Properties;
  * Non-transactional mode is used when --transactional-id is omitted.
  */
 public class TransactionalTestProducer {
-
     public static void main(String[] args) throws Exception {
         Map<String, String> parsed = parseArgs(args);
 
