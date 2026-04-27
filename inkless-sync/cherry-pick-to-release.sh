@@ -229,8 +229,11 @@ main() {
     # Get commits to cherry-pick
     local commits=()
 
+    local reverse_order=true
+
     if [[ ${#SPECIFIC_COMMITS[@]} -gt 0 ]]; then
         commits=("${SPECIFIC_COMMITS[@]}")
+        reverse_order=false  # User-provided order is respected as-is
         echo "Specific commits provided: ${#commits[@]}"
     else
         info "Finding missing commits using branch-consistency..."
@@ -248,10 +251,24 @@ main() {
         return
     fi
 
+    # Build ordered list for display and execution
+    local ordered=()
+    if [[ "$reverse_order" == "true" ]]; then
+        for ((i=${#commits[@]}-1; i>=0; i--)); do
+            ordered+=("${commits[$i]}")
+        done
+    else
+        ordered=("${commits[@]}")
+    fi
+
     echo ""
-    echo "## Commits to cherry-pick"
+    if [[ "$reverse_order" == "true" ]]; then
+        echo "## Commits to cherry-pick (oldest first)"
+    else
+        echo "## Commits to cherry-pick (provided order)"
+    fi
     echo ""
-    for commit in "${commits[@]}"; do
+    for commit in "${ordered[@]}"; do
         local msg
         msg=$(git log --format="%s" -1 "$commit" 2>/dev/null || echo "unknown")
         local applicable="✓"
@@ -288,7 +305,7 @@ main() {
     local skip_count=0
     local fail_count=0
 
-    for commit in "${commits[@]}"; do
+    for commit in "${ordered[@]}"; do
         if ! is_applicable_commit "$commit"; then
             echo ""
             echo "Skipping merge resolution commit: $commit"
