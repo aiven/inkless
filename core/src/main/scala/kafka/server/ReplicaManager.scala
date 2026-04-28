@@ -1867,7 +1867,7 @@ class ReplicaManager(val config: KafkaConfig,
 
     val disklessFetchInfosWithoutTopicId = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
     val classicFetchInfos = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
-    val invalidDisklessFetchResponses = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionData)]()
+    val immediateFetchResponses = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionData)]()
 
     fetchInfos.foreach { case (tp, partitionData) =>
       val fetchInfo = tp -> partitionData
@@ -1880,32 +1880,53 @@ class ReplicaManager(val config: KafkaConfig,
         val shouldReadFromUnifiedLog = migrationPending || (
           classicToDisklessStartOffset >= 0 && partitionData.fetchOffset < classicToDisklessStartOffset)
 
-        (shouldReadFromUnifiedLog, config.disklessManagedReplicasEnabled) match {
-          case (false, _) =>
-            disklessFetchInfosWithoutTopicId += fetchInfo
-          // Cannot read from UnifiedLog on a diskless topic if diskless managed replicas are not enabled.
-          case (true, false) =>
-            invalidDisklessFetchResponses += tp -> new FetchPartitionData(
-              Errors.INVALID_REQUEST,
-              UnifiedLog.UNKNOWN_OFFSET,
-              UnifiedLog.UNKNOWN_OFFSET,
-              MemoryRecords.EMPTY,
-              Optional.empty(),
-              OptionalLong.empty(),
-              Optional.empty(),
-              OptionalInt.empty(),
-              false
-            )
-          case (true, true) =>
-            classicFetchInfos += fetchInfo
+        if (params.isFromFollower && !shouldReadFromUnifiedLog && classicToDisklessStartOffset >= 0) {
+          // The partition has fully migrated to diskless and the follower is asking for an offset at or beyond it.
+          // Followers must never replicate diskless records into their local log. Return
+          // an empty response with HW clamped to the seal offset so the fetcher loop sees the
+          // partition as caught up and goes idle, rather than treating it as out of range.
+          // Deliberately pass logStartOffset=0 (a no-op for the follower since
+          // maybeIncrementLogStartOffset only ever advances) so the follower keeps its classic
+          // local data intact and remains able to serve consumer reads from the local log.
+          immediateFetchResponses += tp -> new FetchPartitionData(
+            Errors.NONE,
+            classicToDisklessStartOffset,
+            0L,
+            MemoryRecords.EMPTY,
+            Optional.empty(),
+            OptionalLong.empty(),
+            Optional.empty(),
+            OptionalInt.empty(),
+            false
+          )
+        } else {
+          (shouldReadFromUnifiedLog, config.disklessManagedReplicasEnabled) match {
+            case (false, _) =>
+              disklessFetchInfosWithoutTopicId += fetchInfo
+            // Cannot read from UnifiedLog on a diskless topic if diskless managed replicas are not enabled.
+            case (true, false) =>
+              immediateFetchResponses += tp -> new FetchPartitionData(
+                Errors.INVALID_REQUEST,
+                UnifiedLog.UNKNOWN_OFFSET,
+                UnifiedLog.UNKNOWN_OFFSET,
+                MemoryRecords.EMPTY,
+                Optional.empty(),
+                OptionalLong.empty(),
+                Optional.empty(),
+                OptionalInt.empty(),
+                false
+              )
+            case (true, true) =>
+              classicFetchInfos += fetchInfo
+          }
         }
       }
     }
 
     def respond(response: Seq[(TopicIdPartition, FetchPartitionData)]): Unit =
-      responseCallback(response ++ invalidDisklessFetchResponses)
+      responseCallback(response ++ immediateFetchResponses)
 
-    if (classicFetchInfos.isEmpty && disklessFetchInfosWithoutTopicId.isEmpty && invalidDisklessFetchResponses.nonEmpty) {
+    if (classicFetchInfos.isEmpty && disklessFetchInfosWithoutTopicId.isEmpty && immediateFetchResponses.nonEmpty) {
       respond(Seq.empty)
       return
     }

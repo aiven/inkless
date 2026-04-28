@@ -21,7 +21,7 @@ import kafka.log.LogManager
 
 import kafka.server.QuotaFactory.UNBOUNDED_QUOTA
 import kafka.server.epoch.util.MockBlockingSender
-import kafka.server.metadata.KRaftMetadataCache
+import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.utils.TestUtils
 import org.apache.kafka.clients.FetchSessionHandler
 import org.apache.kafka.common.compress.Compression
@@ -34,6 +34,7 @@ import org.apache.kafka.common.record.{CompressionType, MemoryRecords, RecordBat
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.{UNDEFINED_EPOCH, UNDEFINED_EPOCH_OFFSET}
 import org.apache.kafka.common.requests.{FetchRequest, FetchResponse}
 import org.apache.kafka.common.utils.{LogContext, Time}
+import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.ReplicaState
@@ -393,6 +394,7 @@ class ReplicaFetcherThreadTest {
 
     when(replicaManager.localLogOrException(t1p0)).thenReturn(log)
     when(replicaManager.getPartitionOrException(t1p0)).thenReturn(partition)
+    stubInklessMetadataView(replicaManager)
 
     when(partition.localLogOrException).thenReturn(log)
     when(partition.appendRecordsToFollowerOrFutureReplica(any(), any(), any())).thenReturn(None)
@@ -473,6 +475,7 @@ class ReplicaFetcherThreadTest {
     when(replicaManager.localLogOrException(t1p0)).thenReturn(log)
     when(replicaManager.getPartitionOrException(t1p0)).thenReturn(partition)
     when(replicaManager.brokerTopicStats).thenReturn(mock(classOf[BrokerTopicStats]))
+    stubInklessMetadataView(replicaManager)
 
     when(partition.localLogOrException).thenReturn(log)
     when(partition.appendRecordsToFollowerOrFutureReplica(any(), any(), any())).thenReturn(Some(new LogAppendInfo(
@@ -705,6 +708,7 @@ class ReplicaFetcherThreadTest {
     )
     val brokerTopicStats = new BrokerTopicStats
     when(replicaManager.brokerTopicStats).thenReturn(brokerTopicStats)
+    stubInklessMetadataView(replicaManager)
 
     val replicaQuota: ReplicaQuota = mock(classOf[ReplicaQuota])
 
@@ -737,6 +741,112 @@ class ReplicaFetcherThreadTest {
       verify(replicaManager, times(0)).completeDelayedFetchRequests(any[Seq[TopicPartition]])
     }
     assertEquals(mutable.Buffer.empty, thread.partitionsWithNewHighWatermark)
+  }
+
+  @Test
+  def shouldEvictPartitionWhenLogEndOffsetReachesClassicToDisklessSealOffset(): Unit = {
+    verifyDisklessMigrationEviction(
+      classicToDisklessStartOffset = 100L,
+      logEndOffsetAfterAppend = 100L,
+      expectEviction = true)
+  }
+
+  @Test
+  def shouldEvictPartitionWhenLogEndOffsetExceedsClassicToDisklessSealOffset(): Unit = {
+    verifyDisklessMigrationEviction(
+      classicToDisklessStartOffset = 100L,
+      logEndOffsetAfterAppend = 150L,
+      expectEviction = true)
+  }
+
+  @Test
+  def shouldNotEvictPartitionWhenLogEndOffsetBelowClassicToDisklessSealOffset(): Unit = {
+    verifyDisklessMigrationEviction(
+      classicToDisklessStartOffset = 100L,
+      logEndOffsetAfterAppend = 50L,
+      expectEviction = false)
+  }
+
+  @Test
+  def shouldNotEvictPartitionWhenNoClassicToDisklessMigration(): Unit = {
+    verifyDisklessMigrationEviction(
+      classicToDisklessStartOffset = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+      logEndOffsetAfterAppend = 100L,
+      expectEviction = false)
+  }
+
+  @Test
+  def shouldNotEvictPartitionWhenClassicToDisklessMigrationPending(): Unit = {
+    verifyDisklessMigrationEviction(
+      classicToDisklessStartOffset = PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING,
+      logEndOffsetAfterAppend = 100L,
+      expectEviction = false)
+  }
+
+  private def verifyDisklessMigrationEviction(
+    classicToDisklessStartOffset: Long,
+    logEndOffsetAfterAppend: Long,
+    expectEviction: Boolean
+  ): Unit = {
+    val props = TestUtils.createBrokerConfig(1)
+    val config = KafkaConfig.fromProps(props)
+
+    val mockBlockingSend: BlockingSend = mock(classOf[BlockingSend])
+    when(mockBlockingSend.brokerEndPoint()).thenReturn(brokerEndPoint)
+
+    // Pin LEO to the post-append value so it satisfies both the offset-mismatch check at the
+    // top of processPartitionData and the seal-offset comparison at the bottom.
+    val log: UnifiedLog = mock(classOf[UnifiedLog])
+    when(log.logEndOffset).thenReturn(logEndOffsetAfterAppend)
+    when(log.maybeUpdateHighWatermark(anyLong())).thenReturn(Optional.empty)
+
+    val partition: Partition = mock(classOf[Partition])
+    when(partition.localLogOrException).thenReturn(log)
+    when(partition.appendRecordsToFollowerOrFutureReplica(any[MemoryRecords], any[Boolean], any[Int]))
+      .thenReturn(Some(mock(classOf[LogAppendInfo])))
+
+    val inklessMetadataView: InklessMetadataView = mock(classOf[InklessMetadataView])
+    when(inklessMetadataView.getClassicToDisklessStartOffset(t1p0)).thenReturn(classicToDisklessStartOffset)
+
+    val replicaFetcherManager: ReplicaFetcherManager = mock(classOf[ReplicaFetcherManager])
+
+    val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.getPartitionOrException(any[TopicPartition])).thenReturn(partition)
+    when(replicaManager.brokerTopicStats).thenReturn(new BrokerTopicStats)
+    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    when(replicaManager.replicaFetcherManager).thenReturn(replicaFetcherManager)
+
+    val replicaQuota: ReplicaQuota = mock(classOf[ReplicaQuota])
+
+    val thread = createReplicaFetcherThread(
+      name = "replica-fetcher",
+      fetcherId = 0,
+      brokerConfig = config,
+      failedPartitions = failedPartitions,
+      replicaMgr = replicaManager,
+      quota = replicaQuota,
+      leaderEndpointBlockingSend = mockBlockingSend)
+
+    val records = MemoryRecords.withRecords(Compression.NONE,
+      new SimpleRecord(1000, "foo".getBytes(StandardCharsets.UTF_8)))
+    val partitionData = new FetchResponseData.PartitionData()
+      .setPartitionIndex(t1p0.partition)
+      .setRecords(records)
+
+    // fetchOffset must equal log.logEndOffset to avoid the offset-mismatch IllegalStateException.
+    thread.processPartitionData(t1p0, logEndOffsetAfterAppend, Int.MaxValue, partitionData)
+
+    // processPartitionData only buffers the eviction; the actual fetcher removal is deferred to doWork().
+    verify(replicaFetcherManager, times(0)).removeFetcherForPartitions(any())
+
+    thread.doWork()
+
+    if (expectEviction) {
+      verify(replicaFetcherManager, times(1)).removeFetcherForPartitions(Set(t1p0))
+    } else {
+      verify(replicaFetcherManager, times(0)).removeFetcherForPartitions(any())
+    }
+    assertEquals(mutable.Buffer.empty, thread.partitionsToEvictAfterDisklessMigration)
   }
 
   private def newOffsetForLeaderPartitionResult(
@@ -782,6 +892,7 @@ class ReplicaFetcherThreadTest {
     when(replicaManager.getPartitionOrException(any[TopicPartition])).thenReturn(partition)
     val brokerTopicStats = new BrokerTopicStats
     when(replicaManager.brokerTopicStats).thenReturn(brokerTopicStats)
+    stubInklessMetadataView(replicaManager)
 
     val replicaQuota: ReplicaQuota = mock(classOf[ReplicaQuota])
 
@@ -817,5 +928,12 @@ class ReplicaFetcherThreadTest {
     when(replicaManager.getPartitionOrException(t1p1)).thenReturn(partition)
     when(replicaManager.localLogOrException(t2p1)).thenReturn(log)
     when(replicaManager.getPartitionOrException(t2p1)).thenReturn(partition)
+  }
+
+  private def stubInklessMetadataView(replicaManager: ReplicaManager): Unit = {
+    val view: InklessMetadataView = mock(classOf[InklessMetadataView])
+    when(view.getClassicToDisklessStartOffset(any[TopicPartition]))
+      .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(replicaManager.inklessMetadataView()).thenReturn(view)
   }
 }
