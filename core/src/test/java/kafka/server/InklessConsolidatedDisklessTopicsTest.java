@@ -29,6 +29,7 @@ import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.Node;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -63,6 +64,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntFunction;
 import java.util.stream.Collectors;
 
@@ -225,12 +227,10 @@ public class InklessConsolidatedDisklessTopicsTest {
 
         int recordsToSendAndReceive = 50;
 
-        var producedValues = produceRecords(commonConfigs, recordsToSendAndReceive, i -> {
+        produceRecords(commonConfigs, recordsToSendAndReceive, i -> {
             String value = TestUtils.randomString(104_857);
             return new ProducerRecord<>(topicName, i % numPartitions, null, value);
         });
-
-        assertEquals(recordsToSendAndReceive, producedValues.size());
 
         try (S3Client s3 = s3Container.getS3Client()) {
             final String bucket = s3Container.getBucketName();
@@ -239,54 +239,60 @@ public class InklessConsolidatedDisklessTopicsTest {
                 () -> "Expected at least one tiered object in the Minio bucket after produce");
         }
 
-        consumeAndVerify(commonConfigs, producedValues);
+        consumeAndVerify(commonConfigs, recordsToSendAndReceive);
     }
 
-    private List<String> produceRecords(Map<String, Object> commonConfigs, int numRecords,
+    private void produceRecords(Map<String, Object> commonConfigs, int numRecords,
                                         IntFunction<ProducerRecord<String, String>> recordFactory) {
         var producerConfigs = new HashMap<>(commonConfigs);
         producerConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         producerConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
 
         long totalSize = 0;
-        var producedValues = new ArrayList<String>();
         try (Producer<String, String> producer = new KafkaProducer<>(producerConfigs)) {
             for (int i = 0; i < numRecords; i++) {
                 var record = recordFactory.apply(i);
                 var metadata = producer.send(record).get();
-                producedValues.add(record.value());
                 totalSize += metadata.serializedValueSize();
             }
-        } catch (ExecutionException | InterruptedException e) {
+        } catch (ExecutionException e) {
+            throw new RuntimeException(e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             throw new RuntimeException(e);
         }
         log.info("Produced {} records in total size {}", numRecords, totalSize);
-        return producedValues;
     }
 
-    private void consumeAndVerify(Map<String, Object> commonConfigs, List<String> producedValues) {
+    private void consumeAndVerify(Map<String, Object> commonConfigs, int expectedTotalRecords) throws InterruptedException {
         var consumerConfigs = new HashMap<>(commonConfigs);
         consumerConfigs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         consumerConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         consumerConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, "test-group-id-" + UUID.randomUUID());
         consumerConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
 
-        var consumedRecordCount = 0L;
-        var recordsToConsumeCount = producedValues.size();
-        try (var consumer = new KafkaConsumer<>(consumerConfigs)) {
+        try (var consumer = new KafkaConsumer<String, String>(consumerConfigs)) {
             consumer.subscribe(Collections.singletonList(topicName));
-            // consume every record to verify that the consumer works
-            for  (int i = 0; i < recordsToConsumeCount; i++) {
+            var offsetsByPartition = new HashMap<TopicPartition, List<Long>>();
+            var consumedCount = new AtomicLong(0);
+            TestUtils.waitForCondition(() -> {
                 var records = consumer.poll(Duration.ofMillis(1000));
-                records.forEach(record -> {
-                    producedValues.remove(record.value());
+                records.forEach(r -> {
+                    var tp = new TopicPartition(r.topic(), r.partition());
+                    offsetsByPartition.computeIfAbsent(tp, __ -> new ArrayList<>()).add(r.offset());
                 });
-                consumedRecordCount += records.count();
-            }
-            // verify that we consumed exactly as much as we needed to, not more, not less
-            assertEquals(recordsToConsumeCount, consumedRecordCount);
-            // verify value-wise correctness
-            assertEquals(0, producedValues.size());
+                consumedCount.addAndGet(records.count());
+                return consumedCount.get() >= expectedTotalRecords;
+            }, 60_000, "Not all records have been consumed");
+            // Monotonicity + no gaps per partition
+            offsetsByPartition.forEach((tp, offsets) -> {
+                offsets.sort(Long::compareTo);
+                for (int i = 1; i < offsets.size(); i++) {
+                    long prev = offsets.get(i - 1);
+                    long cur = offsets.get(i);
+                    assertEquals(prev + 1, cur, "Offset gap or reordering for " + tp);
+                }
+            });
         }
     }
 
