@@ -6575,8 +6575,10 @@ class ReplicaManagerTest {
     def testFetchFailDisklessWhenFromReplicaAndUnmanagedReplicas(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
       try {
-        // Given a topic partition that is diskless and managed replicas are disabled
-        val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = false)
+        // Given a topic partition that is fully diskless (never migrated) and managed replicas are disabled
+        val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = false))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
         val fetchParams = new FetchParams(
           1, 1L, // follower fetch
           10L, 100, 200, FetchIsolation.HIGH_WATERMARK, Optional.empty()
@@ -7760,6 +7762,144 @@ class ReplicaManagerTest {
         assertTrue(onlinePartition.isSealed, "Partition should be sealed")
       } finally {
         replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testFollowerFetchAtClassicToDisklessStartOffsetReturnsEmptyAndIdle(): Unit = {
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        val cp = mock(classOf[ControlPlane])
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = true,
+        ))
+
+        // Given a fully-migrated diskless topic with classicToDisklessStartOffset = 100
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(100L)
+
+        // When a follower fetches at offset >= classicToDisklessStartOffset
+        val fetchParams = new FetchParams(
+          1, 1L, // follower fetch
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 100L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        // Then the response is empty with HW clamped to the seal offset and we never touched
+        // diskless storage or the local log on behalf of the follower.
+        assertNotNull(responseData)
+        assertEquals(1, responseData.size)
+        val data = responseData(disklessTopicPartition)
+        assertEquals(Errors.NONE, data.error)
+        assertEquals(MemoryRecords.EMPTY, data.records)
+        assertEquals(100L, data.highWatermark)
+        // logStartOffset must NOT advance the follower's local log start offset (would delete classic data).
+        assertEquals(0L, data.logStartOffset)
+        verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+        verify(cp, never()).findBatches(any(), any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFollowerFetchAtClassicToDisklessStartOffsetEmptyEvenWhenManagedReplicasDisabled(): Unit = {
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        val cp = mock(classOf[ControlPlane])
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = false,
+        ))
+
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(100L)
+
+        val fetchParams = new FetchParams(
+          1, 1L, // follower fetch
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 150L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        // Same outcome regardless of managedReplicasEnabled: follower never sees diskless data.
+        assertNotNull(responseData)
+        assertEquals(1, responseData.size)
+        val data = responseData(disklessTopicPartition)
+        assertEquals(Errors.NONE, data.error)
+        assertEquals(MemoryRecords.EMPTY, data.records)
+        assertEquals(100L, data.highWatermark)
+        verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+        verify(cp, never()).findBatches(any(), any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFollowerFetchBelowClassicToDisklessStartOffsetReadsFromClassicLog(): Unit = {
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        val cp = mock(classOf[ControlPlane])
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = true,
+        ))
+
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(100L)
+
+        // Below the seal offset the follower should still be able to catch up via classic.
+        doReturn(Seq(disklessTopicPartition ->
+          new LogReadResult(
+            new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), RECORDS),
+            Optional.empty(), 100L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+          ))
+        ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+        val fetchParams = new FetchParams(
+          1, 1L, // follower fetch
+          0L, 1, 1024, FetchIsolation.LOG_END, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        assertNotNull(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+        verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+        verify(cp, never()).findBatches(any(), any(), any())
+      } finally {
+        fetchHandlerCtor.close()
       }
     }
 
