@@ -1909,10 +1909,12 @@ class ReplicaManager(val config: KafkaConfig,
     val disklessFetchInfosWithoutTopicId = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
     val classicFetchInfos = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
     val immediateFetchResponses = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionData)]()
+    val invalidConsolidatingPartitionFetchResponses = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionData)]()
 
     fetchInfos.foreach { case (tp, partitionData) =>
       val fetchInfo = tp -> partitionData
       val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic)
+      var partitionAlreadyHandled = false
       if (!isDiskless) {
         classicFetchInfos += fetchInfo
       } else {
@@ -1922,40 +1924,11 @@ class ReplicaManager(val config: KafkaConfig,
           _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic) &&
             config.disklessRemoteStorageConsolidationEnabled
         if (isConsolidatingPartition) {
-          shouldReadFromUnifiedLog = shouldReadFromUnifiedLog ||
-            getPartitionOrException(tp).log.exists(partitionData.fetchOffset < _.logEndOffset)
-        } else {
-          shouldReadFromUnifiedLog = shouldReadFromUnifiedLog ||
-            (classicToDisklessStartOffset >= 0 && partitionData.fetchOffset < classicToDisklessStartOffset)
-        }
-
-        if (params.isFromFollower && !shouldReadFromUnifiedLog && classicToDisklessStartOffset >= 0) {
-          // The partition has fully migrated to diskless and the follower is asking for an offset at or beyond it.
-          // Followers must never replicate diskless records into their local log. Return
-          // an empty response with HW clamped to the seal offset so the fetcher loop sees the
-          // partition as caught up and goes idle, rather than treating it as out of range.
-          // Deliberately pass logStartOffset=0 (a no-op for the follower since
-          // maybeIncrementLogStartOffset only ever advances) so the follower keeps its classic
-          // local data intact and remains able to serve consumer reads from the local log.
-          immediateFetchResponses += tp -> new FetchPartitionData(
-            Errors.NONE,
-            classicToDisklessStartOffset,
-            0L,
-            MemoryRecords.EMPTY,
-            Optional.empty(),
-            OptionalLong.empty(),
-            Optional.empty(),
-            OptionalInt.empty(),
-            false
-          )
-        } else {
-          (shouldReadFromUnifiedLog, config.disklessManagedReplicasEnabled) match {
-            case (false, _) =>
-              disklessFetchInfosWithoutTopicId += fetchInfo
-            // Cannot read from UnifiedLog on a diskless topic if diskless managed replicas are not enabled.
-            case (true, false) =>
-              immediateFetchResponses += tp -> new FetchPartitionData(
-                Errors.INVALID_REQUEST,
+          getPartitionOrError(tp.topicPartition) match {
+            case Right(partition) => shouldReadFromUnifiedLog = shouldReadFromUnifiedLog || partition.log.exists(partitionData.fetchOffset < _.logEndOffset)
+            case Left(error) =>
+              invalidConsolidatingPartitionFetchResponses += tp -> new FetchPartitionData(
+                error,
                 UnifiedLog.UNKNOWN_OFFSET,
                 UnifiedLog.UNKNOWN_OFFSET,
                 MemoryRecords.EMPTY,
@@ -1965,17 +1938,68 @@ class ReplicaManager(val config: KafkaConfig,
                 OptionalInt.empty(),
                 false
               )
-            case (true, true) =>
-              classicFetchInfos += fetchInfo
+              partitionAlreadyHandled = true
+          }
+        } else {
+          shouldReadFromUnifiedLog = shouldReadFromUnifiedLog ||
+            (classicToDisklessStartOffset >= 0 && partitionData.fetchOffset < classicToDisklessStartOffset)
+        }
+
+        if (!partitionAlreadyHandled) {
+          if (params.isFromFollower && !shouldReadFromUnifiedLog && classicToDisklessStartOffset >= 0) {
+            // The partition has fully migrated to diskless and the follower is asking for an offset at or beyond it.
+            // Followers must never replicate diskless records into their local log. Return
+            // an empty response with HW clamped to the seal offset so the fetcher loop sees the
+            // partition as caught up and goes idle, rather than treating it as out of range.
+            // Deliberately pass logStartOffset=0 (a no-op for the follower since
+            // maybeIncrementLogStartOffset only ever advances) so the follower keeps its classic
+            // local data intact and remains able to serve consumer reads from the local log.
+            immediateFetchResponses += tp -> new FetchPartitionData(
+              Errors.NONE,
+              classicToDisklessStartOffset,
+              0L,
+              MemoryRecords.EMPTY,
+              Optional.empty(),
+              OptionalLong.empty(),
+              Optional.empty(),
+              OptionalInt.empty(),
+              false
+            )
+          } else {
+            (shouldReadFromUnifiedLog, config.disklessManagedReplicasEnabled) match {
+              case (false, _) =>
+                disklessFetchInfosWithoutTopicId += fetchInfo
+              // Cannot read from UnifiedLog on a diskless topic if diskless managed replicas are not enabled.
+              case (true, false) =>
+                immediateFetchResponses += tp -> new FetchPartitionData(
+                  Errors.INVALID_REQUEST,
+                  UnifiedLog.UNKNOWN_OFFSET,
+                  UnifiedLog.UNKNOWN_OFFSET,
+                  MemoryRecords.EMPTY,
+                  Optional.empty(),
+                  OptionalLong.empty(),
+                  Optional.empty(),
+                  OptionalInt.empty(),
+                  false
+                )
+              case (true, true) =>
+                classicFetchInfos += fetchInfo
+            }
           }
         }
       }
     }
 
     def respond(response: Seq[(TopicIdPartition, FetchPartitionData)]): Unit =
-      responseCallback(response ++ immediateFetchResponses)
+      responseCallback(response ++ immediateFetchResponses ++ invalidConsolidatingPartitionFetchResponses)
 
     if (classicFetchInfos.isEmpty && disklessFetchInfosWithoutTopicId.isEmpty && immediateFetchResponses.nonEmpty) {
+      respond(Seq.empty)
+      return
+    }
+
+    if (classicFetchInfos.isEmpty && disklessFetchInfosWithoutTopicId.isEmpty &&
+      invalidDisklessFetchResponses.isEmpty && invalidConsolidatingPartitionFetchResponses.nonEmpty) {
       respond(Seq.empty)
       return
     }
