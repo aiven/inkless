@@ -179,10 +179,8 @@ public class InklessConsolidatedDisklessTopicsTest {
 
     @Test
     public void testNewConsolidatedDisklessTopics() throws Exception {
-        Map<String, Object> clientConfigs = new HashMap<>();
-        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
-        clientConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        clientConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        Map<String, Object> commonConfigs = new HashMap<>();
+        commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
 
         Map<String, String> topicConfigs = Map.of(
             DISKLESS_ENABLE_CONFIG, "true",
@@ -191,7 +189,7 @@ public class InklessConsolidatedDisklessTopicsTest {
             SEGMENT_BYTES_CONFIG, "1048576"
         );
 
-        try (Admin admin = AdminClient.create(clientConfigs)) {
+        try (Admin admin = AdminClient.create(commonConfigs)) {
             final NewTopic topic = new NewTopic(topicName, numPartitions, (short) -1).configs(topicConfigs);
             CreateTopicsResult result = admin.createTopics(Collections.singletonList(topic));
             result.all().get(30, TimeUnit.SECONDS);
@@ -226,7 +224,7 @@ public class InklessConsolidatedDisklessTopicsTest {
 
         int recordsToSendAndReceive = 50;
 
-        var producedValues = produceRecords(clientConfigs, recordsToSendAndReceive, i -> {
+        var producedValues = produceRecords(commonConfigs, recordsToSendAndReceive, i -> {
             String value = TestUtils.randomString(104_857);
             return new ProducerRecord<>(topicName, i % numPartitions, null, value);
         });
@@ -240,14 +238,18 @@ public class InklessConsolidatedDisklessTopicsTest {
                 () -> "Expected at least one tiered object in the Minio bucket after produce");
         }
 
-        consumeAndVerify(clientConfigs, producedValues);
+        consumeAndVerify(commonConfigs, producedValues);
     }
 
-    private List<String> produceRecords(Map<String, Object> configs, int numRecords,
+    private List<String> produceRecords(Map<String, Object> commonConfigs, int numRecords,
                                         IntFunction<ProducerRecord<String, String>> recordFactory) {
+        var producerConfigs = new HashMap<>(commonConfigs);
+        producerConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        producerConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+
         long totalSize = 0;
         var producedValues = new ArrayList<String>();
-        try (Producer<String, String> producer = new KafkaProducer<>(configs)) {
+        try (Producer<String, String> producer = new KafkaProducer<>(producerConfigs)) {
             for (int i = 0; i < numRecords; i++) {
                 var record = recordFactory.apply(i);
                 var metadata = producer.send(record).get();
@@ -261,14 +263,16 @@ public class InklessConsolidatedDisklessTopicsTest {
         return producedValues;
     }
 
-    private void consumeAndVerify(Map<String, Object> configs, List<String> producedValues) {
-        configs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        configs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        configs.put(ConsumerConfig.GROUP_ID_CONFIG, "test-group-id");
-        configs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+    private void consumeAndVerify(Map<String, Object> commonConfigs, List<String> producedValues) {
+        var consumerConfigs = new HashMap<>(commonConfigs);
+        consumerConfigs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        consumerConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        consumerConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, "test-group-id");
+        consumerConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+
         var consumedRecordCount = 0L;
         var recordsToConsumeCount = producedValues.size();
-        try (var consumer = new KafkaConsumer<>(configs)) {
+        try (var consumer = new KafkaConsumer<>(consumerConfigs)) {
             consumer.subscribe(Collections.singletonList(topicName));
             // consume every record to verify that the consumer works
             for  (int i = 0; i < recordsToConsumeCount; i++) {
