@@ -1625,13 +1625,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return getConfiguredTopics(mirrorName, includePaused, true);
     }
 
-    Set<String> getConfiguredTopics(String mirrorName, boolean includePaused, boolean includeRemoved) {
+    Set<String> getConfiguredTopics(String mirrorName, boolean includePaused, boolean includeStopped) {
         return metadataImage.configs().resourceData().entrySet().stream()
                 .filter(configEntry -> {
                     if (configEntry.getKey().type() != ConfigResource.Type.TOPIC) return false;
                     String topicMirrorName = configEntry.getValue().data().get(TopicConfig.MIRROR_NAME_CONFIG);
                     if (topicMirrorName == null) return false;
-                    if (!includeRemoved && topicMirrorName.endsWith(STOPPED_TOPIC_SUFFIX)) return false;
+                    if (!includeStopped && topicMirrorName.endsWith(STOPPED_TOPIC_SUFFIX)) return false;
                     if (!includePaused && topicMirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) return false;
                     return mirrorName.equals(MirrorUtils.originalMirrorName(topicMirrorName));
                 })
