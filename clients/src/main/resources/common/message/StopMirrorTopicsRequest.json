@@ -19,8 +19,7 @@
   "listeners": ["broker", "controller"],
   "name": "StopMirrorTopicsRequest",
   // Version 0 is the initial version.
-  // Version 1 adds Patterns for atomic include/exclude config update.
-  "validVersions": "0-1",
+  "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
     { "name": "MirrorName", "type": "string", "versions": "0+",
@@ -31,7 +30,7 @@
         { "name": "TopicName", "type": "string", "versions": "0+", "mapKey": true, "entityType": "topicName",
           "about": "The topic name." }
       ]},
-    { "name": "Patterns", "type": "[]string", "versions": "1+",
+    { "name": "Patterns", "type": "[]string", "versions": "0+",
       "about": "Patterns to update in mirror.topics.include/exclude." }
   ]
 }

@@ -4933,17 +4933,16 @@ public class KafkaAdminClient extends AdminClient {
             @Override
             StartMirrorTopicsRequest.Builder createRequest(int timeoutMs) {
                 Map<String, StartMirrorTopicsRequestData.TopicData> metadata = options.topicMetadata();
-                List<StartMirrorTopicsRequestData.TopicData> topicData = topics.stream()
-                        .map(t -> {
-                            StartMirrorTopicsRequestData.TopicData existing = metadata.get(t);
-                            if (existing != null) {
-                                return existing;
-                            }
-                            return new StartMirrorTopicsRequestData.TopicData().setTopicName(t);
-                        })
-                        .collect(Collectors.toList());
-                return new StartMirrorTopicsRequest.Builder(mirrorName, topicData,
-                        options.includePatterns(), options.excludePatterns());
+                StartMirrorTopicsRequestData data = new StartMirrorTopicsRequestData();
+                data.setMirrorName(mirrorName);
+                topics.forEach(t -> {
+                    StartMirrorTopicsRequestData.TopicData existing = metadata.get(t);
+                    data.topics().add(existing != null ? existing
+                            : new StartMirrorTopicsRequestData.TopicData().setTopicName(t));
+                });
+                data.setIncludePatterns(options.includePatterns());
+                data.setExcludePatterns(options.excludePatterns());
+                return new StartMirrorTopicsRequest.Builder(data);
             }
 
             @Override
