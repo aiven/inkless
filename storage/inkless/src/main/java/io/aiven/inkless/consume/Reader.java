@@ -36,12 +36,14 @@ import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
@@ -107,6 +109,9 @@ public class Reader implements AutoCloseable {
     private final ScheduledExecutorService hedgeScheduler;
     private final long hedgeTtfbThresholdMs;
     private final long hedgeTotalTimeThresholdMs;
+    // Per-key hedge dedup: ensures at most one hedge per primary future across all concurrent callers.
+    // Keyed by CF identity (same instance = same cache-deduped primary). Entries are removed on completion.
+    private final ConcurrentHashMap<CompletableFuture<?>, AtomicBoolean> hedgeGuards = new ConcurrentHashMap<>();
     private final InklessFetchMetrics fetchMetrics;
     private final BrokerTopicStats brokerTopicStats;
     private final Bucket rateLimiter;
@@ -351,6 +356,7 @@ public class Reader implements AutoCloseable {
                     hedgeScheduler,
                     hedgeTtfbThresholdMs,
                     hedgeTotalTimeThresholdMs,
+                    hedgeGuards,
                     coordinates,
                     fetchMetrics
                 ).get();
