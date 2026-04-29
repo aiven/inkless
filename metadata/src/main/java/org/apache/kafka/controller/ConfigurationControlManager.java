@@ -236,7 +236,7 @@ public class ConfigurationControlManager {
         data.setMirrorName(mirrorName);
 
         if (!patterns.isEmpty()) {
-            ApiError patternError = updateMirrorPatterns(mirrorName, records, (includeSet, excludeSet) -> {
+            ApiError patternError = updatePatternsAndStopExcluded(mirrorName, records, (includeSet, excludeSet) -> {
                 for (String pattern : patterns) {
                     if (!includeSet.remove(pattern)) {
                         excludeSet.add(pattern);
@@ -407,7 +407,7 @@ public class ConfigurationControlManager {
         data.setMirrorName(mirrorName);
 
         if (!includePatterns.isEmpty() || !excludePatterns.isEmpty()) {
-            ApiError patternError = updateMirrorPatterns(mirrorName, records, (includeSet, excludeSet) -> {
+            ApiError patternError = updatePatternsAndStopExcluded(mirrorName, records, (includeSet, excludeSet) -> {
                 for (String pattern : includePatterns) {
                     includeSet.add(pattern);
                     excludeSet.remove(pattern);
@@ -481,8 +481,12 @@ public class ConfigurationControlManager {
         return result;
     }
 
-    private ApiError updateMirrorPatterns(String mirrorName, List<ApiMessageAndVersion> records,
-                                          BiConsumer<Set<String>, Set<String>> mutator) {
+    /**
+     * Updates mirror.topics.include/exclude on the MIRROR config resource,
+     * then stops any active topics that now match the updated exclude pattern.
+     */
+    private ApiError updatePatternsAndStopExcluded(String mirrorName, List<ApiMessageAndVersion> records,
+                                                   BiConsumer<Set<String>, Set<String>> mutator) {
         ConfigResource mirrorResource = new ConfigResource(Type.MIRROR, mirrorName);
         TimelineHashMap<String, String> mirrorConfigs = configData.get(mirrorResource);
 
@@ -501,7 +505,6 @@ public class ConfigurationControlManager {
             return result.response();
         }
         records.addAll(result.records());
-
         stopExcludedTopics(mirrorName, excludeSet, records);
         return ApiError.NONE;
     }

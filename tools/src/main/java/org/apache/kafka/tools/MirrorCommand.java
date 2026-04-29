@@ -188,15 +188,17 @@ public abstract class MirrorCommand {
                 }
             }
 
+            adminClient.startMirrorTopics(mirrorName, matchingTopicNames,
+                    new StartMirrorTopicsOptions()
+                            .includePatterns(topicPatterns)
+                            .excludePatterns(excludePatterns)
+                            .topicMetadata(topicMetadata))
+                    .all().get();
             if (!matchingTopicNames.isEmpty()) {
-                adminClient.startMirrorTopics(mirrorName, matchingTopicNames,
-                        new StartMirrorTopicsOptions()
-                                .includePatterns(topicPatterns)
-                                .excludePatterns(excludePatterns)
-                                .topicMetadata(topicMetadata))
-                        .all().get();
                 System.out.printf("Started %d mirror topic(s) in mirror %s: %s%n",
                         matchingTopicNames.size(), mirrorName, matchingTopicNames);
+            } else {
+                System.out.printf("No matching topics found yet. Patterns saved to mirror %s for auto-discovery.%n", mirrorName);
             }
         }
 
