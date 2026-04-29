@@ -172,6 +172,8 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.MetadataRequestData;
 import org.apache.kafka.common.message.RemoveRaftVoterRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StopMirrorTopicsRequestData;
 import org.apache.kafka.common.message.UnregisterBrokerRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData.UpdatableFeatureResult;
@@ -266,8 +268,6 @@ import org.apache.kafka.common.requests.RenewDelegationTokenRequest;
 import org.apache.kafka.common.requests.RenewDelegationTokenResponse;
 import org.apache.kafka.common.requests.ResumeMirrorTopicsRequest;
 import org.apache.kafka.common.requests.ResumeMirrorTopicsResponse;
-import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
-import org.apache.kafka.common.message.StopMirrorTopicsRequestData;
 import org.apache.kafka.common.requests.StartMirrorTopicsRequest;
 import org.apache.kafka.common.requests.StartMirrorTopicsResponse;
 import org.apache.kafka.common.requests.StopMirrorTopicsRequest;
@@ -317,6 +317,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -5021,8 +5023,8 @@ public class KafkaAdminClient extends AdminClient {
     private static void validateRegexPatterns(List<String> patterns) {
         for (String pattern : patterns) {
             try {
-                java.util.regex.Pattern.compile(pattern);
-            } catch (java.util.regex.PatternSyntaxException e) {
+                Pattern.compile(pattern);
+            } catch (PatternSyntaxException e) {
                 throw new IllegalArgumentException("Invalid regex pattern: " + pattern, e);
             }
         }

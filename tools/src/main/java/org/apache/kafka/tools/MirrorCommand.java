@@ -22,25 +22,21 @@ import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateMirrorOptions;
 import org.apache.kafka.clients.admin.CreateMirrorResult;
-
 import org.apache.kafka.clients.admin.DeleteMirrorOptions;
 import org.apache.kafka.clients.admin.DeleteMirrorResult;
 import org.apache.kafka.clients.admin.DescribeMirrorsOptions;
 import org.apache.kafka.clients.admin.DescribeMirrorsResult;
-import org.apache.kafka.clients.admin.StopMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.ListMirrorsResult;
 import org.apache.kafka.clients.admin.MirrorDescription;
 import org.apache.kafka.clients.admin.MirrorListing;
-
 import org.apache.kafka.clients.admin.PauseMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.PauseMirrorTopicsResult;
 import org.apache.kafka.clients.admin.ResumeMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.ResumeMirrorTopicsResult;
 import org.apache.kafka.clients.admin.StartMirrorTopicsOptions;
-import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
-
+import org.apache.kafka.clients.admin.StopMirrorTopicsOptions;
 import org.apache.kafka.common.config.ConfigResource;
-
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
 import org.apache.kafka.common.utils.Exit;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.config.MirrorConfig;
