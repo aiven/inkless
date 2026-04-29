@@ -2257,5 +2257,96 @@ public class FetchPlannerTest {
                 multiExecutor.shutdownNow();
             }
         }
+
+        @Test
+        void concurrentCallersOnSameKeyEachFireHedge() throws Exception {
+            // Scenario: multiple consumers reading the same partition/offset range concurrently
+            // (e.g., consumer group rebalance, or multiple groups on the same topic). Each consumer's
+            // Reader.fetch() creates a FetchPlanner that hits the same cache key. CaffeineCache deduplicates
+            // the load — all callers share the same primary future. Each caller's withHedge() fires
+            // independently (hedgeFired is per-call, not per-future), so multiple hedges can spawn.
+            // Verifies they resolve correctly: first primary.complete() wins, rest are no-ops.
+            final long recentTimestamp = time.milliseconds();
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final CountDownLatch primaryBlocked = new CountDownLatch(1);
+            final CountDownLatch releaseHedges = new CountDownLatch(1);
+            final CountDownLatch releasePrimary = new CountDownLatch(1);
+            final byte[] data = {1, 2, 3};
+
+            // Primary blocks; hedges also block until released (ensures both timers fire before
+            // either hedge completes and resolves the primary).
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any()))
+                .thenAnswer(invocation -> {
+                    // Primary: block until test releases
+                    primaryBlocked.countDown();
+                    releasePrimary.await(10, TimeUnit.SECONDS);
+                    return ByteBuffer.wrap(data);
+                })
+                .thenAnswer(invocation -> {
+                    // First hedge: block until released so second hedge timer also fires
+                    releaseHedges.await(10, TimeUnit.SECONDS);
+                    return ByteBuffer.wrap(data);
+                })
+                .thenAnswer(invocation -> {
+                    // Second hedge: also block briefly
+                    releaseHedges.await(10, TimeUnit.SECONDS);
+                    return ByteBuffer.wrap(data);
+                });
+
+            // CaffeineCache deduplicates: both planners get the same future for the same key
+            final CaffeineCache cache = new CaffeineCache(100, 0, 60, -1);
+            final ExecutorService multiExecutor = Executors.newFixedThreadPool(4);
+            try {
+                // Two planners sharing the same cache and metrics — simulates two concurrent Reader.fetch() calls
+                final FetchPlanner planner1 = new FetchPlanner(
+                    time, OBJECT_KEY_CREATOR, keyAlignmentStrategy, cache, fetcher,
+                    multiExecutor, fetcher, 60 * 1000L, null, laggingFetchDataExecutor,
+                    hedgeScheduler, 0, hedgeThresholdMs, coordinates, metrics
+                );
+                final FetchPlanner planner2 = new FetchPlanner(
+                    time, OBJECT_KEY_CREATOR, keyAlignmentStrategy, cache, fetcher,
+                    multiExecutor, fetcher, 60 * 1000L, null, laggingFetchDataExecutor,
+                    hedgeScheduler, 0, hedgeThresholdMs, coordinates, metrics
+                );
+
+                final List<FetchPlanner.FetchRequestWithFuture> results1 = planner1.get();
+                final List<FetchPlanner.FetchRequestWithFuture> results2 = planner2.get();
+
+                // Both should get futures for the same request
+                assertThat(results1).hasSize(1);
+                assertThat(results2).hasSize(1);
+
+                // Both share the same underlying future (cache dedup)
+                assertThat(results1.get(0).future()).isSameAs(results2.get(0).future());
+
+                // Wait for primary to block
+                assertThat(primaryBlocked.await(5, TimeUnit.SECONDS)).isTrue();
+
+                // Both callers should fire a hedge (2 hedge requests total)
+                verify(metrics, timeout(5000).times(2)).recordHedgeRequest();
+
+                // Release hedges — first to complete wins the primary.complete() CAS
+                releaseHedges.countDown();
+
+                // The shared future resolves correctly (via one of the hedges)
+                final FileExtent result = results1.get(0).future().get(5, TimeUnit.SECONDS);
+                assertThat(result.object()).isEqualTo(OBJECT_KEY_A.value());
+
+                // Only one hedge can win (first complete() succeeds, second is a no-op)
+                verify(metrics, times(1)).recordHedgeWon();
+            } finally {
+                releaseHedges.countDown();
+                releasePrimary.countDown();
+                multiExecutor.shutdownNow();
+                cache.close();
+            }
+        }
     }
 }
