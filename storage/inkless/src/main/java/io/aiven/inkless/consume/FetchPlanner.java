@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -85,6 +86,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
     private final ScheduledExecutorService hedgeScheduler;
     private final long hedgeTtfbThresholdMs;
     private final long hedgeTotalTimeThresholdMs;
+    private final ConcurrentHashMap<CompletableFuture<?>, AtomicBoolean> hedgeGuards;
     private final Map<TopicIdPartition, FindBatchResponse> batchCoordinates;
     private final InklessFetchMetrics metrics;
 
@@ -102,6 +104,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         ScheduledExecutorService hedgeScheduler,
         long hedgeTtfbThresholdMs,
         long hedgeTotalTimeThresholdMs,
+        ConcurrentHashMap<CompletableFuture<?>, AtomicBoolean> hedgeGuards,
         Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
         InklessFetchMetrics metrics
     ) {
@@ -118,6 +121,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         this.hedgeScheduler = hedgeScheduler;
         this.hedgeTtfbThresholdMs = hedgeTtfbThresholdMs;
         this.hedgeTotalTimeThresholdMs = hedgeTotalTimeThresholdMs;
+        this.hedgeGuards = hedgeGuards;
         this.batchCoordinates = batchCoordinates;
         this.metrics = metrics;
     }
@@ -246,9 +250,8 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
             metrics.recordRecentDataRequest();
             // Per-caller TTFB signal: set by the load function's TTFB callback when first byte arrives.
             // On a cache dedup (computeIfAbsent returns an existing in-flight future), the load function
-            // doesn't run, so this flag stays false — a TTFB hedge may fire for the deduped caller.
-            // This is bounded: each caller can fire at most one hedge (hedgeFired CAS), and the first
-            // hedge to complete resolves the shared primary for all waiters.
+            // doesn't run, so this flag stays false — but with per-key hedge dedup (hedgeGuards),
+            // at most one hedge fires per primary regardless of how many callers have stale TTFB flags.
             final AtomicBoolean firstByteReceived = new AtomicBoolean(false);
             final CompletableFuture<FileExtent> primary = cache.computeIfAbsent(
                 request.toCacheKey(),
@@ -308,9 +311,10 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
     // Race resolution: hedge calls primary.complete(value) — CF.complete() is a CAS, first caller wins.
     // This makes hedging transparent to the cache (cache holds a reference to primary).
     //
-    // Scope: hedgeFired is per-call. On cache dedup, N concurrent callers sharing the same primary
-    // each call withHedge() independently and can each spawn one hedge — bounded by executor
-    // backpressure, and the first hedge to complete resolves the shared future for all waiters.
+    // Per-key dedup: hedgeFired is shared across all callers of the same primary (via hedgeGuards map).
+    // On cache dedup, N concurrent callers share the same primary and the same guard — at most one
+    // hedge fires per primary, preventing hedge storms under high fan-out. The guard is removed
+    // when the primary completes.
     //
     // Early exits: returns primary as-is when disabled (null scheduler) or already complete (cache hit).
     // Fast failures propagate immediately — hedging mitigates slow responses, not errors.
@@ -325,7 +329,12 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
             return primary;
         }
 
-        final AtomicBoolean hedgeFired = new AtomicBoolean(false);
+        // Per-key dedup: all callers sharing the same primary (via cache dedup) share one guard.
+        // At most one hedge fires per primary, regardless of concurrent caller count.
+        final AtomicBoolean hedgeFired = hedgeGuards.computeIfAbsent(primary, k -> {
+            k.whenComplete((v, e) -> hedgeGuards.remove(k));
+            return new AtomicBoolean(false);
+        });
         final List<ScheduledFuture<?>> timers = new ArrayList<>(2);
 
         try {
