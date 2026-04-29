@@ -244,11 +244,11 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         if (!request.lagging()) {
             // Hot path: up-to-date consumers use cache + recentDataExecutor
             metrics.recordRecentDataRequest();
-            // Per-request TTFB signal: set by the load function's TTFB callback when first byte arrives.
+            // Per-caller TTFB signal: set by the load function's TTFB callback when first byte arrives.
             // On a cache dedup (computeIfAbsent returns an existing in-flight future), the load function
-            // doesn't run, so this flag stays false. A TTFB hedge may fire for the deduped request —
-            // this is benign: the CAS guard limits it to one hedge, and the shared future is already
-            // in progress so it will likely complete before the timer fires.
+            // doesn't run, so this flag stays false — a TTFB hedge may fire for the deduped caller.
+            // This is bounded: each caller can fire at most one hedge (hedgeFired CAS), and the first
+            // hedge to complete resolves the shared primary for all waiters.
             final AtomicBoolean firstByteReceived = new AtomicBoolean(false);
             final CompletableFuture<FileExtent> primary = cache.computeIfAbsent(
                 request.toCacheKey(),
@@ -301,35 +301,19 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         }
     }
 
-    /**
-     * Wraps a primary fetch future with hedging. Two independent triggers can fire a hedge request:
-     * <ul>
-     *   <li><b>TTFB trigger:</b> If the first byte has not been received within {@code hedgeTtfbThresholdMs},
-     *       a hedge is fired. This catches stuck connections (DNS, TLS, backend routing) early.</li>
-     *   <li><b>Total-time trigger:</b> If the primary has not completed within {@code hedgeTotalTimeThresholdMs},
-     *       a hedge is fired. This catches slow transfers even after the first byte arrived.</li>
-     * </ul>
-     *
-     * <p>At most one hedge request is submitted (guarded by {@code hedgeFired} CAS).
-     * The hedge resolves the race by calling {@code primary.complete(hedgeValue)} directly —
-     * since {@link CompletableFuture#complete} is a CAS, the first caller (primary's natural completion
-     * or hedge) wins. This makes hedging transparent to the cache: on the hot path, the cache holds
-     * a reference to {@code primary}, so whichever value resolves it is what the cache sees.
-     *
-     * <p>When hedging is disabled ({@code hedgeScheduler == null}), returns the primary future as-is.
-     * If the primary is already complete (e.g. cache hit), returns it immediately without scheduling.
-     *
-     * <p><strong>Fast-failure semantics:</strong> If the primary fails before any hedge threshold,
-     * the error propagates immediately and no hedge is attempted. Hedging mitigates slow responses,
-     * not fast failures — retries are the appropriate mechanism for those.
-     *
-     * @param primary           the original fetch future
-     * @param fetcher           the object fetcher to use for the hedge request
-     * @param request           the fetch request (object key + byte range)
-     * @param executor          the executor to submit the hedge request to
-     * @param firstByteReceived signal set by the primary's TTFB callback when first byte arrives
-     * @return the primary future (hedge resolves it directly if it wins the race)
-     */
+    // Wraps a primary future with hedging: schedules timer(s) that fire a competing fetch if the
+    // primary is too slow. Two triggers: TTFB (stuck connection) and total-time (slow transfer).
+    // Timers run on the hedge scheduler; actual fetches run on the data executor.
+    //
+    // Race resolution: hedge calls primary.complete(value) — CF.complete() is a CAS, first caller wins.
+    // This makes hedging transparent to the cache (cache holds a reference to primary).
+    //
+    // Scope: hedgeFired is per-call. On cache dedup, N concurrent callers sharing the same primary
+    // each call withHedge() independently and can each spawn one hedge — bounded by executor
+    // backpressure, and the first hedge to complete resolves the shared future for all waiters.
+    //
+    // Early exits: returns primary as-is when disabled (null scheduler) or already complete (cache hit).
+    // Fast failures propagate immediately — hedging mitigates slow responses, not errors.
     private CompletableFuture<FileExtent> withHedge(
         final CompletableFuture<FileExtent> primary,
         final ObjectFetcher fetcher,
@@ -384,21 +368,13 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         return primary;
     }
 
-    /**
-     * Attempts to fire a single hedge request. Uses compare-and-set on {@code hedgeFired} to ensure at most
-     * one hedge is submitted, even if both TTFB and total-time triggers fire concurrently.
-     *
-     * <p>The hedge uses the 2-arg {@link #fetchFileExtent(ObjectFetcher, ObjectFetchRequest)} overload
-     * (no {@code firstByteReceived} flag) intentionally: the TTFB signal is only needed for the primary's
-     * hedge trigger decision, and the CAS guard ensures at most one hedge fires regardless.
-     *
-     * <p>The hedge resolves the race by completing the {@code primary} future directly. This is
-     * transparent to the cache: on the hot path, the cache holds a reference to this same future.
-     *
-     * <p>The losing in-flight fetch (primary or hedge) is not cancelled — {@code CompletableFuture.cancel()}
-     * does not interrupt S3/GCS I/O, so the HTTP request would run to completion regardless. The loser's
-     * result is simply ignored (its {@code complete()} call is a no-op on the already-resolved future).
-     */
+    // Fires a single hedge request. Runs on the hedge scheduler thread — must never block.
+    // All operations are non-blocking: CAS, meter marks, and supplyAsync (only enqueues a task;
+    // actual I/O runs on the data executor). Executor-full → RejectedExecutionException thrown
+    // immediately and caught.
+    //
+    // The losing fetch (primary or hedge) is not cancelled — CF.cancel() doesn't interrupt S3/GCS
+    // I/O, so the request runs to completion regardless. The loser's complete() is a no-op.
     private void tryFireHedge(
         final AtomicBoolean hedgeFired,
         final CompletableFuture<FileExtent> primary,
