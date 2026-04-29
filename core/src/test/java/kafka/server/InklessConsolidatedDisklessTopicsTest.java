@@ -286,7 +286,6 @@ public class InklessConsolidatedDisklessTopicsTest {
             }, 60_000, "Not all records have been consumed");
             // Monotonicity + no gaps per partition
             offsetsByPartition.forEach((tp, offsets) -> {
-                offsets.sort(Long::compareTo);
                 for (int i = 1; i < offsets.size(); i++) {
                     long prev = offsets.get(i - 1);
                     long cur = offsets.get(i);
