@@ -1593,7 +1593,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         Pattern excludePattern = mirrorConfig.topicsExcludePattern();
         if (excludePattern == null) return;
 
-        Set<String> activeTopics = getConfiguredTopics(mirrorName);
+        Set<String> activeTopics = getConfiguredTopics(mirrorName, false, false);
         Set<String> excludedTopics = activeTopics.stream()
                 .filter(topic -> excludePattern.matcher(topic).matches())
                 .collect(Collectors.toSet());
