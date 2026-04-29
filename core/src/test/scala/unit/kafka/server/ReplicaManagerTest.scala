@@ -6917,6 +6917,529 @@ class ReplicaManagerTest {
       }
     }
 
+    private def stubConsolidatingPartitionWithLocalLeo(replicaManager: ReplicaManager, localLeo: Long): Unit = {
+      stubConsolidatingPartitionWithLocalLeoFor(replicaManager, disklessTopicPartition, localLeo)
+    }
+
+    private def stubConsolidatingPartitionWithLocalLeoFor(replicaManager: ReplicaManager, tp: TopicIdPartition, localLeo: Long): Unit = {
+      val mockPartition = mock(classOf[Partition])
+      val mockLog = mock(classOf[UnifiedLog])
+      when(mockLog.logEndOffset).thenReturn(localLeo)
+      when(mockPartition.log).thenReturn(Some(mockLog))
+      doReturn(Right(mockPartition)).when(replicaManager).getPartitionOrError(
+        ArgumentMatchers.eq(tp.topicPartition()))
+    }
+
+    private def stubConsolidatingPartitionWithoutLocalLog(replicaManager: ReplicaManager): Unit = {
+      val mockPartition = mock(classOf[Partition])
+      when(mockPartition.log).thenReturn(None)
+      doReturn(Right(mockPartition)).when(replicaManager).getPartitionOrError(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+    }
+
+    private def stubConsolidatingPartitionAsError(replicaManager: ReplicaManager, error: Errors): Unit = {
+      doReturn(Left(error)).when(replicaManager).getPartitionOrError(
+        ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+    }
+
+    private def waitForFetchResponse(responseData: => Map[TopicIdPartition, FetchPartitionData]): Unit = {
+      TestUtils.waitUntilTrue(() => responseData != null, "Expected fetch response", 10_000)
+    }
+
+    @Test
+    def testFetchConsolidatingDisklessBelowLocalLeoReadsFromUnifiedLogWhenManagedReplicasEnabled(): Unit = {
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        val cp = mock(classOf[ControlPlane])
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = true,
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+        ))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(100L)
+        stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 200L)
+
+        doReturn(Seq(disklessTopicPartition ->
+          new LogReadResult(
+            new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+            Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
+          ))
+        ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        waitForFetchResponse(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+        verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFetchConsolidatingDisklessPartitionOfflineReturnsKafkaStorageError(): Unit = {
+      val disklessResponse = Map(disklessTopicPartition ->
+        new FetchPartitionData(
+          Errors.NONE,
+          110L, 100L,
+          RECORDS,
+          Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      )
+      val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+      try {
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          disklessManagedReplicasEnabled = true,
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+        ))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+        stubConsolidatingPartitionAsError(replicaManager, Errors.KAFKA_STORAGE_ERROR)
+
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => responseData = response.toMap
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        waitForFetchResponse(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(Errors.KAFKA_STORAGE_ERROR, responseData(disklessTopicPartition).error)
+        assertEquals(MemoryRecords.EMPTY, responseData(disklessTopicPartition).records)
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+        verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFetchConsolidatingDisklessPartitionMissingReplicaReturnsNotLeaderOrFollower(): Unit = {
+      val disklessResponse = Map(disklessTopicPartition ->
+        new FetchPartitionData(
+          Errors.NONE,
+          110L, 100L,
+          RECORDS,
+          Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      )
+      val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+      try {
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          disklessManagedReplicasEnabled = true,
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+        ))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+        stubConsolidatingPartitionAsError(replicaManager, Errors.NOT_LEADER_OR_FOLLOWER)
+
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => responseData = response.toMap
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        waitForFetchResponse(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, responseData(disklessTopicPartition).error)
+        assertEquals(MemoryRecords.EMPTY, responseData(disklessTopicPartition).records)
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+        verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFetchConsolidatingDisklessUnknownPartitionReturnsUnknownTopicOrPartition(): Unit = {
+      val disklessResponse = Map(disklessTopicPartition ->
+        new FetchPartitionData(
+          Errors.NONE,
+          110L, 100L,
+          RECORDS,
+          Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      )
+      val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+      try {
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          disklessManagedReplicasEnabled = true,
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+        ))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+        stubConsolidatingPartitionAsError(replicaManager, Errors.UNKNOWN_TOPIC_OR_PARTITION)
+
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => responseData = response.toMap
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        waitForFetchResponse(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(Errors.UNKNOWN_TOPIC_OR_PARTITION, responseData(disklessTopicPartition).error)
+        assertEquals(MemoryRecords.EMPTY, responseData(disklessTopicPartition).records)
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+        verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFetchConsolidatingDisklessErrorAppendedWhenOtherPartitionReadsFromUnifiedLog(): Unit = {
+      val disklessTopicPartition2 = new TopicIdPartition(Uuid.randomUuid(), 0, "diskless2")
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        val cp = mock(classOf[ControlPlane])
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic(), disklessTopicPartition2.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = true,
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(disklessTopicPartition.topic(), disklessTopicPartition2.topic()),
+          topicIdMapping = Map(disklessTopicPartition2.topic() -> disklessTopicPartition2.topicId()),
+        ))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition2.topicPartition()))
+          .thenReturn(100L)
+
+        doReturn(Left(Errors.KAFKA_STORAGE_ERROR)).when(replicaManager).getPartitionOrError(
+          ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+        stubConsolidatingPartitionWithLocalLeoFor(replicaManager, disklessTopicPartition2, localLeo = 200L)
+
+        doReturn(Seq(disklessTopicPartition2 ->
+          new LogReadResult(
+            new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+            Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
+          ))
+        ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty()),
+          disklessTopicPartition2 -> new PartitionData(disklessTopicPartition2.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        waitForFetchResponse(responseData)
+        assertEquals(2, responseData.size)
+        assertEquals(Errors.KAFKA_STORAGE_ERROR, responseData(disklessTopicPartition).error)
+        assertEquals(MemoryRecords.EMPTY, responseData(disklessTopicPartition).records)
+        assertEquals(Errors.NONE, responseData(disklessTopicPartition2).error)
+        assertEquals(RECORDS, responseData(disklessTopicPartition2).records)
+        verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFetchConsolidatingDisklessAboveClassicStartButBelowLocalLeoReadsFromUnifiedLog(): Unit = {
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        val cp = mock(classOf[ControlPlane])
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = true,
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+        ))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(50L)
+        stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 200L)
+
+        doReturn(Seq(disklessTopicPartition ->
+          new LogReadResult(
+            new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+            Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
+          ))
+        ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 75L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        waitForFetchResponse(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+        verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFetchConsolidatingDisklessAtOrAboveLocalLeoUsesDisklessPath(): Unit = {
+      val disklessResponse = Map(disklessTopicPartition ->
+        new FetchPartitionData(
+          Errors.NONE,
+          110L, 100L,
+          RECORDS,
+          Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      )
+      val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+      try {
+        val batchMetadata = mock(classOf[BatchMetadata])
+        when(batchMetadata.topicIdPartition()).thenReturn(disklessTopicPartition)
+        val batch = mock(classOf[BatchInfo])
+        when(batch.metadata()).thenReturn(batchMetadata)
+        val findBatchResponse = mock(classOf[FindBatchResponse])
+        when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+        when(findBatchResponse.highWatermark()).thenReturn(110L)
+        when(findBatchResponse.estimatedByteSize(100L)).thenReturn(RECORDS.sizeInBytes())
+        when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+        val cp = mock(classOf[ControlPlane])
+        when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
+
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = true,
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+        ))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(100L)
+        stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 100L)
+
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 100L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        waitForFetchResponse(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(Errors.NONE, responseData(disklessTopicPartition).error)
+        assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+        verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFetchConsolidatingDisklessWithNoLocalLogUsesDisklessDespiteFetchBelowClassicStart(): Unit = {
+      val disklessResponse = Map(disklessTopicPartition ->
+        new FetchPartitionData(
+          Errors.NONE,
+          110L, 100L,
+          RECORDS,
+          Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      )
+      val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+      try {
+        val batchMetadata = mock(classOf[BatchMetadata])
+        when(batchMetadata.topicIdPartition()).thenReturn(disklessTopicPartition)
+        val batch = mock(classOf[BatchInfo])
+        when(batch.metadata()).thenReturn(batchMetadata)
+        val findBatchResponse = mock(classOf[FindBatchResponse])
+        when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+        when(findBatchResponse.highWatermark()).thenReturn(110L)
+        when(findBatchResponse.estimatedByteSize(50L)).thenReturn(RECORDS.sizeInBytes())
+        when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+        val cp = mock(classOf[ControlPlane])
+        when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
+
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = true,
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+        ))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(100L)
+        stubConsolidatingPartitionWithoutLocalLog(replicaManager)
+
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        waitForFetchResponse(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(Errors.NONE, responseData(disklessTopicPartition).error)
+        verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFetchConsolidatingMetadataButConsolidationDisabledUsesClassicStartOffsetRule(): Unit = {
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        val cp = mock(classOf[ControlPlane])
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = true,
+          consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+        ))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(100L)
+
+        doReturn(Seq(disklessTopicPartition ->
+          new LogReadResult(
+            new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+            Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
+          ))
+        ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        waitForFetchResponse(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+        verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testFetchConsolidatingDisklessMigrationPendingReadsFromUnifiedLogWhenConsolidationEnabled(): Unit = {
+      val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      try {
+        val cp = mock(classOf[ControlPlane])
+        val replicaManager = spy(createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          controlPlane = Some(cp),
+          disklessManagedReplicasEnabled = true,
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+        ))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+        // Ensure we don't generate an additional invalid response from the consolidating-partition check.
+        stubConsolidatingPartitionWithoutLocalLog(replicaManager)
+
+        doReturn(Seq(disklessTopicPartition ->
+          new LogReadResult(
+            new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+            Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
+          ))
+        ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+        val fetchParams = new FetchParams(
+          -1, -1L,
+          0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        )
+        val fetchInfos = Seq(
+          disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+        )
+
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+          responseData = response.toMap
+        }
+        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+        waitForFetchResponse(responseData)
+        assertEquals(1, responseData.size)
+        assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+        verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+        verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+      } finally {
+        fetchHandlerCtor.close()
+      }
+    }
+
     @Test
     def testFindBatches(): Unit = {
       // Given

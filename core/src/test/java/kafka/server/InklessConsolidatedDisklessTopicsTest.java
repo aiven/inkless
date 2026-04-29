@@ -22,14 +22,18 @@ import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.Node;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
-import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
@@ -50,12 +54,17 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.nio.file.Files;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntFunction;
 import java.util.stream.Collectors;
 
@@ -94,6 +103,8 @@ public class InklessConsolidatedDisklessTopicsTest {
     protected static MinioContainer s3Container = S3TestContainer.minio();
 
     private KafkaClusterTestKit cluster;
+    private String topicName = "consolidated-diskless-topic";
+    private int numPartitions = 2;
 
     @BeforeEach
     public void setup(final TestInfo testInfo) throws Exception {
@@ -170,13 +181,8 @@ public class InklessConsolidatedDisklessTopicsTest {
 
     @Test
     public void testNewConsolidatedDisklessTopics() throws Exception {
-        Map<String, Object> clientConfigs = new HashMap<>();
-        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
-        clientConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
-        clientConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
-
-        String topicName = "consolidated-diskless-topic";
-        int numPartitions = 2;
+        Map<String, Object> commonConfigs = new HashMap<>();
+        commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
 
         Map<String, String> topicConfigs = Map.of(
             DISKLESS_ENABLE_CONFIG, "true",
@@ -185,7 +191,7 @@ public class InklessConsolidatedDisklessTopicsTest {
             SEGMENT_BYTES_CONFIG, "1048576"
         );
 
-        try (Admin admin = AdminClient.create(clientConfigs)) {
+        try (Admin admin = AdminClient.create(commonConfigs)) {
             final NewTopic topic = new NewTopic(topicName, numPartitions, (short) -1).configs(topicConfigs);
             CreateTopicsResult result = admin.createTopics(Collections.singletonList(topic));
             result.all().get(30, TimeUnit.SECONDS);
@@ -218,8 +224,10 @@ public class InklessConsolidatedDisklessTopicsTest {
             }
         }
 
-        produceRecords(clientConfigs, 50, i -> {
-            byte[] value = TestUtils.randomBytes(104_857);
+        int recordsToSendAndReceive = 50;
+
+        produceRecords(commonConfigs, recordsToSendAndReceive, i -> {
+            String value = TestUtils.randomString(104_857);
             return new ProducerRecord<>(topicName, i % numPartitions, null, value);
         });
 
@@ -229,21 +237,61 @@ public class InklessConsolidatedDisklessTopicsTest {
                 120_000,
                 () -> "Expected at least one tiered object in the Minio bucket after produce");
         }
+
+        consumeAndVerify(commonConfigs, recordsToSendAndReceive);
     }
 
-    private void produceRecords(Map<String, Object> configs, int numRecords,
-                                IntFunction<ProducerRecord<byte[], byte[]>> recordFactory) {
+    private void produceRecords(Map<String, Object> commonConfigs, int numRecords,
+                                        IntFunction<ProducerRecord<String, String>> recordFactory) {
+        var producerConfigs = new HashMap<>(commonConfigs);
+        producerConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        producerConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+
         long totalSize = 0;
-        try (Producer<byte[], byte[]> producer = new KafkaProducer<>(configs)) {
+        try (Producer<String, String> producer = new KafkaProducer<>(producerConfigs)) {
             for (int i = 0; i < numRecords; i++) {
                 var record = recordFactory.apply(i);
                 var metadata = producer.send(record).get();
                 totalSize += metadata.serializedValueSize();
             }
-        } catch (ExecutionException | InterruptedException e) {
+        } catch (ExecutionException e) {
+            throw new RuntimeException(e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             throw new RuntimeException(e);
         }
         log.info("Produced {} records in total size {}", numRecords, totalSize);
+    }
+
+    private void consumeAndVerify(Map<String, Object> commonConfigs, int expectedTotalRecords) throws InterruptedException {
+        var consumerConfigs = new HashMap<>(commonConfigs);
+        consumerConfigs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        consumerConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        consumerConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, "test-group-id-" + UUID.randomUUID());
+        consumerConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+
+        try (var consumer = new KafkaConsumer<String, String>(consumerConfigs)) {
+            consumer.subscribe(Collections.singletonList(topicName));
+            var offsetsByPartition = new HashMap<TopicPartition, List<Long>>();
+            var consumedCount = new AtomicLong(0);
+            TestUtils.waitForCondition(() -> {
+                var records = consumer.poll(Duration.ofMillis(1000));
+                records.forEach(r -> {
+                    var tp = new TopicPartition(r.topic(), r.partition());
+                    offsetsByPartition.computeIfAbsent(tp, __ -> new ArrayList<>()).add(r.offset());
+                });
+                consumedCount.addAndGet(records.count());
+                return consumedCount.get() >= expectedTotalRecords;
+            }, 60_000, "Not all records have been consumed");
+            // Monotonicity + no gaps per partition
+            offsetsByPartition.forEach((tp, offsets) -> {
+                for (int i = 1; i < offsets.size(); i++) {
+                    long prev = offsets.get(i - 1);
+                    long cur = offsets.get(i);
+                    assertEquals(prev + 1, cur, "Offset gap or reordering for " + tp);
+                }
+            });
+        }
     }
 
     private static int countObjectsWithPrefix(S3Client s3, String bucket, String prefix) {
