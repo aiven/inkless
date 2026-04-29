@@ -1999,7 +1999,7 @@ class ReplicaManager(val config: KafkaConfig,
     }
 
     if (classicFetchInfos.isEmpty && disklessFetchInfosWithoutTopicId.isEmpty &&
-      invalidDisklessFetchResponses.isEmpty && invalidConsolidatingPartitionFetchResponses.nonEmpty) {
+      immediateFetchResponses.isEmpty && invalidConsolidatingPartitionFetchResponses.nonEmpty) {
       respond(Seq.empty)
       return
     }
