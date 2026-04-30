@@ -389,8 +389,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         initialized = true;
     }
 
+    private static final Set<String> NON_CONNECTION_CONFIGS = Set.of(
+            MirrorConfig.MIRROR_TOPICS_INCLUDE_CONFIG, MirrorConfig.MIRROR_TOPICS_EXCLUDE_CONFIG,
+            MirrorConfig.MIRROR_GROUPS_INCLUDE_CONFIG, MirrorConfig.MIRROR_GROUPS_EXCLUDE_CONFIG,
+            MirrorConfig.MIRROR_ACL_INCLUDE_CONFIG);
+
     private void maybeRecreateConnection(MetadataDelta delta, MetadataImage newImage) {
-        // detect config changes and close stale connections and fetchers to trigger reconnection
         if (delta.configsDelta() != null) {
             delta.configsDelta().changes().entrySet().stream()
                 .filter(e -> e.getKey().type() == ConfigResource.Type.MIRROR)
@@ -402,14 +406,20 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         log.info("Mirror '{}' has been deleted. Writing tombstone records.", mirrorName);
                         mirrorDeletionHandler.ifPresent(h -> h.accept(mirrorName));
                     }
-                    sourceLeaders.remove(mirrorName);
-                    List<MirrorSourceSender> senders = sourceSenders.remove(mirrorName);
-                    if (senders != null) {
-                        log.info("Mirror config changed for '{}'. Closing existing connections "
-                                + "to trigger reconnection with updated configuration.", mirrorName);
-                        senders.forEach(MirrorSourceSender::close);
+
+                    boolean connectionConfigChanged = e.getValue().changes().keySet().stream()
+                            .anyMatch(key -> !NON_CONNECTION_CONFIGS.contains(key));
+
+                    if (connectionConfigChanged || mirrorDeleted) {
+                        sourceLeaders.remove(mirrorName);
+                        List<MirrorSourceSender> senders = sourceSenders.remove(mirrorName);
+                        if (senders != null) {
+                            log.info("Mirror config changed for '{}'. Closing existing connections "
+                                    + "to trigger reconnection with updated configuration.", mirrorName);
+                            senders.forEach(MirrorSourceSender::close);
+                        }
+                        mirrorFetcherManagerSupplier.get().removeFetchersForMirror(mirrorName);
                     }
-                    mirrorFetcherManagerSupplier.get().removeFetchersForMirror(mirrorName);
                 });
         }
     }
