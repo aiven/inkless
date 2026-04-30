@@ -102,6 +102,7 @@ import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
 import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.common.TopicIdPartition;
+import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.policy.CreateTopicPolicy;
 import org.apache.kafka.server.util.MockRandom;
 import org.apache.kafka.timeline.SnapshotRegistry;
@@ -4178,6 +4179,53 @@ public class ReplicationControlManagerTest {
             CreatableTopicResult topicResult = result.response().topics().find(systemTopic);
             assertEquals(Errors.INVALID_REQUEST.code(), topicResult.errorCode());
             assertEquals("System topics cannot be diskless topics.", topicResult.errorMessage());
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"__remote_log_metadata", "__cluster_metadata"})
+        public void testRejectAlterConfigDisklessEnableForSystemTopics(String systemTopic) {
+            // Given a setup with the diskless storage system enabled and allow-from-classic enabled
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            // Given a system topic already exists
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic(systemTopic, new int[][] {new int[] {0, 1, 2}});
+            // When attempting to alter diskless.enable to true on the system topic
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, systemTopic);
+            ControllerResult<Map<ConfigResource, ApiError>> result =
+                ctx.configurationControl.incrementalAlterConfigs(
+                    Map.of(resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                        new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true"))),
+                    false);
+            // Then the alter config should be rejected
+            assertEquals(Errors.INVALID_CONFIG.code(), result.response().get(resource).error().code());
+            assertTrue(result.response().get(resource).message().contains("System topics cannot be diskless"));
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"__remote_log_metadata", "__cluster_metadata"})
+        public void testRejectLegacyAlterConfigDisklessEnableForSystemTopics(String systemTopic) {
+            // Given a setup with the diskless storage system enabled and allow-from-classic enabled
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            // Given a system topic already exists
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic(systemTopic, new int[][] {new int[] {0, 1, 2}});
+            // When attempting to set diskless.enable=true via legacy AlterConfigs
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, systemTopic);
+            ControllerResult<Map<ConfigResource, ApiError>> result =
+                ctx.configurationControl.legacyAlterConfigs(
+                    Map.of(resource, Map.of(DISKLESS_ENABLE_CONFIG, "true")),
+                    false);
+            // Then the alter config should be rejected
+            assertEquals(Errors.INVALID_CONFIG.code(), result.response().get(resource).error().code());
+            assertTrue(result.response().get(resource).message().contains("System topics cannot be diskless"));
         }
 
         @Test
