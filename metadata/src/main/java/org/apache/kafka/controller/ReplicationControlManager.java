@@ -827,10 +827,10 @@ public class ReplicationControlManager {
         if (isDisklessEnableConfigDefined) {
             disklessConfigEnabled = Boolean.parseBoolean(disklessEnableConfigValue);
         }
-        // Reject internal topic creation request where diskless is explicitly enabled
+        // Reject system topic creation request where diskless is explicitly enabled
         if (isSystemTopic(topic.name()) && isDisklessEnableConfigDefined && disklessConfigEnabled) {
             return new ApiError(INVALID_REQUEST,
-                "Internal topics cannot be diskless topics.");
+                "System topics cannot be diskless topics.");
         }
 
         final boolean disklessEnabled = disklessConfigEnabled && !isSystemTopic(topic.name());

@@ -4150,7 +4150,7 @@ public class ReplicationControlManagerTest {
         @ParameterizedTest
         @ValueSource(strings = {"__remote_log_metadata", "__cluster_metadata"})
         public void testRejectExplicitDisklessEnableForSystemTopics(String systemTopic) {
-            // Given a setup with diskless enabled at the server level
+            // Given a setup with the diskless storage system enabled
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setDisklessStorageSystemEnabled(true)
                 .build();
@@ -4177,7 +4177,7 @@ public class ReplicationControlManagerTest {
             // Then the topic creation should be rejected
             CreatableTopicResult topicResult = result.response().topics().find(systemTopic);
             assertEquals(Errors.INVALID_REQUEST.code(), topicResult.errorCode());
-            assertEquals("Internal topics cannot be diskless topics.", topicResult.errorMessage());
+            assertEquals("System topics cannot be diskless topics.", topicResult.errorMessage());
         }
 
         @Test
@@ -4208,7 +4208,7 @@ public class ReplicationControlManagerTest {
                 new CreatableTopicResult()
                     .setName(internalTopic)
                     .setErrorCode(Errors.INVALID_REQUEST.code())
-                    .setErrorMessage("Internal topics cannot be diskless topics."));
+                    .setErrorMessage("System topics cannot be diskless topics."));
             assertEquals(expectedResponse, withoutConfigs(result.response()));
         }
 
@@ -5101,7 +5101,7 @@ public class ReplicationControlManagerTest {
                 new CreatableTopicResult()
                     .setName(internalTopic)
                     .setErrorCode(Errors.INVALID_REQUEST.code())
-                    .setErrorMessage("Internal topics cannot be diskless topics."));
+                    .setErrorMessage("System topics cannot be diskless topics."));
             assertEquals(expectedResponse, withoutConfigs(result.response()));
         }
 
