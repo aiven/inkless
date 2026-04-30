@@ -4105,8 +4105,79 @@ public class ReplicationControlManagerTest {
                 .map(m -> (ConfigRecord) m.message())
                 .filter(c -> c.name().equals(DISKLESS_ENABLE_CONFIG))
                 .toList();
-            // Then always diskless is disabled
+            // Then always diskless is explicitly disabled
+            assertFalse(disklessConfigRecords.isEmpty(),
+                "Expected explicit diskless.enable=false ConfigRecord for internal topic");
             assertTrue(disklessConfigRecords.stream().allMatch(c -> c.value().equals("false")));
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"__remote_log_metadata", "__cluster_metadata"})
+        public void testCreateSystemTopicAsClassicWhenDisklessEnabled(String systemTopic) {
+            // Given a setup with diskless enabled at the server level
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(true)
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            // Given a system topic creation request without explicit diskless config
+            CreateTopicsRequestData request = new CreateTopicsRequestData();
+            request.topics().add(
+                new CreatableTopic()
+                    .setName(systemTopic)
+                    .setNumPartitions(1)
+                    .setReplicationFactor((short) 3));
+            // Given all brokers unfenced
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            // When creating the system topic
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+            ControllerResult<CreateTopicsResponseData> result =
+                replicationControl.createTopics(requestContext, request, Set.of(systemTopic));
+            // Then the topic creation should succeed
+            assertEquals(Errors.NONE.code(), result.response().topics().find(systemTopic).errorCode());
+            // And diskless should not be enabled
+            List<ConfigRecord> disklessConfigRecords = result.records().stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .filter(c -> c.name().equals(DISKLESS_ENABLE_CONFIG))
+                .toList();
+            assertFalse(disklessConfigRecords.isEmpty(),
+                "Expected explicit diskless.enable=false ConfigRecord for system topic");
+            assertTrue(disklessConfigRecords.stream().allMatch(c -> c.value().equals("false")));
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"__remote_log_metadata", "__cluster_metadata"})
+        public void testRejectExplicitDisklessEnableForSystemTopics(String systemTopic) {
+            // Given a setup with diskless enabled at the server level
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            // Given a system topic creation request with diskless explicitly enabled
+            CreateTopicsRequestData request = new CreateTopicsRequestData();
+            CreateTopicsRequestData.CreatableTopicConfigCollection topicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            topicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue("true"));
+            request.topics().add(
+                new CreatableTopic()
+                    .setName(systemTopic)
+                    .setNumPartitions(1)
+                    .setReplicationFactor((short) 3)
+                    .setConfigs(topicConfigs));
+            // Given all brokers unfenced
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            // When creating the system topic with diskless explicitly enabled
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+            ControllerResult<CreateTopicsResponseData> result =
+                replicationControl.createTopics(requestContext, request, Set.of(systemTopic));
+            // Then the topic creation should be rejected
+            CreatableTopicResult topicResult = result.response().topics().find(systemTopic);
+            assertEquals(Errors.INVALID_REQUEST.code(), topicResult.errorCode());
+            assertEquals("Internal topics cannot be diskless topics.", topicResult.errorMessage());
         }
 
         @Test
