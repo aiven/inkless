@@ -28,7 +28,13 @@
       "fields": [
         { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
         { "name": "TopicName", "type": "string", "versions": "0+", "mapKey": true, "entityType": "topicName",
-          "about": "The topic name." }
-      ]}
+          "about": "The topic name." },
+        { "name": "NumPartitions", "type": "int32", "versions": "0+",
+          "about": "The number of partitions for the topic. Must match the source topic." }
+      ]},
+    { "name": "IncludePatterns", "type": "[]string", "versions": "0+",
+      "about": "Regex patterns to add to mirror.topics.include." },
+    { "name": "ExcludePatterns", "type": "[]string", "versions": "0+",
+      "about": "Regex patterns to add to mirror.topics.exclude." }
   ]
 }

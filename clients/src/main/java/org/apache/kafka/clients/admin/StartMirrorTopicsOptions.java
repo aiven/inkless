@@ -17,10 +17,44 @@
 
 package org.apache.kafka.clients.admin;
 
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
+
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
  * Options for {@link Admin#startMirrorTopics(String, Set, StartMirrorTopicsOptions)}.
  */
 public class StartMirrorTopicsOptions extends AbstractOptions<StartMirrorTopicsOptions> {
+    private List<String> includePatterns = List.of();
+    private List<String> excludePatterns = List.of();
+    private Map<String, StartMirrorTopicsRequestData.TopicData> topicMetadata = Map.of();
+
+    public StartMirrorTopicsOptions includePatterns(List<String> patterns) {
+        this.includePatterns = patterns;
+        return this;
+    }
+
+    public StartMirrorTopicsOptions excludePatterns(List<String> patterns) {
+        this.excludePatterns = patterns;
+        return this;
+    }
+
+    public StartMirrorTopicsOptions topicMetadata(Map<String, StartMirrorTopicsRequestData.TopicData> metadata) {
+        this.topicMetadata = metadata;
+        return this;
+    }
+
+    public List<String> includePatterns() {
+        return includePatterns;
+    }
+
+    public List<String> excludePatterns() {
+        return excludePatterns;
+    }
+
+    public Map<String, StartMirrorTopicsRequestData.TopicData> topicMetadata() {
+        return topicMetadata;
+    }
 }

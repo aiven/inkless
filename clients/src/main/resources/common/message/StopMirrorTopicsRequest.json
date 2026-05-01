@@ -29,6 +29,8 @@
         { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
         { "name": "TopicName", "type": "string", "versions": "0+", "mapKey": true, "entityType": "topicName",
           "about": "The topic name." }
-      ]}
+      ]},
+    { "name": "Patterns", "type": "[]string", "versions": "0+",
+      "about": "Patterns to update in mirror.topics.include/exclude." }
   ]
 }

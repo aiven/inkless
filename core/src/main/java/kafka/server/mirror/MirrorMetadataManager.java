@@ -51,6 +51,7 @@ import org.apache.kafka.common.message.OffsetFetchRequestData;
 import org.apache.kafka.common.message.OffsetFetchResponseData;
 import org.apache.kafka.common.message.ReadMirrorStatesRequestData;
 import org.apache.kafka.common.message.ReadMirrorStatesResponseData;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
 import org.apache.kafka.common.message.WriteMirrorStatesRequestData;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.network.ClientInformation;
@@ -79,6 +80,8 @@ import org.apache.kafka.common.requests.ReadMirrorStatesRequest;
 import org.apache.kafka.common.requests.ReadMirrorStatesResponse;
 import org.apache.kafka.common.requests.RequestContext;
 import org.apache.kafka.common.requests.RequestHeader;
+import org.apache.kafka.common.requests.StartMirrorTopicsRequest;
+import org.apache.kafka.common.requests.StopMirrorTopicsRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesResponse;
 import org.apache.kafka.common.resource.PatternType;
@@ -386,8 +389,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         initialized = true;
     }
 
+    private static final Set<String> NON_CONNECTION_CONFIGS = Set.of(
+            MirrorConfig.MIRROR_TOPICS_INCLUDE_CONFIG, MirrorConfig.MIRROR_TOPICS_EXCLUDE_CONFIG,
+            MirrorConfig.MIRROR_GROUPS_INCLUDE_CONFIG, MirrorConfig.MIRROR_GROUPS_EXCLUDE_CONFIG,
+            MirrorConfig.MIRROR_ACL_INCLUDE_CONFIG);
+
     private void maybeRecreateConnection(MetadataDelta delta, MetadataImage newImage) {
-        // detect config changes and close stale connections and fetchers to trigger reconnection
         if (delta.configsDelta() != null) {
             delta.configsDelta().changes().entrySet().stream()
                 .filter(e -> e.getKey().type() == ConfigResource.Type.MIRROR)
@@ -399,14 +406,20 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         log.info("Mirror '{}' has been deleted. Writing tombstone records.", mirrorName);
                         mirrorDeletionHandler.ifPresent(h -> h.accept(mirrorName));
                     }
-                    sourceLeaders.remove(mirrorName);
-                    List<MirrorSourceSender> senders = sourceSenders.remove(mirrorName);
-                    if (senders != null) {
-                        log.info("Mirror config changed for '{}'. Closing existing connections "
-                                + "to trigger reconnection with updated configuration.", mirrorName);
-                        senders.forEach(MirrorSourceSender::close);
+
+                    boolean connectionConfigChanged = e.getValue().changes().keySet().stream()
+                            .anyMatch(key -> !NON_CONNECTION_CONFIGS.contains(key));
+
+                    if (connectionConfigChanged || mirrorDeleted) {
+                        sourceLeaders.remove(mirrorName);
+                        List<MirrorSourceSender> senders = sourceSenders.remove(mirrorName);
+                        if (senders != null) {
+                            log.info("Mirror config changed for '{}'. Closing existing connections "
+                                    + "to trigger reconnection with updated configuration.", mirrorName);
+                            senders.forEach(MirrorSourceSender::close);
+                        }
+                        mirrorFetcherManagerSupplier.get().removeFetchersForMirror(mirrorName);
                     }
-                    mirrorFetcherManagerSupplier.get().removeFetchersForMirror(mirrorName);
                 });
         }
     }
@@ -1189,9 +1202,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         .setAssignments(null)
                 );
             } else if (metadataImage.topics().getTopic(tm.topicId()) == null &&
+                    metadataImage.topics().getTopic(tm.topic()) == null &&
                     tm.error() == Errors.NONE && sourcePartitionCount > 0) {
                 // create topic on destination using cluster default replication factor
                 this.createMirrorTopic(tm.topic(), tm.topicId(), sourcePartitionCount);
+            } else if (metadataImage.topics().getTopic(tm.topicId()) == null &&
+                    metadataImage.topics().getTopic(tm.topic()) != null &&
+                    tm.error() == Errors.NONE) {
+                log.error("Mirror topic {} exists on destination with TopicId {} but source has TopicId {}. "
+                        + "Delete the topic on destination and let auto-creation recreate it with the correct TopicId.",
+                        tm.topic(), metadataImage.topics().getTopic(tm.topic()).id(), tm.topicId());
             }
         });
 
@@ -1241,6 +1261,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 syncTopicConfigurations(mirrorName, mirrorConfig);
                 syncConsumerGroupOffsets(mirrorName, mirrorConfig);
                 syncAccessControlLists(mirrorName, mirrorConfig);
+                discoverTopicsByPattern(mirrorName, mirrorConfig);
+                enforceExcludePatterns(mirrorName, mirrorConfig);
             } catch (Exception e) {
                 log.error("Failed to sync mirror metadata for mirror {}", mirrorName, e);
             }
@@ -1286,7 +1308,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     // by source cluster configs (which wouldn't have this config set)
                     if (con.configSource() == DescribeConfigsResponse.ConfigSource.TOPIC_CONFIG.id()
                             && !con.name().equals(TopicConfig.MIRROR_NAME_CONFIG)
-                            && !excludePattern.matcher(con.name()).matches()) {
+                            && (excludePattern == null || !excludePattern.matcher(con.name()).matches())) {
                         if (props.containsKey(con.name())) {
                             if (!props.get(con.name()).equals(con.value())) {
                                 conChange.put(con.name(), con.value());
@@ -1342,6 +1364,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
         consumerGroupOffsetSyncError.incrementAndGet();
         Pattern groupsIncludePattern = mirrorConfig.groupsIncludePattern();
+        Pattern groupsExcludePattern = mirrorConfig.groupsExcludePattern();
         // 1. list group
         ListGroupsRequest.Builder builder = new ListGroupsRequest.Builder(new ListGroupsRequestData()
                 // TODO: if the source cluster is in old version, it won't support types filter
@@ -1353,7 +1376,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
             // Filter groups by include pattern
             var matchingGroups = listGroupsRes.data().groups().stream()
-                    .filter(group -> groupsIncludePattern.matcher(group.groupId()).matches())
+                    .filter(group -> groupsIncludePattern == null || groupsIncludePattern.matcher(group.groupId()).matches()
+                            && (groupsExcludePattern == null || !groupsExcludePattern.matcher(group.groupId()).matches()))
                     .toList();
 
             if (matchingGroups.isEmpty()) {
@@ -1525,6 +1549,76 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     private record ACLChanges(List<AclBinding> aclsToAdd, List<AclBinding> aclsToDelete) { }
 
+    private void discoverTopicsByPattern(String mirrorName, MirrorConfig mirrorConfig) {
+        final Pattern topicsIncludePattern = mirrorConfig.topicsIncludePattern();
+        if (topicsIncludePattern == null) {
+            return;
+        }
+
+        var response = trySendSourceClusterRequest(mirrorName, MetadataRequest.Builder.allTopics());
+        if (!(response.responseBody() instanceof MetadataResponse metadataResponse)) {
+            log.warn("Unexpected metadata response type from source cluster for topic discovery: {}", response);
+            return;
+        }
+
+        Set<String> configuredTopics = getConfiguredTopics(mirrorName, true);
+        final Pattern topicsExcludePattern = mirrorConfig.topicsExcludePattern();
+
+        List<StartMirrorTopicsRequestData.TopicData> newTopics = metadataResponse.topicMetadata().stream()
+                .filter(tm -> tm.error() == Errors.NONE)
+                .filter(tm -> topicsIncludePattern.matcher(tm.topic()).matches())
+                .filter(tm -> topicsExcludePattern == null || !topicsExcludePattern.matcher(tm.topic()).matches())
+                .filter(tm -> !configuredTopics.contains(tm.topic()))
+                .map(tm -> new StartMirrorTopicsRequestData.TopicData()
+                        .setTopicName(tm.topic())
+                        .setTopicId(tm.topicId())
+                        .setNumPartitions(tm.partitionMetadata().size()))
+                .toList();
+
+        if (newTopics.isEmpty()) {
+            return;
+        }
+
+        log.info("Discovered {} new topic(s) matching mirror.topics.include pattern for mirror {}: {}",
+                newTopics.size(), mirrorName, newTopics.stream().map(StartMirrorTopicsRequestData.TopicData::topicName).toList());
+
+        StartMirrorTopicsRequestData data = new StartMirrorTopicsRequestData();
+        data.setMirrorName(mirrorName);
+        newTopics.forEach(topic -> data.topics().add(topic));
+
+        // TODO: creation failures from auto-discovery are silently lost here (fire-and-forget).
+        //  Add per-topic status tracking so describeMirror can surface failed topics to users.
+        channelManager.sendRequest(
+                new StartMirrorTopicsRequest.Builder(data),
+                new TimeoutHandler(log)
+        );
+    }
+
+    /**
+     * Checks if any active mirroring topics now match the exclude pattern and sends
+     * StopMirrorTopicsRequest to stop them. Catches cases where exclude was updated
+     * via incrementalAlterConfigs outside of the startMirrorTopics/stopMirrorTopics flow.
+     */
+    private void enforceExcludePatterns(String mirrorName, MirrorConfig mirrorConfig) {
+        Pattern excludePattern = mirrorConfig.topicsExcludePattern();
+        if (excludePattern == null) return;
+
+        Set<String> activeTopics = getConfiguredTopics(mirrorName, false, false);
+        Set<String> excludedTopics = activeTopics.stream()
+                .filter(topic -> excludePattern.matcher(topic).matches())
+                .collect(Collectors.toSet());
+
+        if (excludedTopics.isEmpty()) return;
+
+        log.info("Stopping {} topic(s) matching mirror.topics.exclude for mirror {}: {}",
+                excludedTopics.size(), mirrorName, excludedTopics);
+
+        channelManager.sendRequest(
+                new StopMirrorTopicsRequest.Builder(mirrorName, excludedTopics),
+                new TimeoutHandler(log)
+        );
+    }
+
     Set<String> getConfiguredMirrors() {
         return metadataImage.configs().resourceData().keySet().stream()
                 .filter(resource -> resource.type() == ConfigResource.Type.MIRROR)
@@ -1534,21 +1628,29 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     /** Returns the set of topic names configured for the given mirror, excluding paused topics. */
     Set<String> getConfiguredTopics(String mirrorName) {
-        return getConfiguredTopics(mirrorName, false);
+        return getConfiguredTopics(mirrorName, false, true);
     }
 
-    /** Returns the set of topic names configured for the given mirror even if not created yet by using metadataImage, optionally including paused topics. */
     Set<String> getConfiguredTopics(String mirrorName, boolean includePaused) {
+        return getConfiguredTopics(mirrorName, includePaused, true);
+    }
+
+    Set<String> getConfiguredTopics(String mirrorName, boolean includePaused, boolean includeStopped) {
         return metadataImage.configs().resourceData().entrySet().stream()
                 .filter(configEntry -> {
                     if (configEntry.getKey().type() != ConfigResource.Type.TOPIC) return false;
                     String topicMirrorName = configEntry.getValue().data().get(TopicConfig.MIRROR_NAME_CONFIG);
                     if (topicMirrorName == null) return false;
+                    if (!includeStopped && topicMirrorName.endsWith(STOPPED_TOPIC_SUFFIX)) return false;
                     if (!includePaused && topicMirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) return false;
                     return mirrorName.equals(MirrorUtils.originalMirrorName(topicMirrorName));
                 })
                 .map(configEntry -> configEntry.getKey().name())
                 .collect(Collectors.toSet());
+    }
+
+    int getActiveTopicCount(String mirrorName) {
+        return getConfiguredTopics(mirrorName, false, false).size();
     }
 
     String getSourceBootstrap(String mirrorName) {

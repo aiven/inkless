@@ -903,6 +903,10 @@ public class MirrorCoordinator {
         return metadataManager.getConfiguredTopics(mirrorName);
     }
 
+    public int getActiveTopicCount(String mirrorName) {
+        return metadataManager.getActiveTopicCount(mirrorName);
+    }
+
     public String getSourceBootstrap(String mirrorName) {
         return metadataManager.getSourceBootstrap(mirrorName);
     }

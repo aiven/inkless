@@ -61,6 +61,7 @@ import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
 import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
 import org.apache.kafka.common.message.StopMirrorTopicsResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
@@ -1796,20 +1797,24 @@ public final class QuorumController implements Controller {
     public CompletableFuture<StartMirrorTopicsResponseData> startMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
-            Set<String> topics
+            List<StartMirrorTopicsRequestData.TopicData> topics,
+            List<String> includePatterns,
+            List<String> excludePatterns
     ) {
         return appendWriteEvent("startMirrorTopics", context.deadlineNs(),
-                () -> configurationControl.startMirrorTopics(mirrorName, topics));
+                () -> configurationControl.startMirrorTopics(mirrorName, topics,
+                        includePatterns, excludePatterns, replicationControl));
     }
 
     @Override
     public CompletableFuture<StopMirrorTopicsResponseData> stopMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
-            Set<String> topics
+            Set<String> topics,
+            List<String> patterns
     ) {
         return appendWriteEvent("stopMirrorTopics", context.deadlineNs(),
-                () -> configurationControl.stopMirrorTopics(mirrorName, topics));
+                () -> configurationControl.stopMirrorTopics(mirrorName, topics, patterns));
     }
 
     @Override

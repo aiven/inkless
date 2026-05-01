@@ -172,6 +172,8 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.MetadataRequestData;
 import org.apache.kafka.common.message.RemoveRaftVoterRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StopMirrorTopicsRequestData;
 import org.apache.kafka.common.message.UnregisterBrokerRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData.UpdatableFeatureResult;
@@ -315,6 +317,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -4920,13 +4924,27 @@ public class KafkaAdminClient extends AdminClient {
     @Override
     public StartMirrorTopicsResult startMirrorTopics(String mirrorName, Set<String> topics, StartMirrorTopicsOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+
+        validateRegexPatterns(options.includePatterns());
+        validateRegexPatterns(options.excludePatterns());
+
         final long now = time.milliseconds();
         final Call call = new Call("startMirrorTopics", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
 
             @Override
             StartMirrorTopicsRequest.Builder createRequest(int timeoutMs) {
-                return new StartMirrorTopicsRequest.Builder(mirrorName, topics);
+                Map<String, StartMirrorTopicsRequestData.TopicData> metadata = options.topicMetadata();
+                StartMirrorTopicsRequestData data = new StartMirrorTopicsRequestData();
+                data.setMirrorName(mirrorName);
+                topics.forEach(t -> {
+                    StartMirrorTopicsRequestData.TopicData existing = metadata.get(t);
+                    data.topics().add(existing != null ? existing
+                            : new StartMirrorTopicsRequestData.TopicData().setTopicName(t));
+                });
+                data.setIncludePatterns(options.includePatterns());
+                data.setExcludePatterns(options.excludePatterns());
+                return new StartMirrorTopicsRequest.Builder(data);
             }
 
             @Override
@@ -4959,13 +4977,20 @@ public class KafkaAdminClient extends AdminClient {
     @Override
     public StopMirrorTopicsResult stopMirrorTopics(String mirrorName, Set<String> topics, StopMirrorTopicsOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+
+        validateRegexPatterns(options.patterns());
+
         final long now = time.milliseconds();
         final Call call = new Call("stopMirrorTopics", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
 
             @Override
             StopMirrorTopicsRequest.Builder createRequest(int timeoutMs) {
-                return new StopMirrorTopicsRequest.Builder(mirrorName, topics);
+                StopMirrorTopicsRequestData data = new StopMirrorTopicsRequestData();
+                data.setMirrorName(mirrorName);
+                topics.forEach(t -> data.topics().add(new StopMirrorTopicsRequestData.TopicData().setTopicName(t)));
+                data.setPatterns(options.patterns());
+                return new StopMirrorTopicsRequest.Builder(data);
             }
 
             @Override
@@ -4993,6 +5018,16 @@ public class KafkaAdminClient extends AdminClient {
         };
         runnable.call(call, now);
         return new StopMirrorTopicsResult(future);
+    }
+
+    private static void validateRegexPatterns(List<String> patterns) {
+        for (String pattern : patterns) {
+            try {
+                Pattern.compile(pattern);
+            } catch (PatternSyntaxException e) {
+                throw new IllegalArgumentException("Invalid regex pattern: " + pattern, e);
+            }
+        }
     }
 
     @Override

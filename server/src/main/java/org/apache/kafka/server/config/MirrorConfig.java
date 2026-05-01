@@ -27,6 +27,7 @@ import org.apache.kafka.common.config.SslConfigs;
 import org.apache.kafka.common.resource.ResourceType;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
@@ -75,11 +76,31 @@ public final class MirrorConfig {
             + "Properties in this list will not be replicated from the source cluster. "
             + "The mirror.name property is always excluded regardless of this setting.";
 
+    // Topic include filter (regex patterns)
+    public static final String MIRROR_TOPICS_INCLUDE_CONFIG = "mirror.topics.include";
+    public static final String MIRROR_TOPICS_INCLUDE_DEFAULT = "";
+    public static final String MIRROR_TOPICS_INCLUDE_DOC = "A comma-separated list of regex patterns for topic names to include in mirroring. "
+            + "Topics on the source cluster whose names match at least one of the patterns will be automatically discovered and mirrored. "
+            + "When empty (default), only explicitly added topics are mirrored.";
+
+    // Topic exclude filter (regex patterns)
+    public static final String MIRROR_TOPICS_EXCLUDE_CONFIG = "mirror.topics.exclude";
+    public static final String MIRROR_TOPICS_EXCLUDE_DEFAULT = "__.*";
+    public static final String MIRROR_TOPICS_EXCLUDE_DOC = "A comma-separated list of regex patterns for topic names to exclude from mirroring. "
+            + "Topics matching the exclude pattern are not mirrored even if they match mirror.topics.include. "
+            + "By default, internal topics (starting with '__') are excluded.";
+
     // Consumer group include filter (regex patterns)
     public static final String MIRROR_GROUPS_INCLUDE_CONFIG = "mirror.groups.include";
     public static final String MIRROR_GROUPS_INCLUDE_DEFAULT = ".*";
     public static final String MIRROR_GROUPS_INCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to include in offset synchronization. "
             + "Only consumer groups whose IDs match at least one of the patterns will have their offsets replicated from the source cluster.";
+
+    // Consumer group exclude filter (regex patterns)
+    public static final String MIRROR_GROUPS_EXCLUDE_CONFIG = "mirror.groups.exclude";
+    public static final String MIRROR_GROUPS_EXCLUDE_DEFAULT = "";
+    public static final String MIRROR_GROUPS_EXCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to exclude from offset synchronization. "
+            + "Groups matching the exclude pattern are not replicated even if they match mirror.groups.include.";
 
     // ACL include filter (semicolon-separated rules)
     public static final String MIRROR_ACL_INCLUDE_CONFIG = "mirror.acl.include";
@@ -211,7 +232,10 @@ public final class MirrorConfig {
      */
     public static final ConfigDef CONFIG_DEF = new ConfigDef()
             .define(MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG, LIST, MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT, LOW, MIRROR_TOPIC_PROPERTIES_EXCLUDE_DOC)
+            .define(MIRROR_TOPICS_INCLUDE_CONFIG, LIST, MIRROR_TOPICS_INCLUDE_DEFAULT, LOW, MIRROR_TOPICS_INCLUDE_DOC)
+            .define(MIRROR_TOPICS_EXCLUDE_CONFIG, LIST, MIRROR_TOPICS_EXCLUDE_DEFAULT, LOW, MIRROR_TOPICS_EXCLUDE_DOC)
             .define(MIRROR_GROUPS_INCLUDE_CONFIG, LIST, MIRROR_GROUPS_INCLUDE_DEFAULT, LOW, MIRROR_GROUPS_INCLUDE_DOC)
+            .define(MIRROR_GROUPS_EXCLUDE_CONFIG, LIST, MIRROR_GROUPS_EXCLUDE_DEFAULT, LOW, MIRROR_GROUPS_EXCLUDE_DOC)
             .define(MIRROR_ACL_INCLUDE_CONFIG, LIST, MIRROR_ACL_INCLUDE_DEFAULT, LOW, MIRROR_ACL_INCLUDE_DOC)
             .define(BOOTSTRAP_SERVERS_CONFIG, LIST, null, HIGH, BOOTSTRAP_SERVERS_DOC)
             .define(SECURITY_PROTOCOL_CONFIG, STRING, SECURITY_PROTOCOL_DEFAULT, ConfigDef.ValidString.in(SecurityProtocol.PLAINTEXT.name, SecurityProtocol.SSL.name,
@@ -244,7 +268,10 @@ public final class MirrorConfig {
 
     private final AbstractConfig config;
     private final Pattern topicPropertiesExcludePattern;
+    private final Pattern topicsIncludePattern;
+    private final Pattern topicsExcludePattern;
     private final Pattern groupsIncludePattern;
+    private final Pattern groupsExcludePattern;
     private final List<AclRule> aclIncludeRules;
     private final String securityProtocol;
     private final String saslMechanism;
@@ -257,8 +284,11 @@ public final class MirrorConfig {
         this.config = config;
         this.securityProtocol = null;
         this.saslMechanism = null;
-        this.topicPropertiesExcludePattern = compilePatternList(List.of(MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT));
+        this.topicPropertiesExcludePattern = compilePatternList(Arrays.asList(MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT.split(",")));
+        this.topicsIncludePattern = null;
+        this.topicsExcludePattern = compilePatternList(List.of(MIRROR_TOPICS_EXCLUDE_DEFAULT));
         this.groupsIncludePattern = compilePatternList(List.of(MIRROR_GROUPS_INCLUDE_DEFAULT));
+        this.groupsExcludePattern = null;
         this.aclIncludeRules = parseAclRules(List.of(MIRROR_ACL_INCLUDE_DEFAULT));
     }
 
@@ -273,19 +303,28 @@ public final class MirrorConfig {
         AbstractConfig config = new AbstractConfig(CONFIG_DEF, properties, false) { };
         return new MirrorConfig(config,
                 config.getList(MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG),
+                config.getList(MIRROR_TOPICS_INCLUDE_CONFIG),
+                config.getList(MIRROR_TOPICS_EXCLUDE_CONFIG),
                 config.getList(MIRROR_GROUPS_INCLUDE_CONFIG),
+                config.getList(MIRROR_GROUPS_EXCLUDE_CONFIG),
                 config.getList(MIRROR_ACL_INCLUDE_CONFIG));
     }
 
     private MirrorConfig(AbstractConfig config,
                          List<String> topicPropertiesExclude,
+                         List<String> topicsInclude,
+                         List<String> topicsExclude,
                          List<String> groupsInclude,
+                         List<String> groupsExclude,
                          List<String> aclInclude) {
         this.config = config;
         this.securityProtocol = config.getString(SECURITY_PROTOCOL_CONFIG);
         this.saslMechanism = config.getString(SASL_MECHANISM_CONFIG);
         this.topicPropertiesExcludePattern = compilePatternList(topicPropertiesExclude);
+        this.topicsIncludePattern = compilePatternList(topicsInclude);
+        this.topicsExcludePattern = compilePatternList(topicsExclude);
         this.groupsIncludePattern = compilePatternList(groupsInclude);
+        this.groupsExcludePattern = compilePatternList(groupsExclude);
         this.aclIncludeRules = parseAclRules(aclInclude);
     }
 
@@ -293,8 +332,20 @@ public final class MirrorConfig {
         return topicPropertiesExcludePattern;
     }
 
+    public Pattern topicsIncludePattern() {
+        return topicsIncludePattern;
+    }
+
+    public Pattern topicsExcludePattern() {
+        return topicsExcludePattern;
+    }
+
     public Pattern groupsIncludePattern() {
         return groupsIncludePattern;
+    }
+
+    public Pattern groupsExcludePattern() {
+        return groupsExcludePattern;
     }
 
     public List<AclRule> aclIncludeRules() {
@@ -354,7 +405,7 @@ public final class MirrorConfig {
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.joining("|"));
-        return Pattern.compile(combined);
+        return combined.isEmpty() ? null : Pattern.compile("^(" + combined + ")$");
     }
 
     /**
