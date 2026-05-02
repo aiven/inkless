@@ -18,8 +18,6 @@ package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.AlterConfigOp;
-import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateMirrorOptions;
 import org.apache.kafka.clients.admin.CreateMirrorResult;
 import org.apache.kafka.clients.admin.DeleteMirrorOptions;
@@ -49,7 +47,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -89,8 +86,6 @@ public abstract class MirrorCommand {
         try (MirrorService mirrorService = new MirrorService(opts.bootstrapServer(), opts.commandConfig(), opts.mirrorConfig())) {
             if (opts.hasCreateOption()) {
                 mirrorService.createMirror(opts);
-            } else if (opts.hasAlterOption()) {
-                mirrorService.alterMirror(opts);
             } else if (opts.hasStartOption()) {
                 mirrorService.startMirrorTopics(opts);
             } else if (opts.hasStopOption()) {
@@ -136,19 +131,6 @@ public abstract class MirrorCommand {
             );
             result.all().get();
             System.out.printf("Created mirror %s%n", opts.mirror().get());
-        }
-
-        private void alterMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
-            ConfigResource resource = new ConfigResource(ConfigResource.Type.MIRROR, opts.mirror().get());
-            List<AlterConfigOp> ops = new ArrayList<>();
-            mirrorConfigs.forEach((k, v) ->
-                ops.add(new AlterConfigOp(
-                    new ConfigEntry(k.toString(), v.toString()),
-                    AlterConfigOp.OpType.SET)));
-
-            Map<ConfigResource, Collection<AlterConfigOp>> configs = Map.of(resource, ops);
-            adminClient.incrementalAlterConfigs(configs).all().get();
-            System.out.printf("Altered mirror %s%n", opts.mirror().get());
         }
 
         private void startMirrorTopics(MirrorCommandOptions opts) throws Exception {
@@ -397,7 +379,6 @@ public abstract class MirrorCommand {
         private final ArgumentAcceptingOptionSpec<String> commandConfigOpt;
         private final ArgumentAcceptingOptionSpec<String> mirrorConfigOpt;
         private final OptionSpecBuilder createOpt;
-        private final OptionSpecBuilder alterOpt;
         private final OptionSpecBuilder startOpt;
         private final OptionSpecBuilder stopOpt;
         private final OptionSpecBuilder deleteOpt;
@@ -429,7 +410,6 @@ public abstract class MirrorCommand {
                 .ofType(String.class);
 
             createOpt = parser.accepts("create", "Create a new cluster mirror from a source cluster.");
-            alterOpt = parser.accepts("alter", "Alter the configuration of an existing cluster mirror.");
             startOpt = parser.accepts("start", "Start mirroring topics matching the given patterns.");
             stopOpt = parser.accepts("stop", "Stop mirroring topics matching the given patterns.");
             pauseOpt = parser.accepts("pause", "Pause mirroring for topics matching the given patterns.");
@@ -470,10 +450,6 @@ public abstract class MirrorCommand {
 
         private boolean hasCreateOption() {
             return has(createOpt);
-        }
-
-        private boolean hasAlterOption() {
-            return has(alterOpt);
         }
 
         private boolean hasStartOption() {
@@ -556,25 +532,22 @@ public abstract class MirrorCommand {
             CommandLineUtils.maybePrintHelpOrVersion(this, "This tool helps to create cluster mirrors and manage mirrored topics.");
 
             // should have exactly one action
-            if ((has(createOpt) ? 1 : 0) + (has(alterOpt) ? 1 : 0) + (has(startOpt) ? 1 : 0) + (has(stopOpt) ? 1 : 0)
+            if ((has(createOpt) ? 1 : 0) + (has(startOpt) ? 1 : 0) + (has(stopOpt) ? 1 : 0)
                     + (has(deleteOpt) ? 1 : 0) + (has(pauseOpt) ? 1 : 0) + (has(resumeOpt) ? 1 : 0)
                     + (has(listOpt) ? 1 : 0) + (has(describeOpt) ? 1 : 0) != 1)
-                CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create, --alter, --start, " +
+                CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create, --start, " +
                         "--stop, --delete, --pause, --resume, --list, or --describe");
 
             // check required args
             if (!has(bootstrapServerOpt))
                 throw new IllegalArgumentException("--bootstrap-server must be specified");
 
-            // --mirror is required for create, alter, add, remove, pause, and resume operations, but optional for list and describe
+            // --mirror is required for create, start, stop, pause, resume, and delete operations, but optional for list and describe
             if (!has(listOpt) && !has(describeOpt) && !has(mirrorOpt))
                 throw new IllegalArgumentException("--mirror must be specified");
 
             if (has(createOpt) && !has(mirrorConfigOpt))
                 throw new IllegalArgumentException("--mirror-config must be specified when creating a mirror");
-
-            if (has(alterOpt) && !has(mirrorConfigOpt))
-                throw new IllegalArgumentException("--mirror-config must be specified when altering a mirror");
 
             if (has(startOpt) && !has(topicsOpt))
                 throw new IllegalArgumentException("--topics must be specified when starting mirror topic(s)");
