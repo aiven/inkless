@@ -57,7 +57,6 @@ import scala.jdk.OptionConverters.RichOptional
  * and finally calls `job.start()` to fire the underlying control plane job.
  */
 class DisklessFetchOffsetRouter(
-  inklessFetchOffsetHandler: Option[FetchOffsetHandler],
   inklessMetadataView: InklessMetadataView,
   disklessManagedReplicasEnabled: Boolean,
   delayedRemoteListOffsetsPurgatory: DelayedOperationPurgatory[DelayedRemoteListOffsets]
@@ -65,19 +64,14 @@ class DisklessFetchOffsetRouter(
   import DisklessFetchOffsetRouter._
 
   /**
-   * Create a per-request control-plane job. Returns `None` if diskless is not configured for
-   * this broker, in which case the caller should fall through to the standard classic path for
-   * all partitions.
-   */
-  def createJob(): Option[FetchOffsetHandler.Job] =
-    inklessFetchOffsetHandler.map(_.createJob())
-
-  /**
    * Route a single partition.
    *
-   * @param job                           the per-request job from [[createJob]]; partitions that
-   *                                      go to the diskless path are added to it (and the caller
+   * @param job                           the per-request control-plane job; partitions that go
+   *                                      to the diskless path are added to it (and the caller
    *                                      starts it once after routing all partitions).
+   * @param newJob                        factory for a fresh, immediately-started job used by
+   *                                      async fallbacks that fire after the caller has already
+   *                                      started `job`.
    * @param classicLogStartOffsetProvider returns the local UnifiedLog's `logStartOffset` for the
    *                                      given partition, used to decide whether the EARLIEST
    *                                      timestamp can be served by the classic path.
@@ -86,6 +80,7 @@ class DisklessFetchOffsetRouter(
    */
   def route(
     job: FetchOffsetHandler.Job,
+    newJob: () => FetchOffsetHandler.Job,
     topicPartition: TopicPartition,
     partition: ListOffsetsPartition,
     replicaId: Int,
@@ -106,7 +101,7 @@ class DisklessFetchOffsetRouter(
 
     def classicLookup(): ListOffsetsPartitionStatus = classicFetchOffset(topicPartition, partition, allowFromFollower)
     def disklessLookup: Lookup = disklessLookupOnJob(job, topicPartition, partition)
-    def disklessLookupOnNewJob: Lookup = disklessLookupOnJob(inklessFetchOffsetHandler.get.createJob(), topicPartition, partition, startNow = true)
+    def disklessLookupOnNewJob: Lookup = disklessLookupOnJob(newJob(), topicPartition, partition, startNow = true)
 
     if (migrationPending && disklessManagedReplicasEnabled) {
       // Case 3.

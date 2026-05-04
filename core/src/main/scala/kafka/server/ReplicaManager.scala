@@ -275,7 +275,6 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessFetchHandler: Option[FetchHandler] = inklessSharedState.map(new FetchHandler(_))
   private val inklessFetchOffsetHandler: Option[FetchOffsetHandler] = inklessSharedState.map(new FetchOffsetHandler(_))
   private val disklessFetchOffsetRouter = new DisklessFetchOffsetRouter(
-    inklessFetchOffsetHandler,
     _inklessMetadataView,
     config.disklessManagedReplicasEnabled,
     delayedRemoteListOffsetsPurgatory
@@ -1621,7 +1620,7 @@ class ReplicaManager(val config: KafkaConfig,
                   buildErrorResponse: (Errors, ListOffsetsPartition) => ListOffsetsPartitionResponse,
                   responseCallback: Consumer[util.Collection[ListOffsetsTopicResponse]],
                   timeoutMs: Int = 0): Unit = {
-    val maybeFetchOffsetJob: Option[FetchOffsetHandler.Job] = disklessFetchOffsetRouter.createJob()
+    val maybeFetchOffsetJob: Option[FetchOffsetHandler.Job] = inklessFetchOffsetHandler.map(_.createJob())
     val statusByPartition = mutable.Map[TopicPartition, ListOffsetsPartitionStatus]()
 
     val classicFetch: (TopicPartition, ListOffsetsPartition, Boolean) => ListOffsetsPartitionStatus =
@@ -1643,8 +1642,8 @@ class ReplicaManager(val config: KafkaConfig,
             ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.UNSUPPORTED_VERSION, partition))).build()
         } else if (maybeFetchOffsetJob.exists(_.mustHandle(topic.name))) {
           statusByPartition += topicPartition ->
-            disklessFetchOffsetRouter.route(maybeFetchOffsetJob.get, topicPartition, partition, replicaId, version,
-              classicLogStart, classicFetch)
+            disklessFetchOffsetRouter.route(maybeFetchOffsetJob.get, () => inklessFetchOffsetHandler.get.createJob(),
+              topicPartition, partition, replicaId, version, classicLogStart, classicFetch)
         } else {
           statusByPartition += topicPartition -> classicFetch(topicPartition, partition, false)
         }
