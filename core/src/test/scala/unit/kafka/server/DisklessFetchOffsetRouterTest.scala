@@ -34,7 +34,7 @@ import org.mockito.ArgumentMatchers.{any, eq => eqTo}
 import org.mockito.Mockito._
 
 import java.util.Optional
-import java.util.concurrent.{CompletableFuture, TimeUnit}
+import java.util.concurrent.{CompletableFuture, ExecutionException, TimeUnit}
 import scala.collection.mutable
 
 class DisklessFetchOffsetRouterTest {
@@ -371,5 +371,28 @@ class DisklessFetchOffsetRouterTest {
       verify(fresh).add(eqTo(p), any())
       verify(fresh).start()
     }
+  }
+
+  @Test
+  def routesToDisklessAndForwardsControlPlaneFailureWhenMigrationPendingAndManagedReplicasDisabled(): Unit = {
+    // Migration to diskless is pending while managed replicas are disabled. Migration can only have been 
+    // initiated with managed replicas enabled, so this is a misconfiguration.
+    // The control plane is not expected to have a committed diskless start offset for the partition yet, so we
+    // simulate the realistic outcome by completing the diskless task future exceptionally and
+    // assert the router forwards that failure verbatim.
+    
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+    val controlPlaneFailure = new RuntimeException("partition not found in the diskless control plane")
+    disklessTaskFuture.completeExceptionally(controlPlaneFailure)
+
+    val status = route(newRouter(disklessManagedReplicasEnabled = false), timestamp = ListOffsetsRequest.LATEST_TIMESTAMP)
+
+    assertTrue(classicCalls.isEmpty, "classic path must not be invoked")
+    verify(job).add(eqTo(tp), any())
+    assertTrue(status.futureHolderOpt.isPresent, "must surface an async holder backed by the diskless control plane")
+    assertFalse(status.responseOpt.isPresent)
+    val ex = assertThrows(classOf[ExecutionException],
+      () => status.futureHolderOpt.get.taskFuture.get(1, TimeUnit.SECONDS))
+    assertSame(controlPlaneFailure, ex.getCause)
   }
 }
