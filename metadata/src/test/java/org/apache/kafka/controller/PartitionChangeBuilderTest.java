@@ -123,6 +123,7 @@ public class PartitionChangeBuilderTest {
             case (short) 0 -> MetadataVersion.IBP_3_7_IV0;
             case (short) 1 -> MetadataVersion.IBP_3_7_IV2;
             case (short) 2 -> MetadataVersion.IBP_4_0_IV1;
+            case (short) 3 -> MetadataVersion.IBP_4_2_IV2;
             default -> throw new RuntimeException("Unknown PartitionChangeRecord version " + version);
         };
     }
