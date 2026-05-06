@@ -2865,8 +2865,14 @@ class KafkaApis(val requestChannel: RequestChannel,
                 if (cachedErrors.nonEmpty) {
                   val missingInternalTopicStatus =
                     responseData.status().stream().filter(x => x.statusCode() == StreamsGroupHeartbeatResponse.Status.MISSING_INTERNAL_TOPICS.code()).findFirst()
-                  val creationErrorDetails = cachedErrors.map { case (topic, error) => s"$topic ($error)" }.mkString(", ")
                   if (missingInternalTopicStatus.isPresent) {
+                    val maxErrorsToInclude = 3
+                    val errorList = cachedErrors.take(maxErrorsToInclude).map { case (topic, error) => s"$topic ($error)" }.mkString(", ")
+                    val creationErrorDetails = if (cachedErrors.size > maxErrorsToInclude) {
+                      s"$errorList and ${cachedErrors.size - maxErrorsToInclude} more"
+                    } else {
+                      errorList
+                    }
                     val existingDetail = Option(missingInternalTopicStatus.get().statusDetail()).getOrElse("")
                     missingInternalTopicStatus.get().setStatusDetail(
                       existingDetail + s"; Creation failed: $creationErrorDetails."
@@ -3399,7 +3405,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                   error(s"Releasing share session close with correlation from client ${request.header.clientId}  " +
                     s"failed with error ${throwable.getMessage}")
                 } else {
-                  info(s"Releasing share session close $releaseAcquiredRecordsData succeeded")
+                  info(s"Releasing share session for client id ${request.header.clientId} succeeded, response: $releaseAcquiredRecordsData")
                 }
               )
           }
@@ -3623,7 +3629,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                   debug(s"Releasing share session close with correlation from client ${request.header.clientId}  " +
                     s"failed with error ${throwable.getMessage}")
                 } else {
-                  info(s"Releasing share session close $releaseAcquiredRecordsData succeeded")
+                  info(s"Releasing share session for client id ${request.header.clientId} succeeded, response: $releaseAcquiredRecordsData")
                 }
               }
           }

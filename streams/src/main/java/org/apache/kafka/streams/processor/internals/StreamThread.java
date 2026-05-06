@@ -339,6 +339,7 @@ public class StreamThread extends Thread implements ProcessingThread {
     private long lastPurgeMs;
     private long lastPartitionAssignedMs = -1L;
     private int numIterations;
+    private boolean streamsGroupReady = false;
     private volatile State state = State.CREATED;
     private volatile ThreadMetadata threadMetadata;
     private StreamThread.StateListener stateListener;
@@ -1209,7 +1210,15 @@ public class StreamThread extends Thread implements ProcessingThread {
         pollLatency = pollPhase();
         totalPolledSinceLastSummary += 1;
 
-        handleStreamsRebalanceData();
+        if (streamsRebalanceData.isPresent()) {
+            // Always handle status codes (e.g., MISSING_SOURCE_TOPICS, INCORRECTLY_PARTITIONED_TOPICS)
+            // regardless of streamsGroupReady, as these may throw exceptions that need to be handled.
+            handleStreamsRebalanceData();
+
+            if (!streamsGroupReady) {
+                return;
+            }
+        }
 
         // Shutdown hook could potentially be triggered and transit the thread state to PENDING_SHUTDOWN during #pollRequests().
         // The task manager internal states could be uninitialized if the state transition happens during #onPartitionsAssigned().
@@ -1360,7 +1369,15 @@ public class StreamThread extends Thread implements ProcessingThread {
         taskManager.resumePollingForPartitionsWithAvailableSpace();
         pollLatency = pollPhase();
 
-        handleStreamsRebalanceData();
+        if (streamsRebalanceData.isPresent()) {
+            // Always handle status codes (e.g., MISSING_SOURCE_TOPICS, INCORRECTLY_PARTITIONED_TOPICS)
+            // regardless of streamsGroupReady, as these may throw exceptions that need to be handled.
+            handleStreamsRebalanceData();
+
+            if (!streamsGroupReady) {
+                return;
+            }
+        }
 
         // Shutdown hook could potentially be triggered and transit the thread state to PENDING_SHUTDOWN during #pollRequests().
         // The task manager internal states could be uninitialized if the state transition happens during #onPartitionsAssigned().
@@ -1542,6 +1559,17 @@ public class StreamThread extends Thread implements ProcessingThread {
         }
 
         return records;
+    }
+
+    /**
+     * Sets the readiness state of the Streams group for this thread.
+     *
+     * @param ready {@code true} if the Streams group is ready to process records; {@code false} otherwise.
+     *              When set to {@code true}, this thread may transition to an active processing state.
+     *              When set to {@code false}, the thread will not process records until the group is ready.
+     */
+    public void setStreamsGroupReady(final boolean ready) {
+        streamsGroupReady = ready;
     }
 
     public void handleStreamsRebalanceData() {

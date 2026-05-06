@@ -676,7 +676,8 @@ class BrokerServer(
         new LogContext(s"[NetworkPartitionMetadataClient broker=${config.brokerId}]")
       ),
       Time.SYSTEM,
-      config.interBrokerListenerName()
+      config.interBrokerListenerName(),
+      new SystemTimerReaper("network-partition-metadata-client-reaper", new SystemTimer("network-partition-metadata-client"))
     )
   }
 
