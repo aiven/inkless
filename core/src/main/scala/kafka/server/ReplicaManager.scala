@@ -76,7 +76,7 @@ import org.apache.kafka.server.util.timer.{SystemTimer, TimerTask}
 import org.apache.kafka.server.util.{Scheduler, ShutdownableThread}
 import org.apache.kafka.server.{ActionQueue, DelayedActionQueue, common}
 import org.apache.kafka.storage.internals.checkpoint.{LazyOffsetCheckpoints, OffsetCheckpointFile, OffsetCheckpoints}
-import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, FetchDataInfo, FetchPartitionStatus, LeaderHwChange, LogAppendInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogReadInfo, LogReadResult, OffsetResultHolder, RecordValidationException, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog, VerificationGuard}
+import org.apache.kafka.storage.internals.log.{AppendOrigin, FetchDataInfo, FetchPartitionStatus, LeaderHwChange, LogAppendInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogReadInfo, LogReadResult, OffsetResultHolder, RecordValidationException, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog, VerificationGuard}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
 import java.io.File
@@ -274,6 +274,11 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessAppendHandler: Option[AppendHandler] = inklessSharedState.map(new AppendHandler(_))
   private val inklessFetchHandler: Option[FetchHandler] = inklessSharedState.map(new FetchHandler(_))
   private val inklessFetchOffsetHandler: Option[FetchOffsetHandler] = inklessSharedState.map(new FetchOffsetHandler(_))
+  private val disklessFetchOffsetRouter = new DisklessFetchOffsetRouter(
+    _inklessMetadataView,
+    config.disklessManagedReplicasEnabled,
+    delayedRemoteListOffsetsPurgatory
+  )
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessRetentionEnforcer: Option[RetentionEnforcer] = inklessSharedState.map(new RetentionEnforcer(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
@@ -1617,6 +1622,13 @@ class ReplicaManager(val config: KafkaConfig,
                   timeoutMs: Int = 0): Unit = {
     val maybeFetchOffsetJob: Option[FetchOffsetHandler.Job] = inklessFetchOffsetHandler.map(_.createJob())
     val statusByPartition = mutable.Map[TopicPartition, ListOffsetsPartitionStatus]()
+
+    val classicFetch: (TopicPartition, ListOffsetsPartition, Boolean) => ListOffsetsPartitionStatus =
+      (tp, p, allowFromFollower) =>
+        classicFetchOffset(tp, p, replicaId, isolationLevel, version,
+          correlationId, clientId, buildErrorResponse, allowFromFollower = allowFromFollower)
+    val classicLogStart: TopicPartition => Option[Long] = tp => logManager.getLog(tp).map(_.logStartOffset)
+
     topics.foreach { topic =>
       topic.partitions.asScala.foreach { partition =>
         val topicPartition = new TopicPartition(topic.name, partition.partitionIndex)
@@ -1628,22 +1640,12 @@ class ReplicaManager(val config: KafkaConfig,
         } else if (isListOffsetsTimestampUnsupported(partition.timestamp(), version)) {
           statusByPartition += topicPartition ->
             ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.UNSUPPORTED_VERSION, partition))).build()
-        } else if (maybeFetchOffsetJob.exists(_.mustHandle(topic.name()))) {
-          val migrationPending =
-            _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition) == PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING
-
-          if (migrationPending) {
-            statusByPartition += topicPartition ->
-              classicFetchOffset(topicPartition, partition, replicaId, isolationLevel, version,
-                correlationId, clientId, buildErrorResponse)
-          } else {
-            statusByPartition += topicPartition ->
-              disklessFetchOffset(maybeFetchOffsetJob.get, topicPartition, partition)
-          }
-        } else {
+        } else if (maybeFetchOffsetJob.exists(_.mustHandle(topic.name))) {
           statusByPartition += topicPartition ->
-            classicFetchOffset(topicPartition, partition, replicaId, isolationLevel, version,
-              correlationId, clientId, buildErrorResponse)
+            disklessFetchOffsetRouter.route(maybeFetchOffsetJob.get, () => inklessFetchOffsetHandler.get.createJob(),
+              topicPartition, partition, replicaId, version, classicLogStart, classicFetch)
+        } else {
+          statusByPartition += topicPartition -> classicFetch(topicPartition, partition, false)
         }
       }
     }
@@ -1668,23 +1670,6 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
-  private def disklessFetchOffset(fetchOffsetJob: FetchOffsetHandler.Job,
-                                 topicPartition: TopicPartition,
-                                 partition: ListOffsetsPartition): ListOffsetsPartitionStatus = {
-    val taskFuture = fetchOffsetJob.add(topicPartition, partition)
-    taskFuture.handle((_ignoredValue, _ignoredError) => {
-      val key = new TopicPartitionOperationKey(topicPartition.topic, topicPartition.partition)
-      delayedRemoteListOffsetsPurgatory.checkAndComplete(key)
-    })
-    val futureHolder = new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
-      fetchOffsetJob.cancelHandler(),
-      taskFuture
-    )
-    ListOffsetsPartitionStatus.builder()
-      .futureHolderOpt(Optional.of(futureHolder))
-      .build()
-  }
-
   private def classicFetchOffset(topicPartition: TopicPartition,
                                  partition: ListOffsetsPartition,
                                  replicaId: Int,
@@ -1692,10 +1677,11 @@ class ReplicaManager(val config: KafkaConfig,
                                  version: Short,
                                  correlationId: Int,
                                  clientId: String,
-                                 buildErrorResponse: (Errors, ListOffsetsPartition) => ListOffsetsPartitionResponse
+                                 buildErrorResponse: (Errors, ListOffsetsPartition) => ListOffsetsPartitionResponse,
+                                 allowFromFollower: Boolean
                                 ): ListOffsetsPartitionStatus = {
     try {
-      val fetchOnlyFromLeader = replicaId != ListOffsetsRequest.DEBUGGING_REPLICA_ID
+      val fetchOnlyFromLeader = replicaId != ListOffsetsRequest.DEBUGGING_REPLICA_ID && !allowFromFollower
       val isClientRequest = replicaId == ListOffsetsRequest.CONSUMER_REPLICA_ID
       val isolationLevelOpt = if (isClientRequest)
         Some(isolationLevel)
