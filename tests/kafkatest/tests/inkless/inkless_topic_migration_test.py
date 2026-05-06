@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import os
 import time
 import uuid
 
@@ -30,6 +31,30 @@ from kafkatest.services.trogdor.trogdor import TrogdorService
 from kafkatest.services.verifiable_consumer import VerifiableConsumer
 from kafkatest.services.verifiable_producer import VerifiableProducer
 from kafkatest.utils import is_int_with_prefix
+
+
+def _enable_tiered_storage_classpath(kafka):
+    """Add the ``:storage`` test jar (containing ``LocalTieredStorage``)
+    to the broker classpath. ``kafka-run-class.sh`` neither scans
+    ``storage/build/libs/`` nor keeps ``*-test.jar`` files by default, so
+    we set ``INCLUDE_TEST_JARS=true`` and prepend the jar explicitly.
+
+    Patched on the instance rather than via a ``KafkaService`` subclass
+    because ducktape's ``render()`` resolves Jinja2 templates relative to
+    the class's module, which breaks for subclasses defined in test files.
+    """
+    original_start_cmd = kafka.start_cmd
+
+    def _patched_start_cmd(node):
+        kafka_home = kafka.path.home(node)
+        storage_test_libs = os.path.join(kafka_home, "storage", "build", "libs", "*-test.jar")
+        prefix = (
+            "export INCLUDE_TEST_JARS=true; "
+            "export CLASSPATH=\"$(echo %s 2>/dev/null | tr ' ' ':')${CLASSPATH:+:$CLASSPATH}\"; "
+        ) % (storage_test_libs,)
+        return prefix + original_start_cmd(node)
+
+    kafka.start_cmd = _patched_start_cmd
 
 
 class InklessTopicMigrationTest(Test):
@@ -106,6 +131,101 @@ class InklessTopicMigrationTest(Test):
             "configs": {
                 "min.insync.replicas": 2,
                 "diskless.enable": "false",
+            }
+        })
+
+    def _create_kafka_with_tiered_storage(self):
+        """Single-broker cluster with real (LocalTieredStorage) tiered storage
+        on the broker, plus the diskless-from-classic migration bridge.
+
+        Single broker keeps the test self-contained: LocalTieredStorage uses
+        a per-broker filesystem path, so multi-broker reads from remote would
+        require shared storage or sticky leadership - neither is needed to
+        exercise the classic-tiered to diskless migration path.
+        """
+        self.replication_factor = 1
+        self.num_partitions = 1
+
+        storage_dir = os.path.join(KafkaService.PERSISTENT_ROOT, "kafka-tiered-storage")
+
+        common_overrides = [
+            ["diskless.managed.rf.enable", "true"],
+            ["remote.log.storage.system.enable", "true"],
+            ["diskless.allow.from.classic.enable", "true"],
+            ["remote.log.metadata.manager.class.name",
+             "org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager"],
+            ["remote.log.metadata.manager.listener.name", "PLAINTEXT"],
+            ["rlmm.config.remote.log.metadata.topic.replication.factor", "1"],
+            ["rlmm.config.remote.log.metadata.topic.num.partitions", "1"],
+            ["remote.log.manager.task.interval.ms", "1000"],
+            ["log.retention.check.interval.ms", "1000"],
+        ]
+
+        broker_overrides = list(common_overrides) + [
+            ["remote.log.storage.manager.class.name",
+             "org.apache.kafka.server.log.remote.storage.LocalTieredStorage"],
+            ["rsm.config.dir", storage_dir],
+            ["rsm.config.delete.on.close", "true"],
+        ]
+
+        # Controllers only validate the class names; using NoOp avoids needing
+        # LocalTieredStorage on the controller classpath.
+        controller_overrides = list(common_overrides) + [
+            ["remote.log.storage.manager.class.name",
+             "org.apache.kafka.server.log.remote.storage.NoOpRemoteStorageManager"],
+        ]
+
+        self.kafka = KafkaService(
+            self.test_context,
+            num_nodes=1,
+            zk=None,
+            controller_num_nodes_override=1,
+            server_prop_overrides=broker_overrides,
+        )
+        _enable_tiered_storage_classpath(self.kafka)
+        if hasattr(self.kafka, 'isolated_controller_quorum') and self.kafka.isolated_controller_quorum:
+            ctrl = self.kafka.isolated_controller_quorum
+            ctrl.server_prop_overrides = list(ctrl.server_prop_overrides) + controller_overrides
+
+        security_protocol = 'PLAINTEXT'
+        self.kafka.security_protocol = security_protocol
+        self.kafka.interbroker_security_protocol = security_protocol
+        self.kafka.logs["kafka_data_1"]["collect_default"] = True
+        self.kafka.logs["kafka_data_2"]["collect_default"] = True
+        self.kafka.logs["kafka_operational_logs_debug"]["collect_default"] = True
+
+    def _create_classic_tiered_topic(self, topic, num_partitions=1):
+        """Classic (non-diskless) topic with tiered storage enabled and very
+        short local retention so closed segments are uploaded to remote and
+        then deleted from the local log directory.
+
+        ``segment.bytes`` has a hard floor of 1 MiB (LogConfig.validate),
+        so we additionally force time-based rolling via ``segment.ms`` to
+        produce closed segments quickly without needing a huge produce
+        volume.
+        """
+        # NOTE: We can't pass both ``diskless.enable=false`` and
+        # ``remote.storage.enable=true`` at create time - the broker rejects
+        # that combination outside of an active migration. Diskless defaults
+        # to false (cluster default ``log.diskless.enable=false``), so simply
+        # omitting ``diskless.enable`` produces a classic+tiered topic.
+        self.kafka.create_topic({
+            "topic": topic,
+            "partitions": num_partitions,
+            "replication-factor": 1,
+            "configs": {
+                "remote.storage.enable": "true",
+                "min.insync.replicas": 1,
+                # 1 MiB is the enforced minimum for segment.bytes.
+                "segment.bytes": 1048576,
+                # Force a roll every 2s regardless of segment fill, so that
+                # produced records flow through closed segments quickly.
+                "segment.ms": 2000,
+                # Delete local segments ~immediately after the upload to remote.
+                "local.retention.ms": 1000,
+                # Long total retention so remote data remains during the test.
+                "retention.ms": 3600000,
+                "file.delete.delay.ms": 1000,
             }
         })
 
@@ -273,6 +393,51 @@ class InklessTopicMigrationTest(Test):
                          consumed, topic, expected_count)
         consumer.free()
         return consumed
+
+    def _earliest_local_offset(self, topic, partition=0):
+        """Return the topic-partition's earliest-local offset via
+        kafka-get-offsets.sh --time -4 (i.e. OffsetSpec.earliestLocal()).
+
+        For a tiered topic this advances past 0 once segments have been
+        uploaded to remote and deleted from the broker's local log dir.
+        Returns -1 if the offset cannot be parsed yet."""
+        node = self.kafka.nodes[0]
+        cmd = "%s --bootstrap-server %s --topic %s --partitions %d --time -4" % (
+            self.kafka.path.script("kafka-get-offsets.sh", node),
+            self.kafka.bootstrap_servers(),
+            topic,
+            partition,
+        )
+        try:
+            output = node.account.ssh_capture(cmd, allow_fail=True)
+            for line in output:
+                line = line.decode("utf-8") if isinstance(line, bytes) else line
+                parts = line.strip().split(":")
+                if len(parts) == 3 and parts[0] == topic and parts[1] == str(partition):
+                    return int(parts[2])
+        except Exception as e:
+            self.logger.warn("Failed to read earliest-local offset for %s-%d: %s",
+                             topic, partition, str(e))
+        return -1
+
+    def _wait_for_local_log_truncation(self, topic, partition=0, timeout_sec=120):
+        """Wait until the topic's earliest-local offset advances past 0,
+        which proves that some segments have been tiered to remote AND
+        deleted locally (so reads from offset 0 must come from remote)."""
+        def check():
+            offset = self._earliest_local_offset(topic, partition)
+            self.logger.info("Topic %s-%d earliest-local offset: %d",
+                             topic, partition, offset)
+            return offset > 0
+
+        wait_until(
+            check,
+            timeout_sec=timeout_sec,
+            backoff_sec=2,
+            err_msg=("earliest-local offset for %s-%d did not advance past 0 within %ds; "
+                     "tiering or local retention is not progressing") %
+                    (topic, partition, timeout_sec)
+        )
 
     def _wait_for_steady_production(self, producer, min_acked=5000, timeout_sec=60):
         wait_until(
@@ -751,6 +916,59 @@ class InklessTopicMigrationTest(Test):
             )
             assert consumed >= produced_counts[topic], \
                 "Data loss on topic %s: expected >= %d but got %d" % (topic, produced_counts[topic], consumed)
+
+    @cluster(num_nodes=5)
+    @matrix(metadata_quorum=[quorum.isolated_kraft])
+    def test_classic_tiered_to_diskless_migration(self, metadata_quorum) -> None:
+        """C3: Migrate a classic topic with real (LocalTieredStorage) tiered
+        storage to diskless, then read across all three layers.
+
+        Sequence:
+          1. Create a classic topic with ``remote.storage.enable=true``,
+             small ``segment.bytes``, and short ``local.retention.ms``.
+             Produce a first batch large enough to roll several segments.
+                                                          state: [empty]
+          2. Wait until the topic's earliest-local offset advances past 0,
+             confirming closed segments were uploaded to remote and then
+             deleted from local disk.
+                                                          state: [remote]
+          3. Produce a second batch. The active segment is never eligible
+             for upload, so the most recent records are local-only at this
+             instant.
+                                                          state: [remote][local]
+          4. Switch the topic to diskless and produce a third batch which
+             is written via the diskless write path.
+                                                          state: [remote][local][diskless]
+          5. A fresh consumer reads from offset 0 and must see every record,
+             crossing the remote->local boundary, the classic->diskless
+             boundary, and any internal classic-segment seam.
+        """
+        topic = "tiered-migration-topic"
+
+        self._create_kafka_with_tiered_storage()
+        self.kafka.start()
+        self._create_classic_tiered_topic(topic=topic)
+
+        remote_count = self._produce_messages(topic=topic, num_messages=8000)
+        self._wait_for_local_log_truncation(topic=topic)
+
+        local_count = self._produce_messages(topic=topic, num_messages=2000)
+
+        self._migrate_topic_to_diskless(topic=topic)
+        self._wait_for_migration_complete(topic=topic)
+
+        diskless_count = self._produce_messages(topic=topic, num_messages=1000)
+
+        total = remote_count + local_count + diskless_count
+
+        consumed = self._consume_all_from_beginning(
+            topic=topic,
+            expected_count=total,
+            timeout_sec=self.CONSUME_TIMEOUT_SEC,
+        )
+        assert consumed >= total, \
+            "Cross-tier consumption (remote/local/diskless) failed: expected >= %d but got %d" % \
+            (total, consumed)
 
     @cluster(num_nodes=9)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
