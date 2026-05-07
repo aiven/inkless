@@ -138,6 +138,18 @@ public class MirrorCoordinator {
                 log.info("PREPARING for topics {}.", topicPartitions);
                 scheduleTruncation(mirrorName, topicPartitions);
                 break;
+            case EPOCH_FENCING:
+                log.info("EPOCH_FENCING for topics {}.", topicPartitions);
+                metadataManager.scheduleBumpLeaderEpoch(mirrorName, topicPartitions)
+                    .whenComplete((v, ex) -> {
+                        if (ex != null) {
+                            log.error("Failed to bump leader epoch for {}", topicPartitions, ex);
+                            transitionTo(mirrorName, topicPartitions, MirrorPartitionState.FAILED);
+                        } else {
+                            transitionTo(mirrorName, topicPartitions, MirrorPartitionState.MIRRORING);
+                        }
+                    });
+                break;
             case MIRRORING:
                 log.info("MIRRORING topics {}.", topicPartitions);
                 replicaManager.maybeCreateMirrorFetchers(mirrorName, topicPartitions);
@@ -163,7 +175,7 @@ public class MirrorCoordinator {
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
 
                 collectAndUpdateLastMirrorEpochs(mirrorName, topicPartitions)
-                    .thenCompose(v -> metadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions))
+                    .thenCompose(v -> metadataManager.sendBumpLeaderEpoch(metadataManager.buildBumpLeaderEpochRequestData(replicaManager.logManager(), topicPartitions)))
                     .thenCompose(v -> abortOngoingTransactions(topicPartitions))
                     .thenAccept(v -> writeMirrorPidResetAndStop(mirrorName, topicPartitions))
                     .exceptionally(ex -> {
@@ -492,7 +504,7 @@ public class MirrorCoordinator {
                             }
 
                             replicaManager.maybeTruncateForLeaderEpoch(epochs,
-                                    partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING));
+                                    partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.EPOCH_FENCING));
                         });
                 } catch (Exception e) {
                     log.warn("Failed to truncate to last mirrored offsets for mirror {}, retrying in {} ms", mirrorName, retryDelayMs, e);

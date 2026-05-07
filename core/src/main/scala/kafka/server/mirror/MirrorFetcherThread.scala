@@ -16,9 +16,13 @@
  */
 package kafka.server.mirror
 
+import kafka.cluster.Partition
 import kafka.server._
+import kafka.server.mirror.MirrorUtils.LEADER_EPOCH_BUMP_THRESHOLD
+import org.apache.kafka.common.errors.MirrorLeaderEpochExceededException
 import org.apache.kafka.common.{Node, TopicPartition}
 import org.apache.kafka.common.message.FetchResponseData
+import org.apache.kafka.common.record.Records
 import org.apache.kafka.common.requests.FetchResponse
 import org.apache.kafka.server.{LeaderEndPoint, PartitionFetchState}
 import org.apache.kafka.server.common.OffsetAndEpoch
@@ -74,6 +78,34 @@ class MirrorFetcherThread(name: String,
     replicaMgr.maybeCreateMirrorFetchers(mirrorName, mirrorPartitions.asJava)
   }
 
+  override protected def handleMirrorLeaderEpochExceeded(mirrorName: String, topicPartition: TopicPartition): Unit = {
+    // when the source cluster's epoch is higher than the destination cluster's epoch, we need to
+    // fence the partition to prevent the source cluster from appending to the destination cluster.
+    replicaMgr.mirrorMetadataManager.get.transitionTo(mirrorName, topicPartition, MirrorPartitionState.EPOCH_FENCING)
+  }
+
+  def validateLeaderEpoch(topicPartition: TopicPartition, partition: Partition, records: Records): Unit = {
+    val localLeaderEpoch = partition.getLeaderEpoch
+    val highestBatchLeaderEpoch = if (records.lastBatch().isPresent)
+      records.lastBatch().get().partitionLeaderEpoch() else -1
+    log.trace(s"Current highestBatchLeaderEpoch: $highestBatchLeaderEpoch, localLeaderEpoch: $localLeaderEpoch")
+    if (highestBatchLeaderEpoch > localLeaderEpoch) {
+      // React by fencing this partition when source records are already ahead of the local leader epoch.
+      // The exception will mark this partition as failed and transition mirror state to EPOCH_FENCING.
+      throw new MirrorLeaderEpochExceededException(s"Rejecting the batch because the batch leader " +
+        s"epoch $highestBatchLeaderEpoch is higher than local leader epoch $localLeaderEpoch")
+    } else if (highestBatchLeaderEpoch > localLeaderEpoch - LEADER_EPOCH_BUMP_THRESHOLD) {
+      // When source batch is close to the local epoch (within LEADER_EPOCH_BUMP_THRESHOLD),
+      // schedule a proactive local epoch bump while still allowing the current batch to append.
+      replicaMgr.mirrorMetadataManager.foreach { mmm =>
+        mmm.scheduleBumpLeaderEpoch(partition.getMirrorName().get(), java.util.Set.of(topicPartition))
+          .whenComplete { (_, ex) =>
+            if (ex != null) log.warn(s"Proactive epoch bump failed for $topicPartition", ex)
+          }
+      }
+    }
+  }
+
   // process fetched data
   override def processPartitionData(
     topicPartition: TopicPartition,
@@ -93,6 +125,8 @@ class MirrorFetcherThread(name: String,
     if (logTrace)
       trace("Mirror follower has replica log end offset %d for partition %s. Received %d bytes of messages and leader hw %d"
         .format(log.logEndOffset, topicPartition, records.sizeInBytes, partitionData.highWatermark))
+
+    validateLeaderEpoch(topicPartition, partition, records)
 
     // Append batches from the source cluster to the destination partition's log.
     val logAppendInfo = partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, partitionLeaderEpoch, isMirrorLeader = true)

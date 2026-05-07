@@ -29,18 +29,24 @@ public enum MirrorPartitionState {
     PREPARING((byte) 0),
 
     /**
-     * All ISR members have completed truncation. A MirrorFetcherThread is started to
-     * continuously replicate records from the source cluster.
-     * Valid from: PREPARING, PAUSED.
+     * Checking if bumping the leader epoch is necessary to ensure local leader epoch > source leader epoch.
+     * Valid from: UNKNOWN, PREPARING, STOPPED, FAILED.
      */
-    MIRRORING((byte) 1),
+    EPOCH_FENCING((byte) 1),
+
+    /**
+     * All ISR members have completed truncation and leader epoch bumping completes. A MirrorFetcherThread is started to
+     * continuously replicate records from the source cluster.
+     * Valid from: EPOCH_FENCING, PAUSED.
+     */
+    MIRRORING((byte) 2),
 
     /**
      * Triggered by PauseMirrorTopics API (appends .paused suffix to mirror.name config).
      * The system removes fetchers for the affected partitions.
      * Valid from: MIRRORING only.
      */
-    PAUSING((byte) 2),
+    PAUSING((byte) 3),
 
     /**
      * Fetchers have been removed. The partition stays read-only with no active fetchers
@@ -48,27 +54,27 @@ public enum MirrorPartitionState {
      * directly to MIRRORING (fetchers resume from local LEO, no truncation needed).
      * Valid from: PAUSING only.
      */
-    PAUSED((byte) 3),
+    PAUSED((byte) 4),
 
     /**
      * Triggered by StopMirrorTopics API (failover) or topic deletion on the source.
      * The system records the last mirrored offset to the internal topic.
      * Valid from: PREPARING, MIRRORING, PAUSING (race guard), PAUSED, FAILED.
      */
-    STOPPING((byte) 4),
+    STOPPING((byte) 5),
 
     /**
      * Last mirrored offsets have been persisted. The topic becomes writable on the
      * destination cluster (fetcher removed, read-only flag cleared).
      * Valid from: STOPPING only.
      */
-    STOPPED((byte) 5),
+    STOPPED((byte) 6),
 
     /**
      * An error occurred. Can transition back to PREPARING to retry.
      * Valid from: any state.
      */
-    FAILED((byte) 6),
+    FAILED((byte) 7),
 
     /**
      * No cached state (broker just became leader, state not loaded yet).
@@ -91,16 +97,18 @@ public enum MirrorPartitionState {
             case 0:
                 return PREPARING;
             case 1:
-                return MIRRORING;
+                return EPOCH_FENCING;
             case 2:
-                return PAUSING;
+                return MIRRORING;
             case 3:
-                return PAUSED;
+                return PAUSING;
             case 4:
-                return STOPPING;
+                return PAUSED;
             case 5:
-                return STOPPED;
+                return STOPPING;
             case 6:
+                return STOPPED;
+            case 7:
                 return FAILED;
             case 16:
                 return UNKNOWN;
@@ -119,8 +127,13 @@ public enum MirrorPartitionState {
                         || source == MirrorPartitionState.UNKNOWN
                         || source == MirrorPartitionState.STOPPED
                         || source == MirrorPartitionState.FAILED;
-            case MIRRORING:
+            case EPOCH_FENCING:
                 return source == MirrorPartitionState.PREPARING
+                        || source == MirrorPartitionState.MIRRORING
+                        || source == MirrorPartitionState.STOPPED
+                        || source == MirrorPartitionState.FAILED;
+            case MIRRORING:
+                return source == MirrorPartitionState.EPOCH_FENCING
                         || source == MirrorPartitionState.PAUSED;
             case PAUSING:
                 return source == MirrorPartitionState.MIRRORING;
@@ -129,6 +142,7 @@ public enum MirrorPartitionState {
             case STOPPING:
                 // TODO: remove PAUSING once state transitions are serialized via the shared queue
                 return source == MirrorPartitionState.PREPARING
+                        || source == MirrorPartitionState.EPOCH_FENCING
                         || source == MirrorPartitionState.MIRRORING
                         || source == MirrorPartitionState.PAUSING
                         || source == MirrorPartitionState.PAUSED
