@@ -98,7 +98,7 @@ class MirrorFetcherThread(name: String,
       // When source batch is close to the local epoch (within LEADER_EPOCH_BUMP_THRESHOLD),
       // schedule a proactive local epoch bump while still allowing the current batch to append.
       replicaMgr.mirrorMetadataManager.foreach { mmm =>
-        mmm.scheduleBumpLeaderEpoch(partition.getMirrorName().get(), java.util.Set.of(topicPartition))
+        mmm.scheduleBumpLeaderEpochs(partition.getMirrorName().get(), java.util.Set.of(topicPartition))
           .whenComplete { (_, ex) =>
             if (ex != null) log.warn(s"Proactive epoch bump failed for $topicPartition", ex)
           }

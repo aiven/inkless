@@ -142,7 +142,7 @@ public class MirrorCoordinator {
                 break;
             case EPOCH_FENCING:
                 log.info("EPOCH_FENCING for topics {}.", topicPartitions);
-                metadataManager.scheduleBumpLeaderEpoch(mirrorName, topicPartitions)
+                metadataManager.scheduleBumpLeaderEpochs(mirrorName, topicPartitions)
                     .whenComplete((v, ex) -> {
                         if (ex != null) {
                             log.error("Failed to bump leader epoch for {}", topicPartitions, ex);
@@ -177,7 +177,8 @@ public class MirrorCoordinator {
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
 
                 collectAndUpdateLastMirrorEpochs(mirrorName, topicPartitions)
-                    .thenCompose(v -> metadataManager.sendBumpLeaderEpoch(metadataManager.buildBumpLeaderEpochRequestData(replicaManager.logManager(), topicPartitions)))
+                    .thenCompose(v -> metadataManager.sendBumpLeaderEpochs(
+                            metadataManager.buildLocalEpochBumpTargets(replicaManager.logManager(), topicPartitions)))
                     .thenCompose(v -> abortOngoingTransactions(topicPartitions))
                     .thenAccept(v -> writeMirrorPidResetAndStop(mirrorName, topicPartitions))
                     .exceptionally(ex -> {
@@ -466,7 +467,7 @@ public class MirrorCoordinator {
 
         // periodically query source cluster to get the metadata
         long metadataRefreshIntervalMs = brokerConfig.mirrorConfig().metadataRefreshIntervalMs();
-        scheduler.schedule("MirrorMetadataRefresh", metadataManager::syncMetadata, 0, metadataRefreshIntervalMs);
+        scheduler.schedule("MirrorMetadataRefresh", metadataManager::periodicSync, 0, metadataRefreshIntervalMs);
 
         log.info("Startup complete.");
     }
