@@ -800,7 +800,8 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
         Map.Entry<AlterShareGroupOffsetsResponseData, InitializeShareGroupStateParameters> response = groupMetadataManager.completeAlterShareGroupOffsets(
             groupId,
             alterShareGroupOffsetsRequestData,
-            records
+            records,
+            group
         );
         return new CoordinatorResult<>(
             records,
