@@ -1171,10 +1171,11 @@ public class GroupMetadataManager {
         String groupId,
         long committedOffset
     ) throws GroupIdNotFoundException {
-        Group group = group(groupId, committedOffset);
+        // Get or create the share group. If the group exists, check that it's empty. If it is created, it is empty.
+        final ShareGroup group = getOrMaybeCreateShareGroup(groupId, true);
 
         if (group.type() == SHARE) {
-            return (ShareGroup) group;
+            return group;
         } else {
             // We don't support upgrading/downgrading between protocols at the moment so
             // we throw an exception if a group exists with the wrong type.
@@ -8190,10 +8191,10 @@ public class GroupMetadataManager {
     public Map.Entry<AlterShareGroupOffsetsResponseData, InitializeShareGroupStateParameters> completeAlterShareGroupOffsets(
         String groupId,
         AlterShareGroupOffsetsRequestData alterShareGroupOffsetsRequest,
-        List<CoordinatorRecord> records
+        List<CoordinatorRecord> records,
+        ShareGroup group
     ) {
         final long currentTimeMs = time.milliseconds();
-        Group group = groups.get(groupId);
         AlterShareGroupOffsetsResponseData.AlterShareGroupOffsetsResponseTopicCollection alterShareGroupOffsetsResponseTopics = new AlterShareGroupOffsetsResponseData.AlterShareGroupOffsetsResponseTopicCollection();
 
         Map<Uuid, InitMapValue> initializingTopics = new HashMap<>();
@@ -8256,7 +8257,7 @@ public class GroupMetadataManager {
         return Map.entry(
             new AlterShareGroupOffsetsResponseData()
                 .setResponses(alterShareGroupOffsetsResponseTopics),
-            buildInitializeShareGroupState(groupId, ((ShareGroup) group).groupEpoch(), offsetByTopicPartitions)
+            buildInitializeShareGroupState(groupId, group.groupEpoch(), offsetByTopicPartitions)
         );
     }
 
