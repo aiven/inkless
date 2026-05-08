@@ -527,7 +527,8 @@ public class MirrorCoordinator {
                                 });
                             }
 
-                            replicaManager.maybeTruncateForLeaderEpoch(epochs, truncateCallback);
+                            replicaManager.maybeTruncateForLeaderEpoch(epochs,
+                                    partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING));
                         });
                 } catch (Exception e) {
                     log.warn("Failed to truncate to last mirrored offsets for mirror {}, retrying in {} ms", mirrorName, retryDelayMs, e);

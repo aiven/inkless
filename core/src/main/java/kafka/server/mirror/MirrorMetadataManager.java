@@ -537,8 +537,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     t.transitionTo(mirrorName, tp, MirrorPartitionState.PAUSED);
                 }
             } else if (curState == MirrorPartitionState.PAUSED) {
-                // during PAUSED, the source leader epoch might jump a lot, moving to EPOCH_FENCING first.
-                t.transitionTo(mirrorName, tp, MirrorPartitionState.EPOCH_FENCING);
+                t.transitionTo(mirrorName, tp, MirrorPartitionState.MIRRORING);
             } else if (curState == MirrorPartitionState.UNKNOWN
                     || curState == MirrorPartitionState.STOPPED) {
                 t.transitionTo(mirrorName, tp, MirrorPartitionState.PREPARING);

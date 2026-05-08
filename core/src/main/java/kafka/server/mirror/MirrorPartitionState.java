@@ -128,12 +128,10 @@ public enum MirrorPartitionState {
                         || source == MirrorPartitionState.STOPPED
                         || source == MirrorPartitionState.FAILED;
             case EPOCH_FENCING:
-                return source == MirrorPartitionState.PREPARING
-                        || source == MirrorPartitionState.MIRRORING
-                        || source == MirrorPartitionState.STOPPED
-                        || source == MirrorPartitionState.FAILED;
+                return source == MirrorPartitionState.MIRRORING;
             case MIRRORING:
-                return source == MirrorPartitionState.EPOCH_FENCING
+                return source == MirrorPartitionState.PREPARING
+                        || source == MirrorPartitionState.EPOCH_FENCING
                         || source == MirrorPartitionState.PAUSED;
             case PAUSING:
                 return source == MirrorPartitionState.MIRRORING;
