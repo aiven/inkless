@@ -74,6 +74,7 @@ import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CO
 import static org.apache.kafka.common.config.TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG;
 import static org.apache.kafka.common.metadata.MetadataRecordType.CONFIG_RECORD;
 import static org.apache.kafka.common.protocol.Errors.INVALID_CONFIG;
+import static org.apache.kafka.common.protocol.Errors.MIRROR_ALREADY_EXISTS;
 import static org.apache.kafka.controller.QuorumController.MAX_RECORDS_PER_USER_OP;
 
 public class ConfigurationControlManager {
@@ -550,6 +551,14 @@ public class ConfigurationControlManager {
                     + STOPPED_TOPIC_SUFFIX + "' or '" + PAUSED_TOPIC_SUFFIX + "'");
                 return ControllerResult.of(List.of(), data);
             }
+
+            final Map<String, String> existingConfig = getConfigs(resourceEntry.getKey());
+            if (!existingConfig.isEmpty()) {
+                data.setErrorCode(MIRROR_ALREADY_EXISTS.code())
+                    .setErrorMessage("Mirror '" + mirrorName + "' already exists");
+                return ControllerResult.of(List.of(), data);
+            }
+
             ApiError apiError = incrementalAlterConfigResource(resourceEntry.getKey(),
                     resourceEntry.getValue(),
                     newlyCreatedResource,

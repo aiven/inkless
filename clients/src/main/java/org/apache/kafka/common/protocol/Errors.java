@@ -86,6 +86,7 @@ import org.apache.kafka.common.errors.LeaderNotAvailableException;
 import org.apache.kafka.common.errors.ListenerNotFoundException;
 import org.apache.kafka.common.errors.LogDirNotFoundException;
 import org.apache.kafka.common.errors.MemberIdRequiredException;
+import org.apache.kafka.common.errors.MirrorAlreadyExistsException;
 import org.apache.kafka.common.errors.MirrorAuthorizationException;
 import org.apache.kafka.common.errors.MirrorNotEmptyException;
 import org.apache.kafka.common.errors.MirrorTopicAlreadyPausedException;
@@ -431,14 +432,15 @@ public enum Errors {
     SHARE_SESSION_LIMIT_REACHED(133, "The limit of share sessions has been reached.", ShareSessionLimitReachedException::new),
     READ_ONLY_TOPIC(134, "The topic is read-only.", ReadOnlyTopicException::new),
     INVALID_MIRROR_NAME(135, "The mirror name does not meet the naming rules.", InvalidMirrorNameException::new),
-    UNKNOWN_MIRROR(136, "The mirror does not exist.", UnknownMirrorException::new),
-    TOPIC_ALREADY_IN_MIRROR(137, "The topic is already assigned to a mirror.", TopicAlreadyInMirrorException::new),
-    TOPIC_NOT_IN_MIRROR(138, "The topic does not belong to the specified mirror.", TopicNotInMirrorException::new),
-    MIRROR_TOPIC_ALREADY_PAUSED(139, "The mirror topic is already paused.", MirrorTopicAlreadyPausedException::new),
-    MIRROR_TOPIC_NOT_PAUSED(140, "The mirror topic is not paused.", MirrorTopicNotPausedException::new),
-    MIRROR_TOPIC_BEING_STOPPED(141, "The mirror topic is being stopped.", MirrorTopicBeingStoppedException::new),
-    MIRROR_NOT_EMPTY(142, "The mirror still has active or non-stopped topics.", MirrorNotEmptyException::new),
-    MIRROR_AUTHORIZATION_FAILED(143, "Mirror authorization failed.", MirrorAuthorizationException::new);
+    MIRROR_ALREADY_EXISTS(136, "The mirror already exists.", MirrorAlreadyExistsException::new),
+    UNKNOWN_MIRROR(137, "The mirror does not exist.", UnknownMirrorException::new),
+    TOPIC_ALREADY_IN_MIRROR(138, "The topic is already assigned to a mirror.", TopicAlreadyInMirrorException::new),
+    TOPIC_NOT_IN_MIRROR(139, "The topic does not belong to the specified mirror.", TopicNotInMirrorException::new),
+    MIRROR_TOPIC_ALREADY_PAUSED(140, "The mirror topic is already paused.", MirrorTopicAlreadyPausedException::new),
+    MIRROR_TOPIC_NOT_PAUSED(141, "The mirror topic is not paused.", MirrorTopicNotPausedException::new),
+    MIRROR_TOPIC_BEING_STOPPED(142, "The mirror topic is being stopped.", MirrorTopicBeingStoppedException::new),
+    MIRROR_NOT_EMPTY(143, "The mirror still has active or non-stopped topics.", MirrorNotEmptyException::new),
+    MIRROR_AUTHORIZATION_FAILED(144, "Mirror authorization failed.", MirrorAuthorizationException::new);
 
     private static final Logger log = LoggerFactory.getLogger(Errors.class);
 
