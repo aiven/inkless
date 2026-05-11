@@ -23,7 +23,7 @@ import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchRes
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendHandler
-import io.aiven.inkless.consolidation.ConsolidationFetcherManager
+import io.aiven.inkless.consolidation.{ConsolidationFetcherManager, ConsolidatedDisklessLogPruner}
 import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
@@ -282,6 +282,8 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessRetentionEnforcer: Option[RetentionEnforcer] = inklessSharedState.map(new RetentionEnforcer(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
+  private val inklessConsolidatedDisklessLogPruner: Option[ConsolidatedDisklessLogPruner] = inklessSharedState.map(st =>
+    new ConsolidatedDisklessLogPruner(this, _inklessMetadataView, st.controlPlane))
   // FIXME: FileMerger is having issues with hanging queries. Disabling until fixed.
   private val inklessFileMerger: Option[FileMerger] = None // inklessSharedState.map(new FileMerger(_))
   private val consolidationFetcherManager: Option[ConsolidationFetcherManager] =
@@ -387,6 +389,9 @@ class ReplicaManager(val config: KafkaConfig,
       scheduler.schedule("inkless-retention-enforcer", () => inklessRetentionEnforcer.foreach(_.run()), config.logInitialTaskDelayMs, 500L)  // the real interval is inside
 
       scheduler.schedule("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run()), sharedState.config().fileCleanerInterval().toMillis, sharedState.config().fileCleanerInterval().toMillis)
+
+      scheduler.schedule("inkless-consolidated-diskless-log-pruner", () => inklessConsolidatedDisklessLogPruner.foreach(_.run()),
+        sharedState.config.consolidationCleanupInterval.toMillis, sharedState.config.consolidationCleanupInterval.toMillis)
 
       // There are internal delays in case of errors or absence of work items, no need for extra delays here.
       scheduler.schedule("inkless-file-merger", () => inklessFileMerger.foreach(_.run()), sharedState.config().fileMergerInterval().toMillis, sharedState.config().fileMergerInterval().toMillis)
