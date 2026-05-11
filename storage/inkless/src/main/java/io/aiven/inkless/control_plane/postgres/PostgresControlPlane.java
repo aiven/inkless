@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import io.aiven.inkless.control_plane.PruneDisklessLogsRequest;
+import io.aiven.inkless.control_plane.PruneDisklessLogsResponse;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
@@ -377,7 +379,16 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public List<PruneDisklessLogsResponse> pruneDisklessLogs(List<PruneDisklessLogsRequest> pruneDisklessLogsRequests) {
-        throw new UnsupportedOperationException();
+        try {
+            final PruneDisklessLogsJob job = new PruneDisklessLogsJob(time, jobsJooqCtx, pruneDisklessLogsRequests, pgMetrics::onPruneDisklessLogsCompleted);
+            return job.call();
+        } catch (Exception e) {
+            if (e instanceof ControlPlaneException) {
+                throw (ControlPlaneException) e;
+            } else {
+                throw new ControlPlaneException("Failed to prune diskless logs", e);
+            }
+        }
     }
 
     @Override
