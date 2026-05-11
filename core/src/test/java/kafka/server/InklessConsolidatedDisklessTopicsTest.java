@@ -31,6 +31,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -54,14 +55,19 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.nio.file.Files;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Duration;
+import java.util.UUID;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -131,6 +137,8 @@ public class InklessConsolidatedDisklessTopicsTest {
             .setConfigProp(ReplicationConfigs.DEFAULT_REPLICATION_FACTOR_CONFIG, "2")
             // Enable diskless topic consolidation (diskless.enable + remote.storage.enable on new topics)
             .setConfigProp(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, "true")
+            // Run consolidated diskless WAL pruning frequently enough for the test wait windows
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONSOLIDATION_CLEANUP_INTERVAL_MS_CONFIG, 5000)
             // PG control plane config
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl())
@@ -192,6 +200,7 @@ public class InklessConsolidatedDisklessTopicsTest {
             SEGMENT_BYTES_CONFIG, "1048576"
         );
 
+        final Uuid topicUuid;
         try (Admin admin = AdminClient.create(commonConfigs)) {
             final NewTopic topic = new NewTopic(topicName, numPartitions, (short) -1).configs(topicConfigs);
             CreateTopicsResult result = admin.createTopics(Collections.singletonList(topic));
@@ -215,6 +224,7 @@ public class InklessConsolidatedDisklessTopicsTest {
             }, 60_000, () -> "Topic should become visible with " + numPartitions + " partitions");
             TopicDescription description = descriptionHolder[0];
             assertEquals(numPartitions, description.partitions().size());
+            topicUuid = description.topicId();
 
             Set<Integer> expectedBrokers = Set.of(0, 1);
             for (TopicPartitionInfo partition : description.partitions()) {
@@ -239,7 +249,75 @@ public class InklessConsolidatedDisklessTopicsTest {
                 () -> "Expected at least one tiered object in the Minio bucket after produce");
         }
 
+        ControlPlaneDisklessSnapshot beforeConsumeSnapshot = readControlPlaneDisklessSnapshot(topicUuid);
+        log.info("Control plane snapshot before first consume: {}", beforeConsumeSnapshot);
+
         consumeAndVerify(commonConfigs, recordsToSendAndReceive);
+
+        waitUntilTieredDisklessDataPrunedFromControlPlane(topicUuid, beforeConsumeSnapshot);
+
+        consumeAndVerify(commonConfigs, recordsToSendAndReceive);
+    }
+
+    private record ControlPlaneDisklessSnapshot(long batchRowCount, long minLogStartOffset) { }
+
+    private static UUID toJavaUuid(Uuid topicId) {
+        return new UUID(topicId.getMostSignificantBits(), topicId.getLeastSignificantBits());
+    }
+
+    private ControlPlaneDisklessSnapshot readControlPlaneDisklessSnapshot(Uuid kafkaTopicId) throws SQLException {
+        UUID id = toJavaUuid(kafkaTopicId);
+        try (
+            Connection connection = DriverManager.getConnection(
+                pgContainer.getJdbcUrl(),
+                PostgreSQLTestContainer.USERNAME,
+                PostgreSQLTestContainer.PASSWORD)
+        ) {
+            long batches;
+            try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT COUNT(*) FROM batches WHERE topic_id = ?")) {
+                ps.setObject(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    batches = rs.getLong(1);
+                }
+            }
+            long minLogStart;
+            try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT MIN(log_start_offset) FROM logs WHERE topic_id = ?")) {
+                ps.setObject(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next() || rs.getObject(1) == null) {
+                        minLogStart = 0L;
+                    } else {
+                        minLogStart = rs.getLong(1);
+                    }
+                }
+            }
+            return new ControlPlaneDisklessSnapshot(batches, minLogStart);
+        }
+    }
+
+    /**
+     * Waits until consolidated-diskless pruning removed WAL batches that are already represented in remote storage
+     * (fewer rows in {@code batches}, or {@code logs.log_start_offset} advanced).
+     */
+    private void waitUntilTieredDisklessDataPrunedFromControlPlane(Uuid kafkaTopicId,
+                                                                   ControlPlaneDisklessSnapshot baseline)
+        throws InterruptedException {
+        TestUtils.waitForCondition(() -> {
+            try {
+                ControlPlaneDisklessSnapshot current = readControlPlaneDisklessSnapshot(kafkaTopicId);
+                boolean batchesRemoved = current.batchRowCount() < baseline.batchRowCount();
+                boolean disklessStartAdvanced = current.minLogStartOffset() > baseline.minLogStartOffset();
+                log.info("Waiting for diskless prune in control plane: current={}, baseline={}", current, baseline);
+                return batchesRemoved || disklessStartAdvanced;
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
+            }
+        }, 120_000, () -> "Expected diskless WAL batches tiered to remote to be pruned from control plane "
+            + "(batch count should drop below " + baseline.batchRowCount()
+            + " or min(log_start_offset) should exceed " + baseline.minLogStartOffset() + ")");
     }
 
     private void produceRecords(Map<String, Object> commonConfigs, int numRecords,
