@@ -219,6 +219,8 @@ class Partition(val topicPartition: TopicPartition,
     }
   }
 
+  @volatile private var disklessStartOffset: Long = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
+
   this.logIdent = s"[Partition $topicPartition broker=$localBrokerId] "
 
   private val tags = Map("topic" -> topic, "partition" -> partitionId.toString).asJava
@@ -258,6 +260,10 @@ class Partition(val topicPartition: TopicPartition,
    * the effectiveMinIsr().
    */
   def isAtMinIsr: Boolean = leaderLogIfLocal.exists { partitionState.isr.size == effectiveMinIsr(_) }
+
+  def setDisklessStartOffset(disklessStartOffset: Long) = this.disklessStartOffset = disklessStartOffset
+
+  def getDisklessStartOffset() = disklessStartOffset
 
   def isSealed: Boolean = _sealed
 
