@@ -23,6 +23,7 @@ import org.apache.kafka.common.acl.AclPermissionType;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.SaslConfigs;
+import org.apache.kafka.common.config.SecurityConfig;
 import org.apache.kafka.common.config.SslConfigs;
 import org.apache.kafka.common.resource.ResourceType;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
@@ -226,6 +227,11 @@ public final class MirrorConfig {
     public static final String SSL_ENGINE_FACTORY_CLASS_CONFIG = SslConfigs.SSL_ENGINE_FACTORY_CLASS_CONFIG;
     public static final String SSL_ENGINE_FACTORY_CLASS_DOC = "The class of type org.apache.kafka.common.security.auth.SslEngineFactory to provide SSLEngine objects for Cluster Mirror SSL connections.";
 
+    public static final String SECURITY_PROVIDERS_CONFIG = SecurityConfig.SECURITY_PROVIDERS_CONFIG;
+    public static final String SECURITY_PROVIDERS_DOC =  "A list of configurable creator classes each returning a provider" +
+            " implementing security algorithms for Cluster Mirror SSL Connections. These classes should implement the" +
+            " <code>org.apache.kafka.common.security.auth.SecurityProviderCreator</code> interface.";
+
     /**
      * Configuration definition for Cluster Mirror feature.
      * This includes all supported configurations with proper validation, defaults, and documentation.
@@ -264,7 +270,8 @@ public final class MirrorConfig {
             .define(SSL_TRUSTMANAGER_ALGORITHM_CONFIG, STRING, SSL_TRUSTMANAGER_ALGORITHM_DEFAULT, LOW, SSL_TRUSTMANAGER_ALGORITHM_DOC)
             .define(SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG, STRING, SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_DEFAULT, LOW, SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_DOC)
             .define(SSL_SECURE_RANDOM_IMPLEMENTATION_CONFIG, STRING, null, LOW, SSL_SECURE_RANDOM_IMPLEMENTATION_DOC)
-            .define(SSL_ENGINE_FACTORY_CLASS_CONFIG, STRING, null, LOW, SSL_ENGINE_FACTORY_CLASS_DOC);
+            .define(SSL_ENGINE_FACTORY_CLASS_CONFIG, STRING, null, LOW, SSL_ENGINE_FACTORY_CLASS_DOC)
+            .define(SECURITY_PROVIDERS_CONFIG, STRING, null, LOW, SECURITY_PROVIDERS_DOC);
 
     private final AbstractConfig config;
     private final Pattern topicPropertiesExcludePattern;
