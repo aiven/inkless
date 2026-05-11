@@ -119,7 +119,7 @@ class DisklessLeaderEndPoint(
         case Right(partition) =>
           val logStartOffset = Try(partition.localLogOrException).toOption match {
             case Some(localLog) => localLog.logStartOffset
-            case None => 
+            case None =>
                     logger.warn("Local log unavailable for topic-partition {}, returning unknown log start offset", tp.topicPartition)
                     UnifiedLog.UNKNOWN_OFFSET
           }
