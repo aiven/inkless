@@ -1504,7 +1504,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             Map<String, Map<TopicPartition, OffsetAndMetadata>> allOffsets = srcAdmin
                     .listConsumerGroupOffsets(groupSpecs).all().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
 
-            Optional<Set<String>> activeDestGroups = getActiveDestinationGroupIds(ListGroupsOptions.forConsumerGroups());
+            Optional<Set<String>> activeDestGroups = getNonSyncableDestinationGroupIds(ListGroupsOptions.forConsumerGroups());
             if (activeDestGroups.isEmpty()) {
                 return;
             }
@@ -1552,7 +1552,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             Map<String, Map<TopicPartition, OffsetAndMetadata>> allOffsets = srcAdmin
                     .listShareGroupOffsets(groupSpecs).all().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
 
-            Optional<Set<String>> activeDestGroups = getActiveDestinationGroupIds(ListGroupsOptions.forShareGroups());
+            Optional<Set<String>> activeDestGroups = getNonSyncableDestinationGroupIds(ListGroupsOptions.forShareGroups());
             if (activeDestGroups.isEmpty()) {
                 return;
             }
@@ -1594,14 +1594,15 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /** Returns empty Optional on failure so the caller can skip the sync cycle. */
-    private Optional<Set<String>> getActiveDestinationGroupIds(ListGroupsOptions typeFilter) {
+    private Optional<Set<String>> getNonSyncableDestinationGroupIds(ListGroupsOptions typeFilter) {
         try {
             var options = typeFilter.inGroupStates(Set.of(
                     GroupState.STABLE,
                     GroupState.PREPARING_REBALANCE,
                     GroupState.COMPLETING_REBALANCE,
                     GroupState.ASSIGNING,
-                    GroupState.RECONCILING));
+                    GroupState.RECONCILING,
+                    GroupState.EMPTY));
             return Optional.of(dstAdmin.listGroups(options).all()
                     .get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS).stream()
                     .map(GroupListing::groupId)
