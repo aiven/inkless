@@ -26,7 +26,9 @@ from ducktape.utils.util import wait_until
 
 from kafkatest.services.console_consumer import ConsoleConsumer
 from kafkatest.services.kafka import KafkaService, quorum
+from kafkatest.services.trogdor.degraded_network_fault_spec import DegradedNetworkFaultSpec
 from kafkatest.services.trogdor.network_partition_fault_spec import NetworkPartitionFaultSpec
+from kafkatest.services.trogdor.process_stop_fault_spec import ProcessStopFaultSpec
 from kafkatest.services.trogdor.trogdor import TrogdorService
 from kafkatest.services.verifiable_consumer import VerifiableConsumer
 from kafkatest.services.verifiable_producer import VerifiableProducer
@@ -61,7 +63,7 @@ class InklessTopicMigrationTest(Test):
     """System tests for classic-to-diskless topic migration.
 
     Tests are organized into three categories:
-      A) Post-migration data availability (classic data after broker restarts)
+      A) Post-migration data availability 
       B) Mid-migration fault tolerance (faults injected during migration)
       C) Operational scenarios (concurrent migration, producer state)
     """
@@ -82,9 +84,24 @@ class InklessTopicMigrationTest(Test):
     # Cluster setup
     # -----------------------------------------------------------------------
 
-    def _create_kafka(self, num_nodes=None, controller_num_nodes=1):
+    # JMX gauges that the Category B retrofitted tests poll on every broker to
+    # confirm that the injected fault actually overlapped a mid-migration state
+    # (rather than landing after migration had already completed).
+    MIGRATION_JMX_OBJECT_NAMES = [
+        "kafka.server:type=ReplicaManager,name=SealedPartitionsCount",
+        "kafka.server:type=InitDisklessLogManager,name=ClassicToDisklessMigrationsInFlight",
+        "kafka.server:type=InitDisklessLogManager,name=ClassicToDisklessMigrationsWaitingForReplicationCount",
+        "kafka.server:type=InitDisklessLogManager,name=ClassicToDisklessMigrationsSendingToControllerCount",
+        "kafka.server:type=InitDisklessLogManager,name=ClassicToDisklessMigrationsAwaitingMetadataCount",
+    ]
+    MIGRATION_JMX_ATTRIBUTES = ["Value"]
+
+    def _create_kafka(self, num_nodes=None, controller_num_nodes=1,
+                      scrape_migration_state_jmx=False):
         if num_nodes is None:
             num_nodes = self.num_brokers
+        jmx_object_names = self.MIGRATION_JMX_OBJECT_NAMES if scrape_migration_state_jmx else None
+        jmx_attributes = self.MIGRATION_JMX_ATTRIBUTES if scrape_migration_state_jmx else None
         self.kafka = KafkaService(
             self.test_context,
             num_nodes=num_nodes,
@@ -93,6 +110,8 @@ class InklessTopicMigrationTest(Test):
             server_prop_overrides=[
                 ["diskless.managed.rf.enable", "true"],
             ],
+            jmx_object_names=jmx_object_names,
+            jmx_attributes=jmx_attributes,
         )
         # Migration configs (diskless.allow.from.classic.enable) require
         # remote.log.storage.system.enable, which needs RSM class names.
@@ -111,6 +130,14 @@ class InklessTopicMigrationTest(Test):
         if hasattr(self.kafka, 'isolated_controller_quorum') and self.kafka.isolated_controller_quorum:
             ctrl = self.kafka.isolated_controller_quorum
             ctrl.server_prop_overrides = list(ctrl.server_prop_overrides) + controller_only_overrides
+            # KafkaService forwards jmx_object_names/jmx_attributes to the
+            # isolated controller quorum too, but our broker-side MBeans
+            # (ReplicaManager, InitDisklessLogManager) don't exist on a
+            # controller-only node. Disable JMX scraping there so JmxTool
+            # doesn't block start_jmx_tool() waiting for MBeans that never
+            # show up.
+            ctrl.jmx_object_names = None
+            ctrl.jmx_attributes = []
 
         security_protocol = 'PLAINTEXT'
         self.kafka.security_protocol = security_protocol
@@ -497,20 +524,98 @@ class InklessTopicMigrationTest(Test):
         )
 
     # -----------------------------------------------------------------------
+    # Helpers: Trogdor faults and mid-migration JMX assertions
+    # -----------------------------------------------------------------------
+
+    # Per-state mid-migration window used by the Category B retrofits. The two
+    # RPC-bounded windows are the ones the injected faults (broker restart,
+    # SIGKILL, SIGSTOP, rolling restart, network partition) most directly hit.
+    DEFAULT_REQUIRED_MIGRATION_STATES = (
+        "ClassicToDisklessMigrationsSendingToControllerCount",
+        "ClassicToDisklessMigrationsAwaitingMetadataCount",
+    )
+
+    def _start_trogdor(self) -> None:
+        """Idempotently start a TrogdorService scoped to the Kafka brokers."""
+        if getattr(self, "trogdor", None) is None:
+            self.trogdor = TrogdorService(
+                context=self.test_context,
+                client_services=[self.kafka],
+            )
+            self.trogdor.start()
+
+    def _stop_trogdor(self) -> None:
+        if getattr(self, "trogdor", None) is not None:
+            self.trogdor.stop()
+            self.trogdor = None
+
+    def _degrade_network(self, latency_ms=200, rate_kbit=2000, duration_ms=5 * 60 * 1000,
+                         nodes=None, network_device="eth0", task_name="degrade-network"):
+        """Apply tc-based latency + rate limit to every broker NIC. Returns the
+        Trogdor task so the caller can ``.stop()`` it once migration finishes."""
+        if nodes is None:
+            nodes = list(self.kafka.nodes)
+        spec = DegradedNetworkFaultSpec(0, duration_ms)
+        for node in nodes:
+            spec.add_node_spec(
+                node.name, network_device,
+                latencyMs=latency_ms, rateLimitKbit=rate_kbit,
+            )
+        return self.trogdor.create_task(task_name, spec)
+
+    def _pause_broker_process(self, node, duration_ms, task_name="pause-broker"):
+        """SIGSTOP the broker JVM on ``node`` for ``duration_ms`` via Trogdor.
+        Returns the Trogdor task; Trogdor will SIGCONT automatically when
+        the task duration elapses or ``.stop()`` is called."""
+        spec = ProcessStopFaultSpec(
+            0, duration_ms, [node], self.kafka.java_class_name(),
+        )
+        return self.trogdor.create_task(task_name, spec)
+
+    def _assert_mid_migration_observed(self, require_states=None) -> None:
+        """Read the per-broker JmxTool logs that were started alongside the
+        Kafka service (``scrape_migration_state_jmx=True``) and assert that
+        each metric in ``require_states`` was observed at >= 1 across the
+        cluster at some point during the test window.
+
+        The JmxMixin aggregator sums values across brokers per second and
+        then takes the max over time, which is exactly the "any partition
+        in this state on any broker" semantic we want.
+        """
+        if require_states is None:
+            require_states = self.DEFAULT_REQUIRED_MIGRATION_STATES
+        self.kafka.read_jmx_output_all_nodes()
+        max_values = self.kafka.maximum_jmx_value
+        self.logger.info("Mid-migration JMX maxima: %s", max_values)
+        for state in require_states:
+            attribute = "kafka.server:type=InitDisklessLogManager,name=%s:Value" % state
+            observed = max_values.get(attribute, 0)
+            assert observed >= 1, (
+                "Fault did not overlap %s state on any broker: max observed across "
+                "the cluster was %s (raw=%s). Either the migration finished before "
+                "the fault landed, or the gauge is not being published." %
+                (state, observed, max_values)
+            )
+
+    # -----------------------------------------------------------------------
     # Category A: Post-Migration Data Availability
     # -----------------------------------------------------------------------
 
     @cluster(num_nodes=9)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_classic_data_available_after_broker_restart(self, metadata_quorum) -> None:
-        """A1: After migration completes, restart one broker and verify that a
+        """After migration completes, restart one broker and verify that a
         fresh consumer can read ALL data (classic + diskless) from the beginning.
-        Directly targets the applyLocalLeadersDelta Partition creation bug."""
+
+        The classic prefix is deliberately ~3x the diskless tail so that a
+        regression which only serves the diskless portion (or only the
+        classic portion) shows up as an obviously short consume rather than
+        a borderline count that could be mistaken for a flake."""
         self._create_kafka()
         self.kafka.start()
         self._create_classic_topic()
 
-        classic_count = self._produce_messages(num_messages=10000)
+        classic_count = self._produce_messages(num_messages=15000)
 
         self._migrate_topic_to_diskless()
         self._wait_for_migration_complete()
@@ -530,7 +635,7 @@ class InklessTopicMigrationTest(Test):
     @cluster(num_nodes=9)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_classic_data_available_after_rolling_restart(self, metadata_quorum) -> None:
-        """A2: After migration completes, rolling restart ALL brokers and verify
+        """After migration completes, rolling restart ALL brokers and verify
         classic + diskless data is fully readable."""
         self._create_kafka()
         self.kafka.start()
@@ -554,34 +659,8 @@ class InklessTopicMigrationTest(Test):
 
     @cluster(num_nodes=9)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_cross_boundary_consumption(self, metadata_quorum) -> None:
-        """A3: After migration + restart, a single consumer session reads
-        seamlessly across the classic-to-diskless offset boundary."""
-        self._create_kafka()
-        self.kafka.start()
-        self._create_classic_topic()
-
-        classic_count = self._produce_messages(num_messages=5000)
-
-        self._migrate_topic_to_diskless()
-        self._wait_for_migration_complete()
-
-        diskless_count = self._produce_messages(num_messages=5000)
-        total = classic_count + diskless_count
-
-        leader_node = self._get_leader_node(partition=0)
-        self._restart_broker(leader_node)
-        time.sleep(10)
-
-        consumed = self._consume_all_from_beginning(expected_count=total,
-                                                    timeout_sec=self.CONSUME_TIMEOUT_SEC)
-        assert consumed >= total, \
-            "Cross-boundary consumption failed: expected >= %d but got %d" % (total, consumed)
-
-    @cluster(num_nodes=9)
-    @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_classic_data_after_leader_change_post_migration(self, metadata_quorum) -> None:
-        """A4: After migration, force leadership change by killing the leader.
+        """After migration, force leadership change by killing the leader.
         Fresh consumer on new leader must serve classic data."""
         self._create_kafka()
         self.kafka.start()
@@ -610,7 +689,7 @@ class InklessTopicMigrationTest(Test):
     @cluster(num_nodes=9)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_classic_data_after_unclean_shutdown_post_migration(self, metadata_quorum) -> None:
-        """A5: After migration, hard-kill a broker and verify classic data
+        """After migration, hard-kill a broker and verify classic data
         survives unclean shutdown."""
         self._create_kafka()
         self.kafka.start()
@@ -639,24 +718,38 @@ class InklessTopicMigrationTest(Test):
     # Category B: Mid-Migration Fault Tolerance
     # -----------------------------------------------------------------------
 
-    @cluster(num_nodes=9)
+    @cluster(num_nodes=10)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_migration_happy_path(self, metadata_quorum) -> None:
-        """B1: Migrate a classic topic to diskless under continuous load.
-        Verify no data loss."""
-        self._create_kafka()
+        """Migrate a classic topic to diskless under continuous load.
+        Verify no data loss.
+
+        Doubles as a control test for the Category B retrofit infrastructure:
+        with 30 partitions and a degraded broker network, every per-state
+        migration gauge must read >= 1 at least once during the migration."""
+        self.num_partitions = 30
+        self._create_kafka(scrape_migration_state_jmx=True)
         self.kafka.start()
         self._create_classic_topic()
 
-        producer = self._start_producer(max_messages=50000)
+        self._start_trogdor()
+        degrade = self._degrade_network()
+
+        producer = self._start_producer(max_messages=-1)
         consumer = self._start_continuous_consumer()
 
-        self._wait_for_steady_production(producer, min_acked=10000)
+        self._wait_for_steady_production(producer, min_acked=5000)
 
         self._migrate_topic_to_diskless()
         self._wait_for_migration_complete()
 
-        self._wait_for_steady_production(producer, min_acked=30000)
+        post_migration_target = producer.num_acked + 5000
+        wait_until(
+            lambda: producer.num_acked >= post_migration_target or producer.worker_errors,
+            timeout_sec=180,
+            err_msg="Producer did not reach %d acks within 180s after migration" %
+                    post_migration_target,
+        )
 
         producer.stop()
         total_produced = producer.num_acked
@@ -670,89 +763,149 @@ class InklessTopicMigrationTest(Test):
         assert not consumer.worker_errors, "Consumer errors: %s" % consumer.worker_errors
         consumer.stop()
 
+        self._assert_mid_migration_observed()
+
+        degrade.stop()
+        degrade.wait_for_done(timeout_sec=60)
+        self._stop_trogdor()
+
         assert consumer.total_consumed() >= total_produced, \
             "Data loss: produced %d but consumed only %d" % (total_produced, consumer.total_consumed())
 
-    @cluster(num_nodes=9)
+    @cluster(num_nodes=10)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_migration_leader_restart(self, metadata_quorum) -> None:
-        """B2: Restart the leader broker during migration. Verify migration
-        completes and all data is readable via fresh consumer."""
-        self._create_kafka()
+        """Restart the leader broker during migration. Verify migration
+        completes and all data is readable via fresh consumer.
+
+        Runs under a degraded broker network (200 ms latency, 2 Mbit/s) and
+        with 30 partitions so the restart reliably overlaps a partition still
+        in SendingToController or AwaitingMetadata; the JMX assertion at the
+        end fails the test if that overlap never happened."""
+        self.num_partitions = 30
+        self._create_kafka(scrape_migration_state_jmx=True)
         self.kafka.start()
         self._create_classic_topic()
+
+        self._start_trogdor()
+        degrade = self._degrade_network()
 
         producer = self._start_producer(max_messages=-1)
         self._wait_for_steady_production(producer, min_acked=5000)
 
         self._migrate_topic_to_diskless()
-        time.sleep(2)
 
         leader_node = self._get_leader_node(partition=0)
         self._restart_broker(leader_node)
 
         self._wait_for_migration_complete()
-        self._wait_for_steady_production(producer, min_acked=producer.num_acked + 5000)
+        self._wait_for_steady_production(
+            producer, min_acked=producer.num_acked + 5000, timeout_sec=180)
 
         producer.stop()
         total_produced = producer.num_acked
+
+        self._assert_mid_migration_observed()
+
+        degrade.stop()
+        degrade.wait_for_done(timeout_sec=60)
+        self._stop_trogdor()
 
         consumed = self._consume_all_from_beginning(expected_count=total_produced,
                                                     timeout_sec=self.CONSUME_TIMEOUT_SEC)
         assert consumed >= total_produced, \
             "Data loss after leader restart during migration: expected >= %d but got %d" % (total_produced, consumed)
 
-    @cluster(num_nodes=9)
-    @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_migration_leader_crash(self, metadata_quorum) -> None:
-        """B3: Hard-kill the leader during migration. Verify new leader
-        completes migration, then fresh consumer reads all data."""
-        self._create_kafka()
+    @cluster(num_nodes=10)
+    @matrix(
+        metadata_quorum=[quorum.isolated_kraft],
+        leader_failure_mode=["sigkill", "sigstop"],
+    )
+    def test_migration_leader_crash(self, metadata_quorum, leader_failure_mode) -> None:
+        """Take down the leader during migration via either SIGKILL or SIGSTOP
+        and verify migration completes plus all data is recoverable.
+
+        ``sigkill`` exercises hard-loss-of-in-memory-state recovery: the broker
+        is killed, restarted, and must rebuild its InitDisklessLogManager state
+        from disk and incoming metadata.
+
+        ``sigstop`` (Trogdor ProcessStopFaultSpec) freezes the broker process
+        while keeping in-memory state intact: the controller and other brokers
+        observe it as unresponsive, leadership/migration progress on partitions
+        led by it must continue, and after SIGCONT the broker should rejoin and
+        catch up without re-issuing duplicate InitDisklessLog requests."""
+        self.num_partitions = 30
+        self._create_kafka(scrape_migration_state_jmx=True)
         self.kafka.start()
         self._create_classic_topic()
+
+        self._start_trogdor()
+        degrade = self._degrade_network()
 
         producer = self._start_producer(max_messages=-1)
         self._wait_for_steady_production(producer, min_acked=5000)
 
         self._migrate_topic_to_diskless()
-        time.sleep(2)
 
         leader_node = self._get_leader_node(partition=0)
-        self._stop_broker(leader_node, clean_shutdown=False)
-
-        time.sleep(10)
-        self._start_broker(leader_node)
+        pause_duration_ms = 30_000
+        if leader_failure_mode == "sigkill":
+            self._stop_broker(leader_node, clean_shutdown=False)
+            time.sleep(10)
+            self._start_broker(leader_node)
+        elif leader_failure_mode == "sigstop":
+            pause = self._pause_broker_process(leader_node, duration_ms=pause_duration_ms)
+            time.sleep(pause_duration_ms / 1000.0 + 5)
+            pause.stop()
+            pause.wait_for_done(timeout_sec=60)
+        else:
+            raise AssertionError("Unknown leader_failure_mode: %s" % leader_failure_mode)
 
         self._wait_for_migration_complete()
 
         target_acked = producer.num_acked + 5000
         wait_until(
             lambda: producer.num_acked >= target_acked or producer.worker_errors,
-            timeout_sec=60,
-            err_msg="Producer did not recover after leader crash"
+            timeout_sec=240,
+            err_msg="Producer did not recover after leader %s" % leader_failure_mode
         )
         producer.stop()
         total_produced = producer.num_acked
 
+        self._assert_mid_migration_observed()
+
+        degrade.stop()
+        degrade.wait_for_done(timeout_sec=60)
+        self._stop_trogdor()
+
         consumed = self._consume_all_from_beginning(expected_count=total_produced,
                                                     timeout_sec=self.CONSUME_TIMEOUT_SEC)
         assert consumed >= total_produced, \
-            "Data loss after leader crash during migration: expected >= %d but got %d" % (total_produced, consumed)
+            "Data loss after leader %s during migration: expected >= %d but got %d" % \
+            (leader_failure_mode, total_produced, consumed)
 
-    @cluster(num_nodes=9)
+    @cluster(num_nodes=10)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_migration_rolling_restart(self, metadata_quorum) -> None:
-        """B4: Rolling restart all brokers during migration. Verify migration
-        completes and data is fully readable."""
-        self._create_kafka()
+        """Rolling restart all brokers during migration. Verify migration
+        completes and data is fully readable.
+
+        With a degraded broker network and 30 partitions, every broker bounce
+        in the rolling sequence lands while at least one other broker still
+        has partitions mid-migration. The JMX assertion at the end fails the
+        test if no partition was ever observed in the RPC-bounded states."""
+        self.num_partitions = 30
+        self._create_kafka(scrape_migration_state_jmx=True)
         self.kafka.start()
         self._create_classic_topic()
+
+        self._start_trogdor()
+        degrade = self._degrade_network()
 
         producer = self._start_producer(max_messages=-1)
         self._wait_for_steady_production(producer, min_acked=5000)
 
         self._migrate_topic_to_diskless()
-        time.sleep(2)
 
         self._rolling_restart()
 
@@ -761,11 +914,17 @@ class InklessTopicMigrationTest(Test):
         target_acked = producer.num_acked + 5000
         wait_until(
             lambda: producer.num_acked >= target_acked or producer.worker_errors,
-            timeout_sec=60,
+            timeout_sec=240,
             err_msg="Producer did not recover after rolling restart"
         )
         producer.stop()
         total_produced = producer.num_acked
+
+        self._assert_mid_migration_observed()
+
+        degrade.stop()
+        degrade.wait_for_done(timeout_sec=60)
+        self._stop_trogdor()
 
         consumed = self._consume_all_from_beginning(expected_count=total_produced,
                                                     timeout_sec=self.CONSUME_TIMEOUT_SEC)
@@ -775,15 +934,18 @@ class InklessTopicMigrationTest(Test):
     @cluster(num_nodes=10)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_migration_follower_network_partition(self, metadata_quorum) -> None:
-        """B5: Isolate a follower via Trogdor network partition during migration.
-        Verify ISR shrinks, migration completes, ISR re-expands, no data loss."""
-        self._create_kafka()
+        """Isolate a follower via Trogdor network partition during migration.
+        Verify ISR shrinks, migration completes, ISR re-expands, no data loss.
+
+        The Trogdor partition fault already shrinks ISR and reliably parks
+        partitions in WaitingForReplication (HW cannot advance with the
+        follower isolated), so we layer on JMX scraping but do NOT stack a
+        DegradedNetworkFaultSpec on top of the existing partition fault."""
+        self._create_kafka(scrape_migration_state_jmx=True)
         self.kafka.start()
         self._create_classic_topic()
 
-        self.trogdor = TrogdorService(context=self.test_context,
-                                      client_services=[self.kafka])
-        self.trogdor.start()
+        self._start_trogdor()
 
         producer = self._start_producer(max_messages=-1)
         self._wait_for_steady_production(producer, min_acked=5000)
@@ -821,25 +983,31 @@ class InklessTopicMigrationTest(Test):
         producer.stop()
         total_produced = producer.num_acked
 
+        self._assert_mid_migration_observed()
+
         consumed = self._consume_all_from_beginning(expected_count=total_produced,
                                                     timeout_sec=self.CONSUME_TIMEOUT_SEC)
         assert consumed >= total_produced, \
             "Data loss with follower partition during migration: expected >= %d but got %d" % (total_produced, consumed)
 
-        self.trogdor.stop()
+        self._stop_trogdor()
 
     @cluster(num_nodes=10)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_migration_leader_network_partition(self, metadata_quorum) -> None:
-        """B6: Isolate the leader via Trogdor network partition during migration.
-        Verify new leader elected, migration completes, ISR heals, no data loss."""
-        self._create_kafka()
+        """Isolate the leader via Trogdor network partition during migration.
+        Verify new leader elected, migration completes, ISR heals, no data loss.
+
+        The Trogdor partition fault already prevents the original leader from
+        finishing migration (no controller reachable from it) so partitions on
+        the new leader sit in SendingToController or AwaitingMetadata until
+        the network heals; we layer JMX scraping on top to confirm that
+        actually happened."""
+        self._create_kafka(scrape_migration_state_jmx=True)
         self.kafka.start()
         self._create_classic_topic()
 
-        self.trogdor = TrogdorService(context=self.test_context,
-                                      client_services=[self.kafka])
-        self.trogdor.start()
+        self._start_trogdor()
 
         producer = self._start_producer(max_messages=-1)
         self._wait_for_steady_production(producer, min_acked=5000)
@@ -872,12 +1040,14 @@ class InklessTopicMigrationTest(Test):
         producer.stop()
         total_produced = producer.num_acked
 
+        self._assert_mid_migration_observed()
+
         consumed = self._consume_all_from_beginning(expected_count=total_produced,
                                                     timeout_sec=self.CONSUME_TIMEOUT_SEC)
         assert consumed >= total_produced, \
             "Data loss with leader partition during migration: expected >= %d but got %d" % (total_produced, consumed)
 
-        self.trogdor.stop()
+        self._stop_trogdor()
 
     # -----------------------------------------------------------------------
     # Category C: Operational Scenarios
@@ -886,7 +1056,7 @@ class InklessTopicMigrationTest(Test):
     @cluster(num_nodes=9)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_migration_concurrent_topics(self, metadata_quorum) -> None:
-        """C1: Migrate 3 classic topics simultaneously. Verify all migrate
+        """Migrate 3 classic topics simultaneously. Verify all migrate
         successfully with no data loss."""
         self._create_kafka()
         self.kafka.start()
@@ -920,7 +1090,7 @@ class InklessTopicMigrationTest(Test):
     @cluster(num_nodes=5)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_classic_tiered_to_diskless_migration(self, metadata_quorum) -> None:
-        """C3: Migrate a classic topic with real (LocalTieredStorage) tiered
+        """Migrate a classic topic with real (LocalTieredStorage) tiered
         storage to diskless, then read across all three layers.
 
         Sequence:
@@ -973,7 +1143,7 @@ class InklessTopicMigrationTest(Test):
     @cluster(num_nodes=9)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_migration_idempotent_producer_state(self, metadata_quorum) -> None:
-        """C2: Verify idempotent producer state is preserved across the
+        """Verify idempotent producer state is preserved across the
         migration boundary. The same producer continues producing after
         migration without OutOfOrderSequence errors or duplicates."""
         self._create_kafka()
