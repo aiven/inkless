@@ -734,6 +734,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public List<PruneDisklessLogsResponse> pruneDisklessLogs(List<PruneDisklessLogsRequest> pruneDisklessLogsRequests) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void close() throws IOException {
         // Do nothing.
     }
