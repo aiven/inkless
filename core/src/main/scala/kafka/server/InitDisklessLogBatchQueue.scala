@@ -61,7 +61,8 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
   brokerEpochSupplier: () => Long,
   lingerMs: Long,
   retryPeriodMs: Long,
-  maxRetryTimeMs: Long
+  maxRetryTimeMs: Long,
+  onRetry: () => Unit = () => ()
 ) extends Logging {
   import InitDisklessLogBatchQueue._
 
@@ -226,15 +227,18 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
     taskStatus = TaskScheduled(scheduler.scheduleOnce("init-diskless-log-batch-queue", () => task(), delayMs))
   }
 
-  private def enqueueRetryOrFail(tp: TopicPartition, attempt: Attempt): Unit = withQueueLock {
-    val retryAttemptNumber = attempt.attemptNumber + 1
-    Option(queuedByTp.get(tp)) match {
-      case Some(existing) =>
-        // Keep the already queued state (it may be fresher), but ensure retry progression is not lost.
-        queuedByTp.put(tp, Attempt(existing.state, Math.max(existing.attemptNumber, retryAttemptNumber)))
-      case None =>
-        queuedByTp.put(tp, Attempt(attempt.state, retryAttemptNumber))
+  private def enqueueRetryOrFail(tp: TopicPartition, attempt: Attempt): Unit = {
+    withQueueLock {
+      val retryAttemptNumber = attempt.attemptNumber + 1
+      Option(queuedByTp.get(tp)) match {
+        case Some(existing) =>
+          // Keep the already queued state (it may be fresher), but ensure retry progression is not lost.
+          queuedByTp.put(tp, Attempt(existing.state, Math.max(existing.attemptNumber, retryAttemptNumber)))
+        case None =>
+          queuedByTp.put(tp, Attempt(attempt.state, retryAttemptNumber))
+      }
     }
+    onRetry()
   }
 
   private def completeAndRemovePromise(tp: TopicPartition, accepted: Boolean): Unit = {
@@ -267,14 +271,16 @@ class SendingToControllerBatchQueue(
   brokerEpochSupplier: () => Long,
   lingerMs: Long,
   retryPeriodMs: Long,
-  maxRetryTimeMs: Long
+  maxRetryTimeMs: Long,
+  onRetry: () => Unit = () => ()
 ) extends RetriableInitDisklessLogBatchQueue[SendingToController](
   scheduler = scheduler,
   brokerId = brokerId,
   brokerEpochSupplier = brokerEpochSupplier,
   lingerMs = lingerMs,
   retryPeriodMs = retryPeriodMs,
-  maxRetryTimeMs = maxRetryTimeMs
+  maxRetryTimeMs = maxRetryTimeMs,
+  onRetry = onRetry
 ) {
   logIdent = s"[SendingToControllerBatchQueue] "
 
@@ -328,14 +334,16 @@ class AwaitingMetadataBatchQueue(
   brokerEpochSupplier: () => Long,
   lingerMs: Long,
   retryPeriodMs: Long,
-  maxRetryTimeMs: Long
+  maxRetryTimeMs: Long,
+  onRetry: () => Unit = () => ()
 ) extends RetriableInitDisklessLogBatchQueue[AwaitingMetadata](
   scheduler = scheduler,
   brokerId = brokerId,
   brokerEpochSupplier = brokerEpochSupplier,
   lingerMs = lingerMs,
   retryPeriodMs = retryPeriodMs,
-  maxRetryTimeMs = maxRetryTimeMs
+  maxRetryTimeMs = maxRetryTimeMs,
+  onRetry = onRetry
 ) {
   logIdent = s"[AwaitingMetadataBatchQueue] "
 

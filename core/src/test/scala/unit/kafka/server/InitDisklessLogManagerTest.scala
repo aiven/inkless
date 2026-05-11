@@ -30,7 +30,7 @@ import org.apache.kafka.server.util.MockScheduler
 import org.apache.kafka.common.utils.MockTime
 import org.apache.kafka.storage.internals.log.{ProducerStateEntry, ProducerStateManager, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
-import org.junit.jupiter.api.{BeforeEach, Test}
+import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito._
 
@@ -66,8 +66,14 @@ class InitDisklessLogManagerTest {
       controlPlane = controlPlane,
       scheduler = scheduler,
       brokerId = brokerId,
-      brokerEpochSupplier = () => brokerEpoch
+      brokerEpochSupplier = () => brokerEpoch,
+      time = mockTime
     )
+  }
+
+  @AfterEach
+  def tearDown(): Unit = {
+    if (manager != null) manager.removeMetrics()
   }
 
   private def fireLinger(): Unit = {
