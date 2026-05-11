@@ -19,13 +19,15 @@
 package kafka.server.metadata
 
 import org.apache.kafka.common.config.TopicConfig
+import org.apache.kafka.common.{TopicIdPartition, Uuid}
 import org.junit.jupiter.api.{BeforeEach, Nested, Test}
 import org.junit.jupiter.api.Assertions._
+import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito._
 
 import java.util.function.Supplier
 import java.util
-import java.util.Properties
+import java.util.{Collections, Optional, Properties}
 
 class InklessMetadataViewTest {
   private var metadataCache: KRaftMetadataCache = _
@@ -137,6 +139,74 @@ class InklessMetadataViewTest {
       when(metadataCache.topicConfig(topicName)).thenReturn(props)
       assertEquals(expected, metadataView.isRemoteStorageEnabled(topicName), s"Failed on case: '$description'")
     }
+  }
+
+  @Test
+  def testIsConsolidatingDisklessTopicTrueOnlyWhenDisklessAndRemoteStorageEnabled(): Unit = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataView = new InklessMetadataView(metadataCache, null)
+
+    val consolidating = createTopicProps(diskless = Some("true"), remoteStorageEnable = Some("true"))
+    when(metadataCache.topicConfig("consolidating")).thenReturn(consolidating)
+    assertTrue(metadataView.isConsolidatingDisklessTopic("consolidating"))
+
+    when(metadataCache.topicConfig("diskless-only")).thenReturn(createTopicProps(diskless = Some("true")))
+    assertFalse(metadataView.isConsolidatingDisklessTopic("diskless-only"))
+
+    when(metadataCache.topicConfig("remote-only")).thenReturn(createTopicProps(remoteStorageEnable = Some("true")))
+    assertFalse(metadataView.isConsolidatingDisklessTopic("remote-only"))
+
+    when(metadataCache.topicConfig("neither")).thenReturn(new Properties())
+    assertFalse(metadataView.isConsolidatingDisklessTopic("neither"))
+  }
+
+  @Test
+  def testGetConsolidatingDisklessTopicPartitionsEmptyWhenNoTopics(): Unit = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataView = new InklessMetadataView(metadataCache, null)
+    when(metadataCache.getAllTopics()).thenReturn(Collections.emptySet())
+    assertTrue(metadataView.getConsolidatingDisklessTopicPartitions.isEmpty)
+  }
+
+  @Test
+  def testGetConsolidatingDisklessTopicPartitionsExcludesTopicsThatAreNotConsolidating(): Unit = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataView = new InklessMetadataView(metadataCache, null)
+    val topics = new util.HashSet[String]()
+    topics.add("plain")
+    topics.add("diskless-only")
+    when(metadataCache.getAllTopics()).thenReturn(topics)
+    when(metadataCache.topicConfig("plain")).thenReturn(new Properties())
+    when(metadataCache.topicConfig("diskless-only")).thenReturn(createTopicProps(diskless = Some("true")))
+
+    assertTrue(metadataView.getConsolidatingDisklessTopicPartitions.isEmpty)
+    verify(metadataCache, never()).numPartitions(anyString())
+  }
+
+  @Test
+  def testGetConsolidatingDisklessTopicPartitionsReturnsTopicIdPartitionPerPartition(): Unit = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataView = new InklessMetadataView(metadataCache, null)
+    val uuidA = Uuid.randomUuid()
+    val uuidB = Uuid.randomUuid()
+    val topics = new util.HashSet[String]()
+    topics.add("topic-a")
+    topics.add("topic-b")
+    when(metadataCache.getAllTopics()).thenReturn(topics)
+    val consolidatingProps = createTopicProps(diskless = Some("true"), remoteStorageEnable = Some("true"))
+    when(metadataCache.topicConfig("topic-a")).thenReturn(consolidatingProps)
+    when(metadataCache.topicConfig("topic-b")).thenReturn(consolidatingProps)
+    when(metadataCache.numPartitions("topic-a")).thenReturn(Optional.of(2))
+    when(metadataCache.numPartitions("topic-b")).thenReturn(Optional.of(1))
+    when(metadataCache.getTopicId("topic-a")).thenReturn(uuidA)
+    when(metadataCache.getTopicId("topic-b")).thenReturn(uuidB)
+
+    val result = metadataView.getConsolidatingDisklessTopicPartitions
+
+    assertEquals(3, result.size)
+    assertTrue(result.contains(new TopicIdPartition(uuidA, 0, "topic-a")))
+    assertTrue(result.contains(new TopicIdPartition(uuidA, 1, "topic-a")))
+    assertTrue(result.contains(new TopicIdPartition(uuidB, 0, "topic-b")))
   }
 
   private def createTopicProps(diskless: Option[String] = None, remoteStorageEnable: Option[String] = None): Properties = {
