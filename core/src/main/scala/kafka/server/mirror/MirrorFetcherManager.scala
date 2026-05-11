@@ -47,7 +47,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
       name = "MirrorFetcherManager id=" + brokerConfig.brokerId,
       clientId = "MirrorReplica",
       numFetchers = brokerConfig.mirrorConfig.numReplicaFetchers) {
-  private val mirrorFetcherThreadMap = new mutable.HashMap[FetcherKey, MirrorFetcherThread]
+  private lazy val mirrorFetcherThreadMap = new mutable.HashMap[FetcherKey, MirrorFetcherThread]
   private val lagInfo = new TrieMap[PartitionLagKey, LagInfo]
 
   override def deadThreadCount: Int = lock synchronized { mirrorFetcherThreadMap.values.count(_.isThreadFailed) }
