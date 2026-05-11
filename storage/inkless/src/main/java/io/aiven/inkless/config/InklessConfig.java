@@ -114,6 +114,10 @@ public class InklessConfig extends AbstractConfig {
         "the more brokers, the less frequently each one of them enforces retention policy.";
     private static final int RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
 
+    public static final String CONSOLIDATION_CLEANUP_INTERVAL_MS_CONFIG = "consolidation.cleanup.interval.ms";
+    private static final String CONSOLIDATION_CLEANUP_INTERVAL_MS_DOC = "The interval with which to run consolidated diskless WAL pruning on each broker.";
+    private static final int CONSOLIDATION_CLEANUP_INTERVAL_MS_DEFAULT = RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT;
+
     public static final String FILE_CLEANER_INTERVAL_MS_CONFIG = "file.cleaner.interval.ms";
     private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion.";
     private static final int FILE_CLEANER_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
@@ -288,6 +292,15 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(1),
             ConfigDef.Importance.LOW,
             RETENTION_ENFORCEMENT_INTERVAL_MS_DOC
+        );
+
+        configDef.define(
+            CONSOLIDATION_CLEANUP_INTERVAL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            CONSOLIDATION_CLEANUP_INTERVAL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            CONSOLIDATION_CLEANUP_INTERVAL_MS_DOC
         );
 
         configDef.define(
@@ -562,6 +575,10 @@ public class InklessConfig extends AbstractConfig {
 
     public Duration retentionEnforcementInterval() {
         return Duration.ofMillis(getInt(RETENTION_ENFORCEMENT_INTERVAL_MS_CONFIG));
+    }
+
+    public Duration consolidationCleanupInterval() {
+        return Duration.ofMillis(getInt(CONSOLIDATION_CLEANUP_INTERVAL_MS_CONFIG));
     }
 
     public Duration fileCleanerInterval() {

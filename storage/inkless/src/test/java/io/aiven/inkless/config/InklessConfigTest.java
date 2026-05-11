@@ -60,6 +60,7 @@ class InklessConfigTest {
         configs.put("inkless.fetch.data.thread.pool.size", "12");
         configs.put("inkless.fetch.metadata.thread.pool.size", "14");
         configs.put("inkless.retention.enforcement.max.batches.per.request", "50");
+        configs.put("inkless.consolidation.cleanup.interval.ms", "60000");
         final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), configs));
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
@@ -81,6 +82,7 @@ class InklessConfigTest {
         assertThat(config.fetchDataThreadPoolSize()).isEqualTo(12);
         assertThat(config.fetchMetadataThreadPoolSize()).isEqualTo(14);
         assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(50);
+        assertThat(config.consolidationCleanupInterval()).isEqualTo(Duration.ofMillis(60000));
     }
 
     @Test
@@ -111,6 +113,7 @@ class InklessConfigTest {
         assertThat(config.fetchDataThreadPoolSize()).isEqualTo(32);
         assertThat(config.fetchMetadataThreadPoolSize()).isEqualTo(8);
         assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(0);
+        assertThat(config.consolidationCleanupInterval()).isEqualTo(Duration.ofMinutes(5));
     }
 
     @Test
@@ -138,6 +141,7 @@ class InklessConfigTest {
         configs.put("fetch.lagging.consumer.threshold.ms", "240000");  // 4 minutes
         configs.put("fetch.lagging.consumer.request.rate.limit", "250");
         configs.put("retention.enforcement.max.batches.per.request", "10");
+        configs.put("consolidation.cleanup.interval.ms", "75000");
         final var config = new InklessConfig(
             configs
         );
@@ -163,6 +167,7 @@ class InklessConfigTest {
         assertThat(config.fetchLaggingConsumerThresholdMs()).isEqualTo(240_000L);
         assertThat(config.fetchLaggingConsumerRequestRateLimit()).isEqualTo(250);
         assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(10);
+        assertThat(config.consolidationCleanupInterval()).isEqualTo(Duration.ofMillis(75000));
     }
 
     @Test
