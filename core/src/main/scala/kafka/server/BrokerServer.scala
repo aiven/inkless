@@ -372,7 +372,8 @@ class BrokerServer(
           controlPlane = controlPlane,
           scheduler = kafkaScheduler,
           brokerId = config.brokerId,
-          brokerEpochSupplier = () => lifecycleManager.brokerEpoch
+          brokerEpochSupplier = () => lifecycleManager.brokerEpoch,
+          time = time,
         )
       }
 
