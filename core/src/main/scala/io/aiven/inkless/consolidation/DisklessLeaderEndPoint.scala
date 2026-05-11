@@ -20,6 +20,7 @@ package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import kafka.server.{KafkaConfig, ReplicaManager, ReplicaQuota}
+import kafka.utils.Logging
 import org.apache.kafka.common.Uuid
 import org.apache.kafka.common.errors.KafkaStorageException
 import org.apache.kafka.common.message.{FetchResponseData, OffsetForLeaderEpochRequestData}
@@ -35,6 +36,7 @@ import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams}
 import org.apache.kafka.server.{LeaderEndPoint, PartitionFetchState, ReplicaFetch, ResultWithPartitions}
 import org.apache.kafka.storage.internals.log.OffsetResultHolder.FileRecordsOrError
+import org.apache.kafka.storage.internals.log.UnifiedLog
 
 import java.util
 import java.util.Optional
@@ -58,7 +60,7 @@ class DisklessLeaderEndPoint(
   quota: ReplicaQuota,
   metadataVersionSupplier: () => MetadataVersion,
   brokerEpochSupplier: () => Long
-) extends LeaderEndPoint {
+) extends LeaderEndPoint with Logging {
 
   private val replicaId = brokerConfig.brokerId
   private val maxWait = brokerConfig.replicaFetchWaitMaxMs
@@ -96,14 +98,35 @@ class DisklessLeaderEndPoint(
     response.asScala.map { case (tp, data) =>
       val abortedTransactions = data.abortedTransactions.orElse(null)
       val lastStableOffset: Long = data.lastStableOffset.orElse(FetchResponse.INVALID_LAST_STABLE_OFFSET)
-      tp.topicPartition -> new FetchResponseData.PartitionData()
+      val fetchResponseData = new FetchResponseData.PartitionData()
         .setPartitionIndex(tp.topicPartition.partition)
         .setErrorCode(data.error.code)
         .setHighWatermark(data.highWatermark)
         .setLastStableOffset(lastStableOffset)
-        .setLogStartOffset(data.logStartOffset)
         .setAbortedTransactions(abortedTransactions)
         .setRecords(data.records)
+      // set local LSO if possible instead of the diskless start offset that is data.logStartOffset
+      replicaManager.getPartitionOrError(tp.topicPartition) match {
+        case Left(error) =>
+          if (fetchResponseData.errorCode == Errors.NONE.code) {
+            fetchResponseData.setErrorCode(error.code)
+          }
+          fetchResponseData.setLogStartOffset(UnifiedLog.UNKNOWN_OFFSET)
+        case Right(partition) =>
+          if (fetchResponseData.errorCode == Errors.NONE.code) {
+            // in case of an inconsistency log an error and set an unknown offset
+            if (partition.logStartOffset > data.highWatermark) {
+              logger.error("Local log start offset ({}) is higher than high watermark ({}) for topic-partition {}",
+                partition.logStartOffset, data.highWatermark, partition.topicPartition)
+              fetchResponseData.setLogStartOffset(UnifiedLog.UNKNOWN_OFFSET)
+            } else {
+              fetchResponseData.setLogStartOffset(partition.logStartOffset)
+            }
+          } else {
+            fetchResponseData.setLogStartOffset(data.logStartOffset)
+          }
+      }
+      tp.topicPartition -> fetchResponseData
     }.toMap.asJava
   }
 

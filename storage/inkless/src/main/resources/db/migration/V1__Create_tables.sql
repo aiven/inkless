@@ -48,7 +48,7 @@ CREATE TABLE logs (
     topic_id topic_id_t,
     partition partition_t,
     topic_name topic_name_t,
-    log_start_offset offset_t,
+    log_start_offset offset_t, -- start of the diskless offset space
     high_watermark offset_t,
     PRIMARY KEY(topic_id, partition)
 );

@@ -12,7 +12,7 @@ CREATE TYPE init_diskless_log_request_v1 AS (
     partition partition_t,
     topic_name topic_name_t,
     log_start_offset offset_t,
-    diskless_start_offset offset_t
+    diskless_start_offset offset_t -- the start offset of diskless offsets for a hybrid or migrating classic log
 );
 
 CREATE TYPE init_diskless_log_producer_state_v1 AS (

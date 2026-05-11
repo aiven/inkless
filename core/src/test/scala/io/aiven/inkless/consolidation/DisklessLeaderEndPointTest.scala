@@ -19,6 +19,7 @@
 package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
+import kafka.cluster.Partition
 import kafka.server.{KafkaConfig, QuotaFactory, ReplicaManager, ReplicaQuota}
 import kafka.utils.TestUtils
 import org.apache.kafka.common.errors.{KafkaStorageException, UnknownTopicOrPartitionException}
@@ -48,6 +49,7 @@ import java.util.OptionalInt
 import java.util.OptionalLong
 import java.util.concurrent.CompletableFuture
 import scala.jdk.CollectionConverters._
+import scala.util.{Left, Right}
 
 class DisklessLeaderEndPointTest {
 
@@ -113,6 +115,9 @@ class DisklessLeaderEndPointTest {
     val fetchHandler = mock(classOf[FetchHandler])
     val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
     val replicaManager = mock(classOf[ReplicaManager])
+    val partition = mock(classOf[Partition])
+    when(partition.logStartOffset).thenReturn(55L)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
 
     val aborted = util.List.of(new FetchResponseData.AbortedTransaction())
     val fetchData = new FetchPartitionData(
@@ -140,7 +145,7 @@ class DisklessLeaderEndPointTest {
     assertEquals(Errors.NONE.code, pd.errorCode)
     assertEquals(99L, pd.highWatermark)
     assertEquals(88L, pd.lastStableOffset)
-    assertEquals(1L, pd.logStartOffset)
+    assertEquals(55L, pd.logStartOffset)
     assertEquals(aborted, pd.abortedTransactions)
     assertEquals(MemoryRecords.EMPTY, pd.records)
   }
@@ -150,6 +155,9 @@ class DisklessLeaderEndPointTest {
     val fetchHandler = mock(classOf[FetchHandler])
     val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
     val replicaManager = mock(classOf[ReplicaManager])
+    val partition = mock(classOf[Partition])
+    when(partition.logStartOffset).thenReturn(0L)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
 
     val fetchData = new FetchPartitionData(
       Errors.NONE,
@@ -477,5 +485,94 @@ class DisklessLeaderEndPointTest {
 
     assertTrue(result.result.isEmpty)
     assertTrue(result.partitionsWithError.isEmpty)
+  }
+
+  @Test
+  def testFetchLeavesDisklessLogStartOffsetWhenDisklessErrorEvenIfPartitionAvailable(): Unit = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val partition = mock(classOf[Partition])
+    when(partition.logStartOffset).thenReturn(999L)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+
+    val fetchData = new FetchPartitionData(
+      Errors.OFFSET_OUT_OF_RANGE,
+      50L,
+      7L,
+      MemoryRecords.EMPTY,
+      Optional.empty(),
+      OptionalLong.empty(),
+      Optional.empty(),
+      OptionalInt.empty(),
+      false
+    )
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    val partitionData = new util.HashMap[TopicPartition, FetchRequest.PartitionData]()
+    val fetchBuilder = FetchRequest.Builder.forReplica(12, 1, 1L, 100, 1, partitionData).setMaxBytes(100_000)
+
+    val pd = endPoint.fetch(fetchBuilder).get(topicPartition)
+    assertEquals(Errors.OFFSET_OUT_OF_RANGE.code, pd.errorCode)
+    assertEquals(7L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchOverlaysPartitionErrorAndUnknownLogStartWhenLookupFailsAndDisklessWasOk(): Unit = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Left(Errors.NOT_LEADER_OR_FOLLOWER))
+
+    val fetchData = new FetchPartitionData(
+      Errors.NONE,
+      50L,
+      3L,
+      MemoryRecords.EMPTY,
+      Optional.empty(),
+      OptionalLong.empty(),
+      Optional.empty(),
+      OptionalInt.empty(),
+      false
+    )
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    val partitionData = new util.HashMap[TopicPartition, FetchRequest.PartitionData]()
+    val fetchBuilder = FetchRequest.Builder.forReplica(12, 1, 1L, 100, 1, partitionData).setMaxBytes(100_000)
+
+    val pd = endPoint.fetch(fetchBuilder).get(topicPartition)
+    assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, pd.errorCode)
+    assertEquals(UnifiedLog.UNKNOWN_OFFSET, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchKeepsDisklessErrorWhenLookupFailsButDisklessAlreadyFailed(): Unit = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Left(Errors.KAFKA_STORAGE_ERROR))
+
+    val fetchData = new FetchPartitionData(
+      Errors.OFFSET_OUT_OF_RANGE,
+      50L,
+      12L,
+      MemoryRecords.EMPTY,
+      Optional.empty(),
+      OptionalLong.empty(),
+      Optional.empty(),
+      OptionalInt.empty(),
+      false
+    )
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    val partitionData = new util.HashMap[TopicPartition, FetchRequest.PartitionData]()
+    val fetchBuilder = FetchRequest.Builder.forReplica(12, 1, 1L, 100, 1, partitionData).setMaxBytes(100_000)
+
+    val pd = endPoint.fetch(fetchBuilder).get(topicPartition)
+    assertEquals(Errors.OFFSET_OUT_OF_RANGE.code, pd.errorCode)
+    assertEquals(UnifiedLog.UNKNOWN_OFFSET, pd.logStartOffset)
   }
 }
