@@ -2515,6 +2515,7 @@ project(':tools') {
     implementation project(':group-coordinator')
     implementation project(':coordinator-common')
     implementation project(':share-coordinator')
+    implementation project(':mirror-coordinator')
     implementation project(':raft')
     implementation libs.argparse4j
     implementation libs.jacksonDatabind
