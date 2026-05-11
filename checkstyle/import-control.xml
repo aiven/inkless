@@ -335,6 +335,7 @@
     <allow pkg="scala.jdk.javaapi" />
     <allow pkg="org.apache.kafka.coordinator.transaction" />
     <allow pkg="org.apache.kafka.coordinator.group" />
+    <allow pkg="org.apache.kafka.coordinator.mirror" />
     <allow pkg="org.apache.kafka.tools" />
     <allow pkg="org.apache.kafka.tools.api" />
     <allow pkg="org.apache.kafka.tools.filter" />
