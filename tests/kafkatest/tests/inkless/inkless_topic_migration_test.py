@@ -84,16 +84,39 @@ class InklessTopicMigrationTest(Test):
     # Cluster setup
     # -----------------------------------------------------------------------
 
-    # JMX gauges that the Category B retrofitted tests poll on every broker to
-    # confirm that the injected fault actually overlapped a mid-migration state
-    # (rather than landing after migration had already completed).
+    # Per-state JMX gauges that the Category B retrofitted tests poll on every
+    # broker to confirm that the injected fault actually overlapped a mid-
+    # migration state (rather than landing after migration had already
+    # completed). Each entry maps a short state name to ``(count_object_name,
+    # oldest_age_ms_object_name)``: the count drives the assertion, the
+    # oldest-age gauge is reported alongside as diagnostic context (so a
+    # failure log shows e.g. ``max_count=2 max_age_ms=45123`` instead of just
+    # ``max_count=2``).
+    #
+    # The per-state meters (ClassicToDisklessMigrations{Completed,Failed,
+    # Retried}PerSec) are intentionally omitted: they expose Count /
+    # OneMinuteRate rather than Value, and JmxTool applies the same attribute
+    # list to every object name, so mixing them in here would break the
+    # gauges scrape.
+    _IDLM_OBJ = "kafka.server:type=InitDisklessLogManager,name=%s"
+    MIGRATION_STATE_GAUGES = {
+        "WaitingForReplication": (
+            _IDLM_OBJ % "ClassicToDisklessMigrationsWaitingForReplicationCount",
+            _IDLM_OBJ % "ClassicToDisklessMigrationOldestWaitingForReplicationAgeMs",
+        ),
+        "SendingToController": (
+            _IDLM_OBJ % "ClassicToDisklessMigrationsSendingToControllerCount",
+            _IDLM_OBJ % "ClassicToDisklessMigrationOldestSendingToControllerAgeMs",
+        ),
+        "AwaitingMetadata": (
+            _IDLM_OBJ % "ClassicToDisklessMigrationsAwaitingMetadataCount",
+            _IDLM_OBJ % "ClassicToDisklessMigrationOldestAwaitingMetadataAgeMs",
+        ),
+    }
     MIGRATION_JMX_OBJECT_NAMES = [
         "kafka.server:type=ReplicaManager,name=SealedPartitionsCount",
-        "kafka.server:type=InitDisklessLogManager,name=ClassicToDisklessMigrationsInFlight",
-        "kafka.server:type=InitDisklessLogManager,name=ClassicToDisklessMigrationsWaitingForReplicationCount",
-        "kafka.server:type=InitDisklessLogManager,name=ClassicToDisklessMigrationsSendingToControllerCount",
-        "kafka.server:type=InitDisklessLogManager,name=ClassicToDisklessMigrationsAwaitingMetadataCount",
-    ]
+        _IDLM_OBJ % "ClassicToDisklessMigrationsInFlight",
+    ] + [obj for pair in MIGRATION_STATE_GAUGES.values() for obj in pair]
     MIGRATION_JMX_ATTRIBUTES = ["Value"]
 
     def _create_kafka(self, num_nodes=None, controller_num_nodes=1,
@@ -530,9 +553,10 @@ class InklessTopicMigrationTest(Test):
     # Per-state mid-migration window used by the Category B retrofits. The two
     # RPC-bounded windows are the ones the injected faults (broker restart,
     # SIGKILL, SIGSTOP, rolling restart, network partition) most directly hit.
+    # Names are short state keys into ``MIGRATION_STATE_GAUGES``.
     DEFAULT_REQUIRED_MIGRATION_STATES = (
-        "ClassicToDisklessMigrationsSendingToControllerCount",
-        "ClassicToDisklessMigrationsAwaitingMetadataCount",
+        "SendingToController",
+        "AwaitingMetadata",
     )
 
     def _start_trogdor(self) -> None:
@@ -575,26 +599,41 @@ class InklessTopicMigrationTest(Test):
     def _assert_mid_migration_observed(self, require_states=None) -> None:
         """Read the per-broker JmxTool logs that were started alongside the
         Kafka service (``scrape_migration_state_jmx=True``) and assert that
-        each metric in ``require_states`` was observed at >= 1 across the
-        cluster at some point during the test window.
+        each state in ``require_states`` (keys into
+        ``MIGRATION_STATE_GAUGES``) was observed with a count >= 1 across
+        the cluster at some point during the test window.
 
         The JmxMixin aggregator sums values across brokers per second and
         then takes the max over time, which is exactly the "any partition
-        in this state on any broker" semantic we want.
+        in this state on any broker" semantic we want. Both the per-state
+        count and the per-state oldest-age-ms gauge are logged so a failed
+        assertion (or just a passing run) shows e.g.
+        ``SendingToController: max_count=2 max_age_ms=45123``.
         """
         if require_states is None:
             require_states = self.DEFAULT_REQUIRED_MIGRATION_STATES
         self.kafka.read_jmx_output_all_nodes()
         max_values = self.kafka.maximum_jmx_value
-        self.logger.info("Mid-migration JMX maxima: %s", max_values)
+
+        def _max(obj_name):
+            return max_values.get("%s:Value" % obj_name, 0)
+
+        summary = "; ".join(
+            "%s: max_count=%s max_age_ms=%s" % (state, _max(count_obj), _max(age_obj))
+            for state, (count_obj, age_obj) in self.MIGRATION_STATE_GAUGES.items()
+        )
+        self.logger.info("Mid-migration JMX maxima: %s", summary)
+
         for state in require_states:
-            attribute = "kafka.server:type=InitDisklessLogManager,name=%s:Value" % state
-            observed = max_values.get(attribute, 0)
-            assert observed >= 1, (
-                "Fault did not overlap %s state on any broker: max observed across "
-                "the cluster was %s (raw=%s). Either the migration finished before "
-                "the fault landed, or the gauge is not being published." %
-                (state, observed, max_values)
+            count_obj, age_obj = self.MIGRATION_STATE_GAUGES[state]
+            max_count = _max(count_obj)
+            max_age_ms = _max(age_obj)
+            assert max_count >= 1, (
+                "Fault did not overlap %s state on any broker: "
+                "max_count=%s, max_age_ms=%s across the cluster (full JMX maxima: %s). "
+                "Either the migration finished before the fault landed, "
+                "or the gauges are not being published." %
+                (state, max_count, max_age_ms, summary)
             )
 
     # -----------------------------------------------------------------------
