@@ -79,7 +79,8 @@ public class ThreadPoolMonitorMetricsRegistry {
             activeThreadsTotalMetricName,
             poolSizeTotalMetricName,
             parallelismTotalMetricName,
-            queuedTaskCountTotalMetricName
+            queuedTaskCountTotalMetricName,
+            avgIdlePercentMetricName
         );
     }
 }

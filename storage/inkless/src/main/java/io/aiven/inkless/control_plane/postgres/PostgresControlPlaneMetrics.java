@@ -17,17 +17,41 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.yammer.metrics.core.Histogram;
 
 import java.io.Closeable;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.LongAdder;
 
 public class PostgresControlPlaneMetrics implements Closeable {
+    private static final String GROUP = PostgresControlPlane.class.getSimpleName();
+
+    private static final List<String> QUERY_NAMES = List.of(
+        "FindBatches", "GetLogs", "CommitFile", "CommitFileMergeWorkItem",
+        "TopicCreate", "TopicDelete", "FilesDelete", "ListOffsets",
+        "DeleteRecords", "EnforceRetention", "GetFilesToDelete",
+        "GetFileMergeWorkItem", "ReleaseFileMergeWorkItem", "SafeDeleteFileCheck",
+        "GetLogInfo", "InitDisklessLog", "GetProducerState"
+    );
+
+    public static List<MetricNameTemplate> all() {
+        final List<MetricNameTemplate> templates = new ArrayList<>();
+        for (final String name : QUERY_NAMES) {
+            templates.add(new MetricNameTemplate(name + "QueryTime", GROUP,
+                "Time spent executing the " + name + " query in milliseconds"));
+            templates.add(new MetricNameTemplate(name + "QueryRate", GROUP,
+                "Total number of " + name + " queries executed"));
+        }
+        return templates;
+    }
+
     final Time time;
 
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(

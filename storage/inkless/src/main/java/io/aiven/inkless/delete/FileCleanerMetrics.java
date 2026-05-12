@@ -17,18 +17,35 @@
  */
 package io.aiven.inkless.delete;
 
+import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.yammer.metrics.core.Histogram;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.LongAdder;
 
 public class FileCleanerMetrics {
+    private static final String GROUP = FileCleaner.class.getSimpleName();
+
     static final String FILE_CLEANER_TOTAL_TIME = "FileCleanerTotalTime";
+    private static final String FILE_CLEANER_TOTAL_TIME_DOC = "Total time spent on a file cleaning cycle in milliseconds";
     static final String FILE_CLEANER_RATE = "FileCleanerRate";
+    private static final String FILE_CLEANER_RATE_DOC = "Total number of file cleaning cycles started";
     static final String FILE_CLEANER_FILES_RATE = "FileCleanerFilesRate";
+    private static final String FILE_CLEANER_FILES_RATE_DOC = "Total number of files cleaned";
     static final String FILE_CLEANER_ERROR_RATE = "FileCleanerErrorRate";
+    private static final String FILE_CLEANER_ERROR_RATE_DOC = "Total number of file cleaning errors";
+
+    public static List<MetricNameTemplate> all() {
+        return List.of(
+            new MetricNameTemplate(FILE_CLEANER_TOTAL_TIME, GROUP, FILE_CLEANER_TOTAL_TIME_DOC),
+            new MetricNameTemplate(FILE_CLEANER_RATE, GROUP, FILE_CLEANER_RATE_DOC),
+            new MetricNameTemplate(FILE_CLEANER_FILES_RATE, GROUP, FILE_CLEANER_FILES_RATE_DOC),
+            new MetricNameTemplate(FILE_CLEANER_ERROR_RATE, GROUP, FILE_CLEANER_ERROR_RATE_DOC)
+        );
+    }
 
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
         FileCleaner.class.getPackageName(), FileCleaner.class.getSimpleName());

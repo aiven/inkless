@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
@@ -27,6 +28,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.LongAdder;
@@ -35,9 +37,22 @@ import io.aiven.inkless.TimeUtils;
 
 @CoverageIgnore
 public class WriterMetrics implements Closeable {
+    private static final String GROUP = WriterMetrics.class.getSimpleName();
+
     public static final String REQUEST_RATE = "RequestRate";
+    private static final String REQUEST_RATE_DOC = "Number of produce requests received";
     public static final String ROTATION_RATE = "RotationRate";
+    private static final String ROTATION_RATE_DOC = "Number of file rotations performed";
     public static final String ROTATION_TIME = "RotationTime";
+    private static final String ROTATION_TIME_DOC = "Time spent rotating files in milliseconds";
+
+    public static List<MetricNameTemplate> all() {
+        return List.of(
+            new MetricNameTemplate(REQUEST_RATE, GROUP, REQUEST_RATE_DOC),
+            new MetricNameTemplate(ROTATION_RATE, GROUP, ROTATION_RATE_DOC),
+            new MetricNameTemplate(ROTATION_TIME, GROUP, ROTATION_TIME_DOC)
+        );
+    }
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
         WriterMetrics.class.getPackageName(), WriterMetrics.class.getSimpleName());
     private final Histogram rotationTime;

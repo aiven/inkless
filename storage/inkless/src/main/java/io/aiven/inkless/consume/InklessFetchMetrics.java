@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.consume;
 
+import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
@@ -27,6 +28,7 @@ import com.yammer.metrics.core.Meter;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -36,34 +38,85 @@ import io.aiven.inkless.cache.ObjectCache;
 
 @CoverageIgnore
 public class InklessFetchMetrics {
+    private static final String GROUP = InklessFetchMetrics.class.getSimpleName();
+
     private static final String FETCH_TOTAL_TIME = "FetchTotalTime";
+    private static final String FETCH_TOTAL_TIME_DOC = "Total time spent processing a fetch request in milliseconds";
     private static final String FIND_BATCHES_TIME = "FindBatchesTime";
+    private static final String FIND_BATCHES_TIME_DOC = "Time spent finding batch coordinates in the control plane in milliseconds";
     private static final String FETCH_PLAN_TIME = "FetchPlanTime";
+    private static final String FETCH_PLAN_TIME_DOC = "Time spent creating the fetch plan in milliseconds";
     private static final String CACHE_QUERY_TIME = "CacheQueryTime";
+    private static final String CACHE_QUERY_TIME_DOC = "Time spent querying the object cache in milliseconds";
     private static final String CACHE_STORE_TIME = "CacheStoreTime";
+    private static final String CACHE_STORE_TIME_DOC = "Time spent storing entries in the object cache in milliseconds";
     private static final String CACHE_HIT_COUNT = "CacheHitCount";
+    private static final String CACHE_HIT_COUNT_DOC = "Rate of cache hits per second";
     private static final String CACHE_MISS_COUNT = "CacheMissCount";
+    private static final String CACHE_MISS_COUNT_DOC = "Rate of cache misses per second";
     private static final String CACHE_ENTRY_SIZE = "CacheEntrySize";
+    private static final String CACHE_ENTRY_SIZE_DOC = "Size of individual cache entries in bytes";
     private static final String CACHE_SIZE = "CacheSize";
+    private static final String CACHE_SIZE_DOC = "Current number of entries in the object cache";
     private static final String FETCH_FIRST_BYTE_TIME = "FetchFirstByteTime";
+    private static final String FETCH_FIRST_BYTE_TIME_DOC = "Time until the first byte is received from storage in milliseconds";
     private static final String FETCH_FILE_TIME = "FetchFileTime";
+    private static final String FETCH_FILE_TIME_DOC = "Time spent fetching a file from storage in milliseconds";
     private static final String FETCH_COMPLETION_TIME = "FetchCompletionTime";
+    private static final String FETCH_COMPLETION_TIME_DOC = "Time spent completing the fetch response assembly in milliseconds";
     private static final String FETCH_RATE = "FetchRate";
+    private static final String FETCH_RATE_DOC = "Rate of fetch requests processed per second";
     private static final String FETCH_ERROR_RATE = "FetchErrorRate";
+    private static final String FETCH_ERROR_RATE_DOC = "Rate of failed fetch requests per second";
     private static final String FIND_BATCHES_ERROR_RATE = "FindBatchesErrorRate";
+    private static final String FIND_BATCHES_ERROR_RATE_DOC = "Rate of errors when finding batches in the control plane per second";
     private static final String FILE_FETCH_ERROR_RATE = "FileFetchErrorRate";
+    private static final String FILE_FETCH_ERROR_RATE_DOC = "Rate of errors when fetching files from storage per second";
     private static final String CACHE_FETCH_ERROR_RATE = "CacheFetchErrorRate";
+    private static final String CACHE_FETCH_ERROR_RATE_DOC = "Rate of errors when fetching from the cache per second";
     private static final String FETCH_PARTITIONS_PER_FETCH_COUNT = "FetchPartitionsPerFetchCount";
+    private static final String FETCH_PARTITIONS_PER_FETCH_COUNT_DOC = "Number of partitions included in each fetch request";
     private static final String FETCH_BATCHES_PER_FETCH_COUNT = "FetchBatchesPerPartitionCount";
+    private static final String FETCH_BATCHES_PER_FETCH_COUNT_DOC = "Number of batches fetched per partition";
     private static final String FETCH_OBJECTS_PER_FETCH_COUNT = "FetchObjectsPerFetchCount";
+    private static final String FETCH_OBJECTS_PER_FETCH_COUNT_DOC = "Number of storage objects accessed per fetch request";
     private static final String RECENT_DATA_REQUEST_RATE = "RecentDataRequestRate";
+    private static final String RECENT_DATA_REQUEST_RATE_DOC = "Rate of requests served via the hot path (recent data with cache) per second";
     private static final String LAGGING_CONSUMER_REQUEST_RATE = "LaggingConsumerRequestRate";
+    private static final String LAGGING_CONSUMER_REQUEST_RATE_DOC = "Rate of requests from lagging consumers (cold path, bypasses cache) per second";
     private static final String LAGGING_CONSUMER_REQUEST_REJECTED_RATE = "LaggingConsumerRequestRejectedRate";
-    // Tracks wait time (including zero-wait) for ALL lagging consumer requests when rate limiting is enabled.
-    // When rate limiter is disabled (config = 0), LaggingConsumerRequestRate > 0 but this metric rate = 0.
-    // Always records wait time to avoid histogram bias - zero-wait cases show when rate limiting is NOT a bottleneck.
-    // Use to monitor: rate limiting latency distribution, actual throttling pressure, and limiter effectiveness.
+    private static final String LAGGING_CONSUMER_REQUEST_REJECTED_RATE_DOC = "Rate of lagging consumer requests rejected due to executor unavailability per second";
     private static final String LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME = "LaggingConsumerRateLimitWaitTime";
+    private static final String LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME_DOC = "Wait time for rate-limited lagging consumer requests in milliseconds";
+
+    public static List<MetricNameTemplate> all() {
+        return List.of(
+            new MetricNameTemplate(FETCH_TOTAL_TIME, GROUP, FETCH_TOTAL_TIME_DOC),
+            new MetricNameTemplate(FIND_BATCHES_TIME, GROUP, FIND_BATCHES_TIME_DOC),
+            new MetricNameTemplate(FETCH_PLAN_TIME, GROUP, FETCH_PLAN_TIME_DOC),
+            new MetricNameTemplate(CACHE_QUERY_TIME, GROUP, CACHE_QUERY_TIME_DOC),
+            new MetricNameTemplate(CACHE_STORE_TIME, GROUP, CACHE_STORE_TIME_DOC),
+            new MetricNameTemplate(CACHE_HIT_COUNT, GROUP, CACHE_HIT_COUNT_DOC),
+            new MetricNameTemplate(CACHE_MISS_COUNT, GROUP, CACHE_MISS_COUNT_DOC),
+            new MetricNameTemplate(CACHE_ENTRY_SIZE, GROUP, CACHE_ENTRY_SIZE_DOC),
+            new MetricNameTemplate(CACHE_SIZE, GROUP, CACHE_SIZE_DOC),
+            new MetricNameTemplate(FETCH_FIRST_BYTE_TIME, GROUP, FETCH_FIRST_BYTE_TIME_DOC),
+            new MetricNameTemplate(FETCH_FILE_TIME, GROUP, FETCH_FILE_TIME_DOC),
+            new MetricNameTemplate(FETCH_COMPLETION_TIME, GROUP, FETCH_COMPLETION_TIME_DOC),
+            new MetricNameTemplate(FETCH_RATE, GROUP, FETCH_RATE_DOC),
+            new MetricNameTemplate(FETCH_ERROR_RATE, GROUP, FETCH_ERROR_RATE_DOC),
+            new MetricNameTemplate(FIND_BATCHES_ERROR_RATE, GROUP, FIND_BATCHES_ERROR_RATE_DOC),
+            new MetricNameTemplate(FILE_FETCH_ERROR_RATE, GROUP, FILE_FETCH_ERROR_RATE_DOC),
+            new MetricNameTemplate(CACHE_FETCH_ERROR_RATE, GROUP, CACHE_FETCH_ERROR_RATE_DOC),
+            new MetricNameTemplate(FETCH_PARTITIONS_PER_FETCH_COUNT, GROUP, FETCH_PARTITIONS_PER_FETCH_COUNT_DOC),
+            new MetricNameTemplate(FETCH_BATCHES_PER_FETCH_COUNT, GROUP, FETCH_BATCHES_PER_FETCH_COUNT_DOC),
+            new MetricNameTemplate(FETCH_OBJECTS_PER_FETCH_COUNT, GROUP, FETCH_OBJECTS_PER_FETCH_COUNT_DOC),
+            new MetricNameTemplate(RECENT_DATA_REQUEST_RATE, GROUP, RECENT_DATA_REQUEST_RATE_DOC),
+            new MetricNameTemplate(LAGGING_CONSUMER_REQUEST_RATE, GROUP, LAGGING_CONSUMER_REQUEST_RATE_DOC),
+            new MetricNameTemplate(LAGGING_CONSUMER_REQUEST_REJECTED_RATE, GROUP, LAGGING_CONSUMER_REQUEST_REJECTED_RATE_DOC),
+            new MetricNameTemplate(LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME, GROUP, LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME_DOC)
+        );
+    }
 
     private final Time time;
 

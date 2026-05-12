@@ -101,3 +101,287 @@ resumable-upload-initiate-total   Total number of initiate resumable upload oper
 ================================  ===================================================================
 
 
+InklessFetch metrics
+==================================
+
+io.aiven.inkless.consume:type=InklessFetchMetrics
+-------------------------------------------------
+
+===================================  ====================================================================================
+Attribute name                       Description                                                                         
+===================================  ====================================================================================
+CacheEntrySize                       Size of individual cache entries in bytes                                           
+CacheFetchErrorRate                  Rate of errors when fetching from the cache per second                              
+CacheHitCount                        Rate of cache hits per second                                                       
+CacheMissCount                       Rate of cache misses per second                                                     
+CacheQueryTime                       Time spent querying the object cache in milliseconds                                
+CacheSize                            Current number of entries in the object cache                                       
+CacheStoreTime                       Time spent storing entries in the object cache in milliseconds                      
+FetchBatchesPerPartitionCount        Number of batches fetched per partition                                             
+FetchCompletionTime                  Time spent completing the fetch response assembly in milliseconds                   
+FetchErrorRate                       Rate of failed fetch requests per second                                            
+FetchFileTime                        Time spent fetching a file from storage in milliseconds                             
+FetchFirstByteTime                   Time until the first byte is received from storage in milliseconds                  
+FetchObjectsPerFetchCount            Number of storage objects accessed per fetch request                                
+FetchPartitionsPerFetchCount         Number of partitions included in each fetch request                                 
+FetchPlanTime                        Time spent creating the fetch plan in milliseconds                                  
+FetchRate                            Rate of fetch requests processed per second                                         
+FetchTotalTime                       Total time spent processing a fetch request in milliseconds                         
+FileFetchErrorRate                   Rate of errors when fetching files from storage per second                          
+FindBatchesErrorRate                 Rate of errors when finding batches in the control plane per second                 
+FindBatchesTime                      Time spent finding batch coordinates in the control plane in milliseconds           
+LaggingConsumerRateLimitWaitTime     Wait time for rate-limited lagging consumer requests in milliseconds                
+LaggingConsumerRequestRate           Rate of requests from lagging consumers (cold path, bypasses cache) per second      
+LaggingConsumerRequestRejectedRate   Rate of lagging consumer requests rejected due to executor unavailability per second
+RecentDataRequestRate                Rate of requests served via the hot path (recent data with cache) per second        
+===================================  ====================================================================================
+
+
+InklessFetchOffset metrics
+==================================
+
+io.aiven.inkless.consume:type=InklessFetchOffsetMetrics
+-------------------------------------------------------
+
+=====================  ==================================================================
+Attribute name         Description                                                       
+=====================  ==================================================================
+FetchOffsetErrorRate   Rate of failed fetch offset requests per second                   
+FetchOffsetRate        Rate of fetch offset requests processed per second                
+FetchOffsetTotalTime   Total time spent processing a fetch offset request in milliseconds
+=====================  ==================================================================
+
+
+Writer metrics
+==================================
+
+io.aiven.inkless.produce:type=WriterMetrics
+-------------------------------------------
+
+===============  =========================================
+Attribute name   Description                              
+===============  =========================================
+RequestRate      Number of produce requests received      
+RotationRate     Number of file rotations performed       
+RotationTime     Time spent rotating files in milliseconds
+===============  =========================================
+
+
+FileCommitter metrics
+==================================
+
+io.aiven.inkless.produce:type=FileCommitter
+-------------------------------------------
+
+========================  ===========================================================================
+Attribute name            Description                                                                
+========================  ===========================================================================
+BatchesCommitRate         Rate of batches committed per second                                       
+BatchesCount              Number of batches per committed file                                       
+CacheStoreTime            Time spent storing file data in the cache after commit in milliseconds     
+CommitQueueBytes          Current total bytes of files waiting to be committed                       
+CommitQueueFiles          Current number of files waiting to be committed                            
+FileCommitErrorRate       Rate of failed file commits per second                                     
+FileCommitRate            Rate of successful file commits per second                                 
+FileCommitTime            Time spent committing a file to the control plane in milliseconds          
+FileCommitWaitTime        Time a file waits before commit starts in milliseconds                     
+FileSize                  Size of committed files in bytes                                           
+FileTotalLifeTime         Total lifetime of a file from creation to commit completion in milliseconds
+FileUploadAndCommitTime   Time spent uploading and committing a file in milliseconds                 
+FileUploadErrorRate       Rate of failed file uploads per second                                     
+FileUploadRate            Rate of successful file uploads per second                                 
+FileUploadTime            Time spent uploading a file to object storage in milliseconds              
+WriteErrorRate            Rate of failed write operations per second                                 
+WriteRate                 Rate of successful write operations per second                             
+========================  ===========================================================================
+
+
+FileCleaner metrics
+==================================
+
+io.aiven.inkless.delete:type=FileCleaner
+----------------------------------------
+
+=====================  =========================================================
+Attribute name         Description                                              
+=====================  =========================================================
+FileCleanerErrorRate   Total number of file cleaning errors                     
+FileCleanerFilesRate   Total number of files cleaned                            
+FileCleanerRate        Total number of file cleaning cycles started             
+FileCleanerTotalTime   Total time spent on a file cleaning cycle in milliseconds
+=====================  =========================================================
+
+
+RetentionEnforcer metrics
+==================================
+
+io.aiven.inkless.delete:type=RetentionEnforcer
+----------------------------------------------
+
+========================================  =================================================================
+Attribute name                            Description                                                      
+========================================  =================================================================
+RetentionEnforcementErrorRate             Total number of retention enforcement errors                     
+RetentionEnforcementRate                  Total number of retention enforcement cycles started             
+RetentionEnforcementTotalBatchesDeleted   Total number of batches deleted by retention enforcement         
+RetentionEnforcementTotalBytesDeleted     Total number of bytes deleted by retention enforcement           
+RetentionEnforcementTotalTime             Total time spent on a retention enforcement cycle in milliseconds
+========================================  =================================================================
+
+
+FileMerger metrics
+==================================
+
+io.aiven.inkless.merge:type=FileMerger
+--------------------------------------
+
+===================  ======================================================================
+Attribute name       Description                                                           
+===================  ======================================================================
+FileMergeErrorRate   Total number of file merge errors                                     
+FileMergeFilesRate   Total number of files produced by merge operations                    
+FileMergeRate        Total number of file merge operations started                         
+FileMergeTotalTime   Total time spent on a file merge operation in milliseconds            
+FileUploadTime       Time spent uploading the merged file to object storage in milliseconds
+===================  ======================================================================
+
+
+ClientAzAwareness metrics
+==================================
+
+io.aiven.inkless.metadata:type=ClientAzAwarenessMetrics
+-------------------------------------------------------
+
+===============================  ===============================================================================
+Attribute name                   Description                                                                    
+===============================  ===============================================================================
+client-az-hit-rate               Rate of requests routed to a broker in the same availability zone as the client
+client-az-miss-rate              Rate of requests where no broker was available in the client availability zone 
+client-az-unaware-rate           Rate of requests from clients without availability zone information            
+cross-az-routing-total           Rate of requests routed to a broker in a different availability zone           
+fallback-total                   Rate of requests routed to non-replica brokers (diskless-only topics)          
+offline-replicas-routed-around   Rate of requests rerouted around offline replicas                              
+===============================  ===============================================================================
+
+
+PostgresControlPlane metrics
+==================================
+
+io.aiven.inkless.control_plane.postgres:type=PostgresControlPlane
+-----------------------------------------------------------------
+
+==================================  =======================================================================
+Attribute name                      Description                                                            
+==================================  =======================================================================
+CommitFileMergeWorkItemQueryRate    Total number of CommitFileMergeWorkItem queries executed               
+CommitFileMergeWorkItemQueryTime    Time spent executing the CommitFileMergeWorkItem query in milliseconds 
+CommitFileQueryRate                 Total number of CommitFile queries executed                            
+CommitFileQueryTime                 Time spent executing the CommitFile query in milliseconds              
+DeleteRecordsQueryRate              Total number of DeleteRecords queries executed                         
+DeleteRecordsQueryTime              Time spent executing the DeleteRecords query in milliseconds           
+EnforceRetentionQueryRate           Total number of EnforceRetention queries executed                      
+EnforceRetentionQueryTime           Time spent executing the EnforceRetention query in milliseconds        
+FilesDeleteQueryRate                Total number of FilesDelete queries executed                           
+FilesDeleteQueryTime                Time spent executing the FilesDelete query in milliseconds             
+FindBatchesQueryRate                Total number of FindBatches queries executed                           
+FindBatchesQueryTime                Time spent executing the FindBatches query in milliseconds             
+GetFileMergeWorkItemQueryRate       Total number of GetFileMergeWorkItem queries executed                  
+GetFileMergeWorkItemQueryTime       Time spent executing the GetFileMergeWorkItem query in milliseconds    
+GetFilesToDeleteQueryRate           Total number of GetFilesToDelete queries executed                      
+GetFilesToDeleteQueryTime           Time spent executing the GetFilesToDelete query in milliseconds        
+GetLogInfoQueryRate                 Total number of GetLogInfo queries executed                            
+GetLogInfoQueryTime                 Time spent executing the GetLogInfo query in milliseconds              
+GetLogsQueryRate                    Total number of GetLogs queries executed                               
+GetLogsQueryTime                    Time spent executing the GetLogs query in milliseconds                 
+GetProducerStateQueryRate           Total number of GetProducerState queries executed                      
+GetProducerStateQueryTime           Time spent executing the GetProducerState query in milliseconds        
+InitDisklessLogQueryRate            Total number of InitDisklessLog queries executed                       
+InitDisklessLogQueryTime            Time spent executing the InitDisklessLog query in milliseconds         
+ListOffsetsQueryRate                Total number of ListOffsets queries executed                           
+ListOffsetsQueryTime                Time spent executing the ListOffsets query in milliseconds             
+ReleaseFileMergeWorkItemQueryRate   Total number of ReleaseFileMergeWorkItem queries executed              
+ReleaseFileMergeWorkItemQueryTime   Time spent executing the ReleaseFileMergeWorkItem query in milliseconds
+SafeDeleteFileCheckQueryRate        Total number of SafeDeleteFileCheck queries executed                   
+SafeDeleteFileCheckQueryTime        Time spent executing the SafeDeleteFileCheck query in milliseconds     
+TopicCreateQueryRate                Total number of TopicCreate queries executed                           
+TopicCreateQueryTime                Time spent executing the TopicCreate query in milliseconds             
+TopicDeleteQueryRate                Total number of TopicDelete queries executed                           
+TopicDeleteQueryTime                Time spent executing the TopicDelete query in milliseconds             
+==================================  =======================================================================
+
+
+PostgresConnectionPool metrics
+==================================
+
+io.aiven.inkless.control_plane.postgres:type=PostgresConnectionPoolMetrics,pool="{pool}"
+----------------------------------------------------------------------------------------
+
+========================  ===========================================================================
+Attribute name            Description                                                                
+========================  ===========================================================================
+ActiveConnectionsCount    Number of currently active connections in the pool                         
+ConnectionAcquiredNanos   Time spent acquiring connections from the pool in nanoseconds              
+ConnectionTimeoutCount    Rate of connection acquisition timeouts per second                         
+ConnectionUsageMillis     Time connections are held before being returned to the pool in milliseconds
+IdleConnectionsCount      Number of idle connections in the pool                                     
+MaxConnectionsCount       Maximum number of connections allowed in the pool                          
+MinConnectionsCount       Minimum number of connections maintained in the pool                       
+PendingThreadsCount       Number of threads waiting for a connection from the pool                   
+TotalConnectionsCount     Total number of connections in the pool                                    
+========================  ===========================================================================
+
+
+BatchCoordinateCache metrics
+==================================
+
+io.aiven.inkless.cache:type=BatchCoordinateCache
+------------------------------------------------
+
+=====================  ================================================================================
+Attribute name         Description                                                                     
+=====================  ================================================================================
+CacheEvictions         Total number of cache entry evictions                                           
+CacheHits              Total number of batch coordinate cache hits                                     
+CacheHitsWithoutData   Total number of cache hits where coordinate was found but data was not available
+CacheInvalidations     Total number of cache entry invalidations                                       
+CacheMisses            Total number of batch coordinate cache misses                                   
+CacheSize              Current number of entries in the batch coordinate cache                         
+=====================  ================================================================================
+
+
+CaffeineCache metrics
+==================================
+
+io.aiven.inkless.cache.caffeine:type=wal-segment-cache
+------------------------------------------------------
+
+====================  =========================================
+Attribute name        Description                              
+====================  =========================================
+avg-load-penalty-ns   Average cache load penalty in nanoseconds
+evictions-count       Number of evictions from the cache       
+hit-count             Number of cache hits                     
+hits-rate             Cache hit rate                           
+miss-count            Number of cache misses                   
+miss-rate             Cache miss rate                          
+size                  Current size of the cache                
+====================  =========================================
+
+
+ThreadPoolMonitor metrics
+==================================
+
+io.aiven.inkless.thread-pool:type={pool-name}
+---------------------------------------------
+
+==========================  ==============================================================
+Attribute name              Description                                                   
+==========================  ==============================================================
+active-thread-count-total   Number of threads currently executing tasks                   
+avg-idle-percent            Average idle percent of the pool                              
+parallelism-total           Targeted parallelism level of the pool                        
+pool-size-total             Current number of threads in the pool                         
+queued-task-count-total     Tasks submitted to the pool that have not yet begun executing.
+==========================  ==============================================================
+
+

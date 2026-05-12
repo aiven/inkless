@@ -17,20 +17,39 @@
  */
 package io.aiven.inkless.delete;
 
+import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.yammer.metrics.core.Histogram;
 
 import java.io.Closeable;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.LongAdder;
 
 public class RetentionEnforcerMetrics implements Closeable {
+    private static final String GROUP = RetentionEnforcer.class.getSimpleName();
+
     static final String RETENTION_ENFORCEMENT_TOTAL_TIME = "RetentionEnforcementTotalTime";
+    private static final String RETENTION_ENFORCEMENT_TOTAL_TIME_DOC = "Total time spent on a retention enforcement cycle in milliseconds";
     static final String RETENTION_ENFORCEMENT_RATE = "RetentionEnforcementRate";
+    private static final String RETENTION_ENFORCEMENT_RATE_DOC = "Total number of retention enforcement cycles started";
     static final String RETENTION_ENFORCEMENT_TOTAL_BATCHES_DELETED = "RetentionEnforcementTotalBatchesDeleted";
+    private static final String RETENTION_ENFORCEMENT_TOTAL_BATCHES_DELETED_DOC = "Total number of batches deleted by retention enforcement";
     static final String RETENTION_ENFORCEMENT_TOTAL_BYTES_DELETED = "RetentionEnforcementTotalBytesDeleted";
+    private static final String RETENTION_ENFORCEMENT_TOTAL_BYTES_DELETED_DOC = "Total number of bytes deleted by retention enforcement";
     static final String RETENTION_ENFORCEMENT_ERROR_RATE = "RetentionEnforcementErrorRate";
+    private static final String RETENTION_ENFORCEMENT_ERROR_RATE_DOC = "Total number of retention enforcement errors";
+
+    public static List<MetricNameTemplate> all() {
+        return List.of(
+            new MetricNameTemplate(RETENTION_ENFORCEMENT_TOTAL_TIME, GROUP, RETENTION_ENFORCEMENT_TOTAL_TIME_DOC),
+            new MetricNameTemplate(RETENTION_ENFORCEMENT_RATE, GROUP, RETENTION_ENFORCEMENT_RATE_DOC),
+            new MetricNameTemplate(RETENTION_ENFORCEMENT_TOTAL_BATCHES_DELETED, GROUP, RETENTION_ENFORCEMENT_TOTAL_BATCHES_DELETED_DOC),
+            new MetricNameTemplate(RETENTION_ENFORCEMENT_TOTAL_BYTES_DELETED, GROUP, RETENTION_ENFORCEMENT_TOTAL_BYTES_DELETED_DOC),
+            new MetricNameTemplate(RETENTION_ENFORCEMENT_ERROR_RATE, GROUP, RETENTION_ENFORCEMENT_ERROR_RATE_DOC)
+        );
+    }
 
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
         RetentionEnforcer.class.getPackageName(), RetentionEnforcer.class.getSimpleName());
