@@ -26,6 +26,7 @@ import org.apache.kafka.server.common.NodeToControllerChannelManager
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 import org.apache.kafka.server.util.Scheduler
 
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
 import scala.concurrent.ExecutionContext
 import scala.jdk.CollectionConverters._
@@ -183,9 +184,15 @@ class InitDisklessLogManager(
       } else {
         // PermanentFailure on controller call (e.g. FENCED_LEADER_EPOCH /
         // INVALID_REQUEST) or local pre-flight rejection (leader/log lost):
-        // the migration won't progress, so drop it and record the failure.
-        metrics.markFailed()
-        tracked.remove(tp)
+        // the migration won't progress.
+        // Only count a failure when this callback observed `tp` as still
+        // tracked. `removePartition` completes the queue promise with `false`
+        // (via `queue.remove`) AFTER clearing `tracked`, so the cancellation
+        // path lands here with `tracked.remove(tp) == null` and must not
+        // increment the failed meter.
+        if (tracked.remove(tp) != null) {
+          metrics.markFailed()
+        }
       }
       refreshMetrics(tp)
     }(ExecutionContext.parasitic)
@@ -200,11 +207,18 @@ class InitDisklessLogManager(
             case other => other
           }
         )
-        metrics.markCompleted()
-        tracked.remove(tp)
+        // Only count completion when this callback observed `tp` as still
+        // tracked. If `removePartition` cleared `tracked` (and/or the queue
+        // promise) concurrently, the migration was cancelled externally and
+        // we must not inflate the completed meter.
+        if (tracked.remove(tp) != null) {
+          metrics.markCompleted()
+        }
       } else {
-        metrics.markFailed()
-        tracked.remove(tp)
+        if (tracked.remove(tp) != null) {
+          // Only count failure when this callback observed `tp` as still tracked
+          metrics.markFailed()
+        }
       }
       refreshMetrics(tp)
     }(ExecutionContext.parasitic)
@@ -220,6 +234,11 @@ class InitDisklessLogManager(
       refreshMetrics(tp)
       info(s"Removed partition $tp from diskless init tracking")
     }
+  }
+
+  def shutdown(): Unit = {
+    tracked.keySet().asScala.toList.foreach(removePartition)
+    removeMetrics()
   }
 
   def removeMetrics(): Unit = metrics.removeMetrics()
@@ -261,22 +280,32 @@ object InitDisklessLogManager {
 
   private[server] val MetricNames: Set[String] = GaugeMetricNames union MeterMetricNames
 
-  private final case class EnteredAtEntry(stateClass: Class[_], enteredAtMs: Long)
-
-  // All JMX wiring for InitDisklessLogManager: per-state count / oldest-age
-  // gauges, completed/failed/retried meters, plus a small per-partition
-  // bookkeeping map used to back the gauges. The manager calls `onStateChange`
-  // after every mutation of its `tracked` map and `markCompleted` /
-  // `markFailed` / `markRetried` at the relevant points in the state machine.
+  // JMX wiring: per-state count and oldest-age gauges plus completed/failed/
+  // retried meters. The manager calls `onStateChange` after every mutation of
+  // its `tracked` map and `markCompleted` / `markFailed` / `markRetried` at
+  // the relevant state-machine transitions.
   private[server] final class Metrics(time: Time, trackedSize: () => Int) {
-    private val enteredAtByTp = new ConcurrentHashMap[TopicPartition, EnteredAtEntry]()
     private val metricsGroup = new KafkaMetricsGroup(MetricsPackage, MetricsClassName)
 
-    metricsGroup.newGauge(MigrationsInFlightMetricName, () => trackedSize())
-    metricsGroup.newGauge(WaitingForReplicationCountMetricName, () => enteredAtByTp.values().asScala.count(_.stateClass eq classOf[WaitingForReplication]))
-    metricsGroup.newGauge(SendingToControllerCountMetricName,   () => enteredAtByTp.values().asScala.count(_.stateClass eq classOf[SendingToController]))
-    metricsGroup.newGauge(AwaitingMetadataCountMetricName,      () => enteredAtByTp.values().asScala.count(_.stateClass eq classOf[AwaitingMetadata]))
+    // Per-state counters incrementally maintained by `onStateChange`
+    private val counters: Map[Class[_], AtomicInteger] = Map(
+      classOf[WaitingForReplication] -> new AtomicInteger(0),
+      classOf[SendingToController]   -> new AtomicInteger(0),
+      classOf[AwaitingMetadata]      -> new AtomicInteger(0)
+    )
 
+    // Per-state TP -> enteredAtMs registry; walked by `oldestAgeMs` on read.
+    // Scan cost is negligible: same pattern as `AbstractFetcherManager.MaxLag`.
+    private val enteredAtByState: Map[Class[_], ConcurrentHashMap[TopicPartition, java.lang.Long]] = Map(
+      classOf[WaitingForReplication] -> new ConcurrentHashMap[TopicPartition, java.lang.Long](),
+      classOf[SendingToController]   -> new ConcurrentHashMap[TopicPartition, java.lang.Long](),
+      classOf[AwaitingMetadata]      -> new ConcurrentHashMap[TopicPartition, java.lang.Long]()
+    )
+
+    metricsGroup.newGauge(MigrationsInFlightMetricName, () => trackedSize())
+    metricsGroup.newGauge(WaitingForReplicationCountMetricName, () => counters(classOf[WaitingForReplication]).get)
+    metricsGroup.newGauge(SendingToControllerCountMetricName,   () => counters(classOf[SendingToController]).get)
+    metricsGroup.newGauge(AwaitingMetadataCountMetricName,      () => counters(classOf[AwaitingMetadata]).get)
     metricsGroup.newGauge(OldestWaitingForReplicationAgeMsMetricName, () => oldestAgeMs(classOf[WaitingForReplication]))
     metricsGroup.newGauge(OldestSendingToControllerAgeMsMetricName,   () => oldestAgeMs(classOf[SendingToController]))
     metricsGroup.newGauge(OldestAwaitingMetadataAgeMsMetricName,      () => oldestAgeMs(classOf[AwaitingMetadata]))
@@ -289,17 +318,15 @@ object InitDisklessLogManager {
     def markFailed(): Unit    = failedMeter.mark()
     def markRetried(): Unit   = retriedMeter.mark()
 
-    // Update the gauge view of `tp`'s state. Pass `state == null` when the partition is no longer tracked.
+    // Update metrics for `tp` in `state`, or remove it from tracking when `state == null`.
     def onStateChange(tp: TopicPartition, state: InitDisklessLogState): Unit = {
-      if (state == null) {
-        enteredAtByTp.remove(tp)
-      } else {
-        val newClass: Class[_] = state.getClass
-        val nowMs = time.milliseconds()
-        enteredAtByTp.compute(tp, (_, existing) =>
-          if (existing == null || existing.stateClass != newClass) EnteredAtEntry(newClass, nowMs)
-          else existing
-        )
+      val newClass: Class[_] = if (state == null) null else state.getClass
+      val nowMs = time.milliseconds()
+      enteredAtByState.foreach { case (cls, m) =>
+        if (cls eq newClass) {
+          // Keep the original timestamp on same-class re-entries.
+          if (m.putIfAbsent(tp, nowMs) == null) counters(cls).incrementAndGet()
+        } else if (m.remove(tp) != null) counters(cls).decrementAndGet()
       }
     }
 
@@ -308,13 +335,10 @@ object InitDisklessLogManager {
     private def oldestAgeMs(stateClass: Class[_]): Long = {
       val nowMs = time.milliseconds()
       var oldest = 0L
-      val it = enteredAtByTp.values().iterator()
+      val it = enteredAtByState(stateClass).values().iterator()
       while (it.hasNext) {
-        val e = it.next()
-        if (e.stateClass eq stateClass) {
-          val age = nowMs - e.enteredAtMs
-          if (age > oldest) oldest = age
-        }
+        val age = nowMs - it.next().longValue()
+        if (age > oldest) oldest = age
       }
       oldest
     }

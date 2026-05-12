@@ -880,6 +880,8 @@ class BrokerServer(
       if (replicaManager != null)
         CoreUtils.swallow(replicaManager.shutdown(), this)
 
+      maybeInitDisklessLogManager.foreach(m => CoreUtils.swallow(m.shutdown(), this))
+
       if (initDisklessLogChannelManager != null)
         CoreUtils.swallow(initDisklessLogChannelManager.shutdown(), this)
 
