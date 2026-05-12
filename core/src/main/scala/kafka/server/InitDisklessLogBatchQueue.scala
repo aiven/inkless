@@ -228,17 +228,27 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
   }
 
   private def enqueueRetryOrFail(tp: TopicPartition, attempt: Attempt): Unit = {
-    withQueueLock {
-      val retryAttemptNumber = attempt.attemptNumber + 1
-      Option(queuedByTp.get(tp)) match {
-        case Some(existing) =>
-          // Keep the already queued state (it may be fresher), but ensure retry progression is not lost.
-          queuedByTp.put(tp, Attempt(existing.state, Math.max(existing.attemptNumber, retryAttemptNumber)))
-        case None =>
-          queuedByTp.put(tp, Attempt(attempt.state, retryAttemptNumber))
+    val retried = withQueueLock {
+      // If the tp's promise is gone, it was cancelled via `remove(tp)` (e.g.,
+      // `removePartition` on leadership loss / shutdown) while this batch was
+      // in flight. Re-queueing would produce orphan controller traffic that
+      // no caller is awaiting -- and, for repeated retriable failures, would
+      // keep firing indefinitely.
+      if (!resultPromiseByTp.containsKey(tp)) {
+        false
+      } else {
+        val retryAttemptNumber = attempt.attemptNumber + 1
+        Option(queuedByTp.get(tp)) match {
+          case Some(existing) =>
+            // Keep the already queued state (it may be fresher), but ensure retry progression is not lost.
+            queuedByTp.put(tp, Attempt(existing.state, Math.max(existing.attemptNumber, retryAttemptNumber)))
+          case None =>
+            queuedByTp.put(tp, Attempt(attempt.state, retryAttemptNumber))
+        }
+        true
       }
     }
-    onRetry()
+    if (retried) onRetry()
   }
 
   private def completeAndRemovePromise(tp: TopicPartition, accepted: Boolean): Unit = {
