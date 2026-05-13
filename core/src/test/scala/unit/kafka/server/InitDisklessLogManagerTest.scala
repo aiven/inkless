@@ -24,12 +24,13 @@ import org.apache.kafka.common.message.{InitDisklessLogRequestData, InitDiskless
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.{AbstractRequest, InitDisklessLogRequest, InitDisklessLogResponse, RequestHeader}
 import org.apache.kafka.common.protocol.ApiKeys
+import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.util.MockScheduler
 import org.apache.kafka.common.utils.MockTime
 import org.apache.kafka.storage.internals.log.{ProducerStateEntry, ProducerStateManager, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
-import org.junit.jupiter.api.{BeforeEach, Test}
+import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito._
 
@@ -65,8 +66,14 @@ class InitDisklessLogManagerTest {
       controlPlane = controlPlane,
       scheduler = scheduler,
       brokerId = brokerId,
-      brokerEpochSupplier = () => brokerEpoch
+      brokerEpochSupplier = () => brokerEpoch,
+      time = mockTime
     )
+  }
+
+  @AfterEach
+  def tearDown(): Unit = {
+    if (manager != null) manager.removeMetrics()
   }
 
   private def fireLinger(): Unit = {
@@ -355,6 +362,179 @@ class InitDisklessLogManagerTest {
     // Then it is no longer tracked
     assertTrue(manager.getTrackedPartitions.isEmpty)
     assertEquals(None, manager.getInitState(tp0))
+  }
+
+  @Test
+  def testShutdownDrainsTrackedAndUnregistersMetrics(): Unit = {
+    // Given several partitions across different states
+    val tp1 = new TopicPartition("test-topic", 1)
+    val tp2 = new TopicPartition("test-topic", 2)
+    val p0 = mockPartition(tp = tp0, hw = 100, leo = 100)
+    val p1 = mockPartition(tp = tp1, hw = 50, leo = 100)
+    val p2 = mockPartition(tp = tp2, hw = 200, leo = 200)
+    manager.registerPartition(p0, topicId)
+    manager.registerPartition(p1, topicId)
+    manager.registerPartition(p2, topicId)
+    fireLinger()
+    // p0 and p2 are in-flight to the controller; p1 is parked waiting for HW.
+    assertEquals(1, channelManager.requests.size())
+    assertEquals(Set(tp0, tp1, tp2), manager.getTrackedPartitions)
+    assertTrue(initDisklessMetricsRegistered, "metrics should be registered while manager is alive")
+
+    val failedBefore = meterCount(InitDisklessLogManager.MigrationsFailedPerSecMetricName)
+    val completedBefore = meterCount(InitDisklessLogManager.MigrationsCompletedPerSecMetricName)
+
+    // When the manager is shut down
+    manager.shutdown()
+
+    // Then tracked is drained, no meters are inflated (cancellation is not a
+    // failure or completion), and all Yammer metrics are unregistered so the
+    // next broker start in the same JVM can re-register them.
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    assertEquals(
+      failedBefore,
+      meterCount(
+        InitDisklessLogManager.MigrationsFailedPerSecMetricName,
+        defaultIfMissing = failedBefore
+      )
+    )
+    assertEquals(
+      completedBefore,
+      meterCount(
+        InitDisklessLogManager.MigrationsCompletedPerSecMetricName,
+        defaultIfMissing = completedBefore
+      )
+    )
+    assertFalse(initDisklessMetricsRegistered,
+      "all InitDisklessLogManager metrics should be unregistered after shutdown")
+
+    // And shutdown is idempotent
+    manager.shutdown()
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    assertFalse(initDisklessMetricsRegistered)
+  }
+
+  @Test
+  def testRemovePartitionBeforeRetriableResponseDoesNotEnqueueOrphanRetry(): Unit = {
+    // Given a partition with an in-flight controller request
+    val partition = mockPartition(hw = 100, leo = 100)
+    manager.registerPartition(partition, topicId)
+    fireLinger()
+    assertEquals(1, channelManager.requests.size())
+
+    val retriedBefore = meterCount(InitDisklessLogManager.MigrationsRetriedPerSecMetricName)
+
+    // When the partition is removed (e.g., leadership loss) and the
+    // controller subsequently responds with a retriable error
+    manager.removePartition(tp0)
+    pollAndComplete(makeErrorResponse(topicId, 0, Errors.NOT_CONTROLLER))
+
+    // Then no retry is enqueued: the queue's `enqueueRetryOrFail` must
+    // observe the now-removed promise and skip both re-queueing and the
+    // onRetry callback. Otherwise the queue would keep firing orphan
+    // controller requests on every backoff tick.
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    assertEquals(
+      retriedBefore,
+      meterCount(InitDisklessLogManager.MigrationsRetriedPerSecMetricName),
+      "removed partition's retriable response must not increment the retried meter"
+    )
+
+    // Advance well past the maximum backoff to confirm no retry task fires.
+    mockTime.sleep(manager.maxRetryTimeMs + 1)
+    scheduler.tick()
+    assertTrue(channelManager.requests.isEmpty,
+      "no request should be issued for a partition that was removed before the response")
+  }
+
+  @Test
+  def testRemovePartitionBeforeTransportFailureDoesNotEnqueueOrphanRetry(): Unit = {
+    // Same race as above, but exercising the `Left(reason)` path of
+    // `enqueueRetryOrFail` (transport-level failure -- here, a request
+    // timeout) which iterates over every in-flight entry.
+    val partition = mockPartition(hw = 100, leo = 100)
+    manager.registerPartition(partition, topicId)
+    fireLinger()
+    assertEquals(1, channelManager.requests.size())
+
+    val retriedBefore = meterCount(InitDisklessLogManager.MigrationsRetriedPerSecMetricName)
+
+    manager.removePartition(tp0)
+    channelManager.requests.poll().timeout()
+
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    assertEquals(
+      retriedBefore,
+      meterCount(InitDisklessLogManager.MigrationsRetriedPerSecMetricName)
+    )
+
+    mockTime.sleep(manager.maxRetryTimeMs + 1)
+    scheduler.tick()
+    assertTrue(channelManager.requests.isEmpty)
+  }
+
+  @Test
+  def testRemovePartitionDuringInFlightSendIsNotCountedAsFailure(): Unit = {
+    // Given a partition with an in-flight controller request
+    val partition = mockPartition(hw = 100, leo = 100)
+    manager.registerPartition(partition, topicId)
+    fireLinger()
+    assertEquals(1, channelManager.requests.size())
+
+    val failedBefore = meterCount(InitDisklessLogManager.MigrationsFailedPerSecMetricName)
+
+    // When the partition is removed before the response arrives
+    // (e.g. on leadership loss), `removePartition` calls `queue.remove(tp)`
+    // which completes the pending promise with `false`.
+    manager.removePartition(tp0)
+
+    // Then the migration is no longer tracked and is NOT counted as a failure:
+    // the parasitic callback's `accepted = false` branch must distinguish a
+    // cancellation (tracked already cleared) from a permanent failure.
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    assertEquals(
+      failedBefore,
+      meterCount(InitDisklessLogManager.MigrationsFailedPerSecMetricName),
+      "removePartition during in-flight send must not increment the failed meter"
+    )
+
+    // And a late-arriving controller response remains a no-op for metrics:
+    // the queue's promise is already completed, so `completeAndRemovePromise`
+    // finds no promise to fulfill.
+    pollAndComplete(makeSuccessResponse(topicId, 0))
+    assertEquals(
+      failedBefore,
+      meterCount(InitDisklessLogManager.MigrationsFailedPerSecMetricName)
+    )
+    assertEquals(
+      0L,
+      meterCount(InitDisklessLogManager.MigrationsCompletedPerSecMetricName)
+    )
+  }
+
+  private def meterCount(name: String): Long = {
+    val (_, metric) = KafkaYammerMetrics.defaultRegistry.allMetrics.asScala
+      .find { case (mn, _) => mn.getType == "InitDisklessLogManager" && mn.getName == name }
+      .getOrElse(throw new AssertionError(
+        s"Meter $name not registered on InitDisklessLogManager"))
+    metric.asInstanceOf[com.yammer.metrics.core.Meter].count()
+  }
+
+  // Variant used after shutdown(), when the meter may already have been removed
+  // from the registry. Returns `defaultIfMissing` when the metric is gone.
+  private def meterCount(name: String, defaultIfMissing: Long): Long = {
+    KafkaYammerMetrics.defaultRegistry.allMetrics.asScala
+      .find { case (mn, _) => mn.getType == "InitDisklessLogManager" && mn.getName == name }
+      .map { case (_, metric) => metric.asInstanceOf[com.yammer.metrics.core.Meter].count() }
+      .getOrElse(defaultIfMissing)
+  }
+
+  private def initDisklessMetricsRegistered: Boolean = {
+    val expected = InitDisklessLogManager.MetricNames
+    val present = KafkaYammerMetrics.defaultRegistry.allMetrics.asScala.collect {
+      case (mn, _) if mn.getType == "InitDisklessLogManager" => mn.getName
+    }.toSet
+    expected.subsetOf(present)
   }
 
   @Test

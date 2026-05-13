@@ -17,6 +17,7 @@
 
 package kafka.server.metadata
 
+import com.yammer.metrics.core.Gauge
 import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogResponse => CpInitResponse}
 import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
@@ -34,6 +35,7 @@ import org.apache.kafka.metadata.publisher.AclPublisher
 import org.apache.kafka.raft.LeaderAndEpoch
 import org.apache.kafka.server.common.MetadataVersion
 import org.apache.kafka.server.fault.FaultHandler
+import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.server.util.{MockScheduler, MockTime}
 import org.apache.kafka.storage.internals.log.{LogConfig, LogDirFailureChannel}
 import org.junit.jupiter.api.Assertions.{assertEquals, assertFalse, assertTrue}
@@ -125,6 +127,108 @@ class InitDisklessLogFlowTest {
 
       // Final check: metadata-triggered control-plane init executed.
       verify(ctx.controlPlane, times(1)).initDisklessLog(any())
+    } finally {
+      shutdown(ctx)
+    }
+  }
+
+  @Test
+  def testPerStateGaugesReflectMigrationProgress(): Unit = {
+    // Walks a single partition through the full state machine and asserts that
+    // the per-state JMX gauges and meters advance, and the oldest-age-per-state
+    // gauges reset on transitions and return to 0 once the partition leaves
+    // tracking. WaitingForReplication is left at 0 for the whole flow because
+    // the mock log has HW == LEO == 0 from the start, so registerPartition
+    // transitions directly to SendingToController without parking there.
+    val ctx = newContext()
+    val topicName = "integration-gauge-progression"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+
+    when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(anyString())).thenReturn(false)
+
+    try {
+      // Initially: no partitions sealed, no entries tracked, every gauge is 0
+      // and no migrations have completed/failed/retried yet.
+      val createDelta = new TopicsDelta(TopicsImage.EMPTY)
+      createDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      createDelta.replay(new PartitionRecord()
+        .setTopicId(topicId).setPartitionId(0).setReplicas(util.Arrays.asList(0, 1))
+        .setIsr(util.Arrays.asList(0, 1)).setLeader(ctx.config.brokerId)
+        .setLeaderEpoch(0).setPartitionEpoch(0))
+      val createImage = imageFromTopics(createDelta.apply())
+      ctx.replicaManager.applyDelta(createDelta, createImage)
+      assertCountGaugesAllZero()
+      assertOldestAgesAllZero()
+      assertMeterCount(InitDisklessLogManager.MigrationsCompletedPerSecMetricName, 0L)
+      assertMeterCount(InitDisklessLogManager.MigrationsFailedPerSecMetricName, 0L)
+
+      // After alter -> diskless=true: the partition is sealed and registered.
+      // With a fresh mock log (HW == LEO == 0), the state machine immediately
+      // transitions out of WaitingForReplication and parks in SendingToController.
+      ctx.metadataPublisher._firstPublish = false
+      when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
+      val disklessDelta = new MetadataDelta(createImage)
+      disklessDelta.replay(new ConfigRecord()
+        .setResourceType(ConfigResource.Type.TOPIC.id())
+        .setResourceName(topicName)
+        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+        .setValue("true"))
+      val disklessImage = withClusterBrokers(disklessDelta.apply(MetadataProvenance.EMPTY))
+      ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
+
+      assertGauge(InitDisklessLogManager.MigrationsInFlightMetricName, 1)
+      assertGauge(InitDisklessLogManager.WaitingForReplicationCountMetricName, 0)
+      assertGauge(InitDisklessLogManager.SendingToControllerCountMetricName, 1)
+      assertGauge(InitDisklessLogManager.AwaitingMetadataCountMetricName, 0)
+      assertLongGauge(InitDisklessLogManager.OldestSendingToControllerAgeMsMetricName, 0L)
+
+      // Age advances when virtual clock advances while the state class is unchanged.
+      ctx.time.sleep(50)
+      assertLongGauge(InitDisklessLogManager.OldestSendingToControllerAgeMsMetricName, 50L)
+
+      // After linger elapses + RPC completes: state advances to AwaitingMetadata.
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
+      ctx.scheduler.tick()
+      ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
+        new org.apache.kafka.common.message.InitDisklessLogResponseData.TopicResponse()
+          .setTopicId(topicId)
+          .setPartitions(util.List.of(
+            new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
+              .setPartitionId(0)
+              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+          ))
+      )))
+
+      assertTrackedStates(ctx, Map(tp -> classOf[AwaitingMetadata]))
+      assertGauge(InitDisklessLogManager.MigrationsInFlightMetricName, 1)
+      assertGauge(InitDisklessLogManager.SendingToControllerCountMetricName, 0)
+      assertGauge(InitDisklessLogManager.AwaitingMetadataCountMetricName, 1)
+      // The oldest SendingToController age must reset to 0 (no partitions
+      // remain in that state) while AwaitingMetadata's age starts at 0.
+      assertLongGauge(InitDisklessLogManager.OldestSendingToControllerAgeMsMetricName, 0L)
+      assertLongGauge(InitDisklessLogManager.OldestAwaitingMetadataAgeMsMetricName, 0L)
+
+      // After PartitionChangeRecord with diskless tagged fields replays: control-plane
+      // init runs and the partition is removed from tracking. All gauges return to 0
+      // and the completed meter increments by 1.
+      val pcrDelta = new MetadataDelta(disklessImage)
+      val pcr = new PartitionChangeRecord()
+        .setTopicId(topicId)
+        .setPartitionId(0)
+        .setIsr(util.Arrays.asList(0, 1))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeProducerStates(util.List.of()))
+      pcrDelta.replay(pcr)
+      val pcrImage = withClusterBrokers(pcrDelta.apply(MetadataProvenance.EMPTY))
+      ctx.metadataPublisher.onMetadataUpdate(pcrDelta, pcrImage, metadataManifest())
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
+      ctx.scheduler.tick()
+
+      assertCountGaugesAllZero()
+      assertOldestAgesAllZero()
+      assertMeterCount(InitDisklessLogManager.MigrationsCompletedPerSecMetricName, 1L)
+      assertMeterCount(InitDisklessLogManager.MigrationsFailedPerSecMetricName, 0L)
     } finally {
       shutdown(ctx)
     }
@@ -707,7 +811,8 @@ class InitDisklessLogFlowTest {
       controlPlane = controlPlane,
       scheduler = scheduler,
       brokerId = config.brokerId,
-      brokerEpochSupplier = () => 1L
+      brokerEpochSupplier = () => 1L,
+      time = time
     )
 
     val logManager = TestUtils.createLogManager(
@@ -752,6 +857,52 @@ class InitDisklessLogFlowTest {
   private def shutdown(ctx: TestContext): Unit = {
     ctx.replicaManager.shutdown(checkpointHW = false)
     ctx.logManager.shutdown(-1L)
+    ctx.initDisklessLogManager.removeMetrics()
+  }
+
+  private def gaugeValue[T](name: String): T = {
+    val (_, metric) = KafkaYammerMetrics.defaultRegistry.allMetrics.asScala
+      .find { case (mn, _) => mn.getType == "InitDisklessLogManager" && mn.getName == name }
+      .getOrElse(throw new AssertionError(
+        s"Gauge $name not registered on InitDisklessLogManager"))
+    metric.asInstanceOf[Gauge[T]].value()
+  }
+
+  private def meterCount(name: String): Long = {
+    val (_, metric) = KafkaYammerMetrics.defaultRegistry.allMetrics.asScala
+      .find { case (mn, _) => mn.getType == "InitDisklessLogManager" && mn.getName == name }
+      .getOrElse(throw new AssertionError(
+        s"Meter $name not registered on InitDisklessLogManager"))
+    metric.asInstanceOf[com.yammer.metrics.core.Meter].count()
+  }
+
+  private def assertGauge(name: String, expected: Int): Unit = {
+    assertEquals(expected, gaugeValue[Int](name), s"Unexpected value for gauge $name")
+  }
+
+  private def assertLongGauge(name: String, expected: Long): Unit = {
+    assertEquals(expected, gaugeValue[Long](name), s"Unexpected value for gauge $name")
+  }
+
+  private def assertMeterCount(name: String, expected: Long): Unit = {
+    assertEquals(expected, meterCount(name), s"Unexpected meter count for $name")
+  }
+
+  private def assertCountGaugesAllZero(): Unit = {
+    Set(
+      InitDisklessLogManager.MigrationsInFlightMetricName,
+      InitDisklessLogManager.WaitingForReplicationCountMetricName,
+      InitDisklessLogManager.SendingToControllerCountMetricName,
+      InitDisklessLogManager.AwaitingMetadataCountMetricName,
+    ).foreach(name => assertGauge(name, 0))
+  }
+
+  private def assertOldestAgesAllZero(): Unit = {
+    Set(
+      InitDisklessLogManager.OldestWaitingForReplicationAgeMsMetricName,
+      InitDisklessLogManager.OldestSendingToControllerAgeMsMetricName,
+      InitDisklessLogManager.OldestAwaitingMetadataAgeMsMetricName,
+    ).foreach(name => assertLongGauge(name, 0L))
   }
 
   private def assertTrackedStates(
