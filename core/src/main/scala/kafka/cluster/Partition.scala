@@ -1456,10 +1456,15 @@ class Partition(val topicPartition: TopicPartition,
    * @param maxBytes the maximum bytes to return
    * @param minOneMessage whether to ensure that at least one complete message is returned
    * @param updateFetchState true if the Fetch should update replica state (only applies to follower fetches)
+   * @param allowReplica if true, override `fetchParams.fetchOnlyLeader` and let this node serve the
+   *                     read even when it is not the leader (e.g. for hybrid diskless partitions where
+   *                     any in-sync replica may serve the classic portion of the log). Defaults to
+   *                     `false`, in which case the standard `fetchParams.fetchOnlyLeader` rule applies.
    * @return [[LogReadInfo]] containing the fetched records or the diverging epoch if present
-   * @throws NotLeaderOrFollowerException if this node is not the current leader and `FetchParams.fetchOnlyLeader`
-   *                                      is enabled, or if this is a follower fetch with an older request version
-   *                                      and the replicaId is not recognized among the current valid replicas
+   * @throws NotLeaderOrFollowerException if this node is not the current leader, `fetchParams.fetchOnlyLeader`
+   *                                      is enabled, and `allowReplica` is `false`; or if this is a follower
+   *                                      fetch with an older request version and the replicaId is not
+   *                                      recognized among the current valid replicas
    * @throws FencedLeaderEpochException if the leader epoch in the `Fetch` request is lower than the current
    *                                    leader epoch
    * @throws UnknownLeaderEpochException if the leader epoch in the `Fetch` request is higher than the current
@@ -1477,7 +1482,8 @@ class Partition(val topicPartition: TopicPartition,
     fetchTimeMs: Long,
     maxBytes: Int,
     minOneMessage: Boolean,
-    updateFetchState: Boolean
+    updateFetchState: Boolean,
+    allowReplica: Boolean = false
   ): LogReadInfo = {
     def readFromLocalLog(log: UnifiedLog): LogReadInfo = {
       readRecords(
@@ -1496,7 +1502,7 @@ class Partition(val topicPartition: TopicPartition,
       val (replica, logReadInfo) = inReadLock(leaderIsrUpdateLock) {
         val localLog = localLogWithEpochOrThrow(
           fetchPartitionData.currentLeaderEpoch,
-          fetchParams.fetchOnlyLeader
+          fetchParams.fetchOnlyLeader && !allowReplica
         )
         val replica = followerReplicaOrThrow(
           fetchParams.replicaId,
@@ -1522,7 +1528,7 @@ class Partition(val topicPartition: TopicPartition,
       inReadLock(leaderIsrUpdateLock) {
         val localLog = localLogWithEpochOrThrow(
           fetchPartitionData.currentLeaderEpoch,
-          fetchParams.fetchOnlyLeader
+          fetchParams.fetchOnlyLeader && !allowReplica
         )
         readFromLocalLog(localLog)
       }
