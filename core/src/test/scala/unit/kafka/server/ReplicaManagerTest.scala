@@ -1698,17 +1698,47 @@ class ReplicaManagerTest {
       val followerImage = imageFromTopics(followerDelta.apply())
       replicaManager.applyDelta(followerDelta, followerImage)
 
-      // Mark this partition as hybrid diskless (classicToDisklessStartOffset >= 0).
+      // Mark this partition as migrated from classic to diskless (classicToDisklessStartOffset >= 0).
       doReturn(true).when(replicaManager).isMigratedPartitionFromClassicToDiskless(tidp0)
 
-      // Fetch from follower with empty ClientMetadata (older FETCH versions, no rackId).
-      // Without the hybrid override this would fail with NOT_LEADER_OR_FOLLOWER (see
-      // testFetchFollowerNotAllowedForOlderClients). For hybrid partitions every replica
-      // can serve the classic portion of the log, so the read should succeed.
+      // Consumer fetch with empty ClientMetadata (older FETCH versions, no rackId) targeting
+      // a non-leader broker. Without the override this would fail with NOT_LEADER_OR_FOLLOWER
+      // (see testFetchFollowerNotAllowedForOlderClients); migrated partitions allow any
+      // in-sync replica to serve the classic portion of the log, so the read should succeed.
       val partitionData = new FetchRequest.PartitionData(Uuid.ZERO_UUID, 0L, 0L, 100,
         Optional.of(0))
       val fetchResult = fetchPartitionAsConsumer(replicaManager, tidp0, partitionData)
       assertEquals(Errors.NONE, fetchResult.assertFired.error)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testFetchFromFollowerStillRequiresLeaderOnMigratedPartition(): Unit = {
+    // Regression test: the migrated-partition override must NOT relax leader-only for
+    // broker-to-broker follower replication. Replication semantics (ISR/HWM) require
+    // followers to fetch from the leader.
+    val replicaManager = spy(setupReplicaManagerWithMockedPurgatories(new MockTimer(time), aliveBrokerIds = Seq(0, 1)))
+
+    try {
+      val tp0 = new TopicPartition(topic, 0)
+      val tidp0 = new TopicIdPartition(topicId, tp0)
+      val offsetCheckpoints = new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava)
+      replicaManager.createPartition(tp0).createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
+
+      // Make broker 0 a follower of broker 1 (i.e. this broker is NOT the leader).
+      val followerDelta = createFollowerDelta(topicId, tp0, 0, 1)
+      val followerImage = imageFromTopics(followerDelta.apply())
+      replicaManager.applyDelta(followerDelta, followerImage)
+
+      // Even if the partition is marked as migrated, follower fetches must keep failing.
+      doReturn(true).when(replicaManager).isMigratedPartitionFromClassicToDiskless(tidp0)
+
+      val partitionData = new FetchRequest.PartitionData(Uuid.ZERO_UUID, 0L, 0L, 100,
+        Optional.of(0))
+      val fetchResult = fetchPartitionAsFollower(replicaManager, tidp0, partitionData, replicaId = 1)
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, fetchResult.assertFired.error)
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
@@ -9418,7 +9448,12 @@ class ReplicaManagerTest {
       try {
         val tp = disklessTopicPartition.topicPartition()
 
-        // Never-migrated (or non-diskless) partition: classicToDisklessStartOffset == -1.
+        val classicTp = classicTopicPartition.topicPartition()
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(classicTp))
+          .thenReturn(100L)
+        assertFalse(replicaManager.isMigratedPartitionFromClassicToDiskless(classicTopicPartition))
+
+        // Diskless but never-migrated partition: classicToDisklessStartOffset == -1.
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
           .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
         assertFalse(replicaManager.isMigratedPartitionFromClassicToDiskless(disklessTopicPartition))

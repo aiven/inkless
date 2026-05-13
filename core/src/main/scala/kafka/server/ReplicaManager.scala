@@ -2246,12 +2246,17 @@ class ReplicaManager(val config: KafkaConfig,
             if (preferredReadReplica.isDefined) OptionalInt.of(preferredReadReplica.get) else OptionalInt.empty(),
             Errors.NONE)
         } else {
-          // For hybrid diskless partitions (classicToDisklessStartOffset >= 0, i.e. the partition
-          // was migrated from classic to diskless and still has classic local/remote data to read),
-          // relax the leader-only requirement so any in-sync replica can serve the classic portion
-          // of the read. This enables follower fetching for older FETCH versions (no rackId / empty
-          // clientMetadata) that would otherwise get NOT_LEADER_OR_FOLLOWER when targeting a non-leader broker.
-          val allowReplica = !params.fetchOnlyLeader() || isMigratedPartitionFromClassicToDiskless(tp)
+          // For partitions that were migrated from classic to diskless and still have classic
+          // local/remote data to read (classicToDisklessStartOffset >= 0), relax the leader-only
+          // requirement so any in-sync replica can serve the classic portion of the read. This is
+          // scoped to older consumer fetches that don't supply clientMetadata (pre-KIP-392 / no
+          // rackId), which would otherwise get NOT_LEADER_OR_FOLLOWER on a non-leader broker.
+          // Broker-to-broker follower replication and share fetches are intentionally excluded.
+          // The check is ordered so that the metadata lookup is only performed when the override
+          // could actually apply.
+          val isOlderConsumer = params.isFromConsumer && params.clientMetadata.isEmpty
+          val allowReplica = !params.fetchOnlyLeader() ||
+            (isOlderConsumer && isMigratedPartitionFromClassicToDiskless(tp))
           log = partition.localLogWithEpochOrThrow(fetchInfo.currentLeaderEpoch, !allowReplica)
 
           // Try the read first, this tells us whether we need all of adjustedFetchSize for this partition
