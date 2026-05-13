@@ -161,8 +161,8 @@ io.aiven.inkless.produce:type=WriterMetrics
 ===============  =========================================
 Attribute name   Description                              
 ===============  =========================================
-RequestRate      Number of produce requests received      
-RotationRate     Number of file rotations performed       
+RequestRate      Rate of produce requests received        
+RotationRate     Rate of file rotations performed         
 RotationTime     Time spent rotating files in milliseconds
 ===============  =========================================
 
