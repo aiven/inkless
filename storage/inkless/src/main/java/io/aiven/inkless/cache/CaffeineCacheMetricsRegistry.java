@@ -19,6 +19,8 @@ package io.aiven.inkless.cache;
 
 import org.apache.kafka.common.MetricNameTemplate;
 
+import java.util.List;
+
 public class CaffeineCacheMetricsRegistry {
     public static final String METRIC_CONTEXT = "io.aiven.inkless.cache.caffeine";
     public static final String METRIC_GROUP = "wal-segment-cache";
@@ -38,6 +40,22 @@ public class CaffeineCacheMetricsRegistry {
     public final MetricNameTemplate cacheMissCountMetricName;
     public final MetricNameTemplate avgReadTimeMetricName;
     public final MetricNameTemplate cacheEvictionsMetricName;
+
+    /**
+     * This method returns a list of all the metric name templates for the CaffeineCacheMetricsRegistry class.
+     * This is used for documentation purposes only.
+     */
+    public List<MetricNameTemplate> all() {
+        return List.of(
+            cacheSizeMetricName,
+            cacheHitRateMetricName,
+            cacheHitCountMetricName,
+            cacheMissRateMetricName,
+            cacheMissCountMetricName,
+            avgReadTimeMetricName,
+            cacheEvictionsMetricName
+        );
+    }
 
     public CaffeineCacheMetricsRegistry() {
         cacheSizeMetricName = new MetricNameTemplate(

@@ -17,26 +17,51 @@
  */
 package io.aiven.inkless.metadata;
 
+import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.yammer.metrics.core.Meter;
 
 import java.io.Closeable;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 public class ClientAzAwarenessMetrics implements Closeable {
+    private static final String GROUP = ClientAzAwarenessMetrics.class.getSimpleName();
+
     // Client AZ matching metrics
     private static final String CLIENT_AZ_HIT_RATE = "client-az-hit-rate";
+    private static final String CLIENT_AZ_HIT_RATE_DOC = "Rate of requests routed to a broker in the same availability zone as the client";
     private static final String CLIENT_AZ_MISS_RATE = "client-az-miss-rate";
+    private static final String CLIENT_AZ_MISS_RATE_DOC = "Rate of requests where no broker was available in the client availability zone";
     private static final String CLIENT_AZ_UNAWARE_RATE = "client-az-unaware-rate";
+    private static final String CLIENT_AZ_UNAWARE_RATE_DOC = "Rate of requests from clients without availability zone information";
     // Transformer targets metrics
     private static final String FALLBACK_TOTAL = "fallback-total";
+    private static final String FALLBACK_TOTAL_DOC = "Rate of requests routed to non-replica brokers (diskless-only topics)";
     private static final String OFFLINE_REPLICAS_ROUTED_AROUND = "offline-replicas-routed-around";
+    private static final String OFFLINE_REPLICAS_ROUTED_AROUND_DOC = "Rate of requests rerouted around offline replicas";
     private static final String CROSS_AZ_ROUTING_TOTAL = "cross-az-routing-total";
+    private static final String CROSS_AZ_ROUTING_TOTAL_DOC = "Rate of requests routed to a broker in a different availability zone";
     // Tags
     public static final String CLIENT_AZ_TAG = "client-az";
+
+    /**
+     * This method returns a list of all the metric name templates for the ClientAzAwarenessMetrics class.
+     * This is used for documentation purposes only.
+     */
+    public static List<MetricNameTemplate> all() {
+        return List.of(
+            new MetricNameTemplate(CLIENT_AZ_HIT_RATE, GROUP, CLIENT_AZ_HIT_RATE_DOC),
+            new MetricNameTemplate(CLIENT_AZ_MISS_RATE, GROUP, CLIENT_AZ_MISS_RATE_DOC),
+            new MetricNameTemplate(CLIENT_AZ_UNAWARE_RATE, GROUP, CLIENT_AZ_UNAWARE_RATE_DOC),
+            new MetricNameTemplate(FALLBACK_TOTAL, GROUP, FALLBACK_TOTAL_DOC),
+            new MetricNameTemplate(OFFLINE_REPLICAS_ROUTED_AROUND, GROUP, OFFLINE_REPLICAS_ROUTED_AROUND_DOC),
+            new MetricNameTemplate(CROSS_AZ_ROUTING_TOTAL, GROUP, CROSS_AZ_ROUTING_TOTAL_DOC)
+        );
+    }
 
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
         ClientAzAwarenessMetrics.class.getPackageName(), ClientAzAwarenessMetrics.class.getSimpleName());
