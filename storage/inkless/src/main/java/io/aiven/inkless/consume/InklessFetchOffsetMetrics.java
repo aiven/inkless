@@ -17,6 +17,12 @@
  */
 package io.aiven.inkless.consume;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
 import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
@@ -24,12 +30,6 @@ import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 import com.yammer.metrics.core.Histogram;
 import com.yammer.metrics.core.Meter;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
 
 import io.aiven.inkless.TimeUtils;
 
@@ -44,6 +44,10 @@ public class InklessFetchOffsetMetrics {
     private static final String FETCH_OFFSET_ERROR_RATE = "FetchOffsetErrorRate";
     private static final String FETCH_OFFSET_ERROR_RATE_DOC = "Rate of failed fetch offset requests per second";
 
+    /**
+     * This method returns a list of all the metric name templates for the InklessFetchOffsetMetrics class.
+     * This is used for documentation purposes only.
+     */
     public static List<MetricNameTemplate> all() {
         return List.of(
             new MetricNameTemplate(FETCH_OFFSET_TOTAL_TIME, GROUP, FETCH_OFFSET_TOTAL_TIME_DOC),

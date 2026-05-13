@@ -17,9 +17,9 @@
  */
 package io.aiven.inkless.common.metrics;
 
-import org.apache.kafka.common.MetricNameTemplate;
-
 import java.util.List;
+
+import org.apache.kafka.common.MetricNameTemplate;
 
 public class ThreadPoolMonitorMetricsRegistry {
     public static final String METRIC_CONFIG = "io.aiven.inkless.thread-pool";
@@ -74,6 +74,10 @@ public class ThreadPoolMonitorMetricsRegistry {
         );
     }
 
+    /**
+     * This method returns a list of all the metric name templates for the ThreadPoolMonitorMetricsRegistry class.
+     * This is used for documentation purposes only.
+     */
     public List<MetricNameTemplate> all() {
         return List.of(
             activeThreadsTotalMetricName,

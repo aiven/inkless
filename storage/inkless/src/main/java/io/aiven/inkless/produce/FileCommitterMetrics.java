@@ -17,14 +17,6 @@
  */
 package io.aiven.inkless.produce;
 
-import org.apache.kafka.common.MetricNameTemplate;
-import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.server.metrics.KafkaMetricsGroup;
-
-import com.groupcdg.pitest.annotations.CoverageIgnore;
-import com.yammer.metrics.core.Histogram;
-import com.yammer.metrics.core.Meter;
-
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
@@ -34,6 +26,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
+
+import org.apache.kafka.common.MetricNameTemplate;
+import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
+
+import com.groupcdg.pitest.annotations.CoverageIgnore;
+import com.yammer.metrics.core.Histogram;
+import com.yammer.metrics.core.Meter;
 
 import io.aiven.inkless.TimeUtils;
 
@@ -76,6 +76,10 @@ public class FileCommitterMetrics implements Closeable {
     private static final String WRITE_ERROR_RATE = "WriteErrorRate";
     private static final String WRITE_ERROR_RATE_DOC = "Rate of failed write operations per second";
 
+    /**
+     * This method returns a list of all the metric name templates for the FileCommitterMetrics class.
+     * This is used for documentation purposes only.
+     */
     public static List<MetricNameTemplate> all() {
         return List.of(
             new MetricNameTemplate(FILE_TOTAL_LIFE_TIME, GROUP, FILE_TOTAL_LIFE_TIME_DOC),

@@ -17,14 +17,14 @@
  */
 package io.aiven.inkless.merge;
 
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.LongAdder;
+
 import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.yammer.metrics.core.Histogram;
-
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.LongAdder;
 
 public class FileMergerMetrics {
     private static final String GROUP = FileMerger.class.getSimpleName();
@@ -40,6 +40,10 @@ public class FileMergerMetrics {
     static final String FILE_MERGE_ERROR_RATE = "FileMergeErrorRate";
     private static final String FILE_MERGE_ERROR_RATE_DOC = "Total number of file merge errors";
 
+    /**
+     * This method returns a list of all the metric name templates for the FileMergerMetrics class.
+     * This is used for documentation purposes only.
+     */
     public static List<MetricNameTemplate> all() {
         return List.of(
             new MetricNameTemplate(FILE_MERGE_TOTAL_TIME, GROUP, FILE_MERGE_TOTAL_TIME_DOC),

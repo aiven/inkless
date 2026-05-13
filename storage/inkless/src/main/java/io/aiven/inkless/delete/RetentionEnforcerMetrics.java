@@ -17,15 +17,15 @@
  */
 package io.aiven.inkless.delete;
 
-import org.apache.kafka.common.MetricNameTemplate;
-import org.apache.kafka.server.metrics.KafkaMetricsGroup;
-
-import com.yammer.metrics.core.Histogram;
-
 import java.io.Closeable;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.LongAdder;
+
+import org.apache.kafka.common.MetricNameTemplate;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
+
+import com.yammer.metrics.core.Histogram;
 
 public class RetentionEnforcerMetrics implements Closeable {
     private static final String GROUP = RetentionEnforcer.class.getSimpleName();
@@ -41,6 +41,10 @@ public class RetentionEnforcerMetrics implements Closeable {
     static final String RETENTION_ENFORCEMENT_ERROR_RATE = "RetentionEnforcementErrorRate";
     private static final String RETENTION_ENFORCEMENT_ERROR_RATE_DOC = "Total number of retention enforcement errors";
 
+    /**
+     * This method returns a list of all the metric name templates for the RetentionEnforcerMetrics class.
+     * This is used for documentation purposes only.
+     */
     public static List<MetricNameTemplate> all() {
         return List.of(
             new MetricNameTemplate(RETENTION_ENFORCEMENT_TOTAL_TIME, GROUP, RETENTION_ENFORCEMENT_TOTAL_TIME_DOC),

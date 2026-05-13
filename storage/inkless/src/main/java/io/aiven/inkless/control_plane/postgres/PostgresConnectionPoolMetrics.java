@@ -17,6 +17,11 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
@@ -24,11 +29,6 @@ import com.yammer.metrics.core.Meter;
 import com.yammer.metrics.core.MetricName;
 import com.zaxxer.hikari.metrics.IMetricsTracker;
 import com.zaxxer.hikari.metrics.PoolStats;
-
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
 public class PostgresConnectionPoolMetrics implements IMetricsTracker {
     private static final String GROUP = PostgresConnectionPoolMetrics.class.getSimpleName();
@@ -52,6 +52,10 @@ public class PostgresConnectionPoolMetrics implements IMetricsTracker {
     public static final String CONNECTION_TIMEOUT_COUNT = "ConnectionTimeoutCount";
     private static final String CONNECTION_TIMEOUT_COUNT_DOC = "Rate of connection acquisition timeouts per second";
 
+    /**
+     * This method returns a list of all the metric name templates for the PostgresConnectionPoolMetrics class.
+     * This is used for documentation purposes only.
+     */
     public static List<MetricNameTemplate> all() {
         final Set<String> tags = Set.of("pool");
         return List.of(

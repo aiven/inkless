@@ -17,14 +17,14 @@
  */
 package io.aiven.inkless.delete;
 
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.LongAdder;
+
 import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.yammer.metrics.core.Histogram;
-
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.LongAdder;
 
 public class FileCleanerMetrics {
     private static final String GROUP = FileCleaner.class.getSimpleName();
@@ -38,6 +38,10 @@ public class FileCleanerMetrics {
     static final String FILE_CLEANER_ERROR_RATE = "FileCleanerErrorRate";
     private static final String FILE_CLEANER_ERROR_RATE_DOC = "Total number of file cleaning errors";
 
+    /**
+     * This method returns a list of all the metric name templates for the FileCleanerMetrics class.
+     * This is used for documentation purposes only.
+     */
     public static List<MetricNameTemplate> all() {
         return List.of(
             new MetricNameTemplate(FILE_CLEANER_TOTAL_TIME, GROUP, FILE_CLEANER_TOTAL_TIME_DOC),

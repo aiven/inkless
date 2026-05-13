@@ -17,6 +17,13 @@
  */
 package io.aiven.inkless.consume;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
@@ -25,13 +32,6 @@ import com.groupcdg.pitest.annotations.CoverageIgnore;
 import com.yammer.metrics.core.Gauge;
 import com.yammer.metrics.core.Histogram;
 import com.yammer.metrics.core.Meter;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.ObjectCache;
@@ -89,6 +89,10 @@ public class InklessFetchMetrics {
     private static final String LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME = "LaggingConsumerRateLimitWaitTime";
     private static final String LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME_DOC = "Wait time for rate-limited lagging consumer requests in milliseconds";
 
+    /**
+     * This method returns a list of all the metric name templates for the InklessFetchMetrics class.
+     * This is used for documentation purposes only.
+     */
     public static List<MetricNameTemplate> all() {
         return List.of(
             new MetricNameTemplate(FETCH_TOTAL_TIME, GROUP, FETCH_TOTAL_TIME_DOC),

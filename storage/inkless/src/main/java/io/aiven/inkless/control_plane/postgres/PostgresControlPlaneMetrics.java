@@ -17,18 +17,18 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import org.apache.kafka.common.MetricNameTemplate;
-import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.server.metrics.KafkaMetricsGroup;
-
-import com.yammer.metrics.core.Histogram;
-
 import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.LongAdder;
+
+import org.apache.kafka.common.MetricNameTemplate;
+import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
+
+import com.yammer.metrics.core.Histogram;
 
 public class PostgresControlPlaneMetrics implements Closeable {
     private static final String GROUP = PostgresControlPlane.class.getSimpleName();
@@ -41,6 +41,10 @@ public class PostgresControlPlaneMetrics implements Closeable {
         "GetLogInfo", "InitDisklessLog", "GetProducerState"
     );
 
+    /**
+     * This method returns a list of all the metric name templates for the PostgresControlPlaneMetrics class.
+     * This is used for documentation purposes only.
+     */
     public static List<MetricNameTemplate> all() {
         final List<MetricNameTemplate> templates = new ArrayList<>();
         for (final String name : QUERY_NAMES) {

@@ -17,16 +17,16 @@
  */
 package io.aiven.inkless.metadata;
 
-import org.apache.kafka.common.MetricNameTemplate;
-import org.apache.kafka.server.metrics.KafkaMetricsGroup;
-
-import com.yammer.metrics.core.Meter;
-
 import java.io.Closeable;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+
+import org.apache.kafka.common.MetricNameTemplate;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
+
+import com.yammer.metrics.core.Meter;
 
 public class ClientAzAwarenessMetrics implements Closeable {
     private static final String GROUP = ClientAzAwarenessMetrics.class.getSimpleName();
@@ -48,6 +48,10 @@ public class ClientAzAwarenessMetrics implements Closeable {
     // Tags
     public static final String CLIENT_AZ_TAG = "client-az";
 
+    /**
+     * This method returns a list of all the metric name templates for the ClientAzAwarenessMetrics class.
+     * This is used for documentation purposes only.
+     */
     public static List<MetricNameTemplate> all() {
         return List.of(
             new MetricNameTemplate(CLIENT_AZ_HIT_RATE, GROUP, CLIENT_AZ_HIT_RATE_DOC),

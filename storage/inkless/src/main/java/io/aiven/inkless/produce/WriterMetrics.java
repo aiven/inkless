@@ -17,13 +17,6 @@
  */
 package io.aiven.inkless.produce;
 
-import org.apache.kafka.common.MetricNameTemplate;
-import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.server.metrics.KafkaMetricsGroup;
-
-import com.groupcdg.pitest.annotations.CoverageIgnore;
-import com.yammer.metrics.core.Histogram;
-
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
@@ -33,6 +26,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.LongAdder;
 
+import org.apache.kafka.common.MetricNameTemplate;
+import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
+
+import com.groupcdg.pitest.annotations.CoverageIgnore;
+import com.yammer.metrics.core.Histogram;
+
 import io.aiven.inkless.TimeUtils;
 
 @CoverageIgnore
@@ -40,12 +40,16 @@ public class WriterMetrics implements Closeable {
     private static final String GROUP = WriterMetrics.class.getSimpleName();
 
     public static final String REQUEST_RATE = "RequestRate";
-    private static final String REQUEST_RATE_DOC = "Number of produce requests received";
+    private static final String REQUEST_RATE_DOC = "Rate of produce requests received";
     public static final String ROTATION_RATE = "RotationRate";
-    private static final String ROTATION_RATE_DOC = "Number of file rotations performed";
+    private static final String ROTATION_RATE_DOC = "Rate of file rotations performed";
     public static final String ROTATION_TIME = "RotationTime";
     private static final String ROTATION_TIME_DOC = "Time spent rotating files in milliseconds";
 
+    /**
+     * This method returns a list of all the metric name templates for the WriterMetrics class.
+     * This is used for documentation purposes only.
+     */
     public static List<MetricNameTemplate> all() {
         return List.of(
             new MetricNameTemplate(REQUEST_RATE, GROUP, REQUEST_RATE_DOC),

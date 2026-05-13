@@ -1,11 +1,11 @@
 package io.aiven.inkless.cache;
 
-import org.apache.kafka.common.MetricNameTemplate;
-import org.apache.kafka.server.metrics.KafkaMetricsGroup;
-
 import java.io.Closeable;
 import java.util.List;
 import java.util.concurrent.atomic.LongAdder;
+
+import org.apache.kafka.common.MetricNameTemplate;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 
 public final class BatchCoordinateCacheMetrics implements Closeable {
@@ -24,6 +24,10 @@ public final class BatchCoordinateCacheMetrics implements Closeable {
     static final String CACHE_SIZE = "CacheSize";
     private static final String CACHE_SIZE_DOC = "Current number of entries in the batch coordinate cache";
 
+    /**
+     * This method returns a list of all the metric name templates for the BatchCoordinateCacheMetrics class.
+     * This is used for documentation purposes only.
+     */
     public static List<MetricNameTemplate> all() {
         return List.of(
             new MetricNameTemplate(CACHE_HITS, GROUP, CACHE_HITS_DOC),
