@@ -17,13 +17,6 @@
  */
 package io.aiven.inkless.consume;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.concurrent.TimeUnit;
-
 import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
@@ -32,6 +25,13 @@ import com.groupcdg.pitest.annotations.CoverageIgnore;
 import com.yammer.metrics.core.Gauge;
 import com.yammer.metrics.core.Histogram;
 import com.yammer.metrics.core.Meter;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.ObjectCache;

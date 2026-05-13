@@ -1,11 +1,11 @@
 package io.aiven.inkless.cache;
 
+import org.apache.kafka.common.MetricNameTemplate;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
+
 import java.io.Closeable;
 import java.util.List;
 import java.util.concurrent.atomic.LongAdder;
-
-import org.apache.kafka.common.MetricNameTemplate;
-import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 
 public final class BatchCoordinateCacheMetrics implements Closeable {

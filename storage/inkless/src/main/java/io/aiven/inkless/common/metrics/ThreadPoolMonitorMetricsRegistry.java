@@ -17,9 +17,9 @@
  */
 package io.aiven.inkless.common.metrics;
 
-import java.util.List;
-
 import org.apache.kafka.common.MetricNameTemplate;
+
+import java.util.List;
 
 public class ThreadPoolMonitorMetricsRegistry {
     public static final String METRIC_CONFIG = "io.aiven.inkless.thread-pool";

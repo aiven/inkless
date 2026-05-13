@@ -17,9 +17,9 @@
  */
 package io.aiven.inkless.cache;
 
-import java.util.List;
-
 import org.apache.kafka.common.MetricNameTemplate;
+
+import java.util.List;
 
 public class CaffeineCacheMetricsRegistry {
     public static final String METRIC_CONTEXT = "io.aiven.inkless.cache.caffeine";

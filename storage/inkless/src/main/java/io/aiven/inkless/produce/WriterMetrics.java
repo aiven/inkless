@@ -17,6 +17,13 @@
  */
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.MetricNameTemplate;
+import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
+
+import com.groupcdg.pitest.annotations.CoverageIgnore;
+import com.yammer.metrics.core.Histogram;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
@@ -25,13 +32,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.LongAdder;
-
-import org.apache.kafka.common.MetricNameTemplate;
-import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.server.metrics.KafkaMetricsGroup;
-
-import com.groupcdg.pitest.annotations.CoverageIgnore;
-import com.yammer.metrics.core.Histogram;
 
 import io.aiven.inkless.TimeUtils;
 

@@ -17,18 +17,18 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import org.apache.kafka.common.MetricNameTemplate;
+import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
+
+import com.yammer.metrics.core.Histogram;
+
 import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.LongAdder;
-
-import org.apache.kafka.common.MetricNameTemplate;
-import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.server.metrics.KafkaMetricsGroup;
-
-import com.yammer.metrics.core.Histogram;
 
 public class PostgresControlPlaneMetrics implements Closeable {
     private static final String GROUP = PostgresControlPlane.class.getSimpleName();

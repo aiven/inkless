@@ -17,16 +17,16 @@
  */
 package io.aiven.inkless.metadata;
 
+import org.apache.kafka.common.MetricNameTemplate;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
+
+import com.yammer.metrics.core.Meter;
+
 import java.io.Closeable;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
-
-import org.apache.kafka.common.MetricNameTemplate;
-import org.apache.kafka.server.metrics.KafkaMetricsGroup;
-
-import com.yammer.metrics.core.Meter;
 
 public class ClientAzAwarenessMetrics implements Closeable {
     private static final String GROUP = ClientAzAwarenessMetrics.class.getSimpleName();

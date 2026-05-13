@@ -17,11 +17,6 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.TimeUnit;
-
 import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
@@ -29,6 +24,11 @@ import com.yammer.metrics.core.Meter;
 import com.yammer.metrics.core.MetricName;
 import com.zaxxer.hikari.metrics.IMetricsTracker;
 import com.zaxxer.hikari.metrics.PoolStats;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 public class PostgresConnectionPoolMetrics implements IMetricsTracker {
     private static final String GROUP = PostgresConnectionPoolMetrics.class.getSimpleName();

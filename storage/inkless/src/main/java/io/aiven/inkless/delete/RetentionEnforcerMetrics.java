@@ -17,15 +17,15 @@
  */
 package io.aiven.inkless.delete;
 
-import java.io.Closeable;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.LongAdder;
-
 import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.yammer.metrics.core.Histogram;
+
+import java.io.Closeable;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.LongAdder;
 
 public class RetentionEnforcerMetrics implements Closeable {
     private static final String GROUP = RetentionEnforcer.class.getSimpleName();
