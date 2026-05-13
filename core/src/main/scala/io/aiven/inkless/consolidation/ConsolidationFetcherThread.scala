@@ -20,8 +20,12 @@ package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.ConcatenatedRecords
 import kafka.server.{FailedPartitions, KafkaConfig, ReplicaFetcherThread, ReplicaManager, ReplicaQuota}
+import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.record.{MemoryRecords, Records}
 import org.apache.kafka.server.LeaderEndPoint
+import org.apache.kafka.storage.internals.log.LogAppendInfo
+
+import scala.util.Try
 
 class ConsolidationFetcherThread(name: String,
                                  leader: LeaderEndPoint,
@@ -29,12 +33,39 @@ class ConsolidationFetcherThread(name: String,
                                  failedPartitions: FailedPartitions,
                                  replicaMgr: ReplicaManager,
                                  quota: ReplicaQuota,
-                                 logPrefix: String) extends ReplicaFetcherThread(name, leader, brokerConfig, failedPartitions, replicaMgr, quota, logPrefix) {
+                                 logPrefix: String,
+                                 consolidationMetrics: Option[ConsolidationMetrics] = None) extends ReplicaFetcherThread(name, leader, brokerConfig, failedPartitions, replicaMgr, quota, logPrefix) {
 
   override def toMemoryRecords(records: Records): MemoryRecords = {
     (records: @unchecked) match {
       case r: ConcatenatedRecords => r.toMemoryRecords
       case _ => super.toMemoryRecords(records)
     }
+  }
+
+  override def processPartitionData(
+    topicPartition: TopicPartition,
+    fetchOffset: Long,
+    partitionLeaderEpoch: Int,
+    partitionData: FetchData
+  ): Option[LogAppendInfo] = {
+    val result = super.processPartitionData(topicPartition, fetchOffset, partitionLeaderEpoch, partitionData)
+
+    consolidationMetrics.foreach { metrics =>
+      val logOpt = Try(replicaMgr.getPartitionOrException(topicPartition).localLogOrException).toOption
+      logOpt.foreach { log =>
+        val disklessLogEndOffset = partitionData.highWatermark
+        val localLogEndOffset = log.logEndOffset
+        val remoteLogEndOffset = log.highestOffsetInRemoteStorage()
+
+        metrics.updateLocalLag(topicPartition, Math.max(0L, disklessLogEndOffset - localLogEndOffset))
+        if (remoteLogEndOffset >= 0) {
+          metrics.updateLag(topicPartition, Math.max(0L, disklessLogEndOffset - remoteLogEndOffset))
+          metrics.updateDeletableMessages(topicPartition, Math.max(0L, remoteLogEndOffset - log.localLogStartOffset()))
+        }
+      }
+    }
+
+    result
   }
 }

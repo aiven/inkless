@@ -23,9 +23,10 @@ import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchRes
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendHandler
-import io.aiven.inkless.consolidation.ConsolidationFetcherManager
-import kafka.cluster.{Partition, PartitionListener}
+import kafka.cluster.PartitionListener
 import kafka.controller.StateChangeLogger
+import io.aiven.inkless.consolidation.{ConsolidationFetcherManager, ConsolidationMetrics}
+import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
@@ -290,13 +291,18 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
   // FIXME: FileMerger is having issues with hanging queries. Disabling until fixed.
   private val inklessFileMerger: Option[FileMerger] = None // inklessSharedState.map(new FileMerger(_))
+  private val consolidationMetrics: Option[ConsolidationMetrics] =
+    if (config.disklessRemoteStorageConsolidationEnabled && inklessFetchHandler.isDefined && inklessFetchOffsetHandler.isDefined)
+      Some(new ConsolidationMetrics())
+    else
+      None
   private val consolidationFetcherManager: Option[ConsolidationFetcherManager] =
     if (config.disklessRemoteStorageConsolidationEnabled) {
       if (inklessFetchHandler.isEmpty || inklessFetchOffsetHandler.isEmpty) {
         logger.warn("Remote storage consolidation is enabled, however Inkless doesn't seem to be configured properly.")
       }
       inklessFetchHandler.zip(inklessFetchOffsetHandler).map { case (fetchHandler, fetchOffsetHandler) =>
-        new ConsolidationFetcherManager(config, this, quotaManagers.follower, fetchHandler, fetchOffsetHandler)
+        new ConsolidationFetcherManager(config, this, quotaManagers.follower, fetchHandler, fetchOffsetHandler, consolidationMetrics)
       }
     } else {
       None
@@ -494,8 +500,13 @@ class ReplicaManager(val config: KafkaConfig,
     val partitions = partitionsToStop.map(_.topicPartition)
     replicaFetcherManager.removeFetcherForPartitions(partitions)
     replicaAlterLogDirsManager.removeFetcherForPartitions(partitions)
-    consolidationFetcherManager.foreach(_.removeFetcherForPartitions(
-      partitions.filter(p => _inklessMetadataView.isConsolidatingDisklessTopic(p.topic))))
+    val consolidatingPartitionsToStop = if (config.disklessRemoteStorageConsolidationEnabled)
+      partitions.filter(p => _inklessMetadataView.isConsolidatingDisklessTopic(p.topic))
+      else Set[TopicPartition]()
+    consolidationFetcherManager.foreach(_.removeFetcherForPartitions(consolidatingPartitionsToStop))
+    consolidationMetrics.foreach { metrics =>
+      consolidatingPartitionsToStop.foreach(tp => metrics.unregisterPartition(tp))
+    }
 
     // Second remove deleted partitions from the partition map. Fetchers rely on the
     // ReplicaManager to get Partition's information so they must be stopped first.
@@ -2969,6 +2980,9 @@ class ReplicaManager(val config: KafkaConfig,
       replicaFetcherManager.removeFetcherForPartitions(newOfflinePartitions)
       replicaAlterLogDirsManager.removeFetcherForPartitions(newOfflinePartitions ++ partitionsWithOfflineFutureReplica.map(_.topicPartition))
       consolidationFetcherManager.foreach(_.removeFetcherForPartitions(newOfflinePartitions))
+      consolidationMetrics.foreach { metrics =>
+        newOfflinePartitions.foreach(tp => metrics.unregisterPartition(tp))
+      }
 
       partitionsWithOfflineFutureReplica.foreach(partition => partition.removeFutureLocalReplica(deleteFromLogDir = false))
       newOfflinePartitions.foreach { topicPartition =>
@@ -3024,6 +3038,7 @@ class ReplicaManager(val config: KafkaConfig,
     if (checkpointHW)
       checkpointHighWatermarks()
     consolidationFetcherManager.foreach(_.shutdown())
+    consolidationMetrics.foreach(_.close())
     replicaSelectorPlugin.foreach(_.close)
     removeAllTopicMetrics()
     addPartitionsToTxnManager.foreach(_.shutdown())
@@ -3437,6 +3452,9 @@ class ReplicaManager(val config: KafkaConfig,
       }
 
       consolidationFetcherManager.foreach(_.addFetcherForPartitions(consolidatingPartitionAndOffsets))
+      consolidationMetrics.foreach { metrics =>
+        consolidatingPartitionAndOffsets.keys.foreach(tp => metrics.registerPartition(tp))
+      }
       stateChangeLogger.info(s"Started consolidating diskless fetchers as part of become-leader for ${consolidatingDisklessPartitionsToStartFetching.size} partitions")
     }
   }
@@ -3570,6 +3588,9 @@ class ReplicaManager(val config: KafkaConfig,
 
       replicaFetcherManager.addFetcherForPartitions(partitionAndOffsets)
       consolidationFetcherManager.foreach(_.addFetcherForPartitions(consolidatingPartitionAndOffsets))
+      consolidationMetrics.foreach { metrics =>
+        consolidatingPartitionAndOffsets.keys.foreach(tp => metrics.registerPartition(tp))
+      }
       stateChangeLogger.info(s"Started fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
       partitionsToStartFetching.foreach{ case (topicPartition, partition) =>
