@@ -27,7 +27,8 @@ class ConsolidationFetcherManager(brokerConfig: KafkaConfig,
                                   replicaManager: ReplicaManager,
                                   quotaManager: ReplicationQuotaManager,
                                   fetchHandler: FetchHandler,
-                                  fetchOffsetHandler: FetchOffsetHandler)
+                                  fetchOffsetHandler: FetchOffsetHandler,
+                                  consolidationMetrics: Option[ConsolidationMetrics] = None)
   extends AbstractFetcherManager[ConsolidationFetcherThread](name = "ConsolidationFetcherManager on broker " + brokerConfig.brokerId,
     clientId = "Consolidation",
     numFetchers = brokerConfig.numReplicaFetchers) {
@@ -47,7 +48,7 @@ class ConsolidationFetcherManager(brokerConfig: KafkaConfig,
       replicaManager.brokerEpochSupplier
     )
     new ConsolidationFetcherThread(threadName, disklessLeaderEndPoint, brokerConfig, failedPartitions, replicaManager,
-      quotaManager, logContext.logPrefix)
+      quotaManager, logContext.logPrefix, consolidationMetrics)
   }
 
   def shutdown(): Unit = {
