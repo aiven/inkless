@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
@@ -28,6 +29,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -36,24 +38,69 @@ import java.util.function.Supplier;
 import io.aiven.inkless.TimeUtils;
 
 @CoverageIgnore
-class FileCommitterMetrics implements Closeable {
+public class FileCommitterMetrics implements Closeable {
+    private static final String GROUP = FileCommitter.class.getSimpleName();
+
     private static final String FILE_TOTAL_LIFE_TIME = "FileTotalLifeTime";
+    private static final String FILE_TOTAL_LIFE_TIME_DOC = "Total lifetime of a file from creation to commit completion in milliseconds";
     private static final String FILE_UPLOAD_AND_COMMIT_TIME = "FileUploadAndCommitTime";
+    private static final String FILE_UPLOAD_AND_COMMIT_TIME_DOC = "Time spent uploading and committing a file in milliseconds";
     private static final String FILE_UPLOAD_TIME = "FileUploadTime";
+    private static final String FILE_UPLOAD_TIME_DOC = "Time spent uploading a file to object storage in milliseconds";
     private static final String FILE_UPLOAD_RATE = "FileUploadRate";
+    private static final String FILE_UPLOAD_RATE_DOC = "Rate of successful file uploads per second";
     private static final String FILE_UPLOAD_ERROR_RATE = "FileUploadErrorRate";
+    private static final String FILE_UPLOAD_ERROR_RATE_DOC = "Rate of failed file uploads per second";
     private static final String FILE_COMMIT_WAIT_TIME = "FileCommitWaitTime";
+    private static final String FILE_COMMIT_WAIT_TIME_DOC = "Time a file waits before commit starts in milliseconds";
     private static final String FILE_COMMIT_TIME = "FileCommitTime";
+    private static final String FILE_COMMIT_TIME_DOC = "Time spent committing a file to the control plane in milliseconds";
     private static final String FILE_COMMIT_RATE = "FileCommitRate";
+    private static final String FILE_COMMIT_RATE_DOC = "Rate of successful file commits per second";
     private static final String FILE_COMMIT_ERROR_RATE = "FileCommitErrorRate";
+    private static final String FILE_COMMIT_ERROR_RATE_DOC = "Rate of failed file commits per second";
     private static final String CACHE_STORE_TIME = "CacheStoreTime";
+    private static final String CACHE_STORE_TIME_DOC = "Time spent storing file data in the cache after commit in milliseconds";
     private static final String COMMIT_QUEUE_FILES = "CommitQueueFiles";
+    private static final String COMMIT_QUEUE_FILES_DOC = "Current number of files waiting to be committed";
     private static final String COMMIT_QUEUE_BYTES = "CommitQueueBytes";
+    private static final String COMMIT_QUEUE_BYTES_DOC = "Current total bytes of files waiting to be committed";
     private static final String FILE_SIZE = "FileSize";
+    private static final String FILE_SIZE_DOC = "Size of committed files in bytes";
     private static final String BATCHES_COUNT = "BatchesCount";
+    private static final String BATCHES_COUNT_DOC = "Number of batches per committed file";
     private static final String BATCHES_COMMIT_RATE = "BatchesCommitRate";
+    private static final String BATCHES_COMMIT_RATE_DOC = "Rate of batches committed per second";
     private static final String WRITE_RATE = "WriteRate";
+    private static final String WRITE_RATE_DOC = "Rate of successful write operations per second";
     private static final String WRITE_ERROR_RATE = "WriteErrorRate";
+    private static final String WRITE_ERROR_RATE_DOC = "Rate of failed write operations per second";
+
+    /**
+     * This method returns a list of all the metric name templates for the FileCommitterMetrics class.
+     * This is used for documentation purposes only.
+     */
+    public static List<MetricNameTemplate> all() {
+        return List.of(
+            new MetricNameTemplate(FILE_TOTAL_LIFE_TIME, GROUP, FILE_TOTAL_LIFE_TIME_DOC),
+            new MetricNameTemplate(FILE_UPLOAD_AND_COMMIT_TIME, GROUP, FILE_UPLOAD_AND_COMMIT_TIME_DOC),
+            new MetricNameTemplate(FILE_UPLOAD_TIME, GROUP, FILE_UPLOAD_TIME_DOC),
+            new MetricNameTemplate(FILE_UPLOAD_RATE, GROUP, FILE_UPLOAD_RATE_DOC),
+            new MetricNameTemplate(FILE_UPLOAD_ERROR_RATE, GROUP, FILE_UPLOAD_ERROR_RATE_DOC),
+            new MetricNameTemplate(FILE_COMMIT_TIME, GROUP, FILE_COMMIT_TIME_DOC),
+            new MetricNameTemplate(FILE_COMMIT_WAIT_TIME, GROUP, FILE_COMMIT_WAIT_TIME_DOC),
+            new MetricNameTemplate(FILE_COMMIT_RATE, GROUP, FILE_COMMIT_RATE_DOC),
+            new MetricNameTemplate(FILE_COMMIT_ERROR_RATE, GROUP, FILE_COMMIT_ERROR_RATE_DOC),
+            new MetricNameTemplate(BATCHES_COMMIT_RATE, GROUP, BATCHES_COMMIT_RATE_DOC),
+            new MetricNameTemplate(FILE_SIZE, GROUP, FILE_SIZE_DOC),
+            new MetricNameTemplate(BATCHES_COUNT, GROUP, BATCHES_COUNT_DOC),
+            new MetricNameTemplate(CACHE_STORE_TIME, GROUP, CACHE_STORE_TIME_DOC),
+            new MetricNameTemplate(WRITE_RATE, GROUP, WRITE_RATE_DOC),
+            new MetricNameTemplate(WRITE_ERROR_RATE, GROUP, WRITE_ERROR_RATE_DOC),
+            new MetricNameTemplate(COMMIT_QUEUE_FILES, GROUP, COMMIT_QUEUE_FILES_DOC),
+            new MetricNameTemplate(COMMIT_QUEUE_BYTES, GROUP, COMMIT_QUEUE_BYTES_DOC)
+        );
+    }
 
     private final Time time;
 

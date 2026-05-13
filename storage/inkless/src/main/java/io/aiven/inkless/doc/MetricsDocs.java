@@ -27,7 +27,20 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
 
+import io.aiven.inkless.cache.BatchCoordinateCacheMetrics;
+import io.aiven.inkless.cache.CaffeineCacheMetricsRegistry;
 import io.aiven.inkless.common.SharedState;
+import io.aiven.inkless.common.metrics.ThreadPoolMonitorMetricsRegistry;
+import io.aiven.inkless.consume.InklessFetchMetrics;
+import io.aiven.inkless.consume.InklessFetchOffsetMetrics;
+import io.aiven.inkless.control_plane.postgres.PostgresConnectionPoolMetrics;
+import io.aiven.inkless.control_plane.postgres.PostgresControlPlaneMetrics;
+import io.aiven.inkless.delete.FileCleanerMetrics;
+import io.aiven.inkless.delete.RetentionEnforcerMetrics;
+import io.aiven.inkless.merge.FileMergerMetrics;
+import io.aiven.inkless.metadata.ClientAzAwarenessMetrics;
+import io.aiven.inkless.produce.FileCommitterMetrics;
+import io.aiven.inkless.produce.WriterMetrics;
 
 import static java.lang.System.out;
 
@@ -52,6 +65,67 @@ public class MetricsDocs {
         printHeading(io.aiven.inkless.storage_backend.gcs.GcsStorage.class.getSimpleName() + " metrics");
         out.println();
         out.println(toRstTable(SharedState.STORAGE_METRIC_CONTEXT, io.aiven.inkless.storage_backend.gcs.MetricRegistry.all()));
+
+        // Fetch metrics
+        printHeading("InklessFetch metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.consume", InklessFetchMetrics.all()));
+
+        printHeading("InklessFetchOffset metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.consume", InklessFetchOffsetMetrics.all()));
+
+        // Produce metrics
+        printHeading("Writer metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.produce", WriterMetrics.all()));
+
+        printHeading("FileCommitter metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.produce", FileCommitterMetrics.all()));
+
+        // Delete metrics
+        printHeading("FileCleaner metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.delete", FileCleanerMetrics.all()));
+
+        printHeading("RetentionEnforcer metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.delete", RetentionEnforcerMetrics.all()));
+
+        // Merge metrics
+        printHeading("FileMerger metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.merge", FileMergerMetrics.all()));
+
+        // Metadata metrics
+        printHeading("ClientAzAwareness metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.metadata", ClientAzAwarenessMetrics.all()));
+
+        // Control plane metrics
+        printHeading("PostgresControlPlane metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.control_plane.postgres", PostgresControlPlaneMetrics.all()));
+
+        printHeading("PostgresConnectionPool metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.control_plane.postgres", PostgresConnectionPoolMetrics.all()));
+
+        // Cache metrics
+        printHeading("BatchCoordinateCache metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.cache", BatchCoordinateCacheMetrics.all()));
+
+        // Caffeine cache metrics
+        printHeading("CaffeineCache metrics");
+        out.println();
+        out.println(toRstTable(CaffeineCacheMetricsRegistry.METRIC_CONTEXT, new CaffeineCacheMetricsRegistry().all()));
+
+        // Thread pool metrics
+        printHeading("ThreadPoolMonitor metrics");
+        out.println();
+        out.println(toRstTable(ThreadPoolMonitorMetricsRegistry.METRIC_CONFIG, new ThreadPoolMonitorMetricsRegistry("{pool-name}").all()));
     }
 
     // o.a.k.common.metrics.Metrics does only have generation of Html documentation.

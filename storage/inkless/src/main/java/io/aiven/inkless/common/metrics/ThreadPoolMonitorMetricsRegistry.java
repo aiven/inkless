@@ -74,12 +74,17 @@ public class ThreadPoolMonitorMetricsRegistry {
         );
     }
 
+    /**
+     * This method returns a list of all the metric name templates for the ThreadPoolMonitorMetricsRegistry class.
+     * This is used for documentation purposes only.
+     */
     public List<MetricNameTemplate> all() {
         return List.of(
             activeThreadsTotalMetricName,
             poolSizeTotalMetricName,
             parallelismTotalMetricName,
-            queuedTaskCountTotalMetricName
+            queuedTaskCountTotalMetricName,
+            avgIdlePercentMetricName
         );
     }
 }
