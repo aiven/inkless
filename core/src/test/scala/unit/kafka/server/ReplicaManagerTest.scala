@@ -1685,6 +1685,36 @@ class ReplicaManagerTest {
   }
 
   @Test
+  def testFetchFollowerAllowedForOlderClientsOnHybridDisklessPartition(): Unit = {
+    val replicaManager = spy(setupReplicaManagerWithMockedPurgatories(new MockTimer(time), aliveBrokerIds = Seq(0, 1)))
+
+    try {
+      val tp0 = new TopicPartition(topic, 0)
+      val tidp0 = new TopicIdPartition(topicId, tp0)
+      val offsetCheckpoints = new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava)
+      replicaManager.createPartition(tp0).createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
+
+      val followerDelta = createFollowerDelta(topicId, tp0, 0, 1)
+      val followerImage = imageFromTopics(followerDelta.apply())
+      replicaManager.applyDelta(followerDelta, followerImage)
+
+      // Mark this partition as hybrid diskless (classicToDisklessStartOffset >= 0).
+      doReturn(true).when(replicaManager).isMigratedPartitionFromClassicToDiskless(tidp0)
+
+      // Fetch from follower with empty ClientMetadata (older FETCH versions, no rackId).
+      // Without the hybrid override this would fail with NOT_LEADER_OR_FOLLOWER (see
+      // testFetchFollowerNotAllowedForOlderClients). For hybrid partitions every replica
+      // can serve the classic portion of the log, so the read should succeed.
+      val partitionData = new FetchRequest.PartitionData(Uuid.ZERO_UUID, 0L, 0L, 100,
+        Optional.of(0))
+      val fetchResult = fetchPartitionAsConsumer(replicaManager, tidp0, partitionData)
+      assertEquals(Errors.NONE, fetchResult.assertFired.error)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testFetchRequestRateMetrics(): Unit = {
     val localId = 0
     val mockTimer = new MockTimer(time)
@@ -9379,6 +9409,36 @@ class ReplicaManagerTest {
         verify(cp, never()).findBatches(any(), any(), any())
       } finally {
         fetchHandlerCtor.close()
+      }
+    }
+
+    @Test
+    def testIsMigratedPartitionFromClassicToDiskless(): Unit = {
+      val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic())))
+      try {
+        val tp = disklessTopicPartition.topicPartition()
+
+        // Never-migrated (or non-diskless) partition: classicToDisklessStartOffset == -1.
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+          .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+        assertFalse(replicaManager.isMigratedPartitionFromClassicToDiskless(disklessTopicPartition))
+
+        // Migration pending: classicToDisklessStartOffset == -2 (sealed but offset not committed).
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+        assertFalse(replicaManager.isMigratedPartitionFromClassicToDiskless(disklessTopicPartition))
+
+        // Migrated (just sealed, seal at offset 0).
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+          .thenReturn(0L)
+        assertTrue(replicaManager.isMigratedPartitionFromClassicToDiskless(disklessTopicPartition))
+
+        // Migrated (seal at a later offset).
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+          .thenReturn(100L)
+        assertTrue(replicaManager.isMigratedPartitionFromClassicToDiskless(disklessTopicPartition))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
       }
     }
 

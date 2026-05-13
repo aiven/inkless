@@ -2166,6 +2166,20 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Returns true for a partition that has been migrated from a classic topic to a diskless one
+   * (`diskless.enable=true`) and whose `classicToDisklessStartOffset` has been sealed at a
+   * non-negative offset. For these partitions every replica still can host the classic local/remote
+   * log below the seal offset. Migration-pending (`-2`) and never-migrated (`-1`) partitions are excluded.
+   *
+   * The `isDisklessTopic` check is also a guard against unnecessary metadata-image lookups in the
+   * hot fetch path for the non-diskless case.
+   */
+  private[server] def isMigratedPartitionFromClassicToDiskless(tp: TopicIdPartition): Boolean = {
+    _inklessMetadataView.isDisklessTopic(tp.topic) &&
+      _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition) >= 0L
+  }
+
+  /**
    * Read from multiple topic partitions at the given offset up to maxSize bytes
    */
   def readFromLog(
@@ -2232,7 +2246,13 @@ class ReplicaManager(val config: KafkaConfig,
             if (preferredReadReplica.isDefined) OptionalInt.of(preferredReadReplica.get) else OptionalInt.empty(),
             Errors.NONE)
         } else {
-          log = partition.localLogWithEpochOrThrow(fetchInfo.currentLeaderEpoch, params.fetchOnlyLeader())
+          // For hybrid diskless partitions (classicToDisklessStartOffset >= 0, i.e. the partition
+          // was migrated from classic to diskless and still has classic local/remote data to read),
+          // relax the leader-only requirement so any in-sync replica can serve the classic portion
+          // of the read. This enables follower fetching for older FETCH versions (no rackId / empty
+          // clientMetadata) that would otherwise get NOT_LEADER_OR_FOLLOWER when targeting a non-leader broker.
+          val allowReplica = !params.fetchOnlyLeader() || isMigratedPartitionFromClassicToDiskless(tp)
+          log = partition.localLogWithEpochOrThrow(fetchInfo.currentLeaderEpoch, !allowReplica)
 
           // Try the read first, this tells us whether we need all of adjustedFetchSize for this partition
           val readInfo: LogReadInfo = partition.fetchRecords(
@@ -2241,7 +2261,8 @@ class ReplicaManager(val config: KafkaConfig,
             fetchTimeMs = fetchTimeMs,
             maxBytes = adjustedMaxBytes,
             minOneMessage = minOneMessage,
-            updateFetchState = !readFromPurgatory)
+            updateFetchState = !readFromPurgatory,
+            allowReplica = allowReplica)
 
           val fetchDataInfo = checkFetchDataInfo(partition, readInfo.fetchedData)
 
