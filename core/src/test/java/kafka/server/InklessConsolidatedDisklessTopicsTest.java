@@ -20,7 +20,9 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
+import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -70,6 +72,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntFunction;
 import java.util.stream.Collectors;
@@ -252,11 +255,49 @@ public class InklessConsolidatedDisklessTopicsTest {
         ControlPlaneDisklessSnapshot beforeConsumeSnapshot = readControlPlaneDisklessSnapshot(topicUuid);
         log.info("Control plane snapshot before first consume: {}", beforeConsumeSnapshot);
 
+        assertBrokerEarliestOffsetsEqual(commonConfigs, 0L,
+            "before first consume (expect full 0..N-1 readable with auto.offset.reset=earliest)");
+
         consumeAndVerify(commonConfigs, recordsToSendAndReceive);
 
         waitUntilTieredDisklessDataPrunedFromControlPlane(topicUuid, beforeConsumeSnapshot);
 
         consumeAndVerify(commonConfigs, recordsToSendAndReceive);
+    }
+
+    /**
+     * Queries {@link OffsetSpec#earliest()} via the admin client (same basis as consumer
+     * {@code auto.offset.reset=earliest}) and asserts every partition matches {@code expectedEarliest}.
+     */
+    private void assertBrokerEarliestOffsetsEqual(Map<String, Object> commonConfigs,
+                                                  long expectedEarliest,
+                                                  String context) throws Exception {
+        Map<TopicPartition, Long> earliest = queryBrokerEarliestOffsets(commonConfigs);
+        log.info("Broker ListOffsets earliest per partition {}: {}", context, earliest);
+        for (int p = 0; p < numPartitions; p++) {
+            TopicPartition tp = new TopicPartition(topicName, p);
+            assertEquals(expectedEarliest, earliest.get(tp),
+                "ListOffsets earliest for " + tp + " should be " + expectedEarliest + " " + context
+                    + "; otherwise the consumer cannot read all partitions from the beginning.");
+        }
+    }
+
+    private Map<TopicPartition, Long> queryBrokerEarliestOffsets(Map<String, Object> commonConfigs)
+        throws ExecutionException, InterruptedException, TimeoutException {
+        Map<TopicPartition, OffsetSpec> request = new HashMap<>();
+        for (int p = 0; p < numPartitions; p++) {
+            request.put(new TopicPartition(topicName, p), OffsetSpec.earliest());
+        }
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> infos =
+                admin.listOffsets(request).all().get(30, TimeUnit.SECONDS);
+            Map<TopicPartition, Long> out = new HashMap<>();
+            for (int p = 0; p < numPartitions; p++) {
+                TopicPartition tp = new TopicPartition(topicName, p);
+                out.put(tp, infos.get(tp).offset());
+            }
+            return out;
+        }
     }
 
     private record ControlPlaneDisklessSnapshot(long batchRowCount, long minLogStartOffset) { }
