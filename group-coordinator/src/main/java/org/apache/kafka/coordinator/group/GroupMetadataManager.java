@@ -1171,11 +1171,23 @@ public class GroupMetadataManager {
         String groupId,
         long committedOffset
     ) throws GroupIdNotFoundException {
-        // Get or create the share group. If the group exists, check that it's empty. If it is created, it is empty.
-        final ShareGroup group = getOrMaybeCreateShareGroup(groupId, true);
+        return shareGroup(groupId, committedOffset, false);
+    }
 
+    public ShareGroup shareGroup(
+            String groupId,
+            long committedOffset,
+            boolean createIfNotExists
+    ) throws GroupIdNotFoundException {
+        Group group;
+        if (createIfNotExists) {
+            // Get or create the share group. If the group exists, check that it's empty. If it is created, it is empty.
+            group = getOrMaybeCreateShareGroup(groupId, true);
+        } else {
+            group = group(groupId, committedOffset);
+        }
         if (group.type() == SHARE) {
-            return group;
+            return (ShareGroup) group;
         } else {
             // We don't support upgrading/downgrading between protocols at the moment so
             // we throw an exception if a group exists with the wrong type.
