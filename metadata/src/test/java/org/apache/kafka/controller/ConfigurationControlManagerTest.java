@@ -363,7 +363,42 @@ public class ConfigurationControlManagerTest {
                         entry("quux", entry(SET, "456")),
                         entry("broker.config.to.remove", entry(DELETE, null))
                 ))),
-                true));
+                false));
+    }
+
+    private static class AlwaysFailPolicy implements AlterConfigPolicy {
+        @Override
+        public void validate(RequestMetadata actual) throws PolicyViolationException {
+            throw new PolicyViolationException("Always fail");
+        }
+
+        @Override
+        public void close() {
+            // empty
+        }
+
+        @Override
+        public void configure(Map<String, ?> configs) {
+            // empty
+        }
+    }
+
+    @Test
+    public void testIncrementalAlterConfigSkipsPolicyForNewlyCreatedResource() {
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(createFeatureControlManager()).
+            setKafkaConfigSchema(SCHEMA).
+            setAlterConfigPolicy(Optional.of(new AlwaysFailPolicy())).
+            build();
+
+        ControllerResult<ApiError> result = manager.incrementalAlterConfig(
+            MYTOPIC,
+            toMap(entry("abc", entry(SET, "123"))),
+            true
+        );
+
+        assertEquals(ApiError.NONE, result.response());
+        assertFalse(result.records().isEmpty());
     }
 
     private static class CheckForNullValuesPolicy implements AlterConfigPolicy {
@@ -405,7 +440,7 @@ public class ConfigurationControlManagerTest {
                 expectedRecords1, toMap(entry(MYTOPIC, ApiError.NONE))),
             manager.legacyAlterConfigs(
                 toMap(entry(MYTOPIC, toMap(entry("abc", "456"), entry("def", "901")))),
-                true));
+                false));
         for (ApiMessageAndVersion message : expectedRecords1) {
             manager.replay((ConfigRecord) message.message());
         }
@@ -419,7 +454,7 @@ public class ConfigurationControlManagerTest {
                 CONFIG_RECORD.highestSupportedVersion())),
             toMap(entry(MYTOPIC, ApiError.NONE))),
             manager.legacyAlterConfigs(toMap(entry(MYTOPIC, toMap(entry("def", "901")))),
-                true));
+                false));
     }
 
     @ParameterizedTest
