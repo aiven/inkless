@@ -778,8 +778,8 @@ public class MirrorCoordinator {
                 .setTopicName(topicPartition.topic())
                 .setPartition(topicPartition.partition())
                 .setState(state.value())
-                .setRetryAttempt(retryAttempt)
-                .setPreviousState(metadataManager.prevStateBeforeFailure().getOrDefault(topicPartition, MirrorPartitionState.UNKNOWN).value());
+                .setPreviousState(metadataManager.prevStateBeforeFailure().getOrDefault(topicPartition, MirrorPartitionState.UNKNOWN).value())
+                .setRetryAttempt(retryAttempt);
         var apiVersion = new ApiMessageAndVersion(val, MirrorPartitionStateValue.HIGHEST_SUPPORTED_VERSION);
         return CoordinatorRecord.record(key, apiVersion);
     }
@@ -876,8 +876,8 @@ public class MirrorCoordinator {
         if (version <= MirrorPartitionStateValue.HIGHEST_SUPPORTED_VERSION && version >= MirrorPartitionStateValue.LOWEST_SUPPORTED_VERSION) {
             MirrorPartitionStateValue value = new MirrorPartitionStateValue(new ByteBufferAccessor(buffer), version);
             return new MirrorUtils.PartitionStateLogEntry(value.topicName(), value.partition(),
-                    MirrorPartitionState.fromValue(value.state()), value.retryAttempt(),
-                    MirrorPartitionState.fromValue(value.previousState()));
+                    MirrorPartitionState.fromValue(value.state()),
+                    MirrorPartitionState.fromValue(value.previousState()), value.retryAttempt());
         } else {
             throw new IllegalStateException("Unsupported partition state value version: " + version);
         }

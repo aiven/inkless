@@ -94,8 +94,8 @@ public final class MirrorUtils {
 
     public record PartitionStateInfo(int partition, MirrorPartitionState state, Integer leaderEpoch) { }
 
-    public record PartitionStateLogEntry(String topic, int partition, MirrorPartitionState state, int retryAttempt,
-                                         MirrorPartitionState previousState) { }
+    public record PartitionStateLogEntry(String topic, int partition, MirrorPartitionState state,
+                                         MirrorPartitionState previousState, int retryAttempt) { }
 
     public record PartitionKey(String mirrorName, String topic, int partition) { }
 

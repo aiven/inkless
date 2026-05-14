@@ -30,9 +30,9 @@
       "about": "The partition index."},
     { "name": "State", "type": "int8", "versions": "0+",
       "about": "The mirror partition state." },
-    { "name": "RetryAttempt", "type": "int16", "versions": "0+", "default": "0",
-      "about": "The number of automatic retry attempts while in FAILED state." },
     { "name": "PreviousState", "type": "int8",  "versions": "0+", "default": 16,
-      "about": "The mirror partition state before this transition; UNKNOWN if not recorded." }
+      "about": "The mirror partition state before this transition; UNKNOWN if not recorded." },
+    { "name": "RetryAttempt", "type": "int16", "versions": "0+", "default": "0",
+      "about": "The number of automatic retry attempts while in FAILED state." }
   ]
 }
