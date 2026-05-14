@@ -26,11 +26,11 @@ public enum MirrorPartitionState {
      * align the local log with the source.
      * Valid from: null, UNKNOWN, STOPPED, FAILED.
      */
-    PREPARING((byte) 0),
+    LOG_TRUNCATION((byte) 0),
 
     /**
      * Checking if bumping the leader epoch is necessary to ensure local leader epoch > source leader epoch.
-     * Valid from: UNKNOWN, PREPARING, STOPPED, FAILED.
+     * Valid from: UNKNOWN, LOG_TRUNCATION, STOPPED, FAILED.
      */
     EPOCH_FENCING((byte) 1),
 
@@ -59,7 +59,7 @@ public enum MirrorPartitionState {
     /**
      * Triggered by StopMirrorTopics API (failover) or topic deletion on the source.
      * The system records the last mirrored offset to the internal topic.
-     * Valid from: PREPARING, MIRRORING, PAUSING (race guard), PAUSED, FAILED.
+     * Valid from: LOG_TRUNCATION, MIRRORING, PAUSING (race guard), PAUSED, FAILED.
      */
     STOPPING((byte) 5),
 
@@ -71,7 +71,7 @@ public enum MirrorPartitionState {
     STOPPED((byte) 6),
 
     /**
-     * An error occurred. Can transition back to PREPARING to retry.
+     * An error occurred. Can transition back to LOG_TRUNCATION to retry.
      * Valid from: any state.
      */
     FAILED((byte) 7),
@@ -95,7 +95,7 @@ public enum MirrorPartitionState {
     public static MirrorPartitionState fromValue(byte value) {
         switch (value) {
             case 0:
-                return PREPARING;
+                return LOG_TRUNCATION;
             case 1:
                 return EPOCH_FENCING;
             case 2:
@@ -122,7 +122,7 @@ public enum MirrorPartitionState {
             return true;
         }
         switch (target) {
-            case PREPARING:
+            case LOG_TRUNCATION:
                 return source == null
                         || source == MirrorPartitionState.UNKNOWN
                         || source == MirrorPartitionState.STOPPED
@@ -130,16 +130,17 @@ public enum MirrorPartitionState {
             case EPOCH_FENCING:
                 return source == MirrorPartitionState.MIRRORING;
             case MIRRORING:
-                return source == MirrorPartitionState.PREPARING
+                return source == MirrorPartitionState.LOG_TRUNCATION
                         || source == MirrorPartitionState.EPOCH_FENCING
-                        || source == MirrorPartitionState.PAUSED;
+                        || source == MirrorPartitionState.PAUSED
+                        || source == MirrorPartitionState.FAILED;
             case PAUSING:
                 return source == MirrorPartitionState.MIRRORING;
             case PAUSED:
                 return source == MirrorPartitionState.PAUSING;
             case STOPPING:
                 // TODO: remove PAUSING once state transitions are serialized via the shared queue
-                return source == MirrorPartitionState.PREPARING
+                return source == MirrorPartitionState.LOG_TRUNCATION
                         || source == MirrorPartitionState.EPOCH_FENCING
                         || source == MirrorPartitionState.MIRRORING
                         || source == MirrorPartitionState.PAUSING

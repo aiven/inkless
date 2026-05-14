@@ -1783,8 +1783,8 @@ public interface Admin extends AutoCloseable {
      *
      * This operation retrieves detailed information about cluster mirrors including:
      * - Topics being mirrored
-     * - Partition-level lag information (source offset vs destination offset)
-     * - Mirroring state for each partition (INITIALIZING, PREPARING, MIRRORING, etc.)
+     * - Partition-level lag information
+     * - Mirroring state for each partition
      *
      * @param mirrorNames The names of the mirrors to describe
      * @param options The options to use when describing mirrors

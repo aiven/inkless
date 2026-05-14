@@ -159,11 +159,21 @@ abstract class AbstractFetcherThread(name: String,
     )
   }
 
-  // deal with partitions with errors, potentially due to leadership changes
-  private def handlePartitionsWithErrors(partitions: Iterable[TopicPartition], methodName: String): Unit = {
+  private def handlePartitionsWithErrors(partitions: Iterable[TopicPartition], methodName: String,
+                                         fetchException: Option[Throwable] = None): Unit = {
     if (partitions.nonEmpty) {
       debug(s"Handling errors in $methodName for partitions $partitions")
-      delayPartitions(partitions, fetchBackOffMs)
+      if (fetchException.exists(_.isInstanceOf[IOException]) && mirrorName.nonEmpty && isRunning) {
+        try {
+          partitions.foreach(markPartitionRemoved)
+          handleMirrorFetchConnectionFailure(partitions.toSet)
+        } catch {
+          case t: Throwable =>
+            warn(s"Failed to re-resolve source leader for mirror $mirrorName", t)
+        }
+      } else {
+        delayPartitions(partitions, fetchBackOffMs)
+      }
     }
   }
 
@@ -524,7 +534,7 @@ abstract class AbstractFetcherThread(name: String,
                     case e: MirrorLeaderEpochExceededException =>
                       error(s"Error while processing data for mirror partition $topicPartition " +
                         s"at offset ${currentFetchState.fetchOffset}, waiting for leader epoch bump.", e)
-                      markPartitionFailed(topicPartition)
+                      markPartitionRemoved(topicPartition)
                       handleMirrorLeaderEpochExceeded(currentFetchState.mirrorName(), topicPartition)
                     case t: Throwable =>
                       // stop monitoring this partition and add it to the set of failed partitions
@@ -601,16 +611,8 @@ abstract class AbstractFetcherThread(name: String,
       updateMirrorFetchEpoch(mirrorPartitionsWithNewEpoch)
     if (mirrorPartitionsWithNewLeader.nonEmpty && isRunning)
       maybeCreateMirrorFetchers(mirrorPartitionsWithNewLeader)
-    if (fetchException.exists(_.isInstanceOf[IOException]) && partitionsWithError.nonEmpty && mirrorName.nonEmpty && isRunning) {
-      try {
-        handleMirrorFetchConnectionFailure(partitionsWithError.toSet)
-      } catch {
-        case t: Throwable =>
-          warn(s"Failed to re-resolve source leader for mirror $mirrorName", t)
-      }
-    }
     if (partitionsWithError.nonEmpty) {
-      handlePartitionsWithErrors(partitionsWithError, "processFetchRequest")
+      handlePartitionsWithErrors(partitionsWithError, "processFetchRequest", fetchException)
     }
   }
 
@@ -631,7 +633,7 @@ abstract class AbstractFetcherThread(name: String,
     } finally partitionMapLock.unlock()
   }
 
-  private def markPartitionFailed(topicPartition: TopicPartition): Unit = {
+  private def markPartitionRemoved(topicPartition: TopicPartition): Unit = {
     partitionMapLock.lock()
     try {
       failedPartitions.add(topicPartition)
@@ -639,6 +641,13 @@ abstract class AbstractFetcherThread(name: String,
     } finally partitionMapLock.unlock()
     warn(s"Partition $topicPartition marked as failed")
   }
+
+  private def markPartitionFailed(topicPartition: TopicPartition): Unit = {
+    markPartitionRemoved(topicPartition)
+    handlePartitionFailed(topicPartition)
+  }
+
+  protected def handlePartitionFailed(topicPartition: TopicPartition): Unit = {}
 
   /**
    * Returns initial partition fetch state based on current state and the provided `initialFetchState`.

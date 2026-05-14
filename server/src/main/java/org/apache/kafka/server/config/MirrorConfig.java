@@ -122,10 +122,20 @@ public final class MirrorConfig {
     public static final String FETCH_BACKOFF_MS_DOC = "The amount of time to wait before retrying mirror fetch requests after a failure. " +
             "This controls the backoff for mirror fetcher threads on connection errors or other exceptions from the source cluster.";
 
-    public static final String TRUNCATION_BACKOFF_MS_CONFIG = "mirror.truncation.backoff.ms";
-    public static final long TRUNCATION_BACKOFF_MS_DEFAULT = 5000L;
-    public static final String TRUNCATION_BACKOFF_MS_DOC = "The amount of time to wait before retrying truncation to last mirrored offsets " +
-            "when the source cluster is unavailable during the PREPARING state.";
+    public static final String FAILED_RETRY_INITIAL_BACKOFF_MS_CONFIG = "mirror.failed.retry.initial.backoff.ms";
+    public static final long FAILED_RETRY_INITIAL_BACKOFF_MS_DEFAULT = 1000L;
+    public static final String FAILED_RETRY_INITIAL_BACKOFF_MS_DOC = "The initial backoff time in milliseconds before retrying a mirror partition " +
+            "in FAILED state. The actual delay uses full jitter: a uniform random value in [0, backoff].";
+
+    public static final String FAILED_RETRY_MAX_BACKOFF_MS_CONFIG = "mirror.failed.retry.max.backoff.ms";
+    public static final long FAILED_RETRY_MAX_BACKOFF_MS_DEFAULT = 300000L;
+    public static final String FAILED_RETRY_MAX_BACKOFF_MS_DOC = "The maximum backoff time in milliseconds for retrying a mirror partition in FAILED state.";
+
+    public static final String FAILED_RETRY_MAX_ATTEMPTS_CONFIG = "mirror.failed.retry.max.attempts";
+    public static final int FAILED_RETRY_MAX_ATTEMPTS_DEFAULT = 10;
+    public static final String FAILED_RETRY_MAX_ATTEMPTS_DOC = "The maximum number of automatic retry attempts for a mirror partition in FAILED state. " +
+            "After this limit is reached, manual intervention is required via the start-mirror-topics command. " +
+            "Set to 0 for unlimited retries.";
 
     // Metadata refresh interval
     public static final String METADATA_REFRESH_INTERVAL_MS_CONFIG = "mirror.metadata.refresh.interval.ms";
@@ -387,8 +397,16 @@ public final class MirrorConfig {
         return config.getLong(FETCH_BACKOFF_MS_CONFIG);
     }
 
-    public long truncationBackoffMs() {
-        return config.getLong(TRUNCATION_BACKOFF_MS_CONFIG);
+    public long failedRetryInitialBackoffMs() {
+        return config.getLong(FAILED_RETRY_INITIAL_BACKOFF_MS_CONFIG);
+    }
+
+    public long failedRetryMaxBackoffMs() {
+        return config.getLong(FAILED_RETRY_MAX_BACKOFF_MS_CONFIG);
+    }
+
+    public int failedRetryMaxAttempts() {
+        return config.getInt(FAILED_RETRY_MAX_ATTEMPTS_CONFIG);
     }
 
     /**
@@ -440,7 +458,9 @@ public final class MirrorConfig {
             .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC)
             .define(METADATA_REFRESH_INTERVAL_MS_CONFIG, LONG, METADATA_REFRESH_INTERVAL_MS_DEFAULT, atLeast(0L), MEDIUM, METADATA_REFRESH_INTERVAL_MS_DOC)
             .define(FETCH_BACKOFF_MS_CONFIG, LONG, FETCH_BACKOFF_MS_DEFAULT, atLeast(0L), MEDIUM, FETCH_BACKOFF_MS_DOC)
-            .define(TRUNCATION_BACKOFF_MS_CONFIG, LONG, TRUNCATION_BACKOFF_MS_DEFAULT, atLeast(0L), MEDIUM, TRUNCATION_BACKOFF_MS_DOC);
+            .define(FAILED_RETRY_INITIAL_BACKOFF_MS_CONFIG, LONG, FAILED_RETRY_INITIAL_BACKOFF_MS_DEFAULT, atLeast(1L), MEDIUM, FAILED_RETRY_INITIAL_BACKOFF_MS_DOC)
+            .define(FAILED_RETRY_MAX_BACKOFF_MS_CONFIG, LONG, FAILED_RETRY_MAX_BACKOFF_MS_DEFAULT, atLeast(1L), MEDIUM, FAILED_RETRY_MAX_BACKOFF_MS_DOC)
+            .define(FAILED_RETRY_MAX_ATTEMPTS_CONFIG, INT, FAILED_RETRY_MAX_ATTEMPTS_DEFAULT, atLeast(0), MEDIUM, FAILED_RETRY_MAX_ATTEMPTS_DOC);
     }
 
     /**

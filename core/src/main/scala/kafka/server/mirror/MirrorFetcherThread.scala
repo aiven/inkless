@@ -20,17 +20,16 @@ import kafka.cluster.Partition
 import kafka.server._
 import kafka.server.mirror.MirrorUtils.LEADER_EPOCH_BUMP_THRESHOLD
 import org.apache.kafka.common.errors.MirrorLeaderEpochExceededException
-import org.apache.kafka.common.{Node, TopicPartition}
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.record.Records
 import org.apache.kafka.common.requests.FetchResponse
-import org.apache.kafka.server.{LeaderEndPoint, PartitionFetchState}
+import org.apache.kafka.common.{Node, TopicPartition}
 import org.apache.kafka.server.common.OffsetAndEpoch
+import org.apache.kafka.server.{LeaderEndPoint, PartitionFetchState}
 import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogStartOffsetIncrementReason}
 
 import java.util.Optional
 import scala.collection.{Map, Set}
-import scala.jdk.CollectionConverters._
 
 /**
  * Fetcher thread for cross-cluster mirroring. Unlike ReplicaFetcherThread, this rewrites
@@ -72,16 +71,24 @@ class MirrorFetcherThread(name: String,
     replicaMgr.mirrorFetcherManager.addFetcherForPartitions(partitionAndOffsets)
   }
 
-  // invalidates cached source leaders for affected partitions when source connection is broken
+  // Transition to FAILED so the coordinator can schedule exponential backoff retries.
   override protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {
-    replicaMgr.mirrorMetadataManager.foreach(_.invalidateSourceLeader(mirrorName, mirrorPartitions.asJava))
-    replicaMgr.maybeCreateMirrorFetchers(mirrorName, mirrorPartitions.asJava)
+    mirrorPartitions.foreach { tp =>
+      replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, tp, MirrorPartitionState.FAILED))
+    }
   }
 
+  // Bridges fetcher failures (e.g. KafkaStorageException) to the mirror state machine,
+  // so the coordinator can schedule exponential backoff retries.
+  override protected def handlePartitionFailed(topicPartition: TopicPartition): Unit = {
+    replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, topicPartition, MirrorPartitionState.FAILED))
+  }
+
+  // Source leader epoch exceeds local epoch: transition to EPOCH_FENCING to bump the
+  // local epoch before allowing further appends. If the bump fails, the coordinator
+  // transitions to FAILED and the exponential backoff retry takes over.
   override protected def handleMirrorLeaderEpochExceeded(mirrorName: String, topicPartition: TopicPartition): Unit = {
-    // when the source cluster's epoch is higher than the destination cluster's epoch, we need to
-    // fence the partition to prevent the source cluster from appending to the destination cluster.
-    replicaMgr.mirrorMetadataManager.get.transitionTo(mirrorName, topicPartition, MirrorPartitionState.EPOCH_FENCING)
+    replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, topicPartition, MirrorPartitionState.EPOCH_FENCING))
   }
 
   def validateLeaderEpoch(topicPartition: TopicPartition, partition: Partition, records: Records): Unit = {
