@@ -763,11 +763,11 @@ class RequestQuotaTest extends BaseRequestTest {
         case ApiKeys.GET_REPLICA_LOG_INFO =>
           new GetReplicaLogInfoRequest.Builder(new GetReplicaLogInfoRequestData())
 
-        case ApiKeys.LIST_MIRRORS =>
-          new ListMirrorsRequest.Builder(new ListMirrorsRequestData())
+        case ApiKeys.LIST_CLUSTER_MIRRORS =>
+          new ListClusterMirrorsRequest.Builder(new ListClusterMirrorsRequestData())
 
-        case ApiKeys.CREATE_MIRROR =>
-          new CreateMirrorRequest.Builder(new CreateMirrorRequestData())
+        case ApiKeys.CREATE_CLUSTER_MIRROR =>
+          new CreateClusterMirrorRequest.Builder(new CreateClusterMirrorRequestData())
 
         case ApiKeys.START_MIRROR_TOPICS =>
           new StartMirrorTopicsRequest.Builder(new StartMirrorTopicsRequestData())
@@ -775,8 +775,8 @@ class RequestQuotaTest extends BaseRequestTest {
         case ApiKeys.STOP_MIRROR_TOPICS =>
           new StopMirrorTopicsRequest.Builder(new StopMirrorTopicsRequestData())
 
-        case ApiKeys.DESCRIBE_MIRRORS =>
-          new DescribeMirrorsRequest.Builder(new DescribeMirrorsRequestData())
+        case ApiKeys.DESCRIBE_CLUSTER_MIRRORS =>
+          new DescribeClusterMirrorsRequest.Builder(new DescribeClusterMirrorsRequestData())
 
         case ApiKeys.READ_MIRROR_STATES =>
           new ReadMirrorStatesRequest.Builder(new ReadMirrorStatesRequestData())
@@ -790,8 +790,8 @@ class RequestQuotaTest extends BaseRequestTest {
         case ApiKeys.RESUME_MIRROR_TOPICS =>
           new ResumeMirrorTopicsRequest.Builder(new ResumeMirrorTopicsRequestData())
 
-        case ApiKeys.DELETE_MIRROR =>
-          new DeleteMirrorRequest.Builder(new DeleteMirrorRequestData())
+        case ApiKeys.DELETE_CLUSTER_MIRROR =>
+          new DeleteClusterMirrorRequest.Builder(new DeleteClusterMirrorRequestData())
 
         case ApiKeys.BUMP_LEADER_EPOCHS =>
           new BumpLeaderEpochsRequest.Builder(new BumpLeaderEpochsRequestData())

@@ -24,8 +24,8 @@ import kafka.utils._
 import org.apache.kafka.clients.admin.{AlterConfigOp, ConfigEntry}
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.common.config.ConfigDef.ConfigKey
-import org.apache.kafka.server.config.MirrorConfig
-import org.apache.kafka.common.config.ConfigResource.Type.{BROKER, BROKER_LOGGER, CLIENT_METRICS, GROUP, MIRROR, TOPIC}
+import org.apache.kafka.server.config.ClusterMirrorConfig
+import org.apache.kafka.common.config.ConfigResource.Type.{BROKER, BROKER_LOGGER, CLIENT_METRICS, GROUP, CLUSTER_MIRROR, TOPIC}
 import org.apache.kafka.common.config.{ConfigDef, ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors.{ApiException, InvalidConfigurationException, InvalidRequestException}
 import org.apache.kafka.common.message.{AlterConfigsRequestData, AlterConfigsResponseData, IncrementalAlterConfigsRequestData, IncrementalAlterConfigsResponseData}
@@ -151,8 +151,8 @@ class ConfigAdminManager(nodeId: Int,
                 }
             case CLIENT_METRICS | GROUP =>
             // Nothing to do.
-            case MIRROR =>
-              val validKeys = MirrorConfig.CONFIG_DEF.names()
+            case CLUSTER_MIRROR =>
+              val validKeys = ClusterMirrorConfig.CONFIG_DEF.names()
               resource.configs().forEach { config =>
                 if (!validKeys.contains(config.name())) {
                   throw new InvalidConfigurationException(s"Unknown mirror configuration: ${config.name()}")
@@ -160,7 +160,7 @@ class ConfigAdminManager(nodeId: Int,
               }
               val mirrorProps = new Properties()
               resource.configs().forEach(config => mirrorProps.put(config.name(), config.value()))
-              MirrorConfig.CONFIG_DEF.parse(mirrorProps)
+              ClusterMirrorConfig.CONFIG_DEF.parse(mirrorProps)
             case _ =>
               throw new InvalidRequestException(s"Unknown resource type ${resource.resourceType().toInt}")
           }

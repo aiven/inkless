@@ -18,7 +18,7 @@ package kafka.server.mirror
 
 import kafka.cluster.Partition
 import kafka.server._
-import kafka.server.mirror.MirrorUtils.LEADER_EPOCH_BUMP_THRESHOLD
+import kafka.server.mirror.ClusterMirrorUtils.LEADER_EPOCH_BUMP_THRESHOLD
 import org.apache.kafka.common.errors.MirrorLeaderEpochExceededException
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.record.Records

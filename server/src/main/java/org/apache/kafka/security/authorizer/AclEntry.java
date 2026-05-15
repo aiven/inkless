@@ -80,7 +80,7 @@ public class AclEntry {
             case CLUSTER:
                 return Errors.CLUSTER_AUTHORIZATION_FAILED;
             case CLUSTER_MIRROR:
-                return Errors.MIRROR_AUTHORIZATION_FAILED;
+                return Errors.CLUSTER_MIRROR_AUTHORIZATION_FAILED;
             case TRANSACTIONAL_ID:
                 return Errors.TRANSACTIONAL_ID_AUTHORIZATION_FAILED;
             case DELEGATION_TOKEN:

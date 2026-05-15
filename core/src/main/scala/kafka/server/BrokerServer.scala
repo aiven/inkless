@@ -22,7 +22,7 @@ import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
 import kafka.network.SocketServer
 import kafka.raft.KafkaRaftManager
-import kafka.server.mirror.{MirrorCoordinator, MirrorMetadataManager}
+import kafka.server.mirror.{ClusterMirrorCoordinator, MirrorMetadataManager}
 import kafka.server.metadata._
 import kafka.server.share.{ShareCoordinatorMetadataCacheHelperImpl, SharePartitionManager}
 import kafka.utils.CoreUtils
@@ -125,7 +125,7 @@ class BrokerServer(
 
   var transactionCoordinator: TransactionCoordinator = _
 
-  var mirrorCoordinator: MirrorCoordinator = _
+  var clusterMirrorCoordinator: ClusterMirrorCoordinator = _
 
   var mirrorMetadataManager: MirrorMetadataManager = _
 
@@ -402,7 +402,7 @@ class BrokerServer(
         new KafkaScheduler(1, true, "transaction-log-manager-"),
         producerIdManagerSupplier, metrics, metadataCache, Time.SYSTEM)
 
-      mirrorCoordinator = new MirrorCoordinator(config, replicaManager,
+      clusterMirrorCoordinator = new ClusterMirrorCoordinator(config, replicaManager,
         mirrorScheduler, metrics, metadataCache, Time.SYSTEM, mirrorMetadataManager)
 
       autoTopicCreationManager = new DefaultAutoTopicCreationManager(
@@ -467,7 +467,7 @@ class BrokerServer(
         groupCoordinator = groupCoordinator,
         txnCoordinator = transactionCoordinator,
         shareCoordinator = shareCoordinator,
-        mirrorCoordinator = mirrorCoordinator,
+        clusterMirrorCoordinator = clusterMirrorCoordinator,
         autoTopicCreationManager = autoTopicCreationManager,
         brokerId = config.nodeId,
         config = config,
@@ -536,7 +536,7 @@ class BrokerServer(
         ),
         sharedServer.initialBrokerMetadataLoadFaultHandler,
         sharedServer.metadataPublishingFaultHandler,
-        mirrorCoordinator,
+        clusterMirrorCoordinator,
         mirrorMetadataManager
       )
       // If the BrokerLifecycleManager's initial catch-up future fails, it means we timed out
@@ -804,8 +804,8 @@ class BrokerServer(
       if (shareCoordinator != null)
         CoreUtils.swallow(shareCoordinator.shutdown(), this)
 
-      if (mirrorCoordinator != null)
-        CoreUtils.swallow(mirrorCoordinator.shutdown(), this)
+      if (clusterMirrorCoordinator != null)
+        CoreUtils.swallow(clusterMirrorCoordinator.shutdown(), this)
 
       if (mirrorMetadataManager != null)
         CoreUtils.swallow(mirrorMetadataManager.close(), this)

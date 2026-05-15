@@ -1672,9 +1672,9 @@ public interface Admin extends AutoCloseable {
      * @param mirrorName The name of the cluster mirror
      * @param configs Configuration for the cluster mirror, including bootstrap servers and security settings
      * @param options Options for the create mirror operation
-     * @return The CreateMirrorResult
+     * @return The CreateClusterMirrorResult
      */
-    CreateMirrorResult createMirror(String mirrorName, Map<String, String> configs, CreateMirrorOptions options);
+    CreateClusterMirrorResult createClusterMirror(String mirrorName, Map<String, String> configs, CreateClusterMirrorOptions options);
 
     /**
      * Start mirroring for the specified topics.
@@ -1741,41 +1741,41 @@ public interface Admin extends AutoCloseable {
      *
      * @param mirrorName The cluster mirror name
      * @param options Options for the delete mirror operation
-     * @return The DeleteMirrorResult
+     * @return The DeleteClusterMirrorResult
      */
-    DeleteMirrorResult deleteMirror(String mirrorName, DeleteMirrorOptions options);
+    DeleteClusterMirrorResult deleteClusterMirror(String mirrorName, DeleteClusterMirrorOptions options);
 
     /**
      * List the cluster mirrors available in the cluster with the default options.
      *
-     * <p>This is a convenience method for {@link #listMirrors(ListMirrorsOptions)} with default options.
+     * <p>This is a convenience method for {@link #listClusterMirrors(ListClusterMirrorsOptions)} with default options.
      * See the overload for more details.
      *
-     * @return The ListMirrorsResult.
+     * @return The ListClusterMirrorsResult.
      */
-    default ListMirrorsResult listMirrors() {
-        return listMirrors(new ListMirrorsOptions());
+    default ListClusterMirrorsResult listClusterMirrors() {
+        return listClusterMirrors(new ListClusterMirrorsOptions());
     }
 
     /**
      * List the cluster mirrors available in the cluster.
      *
      * @param options The options to use when listing the mirrors.
-     * @return The ListMirrorsResult.
+     * @return The ListClusterMirrorsResult.
      */
-    ListMirrorsResult listMirrors(ListMirrorsOptions options);
+    ListClusterMirrorsResult listClusterMirrors(ListClusterMirrorsOptions options);
 
     /**
      * Describe cluster mirrors with the default options.
      *
-     * <p>This is a convenience method for {@link #describeMirrors(Collection, DescribeMirrorsOptions)}
+     * <p>This is a convenience method for {@link #describeClusterMirrors(Collection, DescribeClusterMirrorsOptions)}
      * with default options. See the overload for more details.
      *
      * @param mirrorNames The names of the mirrors to describe
-     * @return The DescribeMirrorsResult
+     * @return The DescribeClusterMirrorsResult
      */
-    default DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames) {
-        return describeMirrors(mirrorNames, new DescribeMirrorsOptions());
+    default DescribeClusterMirrorsResult describeClusterMirrors(Collection<String> mirrorNames) {
+        return describeClusterMirrors(mirrorNames, new DescribeClusterMirrorsOptions());
     }
 
     /**
@@ -1788,9 +1788,9 @@ public interface Admin extends AutoCloseable {
      *
      * @param mirrorNames The names of the mirrors to describe
      * @param options The options to use when describing mirrors
-     * @return The DescribeMirrorsResult
+     * @return The DescribeClusterMirrorsResult
      */
-    DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames, DescribeMirrorsOptions options);
+    DescribeClusterMirrorsResult describeClusterMirrors(Collection<String> mirrorNames, DescribeClusterMirrorsOptions options);
 
     /**
      * Describe producer state on a set of topic partitions. See

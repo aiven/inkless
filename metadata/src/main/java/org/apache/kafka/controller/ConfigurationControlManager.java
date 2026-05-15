@@ -26,8 +26,8 @@ import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.config.types.Password;
-import org.apache.kafka.common.message.CreateMirrorResponseData;
-import org.apache.kafka.common.message.DeleteMirrorResponseData;
+import org.apache.kafka.common.message.CreateClusterMirrorResponseData;
+import org.apache.kafka.common.message.DeleteClusterMirrorResponseData;
 import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
 import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
@@ -73,8 +73,8 @@ import static org.apache.kafka.common.config.ConfigResource.Type.BROKER;
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG;
 import static org.apache.kafka.common.metadata.MetadataRecordType.CONFIG_RECORD;
+import static org.apache.kafka.common.protocol.Errors.CLUSTER_MIRROR_ALREADY_EXISTS;
 import static org.apache.kafka.common.protocol.Errors.INVALID_CONFIG;
-import static org.apache.kafka.common.protocol.Errors.MIRROR_ALREADY_EXISTS;
 import static org.apache.kafka.controller.QuorumController.MAX_RECORDS_PER_USER_OP;
 
 public class ConfigurationControlManager {
@@ -262,7 +262,7 @@ public class ConfigurationControlManager {
             } else {
                 curVal = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
                 if (curVal == null || curVal.isBlank()) {
-                    topicRes.setErrorCode(Errors.UNKNOWN_MIRROR.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.UNKNOWN_CLUSTER_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -271,7 +271,7 @@ public class ConfigurationControlManager {
                     ? curVal.substring(0, curVal.length() - PAUSED_TOPIC_SUFFIX.length())
                     : curVal;
                 if (!originalName.equals(mirrorName)) {
-                    topicRes.setErrorCode(Errors.TOPIC_NOT_IN_MIRROR.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.TOPIC_NOT_IN_CLUSTER_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -306,7 +306,7 @@ public class ConfigurationControlManager {
             } else {
                 String curVal = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
                 if (curVal == null || curVal.isBlank()) {
-                    topicRes.setErrorCode(Errors.UNKNOWN_MIRROR.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.UNKNOWN_CLUSTER_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -314,7 +314,7 @@ public class ConfigurationControlManager {
                 if (curVal.endsWith(PAUSED_TOPIC_SUFFIX)) {
                     String originalName = curVal.substring(0, curVal.length() - PAUSED_TOPIC_SUFFIX.length());
                     if (!originalName.equals(mirrorName)) {
-                        topicRes.setErrorCode(Errors.TOPIC_NOT_IN_MIRROR.code()).setName(topic);
+                        topicRes.setErrorCode(Errors.TOPIC_NOT_IN_CLUSTER_MIRROR.code()).setName(topic);
                         topicResList.add(topicRes);
                         continue;
                     }
@@ -330,7 +330,7 @@ public class ConfigurationControlManager {
                 }
 
                 if (!curVal.equals(mirrorName)) {
-                    topicRes.setErrorCode(Errors.TOPIC_NOT_IN_MIRROR.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.TOPIC_NOT_IN_CLUSTER_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -365,7 +365,7 @@ public class ConfigurationControlManager {
             } else {
                 String curVal = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
                 if (curVal == null || curVal.isBlank()) {
-                    topicRes.setErrorCode(Errors.UNKNOWN_MIRROR.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.UNKNOWN_CLUSTER_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -378,7 +378,7 @@ public class ConfigurationControlManager {
 
                 String originalMirrorName = curVal.substring(0, curVal.length() - PAUSED_TOPIC_SUFFIX.length());
                 if (!originalMirrorName.equals(mirrorName)) {
-                    topicRes.setErrorCode(Errors.TOPIC_NOT_IN_MIRROR.code()).setName(topic);
+                    topicRes.setErrorCode(Errors.TOPIC_NOT_IN_CLUSTER_MIRROR.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -434,7 +434,7 @@ public class ConfigurationControlManager {
             if (currentConfigs != null) {
                 String currMirrorNameValue = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
                 if (currMirrorNameValue != null && !currMirrorNameValue.isBlank() && !currMirrorNameValue.endsWith(STOPPED_TOPIC_SUFFIX)) {
-                    topicRes.setErrorCode(Errors.TOPIC_ALREADY_IN_MIRROR.code()).setName(topicName);
+                    topicRes.setErrorCode(Errors.TOPIC_ALREADY_IN_CLUSTER_MIRROR.code()).setName(topicName);
                     topicResList.add(topicRes);
                     continue;
                 }
@@ -488,7 +488,7 @@ public class ConfigurationControlManager {
      */
     private ApiError updatePatternsAndStopExcluded(String mirrorName, List<ApiMessageAndVersion> records,
                                                    BiConsumer<Set<String>, Set<String>> mutator) {
-        ConfigResource mirrorResource = new ConfigResource(Type.MIRROR, mirrorName);
+        ConfigResource mirrorResource = new ConfigResource(Type.CLUSTER_MIRROR, mirrorName);
         TimelineHashMap<String, String> mirrorConfigs = configData.get(mirrorResource);
 
         String currentInclude = mirrorConfigs != null ? mirrorConfigs.getOrDefault("mirror.topics.include", "") : "";
@@ -535,18 +535,18 @@ public class ConfigurationControlManager {
         }
     }
 
-    ControllerResult<CreateMirrorResponseData> addMirrorConfig(
+    ControllerResult<CreateClusterMirrorResponseData> addMirrorConfig(
             Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
             boolean newlyCreatedResource
     ) {
         List<ApiMessageAndVersion> outputRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
-        CreateMirrorResponseData data = new CreateMirrorResponseData();
+        CreateClusterMirrorResponseData data = new CreateClusterMirrorResponseData();
 
         for (Entry<ConfigResource, Map<String, Entry<OpType, String>>> resourceEntry :
                 configChanges.entrySet()) {
             String mirrorName = resourceEntry.getKey().name();
             if (mirrorName.endsWith(STOPPED_TOPIC_SUFFIX) || mirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) {
-                data.setErrorCode(Errors.INVALID_MIRROR_NAME.code());
+                data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_NAME.code());
                 data.setErrorMessage("Mirror name must not end with '"
                     + STOPPED_TOPIC_SUFFIX + "' or '" + PAUSED_TOPIC_SUFFIX + "'");
                 return ControllerResult.of(List.of(), data);
@@ -554,7 +554,7 @@ public class ConfigurationControlManager {
 
             final Map<String, String> existingConfig = getConfigs(resourceEntry.getKey());
             if (!existingConfig.isEmpty()) {
-                data.setErrorCode(MIRROR_ALREADY_EXISTS.code())
+                data.setErrorCode(CLUSTER_MIRROR_ALREADY_EXISTS.code())
                     .setErrorMessage("Mirror '" + mirrorName + "' already exists");
                 return ControllerResult.of(List.of(), data);
             }
@@ -573,15 +573,15 @@ public class ConfigurationControlManager {
         return ControllerResult.atomicOf(outputRecords, data);
     }
 
-    ControllerResult<DeleteMirrorResponseData> deleteMirror(String mirrorName) {
+    ControllerResult<DeleteClusterMirrorResponseData> deleteClusterMirror(String mirrorName) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
-        DeleteMirrorResponseData data = new DeleteMirrorResponseData();
+        DeleteClusterMirrorResponseData data = new DeleteClusterMirrorResponseData();
 
         // Check mirror existence
-        ConfigResource mirrorResource = new ConfigResource(Type.MIRROR, mirrorName);
+        ConfigResource mirrorResource = new ConfigResource(Type.CLUSTER_MIRROR, mirrorName);
         TimelineHashMap<String, String> mirrorConfigs = configData.get(mirrorResource);
         if (mirrorConfigs == null || mirrorConfigs.isEmpty()) {
-            data.setErrorCode(Errors.UNKNOWN_MIRROR.code());
+            data.setErrorCode(Errors.UNKNOWN_CLUSTER_MIRROR.code());
             data.setErrorMessage("Mirror '" + mirrorName + "' not found");
             return ControllerResult.of(records, data);
         }
@@ -593,7 +593,7 @@ public class ConfigurationControlManager {
             String mirrorNameValue = entry.getValue().get(TopicConfig.MIRROR_NAME_CONFIG);
             if (mirrorNameValue == null || mirrorNameValue.isBlank()) continue;
             if (mirrorNameValue.equals(mirrorName) || mirrorNameValue.equals(mirrorName + PAUSED_TOPIC_SUFFIX)) {
-                data.setErrorCode(Errors.MIRROR_NOT_EMPTY.code());
+                data.setErrorCode(Errors.CLUSTER_MIRROR_NOT_EMPTY.code());
                 data.setErrorMessage("Mirror '" + mirrorName + "' still has active or paused topic '"
                     + entry.getKey().name() + "'");
                 return ControllerResult.of(records, data);

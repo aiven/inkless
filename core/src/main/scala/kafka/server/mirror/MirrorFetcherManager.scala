@@ -25,7 +25,7 @@ import org.apache.kafka.common.utils.{LogContext, Time}
 import org.apache.kafka.metadata.MetadataCache
 import org.apache.kafka.server.{LeaderEndPoint, PartitionFetchState}
 import org.apache.kafka.server.common.MetadataVersion
-import org.apache.kafka.server.config.MirrorConfig
+import org.apache.kafka.server.config.ClusterMirrorConfig
 import org.apache.kafka.server.network.BrokerEndPoint
 
 import scala.collection.{Map, mutable}
@@ -137,11 +137,11 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     val logContext = new LogContext(s"[MirrorFetcher id=${brokerConfig.brokerId}, fetcherId=$fetcherId, leaderId=${srcEndpoint.id}, mirrorName=$mirrorName] ")
 
     val sender = if (mirrorName.nonEmpty) {
-      val mirrorProperties = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName))
+      val mirrorProperties = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_MIRROR, mirrorName))
       info(s"Using mirror properties for $mirrorName: ${mirrorProperties.keySet()}")
-      val mirrorConfig = MirrorConfig.fromProperties(mirrorProperties)
+      val mirrorConfig = ClusterMirrorConfig.fromProperties(mirrorProperties)
       val clientId = s"fetcherId-$fetcherId-mirrorName-$mirrorName"
-      MirrorUtils.createSender(srcEndpoint, mirrorConfig, brokerConfig, metrics, time, clientId, logContext)
+      ClusterMirrorUtils.createSender(srcEndpoint, mirrorConfig, brokerConfig, metrics, time, clientId, logContext)
     } else {
       throw new IllegalArgumentException("Mirror name must be provided for remote fetchers")
     }

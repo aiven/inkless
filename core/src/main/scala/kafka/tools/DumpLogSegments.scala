@@ -40,7 +40,7 @@ import org.apache.kafka.coordinator.group.generated.{GroupMetadataValue, GroupMe
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRecordSerde
 import org.apache.kafka.coordinator.common.runtime.Deserializer.UnknownRecordTypeException
 import org.apache.kafka.coordinator.group.GroupCoordinatorRecordSerde
-import org.apache.kafka.coordinator.mirror.MirrorRecordSerde
+import org.apache.kafka.coordinator.mirror.ClusterMirrorRecordSerde
 import org.apache.kafka.coordinator.mirror.generated.{CoordinatorRecordJsonConverters => MirrorCoordinatorRecordJsonConverters}
 import org.apache.kafka.coordinator.share.ShareCoordinatorRecordSerde
 import org.apache.kafka.coordinator.share.generated.{CoordinatorRecordJsonConverters => ShareCoordinatorRecordJsonConverters}
@@ -608,7 +608,7 @@ object DumpLogSegments {
   }
 
   // Package private for testing.
-  class MirrorStateMessageParser extends CoordinatorRecordMessageParser(new MirrorRecordSerde()) {
+  class MirrorStateMessageParser extends CoordinatorRecordMessageParser(new ClusterMirrorRecordSerde()) {
     override protected def keyAsJson(message: ApiMessage): JsonNode = {
       MirrorCoordinatorRecordJsonConverters.writeRecordKeyAsJson(message)
     }

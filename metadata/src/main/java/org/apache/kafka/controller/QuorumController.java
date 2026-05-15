@@ -43,14 +43,14 @@ import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
 import org.apache.kafka.common.message.BumpLeaderEpochsResponseData;
 import org.apache.kafka.common.message.ControllerRegistrationRequestData;
+import org.apache.kafka.common.message.CreateClusterMirrorResponseData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
-import org.apache.kafka.common.message.CreateMirrorResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
-import org.apache.kafka.common.message.DeleteMirrorResponseData;
+import org.apache.kafka.common.message.DeleteClusterMirrorResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
@@ -1773,12 +1773,12 @@ public final class QuorumController implements Controller {
     }
 
     @Override
-    public CompletableFuture<CreateMirrorResponseData> createMirror(
+    public CompletableFuture<CreateClusterMirrorResponseData> createClusterMirror(
             ControllerRequestContext context,
             Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges
     ) {
-        return appendWriteEvent("createMirror", context.deadlineNs(), () -> {
-            ControllerResult<CreateMirrorResponseData> result =
+        return appendWriteEvent("createClusterMirror", context.deadlineNs(), () -> {
+            ControllerResult<CreateClusterMirrorResponseData> result =
                     configurationControl.addMirrorConfig(configChanges, false);
             return result;
         });
@@ -1838,12 +1838,12 @@ public final class QuorumController implements Controller {
     }
 
     @Override
-    public CompletableFuture<DeleteMirrorResponseData> deleteMirror(
+    public CompletableFuture<DeleteClusterMirrorResponseData> deleteClusterMirror(
             ControllerRequestContext context,
             String mirrorName
     ) {
-        return appendWriteEvent("deleteMirror", context.deadlineNs(),
-                () -> configurationControl.deleteMirror(mirrorName));
+        return appendWriteEvent("deleteClusterMirror", context.deadlineNs(),
+                () -> configurationControl.deleteClusterMirror(mirrorName));
     }
 
     @Override

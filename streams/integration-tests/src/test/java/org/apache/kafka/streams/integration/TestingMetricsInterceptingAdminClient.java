@@ -43,22 +43,22 @@ import org.apache.kafka.clients.admin.AlterUserScramCredentialsOptions;
 import org.apache.kafka.clients.admin.AlterUserScramCredentialsResult;
 import org.apache.kafka.clients.admin.CreateAclsOptions;
 import org.apache.kafka.clients.admin.CreateAclsResult;
+import org.apache.kafka.clients.admin.CreateClusterMirrorOptions;
+import org.apache.kafka.clients.admin.CreateClusterMirrorResult;
 import org.apache.kafka.clients.admin.CreateDelegationTokenOptions;
 import org.apache.kafka.clients.admin.CreateDelegationTokenResult;
-import org.apache.kafka.clients.admin.CreateMirrorOptions;
-import org.apache.kafka.clients.admin.CreateMirrorResult;
 import org.apache.kafka.clients.admin.CreatePartitionsOptions;
 import org.apache.kafka.clients.admin.CreatePartitionsResult;
 import org.apache.kafka.clients.admin.CreateTopicsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.DeleteAclsOptions;
 import org.apache.kafka.clients.admin.DeleteAclsResult;
+import org.apache.kafka.clients.admin.DeleteClusterMirrorOptions;
+import org.apache.kafka.clients.admin.DeleteClusterMirrorResult;
 import org.apache.kafka.clients.admin.DeleteConsumerGroupOffsetsOptions;
 import org.apache.kafka.clients.admin.DeleteConsumerGroupOffsetsResult;
 import org.apache.kafka.clients.admin.DeleteConsumerGroupsOptions;
 import org.apache.kafka.clients.admin.DeleteConsumerGroupsResult;
-import org.apache.kafka.clients.admin.DeleteMirrorOptions;
-import org.apache.kafka.clients.admin.DeleteMirrorResult;
 import org.apache.kafka.clients.admin.DeleteRecordsOptions;
 import org.apache.kafka.clients.admin.DeleteRecordsResult;
 import org.apache.kafka.clients.admin.DeleteShareGroupOffsetsOptions;
@@ -77,6 +77,8 @@ import org.apache.kafka.clients.admin.DescribeClassicGroupsOptions;
 import org.apache.kafka.clients.admin.DescribeClassicGroupsResult;
 import org.apache.kafka.clients.admin.DescribeClientQuotasOptions;
 import org.apache.kafka.clients.admin.DescribeClientQuotasResult;
+import org.apache.kafka.clients.admin.DescribeClusterMirrorsOptions;
+import org.apache.kafka.clients.admin.DescribeClusterMirrorsResult;
 import org.apache.kafka.clients.admin.DescribeClusterOptions;
 import org.apache.kafka.clients.admin.DescribeClusterResult;
 import org.apache.kafka.clients.admin.DescribeConfigsOptions;
@@ -91,8 +93,6 @@ import org.apache.kafka.clients.admin.DescribeLogDirsOptions;
 import org.apache.kafka.clients.admin.DescribeLogDirsResult;
 import org.apache.kafka.clients.admin.DescribeMetadataQuorumOptions;
 import org.apache.kafka.clients.admin.DescribeMetadataQuorumResult;
-import org.apache.kafka.clients.admin.DescribeMirrorsOptions;
-import org.apache.kafka.clients.admin.DescribeMirrorsResult;
 import org.apache.kafka.clients.admin.DescribeProducersOptions;
 import org.apache.kafka.clients.admin.DescribeProducersResult;
 import org.apache.kafka.clients.admin.DescribeReplicaLogDirsOptions;
@@ -117,6 +117,8 @@ import org.apache.kafka.clients.admin.FenceProducersResult;
 import org.apache.kafka.clients.admin.FindCoordinatorResult;
 import org.apache.kafka.clients.admin.ListClientMetricsResourcesOptions;
 import org.apache.kafka.clients.admin.ListClientMetricsResourcesResult;
+import org.apache.kafka.clients.admin.ListClusterMirrorsOptions;
+import org.apache.kafka.clients.admin.ListClusterMirrorsResult;
 import org.apache.kafka.clients.admin.ListConfigResourcesOptions;
 import org.apache.kafka.clients.admin.ListConfigResourcesResult;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsOptions;
@@ -126,8 +128,6 @@ import org.apache.kafka.clients.admin.ListConsumerGroupsOptions;
 import org.apache.kafka.clients.admin.ListConsumerGroupsResult;
 import org.apache.kafka.clients.admin.ListGroupsOptions;
 import org.apache.kafka.clients.admin.ListGroupsResult;
-import org.apache.kafka.clients.admin.ListMirrorsOptions;
-import org.apache.kafka.clients.admin.ListMirrorsResult;
 import org.apache.kafka.clients.admin.ListOffsetsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.ListPartitionReassignmentsOptions;
@@ -314,8 +314,8 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     }
 
     @Override
-    public ListMirrorsResult listMirrors(final ListMirrorsOptions options) {
-        return adminDelegate.listMirrors(options);
+    public ListClusterMirrorsResult listClusterMirrors(final ListClusterMirrorsOptions options) {
+        return adminDelegate.listClusterMirrors(options);
     }
 
     @Override
@@ -435,8 +435,8 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     }
 
     @Override
-    public CreateMirrorResult createMirror(final String mirrorName, final Map<String, String> configs, final CreateMirrorOptions options) {
-        return adminDelegate.createMirror(mirrorName, configs, options);
+    public CreateClusterMirrorResult createClusterMirror(final String mirrorName, final Map<String, String> configs, final CreateClusterMirrorOptions options) {
+        return adminDelegate.createClusterMirror(mirrorName, configs, options);
     }
 
     @Override
@@ -460,13 +460,13 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     }
 
     @Override
-    public DeleteMirrorResult deleteMirror(final String mirrorName, final DeleteMirrorOptions options) {
-        return adminDelegate.deleteMirror(mirrorName, options);
+    public DeleteClusterMirrorResult deleteClusterMirror(final String mirrorName, final DeleteClusterMirrorOptions options) {
+        return adminDelegate.deleteClusterMirror(mirrorName, options);
     }
 
     @Override
-    public DescribeMirrorsResult describeMirrors(final Collection<String> mirrorNames, final DescribeMirrorsOptions options) {
-        return adminDelegate.describeMirrors(mirrorNames, options);
+    public DescribeClusterMirrorsResult describeClusterMirrors(final Collection<String> mirrorNames, final DescribeClusterMirrorsOptions options) {
+        return adminDelegate.describeClusterMirrors(mirrorNames, options);
     }
 
     @Override

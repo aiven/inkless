@@ -56,7 +56,7 @@ class ConfigHelper(metadataCache: MetadataCache, config: KafkaConfig, configRepo
       ConfigResource.Type.forId(resource.resourceType) match {
         case ConfigResource.Type.BROKER | ConfigResource.Type.BROKER_LOGGER | ConfigResource.Type.CLIENT_METRICS =>
           authHelper.authorize(request.context, DESCRIBE_CONFIGS, CLUSTER, CLUSTER_NAME)
-        case ConfigResource.Type.MIRROR =>
+        case ConfigResource.Type.CLUSTER_MIRROR =>
           authHelper.authorize(request.context, DESCRIBE_CONFIGS, CLUSTER_MIRROR, resource.resourceName)
         case ConfigResource.Type.TOPIC =>
           authHelper.authorize(request.context, DESCRIBE_CONFIGS, TOPIC, resource.resourceName)
@@ -69,7 +69,7 @@ class ConfigHelper(metadataCache: MetadataCache, config: KafkaConfig, configRepo
     val unauthorizedConfigs = unauthorizedResources.map { resource =>
       val error = ConfigResource.Type.forId(resource.resourceType) match {
         case ConfigResource.Type.BROKER | ConfigResource.Type.BROKER_LOGGER | ConfigResource.Type.CLIENT_METRICS => Errors.CLUSTER_AUTHORIZATION_FAILED
-        case ConfigResource.Type.MIRROR => Errors.MIRROR_AUTHORIZATION_FAILED
+        case ConfigResource.Type.CLUSTER_MIRROR => Errors.CLUSTER_MIRROR_AUTHORIZATION_FAILED
         case ConfigResource.Type.TOPIC => Errors.TOPIC_AUTHORIZATION_FAILED
         case ConfigResource.Type.GROUP => Errors.GROUP_AUTHORIZATION_FAILED
         case rt => throw new InvalidRequestException(s"Unexpected resource type $rt for resource ${resource.resourceName}")
@@ -142,12 +142,12 @@ class ConfigHelper(metadataCache: MetadataCache, config: KafkaConfig, configRepo
               createResponseConfig(resource, groupConfig, createGroupConfigEntry(groupConfig, groupProps, includeSynonyms, includeDocumentation)(_, _))
             }
 
-          case ConfigResource.Type.MIRROR =>
+          case ConfigResource.Type.CLUSTER_MIRROR =>
             val cluster = resource.resourceName
             if (cluster == null || cluster.isEmpty) {
               throw new InvalidRequestException("Cluster name must not be empty")
             } else {
-              val clusterConfigProps = configRepository.config(new ConfigResource(ConfigResource.Type.MIRROR, resource.resourceName))
+              val clusterConfigProps = configRepository.config(new ConfigResource(ConfigResource.Type.CLUSTER_MIRROR, resource.resourceName))
               val configEntries = new util.ArrayList[DescribeConfigsResponseData.DescribeConfigsResourceResult]()
               clusterConfigProps.entrySet().forEach(entry =>
                 configEntries.add(new DescribeConfigsResponseData.DescribeConfigsResourceResult().setName(entry.getKey.toString).setValue(entry.getValue.toString).setConfigType(DescribeConfigsResponse.ConfigType.STRING.id()).setConfigSource(ConfigSource.DYNAMIC_BROKER_CONFIG.id))

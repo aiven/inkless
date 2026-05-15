@@ -85,11 +85,11 @@ import org.apache.kafka.common.message.ControllerRegistrationRequestData;
 import org.apache.kafka.common.message.ControllerRegistrationResponseData;
 import org.apache.kafka.common.message.CreateAclsRequestData;
 import org.apache.kafka.common.message.CreateAclsResponseData;
+import org.apache.kafka.common.message.CreateClusterMirrorRequestData;
+import org.apache.kafka.common.message.CreateClusterMirrorResponseData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData.CreatableRenewers;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
-import org.apache.kafka.common.message.CreateMirrorRequestData;
-import org.apache.kafka.common.message.CreateMirrorResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsAssignment;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
@@ -106,12 +106,12 @@ import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicCo
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicResult;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
 import org.apache.kafka.common.message.DeleteAclsResponseData;
+import org.apache.kafka.common.message.DeleteClusterMirrorRequestData;
+import org.apache.kafka.common.message.DeleteClusterMirrorResponseData;
 import org.apache.kafka.common.message.DeleteGroupsRequestData;
 import org.apache.kafka.common.message.DeleteGroupsResponseData;
 import org.apache.kafka.common.message.DeleteGroupsResponseData.DeletableGroupResult;
 import org.apache.kafka.common.message.DeleteGroupsResponseData.DeletableGroupResultCollection;
-import org.apache.kafka.common.message.DeleteMirrorRequestData;
-import org.apache.kafka.common.message.DeleteMirrorResponseData;
 import org.apache.kafka.common.message.DeleteRecordsRequestData;
 import org.apache.kafka.common.message.DeleteRecordsResponseData;
 import org.apache.kafka.common.message.DeleteShareGroupOffsetsRequestData;
@@ -125,6 +125,8 @@ import org.apache.kafka.common.message.DescribeAclsResponseData;
 import org.apache.kafka.common.message.DescribeAclsResponseData.AclDescription;
 import org.apache.kafka.common.message.DescribeAclsResponseData.DescribeAclsResource;
 import org.apache.kafka.common.message.DescribeClientQuotasResponseData;
+import org.apache.kafka.common.message.DescribeClusterMirrorsRequestData;
+import org.apache.kafka.common.message.DescribeClusterMirrorsResponseData;
 import org.apache.kafka.common.message.DescribeClusterRequestData;
 import org.apache.kafka.common.message.DescribeClusterResponseData;
 import org.apache.kafka.common.message.DescribeClusterResponseData.DescribeClusterBroker;
@@ -138,8 +140,6 @@ import org.apache.kafka.common.message.DescribeGroupsResponseData;
 import org.apache.kafka.common.message.DescribeGroupsResponseData.DescribedGroup;
 import org.apache.kafka.common.message.DescribeLogDirsRequestData;
 import org.apache.kafka.common.message.DescribeLogDirsResponseData;
-import org.apache.kafka.common.message.DescribeMirrorsRequestData;
-import org.apache.kafka.common.message.DescribeMirrorsResponseData;
 import org.apache.kafka.common.message.DescribeProducersRequestData;
 import org.apache.kafka.common.message.DescribeProducersResponseData;
 import org.apache.kafka.common.message.DescribeQuorumRequestData;
@@ -185,12 +185,12 @@ import org.apache.kafka.common.message.JoinGroupResponseData;
 import org.apache.kafka.common.message.JoinGroupResponseData.JoinGroupResponseMember;
 import org.apache.kafka.common.message.LeaveGroupRequestData.MemberIdentity;
 import org.apache.kafka.common.message.LeaveGroupResponseData;
+import org.apache.kafka.common.message.ListClusterMirrorsRequestData;
+import org.apache.kafka.common.message.ListClusterMirrorsResponseData;
 import org.apache.kafka.common.message.ListConfigResourcesRequestData;
 import org.apache.kafka.common.message.ListConfigResourcesResponseData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
 import org.apache.kafka.common.message.ListGroupsResponseData;
-import org.apache.kafka.common.message.ListMirrorsRequestData;
-import org.apache.kafka.common.message.ListMirrorsResponseData;
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition;
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic;
 import org.apache.kafka.common.message.ListOffsetsResponseData;
@@ -1045,7 +1045,7 @@ public class RequestResponseTest {
             case SASL_AUTHENTICATE: return createSaslAuthenticateRequest(version);
             case CREATE_PARTITIONS: return createCreatePartitionsRequest(version);
             case CREATE_DELEGATION_TOKEN: return createCreateTokenRequest(version);
-            case CREATE_MIRROR: return createCreateMirrorRequest(version);
+            case CREATE_CLUSTER_MIRROR: return createCreateClusterMirrorRequest(version);
             case RENEW_DELEGATION_TOKEN: return createRenewTokenRequest(version);
             case EXPIRE_DELEGATION_TOKEN: return createExpireTokenRequest(version);
             case DESCRIBE_DELEGATION_TOKEN: return createDescribeTokenRequest(version);
@@ -1103,13 +1103,13 @@ public class RequestResponseTest {
             case GET_REPLICA_LOG_INFO: return createGetReplicaLogInfoRequest(version);
             case START_MIRROR_TOPICS: return createStartMirrorTopicsRequest(version);
             case STOP_MIRROR_TOPICS: return createStopMirrorTopicsRequest(version);
-            case LIST_MIRRORS: return createListMirrorsRequest(version);
-            case DESCRIBE_MIRRORS: return createDescribeMirrorsRequest(version);
+            case LIST_CLUSTER_MIRRORS: return createListClusterMirrorsRequest(version);
+            case DESCRIBE_CLUSTER_MIRRORS: return createDescribeClusterMirrorsRequest(version);
             case READ_MIRROR_STATES: return createReadMirrorStatesRequest(version);
             case WRITE_MIRROR_STATES: return createWriteMirrorStatesRequest(version);
             case PAUSE_MIRROR_TOPICS: return createPauseMirrorTopicsRequest(version);
             case RESUME_MIRROR_TOPICS: return createResumeMirrorTopicsRequest(version);
-            case DELETE_MIRROR: return createDeleteMirrorRequest(version);
+            case DELETE_CLUSTER_MIRROR: return createDeleteClusterMirrorRequest(version);
             case BUMP_LEADER_EPOCHS: return createBumpLeaderEpochsRequest(version);
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
@@ -1152,7 +1152,7 @@ public class RequestResponseTest {
             case SASL_AUTHENTICATE: return createSaslAuthenticateResponse();
             case CREATE_PARTITIONS: return createCreatePartitionsResponse();
             case CREATE_DELEGATION_TOKEN: return createCreateTokenResponse();
-            case CREATE_MIRROR: return createCreateMirrorResponse();
+            case CREATE_CLUSTER_MIRROR: return createCreateClusterMirrorResponse();
             case RENEW_DELEGATION_TOKEN: return createRenewTokenResponse();
             case EXPIRE_DELEGATION_TOKEN: return createExpireTokenResponse();
             case DESCRIBE_DELEGATION_TOKEN: return createDescribeTokenResponse(version);
@@ -1210,13 +1210,13 @@ public class RequestResponseTest {
             case GET_REPLICA_LOG_INFO: return createGetReplicaLogInfoResponse();
             case START_MIRROR_TOPICS: return createStartMirrorTopicsResponse();
             case STOP_MIRROR_TOPICS: return createStopMirrorTopicsResponse();
-            case LIST_MIRRORS: return createListMirrorsResponse();
-            case DESCRIBE_MIRRORS: return createDescribeMirrorsResponse();
+            case LIST_CLUSTER_MIRRORS: return createListClusterMirrorsResponse();
+            case DESCRIBE_CLUSTER_MIRRORS: return createDescribeClusterMirrorsResponse();
             case READ_MIRROR_STATES: return createReadMirrorStatesResponse();
             case WRITE_MIRROR_STATES: return createWriteMirrorStatesResponse();
             case PAUSE_MIRROR_TOPICS: return createPauseMirrorTopicsResponse();
             case RESUME_MIRROR_TOPICS: return createResumeMirrorTopicsResponse();
-            case DELETE_MIRROR: return createDeleteMirrorResponse();
+            case DELETE_CLUSTER_MIRROR: return createDeleteClusterMirrorResponse();
             case BUMP_LEADER_EPOCHS: return createBumpLeaderEpochsResponse();
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
@@ -1260,35 +1260,35 @@ public class RequestResponseTest {
         return new StopMirrorTopicsResponse(data);
     }
 
-    public ListMirrorsRequest createListMirrorsRequest(short version) {
-        ListMirrorsRequestData data = new ListMirrorsRequestData();
-        return new ListMirrorsRequest.Builder(data).build(version);
+    public ListClusterMirrorsRequest createListClusterMirrorsRequest(short version) {
+        ListClusterMirrorsRequestData data = new ListClusterMirrorsRequestData();
+        return new ListClusterMirrorsRequest.Builder(data).build(version);
     }
 
-    public ListMirrorsResponse createListMirrorsResponse() {
-        ListMirrorsResponseData data = new ListMirrorsResponseData()
-                .setMirrors(List.of(new ListMirrorsResponseData.ListedMirror()
+    public ListClusterMirrorsResponse createListClusterMirrorsResponse() {
+        ListClusterMirrorsResponseData data = new ListClusterMirrorsResponseData()
+                .setMirrors(List.of(new ListClusterMirrorsResponseData.ListedMirror()
                         .setMirrorName("mirror")
                         .setSourceBootstrap("bootstrap")
                         .setSourceClusterId("clusterId")
                 ));
-        return new ListMirrorsResponse(data);
+        return new ListClusterMirrorsResponse(data);
     }
 
-    public DescribeMirrorsRequest createDescribeMirrorsRequest(short version) {
-        DescribeMirrorsRequestData data = new DescribeMirrorsRequestData()
+    public DescribeClusterMirrorsRequest createDescribeClusterMirrorsRequest(short version) {
+        DescribeClusterMirrorsRequestData data = new DescribeClusterMirrorsRequestData()
                 .setMirrorNames(List.of("mirror"))
                 .setIncludeAuthorizedOperations(true);
-        return new DescribeMirrorsRequest.Builder(data).build(version);
+        return new DescribeClusterMirrorsRequest.Builder(data).build(version);
     }
 
-    public DescribeMirrorsResponse createDescribeMirrorsResponse() {
-        DescribeMirrorsResponseData data = new DescribeMirrorsResponseData()
-                .setMirrors(List.of(new DescribeMirrorsResponseData.DescribedMirror()
+    public DescribeClusterMirrorsResponse createDescribeClusterMirrorsResponse() {
+        DescribeClusterMirrorsResponseData data = new DescribeClusterMirrorsResponseData()
+                .setMirrors(List.of(new DescribeClusterMirrorsResponseData.DescribedMirror()
                         .setMirrorName("mirror")
-                        .setTopics(List.of(new DescribeMirrorsResponseData.TopicPartitions()
+                        .setTopics(List.of(new DescribeClusterMirrorsResponseData.TopicPartitions()
                                 .setTopicName("topic")
-                                .setPartitions(List.of(new DescribeMirrorsResponseData.PartitionDetail()
+                                .setPartitions(List.of(new DescribeClusterMirrorsResponseData.PartitionDetail()
                                         .setPartitionIndex(0)
                                         .setState("MIRRORING")
                                         .setLag(100L)
@@ -1297,7 +1297,7 @@ public class RequestResponseTest {
                                         .setSourceOffset(100)
                                 ))
                         ))));
-        return new DescribeMirrorsResponse(data);
+        return new DescribeClusterMirrorsResponse(data);
     }
 
     public ReadMirrorStatesRequest createReadMirrorStatesRequest(short version) {
@@ -1386,15 +1386,15 @@ public class RequestResponseTest {
         return new ResumeMirrorTopicsResponse(data);
     }
 
-    public DeleteMirrorRequest createDeleteMirrorRequest(short version) {
-        DeleteMirrorRequestData data = new DeleteMirrorRequestData()
+    public DeleteClusterMirrorRequest createDeleteClusterMirrorRequest(short version) {
+        DeleteClusterMirrorRequestData data = new DeleteClusterMirrorRequestData()
                 .setMirrorName("mirror");
-        return new DeleteMirrorRequest.Builder(data).build(version);
+        return new DeleteClusterMirrorRequest.Builder(data).build(version);
     }
 
-    public DeleteMirrorResponse createDeleteMirrorResponse() {
-        DeleteMirrorResponseData data = new DeleteMirrorResponseData();
-        return new DeleteMirrorResponse(data);
+    public DeleteClusterMirrorResponse createDeleteClusterMirrorResponse() {
+        DeleteClusterMirrorResponseData data = new DeleteClusterMirrorResponseData();
+        return new DeleteClusterMirrorResponse(data);
     }
 
     public BumpLeaderEpochsRequest createBumpLeaderEpochsRequest(short version) {
@@ -3440,20 +3440,20 @@ public class RequestResponseTest {
         return new CreateDelegationTokenResponse(data);
     }
 
-    private CreateMirrorRequest createCreateMirrorRequest(short version) {
-        CreateMirrorRequestData data = new CreateMirrorRequestData()
+    private CreateClusterMirrorRequest createCreateClusterMirrorRequest(short version) {
+        CreateClusterMirrorRequestData data = new CreateClusterMirrorRequestData()
                 .setMirrorName("test-mirror");
-        CreateMirrorRequestData.MirrorConfigCollection configsCollection = new CreateMirrorRequestData.MirrorConfigCollection();
-        configsCollection.add(new CreateMirrorRequestData.MirrorConfig().setName("config1").setValue("value1"));
+        CreateClusterMirrorRequestData.ClusterMirrorConfigCollection configsCollection = new CreateClusterMirrorRequestData.ClusterMirrorConfigCollection();
+        configsCollection.add(new CreateClusterMirrorRequestData.ClusterMirrorConfig().setName("config1").setValue("value1"));
         data.setConfig(configsCollection);
-        return new CreateMirrorRequest.Builder(data).build(version);
+        return new CreateClusterMirrorRequest.Builder(data).build(version);
     }
 
-    private CreateMirrorResponse createCreateMirrorResponse() {
-        CreateMirrorResponseData data = new CreateMirrorResponseData()
+    private CreateClusterMirrorResponse createCreateClusterMirrorResponse() {
+        CreateClusterMirrorResponseData data = new CreateClusterMirrorResponseData()
                 .setThrottleTimeMs(20)
                 .setErrorCode(Errors.NONE.code());
-        return new CreateMirrorResponse(data);
+        return new CreateClusterMirrorResponse(data);
     }
 
     private RenewDelegationTokenRequest createRenewTokenRequest(short version) {

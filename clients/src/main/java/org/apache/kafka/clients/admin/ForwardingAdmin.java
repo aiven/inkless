@@ -276,8 +276,8 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
-    public CreateMirrorResult createMirror(String mirrorName, Map<String, String> configs, CreateMirrorOptions options) {
-        return delegate.createMirror(mirrorName, configs, options);
+    public CreateClusterMirrorResult createClusterMirror(String mirrorName, Map<String, String> configs, CreateClusterMirrorOptions options) {
+        return delegate.createClusterMirror(mirrorName, configs, options);
     }
 
     @Override
@@ -301,12 +301,12 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
-    public DeleteMirrorResult deleteMirror(String mirrorName, DeleteMirrorOptions options) {
-        return delegate.deleteMirror(mirrorName, options);
+    public DeleteClusterMirrorResult deleteClusterMirror(String mirrorName, DeleteClusterMirrorOptions options) {
+        return delegate.deleteClusterMirror(mirrorName, options);
     }
 
-    public DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames, DescribeMirrorsOptions options) {
-        return delegate.describeMirrors(mirrorNames, options);
+    public DescribeClusterMirrorsResult describeClusterMirrors(Collection<String> mirrorNames, DescribeClusterMirrorsOptions options) {
+        return delegate.describeClusterMirrors(mirrorNames, options);
     }
 
     @Override
@@ -401,8 +401,8 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
-    public ListMirrorsResult listMirrors(ListMirrorsOptions options) {
-        return delegate.listMirrors(options);
+    public ListClusterMirrorsResult listClusterMirrors(ListClusterMirrorsOptions options) {
+        return delegate.listClusterMirrors(options);
     }
 
     @Override

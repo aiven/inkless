@@ -2022,7 +2022,7 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         return "kafka\.Kafka"
 
     def create_cluster_mirror(self, node, mirror_name, mirror_config_file):
-        cluster_mirror_script = self.path.script("kafka-mirrors.sh", node)
+        cluster_mirror_script = self.path.script("kafka-cluster-mirrors.sh", node)
 
         cmd = fix_opts_for_new_jvm(node)
         cmd += "%s --bootstrap-server %s --create --mirror %s --mirror-config %s" % \
@@ -2033,7 +2033,7 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         return self.run_cli_tool(node, cmd)
 
     def list_cluster_mirror(self, node):
-        cluster_mirror_script = self.path.script("kafka-mirrors.sh", node)
+        cluster_mirror_script = self.path.script("kafka-cluster-mirrors.sh", node)
 
         cmd = fix_opts_for_new_jvm(node)
         cmd += "%s --bootstrap-server %s --list" % \
@@ -2042,7 +2042,7 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         return self.run_cli_tool(node, cmd)
 
     def describe_cluster_mirror(self, node):
-        cluster_mirror_script = self.path.script("kafka-mirrors.sh", node)
+        cluster_mirror_script = self.path.script("kafka-cluster-mirrors.sh", node)
 
         cmd = fix_opts_for_new_jvm(node)
         cmd += "%s --bootstrap-server %s --describe --json" % \
@@ -2053,10 +2053,10 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
 
     def _cluster_mirror_action(self, node, mirror_name, topics, action):
         assert topics is not None and len(topics) > 0
-        cluster_mirror_script = self.path.script("kafka-mirrors.sh", node)
+        cluster_mirror_script = self.path.script("kafka-cluster-mirrors.sh", node)
 
         cmd = fix_opts_for_new_jvm(node)
-        topic_names = ' '.join(['--topic %s' % topic for topic in topics])
+        topic_names = ' '.join(['--topics %s' % topic for topic in topics])
         cmd += "%s --bootstrap-server %s --%s --mirror %s %s" % \
                (cluster_mirror_script,
                 self.bootstrap_servers(self.security_protocol),
@@ -2081,7 +2081,7 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         return self._cluster_mirror_action(node, mirror_name, topics, 'stop')
 
     def parse_describe_cluster_mirror(self, cluster_mirror_description):
-        """Parse output of kafka-mirrors.sh --describe (or describe_cluster_mirror() method above), which is a string of form
+        """Parse output of kafka-cluster-mirrors.sh --describe (or describe_cluster_mirror() method above), which is a string of form
         """
         parsed = json.loads(cluster_mirror_description)
         mirrors = {}

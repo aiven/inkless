@@ -101,7 +101,7 @@ public class ListConfigResourcesRequest extends AbstractRequest {
                 ConfigResource.Type.BROKER_LOGGER.id(),
                 ConfigResource.Type.CLIENT_METRICS.id(),
                 ConfigResource.Type.GROUP.id(),
-                ConfigResource.Type.MIRROR.id()
+                ConfigResource.Type.CLUSTER_MIRROR.id()
             );
     }
 }

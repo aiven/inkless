@@ -72,7 +72,7 @@ public abstract class AbstractKafkaConfig extends AbstractConfig {
         BrokerSecurityConfigs.CONFIG_DEF,
         DelegationTokenManagerConfigs.CONFIG_DEF,
         AddPartitionsToTxnConfig.CONFIG_DEF,
-        MirrorConfig.brokerConfigDef()
+        ClusterMirrorConfig.brokerConfigDef()
     ));
 
     public AbstractKafkaConfig(ConfigDef definition, Map<?, ?> originals, Map<String, ?> configProviderProps, boolean doLog) {

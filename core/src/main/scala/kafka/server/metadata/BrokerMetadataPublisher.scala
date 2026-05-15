@@ -22,7 +22,7 @@ import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
 import kafka.server.share.SharePartitionManager
 import kafka.server.{KafkaConfig, ReplicaManager}
-import kafka.server.mirror.{MirrorMetadataManager, MirrorCoordinator}
+import kafka.server.mirror.{MirrorMetadataManager, ClusterMirrorCoordinator}
 import kafka.utils.Logging
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.errors.TimeoutException
@@ -36,7 +36,7 @@ import org.apache.kafka.image.publisher.MetadataPublisher
 import org.apache.kafka.image.{MetadataDelta, MetadataImage, TopicDelta}
 import org.apache.kafka.metadata.publisher.AclPublisher
 import org.apache.kafka.server.common.MetadataVersion.MINIMUM_VERSION
-import org.apache.kafka.server.common.{FinalizedFeatures, MirrorVersion, RequestLocal, ShareVersion}
+import org.apache.kafka.server.common.{FinalizedFeatures, ClusterMirrorVersion, RequestLocal, ShareVersion}
 import org.apache.kafka.server.fault.FaultHandler
 import org.apache.kafka.storage.internals.log.{LogManager => JLogManager}
 
@@ -85,7 +85,7 @@ class BrokerMetadataPublisher(
   aclPublisher: AclPublisher,
   fatalFaultHandler: FaultHandler,
   metadataPublishingFaultHandler: FaultHandler,
-  mirrorCoordinator: MirrorCoordinator,
+  mirrorCoordinator: ClusterMirrorCoordinator,
   mirrorMetadataManager: MirrorMetadataManager
 ) extends MetadataPublisher with Logging {
   logIdent = s"[BrokerMetadataPublisher id=${config.nodeId}] "
@@ -115,7 +115,7 @@ class BrokerMetadataPublisher(
   /**
    * The mirror version being used in the broker metadata.
    */
-  private var finalizedMirrorVersion: Short = FinalizedFeatures.fromKRaftVersion(MINIMUM_VERSION).finalizedFeatures().getOrDefault(MirrorVersion.FEATURE_NAME, 0.toShort)
+  private var finalizedMirrorVersion: Short = FinalizedFeatures.fromKRaftVersion(MINIMUM_VERSION).finalizedFeatures().getOrDefault(ClusterMirrorVersion.FEATURE_NAME, 0.toShort)
 
   override def name(): String = "BrokerMetadataPublisher"
 
@@ -295,11 +295,11 @@ class BrokerMetadataPublisher(
         }
 
         try {
-          val newFinalizedMirrorVersion = newFinalizedFeatures.finalizedFeatures().getOrDefault(MirrorVersion.FEATURE_NAME, 0.toShort)
+          val newFinalizedMirrorVersion = newFinalizedFeatures.finalizedFeatures().getOrDefault(ClusterMirrorVersion.FEATURE_NAME, 0.toShort)
           // Mirror version feature has been toggled.
           if (newFinalizedMirrorVersion != finalizedMirrorVersion) {
             finalizedMirrorVersion = newFinalizedMirrorVersion
-            val mirrorVersion: MirrorVersion = MirrorVersion.fromFeatureLevel(finalizedMirrorVersion)
+            val mirrorVersion: ClusterMirrorVersion = ClusterMirrorVersion.fromFeatureLevel(finalizedMirrorVersion)
             info(s"Feature mirror.version has been updated to version $finalizedMirrorVersion")
             if (mirrorVersion.isClusterMirroringSupported) {
               info("Cluster mirroring feature is now enabled")

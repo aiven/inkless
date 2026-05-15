@@ -21,6 +21,9 @@ import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.errors.BrokerIdNotRegisteredException;
 import org.apache.kafka.common.errors.BrokerNotAvailableException;
 import org.apache.kafka.common.errors.ClusterAuthorizationException;
+import org.apache.kafka.common.errors.ClusterMirrorAlreadyExistsException;
+import org.apache.kafka.common.errors.ClusterMirrorAuthorizationException;
+import org.apache.kafka.common.errors.ClusterMirrorNotEmptyException;
 import org.apache.kafka.common.errors.ConcurrentTransactionsException;
 import org.apache.kafka.common.errors.ControllerMovedException;
 import org.apache.kafka.common.errors.CoordinatorLoadInProgressException;
@@ -56,12 +59,12 @@ import org.apache.kafka.common.errors.InconsistentGroupProtocolException;
 import org.apache.kafka.common.errors.InconsistentTopicIdException;
 import org.apache.kafka.common.errors.InconsistentVoterSetException;
 import org.apache.kafka.common.errors.IneligibleReplicaException;
+import org.apache.kafka.common.errors.InvalidClusterMirrorNameException;
 import org.apache.kafka.common.errors.InvalidCommitOffsetSizeException;
 import org.apache.kafka.common.errors.InvalidConfigurationException;
 import org.apache.kafka.common.errors.InvalidFetchSessionEpochException;
 import org.apache.kafka.common.errors.InvalidFetchSizeException;
 import org.apache.kafka.common.errors.InvalidGroupIdException;
-import org.apache.kafka.common.errors.InvalidMirrorNameException;
 import org.apache.kafka.common.errors.InvalidPartitionsException;
 import org.apache.kafka.common.errors.InvalidPidMappingException;
 import org.apache.kafka.common.errors.InvalidPrincipalTypeException;
@@ -86,9 +89,6 @@ import org.apache.kafka.common.errors.LeaderNotAvailableException;
 import org.apache.kafka.common.errors.ListenerNotFoundException;
 import org.apache.kafka.common.errors.LogDirNotFoundException;
 import org.apache.kafka.common.errors.MemberIdRequiredException;
-import org.apache.kafka.common.errors.MirrorAlreadyExistsException;
-import org.apache.kafka.common.errors.MirrorAuthorizationException;
-import org.apache.kafka.common.errors.MirrorNotEmptyException;
 import org.apache.kafka.common.errors.MirrorTopicAlreadyPausedException;
 import org.apache.kafka.common.errors.MirrorTopicBeingStoppedException;
 import org.apache.kafka.common.errors.MirrorTopicNotPausedException;
@@ -134,20 +134,20 @@ import org.apache.kafka.common.errors.StreamsTopologyFencedException;
 import org.apache.kafka.common.errors.TelemetryTooLargeException;
 import org.apache.kafka.common.errors.ThrottlingQuotaExceededException;
 import org.apache.kafka.common.errors.TimeoutException;
-import org.apache.kafka.common.errors.TopicAlreadyInMirrorException;
+import org.apache.kafka.common.errors.TopicAlreadyInClusterMirrorException;
 import org.apache.kafka.common.errors.TopicAuthorizationException;
 import org.apache.kafka.common.errors.TopicDeletionDisabledException;
 import org.apache.kafka.common.errors.TopicExistsException;
-import org.apache.kafka.common.errors.TopicNotInMirrorException;
+import org.apache.kafka.common.errors.TopicNotInClusterMirrorException;
 import org.apache.kafka.common.errors.TransactionAbortableException;
 import org.apache.kafka.common.errors.TransactionCoordinatorFencedException;
 import org.apache.kafka.common.errors.TransactionalIdAuthorizationException;
 import org.apache.kafka.common.errors.TransactionalIdNotFoundException;
 import org.apache.kafka.common.errors.UnacceptableCredentialException;
+import org.apache.kafka.common.errors.UnknownClusterMirrorException;
 import org.apache.kafka.common.errors.UnknownControllerIdException;
 import org.apache.kafka.common.errors.UnknownLeaderEpochException;
 import org.apache.kafka.common.errors.UnknownMemberIdException;
-import org.apache.kafka.common.errors.UnknownMirrorException;
 import org.apache.kafka.common.errors.UnknownProducerIdException;
 import org.apache.kafka.common.errors.UnknownServerException;
 import org.apache.kafka.common.errors.UnknownSubscriptionIdException;
@@ -431,16 +431,16 @@ public enum Errors {
     STREAMS_TOPOLOGY_FENCED(132, "The supplied topology epoch is outdated.", StreamsTopologyFencedException::new),
     SHARE_SESSION_LIMIT_REACHED(133, "The limit of share sessions has been reached.", ShareSessionLimitReachedException::new),
     READ_ONLY_TOPIC(134, "The topic is read-only.", ReadOnlyTopicException::new),
-    INVALID_MIRROR_NAME(135, "The mirror name does not meet the naming rules.", InvalidMirrorNameException::new),
-    MIRROR_ALREADY_EXISTS(136, "The mirror already exists.", MirrorAlreadyExistsException::new),
-    UNKNOWN_MIRROR(137, "The mirror does not exist.", UnknownMirrorException::new),
-    TOPIC_ALREADY_IN_MIRROR(138, "The topic is already assigned to a mirror.", TopicAlreadyInMirrorException::new),
-    TOPIC_NOT_IN_MIRROR(139, "The topic does not belong to the specified mirror.", TopicNotInMirrorException::new),
+    INVALID_CLUSTER_MIRROR_NAME(135, "The cluster mirror name does not meet the naming rules.", InvalidClusterMirrorNameException::new),
+    CLUSTER_MIRROR_ALREADY_EXISTS(136, "The cluster mirror already exists.", ClusterMirrorAlreadyExistsException::new),
+    UNKNOWN_CLUSTER_MIRROR(137, "The cluster mirror does not exist.", UnknownClusterMirrorException::new),
+    TOPIC_ALREADY_IN_CLUSTER_MIRROR(138, "The topic is already assigned to a cluster mirror.", TopicAlreadyInClusterMirrorException::new),
+    TOPIC_NOT_IN_CLUSTER_MIRROR(139, "The topic does not belong to the specified cluster mirror.", TopicNotInClusterMirrorException::new),
     MIRROR_TOPIC_ALREADY_PAUSED(140, "The mirror topic is already paused.", MirrorTopicAlreadyPausedException::new),
     MIRROR_TOPIC_NOT_PAUSED(141, "The mirror topic is not paused.", MirrorTopicNotPausedException::new),
     MIRROR_TOPIC_BEING_STOPPED(142, "The mirror topic is being stopped.", MirrorTopicBeingStoppedException::new),
-    MIRROR_NOT_EMPTY(143, "The mirror still has active or non-stopped topics.", MirrorNotEmptyException::new),
-    MIRROR_AUTHORIZATION_FAILED(144, "Mirror authorization failed.", MirrorAuthorizationException::new);
+    CLUSTER_MIRROR_NOT_EMPTY(143, "The cluster mirror still has active or non-stopped topics.", ClusterMirrorNotEmptyException::new),
+    CLUSTER_MIRROR_AUTHORIZATION_FAILED(144, "Cluster mirror authorization failed.", ClusterMirrorAuthorizationException::new);
 
     private static final Logger log = LoggerFactory.getLogger(Errors.class);
 

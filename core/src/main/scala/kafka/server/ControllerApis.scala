@@ -27,13 +27,13 @@ import kafka.raft.RaftManager
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.logger.RuntimeLoggerManager
 import kafka.server.metadata.KRaftMetadataCache
-import kafka.server.mirror.MirrorUtils
+import kafka.server.mirror.ClusterMirrorUtils
 import kafka.utils.Logging
 import org.apache.kafka.clients.admin.{AlterConfigOp, EndpointType}
 import org.apache.kafka.common.Uuid.ZERO_UUID
 import org.apache.kafka.common.acl.AclOperation.{ALTER, ALTER_CONFIGS, CLUSTER_ACTION, CREATE, CREATE_TOKENS, DELETE, DESCRIBE, DESCRIBE_CONFIGS}
 import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
-import org.apache.kafka.common.errors.{ApiException, ClusterAuthorizationException, InvalidRequestException, MirrorAuthorizationException, TopicAuthorizationException, TopicDeletionDisabledException, UnsupportedVersionException}
+import org.apache.kafka.common.errors.{ApiException, ClusterAuthorizationException, InvalidRequestException, ClusterMirrorAuthorizationException, TopicAuthorizationException, TopicDeletionDisabledException, UnsupportedVersionException}
 import org.apache.kafka.common.internals.{FatalExitError, Plugin, Topic}
 import org.apache.kafka.common.message.AlterConfigsResponseData.{AlterConfigsResourceResponse => OldAlterConfigsResourceResponse}
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic
@@ -135,13 +135,13 @@ class ControllerApis(
         case ApiKeys.ADD_RAFT_VOTER => handleAddRaftVoter(request)
         case ApiKeys.REMOVE_RAFT_VOTER => handleRemoveRaftVoter(request)
         case ApiKeys.UPDATE_RAFT_VOTER => handleUpdateRaftVoter(request)
-        case ApiKeys.CREATE_MIRROR => handleCreateMirror(request)
+        case ApiKeys.CREATE_CLUSTER_MIRROR => handleCreateMirror(request)
         case ApiKeys.START_MIRROR_TOPICS => handleStartMirrorTopics(request)
         case ApiKeys.STOP_MIRROR_TOPICS => handleStopMirrorTopics(request)
         case ApiKeys.BUMP_LEADER_EPOCHS => handleBumpLeaderEpoch(request)
         case ApiKeys.PAUSE_MIRROR_TOPICS => handlePauseMirrorTopics(request)
         case ApiKeys.RESUME_MIRROR_TOPICS => handleResumeMirrorTopics(request)
-        case ApiKeys.DELETE_MIRROR => handleDeleteMirror(request)
+        case ApiKeys.DELETE_CLUSTER_MIRROR => handleDeleteMirror(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
       }
 
@@ -199,12 +199,12 @@ class ControllerApis(
   }
 
   def handleCreateMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    val mirrorName = request.body[CreateMirrorRequest].data().mirrorName()
+    val mirrorName = request.body[CreateClusterMirrorRequest].data().mirrorName()
     if (!authHelper.authorize(request.context, CREATE, CLUSTER_MIRROR, mirrorName))
-      throw new MirrorAuthorizationException(s"Request $request needs CREATE permission on ClusterMirror:$mirrorName.")
-    if (!MirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
+      throw new ClusterMirrorAuthorizationException(s"Request $request needs CREATE permission on ClusterMirror:$mirrorName.")
+    if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
-    val createMirrorRequest = request.body[CreateMirrorRequest]
+    val createMirrorRequest = request.body[CreateClusterMirrorRequest]
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal, OptionalLong.empty())
     val altersByName = new util.HashMap[String, Entry[AlterConfigOp.OpType, String]]()
     val configChanges = new util.HashMap[ConfigResource, util.Map[String, Entry[AlterConfigOp.OpType, String]]]()
@@ -215,13 +215,13 @@ class ControllerApis(
     }
     configChanges.put(resource, altersByName)
 
-    controller.createMirror(context, configChanges)
+    controller.createClusterMirror(context, configChanges)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
         } else {
           requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
-            new CreateMirrorResponse(response.setThrottleTimeMs(throttleMs)))
+            new CreateClusterMirrorResponse(response.setThrottleTimeMs(throttleMs)))
         }
       }
     val topicMetadata = metadataCache.getTopicMetadata(Set(MIRROR_STATE_TOPIC_NAME).asJava, request.context.listenerName).asScala
@@ -261,8 +261,8 @@ class ControllerApis(
     val startMirrorTopicsRequest = request.body[StartMirrorTopicsRequest]
     val mirrorName = startMirrorTopicsRequest.data().mirrorName()
     if (!authHelper.authorize(request.context, ALTER, CLUSTER_MIRROR, mirrorName))
-      throw new MirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
-    if (!MirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
+      throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
+    if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
     val topics = startMirrorTopicsRequest.data().topics()
     val unauthorizedTopics = topics.asScala.map(_.topicName()).filterNot(topic =>
@@ -291,8 +291,8 @@ class ControllerApis(
     val stopMirrorTopicsRequest = request.body[StopMirrorTopicsRequest]
     val mirrorName = stopMirrorTopicsRequest.data().mirrorName()
     if (!authHelper.authorize(request.context, ALTER, CLUSTER_MIRROR, mirrorName))
-      throw new MirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
-    if (!MirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
+      throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
+    if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
     val topics: util.Set[String] = new util.HashSet[String]()
     stopMirrorTopicsRequest.data().topics().forEach( topic => {
@@ -322,8 +322,8 @@ class ControllerApis(
     val pauseRequest = request.body[PauseMirrorTopicsRequest]
     val mirrorName = pauseRequest.data().mirrorName()
     if (!authHelper.authorize(request.context, ALTER, CLUSTER_MIRROR, mirrorName))
-      throw new MirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
-    if (!MirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
+      throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
+    if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
     val topics: util.Set[String] = new util.HashSet[String]()
     pauseRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
@@ -349,8 +349,8 @@ class ControllerApis(
     val resumeRequest = request.body[ResumeMirrorTopicsRequest]
     val mirrorName = resumeRequest.data().mirrorName()
     if (!authHelper.authorize(request.context, ALTER, CLUSTER_MIRROR, mirrorName))
-      throw new MirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
-    if (!MirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
+      throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
+    if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
     val topics: util.Set[String] = new util.HashSet[String]()
     resumeRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
@@ -373,21 +373,21 @@ class ControllerApis(
   }
 
   def handleDeleteMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    val deleteMirrorRequest = request.body[DeleteMirrorRequest]
+    val deleteMirrorRequest = request.body[DeleteClusterMirrorRequest]
     val mirrorName = deleteMirrorRequest.data().mirrorName()
     if (!authHelper.authorize(request.context, ALTER, CLUSTER_MIRROR, mirrorName))
-      throw new MirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
-    if (!MirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
+      throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
+    if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    controller.deleteMirror(context, mirrorName)
+    controller.deleteClusterMirror(context, mirrorName)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
         } else {
           requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
-            new DeleteMirrorResponse(response.setThrottleTimeMs(throttleMs)))
+            new DeleteClusterMirrorResponse(response.setThrottleTimeMs(throttleMs)))
         }
       }
 
@@ -715,11 +715,11 @@ class ControllerApis(
         } else {
           new ApiError(TOPIC_AUTHORIZATION_FAILED)
         }
-      case ConfigResource.Type.MIRROR =>
+      case ConfigResource.Type.CLUSTER_MIRROR =>
         if (authHelper.authorize(requestContext, ALTER_CONFIGS, CLUSTER_MIRROR, resource.name)) {
           new ApiError(NONE)
         } else {
-          new ApiError(MIRROR_AUTHORIZATION_FAILED)
+          new ApiError(CLUSTER_MIRROR_AUTHORIZATION_FAILED)
         }
       case ConfigResource.Type.GROUP =>
         if (authHelper.authorize(requestContext, ALTER_CONFIGS, GROUP, resource.name)) {

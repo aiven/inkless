@@ -141,6 +141,8 @@ import org.apache.kafka.common.message.DeleteAclsResponseData.DeleteAclsMatching
 import org.apache.kafka.common.message.DeleteTopicsRequestData;
 import org.apache.kafka.common.message.DeleteTopicsRequestData.DeleteTopicState;
 import org.apache.kafka.common.message.DeleteTopicsResponseData.DeletableTopicResult;
+import org.apache.kafka.common.message.DescribeClusterMirrorsRequestData;
+import org.apache.kafka.common.message.DescribeClusterMirrorsResponseData;
 import org.apache.kafka.common.message.DescribeClusterRequestData;
 import org.apache.kafka.common.message.DescribeClusterResponseData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
@@ -148,8 +150,6 @@ import org.apache.kafka.common.message.DescribeConfigsResponseData;
 import org.apache.kafka.common.message.DescribeLogDirsRequestData;
 import org.apache.kafka.common.message.DescribeLogDirsRequestData.DescribableLogDirTopic;
 import org.apache.kafka.common.message.DescribeLogDirsResponseData;
-import org.apache.kafka.common.message.DescribeMirrorsRequestData;
-import org.apache.kafka.common.message.DescribeMirrorsResponseData;
 import org.apache.kafka.common.message.DescribeQuorumResponseData;
 import org.apache.kafka.common.message.DescribeTopicPartitionsRequestData;
 import org.apache.kafka.common.message.DescribeTopicPartitionsRequestData.TopicRequest;
@@ -163,11 +163,11 @@ import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.FindCoordinatorRequestData;
 import org.apache.kafka.common.message.FindCoordinatorResponseData;
 import org.apache.kafka.common.message.LeaveGroupRequestData.MemberIdentity;
+import org.apache.kafka.common.message.ListClusterMirrorsRequestData;
+import org.apache.kafka.common.message.ListClusterMirrorsResponseData;
 import org.apache.kafka.common.message.ListConfigResourcesRequestData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
 import org.apache.kafka.common.message.ListGroupsResponseData;
-import org.apache.kafka.common.message.ListMirrorsRequestData;
-import org.apache.kafka.common.message.ListMirrorsResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.MetadataRequestData;
 import org.apache.kafka.common.message.RemoveRaftVoterRequestData;
@@ -205,24 +205,26 @@ import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreateAclsResponse;
+import org.apache.kafka.common.requests.CreateClusterMirrorRequest;
+import org.apache.kafka.common.requests.CreateClusterMirrorResponse;
 import org.apache.kafka.common.requests.CreateDelegationTokenRequest;
 import org.apache.kafka.common.requests.CreateDelegationTokenResponse;
-import org.apache.kafka.common.requests.CreateMirrorRequest;
-import org.apache.kafka.common.requests.CreateMirrorResponse;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsResponse;
 import org.apache.kafka.common.requests.CreateTopicsRequest;
 import org.apache.kafka.common.requests.CreateTopicsResponse;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
-import org.apache.kafka.common.requests.DeleteMirrorRequest;
-import org.apache.kafka.common.requests.DeleteMirrorResponse;
+import org.apache.kafka.common.requests.DeleteClusterMirrorRequest;
+import org.apache.kafka.common.requests.DeleteClusterMirrorResponse;
 import org.apache.kafka.common.requests.DeleteTopicsRequest;
 import org.apache.kafka.common.requests.DeleteTopicsResponse;
 import org.apache.kafka.common.requests.DescribeAclsRequest;
 import org.apache.kafka.common.requests.DescribeAclsResponse;
 import org.apache.kafka.common.requests.DescribeClientQuotasRequest;
 import org.apache.kafka.common.requests.DescribeClientQuotasResponse;
+import org.apache.kafka.common.requests.DescribeClusterMirrorsRequest;
+import org.apache.kafka.common.requests.DescribeClusterMirrorsResponse;
 import org.apache.kafka.common.requests.DescribeClusterRequest;
 import org.apache.kafka.common.requests.DescribeClusterResponse;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
@@ -231,8 +233,6 @@ import org.apache.kafka.common.requests.DescribeDelegationTokenRequest;
 import org.apache.kafka.common.requests.DescribeDelegationTokenResponse;
 import org.apache.kafka.common.requests.DescribeLogDirsRequest;
 import org.apache.kafka.common.requests.DescribeLogDirsResponse;
-import org.apache.kafka.common.requests.DescribeMirrorsRequest;
-import org.apache.kafka.common.requests.DescribeMirrorsResponse;
 import org.apache.kafka.common.requests.DescribeQuorumRequest;
 import org.apache.kafka.common.requests.DescribeQuorumRequest.Builder;
 import org.apache.kafka.common.requests.DescribeQuorumResponse;
@@ -249,12 +249,12 @@ import org.apache.kafka.common.requests.FindCoordinatorResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsResponse;
 import org.apache.kafka.common.requests.JoinGroupRequest;
+import org.apache.kafka.common.requests.ListClusterMirrorsRequest;
+import org.apache.kafka.common.requests.ListClusterMirrorsResponse;
 import org.apache.kafka.common.requests.ListConfigResourcesRequest;
 import org.apache.kafka.common.requests.ListConfigResourcesResponse;
 import org.apache.kafka.common.requests.ListGroupsRequest;
 import org.apache.kafka.common.requests.ListGroupsResponse;
-import org.apache.kafka.common.requests.ListMirrorsRequest;
-import org.apache.kafka.common.requests.ListMirrorsResponse;
 import org.apache.kafka.common.requests.ListOffsetsRequest;
 import org.apache.kafka.common.requests.ListPartitionReassignmentsRequest;
 import org.apache.kafka.common.requests.ListPartitionReassignmentsResponse;
@@ -1841,7 +1841,7 @@ public class KafkaAdminClient extends AdminClient {
             AbstractRequest.Builder<?> createRequest(int timeoutMs) {
                 return new FindCoordinatorRequest.Builder(
                     new FindCoordinatorRequestData()
-                        .setKeyType(FindCoordinatorRequest.CoordinatorType.MIRROR.id())
+                        .setKeyType(FindCoordinatorRequest.CoordinatorType.CLUSTER_MIRROR.id())
                         .setKey(key)
                         .setCoordinatorKeys(List.of())
                 );
@@ -4844,21 +4844,21 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public CreateMirrorResult createMirror(String mirrorName, Map<String, String> configs, CreateMirrorOptions options) {
+    public CreateClusterMirrorResult createClusterMirror(String mirrorName, Map<String, String> configs, CreateClusterMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
-        final Call call = new Call("createMirror", calcDeadlineMs(now, options.timeoutMs()),
+        final Call call = new Call("createClusterMirror", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
 
             @Override
-            CreateMirrorRequest.Builder createRequest(int timeoutMs) {
-                return new CreateMirrorRequest.Builder(mirrorName, configs);
+            CreateClusterMirrorRequest.Builder createRequest(int timeoutMs) {
+                return new CreateClusterMirrorRequest.Builder(mirrorName, configs);
             }
 
             @Override
             void handleResponse(AbstractResponse abstractResponse) {
-                final CreateMirrorResponse response =
-                        (CreateMirrorResponse) abstractResponse;
+                final CreateClusterMirrorResponse response =
+                        (CreateClusterMirrorResponse) abstractResponse;
                 Errors error = Errors.forCode(response.data().errorCode());
                 switch (error) {
                     case NONE:
@@ -4879,25 +4879,25 @@ public class KafkaAdminClient extends AdminClient {
             }
         };
         runnable.call(call, now);
-        return new CreateMirrorResult(future);
+        return new CreateClusterMirrorResult(future);
     }
 
     @Override
-    public DeleteMirrorResult deleteMirror(String mirrorName, DeleteMirrorOptions options) {
+    public DeleteClusterMirrorResult deleteClusterMirror(String mirrorName, DeleteClusterMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
-        final Call call = new Call("deleteMirror", calcDeadlineMs(now, options.timeoutMs()),
+        final Call call = new Call("deleteClusterMirror", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
 
             @Override
-            DeleteMirrorRequest.Builder createRequest(int timeoutMs) {
-                return new DeleteMirrorRequest.Builder(mirrorName);
+            DeleteClusterMirrorRequest.Builder createRequest(int timeoutMs) {
+                return new DeleteClusterMirrorRequest.Builder(mirrorName);
             }
 
             @Override
             void handleResponse(AbstractResponse abstractResponse) {
-                final DeleteMirrorResponse response =
-                        (DeleteMirrorResponse) abstractResponse;
+                final DeleteClusterMirrorResponse response =
+                        (DeleteClusterMirrorResponse) abstractResponse;
                 Errors error = Errors.forCode(response.data().errorCode());
                 switch (error) {
                     case NONE:
@@ -4918,7 +4918,7 @@ public class KafkaAdminClient extends AdminClient {
             }
         };
         runnable.call(call, now);
-        return new DeleteMirrorResult(future);
+        return new DeleteClusterMirrorResult(future);
     }
 
     @Override
@@ -5109,22 +5109,22 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public ListMirrorsResult listMirrors(ListMirrorsOptions options) {
+    public ListClusterMirrorsResult listClusterMirrors(ListClusterMirrorsOptions options) {
         final KafkaFutureImpl<Collection<Object>> all = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
         final long deadline = calcDeadlineMs(now, options.timeoutMs());
 
         // We query one broker for static metadata (mirror names, topic counts, bootstrap servers)
         // Data comes from metadata cache
-        runnable.call(new Call("listMirrors", deadline, new LeastLoadedNodeProvider()) {
+        runnable.call(new Call("listClusterMirrors", deadline, new LeastLoadedNodeProvider()) {
             @Override
-            ListMirrorsRequest.Builder createRequest(int timeoutMs) {
-                return new ListMirrorsRequest.Builder(new ListMirrorsRequestData());
+            ListClusterMirrorsRequest.Builder createRequest(int timeoutMs) {
+                return new ListClusterMirrorsRequest.Builder(new ListClusterMirrorsRequestData());
             }
 
             @Override
             void handleResponse(AbstractResponse abstractResponse) {
-                final ListMirrorsResponse response = (ListMirrorsResponse) abstractResponse;
+                final ListClusterMirrorsResponse response = (ListClusterMirrorsResponse) abstractResponse;
                 Errors error = Errors.forCode(response.data().errorCode());
                 if (error == Errors.COORDINATOR_LOAD_IN_PROGRESS || error == Errors.COORDINATOR_NOT_AVAILABLE) {
                     throw error.exception();
@@ -5132,8 +5132,8 @@ public class KafkaAdminClient extends AdminClient {
                     all.complete(Collections.singletonList(error.exception()));
                 } else {
                     List<Object> listings = new ArrayList<>();
-                    for (ListMirrorsResponseData.ListedMirror mirror : response.data().mirrors()) {
-                        listings.add(new MirrorListing(
+                    for (ListClusterMirrorsResponseData.ListedMirror mirror : response.data().mirrors()) {
+                        listings.add(new ClusterMirrorListing(
                                 mirror.mirrorName(),
                                 mirror.sourceBootstrap(),
                                 mirror.sourceClusterId(),
@@ -5150,12 +5150,12 @@ public class KafkaAdminClient extends AdminClient {
             }
         }, now);
 
-        return new ListMirrorsResult(all);
+        return new ListClusterMirrorsResult(all);
     }
 
     @Override
-    public DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames, DescribeMirrorsOptions options) {
-        final KafkaFutureImpl<Map<String, MirrorDescription>> all = new KafkaFutureImpl<>();
+    public DescribeClusterMirrorsResult describeClusterMirrors(Collection<String> mirrorNames, DescribeClusterMirrorsOptions options) {
+        final KafkaFutureImpl<Map<String, ClusterMirrorDescription>> all = new KafkaFutureImpl<>();
         final long nowMetadata = time.milliseconds();
         final long deadline = calcDeadlineMs(nowMetadata, options.timeoutMs());
         // We query all brokers to get up-to-date lag AND state
@@ -5176,24 +5176,24 @@ public class KafkaAdminClient extends AdminClient {
                     throw new StaleMetadataException("Metadata fetch failed due to missing broker list");
 
                 HashSet<Node> allNodes = new HashSet<>(nodes);
-                final DescribeMirrorsResults results = new DescribeMirrorsResults(allNodes, mirrorNames, all);
+                final DescribeClusterMirrorsResults results = new DescribeClusterMirrorsResults(allNodes, mirrorNames, all);
 
                 for (final Node node : allNodes) {
                     final long nowDescribe = time.milliseconds();
-                    runnable.call(new Call("describeMirrors", deadline, new ConstantNodeIdProvider(node.id())) {
+                    runnable.call(new Call("describeClusterMirrors", deadline, new ConstantNodeIdProvider(node.id())) {
                         @Override
-                        DescribeMirrorsRequest.Builder createRequest(int timeoutMs) {
-                            DescribeMirrorsRequestData data = new DescribeMirrorsRequestData()
+                        DescribeClusterMirrorsRequest.Builder createRequest(int timeoutMs) {
+                            DescribeClusterMirrorsRequestData data = new DescribeClusterMirrorsRequestData()
                                 .setMirrorNames(new ArrayList<>(mirrorNames))
                                 .setIncludeAuthorizedOperations(options.includeAuthorizedOperations());
-                            return new DescribeMirrorsRequest.Builder(data);
+                            return new DescribeClusterMirrorsRequest.Builder(data);
                         }
 
                         @Override
                         void handleResponse(AbstractResponse abstractResponse) {
-                            final DescribeMirrorsResponse response = (DescribeMirrorsResponse) abstractResponse;
+                            final DescribeClusterMirrorsResponse response = (DescribeClusterMirrorsResponse) abstractResponse;
                             synchronized (results) {
-                                for (DescribeMirrorsResponseData.DescribedMirror mirror : response.data().mirrors()) {
+                                for (DescribeClusterMirrorsResponseData.DescribedMirror mirror : response.data().mirrors()) {
                                     results.handleMirror(mirror);
                                 }
                                 results.tryComplete(node);
@@ -5218,19 +5218,19 @@ public class KafkaAdminClient extends AdminClient {
             }
         }, nowMetadata);
 
-        return new DescribeMirrorsResult(all);
+        return new DescribeClusterMirrorsResult(all);
     }
 
-    private static final class DescribeMirrorsResults {
+    private static final class DescribeClusterMirrorsResults {
         private final Map<String, PartialMirrorDescription> partialDescriptions;
         private final Set<String> requestedMirrors;
         private final boolean describeAll;
         private final HashSet<Node> remaining;
-        private final KafkaFutureImpl<Map<String, MirrorDescription>> allFuture;
+        private final KafkaFutureImpl<Map<String, ClusterMirrorDescription>> allFuture;
 
-        DescribeMirrorsResults(Collection<Node> brokers,
+        DescribeClusterMirrorsResults(Collection<Node> brokers,
                                Collection<String> mirrorNames,
-                               KafkaFutureImpl<Map<String, MirrorDescription>> allFuture) {
+                               KafkaFutureImpl<Map<String, ClusterMirrorDescription>> allFuture) {
             this.partialDescriptions = new HashMap<>();
             this.requestedMirrors = new HashSet<>(mirrorNames);
             this.describeAll = mirrorNames.isEmpty();
@@ -5246,7 +5246,7 @@ public class KafkaAdminClient extends AdminClient {
             tryComplete();
         }
 
-        synchronized void handleMirror(DescribeMirrorsResponseData.DescribedMirror mirror) {
+        synchronized void handleMirror(DescribeClusterMirrorsResponseData.DescribedMirror mirror) {
             // Skip if not requested (only in non-describeAll mode)
             if (!describeAll && !requestedMirrors.contains(mirror.mirrorName())) {
                 return;
@@ -5270,7 +5270,7 @@ public class KafkaAdminClient extends AdminClient {
 
         private synchronized void tryComplete() {
             if (remaining.isEmpty()) {
-                Map<String, MirrorDescription> descriptions = new HashMap<>(partialDescriptions.size());
+                Map<String, ClusterMirrorDescription> descriptions = new HashMap<>(partialDescriptions.size());
                 Throwable firstError = null;
                 for (Map.Entry<String, PartialMirrorDescription> entry : partialDescriptions.entrySet()) {
                     PartialMirrorDescription partial = entry.getValue();
@@ -5296,10 +5296,10 @@ public class KafkaAdminClient extends AdminClient {
             }
         }
 
-        // Accumulated MirrorDescription data from all brokers
+        // Accumulated ClusterMirrorDescription data from all brokers
         private static class PartialMirrorDescription {
             final String mirrorName;
-            final Map<String, Set<MirrorDescription.LeaderState>> topicPartitions;
+            final Map<String, Set<ClusterMirrorDescription.LeaderState>> topicPartitions;
             int authorizedOperations;
             boolean hasSuccess;
             Throwable error;
@@ -5315,7 +5315,7 @@ public class KafkaAdminClient extends AdminClient {
             // DescribeMirrors fans out to all brokers. During ACL propagation, some brokers
             // may deny while others allow. A success from any broker is authoritative, so we
             // only retain the error if no broker has returned a successful response.
-            void merge(DescribeMirrorsResponseData.DescribedMirror mirror) {
+            void merge(DescribeClusterMirrorsResponseData.DescribedMirror mirror) {
                 Errors errorCode = Errors.forCode(mirror.errorCode());
                 if (errorCode != Errors.NONE) {
                     if (!this.hasSuccess && this.error == null) {
@@ -5332,14 +5332,14 @@ public class KafkaAdminClient extends AdminClient {
                 }
 
                 // Merge topic partitions
-                for (DescribeMirrorsResponseData.TopicPartitions topic : mirror.topics()) {
-                    Set<MirrorDescription.LeaderState> partitions =
+                for (DescribeClusterMirrorsResponseData.TopicPartitions topic : mirror.topics()) {
+                    Set<ClusterMirrorDescription.LeaderState> partitions =
                             topicPartitions.computeIfAbsent(topic.topicName(), k -> new HashSet<>());
 
-                    for (DescribeMirrorsResponseData.PartitionDetail partition : topic.partitions()) {
+                    for (DescribeClusterMirrorsResponseData.PartitionDetail partition : topic.partitions()) {
                         TopicPartition tp = new TopicPartition(topic.topicName(), partition.partitionIndex());
-                        MirrorDescription.LeaderState leaderState =
-                                new MirrorDescription.LeaderState(
+                        ClusterMirrorDescription.LeaderState leaderState =
+                                new ClusterMirrorDescription.LeaderState(
                                         tp,
                                         partition.sourceOffset(),
                                         partition.destinationOffset(),
@@ -5353,8 +5353,8 @@ public class KafkaAdminClient extends AdminClient {
 
             }
 
-            MirrorDescription toMirrorDescription() {
-                return new MirrorDescription(
+            ClusterMirrorDescription toMirrorDescription() {
+                return new ClusterMirrorDescription(
                         mirrorName,
                         topicPartitions,
                         validAclOperations(authorizedOperations)

@@ -187,7 +187,7 @@ object ConfigCommand extends Logging {
           case ClientMetricsType => ConfigResource.Type.CLIENT_METRICS
           case BrokerType => ConfigResource.Type.BROKER
           case GroupType => ConfigResource.Type.GROUP
-          case MirrorType => ConfigResource.Type.MIRROR
+          case MirrorType => ConfigResource.Type.CLUSTER_MIRROR
           case _ => throw new IllegalArgumentException(s"$entityNameHead is not a valid entity-type.")
         }
         try {
@@ -396,7 +396,7 @@ object ConfigCommand extends Logging {
             adminClient.listConfigResources(java.util.Set.of(ConfigResource.Type.GROUP), new ListConfigResourcesOptions).all().get().asScala.map(_.name).toSet
 
         case MirrorType =>
-            adminClient.listConfigResources(java.util.Set.of(ConfigResource.Type.MIRROR), new ListConfigResourcesOptions).all().get().asScala.map(_.name).toSet
+            adminClient.listConfigResources(java.util.Set.of(ConfigResource.Type.CLUSTER_MIRROR), new ListConfigResourcesOptions).all().get().asScala.map(_.name).toSet
         case entityType => throw new IllegalArgumentException(s"Invalid entity type: $entityType")
       })
 
@@ -459,7 +459,7 @@ object ConfigCommand extends Logging {
       case GroupType =>
         (ConfigResource.Type.GROUP, Some(ConfigEntry.ConfigSource.DYNAMIC_GROUP_CONFIG))
       case MirrorType =>
-        (ConfigResource.Type.MIRROR, Some(ConfigEntry.ConfigSource.DYNAMIC_BROKER_CONFIG))
+        (ConfigResource.Type.CLUSTER_MIRROR, Some(ConfigEntry.ConfigSource.DYNAMIC_BROKER_CONFIG))
       case entityType => throw new IllegalArgumentException(s"Invalid entity type: $entityType")
     }
 

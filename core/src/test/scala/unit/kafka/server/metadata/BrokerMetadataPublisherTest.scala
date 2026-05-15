@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import kafka.log.LogManager
 import kafka.server.share.SharePartitionManager
 import kafka.server.{BrokerServer, KafkaConfig, ReplicaManager}
-import kafka.server.mirror.{MirrorMetadataManager, MirrorCoordinator}
+import kafka.server.mirror.{MirrorMetadataManager, ClusterMirrorCoordinator}
 import kafka.utils.TestUtils
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET
 import org.apache.kafka.clients.admin.{Admin, AlterConfigOp, ConfigEntry, NewTopic}
@@ -213,7 +213,7 @@ class BrokerMetadataPublisherTest {
       mock(classOf[AclPublisher]),
       faultHandler,
       faultHandler,
-      mock(classOf[MirrorCoordinator]),
+      mock(classOf[ClusterMirrorCoordinator]),
       mock(classOf[MirrorMetadataManager])
     )
 
@@ -279,7 +279,7 @@ class BrokerMetadataPublisherTest {
       mock(classOf[AclPublisher]),
       faultHandler,
       faultHandler,
-      mock(classOf[MirrorCoordinator]),
+      mock(classOf[ClusterMirrorCoordinator]),
       mock(classOf[MirrorMetadataManager])
     )
 
@@ -322,7 +322,7 @@ class BrokerMetadataPublisherTest {
       mock(classOf[AclPublisher]),
       faultHandler,
       faultHandler,
-      mock(classOf[MirrorCoordinator]),
+      mock(classOf[ClusterMirrorCoordinator]),
       mock(classOf[MirrorMetadataManager])
     )
 

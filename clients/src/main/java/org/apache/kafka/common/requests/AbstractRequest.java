@@ -356,16 +356,16 @@ public abstract class AbstractRequest implements AbstractRequestResponse {
                 return DeleteShareGroupOffsetsRequest.parse(readable, apiVersion);
             case GET_REPLICA_LOG_INFO:
                 return GetReplicaLogInfoRequest.parse(readable, apiVersion);
-            case CREATE_MIRROR:
-                return CreateMirrorRequest.parse(readable, apiVersion);
+            case CREATE_CLUSTER_MIRROR:
+                return CreateClusterMirrorRequest.parse(readable, apiVersion);
             case START_MIRROR_TOPICS:
                 return StartMirrorTopicsRequest.parse(readable, apiVersion);
             case STOP_MIRROR_TOPICS:
                 return StopMirrorTopicsRequest.parse(readable, apiVersion);
-            case LIST_MIRRORS:
-                return ListMirrorsRequest.parse(readable, apiVersion);
-            case DESCRIBE_MIRRORS:
-                return DescribeMirrorsRequest.parse(readable, apiVersion);
+            case LIST_CLUSTER_MIRRORS:
+                return ListClusterMirrorsRequest.parse(readable, apiVersion);
+            case DESCRIBE_CLUSTER_MIRRORS:
+                return DescribeClusterMirrorsRequest.parse(readable, apiVersion);
             case WRITE_MIRROR_STATES:
                 return WriteMirrorStatesRequest.parse(readable, apiVersion);
             case READ_MIRROR_STATES:
@@ -376,8 +376,8 @@ public abstract class AbstractRequest implements AbstractRequestResponse {
                 return PauseMirrorTopicsRequest.parse(readable, apiVersion);
             case RESUME_MIRROR_TOPICS:
                 return ResumeMirrorTopicsRequest.parse(readable, apiVersion);
-            case DELETE_MIRROR:
-                return DeleteMirrorRequest.parse(readable, apiVersion);
+            case DELETE_CLUSTER_MIRROR:
+                return DeleteClusterMirrorRequest.parse(readable, apiVersion);
             default:
                 throw new AssertionError(String.format("ApiKey %s is not currently handled in `parseRequest`, the " +
                         "code should be updated to do so.", apiKey));

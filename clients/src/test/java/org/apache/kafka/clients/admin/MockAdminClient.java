@@ -737,10 +737,10 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
-    public synchronized ListMirrorsResult listMirrors(ListMirrorsOptions options) {
+    public synchronized ListClusterMirrorsResult listClusterMirrors(ListClusterMirrorsOptions options) {
         KafkaFutureImpl<Collection<Object>> future = new KafkaFutureImpl<>();
         future.complete(Collections.emptyList());
-        return new ListMirrorsResult(future);
+        return new ListClusterMirrorsResult(future);
     }
 
     @Override
@@ -1378,7 +1378,7 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
-    public CreateMirrorResult createMirror(String mirrorName, Map<String, String> configs, CreateMirrorOptions options) {
+    public CreateClusterMirrorResult createClusterMirror(String mirrorName, Map<String, String> configs, CreateClusterMirrorOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
 
@@ -1403,25 +1403,25 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
-    public DeleteMirrorResult deleteMirror(String mirrorName, DeleteMirrorOptions options) {
+    public DeleteClusterMirrorResult deleteClusterMirror(String mirrorName, DeleteClusterMirrorOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
 
     @Override
-    public synchronized DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames, DescribeMirrorsOptions options) {
-        Map<String, MirrorDescription> descriptions = new HashMap<>();
+    public synchronized DescribeClusterMirrorsResult describeClusterMirrors(Collection<String> mirrorNames, DescribeClusterMirrorsOptions options) {
+        Map<String, ClusterMirrorDescription> descriptions = new HashMap<>();
         for (String mirrorName : mirrorNames) {
             // Return empty description for mock
-            MirrorDescription description = new MirrorDescription(
+            ClusterMirrorDescription description = new ClusterMirrorDescription(
                 mirrorName,
                 Collections.emptyMap(),
                 null
             );
             descriptions.put(mirrorName, description);
         }
-        KafkaFutureImpl<Map<String, MirrorDescription>> future = new KafkaFutureImpl<>();
+        KafkaFutureImpl<Map<String, ClusterMirrorDescription>> future = new KafkaFutureImpl<>();
         future.complete(descriptions);
-        return new DescribeMirrorsResult(future);
+        return new DescribeClusterMirrorsResult(future);
     }
 
     @Override
