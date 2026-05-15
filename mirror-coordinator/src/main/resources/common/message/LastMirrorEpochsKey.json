@@ -24,7 +24,7 @@
   "validVersions": "0",
   "flexibleVersions": "none",
   "fields": [
-    { "name": "MirrorName", "type": "string", "versions": "0",
+    { "name": "MirrorName", "type": "string", "versions": "0", "entityType": "mirrorName",
       "about": "The cluster mirror name."}
   ]
 }
