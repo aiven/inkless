@@ -6401,6 +6401,188 @@ class ReplicaManagerTest {
     }
 
     @Test
+    def testAppendDisklessMigrationPendingReturnsReplicaNotAvailable(): Unit = {
+      val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
+        case (mock, _) =>
+          when(mock.handle(any(), any())).thenReturn(CompletableFuture.completedFuture[util.Map[TopicIdPartition, PartitionResponse]](
+            util.Map.of[TopicIdPartition, PartitionResponse]()
+          ))
+      }
+      val appendHandlerCtor = mockConstruction(classOf[AppendHandler], appendHandlerCtorMockInitializer)
+      val replicaManager = try {
+        createReplicaManager(List(disklessTopicPartition.topic()))
+      } finally {
+        appendHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+
+      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+      replicaManager.appendRecords(
+        timeout = 0,
+        requiredAcks = -1,
+        internalTopicsAllowed = true,
+        origin = AppendOrigin.CLIENT,
+        entriesPerPartition = Map(disklessTopicPartition -> RECORDS),
+        responseCallback = responseCallback,
+      )
+
+      verify(responseCallback, times(1))(
+        Map(disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE))
+      )
+    }
+
+    @Test
+    def testAppendDisklessMigrationPendingWithReadyPartitions(): Unit = {
+      val migratedPartition = new TopicIdPartition(Uuid.randomUuid(), 1, "diskless")
+      val migratedPartitionResponse = Map(migratedPartition -> new PartitionResponse(Errors.NONE))
+      val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
+        case (mock, _) =>
+          when(mock.handle(any(), any())).thenReturn(CompletableFuture.completedFuture[util.Map[TopicIdPartition, PartitionResponse]](
+            migratedPartitionResponse.asJava
+          ))
+      }
+      val appendHandlerCtor = mockConstruction(classOf[AppendHandler], appendHandlerCtorMockInitializer)
+      val replicaManager = try {
+        createReplicaManager(List(disklessTopicPartition.topic()))
+      } finally {
+        appendHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(migratedPartition.topicPartition()))
+        .thenReturn(100L)
+
+      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+      replicaManager.appendRecords(
+        timeout = 0,
+        requiredAcks = -1,
+        internalTopicsAllowed = true,
+        origin = AppendOrigin.CLIENT,
+        entriesPerPartition = Map(disklessTopicPartition -> RECORDS, migratedPartition -> RECORDS),
+        responseCallback = responseCallback,
+      )
+
+      verify(responseCallback, times(1))(
+        Map(
+          disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE),
+          migratedPartition -> new PartitionResponse(Errors.NONE),
+        )
+      )
+    }
+
+    @Test
+    def testAppendDisklessMigrationPendingWithHandlerFailure(): Unit = {
+      val migratedPartition = new TopicIdPartition(Uuid.randomUuid(), 1, "diskless")
+      val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
+        case (mock, _) =>
+          when(mock.handle(any(), any())).thenReturn(CompletableFuture.failedFuture[util.Map[TopicIdPartition, PartitionResponse]](
+            new Exception("control plane unavailable")
+          ))
+      }
+      val appendHandlerCtor = mockConstruction(classOf[AppendHandler], appendHandlerCtorMockInitializer)
+      val replicaManager = try {
+        createReplicaManager(List(disklessTopicPartition.topic()))
+      } finally {
+        appendHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(migratedPartition.topicPartition()))
+        .thenReturn(100L)
+
+      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+      replicaManager.appendRecords(
+        timeout = 0,
+        requiredAcks = -1,
+        internalTopicsAllowed = true,
+        origin = AppendOrigin.CLIENT,
+        entriesPerPartition = Map(disklessTopicPartition -> RECORDS, migratedPartition -> RECORDS),
+        responseCallback = responseCallback,
+      )
+
+      // Pending partition is unaffected by the handler failure — only ready entries get the error fallback
+      verify(responseCallback, times(1))(
+        Map(
+          disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE),
+          migratedPartition -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR),
+        )
+      )
+    }
+
+    @Test
+    def testAppendDisklessMigrationPendingWithClassicEntries(): Unit = {
+      val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
+        case (mock, _) =>
+          when(mock.handle(any(), any())).thenReturn(CompletableFuture.completedFuture[util.Map[TopicIdPartition, PartitionResponse]](
+            util.Map.of[TopicIdPartition, PartitionResponse]()
+          ))
+      }
+      val appendHandlerCtor = mockConstruction(classOf[AppendHandler], appendHandlerCtorMockInitializer)
+      val replicaManager = try {
+        createReplicaManager(List(disklessTopicPartition.topic()))
+      } finally {
+        appendHandlerCtor.close()
+      }
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+
+      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+      replicaManager.appendRecords(
+        timeout = 0,
+        requiredAcks = -1,
+        internalTopicsAllowed = true,
+        origin = AppendOrigin.CLIENT,
+        entriesPerPartition = Map(disklessTopicPartition -> RECORDS, classicTopicPartition -> RECORDS),
+        responseCallback = responseCallback,
+      )
+
+      verify(responseCallback, times(1))(
+        Map(
+          disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE),
+          classicTopicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION),
+        )
+      )
+    }
+
+    @Test
+    def testAppendAlwaysDisklessPartitionIsUnaffected(): Unit = {
+      val expectedResponse = Map(disklessTopicPartition -> new PartitionResponse(Errors.NONE))
+      val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
+        case (mock, _) =>
+          when(mock.handle(any(), any())).thenReturn(CompletableFuture.completedFuture[util.Map[TopicIdPartition, PartitionResponse]](
+            expectedResponse.asJava
+          ))
+      }
+      val appendHandlerCtor = mockConstruction(classOf[AppendHandler], appendHandlerCtorMockInitializer)
+      try {
+        val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+
+        val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+        replicaManager.appendRecords(
+          timeout = 0,
+          requiredAcks = -1,
+          internalTopicsAllowed = true,
+          origin = AppendOrigin.CLIENT,
+          entriesPerPartition = Map(disklessTopicPartition -> RECORDS),
+          responseCallback = responseCallback,
+        )
+
+        verify(responseCallback, times(1))(expectedResponse)
+        verify(appendHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
+      } finally {
+        appendHandlerCtor.close()
+      }
+    }
+
+    @Test
     def testFetchDisklessBelowStartOffsetReadsFromClassicLogWhenManagedReplicasEnabled(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
       try {

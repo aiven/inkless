@@ -809,8 +809,16 @@ class ReplicaManager(val config: KafkaConfig,
 
     val (disklessEntries, classicEntries) = entriesPerPartition.partition { case (k, _) => _inklessMetadataView.isDisklessTopic(k.topic()) }
 
+    val (pendingMigrationToDisklessEntries, readyDisklessEntries) = disklessEntries.partition { case (topicIdPartition, _) =>
+      _inklessMetadataView.getClassicToDisklessStartOffset(topicIdPartition.topicPartition()) ==
+        PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING
+    }
+    val pendingDisklessMigrationResult = pendingMigrationToDisklessEntries.map { case (tp, _) =>
+      tp -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE)
+    }
+
     val disklessResponsesFuture = inklessAppendHandler match {
-      case Some(interceptor) => interceptor.handle(disklessEntries.asJava, requestLocal)
+      case Some(interceptor) => interceptor.handle(readyDisklessEntries.asJava, requestLocal)
       case _ =>
         if (disklessEntries.nonEmpty)
           error(s"Received diskless entries to append for topics ${disklessEntries.keys.map(_.topic()).mkString(", ")} but diskless storage system is not enabled. " +
@@ -822,11 +830,11 @@ class ReplicaManager(val config: KafkaConfig,
       disklessResponsesFuture.whenComplete { case (result, e) =>
         val disklessResult: Map[TopicIdPartition, PartitionResponse] = if (result != null) result.asScala else {
           error("Diskless append future failed", e)
-          disklessEntries.map{ case (tp, _) => tp -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)}
+          readyDisklessEntries.map{ case (tp, _) => tp -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)}
         }
         // Diskless append results do not complete purgatory actions to avoid overloading the control-plane.
         // only classic append results complete purgatory actions.
-        responseCallback(disklessResult ++ classicResult)
+        responseCallback(disklessResult ++ pendingDisklessMigrationResult ++ classicResult)
       }
     }
 
