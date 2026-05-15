@@ -89,9 +89,13 @@ public class InklessFetchMetrics {
     private static final String LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME = "LaggingConsumerRateLimitWaitTime";
     private static final String LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME_DOC = "Wait time for rate-limited lagging consumer requests in milliseconds";
     private static final String HEDGE_REQUEST_RATE = "HedgeRequestRate";
+    private static final String HEDGE_REQUEST_RATE_DOC = "Rate of hedged fetch requests issued per second";
     private static final String HEDGE_TTFB_TRIGGERED_RATE = "HedgeTtfbTriggeredRate";
+    private static final String HEDGE_TTFB_TRIGGERED_RATE_DOC = "Rate of hedge requests triggered by TTFB timeout per second";
     private static final String HEDGE_TOTAL_TIME_TRIGGERED_RATE = "HedgeTotalTimeTriggeredRate";
+    private static final String HEDGE_TOTAL_TIME_TRIGGERED_RATE_DOC = "Rate of hedge requests triggered by total time timeout per second";
     private static final String HEDGE_WON_RATE = "HedgeWonRate";
+    private static final String HEDGE_WON_RATE_DOC = "Rate of hedge requests that completed before the original request per second";
     // Tracks wait time (including zero-wait) for ALL lagging consumer requests when rate limiting is enabled.
     // When rate limiter is disabled (config = 0), LaggingConsumerRequestRate > 0 but this metric rate = 0.
     // Always records wait time to avoid histogram bias - zero-wait cases show when rate limiting is NOT a bottleneck.
@@ -126,7 +130,11 @@ public class InklessFetchMetrics {
             new MetricNameTemplate(RECENT_DATA_REQUEST_RATE, GROUP, RECENT_DATA_REQUEST_RATE_DOC),
             new MetricNameTemplate(LAGGING_CONSUMER_REQUEST_RATE, GROUP, LAGGING_CONSUMER_REQUEST_RATE_DOC),
             new MetricNameTemplate(LAGGING_CONSUMER_REQUEST_REJECTED_RATE, GROUP, LAGGING_CONSUMER_REQUEST_REJECTED_RATE_DOC),
-            new MetricNameTemplate(LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME, GROUP, LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME_DOC)
+            new MetricNameTemplate(LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME, GROUP, LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME_DOC),
+            new MetricNameTemplate(HEDGE_REQUEST_RATE, GROUP, HEDGE_REQUEST_RATE_DOC),
+            new MetricNameTemplate(HEDGE_TTFB_TRIGGERED_RATE, GROUP, HEDGE_TTFB_TRIGGERED_RATE_DOC),
+            new MetricNameTemplate(HEDGE_TOTAL_TIME_TRIGGERED_RATE, GROUP, HEDGE_TOTAL_TIME_TRIGGERED_RATE_DOC),
+            new MetricNameTemplate(HEDGE_WON_RATE, GROUP, HEDGE_WON_RATE_DOC)
         );
     }
 
