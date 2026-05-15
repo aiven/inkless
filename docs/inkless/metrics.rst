@@ -130,6 +130,10 @@ FetchTotalTime                       Total time spent processing a fetch request
 FileFetchErrorRate                   Rate of errors when fetching files from storage per second                          
 FindBatchesErrorRate                 Rate of errors when finding batches in the control plane per second                 
 FindBatchesTime                      Time spent finding batch coordinates in the control plane in milliseconds           
+HedgeRequestRate                     Rate of hedged fetch requests issued per second                                     
+HedgeTotalTimeTriggeredRate          Rate of hedge requests triggered by total time timeout per second                   
+HedgeTtfbTriggeredRate               Rate of hedge requests triggered by TTFB timeout per second                         
+HedgeWonRate                         Rate of hedge requests that completed before the original request per second        
 LaggingConsumerRateLimitWaitTime     Wait time for rate-limited lagging consumer requests in milliseconds                
 LaggingConsumerRequestRate           Rate of requests from lagging consumers (cold path, bypasses cache) per second      
 LaggingConsumerRequestRejectedRate   Rate of lagging consumer requests rejected due to executor unavailability per second
