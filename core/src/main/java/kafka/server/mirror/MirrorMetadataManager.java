@@ -271,10 +271,21 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             delta.topicsDelta().createdTopicIds().forEach(pendingTopicCreations::remove);
         }
 
-        maybeRecreateConnection(delta, newImage);
+        Set<String> reconnectedMirrors = maybeRecreateConnection(delta, newImage);
 
         // get all mirror partition leaders on this node based on the delta
         Set<TopicPartition> mirrorLeaders = getMirrorLeadersAndClearFollowerStates(delta, newImage);
+
+        // after a connection config change (e.g. bootstrap.servers), fetchers were removed
+        // and must be recreated by re-evaluating MIRRORING partitions for the affected mirrors
+        if (!reconnectedMirrors.isEmpty()) {
+            partitionStates.forEach((key, state) -> {
+                if (reconnectedMirrors.contains(key.mirrorName()) && state == MirrorPartitionState.MIRRORING) {
+                    mirrorLeaders.add(new TopicPartition(key.topic(), key.partition()));
+                }
+            });
+        }
+
         if (mirrorLeaders.isEmpty()) {
             return;
         }
@@ -395,7 +406,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             ClusterMirrorConfig.MIRROR_GROUPS_INCLUDE_CONFIG, ClusterMirrorConfig.MIRROR_GROUPS_EXCLUDE_CONFIG,
             ClusterMirrorConfig.MIRROR_ACL_INCLUDE_CONFIG);
 
-    private void maybeRecreateConnection(MetadataDelta delta, MetadataImage newImage) {
+    private Set<String> maybeRecreateConnection(MetadataDelta delta, MetadataImage newImage) {
+        Set<String> reconnectedMirrors = new HashSet<>();
         if (delta.configsDelta() != null) {
             delta.configsDelta().changes().entrySet().stream()
                 .filter(e -> e.getKey().type() == ConfigResource.Type.CLUSTER_MIRROR)
@@ -420,9 +432,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                             senders.forEach(MirrorSourceSender::close);
                         }
                         mirrorFetcherManagerSupplier.get().removeFetchersForMirror(mirrorName);
+                        if (!mirrorDeleted) {
+                            reconnectedMirrors.add(mirrorName);
+                        }
                     }
                 });
         }
+        return reconnectedMirrors;
     }
 
     /** Returns mirror partitions led by this broker, detecting both leadership and config changes */
