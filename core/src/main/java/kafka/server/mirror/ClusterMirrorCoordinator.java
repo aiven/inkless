@@ -710,6 +710,12 @@ public class ClusterMirrorCoordinator {
             });
         });
 
+        // No partitions need updating (e.g. empty topic with no leader epoch)
+        if (localByCoordPartition.isEmpty() && remoteTopicMetadata.isEmpty()) {
+            future.complete(null);
+            return future;
+        }
+
         // Update in-memory cache once with all offsets
         var updatedOffsets = metadataManager.updateLastMirrorEpochs(mirrorName, partitionOffsets, Map.of());
 
