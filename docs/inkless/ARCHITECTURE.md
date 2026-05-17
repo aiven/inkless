@@ -301,3 +301,39 @@ This permits the Classic storage engine to be write-latency-optimized and the Di
 Once the data is moved to Tiered Storage, it will be storage-cost-optimized both for archival and access.
 Data will remain visible to consumers between the time it is given an order by the ingest engine, and when it is finally cleaned up due to retention in tiered storage. 
 
+
+```mermaid
+---
+config:
+  sankey:
+    showValues: false
+    labelStyle: outlined
+    nodePadding: 20
+---
+sankey
+
+%% source,target,value
+Producer,Low-Latency,2
+Low-Latency,Classic,2
+Classic,Tiered Storage,1
+Producer,High-Latency,8
+High-Latency,Diskless,8
+Diskless,High-Throughput,5
+Diskless,Low-Throughput,2
+High-Throughput,Tiered Storage,4
+Low-Throughput,Merging,2
+Merging,Tiered Storage,1
+```
+
+Above is a diagram representing an example data flow pattern through a cluster with Diskless enabled.
+Low-Latency data is directed towards Classic topics, while High-Latency data is directed towards Diskless topics.
+Classic and Diskless topics will expire any short-lived data, with retention period shorter than the time to offload to alternative storage.
+Long-retention data in Classic topics will be uploaded directly to Tiered Storage.
+
+Diskless long-retention data will follow two routes, depending on the roll configurations of the topic.
+High-throughput partitions which roll quickly (e.g. <15 minutes) will be uploaded directly to Tiered Storage.
+Low-throughput partitions which roll infrequently, will be merged into larger Diskless WAL Segments.
+
+These merged segments will typically be larger than the segments created upon ingestion, allowing for efficient replica rebuilds.
+They will combine data from multiple partitions, because those partitions do not individually have enough throughput to meet the roll conditions for Tiered Storage.
+Data which never satisfies the configured roll conditions will either be expired due to retention, or periodically moved to fresher objects.
