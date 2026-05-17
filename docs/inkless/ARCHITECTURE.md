@@ -307,20 +307,18 @@ Data will remain visible to consumers between the time it is given an order by t
 config:
   sankey:
     showValues: false
-    labelStyle: outlined
-    nodePadding: 20
 ---
 sankey
 
 %% source,target,value
-Producer,Low-Latency,2
-Low-Latency,Classic,2
-Classic,Tiered Storage,1
-Producer,High-Latency,8
-High-Latency,Diskless,8
-Diskless,High-Throughput,5
-Diskless,Low-Throughput,2
+Producer,Low-Latency,3
+Low-Latency,Classic,3
+Classic,Tiered Storage,2
+Producer,High-Latency,7
+High-Latency,Diskless,7
+Diskless,High-Throughput,4
 High-Throughput,Tiered Storage,4
+Diskless,Low-Throughput,2
 Low-Throughput,Merging,2
 Merging,Tiered Storage,1
 ```
