@@ -181,7 +181,6 @@ public final class SharedState implements Closeable {
             Utils.closeQuietly(storageMetrics, "storageMetrics");
             Utils.closeQuietly(batchCoordinateCache, "batchCoordinateCache");
             Utils.closeQuietly(objectCache, "objectCache");
-            Utils.closeQuietly(controlPlane, "controlPlane");
             throw new RuntimeException("Failed to initialize SharedState", e);
         }
     }
@@ -195,7 +194,6 @@ public final class SharedState implements Closeable {
         Utils.closeQuietly(storageMetrics, "storageMetrics");
         Utils.closeQuietly(batchCoordinateCache, "batchCoordinateCache");
         Utils.closeQuietly(cache, "objectCache");
-        Utils.closeQuietly(controlPlane, "controlPlane");
     }
 
     public Time time() {

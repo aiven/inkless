@@ -45,7 +45,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -101,15 +100,16 @@ class SharedStateTest {
         stubFullConfig();
         final AtomicInteger storageCallCount = new AtomicInteger();
 
-        when(config.storage(any(Metrics.class))).thenAnswer(invocation -> {
-            return switch (storageCallCount.incrementAndGet()) {
-                case 1 -> firstBackend;   // fetchStorage
-                case 2 -> secondBackend;  // laggingFetchStorage
-                case 3 -> thirdBackend;   // produceStorage
-                case 4 -> fourthBackend;  // backgroundStorage
-                default -> throw new IllegalStateException("Unexpected storage call");
-            };
-        });
+        when(config.storage(any(Metrics.class)))
+            .thenAnswer(invocation ->
+                switch (storageCallCount.incrementAndGet()) {
+                    case 1 -> firstBackend;   // fetchStorage
+                    case 2 -> secondBackend;  // laggingFetchStorage
+                    case 3 -> thirdBackend;   // produceStorage
+                    case 4 -> fourthBackend;  // backgroundStorage
+                    default -> throw new IllegalStateException("Unexpected storage call");
+                }
+            );
 
         final SharedState state = SharedState.initialize(
             Time.SYSTEM, 1, config, metadataView, controlPlane,
@@ -124,7 +124,8 @@ class SharedStateTest {
         inOrder.verify(thirdBackend).close();    // produceStorage
         inOrder.verify(secondBackend).close();   // laggingFetchStorage
         inOrder.verify(firstBackend).close();    // fetchStorage
-        inOrder.verify(controlPlane).close();
+        // controlPlane should not be closed by SharedState since it was passed in, not created by SharedState.
+        inOrder.verify(controlPlane, never()).close();
     }
 
     @Test
@@ -134,14 +135,15 @@ class SharedStateTest {
 
         final AtomicInteger storageCallCount = new AtomicInteger();
 
-        when(config.storage(any(Metrics.class))).thenAnswer(invocation -> {
-            return switch (storageCallCount.incrementAndGet()) {
-                case 1 -> firstBackend;   // fetchStorage
-                case 2 -> thirdBackend;   // produceStorage (no lagging)
-                case 3 -> fourthBackend;  // backgroundStorage
-                default -> throw new IllegalStateException("Unexpected storage call");
-            };
-        });
+        when(config.storage(any(Metrics.class)))
+            .thenAnswer(invocation ->
+                switch (storageCallCount.incrementAndGet()) {
+                    case 1 -> firstBackend;   // fetchStorage
+                    case 2 -> thirdBackend;   // produceStorage (no lagging)
+                    case 3 -> fourthBackend;  // backgroundStorage
+                    default -> throw new IllegalStateException("Unexpected storage call");
+                }
+            );
 
         final SharedState state = SharedState.initialize(
             Time.SYSTEM, 1, config, metadataView, controlPlane,
@@ -153,10 +155,11 @@ class SharedStateTest {
         state.close();
 
         final InOrder inOrder = inOrder(fourthBackend, thirdBackend, firstBackend, controlPlane);
-        inOrder.verify(fourthBackend).close();   // backgroundStorage
-        inOrder.verify(thirdBackend).close();    // produceStorage
-        inOrder.verify(firstBackend).close();    // fetchStorage
-        inOrder.verify(controlPlane).close();
+        inOrder.verify(fourthBackend).close(); // backgroundStorage
+        inOrder.verify(thirdBackend).close();  // produceStorage
+        inOrder.verify(firstBackend).close();  // fetchStorage
+        // controlPlane should not be closed by SharedState since it was passed in, not created by SharedState.
+        inOrder.verify(controlPlane, never()).close();
         // secondBackend was never created, so never closed.
         verify(secondBackend, never()).close();
     }
@@ -192,7 +195,7 @@ class SharedStateTest {
         final InOrder inOrder = inOrder(secondBackend, firstBackend, controlPlane, thirdBackend, fourthBackend);
         inOrder.verify(secondBackend).close();
         inOrder.verify(firstBackend).close();
-        inOrder.verify(controlPlane).close();
+        inOrder.verify(controlPlane, never()).close();
         inOrder.verify(thirdBackend, never()).close();
         inOrder.verify(fourthBackend, never()).close();
     }
