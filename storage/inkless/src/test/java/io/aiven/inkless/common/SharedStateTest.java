@@ -193,7 +193,7 @@ class SharedStateTest {
         inOrder.verify(secondBackend).close();
         inOrder.verify(firstBackend).close();
         inOrder.verify(controlPlane).close();
-        inOrder.verify(thirdBackend, times(0)).close();
-        inOrder.verify(fourthBackend, times(0)).close();
+        inOrder.verify(thirdBackend, never()).close();
+        inOrder.verify(fourthBackend, never()).close();
     }
 }
