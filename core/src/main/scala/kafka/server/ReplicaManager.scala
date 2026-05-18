@@ -3130,15 +3130,32 @@ class ReplicaManager(val config: KafkaConfig,
       if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
         // Clean up migration tracking since only the leader drives classic -> diskless migration.
         initDisklessLogManager.foreach(_.removePartition(tp))
-        // Post-restart: diskless topic still has classic data on local disk.
-        // Create the Partition so classic data remains accessible for reads.
-        if (logManager.getLog(tp).isDefined && !isConsolidatingDisklessTopic) {
+        val seal = _inklessMetadataView.getClassicToDisklessStartOffset(tp)
+        // Create the Partition (and a local log on the fly if missing) when either:
+        //   (a) the broker already has classic data on disk -- typical post-restart case
+        //       for a pre-existing replica; or
+        //   (b) the topic has already been migrated (seal >= 0) and this broker has been
+        //       newly added to the replica set -- it needs a local log so it can fetch
+        //       the classic-era prefix from another replica and serve reads below the
+        //       seal if it ever takes over leadership.
+        // For never-migrated diskless topics (seal == -1) and migrations still in
+        // progress without a committed seal (seal == -2), a missing local log means
+        // there is no classic data to expose on this broker, so we leave the partition
+        // unmanaged here.
+        if (!isConsolidatingDisklessTopic && (logManager.getLog(tp).isDefined || seal >= 0)) {
           getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
             try {
               val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
               partition.makeFollower(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
               partition.seal()
               changedPartitions.add(partition)
+              // Schedule a catch-up fetch when the local HW is below the seal -- either
+              // because we restarted with a stale HW (unclean shutdown) or because we
+              // were just added as a replica and have an empty local log. The
+              // ReplicaFetcher self-evicts once the follower has read past the seal.
+              if (seal >= 0 && partition.localLogOrException.highWatermark < seal) {
+                partitionsToStartFetching.put(tp, partition)
+              }
             } catch {
               case e: KafkaStorageException =>
                 stateChangeLogger.error(s"Unable to create follower for migrated partition $tp " +

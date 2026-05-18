@@ -9486,6 +9486,159 @@ class ReplicaManagerTest {
       }
     }
 
+    // Build a follower delta where `brokerId` is a follower of `leaderId` for the given topic.
+    private def disklessFollowerDelta(topicName: String, topicId: Uuid, brokerId: Int, leaderId: Int): TopicsDelta = {
+      val delta = new TopicsDelta(TopicsImage.EMPTY)
+      delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      delta.replay(new PartitionRecord()
+        .setPartitionId(0)
+        .setTopicId(topicId)
+        .setReplicas(util.Arrays.asList(brokerId, leaderId))
+        .setIsr(util.Arrays.asList(brokerId, leaderId))
+        .setLeader(leaderId)
+        .setLeaderEpoch(0)
+        .setPartitionEpoch(0)
+      )
+      delta
+    }
+
+    // Stage a follower partition with a chosen LEO and HW so the next `applyDelta` sees
+    // exactly that state — used to simulate a post-restart broker whose local log lags
+    // the diskless seal offset.
+    private def populateLocalLogAtLeoAndCheckpointedHwm(
+        replicaManager: ReplicaManager, tp: TopicPartition,
+        log: UnifiedLog, leo: Long, hw: Long): Unit = {
+      if (leo > 0) {
+        // Append records via the follower path with `partitionLeaderEpoch == 0`. This sets
+        // `log.logEndOffset == leo` and, because the batch carries an explicit leader epoch,
+        // populates the leader-epoch cache so `log.latestEpoch.isPresent` — which is what
+        // makes the catch-up fetcher's `initialFetchOffset` resolve to LEO.
+        val simpleRecords = (0L until leo).map(i => new SimpleRecord(s"msg-$i".getBytes)).toArray
+        val records = MemoryRecords.withRecords(Compression.NONE, 0, simpleRecords: _*)
+        log.appendAsFollower(records, 0)
+      }
+      // Write the HW into the on-disk checkpoint file. The next `applyDelta` will call
+      // `Partition.createLog`, which overwrites the in-memory HW with the checkpointed
+      // value (defaulting to 0 when no entry exists), so any HW we want the test to start
+      // from has to live on disk before applyDelta runs.
+      val checkpoint = replicaManager.highWatermarkCheckpoints(log.parentDir)
+      checkpoint.write(util.Collections.singletonMap(tp, java.lang.Long.valueOf(hw)))
+      // Keep the in-memory HW in sync for any reads that happen before `applyDelta`
+      // re-loads it from the checkpoint.
+      log.maybeUpdateHighWatermark(hw)
+    }
+
+    @Test
+    def testApplyDeltaStartsCatchUpFetcherForDisklessFollowerWithLaggingHwm(): Unit = {
+      val topicName = "migrated-topic"
+      val topicId = Uuid.randomUuid()
+      val tp = new TopicPartition(topicName, 0)
+      val brokerId = 1
+      val leaderId = 2
+
+      val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+      when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+      val replicaManager = spy(createReplicaManager(
+        List(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager)
+      ))
+      try {
+        // Pre-create the local log with LEO=10, HW=5 — the broker's classic HW lags the seal point.
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 5L)
+
+        // Mark the partition as fully migrated with classicToDisklessStartOffset = 10.
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(10L)
+
+        // Apply the follower delta.
+        val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        // A fetcher must be scheduled against the leader so that HW can advance to the seal offset.
+        val leaderEndpoint = ClusterImageTest.IMAGE1.broker(leaderId).listeners().get("PLAINTEXT")
+        verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+          topicId = Some(topicId),
+          leader = new BrokerEndPoint(leaderId, leaderEndpoint.host(), leaderEndpoint.port()),
+          currentLeaderEpoch = 0,
+          initOffset = 10L
+        )))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testApplyDeltaDoesNotStartCatchUpFetcherWhenDisklessFollowerHwmAtSealOffset(): Unit = {
+      val topicName = "migrated-topic"
+      val topicId = Uuid.randomUuid()
+      val tp = new TopicPartition(topicName, 0)
+      val brokerId = 1
+      val leaderId = 2
+
+      val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+      when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+      val replicaManager = spy(createReplicaManager(
+        List(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager)
+      ))
+      try {
+        // Local log is already caught up to the seal point: LEO=HW=10, seal=10.
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 10L)
+
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(10L)
+
+        val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        // Nothing to catch up — no fetcher should be added for this partition.
+        verify(mockFetcherManager, never()).addFetcherForPartitions(any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = Array(
+      PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+      PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING
+    ))
+    def testApplyDeltaDoesNotStartCatchUpFetcherWhenSealOffsetUnset(sealOffset: Long): Unit = {
+      val topicName = "migrated-topic"
+      val topicId = Uuid.randomUuid()
+      val tp = new TopicPartition(topicName, 0)
+      val brokerId = 1
+      val leaderId = 2
+
+      val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+      when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+      val replicaManager = spy(createReplicaManager(
+        List(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager)
+      ))
+      try {
+        // HW lags LEO, but the seal offset is not yet committed by the controller.
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 5L)
+
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+
+        val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        // Without a committed seal offset we have no upper bound to fetch up to,
+        // so no catch-up fetcher should be started yet. The follower will start
+        // catching up once the controller publishes the seal (which bumps the
+        // partitionEpoch and re-triggers applyLocalFollowersDelta).
+        verify(mockFetcherManager, never()).addFetcherForPartitions(any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
     @Test
     def testFollowerFetchAtClassicToDisklessStartOffsetReturnsEmptyAndIdle(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
@@ -9666,9 +9819,13 @@ class ReplicaManagerTest {
       val tp = new TopicPartition(topicName, 0)
       val brokerId = 1
 
-      val replicaManager = createReplicaManager(List(topicName))
+      val replicaManager = spy(createReplicaManager(List(topicName)))
       try {
-        // No local log exists — this is a fully-diskless topic with no classic data.
+        // Never-migrated diskless topic: no local log on this broker AND no committed
+        // classicToDisklessStartOffset. Without an explicit stub Mockito would return
+        // 0L which means "migrated, seal at offset 0" -- not what this test models.
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+          .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
         assertTrue(replicaManager.logManager.getLog(tp).isEmpty)
 
         val delta = new TopicsDelta(TopicsImage.EMPTY)
@@ -9686,6 +9843,93 @@ class ReplicaManagerTest {
 
         // No partition should be created for a diskless topic without local data.
         assertEquals(HostedPartition.None, replicaManager.getPartition(tp))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testApplyDeltaCreatesPartitionAndStartsCatchUpFetcherForNewlyAddedDisklessReplica(): Unit = {
+      val topicName = "migrated-topic"
+      val topicId = Uuid.randomUuid()
+      val tp = new TopicPartition(topicName, 0)
+      val brokerId = 1
+      val leaderId = 2
+
+      val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+      when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+      val replicaManager = spy(createReplicaManager(
+        List(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager)
+      ))
+      try {
+        // Newly added replica on a *migrated* diskless topic: no local log yet, but
+        // the topic has a committed classicToDisklessStartOffset (seal). The broker
+        // needs to create a local log on the fly and arm a catch-up fetcher to
+        // backfill the classic-era prefix from another replica, so it can later
+        // serve reads below the seal if leadership moves to it.
+        assertTrue(replicaManager.logManager.getLog(tp).isEmpty)
+        assertEquals(HostedPartition.None, replicaManager.getPartition(tp))
+
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(10L)
+
+        val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        // makeFollower must have created the local log + Partition object.
+        val partition = replicaManager.getPartition(tp)
+        assertTrue(partition.isInstanceOf[HostedPartition.Online], "Partition should be online")
+        assertTrue(replicaManager.logManager.getLog(tp).isDefined, "Local log should be created")
+        val onlinePartition = partition.asInstanceOf[HostedPartition.Online].partition
+        assertFalse(onlinePartition.isLeader, "Partition should be follower")
+        assertTrue(onlinePartition.isSealed, "Partition should be sealed")
+
+        // Fresh log starts empty (LEO == HW == 0 < seal == 10), so a catch-up fetcher
+        // must be armed against the leader with initialFetchOffset == 0.
+        val leaderEndpoint = ClusterImageTest.IMAGE1.broker(leaderId).listeners().get("PLAINTEXT")
+        verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+          topicId = Some(topicId),
+          leader = new BrokerEndPoint(leaderId, leaderEndpoint.host(), leaderEndpoint.port()),
+          currentLeaderEpoch = 0,
+          initOffset = 0L
+        )))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testApplyDeltaDoesNotStartCatchUpFetcherForNewlyAddedReplicaWhenMigrationPending(): Unit = {
+      // A newly added replica must NOT spin up a local log + catch-up fetcher while
+      // the migration is still pending (seal == -2). There is no upper bound to
+      // fetch up to yet, and the controller will re-trigger applyLocalFollowersDelta
+      // once it commits the seal (bumping partitionEpoch), at which point the
+      // standard path will create the log and arm the fetcher.
+      val topicName = "pending-migration-topic"
+      val topicId = Uuid.randomUuid()
+      val tp = new TopicPartition(topicName, 0)
+      val brokerId = 1
+      val leaderId = 2
+
+      val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+      when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+      val replicaManager = spy(createReplicaManager(
+        List(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager)
+      ))
+      try {
+        assertTrue(replicaManager.logManager.getLog(tp).isEmpty)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+
+        val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        assertEquals(HostedPartition.None, replicaManager.getPartition(tp))
+        assertTrue(replicaManager.logManager.getLog(tp).isEmpty)
+        verify(mockFetcherManager, never()).addFetcherForPartitions(any())
       } finally {
         replicaManager.shutdown(checkpointHW = false)
       }
@@ -9712,7 +9956,8 @@ class ReplicaManagerTest {
       topicIdMapping: Map[String, Uuid] = Map.empty,
       disklessManagedReplicasEnabled: Boolean = false,
       disklessRemoteStorageConsolidationEnabled: Boolean = false,
-      consolidatingDisklessTopics: Set[String] = Set.empty
+      consolidatingDisklessTopics: Set[String] = Set.empty,
+      mockReplicaFetcherManager: Option[ReplicaFetcherManager] = None
     ): ReplicaManager = {
       val props = TestUtils.createBrokerConfig(1, logDirCount = 2)
       if (disklessManagedReplicasEnabled || disklessRemoteStorageConsolidationEnabled) {
@@ -9756,7 +10001,15 @@ class ReplicaManagerTest {
         alterPartitionManager = alterPartitionManager,
         inklessSharedState = Some(sharedState),
         inklessMetadataView = Some(inklessMetadata),
-      )
+      ) {
+        override protected def createReplicaFetcherManager(
+          metrics: Metrics,
+          time: Time,
+          quotaManager: ReplicationQuotaManager
+        ): ReplicaFetcherManager = {
+          mockReplicaFetcherManager.getOrElse(super.createReplicaFetcherManager(metrics, time, quotaManager))
+        }
+      }
     }
   }
 }
