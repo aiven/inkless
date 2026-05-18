@@ -97,7 +97,7 @@ class SharedStateTest {
     }
 
     @Test
-    void shouldCloseAllResourcesOnClose() throws Exception {
+    void testShouldCloseAllResourcesOnClose() throws Exception {
         stubFullConfig();
         final AtomicInteger storageCallCount = new AtomicInteger();
 
@@ -128,7 +128,7 @@ class SharedStateTest {
     }
 
     @Test
-    void shouldCloseWithoutLaggingStorageWhenDisabled() throws Exception {
+    void testShouldCloseWithoutLaggingStorageWhenDisabled() throws Exception {
         stubFullConfig();
         when(config.fetchLaggingConsumerThreadPoolSize()).thenReturn(0);
 
@@ -162,7 +162,7 @@ class SharedStateTest {
     }
 
     @Test
-    void shouldCleanupCreatedResourcesInReverseOrderOnInitFailure() throws Exception {
+    void testShouldCleanupCreatedResourcesInReverseOrderOnInitFailure() throws Exception {
         final AtomicInteger storageCallCount = new AtomicInteger();
 
         when(config.storage(any(Metrics.class))).thenAnswer(invocation -> {
