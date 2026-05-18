@@ -124,7 +124,7 @@ class DisklessLeaderEndPoint(
           if (fetchResponseData.errorCode == Errors.NONE.code) {
             // in case of an inconsistency log an error, set an unknown offset and also return unknown server error
             if (logStartOffset > data.highWatermark) {
-              logger.error("Local log start offset ({}) is higher than high watermark ({}) for topic-partition {}",
+              logger.error("Local log start offset ({}) is higher than high watermark ({}) for topic-partition {}, this may indicate a transient inconsistency during migration",
                 logStartOffset, data.highWatermark, partition.topicPartition)
               fetchResponseData.setLogStartOffset(UnifiedLog.UNKNOWN_OFFSET)
               fetchResponseData.setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code)
