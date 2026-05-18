@@ -132,7 +132,7 @@ class DisklessLeaderEndPoint(
               fetchResponseData.setLogStartOffset(logStartOffset)
             }
           } else {
-            fetchResponseData.setLogStartOffset(data.logStartOffset)
+            fetchResponseData.setLogStartOffset(UnifiedLog.UNKNOWN_OFFSET)
           }
       }
       tp.topicPartition -> fetchResponseData

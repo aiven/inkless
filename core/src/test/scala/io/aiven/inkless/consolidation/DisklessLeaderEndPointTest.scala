@@ -492,7 +492,7 @@ class DisklessLeaderEndPointTest {
   }
 
   @Test
-  def testFetchLeavesDisklessLogStartOffsetWhenDisklessErrorEvenIfPartitionAvailable(): Unit = {
+  def testFetchReturnsUnknownLogStartOffsetWhenDisklessErrorEvenIfPartitionAvailable(): Unit = {
     val fetchHandler = mock(classOf[FetchHandler])
     val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
     val replicaManager = mock(classOf[ReplicaManager])
@@ -521,7 +521,7 @@ class DisklessLeaderEndPointTest {
 
     val pd = endPoint.fetch(fetchBuilder).get(topicPartition)
     assertEquals(Errors.OFFSET_OUT_OF_RANGE.code, pd.errorCode)
-    assertEquals(7L, pd.logStartOffset)
+    assertEquals(-1L, pd.logStartOffset)
   }
 
   @Test
