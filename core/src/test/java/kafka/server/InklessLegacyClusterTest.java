@@ -26,6 +26,7 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategy;
 import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -40,6 +41,7 @@ import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
+import org.apache.kafka.coordinator.transaction.TransactionLogConfig;
 import org.apache.kafka.server.config.ServerConfigs;
 
 import org.junit.jupiter.api.AfterEach;
@@ -59,6 +61,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
@@ -74,6 +78,7 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
@@ -99,6 +104,9 @@ public class InklessLegacyClusterTest {
             .build();
         cluster = new KafkaClusterTestKit.Builder(nodes)
             .setConfigProp(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
+            .setConfigProp(TransactionLogConfig.TRANSACTIONS_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
+            .setConfigProp(TransactionLogConfig.TRANSACTIONS_TOPIC_MIN_ISR_CONFIG, "1")
+            .setConfigProp(TransactionLogConfig.TRANSACTIONS_TOPIC_PARTITIONS_CONFIG, "1")
             .setConfigProp(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
             // PG control plane config
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
@@ -248,6 +256,66 @@ public class InklessLegacyClusterTest {
         }
 
         assertEquals(recordsProduced.get(), recordsConsumed);
+    }
+
+    @Test
+    public void txnOffsetCommitWithDisklessSource() throws Exception {
+        Map<String, Object> clientConfigs = new HashMap<>();
+        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+        clientConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+        clientConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+        clientConfigs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        clientConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        clientConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AutoOffsetResetStrategy.EARLIEST.name());
+        String disklessTopicName = "diskless-test-topic";
+        String groupId = "test-group";
+        String transactionalId = "txn-" + UUID.randomUUID();
+        int numRecords = 10;
+
+        try (Admin admin = AdminClient.create(clientConfigs)) {
+            final NewTopic disklessTopic = new NewTopic(disklessTopicName, 1, (short) 1)
+                .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            CreateTopicsResult topics = admin.createTopics(List.of(disklessTopic));
+            topics.all().get(10, TimeUnit.SECONDS);
+        }
+
+        try (Producer<byte[], byte[]> producer = new KafkaProducer<>(clientConfigs)) {
+            for (int i = 0; i < numRecords; i++) {
+                byte[] value = new byte[10000];
+                final ProducerRecord<byte[], byte[]> disklessRecord = new ProducerRecord<>(disklessTopicName, 0, null, value);
+                producer.send(disklessRecord).get(10, TimeUnit.SECONDS);
+            }
+        }
+
+        Map<String, Object> consumerConfigs = new HashMap<>(clientConfigs);
+        consumerConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+        consumerConfigs.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+
+        Map<String, Object> producerConfigs = new HashMap<>(clientConfigs);
+        producerConfigs.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG, transactionalId);
+
+        final TopicPartition disklessTopicPartition = new TopicPartition(disklessTopicName, 0);
+        long committedOffset;
+        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerConfigs);
+             Producer<byte[], byte[]> producer = new KafkaProducer<>(producerConfigs)) {
+            consumer.assign(List.of(disklessTopicPartition));
+            producer.initTransactions();
+
+            ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(30));
+            assertEquals(numRecords, poll.count());
+
+            committedOffset = consumer.position(disklessTopicPartition);
+            assertEquals(numRecords, committedOffset);
+            producer.beginTransaction();
+            producer.sendOffsetsToTransaction(Map.of(disklessTopicPartition, new OffsetAndMetadata(committedOffset)), consumer.groupMetadata());
+            producer.commitTransaction();
+        }
+
+        try (Consumer<byte[], byte[]> verifier = new KafkaConsumer<>(consumerConfigs)) {
+            OffsetAndMetadata committed = verifier.committed(Set.of(disklessTopicPartition), Duration.ofSeconds(10)).get(disklessTopicPartition);
+            assertNotNull(committed);
+            assertEquals(committedOffset, committed.offset());
+        }
     }
 
     private static void consumeWithManualAssignment(TimestampType timestampType, Map<String, Object> clientConfigs, String topicName, long now, int numRecords) {
