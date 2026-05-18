@@ -1486,8 +1486,8 @@ class KafkaApisTest extends Logging {
   }
 
   @Test
-  def testTxnOffsetCommitWithInklessTopic(): Unit = {
-    val topic = "topic"
+  def testTxnOffsetCommitWithDisklessTopic(): Unit = {
+    val topic = "diskless-topic"
     addTopicToMetadataCache(topic, numPartitions = 1)
 
     reset(replicaManager, clientRequestQuotaManager, requestChannel)
@@ -1503,15 +1503,28 @@ class KafkaApisTest extends Logging {
       true
     ).build()
     val request = buildRequest(offsetCommitRequest)
-    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
-      any[Long])).thenReturn(0)
+
+    val coordinatorResponse = new TxnOffsetCommitResponseData().setTopics(util.List.of(
+      new TxnOffsetCommitResponseData.TxnOffsetCommitResponseTopic()
+        .setName(topic)
+        .setPartitions(util.List.of(
+          new TxnOffsetCommitResponseData.TxnOffsetCommitResponsePartition()
+            .setPartitionIndex(0)
+            .setErrorCode(Errors.NONE.code)))))
+
+    val requestLocal = RequestLocal.withThreadConfinedCaching
+    when(groupCoordinator.commitTransactionalOffsets(
+      ArgumentMatchers.eq(request.context),
+      argThat[TxnOffsetCommitRequestData](_.topics.stream.anyMatch(_.name == topic)),
+      ArgumentMatchers.eq(requestLocal.bufferSupplier)
+    )).thenReturn(CompletableFuture.completedFuture(coordinatorResponse))
 
     val kafkaApis = createKafkaApis(inklessSharedState = Some(createInklessSharedStateWithTopic(topic)))
     try {
-      kafkaApis.handleTxnOffsetCommitRequest(request, RequestLocal.withThreadConfinedCaching)
+      kafkaApis.handleTxnOffsetCommitRequest(request, requestLocal)
 
       val response = verifyNoThrottling[TxnOffsetCommitResponse](request)
-      assertEquals(Errors.INVALID_TOPIC_EXCEPTION, response.errors().get(topicPartition))
+      assertEquals(Errors.NONE, response.errors().get(topicPartition))
     } finally {
       kafkaApis.close()
     }

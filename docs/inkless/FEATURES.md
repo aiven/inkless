@@ -16,12 +16,13 @@ Currently Diskless topics support:
 * ListOffsets
 * Access restriction via ACLs
 * Committing offsets via traditional Group Coordinators
+* Transactional offset commits where the Diskless topic appears only as the offset key (`Producer.sendOffsetsToTransaction(...)`)
 * Managed replicas with user-defined replication factor (see [Managed Replicas](#managed-replicas))
 
 The following are notable unsupported features:
 * cleanup.policy=delete
 * cleanup.policy=compact
-* Adding Diskless topics to transactions
+* Transactional Produce, `AddPartitionsToTxn`, and `WriteTxnMarkers` targeting Diskless topics
 * read_committed consumers reading Diskless topics
 * Producing to both inkless and traditional topics simultaneously
 
@@ -62,7 +63,6 @@ If not specified above, features are untested and assumed to be inoperable.
 ### Diskless topics are excluded
 - `ADD_PARTITIONS_TO_TXN`
 - `WRITE_TXN_MARKERS`
-- `TXN_OFFSET_COMMIT`
 
 ### Not supported for Diskless topics (WIP)
 - `DESCRIBE_PRODUCERS`
