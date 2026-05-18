@@ -306,14 +306,14 @@ public class GroupCoordinatorShardTest {
             List<CoordinatorRecord> records = invocation.getArgument(1);
             records.add(GroupCoordinatorRecordHelpers.newGroupMetadataTombstoneRecord(groupId));
             return null;
-        }).when(groupMetadataManager).createGroupTombstoneRecords(anyString(), anyList());
+        }).when(groupMetadataManager).createGroupTombstoneRecordsAndCancelTimers(anyString(), anyList());
 
         CoordinatorResult<DeleteGroupsResponseData.DeletableGroupResultCollection, CoordinatorRecord> coordinatorResult =
             coordinator.deleteGroups(context, groupIds);
 
         for (String groupId : groupIds) {
             verify(groupMetadataManager, times(1)).validateDeleteGroup(ArgumentMatchers.eq(groupId));
-            verify(groupMetadataManager, times(1)).createGroupTombstoneRecords(ArgumentMatchers.eq(groupId), anyList());
+            verify(groupMetadataManager, times(1)).createGroupTombstoneRecordsAndCancelTimers(ArgumentMatchers.eq(groupId), anyList());
             verify(offsetMetadataManager, times(1)).deleteAllOffsets(ArgumentMatchers.eq(groupId), anyList());
         }
         assertEquals(expectedResult, coordinatorResult);
@@ -372,7 +372,7 @@ public class GroupCoordinatorShardTest {
             List<CoordinatorRecord> records = invocation.getArgument(1);
             records.add(GroupCoordinatorRecordHelpers.newGroupMetadataTombstoneRecord(groupId));
             return null;
-        }).when(groupMetadataManager).createGroupTombstoneRecords(anyString(), anyList());
+        }).when(groupMetadataManager).createGroupTombstoneRecordsAndCancelTimers(anyString(), anyList());
 
         CoordinatorResult<DeleteGroupsResponseData.DeletableGroupResultCollection, CoordinatorRecord> coordinatorResult =
             coordinator.deleteGroups(context, groupIds);
@@ -380,7 +380,7 @@ public class GroupCoordinatorShardTest {
         for (String groupId : groupIds) {
             verify(groupMetadataManager, times(1)).validateDeleteGroup(eq(groupId));
             if (!groupId.equals("group-id-2")) {
-                verify(groupMetadataManager, times(1)).createGroupTombstoneRecords(eq(groupId), anyList());
+                verify(groupMetadataManager, times(1)).createGroupTombstoneRecordsAndCancelTimers(eq(groupId), anyList());
                 verify(offsetMetadataManager, times(1)).deleteAllOffsets(eq(groupId), anyList());
             }
         }
@@ -1384,8 +1384,8 @@ public class GroupCoordinatorShardTest {
 
         SnapshotRegistry snapshotRegistry = new SnapshotRegistry(new LogContext());
 
-        ConsumerGroup group1 = new ConsumerGroup(snapshotRegistry, "group-id");
-        ConsumerGroup group2 = new ConsumerGroup(snapshotRegistry, "other-group-id");
+        ConsumerGroup group1 = new ConsumerGroup(new LogContext(), snapshotRegistry, "group-id");
+        ConsumerGroup group2 = new ConsumerGroup(new LogContext(), snapshotRegistry, "other-group-id");
 
         when(groupMetadataManager.groupIds()).thenReturn(Set.of("group-id", "other-group-id"));
         when(groupMetadataManager.group("group-id")).thenReturn(group1);

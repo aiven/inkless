@@ -815,10 +815,10 @@ public class GroupMetadataManager {
         }
 
         if (group == null) {
-            return new ConsumerGroup(snapshotRegistry, groupId);
+            return new ConsumerGroup(logContext, snapshotRegistry, groupId);
         } else if (createIfNotExists && maybeDeleteEmptyClassicGroup(group, records)) {
             log.info("[GroupId {}] Converted the empty classic group to a consumer group.", groupId);
-            return new ConsumerGroup(snapshotRegistry, groupId);
+            return new ConsumerGroup(logContext, snapshotRegistry, groupId);
         } else {
             if (group.type() == CONSUMER) {
                 return (ConsumerGroup) group;
@@ -982,7 +982,7 @@ public class GroupMetadataManager {
         }
 
         if (group == null) {
-            ConsumerGroup consumerGroup = new ConsumerGroup(snapshotRegistry, groupId);
+            ConsumerGroup consumerGroup = new ConsumerGroup(logContext, snapshotRegistry, groupId);
             groups.put(groupId, consumerGroup);
             return consumerGroup;
         } else if (group.type() == CONSUMER) {
@@ -992,7 +992,7 @@ public class GroupMetadataManager {
             // offsets if no group existed. Simple classic groups are not backed by any records
             // in the __consumer_offsets topic hence we can safely replace it here. Without this,
             // replaying consumer group records after offset commit records would not work.
-            ConsumerGroup consumerGroup = new ConsumerGroup(snapshotRegistry, groupId);
+            ConsumerGroup consumerGroup = new ConsumerGroup(logContext, snapshotRegistry, groupId);
             groups.put(groupId, consumerGroup);
             return consumerGroup;
         } else {
@@ -1371,6 +1371,7 @@ public class GroupMetadataManager {
         ConsumerGroup consumerGroup;
         try {
             consumerGroup = ConsumerGroup.fromClassicGroup(
+                logContext,
                 snapshotRegistry,
                 classicGroup,
                 topicHashCache,
@@ -1573,6 +1574,10 @@ public class GroupMetadataManager {
         int receivedMemberEpoch,
         List<ConsumerGroupHeartbeatRequestData.TopicPartitions> ownedTopicPartitions
     ) {
+        // Epoch 0 is a special value indicating the member wants to (re)join the group.
+        // This is valid per KIP-848 fenced member recovery protocol.
+        if (receivedMemberEpoch == 0) return;
+
         if (receivedMemberEpoch > member.memberEpoch()) {
             throw new FencedMemberEpochException("The consumer group member has a greater member "
                 + "epoch (" + receivedMemberEpoch + ") than the one known by the group coordinator ("
@@ -1601,6 +1606,9 @@ public class GroupMetadataManager {
         ShareGroupMember member,
         int receivedMemberEpoch
     ) {
+        // Epoch 0 is a special value indicating the member wants to (re)join the group.
+        if (receivedMemberEpoch == 0) return;
+
         if (receivedMemberEpoch > member.memberEpoch()) {
             throw new FencedMemberEpochException("The share group member has a greater member "
                 + "epoch (" + receivedMemberEpoch + ") than the one known by the group coordinator ("
@@ -1707,6 +1715,9 @@ public class GroupMetadataManager {
         List<StreamsGroupHeartbeatRequestData.TaskIds> ownedStandbyTasks,
         List<StreamsGroupHeartbeatRequestData.TaskIds> ownedWarmupTasks
     ) {
+        // Epoch 0 is a special value indicating the member wants to (re)join the group.
+        if (receivedMemberEpoch == 0) return;
+
         if (receivedMemberEpoch > member.memberEpoch()) {
             throw new FencedMemberEpochException("The streams group member has a greater member "
                 + "epoch (" + receivedMemberEpoch + ") than the one known by the group coordinator ("
@@ -1995,8 +2006,9 @@ public class GroupMetadataManager {
             }
 
             if (reconfigureTopology || group.configuredTopology().isEmpty()) {
-                log.info("[GroupId {}][MemberId {}] Configuring the topology {}", groupId, memberId, updatedTopology);
-                updatedConfiguredTopology = InternalTopicManager.configureTopics(logContext, metadataHash, updatedTopology, metadataImage);
+                log.info("[GroupId {}][MemberId {}] Configuring the topology {}", groupId, memberId, updatedTopology.topologyEpoch());
+                LogContext topicManagerLogContext = new LogContext(String.format("%s[GroupId %s][MemberId %s] ", logContext.logPrefix(), groupId, memberId));
+                updatedConfiguredTopology = InternalTopicManager.configureTopics(topicManagerLogContext, metadataHash, updatedTopology, metadataImage, time);
                 group.setConfiguredTopology(updatedConfiguredTopology);
             } else {
                 updatedConfiguredTopology = group.configuredTopology().get();
@@ -2043,8 +2055,7 @@ public class GroupMetadataManager {
         }
 
         // Schedule initial rebalance delay for new streams groups to coalesce joins.
-        boolean isInitialRebalance = (group.groupEpoch() == 0);
-        if (isInitialRebalance) {
+        if (group.isEmpty()) {
             int initialDelayMs = streamsGroupInitialRebalanceDelayMs(groupId);
             if (initialDelayMs > 0) {
                 timer.scheduleIfAbsent(
@@ -2064,10 +2075,16 @@ public class GroupMetadataManager {
         TasksTuple targetAssignment;
         if (groupEpoch > group.assignmentEpoch()) {
             boolean initialDelayActive = timer.isScheduled(streamsInitialRebalanceKey(groupId));
-            if (initialDelayActive && group.assignmentEpoch() == 0) {
+            if (initialDelayActive) {
                 // During initial rebalance delay, return empty assignment to first joining members.
-                targetAssignmentEpoch = 1;
+                targetAssignmentEpoch = Math.max(1, group.assignmentEpoch());
                 targetAssignment = TasksTuple.EMPTY;
+
+                returnedStatus.add(
+                    new Status()
+                        .setStatusCode(StreamsGroupHeartbeatResponse.Status.ASSIGNMENT_DELAYED.code())
+                        .setStatusDetail("Assignment delayed due to the configured initial rebalance delay.")
+                );
             } else {
                 targetAssignment = updateStreamsTargetAssignment(
                     group,
@@ -2154,9 +2171,8 @@ public class GroupMetadataManager {
                 )
         ));
 
-        if (!returnedStatus.isEmpty()) {
-            response.setStatus(returnedStatus);
-        }
+        response.setStatus(returnedStatus);
+
         return new CoordinatorResult<>(records, new StreamsGroupHeartbeatResult(response, internalTopicsToBeCreated));
     }
 
@@ -3314,6 +3330,8 @@ public class GroupMetadataManager {
                         updateRegularExpressionsResult = UpdateRegularExpressionsResult.REGEX_UPDATED_AND_RESOLVED;
                     }
                 }
+            } else if (isNotEmpty(oldSubscribedTopicRegex)) {
+                updateRegularExpressionsResult = UpdateRegularExpressionsResult.REGEX_UPDATED_AND_RESOLVED;
             }
         }
 
@@ -3632,7 +3650,7 @@ public class GroupMetadataManager {
         String memberId = updatedMember.memberId();
         if (!updatedMember.equals(member)) {
             records.add(newStreamsGroupMemberRecord(groupId, updatedMember));
-            log.info("[GroupId {}] Member {} updated its member metdata to {}.",
+            log.info("[GroupId {}][MemberId {}] Member updated its member metdata to {}.",
                 groupId, memberId, updatedMember);
 
             return true;
@@ -4214,7 +4232,8 @@ public class GroupMetadataManager {
         }
         StreamsGroupHeartbeatResponseData response = new StreamsGroupHeartbeatResponseData()
             .setMemberId(memberId)
-            .setMemberEpoch(memberEpoch);
+            .setMemberEpoch(memberEpoch)
+            .setStatus(List.of());
 
         if (instanceId == null) {
             StreamsGroupMember member = group.getMemberOrThrow(memberId);
@@ -8251,12 +8270,12 @@ public class GroupMetadataManager {
      * @param groupId The id of the group to be deleted. It has been checked in {@link GroupMetadataManager#validateDeleteGroup}.
      * @param records The record list to populate.
      */
-    public void createGroupTombstoneRecords(
+    public void createGroupTombstoneRecordsAndCancelTimers(
         String groupId,
         List<CoordinatorRecord> records
     ) {
         // At this point, we have already validated the group id, so we know that the group exists and that no exception will be thrown.
-        createGroupTombstoneRecords(group(groupId), records);
+        createGroupTombstoneRecordsAndCancelTimers(group(groupId), records);
     }
 
     /**
@@ -8266,12 +8285,12 @@ public class GroupMetadataManager {
      * @param group The group to be deleted.
      * @param records The record list to populate.
      */
-    public void createGroupTombstoneRecords(
+    public void createGroupTombstoneRecordsAndCancelTimers(
         Group group,
         List<CoordinatorRecord> records
     ) {
         group.createGroupTombstoneRecords(records);
-        timer.cancel(streamsInitialRebalanceKey(group.groupId()));
+        group.cancelTimers(timer);
     }
 
     /**
@@ -8666,7 +8685,7 @@ public class GroupMetadataManager {
     public void maybeDeleteGroup(String groupId, List<CoordinatorRecord> records) {
         Group group = groups.get(groupId);
         if (group != null && group.isEmpty()) {
-            createGroupTombstoneRecords(groupId, records);
+            createGroupTombstoneRecordsAndCancelTimers(group, records);
         }
     }
 
@@ -8703,7 +8722,7 @@ public class GroupMetadataManager {
         if (isEmptyClassicGroup(group)) {
             // Delete the classic group by adding tombstones.
             // There's no need to remove the group as the replay of tombstones removes it.
-            createGroupTombstoneRecords(group, records);
+            createGroupTombstoneRecordsAndCancelTimers(group, records);
             return true;
         }
         return false;
@@ -8722,7 +8741,7 @@ public class GroupMetadataManager {
         if (isEmptyConsumerGroup(group)) {
             // Add tombstones for the previous consumer group. The tombstones won't actually be
             // replayed because its coordinator result has a non-null appendFuture.
-            createGroupTombstoneRecords(group, records);
+            createGroupTombstoneRecordsAndCancelTimers(group, records);
             removeGroup(groupId);
             return true;
         }
@@ -8742,7 +8761,7 @@ public class GroupMetadataManager {
         if (isEmptyStreamsGroup(group)) {
             // Add tombstones for the previous streams group. The tombstones won't actually be
             // replayed because its coordinator result has a non-null appendFuture.
-            createGroupTombstoneRecords(group, records);
+            createGroupTombstoneRecordsAndCancelTimers(group, records);
             removeGroup(groupId);
             return true;
         }
@@ -8908,7 +8927,7 @@ public class GroupMetadataManager {
      * @return the initial rebalance key.
      */
     static String streamsInitialRebalanceKey(String groupId) {
-        return "initial-rebalance-timeout-" + groupId;
+        return StreamsGroup.initialRebalanceTimeoutKey(groupId);
     }
 
     /**

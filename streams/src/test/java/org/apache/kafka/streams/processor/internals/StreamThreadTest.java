@@ -1175,6 +1175,7 @@ public class StreamThreadTest {
         when(consumerGroupMetadata.groupInstanceId()).thenReturn(Optional.empty());
         when(consumer.poll(any())).thenReturn(ConsumerRecords.empty());
         final Task task = mock(Task.class);
+        when(task.id()).thenReturn(task1);
         final ActiveTaskCreator activeTaskCreator = mock(ActiveTaskCreator.class);
         when(activeTaskCreator.createTasks(any(), any())).thenReturn(Collections.singleton(task));
         when(activeTaskCreator.producerClientIds()).thenReturn("producerClientId");
@@ -1196,7 +1197,6 @@ public class StreamThreadTest {
             new StreamsMetricsImpl(metrics, CLIENT_ID, mockTime);
         final TopologyMetadata topologyMetadata = new TopologyMetadata(internalTopologyBuilder, config);
         topologyMetadata.buildAndRewriteTopology();
-        stateDirectory = new StateDirectory(config, mockTime, true, false);
 
         final TaskManager taskManager = new TaskManager(
             new MockTime(),
@@ -1208,7 +1208,7 @@ public class StreamThreadTest {
             new Tasks(new LogContext()),
             topologyMetadata,
             null,
-            stateDirectory,
+            null,
             stateUpdater,
             schedulingTaskManager
         ) {
