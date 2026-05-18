@@ -376,6 +376,13 @@ public class ConfigurationControlManager {
             // As per KAFKA-14195, do not include implicit deletions caused by using the legacy AlterConfigs API
             // in the list passed to the policy in order to maintain backwards compatibility
         }
+        if (!newlyCreatedResource &&
+            configResource.type().equals(Type.TOPIC) &&
+            Boolean.parseBoolean(allConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG)) &&
+            ReplicationControlManager.isSystemTopic(configResource.name())) {
+            return ApiError.fromThrowable(
+                new InvalidConfigurationException("System topics cannot be diskless topics."));
+        }
         try {
             validator.validate(configResource, allConfigs, existingConfigsMap);
             if (!newlyCreatedResource) {

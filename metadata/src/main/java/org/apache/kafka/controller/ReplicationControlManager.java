@@ -132,6 +132,7 @@ import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
 import static org.apache.kafka.common.config.ConfigResource.Type.TOPIC;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
+import static org.apache.kafka.common.internals.Topic.CLUSTER_METADATA_TOPIC_NAME;
 import static org.apache.kafka.common.protocol.Errors.FENCED_LEADER_EPOCH;
 import static org.apache.kafka.common.protocol.Errors.INELIGIBLE_REPLICA;
 import static org.apache.kafka.common.protocol.Errors.INVALID_REQUEST;
@@ -157,6 +158,15 @@ import static org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE;
 public class ReplicationControlManager {
     static final int MAX_ELECTIONS_PER_IMBALANCE = 1_000;
     static final int MAX_PARTITIONS_PER_BATCH = 10_000;
+
+    /**
+     * Additional system topics that must not be created as diskless, beyond those
+     * recognized by {@link Topic#isInternal(String)}.
+     */
+    private static final Set<String> ADDITIONAL_SYSTEM_TOPICS = Set.of(
+        CLUSTER_METADATA_TOPIC_NAME,
+        "__remote_log_metadata"
+    );
 
     static class Builder {
         private SnapshotRegistry snapshotRegistry = null;
@@ -817,13 +827,13 @@ public class ReplicationControlManager {
         if (isDisklessEnableConfigDefined) {
             disklessConfigEnabled = Boolean.parseBoolean(disklessEnableConfigValue);
         }
-        // Reject internal topic creation request where diskless is explicitly enabled
-        if (Topic.isInternal(topic.name()) && isDisklessEnableConfigDefined && disklessConfigEnabled) {
+        // Reject system topic creation request where diskless is explicitly enabled
+        if (isSystemTopic(topic.name()) && isDisklessEnableConfigDefined && disklessConfigEnabled) {
             return new ApiError(INVALID_REQUEST,
-                "Internal topics cannot be diskless topics.");
+                "System topics cannot be diskless topics.");
         }
 
-        final boolean disklessEnabled = disklessConfigEnabled && !Topic.isInternal(topic.name());
+        final boolean disklessEnabled = disklessConfigEnabled && !isSystemTopic(topic.name());
         if (disklessEnabled) {
             if (!isDisklessStorageSystemEnabled) {
                 return new ApiError(INVALID_REQUEST,
@@ -979,6 +989,10 @@ public class ReplicationControlManager {
         return ApiError.NONE;
     }
 
+    static boolean isSystemTopic(final String topicName) {
+        return Topic.isInternal(topicName) || ADDITIONAL_SYSTEM_TOPICS.contains(topicName);
+    }
+
     private boolean disklessEnabledOnTopicCreation(final Map<String, String> creationConfigs) {
         final String disklessEnableConfigValue = creationConfigs.get(DISKLESS_ENABLE_CONFIG);
         final boolean disklessConfigEnabled;
@@ -1015,12 +1029,13 @@ public class ReplicationControlManager {
                 validConfigRecord.add(configRecord);
             }
         }
-        // Ensure that diskless.enable config is always defined if diskless is enabled.
-        // This allows to quickly check if a topic is diskless or not from the KRaft metadata directly.
-        if (!isDisklessEnableDefined && disklessEnabled) {
+        // Ensure that diskless.enable config is always persisted when the server default is diskless.
+        // For regular topics this records "true"; for system topics this records "false" to prevent
+        // DescribeConfigs and effective-config resolution from inheriting the broker default.
+        if (!isDisklessEnableDefined && defaultDisklessEnable) {
             validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
                 .setName(DISKLESS_ENABLE_CONFIG)
-                .setValue("true")
+                .setValue(String.valueOf(disklessEnabled))
                 .setResourceName(topic.name())
                 .setResourceType(ResourceType.TOPIC.code()), (short) 0));
         }
@@ -1048,8 +1063,8 @@ public class ReplicationControlManager {
             for (String configName : configNames) {
                 ConfigEntry entry = effectiveConfig.get(configName);
                 String value = entry.isSensitive() ? null : entry.value();
-                // If topic is internal, diskless must be disabled
-                if (Topic.isInternal(topic.name()) && configName.equals(DISKLESS_ENABLE_CONFIG)) {
+                // If topic is internal/system, diskless must be disabled
+                if (isSystemTopic(topic.name()) && configName.equals(DISKLESS_ENABLE_CONFIG)) {
                     value = String.valueOf(false);
                 }
                 result.configs().add(new CreateTopicsResponseData.CreatableTopicConfigs().
