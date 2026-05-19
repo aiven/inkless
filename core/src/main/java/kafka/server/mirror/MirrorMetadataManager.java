@@ -1284,11 +1284,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
             @Override
             public void onComplete(ClientResponse response) {
+                pendingTopicCreations.remove(topicId);
                 if (response.responseBody() instanceof CreateTopicsResponse createTopicsResponse) {
                     createTopicsResponse.data().topics().forEach(topic -> {
                         Errors error = Errors.forCode(topic.errorCode());
                         if (error != Errors.NONE) {
-                            pendingTopicCreations.remove(topicId);
                             log.warn("Failed to create mirror topic {} (topicId={}): {}", topicName, topicId, error.message());
                         }
                     });
