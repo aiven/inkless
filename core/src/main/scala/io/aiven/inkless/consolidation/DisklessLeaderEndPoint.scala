@@ -20,6 +20,7 @@ package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import kafka.server.{KafkaConfig, ReplicaManager, ReplicaQuota}
+import kafka.utils.Logging
 import org.apache.kafka.common.Uuid
 import org.apache.kafka.common.errors.KafkaStorageException
 import org.apache.kafka.common.message.{FetchResponseData, OffsetForLeaderEpochRequestData}
@@ -35,12 +36,14 @@ import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams}
 import org.apache.kafka.server.{LeaderEndPoint, PartitionFetchState, ReplicaFetch, ResultWithPartitions}
 import org.apache.kafka.storage.internals.log.OffsetResultHolder.FileRecordsOrError
+import org.apache.kafka.storage.internals.log.UnifiedLog
 
 import java.util
 import java.util.Optional
 import java.util.concurrent.CompletableFuture
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 
 /**
  * Leader endpoint for consolidation fetching from Inkless (object storage) on this broker.
@@ -58,7 +61,7 @@ class DisklessLeaderEndPoint(
   quota: ReplicaQuota,
   metadataVersionSupplier: () => MetadataVersion,
   brokerEpochSupplier: () => Long
-) extends LeaderEndPoint {
+) extends LeaderEndPoint with Logging {
 
   private val replicaId = brokerConfig.brokerId
   private val maxWait = brokerConfig.replicaFetchWaitMaxMs
@@ -96,14 +99,45 @@ class DisklessLeaderEndPoint(
     response.asScala.map { case (tp, data) =>
       val abortedTransactions = data.abortedTransactions.orElse(null)
       val lastStableOffset: Long = data.lastStableOffset.orElse(FetchResponse.INVALID_LAST_STABLE_OFFSET)
-      tp.topicPartition -> new FetchResponseData.PartitionData()
+      val fetchResponseData = new FetchResponseData.PartitionData()
         .setPartitionIndex(tp.topicPartition.partition)
         .setErrorCode(data.error.code)
         .setHighWatermark(data.highWatermark)
         .setLastStableOffset(lastStableOffset)
-        .setLogStartOffset(data.logStartOffset)
         .setAbortedTransactions(abortedTransactions)
         .setRecords(data.records)
+      // set local LSO if possible instead of the diskless start offset that is data.logStartOffset
+      replicaManager.getPartitionOrError(tp.topicPartition) match {
+        case Left(error) =>
+          // If we couldn't read the partition, then we won't be able to set the log start offset
+          // of the unified log. If there is no error coming from diskless, then we can propagate
+          // the error in the partition, but otherwise don't mask it.
+          if (fetchResponseData.errorCode == Errors.NONE.code) {
+            fetchResponseData.setErrorCode(error.code)
+          }
+          fetchResponseData.setLogStartOffset(UnifiedLog.UNKNOWN_OFFSET)
+        case Right(partition) =>
+          val logStartOffset = Try(partition.localLogOrException).toOption match {
+            case Some(localLog) => localLog.logStartOffset
+            case None => 
+                    logger.warn("Local log unavailable for topic-partition {}, returning unknown log start offset", tp.topicPartition)
+                    UnifiedLog.UNKNOWN_OFFSET
+          }
+          if (fetchResponseData.errorCode == Errors.NONE.code) {
+            // in case of an inconsistency log an error, set an unknown offset and also return unknown server error
+            if (logStartOffset > data.highWatermark) {
+              logger.error("Local log start offset ({}) is higher than high watermark ({}) for topic-partition {}, this may indicate a transient inconsistency during migration",
+                logStartOffset, data.highWatermark, partition.topicPartition)
+              fetchResponseData.setLogStartOffset(UnifiedLog.UNKNOWN_OFFSET)
+              fetchResponseData.setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code)
+            } else {
+              fetchResponseData.setLogStartOffset(logStartOffset)
+            }
+          } else {
+            fetchResponseData.setLogStartOffset(UnifiedLog.UNKNOWN_OFFSET)
+          }
+      }
+      tp.topicPartition -> fetchResponseData
     }.toMap.asJava
   }
 
