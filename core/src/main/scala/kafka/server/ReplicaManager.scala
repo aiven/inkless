@@ -3530,14 +3530,22 @@ class ReplicaManager(val config: KafkaConfig,
             try {
               val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
               val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
-              partition.makeFollower(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+              val isNewLeaderEpoch = partition.makeFollower(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
               partition.seal()
               changedPartitions.add(partition)
-              // Schedule a catch-up fetch when the local HW is below the seal -- either
-              // because we restarted with a stale HW (unclean shutdown) or because we
-              // were just added as a replica and have an empty local log. The
-              // ReplicaFetcher self-evicts once the follower has read past the seal.
               if (seal >= 0 && partition.localLogOrException.highWatermark < seal) {
+                // Schedule a catch-up fetch when the local HW is below the seal -- either
+                // because we restarted with a stale HW (unclean shutdown) or because we
+                // were just added as a replica and have an empty local log. The
+                // ReplicaFetcher self-evicts once the follower has read past the seal.
+                partitionsToStartFetching.put(tp, partition)
+              } else if (seal == PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING && isNewLeaderEpoch) {
+                // Migration is in flight: the leader has already sealed its log and
+                // frozen the LEO, but the controller has not yet committed the seal
+                // offset. Followers must keep replicating up to that frozen LEO via the
+                // classic ReplicaFetcher. Reschedule on any leader-epoch change so a
+                // leader move during PENDING doesn't strand replication on a fetcher
+                // still pointing at the previous leader.
                 partitionsToStartFetching.put(tp, partition)
               }
             } catch {
