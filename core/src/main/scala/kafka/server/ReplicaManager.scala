@@ -284,6 +284,7 @@ class ReplicaManager(val config: KafkaConfig,
   private val disklessFetchOffsetRouter = new DisklessFetchOffsetRouter(
     _inklessMetadataView,
     config.disklessManagedReplicasEnabled,
+    config.disklessRemoteStorageConsolidationEnabled,
     delayedRemoteListOffsetsPurgatory
   )
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
