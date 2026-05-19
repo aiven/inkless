@@ -207,15 +207,12 @@ class ControllerApis(
     val createMirrorRequest = request.body[CreateClusterMirrorRequest]
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal, OptionalLong.empty())
     val altersByName = new util.HashMap[String, Entry[AlterConfigOp.OpType, String]]()
-    val configChanges = new util.HashMap[ConfigResource, util.Map[String, Entry[AlterConfigOp.OpType, String]]]()
-    val resource = new ConfigResource(ConfigResource.Type.forId(64), createMirrorRequest.data().mirrorName())
     createMirrorRequest.data().config.forEach { config =>
       altersByName.put(config.name, new util.AbstractMap.SimpleEntry[AlterConfigOp.OpType, String](
         AlterConfigOp.OpType.forId(0), config.value))
     }
-    configChanges.put(resource, altersByName)
 
-    controller.createClusterMirror(context, configChanges)
+    controller.createClusterMirror(context, createMirrorRequest.data().mirrorName(), altersByName)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)

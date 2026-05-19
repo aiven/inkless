@@ -154,7 +154,8 @@ public interface Controller extends AclMutator, AutoCloseable {
 
     CompletableFuture<CreateClusterMirrorResponseData> createClusterMirror(
             ControllerRequestContext context,
-            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges
+            String mirrorName,
+            Map<String, Map.Entry<AlterConfigOp.OpType, String>> configChanges
     );
 
     /**

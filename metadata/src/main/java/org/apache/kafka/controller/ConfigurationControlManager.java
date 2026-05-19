@@ -17,6 +17,7 @@
 
 package org.apache.kafka.controller;
 
+import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.FeatureUpdate;
@@ -536,36 +537,33 @@ public class ConfigurationControlManager {
     }
 
     ControllerResult<CreateClusterMirrorResponseData> addMirrorConfig(
-            Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
-            boolean newlyCreatedResource
+        String mirrorName,
+        Map<String, Map.Entry<AlterConfigOp.OpType, String>> configChanges
     ) {
         List<ApiMessageAndVersion> outputRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         CreateClusterMirrorResponseData data = new CreateClusterMirrorResponseData();
 
-        for (Entry<ConfigResource, Map<String, Entry<OpType, String>>> resourceEntry :
-                configChanges.entrySet()) {
-            String mirrorName = resourceEntry.getKey().name();
-            if (mirrorName.endsWith(STOPPED_TOPIC_SUFFIX) || mirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) {
-                data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_NAME.code());
-                data.setErrorMessage("Mirror name must not end with '"
-                    + STOPPED_TOPIC_SUFFIX + "' or '" + PAUSED_TOPIC_SUFFIX + "'");
-                return ControllerResult.of(List.of(), data);
-            }
-
-            final Map<String, String> existingConfig = getConfigs(resourceEntry.getKey());
-            if (!existingConfig.isEmpty()) {
-                data.setErrorCode(CLUSTER_MIRROR_ALREADY_EXISTS.code())
-                    .setErrorMessage("Mirror '" + mirrorName + "' already exists");
-                return ControllerResult.of(List.of(), data);
-            }
-
-            ApiError apiError = incrementalAlterConfigResource(resourceEntry.getKey(),
-                    resourceEntry.getValue(),
-                    newlyCreatedResource,
-                    outputRecords);
-            // TODO: Should handle the error here
-            log.info("!!! addMirrorConfig apiError: {} for {}", apiError, resourceEntry);
+        if (mirrorName.endsWith(STOPPED_TOPIC_SUFFIX) || mirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) {
+            data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_NAME.code());
+            data.setErrorMessage("Mirror name must not end with '"
+                + STOPPED_TOPIC_SUFFIX + "' or '" + PAUSED_TOPIC_SUFFIX + "'");
+            return ControllerResult.of(List.of(), data);
         }
+
+        ConfigResource configResource = new ConfigResource(Type.CLUSTER_MIRROR, mirrorName);
+        final Map<String, String> existingConfig = getConfigs(configResource);
+        if (!existingConfig.isEmpty()) {
+            data.setErrorCode(CLUSTER_MIRROR_ALREADY_EXISTS.code())
+                .setErrorMessage("Mirror '" + mirrorName + "' already exists");
+            return ControllerResult.of(List.of(), data);
+        }
+
+        ApiError apiError = incrementalAlterConfigResource(configResource,
+            configChanges,
+            false,
+            outputRecords);
+        // TODO: Should handle the error here
+        log.info("!!! addMirrorConfig apiError: {} for {} {}", apiError, configResource, configChanges);
         outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));
 
         data.setErrorCode((short) 0);

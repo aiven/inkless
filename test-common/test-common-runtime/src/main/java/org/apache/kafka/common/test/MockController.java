@@ -107,7 +107,8 @@ public class MockController implements Controller {
     @Override
     public CompletableFuture<CreateClusterMirrorResponseData> createClusterMirror(
             ControllerRequestContext context,
-            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges
+            String mirrorName,
+            Map<String, Map.Entry<AlterConfigOp.OpType, String>> configChanges
     ) {
         throw new UnsupportedOperationException();
     }
