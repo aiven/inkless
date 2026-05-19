@@ -495,4 +495,21 @@ class DisklessFetchOffsetRouterTest {
     assertClassicCalledWith(allowFromFollower = true)
     verify(job, never()).add(any(), any())
   }
+  
+  @Test
+  def consolidatingFollowerOnLatestTimestampRoutesThroughDisklessFirst(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+
+    val status = route(
+      newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
+      timestamp = ListOffsetsRequest.LATEST_TIMESTAMP,
+      replicaId = followerReplicaId
+    )
+
+    // Should go through hybrid Case 2 LATEST_TIMESTAMP path (diskless first, classic fallback)
+    verify(job).add(eqTo(tp), any())
+    assertTrue(status.futureHolderOpt.isPresent)
+  }
+
 }
