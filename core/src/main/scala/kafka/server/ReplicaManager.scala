@@ -22,7 +22,7 @@ import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.produce.AppendHandler
-import io.aiven.inkless.consolidation.{ConsolidationFetcherManager, ConsolidatedDisklessLogPruner, ConsolidationMetrics}
+import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, ConsolidationMetrics, ConsolidationReconciler}
 import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
@@ -281,6 +281,8 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessRetentionEnforcer: Option[RetentionEnforcer] = inklessSharedState.map(new RetentionEnforcer(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
+
+  // --- Diskless Partition Consolidation Fields ---
   private val inklessConsolidatedDisklessLogPruner: Option[ConsolidatedDisklessLogPruner] =
     if (config.disklessRemoteStorageConsolidationEnabled)
       inklessSharedState.map(st => new ConsolidatedDisklessLogPruner(this, _inklessMetadataView, st.controlPlane))
@@ -302,6 +304,7 @@ class ReplicaManager(val config: KafkaConfig,
     } else {
       None
     }
+  // -----------------------------------------------
 
   /* epoch of the controller that last changed the leader */
   protected val localBrokerId = config.brokerId
@@ -317,6 +320,16 @@ class ReplicaManager(val config: KafkaConfig,
 
   this.logIdent = s"[ReplicaManager broker=$localBrokerId] "
   protected val stateChangeLogger = new StateChangeLogger(localBrokerId)
+
+  // Defined after stateChangeLogger so the reconciler is constructed with a non-null logger.
+  private val consolidationReconciler: Option[ConsolidationReconciler] =
+    if (config.disklessRemoteStorageConsolidationEnabled) {
+      consolidationFetcherManager.flatMap(cfm =>
+        consolidationMetrics.map(metrics =>
+          new ConsolidationReconciler(this, stateChangeLogger, metrics, _inklessMetadataView, initialFetchOffset, cfm)))
+    } else {
+      None
+    }
 
   private var logDirFailureHandler: LogDirFailureHandler = _
 
@@ -3062,6 +3075,85 @@ class ReplicaManager(val config: KafkaConfig,
     initDisklessLogOnControlPlane(delta, localChanges.leaders.asScala)
   }
 
+  /**
+   * Truncate a single partition whose classic-to-diskless start offset (the "seal") was *just
+   * committed* in this delta and whose local log still runs past it. The seal is the high
+   * watermark reported by the broker that drove the switch (it seals, waits for HW == LEO, then
+   * commits at that offset), so any local records beyond the seal are uncommitted and must be
+   * discarded -- the diskless log authoritatively continues from the seal. In practice this only
+   * fires for a replica that held un-replicated records past a seal that a *different* broker
+   * committed at a lower HW (the standard "records beyond HW" cleanup); at commit time such a
+   * replica is a follower or a deposed leader. The broker that drives the switch always seals at
+   * its own HW (== LEO) and is frozen (seal precedes makeLeader) before it can append further, so
+   * it never trips this -- the leader path is kept only as defense.
+   *
+   * Only the just-committed transition (a previous registration that existed with seal < 0, now
+   * sealed at seal >= 0) is reconciled. Catch-up of followers below the seal is handled by the
+   * classic ReplicaFetcher started in applyLocalFollowersDelta, and stopping it once the seal
+   * is reached is handled by the ReplicaFetcherThread's self-eviction, so this method only
+   * owns truncation.
+   *
+   * Must be called after makeLeader/makeFollower (so the local log exists) and before any
+   * catch-up or consolidation fetcher is started (so fetchers initialize from the truncated LEO).
+   */
+  private def maybeTruncateNewlySwitchedPartition(tp: TopicPartition,
+                                                  topicId: Uuid,
+                                                  newRegistration: PartitionRegistration,
+                                                  delta: TopicsDelta): Unit = {
+    val seal = newRegistration.classicToDisklessStartOffset
+    if (seal < 0) return
+
+    val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
+      Option(topicImage.partitions().get(tp.partition()))
+    }
+    val sealJustCommitted = previousPartition.exists(_.classicToDisklessStartOffset < 0)
+    if (!sealJustCommitted) return
+
+    onlinePartition(tp).foreach { partition =>
+      try {
+        val log = partition.localLogOrException
+        if (log.logEndOffset > seal) {
+          stateChangeLogger.info(s"Truncating switched partition $tp from LEO ${log.logEndOffset} " +
+            s"to classic-to-diskless start offset $seal")
+          partition.truncateTo(seal, isFuture = false)
+        } else if (log.logEndOffset < seal && partition.isLeader) {
+          stateChangeLogger.warn(s"Leader partition $tp has LEO ${log.logEndOffset} below " +
+            s"classic-to-diskless start offset $seal; cannot catch up from another replica")
+        }
+      } catch {
+        case e: KafkaStorageException =>
+          stateChangeLogger.error(s"Unable to reconcile switched partition $tp " +
+            s"with topic ID $topicId due to a storage error ${e.getMessage}", e)
+          markPartitionOffline(tp)
+      }
+    }
+  }
+
+  def startConsolidationFetchersForCaughtUpClassicPartitions(topicPartitions: Set[TopicPartition]): Unit = {
+    consolidationReconciler.foreach(_.startConsolidationFetchersForCaughtUpClassicPartitions(topicPartitions))
+  }
+
+  /**
+   * Whether a follower of a consolidating diskless topic is ready to be handed to the consolidation
+   * fetcher rather than the classic ReplicaFetcher:
+   *  - born-consolidated/born-diskless (seal == -1): no classic prefix to replicate, consolidate
+   *    immediately;
+   *  - switch pending (seal == -2): keep replicating the frozen classic prefix on the classic
+   *    fetcher until the controller commits the seal;
+   *  - switched (seal >= 0): only consolidate once the local LEO has reached the committed seal, so
+   *    that the whole classic prefix has been replicated locally; while below the seal it stays on
+   *    the classic fetcher, which self-evicts and hands off to consolidation at the seal.
+   * Non-consolidating topics are never routed to the consolidation fetcher.
+   */
+  private def isConsolidatingFollowerReadyForConsolidation(tp: TopicPartition, partition: Partition): Boolean = {
+    if (!_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)) return false
+    _inklessMetadataView.getClassicToDisklessStartOffset(tp) match {
+      case PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET => true
+      case PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING => false
+      case committedSeal => partition.localLogOrException.logEndOffset >= committedSeal
+    }
+  }
+
   private def initDisklessLogOnControlPlane(
     delta: TopicsDelta,
     localLeaders: mutable.Map[TopicPartition, LocalReplicaChanges.PartitionInfo]
@@ -3199,6 +3291,12 @@ class ReplicaManager(val config: KafkaConfig,
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+            // makeLeader must precede seal() here: unlike the active-switch branch above (which
+            // seals an already-online partition), this partition was just created by
+            // getOrCreatePartition and its local log only becomes available after makeLeader.
+            // The intervening window is harmless because the topic is already fully switched to
+            // diskless, so produces route to the diskless path and never append to the classic
+            // local log; seal() here just marks the partition sealed for the HW restore below.
             partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
             partition.seal()
             // makeLeader reloads HW from the on-disk checkpoint, which may be stale
@@ -3222,34 +3320,17 @@ class ReplicaManager(val config: KafkaConfig,
       }
     }
 
+    // Truncate any partition whose seal was just committed in this delta and whose local log still
+    // runs past it (uncommitted records beyond the committed seal). This must happen after
+    // makeLeader (so the log exists) and before the consolidation fetchers below start, so
+    // consolidation initializes against the truncated LEO. For the broker that drove the switch
+    // this is a no-op (it seals at its own HW == LEO); it is kept here as defense.
+    localLeaders.foreachEntry { (tp, info) =>
+      maybeTruncateNewlySwitchedPartition(tp, info.topicId, info.partition, delta)
+    }
+
     if (consolidatingDisklessPartitionsToStartFetching.nonEmpty) {
-      val listenerName = config.interBrokerListenerName.value
-      val consolidatingPartitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
-
-      consolidatingDisklessPartitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
-        val nodeOpt = partition.leaderReplicaIdOpt
-          .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
-          .flatMap(_.node(listenerName).toScala)
-
-        nodeOpt match {
-          case Some(node) =>
-            val log = partition.localLogOrException
-            consolidatingPartitionAndOffsets.put(topicPartition, InitialFetchState(
-              log.topicId.toScala,
-              new BrokerEndPoint(node.id, node.host, node.port),
-              partition.getLeaderEpoch,
-              initialFetchOffset(log)
-            ))
-          case None =>
-            stateChangeLogger.trace(s"Unable to start fetching $topicPartition with topic ID ${partition.topicId} " +
-              s"from diskless subsystem ${partition.leaderReplicaIdOpt}.")
-        }
-      }
-
-      consolidationFetcherManager.foreach(_.addFetcherForPartitions(consolidatingPartitionAndOffsets))
-      consolidationMetrics.foreach { metrics =>
-        consolidatingPartitionAndOffsets.keys.foreach(tp => metrics.registerPartition(tp))
-      }
+      consolidationReconciler.foreach(_.startConsolidationFetchers(consolidatingDisklessPartitionsToStartFetching))
       stateChangeLogger.info(s"Started consolidating diskless fetchers as part of become-leader for ${consolidatingDisklessPartitionsToStartFetching.size} partitions")
     }
   }
@@ -3369,21 +3450,36 @@ class ReplicaManager(val config: KafkaConfig,
       }
     }
 
+    // Truncate any partition whose seal was just committed in this delta and whose local log ran
+    // past it. This runs after makeFollower (so the log exists) and before the fetchers below
+    // start, so both classic catch-up and consolidation fetchers initialize against the
+    // truncated LEO. The fetch decisions above key off the high watermark (which never exceeds
+    // the seal), so truncating here does not change which partitions need a catch-up fetcher.
+    localFollowers.foreachEntry { (tp, info) =>
+      maybeTruncateNewlySwitchedPartition(tp, info.topicId, info.partition, delta)
+    }
+
     if (partitionsToStartFetching.nonEmpty) {
       // Stopping the fetchers must be done first in order to initialize the fetch
       // position correctly.
-      val (consolidatingDisklessPartitionsToAdd, classicPartitionsToAdd) = partitionsToStartFetching.partition { case (tp, p) =>
-        _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
+      // A consolidating diskless follower only joins the consolidation fetcher once its local log
+      // has replicated the entire classic prefix (LEO >= committed seal). While the switch is still
+      // pending or the log is below the seal, it must stay on the classic ReplicaFetcher so it can
+      // catch up from the leader; that fetcher self-evicts at the seal and hands the partition off
+      // to the consolidation reconciler (startConsolidationFetchersForCaughtUpClassicPartitions).
+      // Routing a below-seal/pending partition straight to the reconciler would strand it: the
+      // reconciler returns Retry and no classic fetcher would ever bring it up to the seal.
+      val (consolidatingDisklessPartitionsToStartFetching, classicPartitionsToStartFetching) = partitionsToStartFetching.partition { case (tp, partition) =>
+        isConsolidatingFollowerReadyForConsolidation(tp, partition)
       }
-      replicaFetcherManager.removeFetcherForPartitions(classicPartitionsToAdd.keySet)
-      consolidationFetcherManager.foreach(_.removeFetcherForPartitions(consolidatingDisklessPartitionsToAdd.keySet))
+      replicaFetcherManager.removeFetcherForPartitions(classicPartitionsToStartFetching.keySet)
+      consolidationFetcherManager.foreach(_.removeFetcherForPartitions(consolidatingDisklessPartitionsToStartFetching.keySet))
       stateChangeLogger.info(s"Stopped fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
       val listenerName = config.interBrokerListenerName.value
       val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
-      val consolidatingPartitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
 
-      partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
+      classicPartitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
         val nodeOpt = partition.leaderReplicaIdOpt
           .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
           .flatMap(_.node(listenerName).toScala)
@@ -3391,8 +3487,7 @@ class ReplicaManager(val config: KafkaConfig,
         nodeOpt match {
           case Some(node) =>
             val log = partition.localLogOrException
-            val partitionAndOffsetMap = if (_inklessMetadataView.isConsolidatingDisklessTopic(partition.topic)) consolidatingPartitionAndOffsets else partitionAndOffsets
-            partitionAndOffsetMap.put(topicPartition, InitialFetchState(
+            partitionAndOffsets.put(topicPartition, InitialFetchState(
               log.topicId.toScala,
               new BrokerEndPoint(node.id, node.host, node.port),
               partition.getLeaderEpoch,
@@ -3405,10 +3500,7 @@ class ReplicaManager(val config: KafkaConfig,
       }
 
       replicaFetcherManager.addFetcherForPartitions(partitionAndOffsets)
-      consolidationFetcherManager.foreach(_.addFetcherForPartitions(consolidatingPartitionAndOffsets))
-      consolidationMetrics.foreach { metrics =>
-        consolidatingPartitionAndOffsets.keys.foreach(tp => metrics.registerPartition(tp))
-      }
+      consolidationReconciler.foreach(_.startConsolidationFetchers(consolidatingDisklessPartitionsToStartFetching))
       stateChangeLogger.info(s"Started fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
       partitionsToStartFetching.foreach{ case (topicPartition, partition) =>

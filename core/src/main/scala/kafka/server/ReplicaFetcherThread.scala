@@ -102,6 +102,8 @@ class ReplicaFetcherThread(name: String,
     evictFullySwitchedDisklessPartitions()
   }
 
+  protected def shouldEvictFullySwitchedDisklessPartitions: Boolean = true
+
   // process fetched data
   override def processPartitionData(
     topicPartition: TopicPartition,
@@ -157,7 +159,9 @@ class ReplicaFetcherThread(name: String,
     // has committed a classicToDisklessStartOffset for this partition AND our local LEO has reached it,
     // the follower is fully caught up to the leader's frozen classic log and must not keep fetching.
     val classicToDisklessStartOffset = replicaMgr.inklessMetadataView().getClassicToDisklessStartOffset(topicPartition)
-    if (classicToDisklessStartOffset >= 0 && log.logEndOffset >= classicToDisklessStartOffset) {
+    if (shouldEvictFullySwitchedDisklessPartitions &&
+        classicToDisklessStartOffset >= 0 &&
+        log.logEndOffset >= classicToDisklessStartOffset) {
       partitionsToEvictAfterDisklessSwitch += topicPartition
     }
 
@@ -178,6 +182,7 @@ class ReplicaFetcherThread(name: String,
       info(s"Evicting partitions from this replica fetcher because they have completed the " +
         s"classic-to-diskless switch and the local log has caught up to the seal offset: $toEvict")
       replicaMgr.replicaFetcherManager.removeFetcherForPartitions(toEvict)
+      replicaMgr.startConsolidationFetchersForCaughtUpClassicPartitions(toEvict)
     }
   }
 
