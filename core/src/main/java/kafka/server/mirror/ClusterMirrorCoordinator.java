@@ -489,7 +489,7 @@ public class ClusterMirrorCoordinator {
         }
 
         log.info("Starting up.");
-        numPartitions = brokerConfig.mirrorConfig().topicNumPartitions();
+        numPartitions = brokerConfig.mirrorConfig().stateTopicNumPartitions();
         failedRetryBackoff = new ExponentialBackoff(
                 brokerConfig.mirrorConfig().failedRetryInitialBackoffMs(),
                 CommonClientConfigs.RETRY_BACKOFF_EXP_BASE,

@@ -75,7 +75,7 @@ object ConfigCommand extends Logging {
   private val UserType = ConfigType.USER.value
   private val ClientType = ConfigType.CLIENT.value
   private val IpType = ConfigType.IP.value
-  private val ClusterMirrorType = ConfigType.CLUSTER_MIRROR.value
+  private val ClusterMirrorType = ConfigType.CLUSTER_MIRRORS.value
 
   def main(args: Array[String]): Unit = {
     try {

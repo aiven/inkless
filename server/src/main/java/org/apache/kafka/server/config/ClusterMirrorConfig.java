@@ -52,13 +52,13 @@ import static org.apache.kafka.common.config.ConfigDef.Type.STRING;
  */
 public final class ClusterMirrorConfig {
     // Internal topic configuration
-    public static final String MIRROR_TOPIC_NUM_PARTITIONS_CONFIG = "mirror.topic.num.partitions";
-    public static final int MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT = 3; // TODO restore 50 after POC testing
-    public static final String MIRROR_TOPIC_NUM_PARTITIONS_DOC = "The number of partitions for the Cluster Mirror internal topic (should not change after deployment).";
+    public static final String MIRROR_STATE_TOPIC_NUM_PARTITIONS_CONFIG = "mirror.state.topic.num.partitions";
+    public static final int MIRROR_STATE_TOPIC_NUM_PARTITIONS_DEFAULT = 50;
+    public static final String MIRROR_STATE_TOPIC_NUM_PARTITIONS_DOC = "The number of partitions for the Cluster Mirror internal topic (should not change after deployment).";
 
-    public static final String MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG = "mirror.topic.replication.factor";
-    public static final short MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT = 1; // TODO restore 3 after POC testing
-    public static final String MIRROR_TOPIC_REPLICATION_FACTOR_DOC = "The replication factor for the Cluster Mirror internal topic. " +
+    public static final String MIRROR_STATE_TOPIC_REPLICATION_FACTOR_CONFIG = "mirror.state.topic.replication.factor";
+    public static final short MIRROR_STATE_TOPIC_REPLICATION_FACTOR_DEFAULT = 3;
+    public static final String MIRROR_STATE_TOPIC_REPLICATION_FACTOR_DOC = "The replication factor for the Cluster Mirror internal topic. " +
             "Topic creation will fail until the cluster size meets this replication factor requirement.";
 
     // Topic properties exclude filter (regex patterns)
@@ -369,12 +369,12 @@ public final class ClusterMirrorConfig {
         return aclIncludeRules;
     }
 
-    public int topicNumPartitions() {
-        return config.getInt(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG);
+    public int stateTopicNumPartitions() {
+        return config.getInt(MIRROR_STATE_TOPIC_NUM_PARTITIONS_CONFIG);
     }
 
-    public short topicReplicationFactor() {
-        return config.getShort(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG);
+    public short stateTopicReplicationFactor() {
+        return config.getShort(MIRROR_STATE_TOPIC_REPLICATION_FACTOR_CONFIG);
     }
 
     public String securityProtocol() {
@@ -453,8 +453,8 @@ public final class ClusterMirrorConfig {
      */
     public static ConfigDef brokerConfigDef() {
         return new ConfigDef()
-            .define(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_NUM_PARTITIONS_DOC)
-            .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC)
+            .define(MIRROR_STATE_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_STATE_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_STATE_TOPIC_NUM_PARTITIONS_DOC)
+            .define(MIRROR_STATE_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_STATE_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_STATE_TOPIC_REPLICATION_FACTOR_DOC)
             .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC)
             .define(METADATA_REFRESH_INTERVAL_MS_CONFIG, LONG, METADATA_REFRESH_INTERVAL_MS_DEFAULT, atLeast(0L), MEDIUM, METADATA_REFRESH_INTERVAL_MS_DOC)
             .define(FETCH_BACKOFF_MS_CONFIG, LONG, FETCH_BACKOFF_MS_DEFAULT, atLeast(0L), MEDIUM, FETCH_BACKOFF_MS_DOC)
