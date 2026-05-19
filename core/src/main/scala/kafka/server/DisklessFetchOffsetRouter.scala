@@ -40,13 +40,16 @@ import scala.jdk.OptionConverters.RichOptional
  * the diskless control-plane path, and hybrid configurations that can answer from either.
  *
  * Distinguishes among:
- *   1. Pure diskless partition (`classicToDisklessStartOffset <= 0` or managed replicas disabled):
- *      fetch offset in the diskless path.
- *   2. Hybrid diskless partition (`classicToDisklessStartOffset > 0` and managed replicas enabled):
- *      fetch offset in classic and/or diskless path, depending on the requested timestamp.
+ *   1. Pure diskless partition (`classicToDisklessStartOffset <= 0` and managed replicas disabled
+ *      and not consolidating diskless topics): fetch offset in the diskless path.
+ *   2. Hybrid diskless partition (`classicToDisklessStartOffset > 0` and managed replicas enabled,
+ *      or a consolidating diskless topic): fetch offset in classic and/or diskless path, depending
+ *      on the requested timestamp. Consolidating topics also allow followers on the classic leg
+ *      (same rationale as sealed migrated replicas: clients may be routed to any ISR replica).
  *   3. Partition that is being migrated from classic to diskless
  *      (`classicToDisklessStartOffset == CLASSIC_TO_DISKLESS_MIGRATION_PENDING` and managed
- *      replicas enabled): fetch offset only in the classic path.
+ *      replicas enabled, and not a consolidating diskless topic): fetch offset only in the
+ *      classic path.
  *   4. Follower requests on a migrated partition: ListOffsets requests (used by ReplicaFetcher
  *      for truncation / initial offset bootstrap) must never see diskless offsets, otherwise the
  *      follower would try to truncate to or fetch from offsets that live only in object storage:
@@ -59,6 +62,7 @@ import scala.jdk.OptionConverters.RichOptional
 class DisklessFetchOffsetRouter(
   inklessMetadataView: InklessMetadataView,
   disklessManagedReplicasEnabled: Boolean,
+  disklessConsolidationEnabled: Boolean,
   delayedRemoteListOffsetsPurgatory: DelayedOperationPurgatory[DelayedRemoteListOffsets]
 ) {
   import DisklessFetchOffsetRouter._
@@ -90,26 +94,33 @@ class DisklessFetchOffsetRouter(
   ): ListOffsetsPartitionStatus = {
     val classicToDisklessStartOffset = inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
     val migrationPending = classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING
-    val isMigratedWithClassicAccess = classicToDisklessStartOffset > 0 && disklessManagedReplicasEnabled
+    val isMigratedWithClassicAccess = (classicToDisklessStartOffset > 0 && disklessManagedReplicasEnabled)
+    val isConsolidatingPartition = disklessConsolidationEnabled && inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
 
     // Migrated partitions seal their classic local log: once classicToDisklessStartOffset is
     // committed the LEO can no longer grow and every ISR replica has the same data on disk.
     // Any replica can therefore safely answer ListOffsets from its local log, so we let
     // followers serve the classic-side query as well.
-    val allowFromFollower = isMigratedWithClassicAccess
+    // Since consolidating partitions contain only data that has been stored in the diskless
+    // coordinator and its offsets won't change, we can allow follower requests.
+    val allowFromFollower = isMigratedWithClassicAccess || isConsolidatingPartition
     val isFollowerRequest = replicaId >= 0
 
     def classicLookup(): ListOffsetsPartitionStatus = classicFetchOffset(topicPartition, partition, allowFromFollower)
     def disklessLookup: Lookup = disklessLookupOnJob(job, topicPartition, partition)
     def disklessLookupOnNewJob: Lookup = disklessLookupOnJob(newJob(), topicPartition, partition, startNow = true)
 
-    if (migrationPending && disklessManagedReplicasEnabled) {
+    // Consolidating diskless topics can still carry CLASSIC_TO_DISKLESS_MIGRATION_PENDING in
+    // metadata while the leader serves (or is catching up) from object storage; ListOffsets must
+    // not be forced down the classic-only path in that case (see ReplicaManager diskless fetch
+    // routing for the analogous consolidating carve-out).
+    if (migrationPending && disklessManagedReplicasEnabled && !isConsolidatingPartition) {
       // Case 3.
       classicFetchOffset(topicPartition, partition, false)
     } else if (isMigratedWithClassicAccess && isFollowerRequest) {
       // Case 4.
       classicLookup()
-    } else if (isMigratedWithClassicAccess) {
+    } else if (isMigratedWithClassicAccess || isConsolidatingPartition) {
       // Case 2: hybrid, route by timestamp.
       partition.timestamp() match {
         case ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP | ListOffsetsRequest.LATEST_TIERED_TIMESTAMP =>
@@ -117,27 +128,19 @@ class DisklessFetchOffsetRouter(
           classicLookup()
 
         case ListOffsetsRequest.EARLIEST_TIMESTAMP =>
+          // Always do classic first and then fall back to diskless with consolidating partitions
+          if (isConsolidatingPartition) {
+            classicWithDisklessFallbackLookup(topicPartition, version, classicLookup _, disklessLookup _, disklessLookupOnNewJob _)
           // Try classic first when classic data is still on disk, otherwise go straight to diskless.
-          if (classicLogStartOffsetProvider(topicPartition).exists(_ < classicToDisklessStartOffset)) classicLookup()
-          else asStatus(topicPartition, disklessLookup)
+          } else if (classicLogStartOffsetProvider(topicPartition).exists(_ < classicToDisklessStartOffset)) {
+            classicLookup()
+          } else {
+            asStatus(topicPartition, disklessLookup)
+          }
 
         case t if t >= 0 =>
           // Specific timestamp: classic first, fall back to diskless on a "no match".
-          val classic = classicLookup()
-          if (classic.responseOpt.isPresent) {
-            if (isSyncNoMatch(classic.responseOpt.get)) asStatus(topicPartition, disklessLookup)
-            else classic
-          } else if (classic.futureHolderOpt.isPresent) {
-            // If the classic future is already complete at routing time, withFallback's thenCompose
-            // invokes the fallback factory synchronously on this thread, i.e. inside route(), which
-            // runs before the caller calls job.start() (see ReplicaManager.fetchOffset). So we can
-            // still batch the diskless lookup into the per-request job. Otherwise the fallback
-            // fires asynchronously after start(), and must use a fresh, immediately-started job.
-            val fallback: () => Lookup =
-              if (classic.futureHolderOpt.get.taskFuture.isDone) () => disklessLookup
-              else                                               () => disklessLookupOnNewJob
-            withFallback(topicPartition, classicLookupOf(classic, version), fallback)
-          } else classic
+          classicWithDisklessFallbackLookup(topicPartition, version, classicLookup _, disklessLookup _, disklessLookupOnNewJob _)
 
         case _ =>
           // LATEST_TIMESTAMP / MAX_TIMESTAMP: diskless first, classic fallback on empty.
@@ -147,6 +150,28 @@ class DisklessFetchOffsetRouter(
       // Case 1.
       asStatus(topicPartition, disklessLookup)
     }
+  }
+
+  private def classicWithDisklessFallbackLookup(topicPartition: TopicPartition,
+                                                version: Short,
+                                                classicLookup: () => ListOffsetsPartitionStatus,
+                                                disklessLookup: () => Lookup,
+                                                disklessLookupOnNewJob: () => Lookup) = {
+    val classic = classicLookup()
+    if (classic.responseOpt.isPresent) {
+      if (isSyncNoMatch(classic.responseOpt.get)) asStatus(topicPartition, disklessLookup())
+      else classic
+    } else if (classic.futureHolderOpt.isPresent) {
+      // If the classic future is already complete at routing time, withFallback's thenCompose
+      // invokes the fallback factory synchronously on this thread, i.e. inside route(), which
+      // runs before the caller calls job.start() (see ReplicaManager.fetchOffset). So we can
+      // still batch the diskless lookup into the per-request job. Otherwise the fallback
+      // fires asynchronously after start(), and must use a fresh, immediately-started job.
+      val fallback: () => Lookup =
+        if (classic.futureHolderOpt.get.taskFuture.isDone) () => disklessLookup()
+        else () => disklessLookupOnNewJob()
+      withFallback(topicPartition, classicLookupOf(classic, version), fallback)
+    } else classic
   }
 
   /**
