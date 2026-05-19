@@ -65,8 +65,11 @@ class DisklessFetchOffsetRouterTest {
   // Default classic-side answer for tests that don't care about the response shape.
   private val defaultClassicResult: ListOffsetsPartitionStatus = resolvedStatus(makeResponse(offset = 0L, timestamp = 0L))
   
-  private def newRouter(disklessManagedReplicasEnabled: Boolean = true): DisklessFetchOffsetRouter =
-    new DisklessFetchOffsetRouter(inklessMetadataView, disklessManagedReplicasEnabled, purgatory)
+  private def newRouter(
+    disklessManagedReplicasEnabled: Boolean = true,
+    disklessConsolidationEnabled: Boolean = false
+  ): DisklessFetchOffsetRouter =
+    new DisklessFetchOffsetRouter(inklessMetadataView, disklessManagedReplicasEnabled, disklessConsolidationEnabled, purgatory)
 
   private def makePartition(timestamp: Long, partitionIndex: Int): ListOffsetsPartition =
     new ListOffsetsPartition().setPartitionIndex(partitionIndex).setTimestamp(timestamp)
@@ -395,4 +398,118 @@ class DisklessFetchOffsetRouterTest {
       () => status.futureHolderOpt.get.taskFuture.get(1, TimeUnit.SECONDS))
     assertSame(controlPlaneFailure, ex.getCause)
   }
+
+  @Test
+  def routesToDisklessWhenMigrationPendingButConsolidatingTopic(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+
+    val status = route(
+      newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
+      timestamp = ListOffsetsRequest.LATEST_TIMESTAMP
+    )
+
+    assertTrue(classicCalls.isEmpty, "consolidating topics must not use migration-pending classic-only ListOffsets")
+    verify(job).add(eqTo(tp), any())
+    assertTrue(status.futureHolderOpt.isPresent)
+    assertFalse(status.responseOpt.isPresent)
+  }
+
+  @Test
+  def hybridConsolidatingWithoutCommittedBoundaryAllowsFollowerOnEarliestLocal(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+
+    val status = route(
+      newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
+      timestamp = ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP
+    )
+
+    assertSame(defaultClassicResult, status)
+    assertClassicCalledWith(allowFromFollower = true)
+    verify(job, never()).add(any(), any())
+  }
+
+  @Test
+  def hybridConsolidatingWithoutCommittedBoundaryAllowsFollowerOnLatestTiered(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+
+    val status = route(
+      newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
+      timestamp = ListOffsetsRequest.LATEST_TIERED_TIMESTAMP
+    )
+
+    assertSame(defaultClassicResult, status)
+    assertClassicCalledWith(allowFromFollower = true)
+    verify(job, never()).add(any(), any())
+  }
+
+  @Test
+  def hybridConsolidatingEarliestAlwaysTriesClassicFirstWithDisklessFallback(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+
+    val status = route(
+      newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
+      timestamp = ListOffsetsRequest.EARLIEST_TIMESTAMP,
+      classicLogStartOffset = Some(100L)
+    )
+
+    assertSame(defaultClassicResult, status)
+    assertClassicCalledWith(allowFromFollower = true)
+    verify(job, never()).add(any(), any())
+  }
+
+  @Test
+  def hybridConsolidatingEarliestFallsBackToDisklessWhenClassicReturnsNoMatchEvenIfLogPastBoundary(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+    val noMatch = resolvedStatus(makeResponse(offset = -1L, errorCode = Errors.NONE.code))
+
+    val status = route(
+      newRouter(disklessConsolidationEnabled = true),
+      timestamp = ListOffsetsRequest.EARLIEST_TIMESTAMP,
+      classicLogStartOffset = Some(100L),
+      classicResult = noMatch
+    )
+
+    assertClassicCalledWith(allowFromFollower = true)
+    verify(job).add(eqTo(tp), any())
+    assertTrue(status.futureHolderOpt.isPresent, "fallback to diskless surfaces an async holder")
+    assertNotSame(noMatch, status)
+  }
+
+  @Test
+  def hybridConsolidatingEarliestReturnsClassicWhenClassicHitsEvenIfLogPastBoundary(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+
+    val status = route(
+      newRouter(disklessConsolidationEnabled = true),
+      timestamp = ListOffsetsRequest.EARLIEST_TIMESTAMP,
+      classicLogStartOffset = Some(100L)
+    )
+
+    assertSame(defaultClassicResult, status)
+    assertClassicCalledWith(allowFromFollower = true)
+    verify(job, never()).add(any(), any())
+  }
+  
+  @Test
+  def consolidatingFollowerOnLatestTimestampRoutesThroughDisklessFirst(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+
+    val status = route(
+      newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
+      timestamp = ListOffsetsRequest.LATEST_TIMESTAMP,
+      replicaId = followerReplicaId
+    )
+
+    // Should go through hybrid Case 2 LATEST_TIMESTAMP path (diskless first, classic fallback)
+    verify(job).add(eqTo(tp), any())
+    assertTrue(status.futureHolderOpt.isPresent)
+  }
+
 }
