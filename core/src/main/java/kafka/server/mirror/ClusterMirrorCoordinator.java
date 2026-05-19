@@ -513,7 +513,7 @@ public class ClusterMirrorCoordinator {
     /** Schedules truncation to align replicas with last mirrored epoch. */
     private void scheduleTruncation(String mirrorName, Set<TopicPartition> topicPartitions) {
         final Consumer<TopicPartition> truncateCallback =
-            partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.EPOCH_FENCING);
+            partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING);
         scheduler.scheduleOnce("LastMirrorEpochsTruncation",
             () -> {
                 try {

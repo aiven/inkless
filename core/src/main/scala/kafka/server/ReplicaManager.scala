@@ -1694,7 +1694,8 @@ class ReplicaManager(val config: KafkaConfig,
           })
         }
         val partition = getPartitionOrException(tp)
-        val mirrorUncleanLeaderElection = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic())).get(TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG).asInstanceOf[String]
+        val mirrorUncleanLeaderElection = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic()))
+          .get(TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG).asInstanceOf[String]
         val waitForAllReplicas = mirrorUncleanLeaderElection != null && mirrorUncleanLeaderElection.toBoolean
 
         partition.maybeCompleteTruncation(log, waitForAllReplicas = waitForAllReplicas, onCompleteCallback = Optional.of(callback),
