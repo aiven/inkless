@@ -545,6 +545,77 @@ class InklessConfigTest {
     }
 
     @Test
+    void hedgeTotalTimeMustBeGreaterThanTtfbWhenBothEnabled() {
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "fetch.hedge.ttfb.threshold.ms", "500",
+            "fetch.hedge.total.time.threshold.ms", "300"  // less than TTFB
+        );
+
+        assertThatThrownBy(() -> new InklessConfig(config))
+            .isInstanceOf(ConfigException.class)
+            .hasMessageContaining("fetch.hedge.total.time.threshold.ms")
+            .hasMessageContaining("must be greater than")
+            .hasMessageContaining("fetch.hedge.ttfb.threshold.ms");
+    }
+
+    @Test
+    void hedgeTotalTimeEqualToTtfbInvalid() {
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "fetch.hedge.ttfb.threshold.ms", "500",
+            "fetch.hedge.total.time.threshold.ms", "500"  // equal to TTFB
+        );
+
+        assertThatThrownBy(() -> new InklessConfig(config))
+            .isInstanceOf(ConfigException.class)
+            .hasMessageContaining("must be greater than");
+    }
+
+    @Test
+    void hedgeTotalTimeGreaterThanTtfbValid() {
+        final Map<String, String> configs = new HashMap<>();
+        configs.put("control.plane.class", InMemoryControlPlane.class.getCanonicalName());
+        configs.put("storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName());
+        configs.put("fetch.hedge.ttfb.threshold.ms", "200");
+        configs.put("fetch.hedge.total.time.threshold.ms", "1000");
+
+        final var config = new InklessConfig(configs);
+        assertThat(config.fetchHedgeTtfbThresholdMs()).isEqualTo(200);
+        assertThat(config.fetchHedgeTotalTimeThresholdMs()).isEqualTo(1000);
+    }
+
+    @Test
+    void hedgeOnlyTtfbEnabledValid() {
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "fetch.hedge.ttfb.threshold.ms", "500",
+            "fetch.hedge.total.time.threshold.ms", "0"  // disabled
+        );
+
+        final var inklessConfig = new InklessConfig(config);
+        assertThat(inklessConfig.fetchHedgeTtfbThresholdMs()).isEqualTo(500);
+        assertThat(inklessConfig.fetchHedgeTotalTimeThresholdMs()).isEqualTo(0);
+    }
+
+    @Test
+    void hedgeOnlyTotalTimeEnabledValid() {
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "fetch.hedge.ttfb.threshold.ms", "0",  // disabled
+            "fetch.hedge.total.time.threshold.ms", "1000"
+        );
+
+        final var inklessConfig = new InklessConfig(config);
+        assertThat(inklessConfig.fetchHedgeTtfbThresholdMs()).isEqualTo(0);
+        assertThat(inklessConfig.fetchHedgeTotalTimeThresholdMs()).isEqualTo(1000);
+    }
+
+    @Test
     void fullConfigWithLaggingConsumer() {
         // Test complete configuration including all lagging consumer settings
         final String controlPlaneClass = InMemoryControlPlane.class.getCanonicalName();

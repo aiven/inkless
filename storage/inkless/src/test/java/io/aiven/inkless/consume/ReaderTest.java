@@ -694,6 +694,9 @@ public class ReaderTest {
             Long.MAX_VALUE,
             0,
             laggingFetchDataExecutor,
+            null, // no hedge scheduler
+            0, // TTFB hedging disabled
+            0, // total-time hedging disabled
             fetchMetrics,
             new BrokerTopicStats());
     }
@@ -783,6 +786,9 @@ public class ReaderTest {
                 LAGGING_THRESHOLD_MS,
                 RATE_LIMIT_REQ_PER_SEC,
                 laggingFetchDataExecutor,
+                null, // no hedge scheduler
+                0, // TTFB hedging disabled
+                0, // total-time hedging disabled
                 fetchMetrics,
                 new BrokerTopicStats())) {
 
@@ -862,6 +868,9 @@ public class ReaderTest {
                 LAGGING_THRESHOLD_MS,
                 0, // Rate limiting disabled
                 laggingFetchDataExecutor,
+                null, // no hedge scheduler
+                0, // TTFB hedging disabled
+                0, // total-time hedging disabled
                 fetchMetrics,
                 new BrokerTopicStats())) {
 
@@ -997,6 +1006,9 @@ public class ReaderTest {
                 LAGGING_THRESHOLD_MS,
                 RATE_LIMIT_REQ_PER_SEC,
                 saturatedLaggingExecutor, // Saturated executor for lagging path
+                null, // no hedge scheduler
+                0, // TTFB hedging disabled
+                0, // total-time hedging disabled
                 fetchMetrics,
                 new BrokerTopicStats())) {
 
@@ -1092,6 +1104,9 @@ public class ReaderTest {
                 LAGGING_THRESHOLD_MS,
                 RATE_LIMIT_REQ_PER_SEC,
                 laggingFetchDataExecutor,
+                null, // no hedge scheduler
+                0, // TTFB hedging disabled
+                0, // total-time hedging disabled
                 fetchMetrics,
                 new BrokerTopicStats())) {
 
