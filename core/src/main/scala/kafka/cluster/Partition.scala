@@ -221,6 +221,8 @@ class Partition(val topicPartition: TopicPartition,
 
   @volatile private var disklessLogStartOffset: Long = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
 
+  @volatile private var safeConsolidationPruningFloor: Option[Long] = None
+
   this.logIdent = s"[Partition $topicPartition broker=$localBrokerId] "
 
   private val tags = Map("topic" -> topic, "partition" -> partitionId.toString).asJava
@@ -268,6 +270,16 @@ class Partition(val topicPartition: TopicPartition,
     } else {
       false
     }
+  }
+
+  def getSafeConsolidatedDisklessPruneOffset(highestRemoteOffset: Long): Option[Long] = {
+    safeConsolidationPruningFloor
+      .filter(floor => highestRemoteOffset >= floor)
+      .map(_ => highestRemoteOffset)
+  }
+
+  def setSafeConsolidatedDisklessPruneFloor(newFloor: Long): Unit = {
+    safeConsolidationPruningFloor = Option(newFloor)
   }
 
   def isSealed: Boolean = _sealed

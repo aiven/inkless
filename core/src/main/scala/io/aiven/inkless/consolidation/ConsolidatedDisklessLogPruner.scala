@@ -23,6 +23,7 @@ import kafka.server.ReplicaManager
 import kafka.server.metadata.InklessMetadataView
 import kafka.utils.Logging
 import org.apache.kafka.common.TopicIdPartition
+import org.apache.kafka.metadata.PartitionRegistration
 
 import scala.jdk.CollectionConverters.{CollectionHasAsScala, SeqHasAsJava}
 
@@ -30,12 +31,10 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
                                     inklessMetadataView: InklessMetadataView,
                                     controlPlane: ControlPlane) extends Runnable with Logging {
 
-  /**
-   * This method is repeatedly invoked until the thread shuts down or this method throws an exception
-   */
   override def run(): Unit = {
-    val disklessTopicIdPartitions = inklessMetadataView.getConsolidatingDisklessTopicPartitions.asScala
-    val eitherErrorOrLog = disklessTopicIdPartitions
+    val eligibleDisklessTopicIdPartitions = inklessMetadataView.getConsolidatingDisklessTopicPartitions.asScala
+      .filter(tip => inklessMetadataView.getClassicToDisklessStartOffset(tip.topicPartition) != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+    val eitherErrorOrLog = eligibleDisklessTopicIdPartitions
       .map(tip => replicaManager.getPartitionOrError(tip.topicPartition))
       .partition(either => either.isLeft)
     eitherErrorOrLog._1
@@ -53,8 +52,11 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
               if (highestRemoteOffset < 0) {
                 None
               } else {
-                val topicIdPartition = new TopicIdPartition(topicId, partition.topicPartition)
-                Some(new PruneDisklessLogsRequest(topicIdPartition, highestRemoteOffset))
+                partition.getSafeConsolidatedDisklessPruneOffset(highestRemoteOffset)
+                  .map { safeHighestRemoteOffset =>
+                    val topicIdPartition = new TopicIdPartition(topicId, partition.topicPartition)
+                    new PruneDisklessLogsRequest(topicIdPartition, safeHighestRemoteOffset)
+                  }
               }
             }
           }
