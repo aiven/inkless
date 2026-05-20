@@ -2957,43 +2957,44 @@ class ReplicaManager(val config: KafkaConfig,
       delta.changedTopics().forEach { (topicId, topicDelta) =>
         val topicName = topicDelta.name()
         topicDelta.partitionChanges().forEach { (partitionId, partitionRegistration) =>
-          val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
-            Option(topicImage.partitions().get(partitionId))
-          }
-          val shouldInitOnControlPlane = previousPartition.exists { previous =>
-            previous.classicToDisklessStartOffset < 0 &&
-              partitionRegistration.classicToDisklessStartOffset >= 0
-          }
+          if (partitionRegistration.classicToDisklessStartOffset >= 0) {
+            val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
+              Option(topicImage.partitions().get(partitionId))
+            }
+            val shouldInitOnControlPlane = previousPartition.exists { previous =>
+              previous.classicToDisklessStartOffset < 0
+            }
 
-          val tp = new TopicPartition(topicName, partitionId)
-          if (shouldInitOnControlPlane) {
-            onlinePartition(tp) match {
-              case Some(partition) if partition.isLeader =>
-                val producerStates = partitionRegistration.disklessProducerStates.asScala.map { producerState =>
-                  new InitDisklessLogProducerState(
-                    producerState.producerId(),
-                    producerState.producerEpoch(),
-                    producerState.baseSequence(),
-                    producerState.lastSequence(),
-                    producerState.assignedOffset(),
-                    producerState.batchMaxTimestamp()
+            val tp = new TopicPartition(topicName, partitionId)
+            if (shouldInitOnControlPlane) {
+              onlinePartition(tp) match {
+                case Some(partition) if partition.isLeader =>
+                  val producerStates = partitionRegistration.disklessProducerStates.asScala.map { producerState =>
+                    new InitDisklessLogProducerState(
+                      producerState.producerId(),
+                      producerState.producerEpoch(),
+                      producerState.baseSequence(),
+                      producerState.lastSequence(),
+                      producerState.assignedOffset(),
+                      producerState.batchMaxTimestamp()
+                    )
+                  }.asJava
+                  manager.initOnControlPlane(
+                    partition = partition,
+                    topicId = topicId,
+                    topicName = topicName,
+                    classicToDisklessStartOffset = partitionRegistration.classicToDisklessStartOffset,
+                    producerStates = producerStates
                   )
-                }.asJava
-                manager.initOnControlPlane(
-                  partition = partition,
-                  topicId = topicId,
-                  topicName = topicName,
-                  classicToDisklessStartOffset = partitionRegistration.classicToDisklessStartOffset,
-                  producerStates = producerStates
-                )
-              case Some(_) =>
-                stateChangeLogger.info(
-                  s"Skipping diskless init on control plane for $tp because the partition is not a local leader."
-                )
-              case None =>
-                stateChangeLogger.info(
-                  s"Skipping diskless init on control plane for $tp because the partition is not online locally."
-                )
+                case Some(_) =>
+                  stateChangeLogger.info(
+                    s"Skipping diskless init on control plane for $tp because the partition is not a local leader."
+                  )
+                case None =>
+                  stateChangeLogger.info(
+                    s"Skipping diskless init on control plane for $tp because the partition is not online locally."
+                  )
+              }
             }
           }
         }
