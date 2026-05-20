@@ -183,7 +183,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Map<TopicPartition, MirrorPartitionState> pendingPartitionStates = new ConcurrentHashMap<>();
     private final Map<TopicPartition, MirrorPartitionState> prevStateBeforeFailure = new ConcurrentHashMap<>();
     private final Map<TopicPartition, Integer> failedRetryAttempts = new ConcurrentHashMap<>();
-    private final Set<Uuid> pendingTopicCreations = ConcurrentHashMap.newKeySet();
+    private final Set<String> pendingTopicCreations = ConcurrentHashMap.newKeySet();
 
     private final AtomicLong metadataRefreshError;
     private final AtomicLong topicConfigSyncError;
@@ -256,11 +256,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
         // caching the image for query purpose
         this.metadataImage = newImage;
-
-        // clear pending topic creations for topics that now exist
-        if (delta.topicsDelta() != null) {
-            delta.topicsDelta().createdTopicIds().forEach(pendingTopicCreations::remove);
-        }
 
         Set<String> reconnectedMirrors = maybeRecreateConnection(delta, newImage);
 
@@ -1247,62 +1242,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             log.debug("Periodic metadata response: {}", metadataResponse);
             Map<Integer, Node> brokerNodes = new HashMap<>();
             metadataResponse.brokers().forEach(broker -> brokerNodes.put(broker.id(), broker));
-            var createPartitionsTopics = processTopicMetadata(mirrorName, metadataResponse.topicMetadata(), brokerNodes);
-            maybeStopDeletedTopics(mirrorName, metadataResponse.topicMetadata());
-            handlePartitionScaling(createPartitionsTopics);
+            processTopicMetadata(mirrorName, metadataResponse.topicMetadata(), brokerNodes);
             return Optional.of(metadataResponse);
         }
         return Optional.empty();
     }
 
-    /**
-     * Creates a mirror topic on the destination with the source's TopicId,
-     * preserving topic identity across clusters. Called during periodic metadata
-     * sync when a topic has mirror.name config but doesn't exist on the destination yet.
-     * Once created, onMetadataUpdate will detect it and start the mirror state machine.
-     */
-    private void createMirrorTopic(String topicName, org.apache.kafka.common.Uuid topicId, int numPartitions) {
-        if (!pendingTopicCreations.add(topicId)) {
-            log.debug("Skipping creation of mirror topic {} (topicId={}), request already in-flight", topicName, topicId);
-            return;
-        }
-        log.info("Creating mirror topic {} on destination (partitions={}, topicId={})",
-                topicName, numPartitions, topicId);
-        var creatableTopic = new CreateTopicsRequestData.CreatableTopic()
-                .setName(topicName)
-                .setNumPartitions(numPartitions)
-                .setReplicationFactor(CreateTopicsRequest.NO_REPLICATION_FACTOR)
-                .setMirrorInfo(new CreateTopicsRequestData.MirrorInfo().setTopicId(topicId));
-        var createTopicsData = new CreateTopicsRequestData().setTimeoutMs(brokerConfig.requestTimeoutMs());
-        createTopicsData.topics().add(creatableTopic);
-        ControllerRequestCompletionHandler requestCompletionHandler = new ControllerRequestCompletionHandler() {
-            @Override
-            public void onTimeout() {
-                pendingTopicCreations.remove(topicId);
-                log.warn("Create mirror topic timed out for {} (topicId={})", topicName, topicId);
-            }
-
-            @Override
-            public void onComplete(ClientResponse response) {
-                pendingTopicCreations.remove(topicId);
-                if (response.responseBody() instanceof CreateTopicsResponse createTopicsResponse) {
-                    createTopicsResponse.data().topics().forEach(topic -> {
-                        Errors error = Errors.forCode(topic.errorCode());
-                        if (error != Errors.NONE) {
-                            log.warn("Failed to create mirror topic {} (topicId={}): {}", topicName, topicId, error.message());
-                        }
-                    });
-                }
-            }
-        };
-        channelManager.sendRequest(
-                new CreateTopicsRequest.Builder(createTopicsData),
-                requestCompletionHandler);
-    }
-
-    /** Processes topic metadata and returns topics that need partition scaling */
-    private CreatePartitionsRequestData.CreatePartitionsTopicCollection processTopicMetadata(
+    /** Processes topic metadata: updates source leaders, creates missing topics, scales partitions and stops deleted topics. */
+    private void processTopicMetadata(
             String mirrorName, Collection<MetadataResponse.TopicMetadata> topicMetadata, Map<Integer, Node> brokerNodes) {
+        var creatableTopics = new ArrayList<CreateTopicsRequestData.CreatableTopic>();
         var createPartitionsTopics = new CreatePartitionsRequestData.CreatePartitionsTopicCollection();
 
         topicMetadata.forEach(tm -> {
@@ -1322,19 +1271,28 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 }
             });
 
-            if (metadataImage.topics().getTopic(tm.topicId()) != null &&
-                    metadataImage.topics().getTopic(tm.topicId()).partitions().size() < sourcePartitionCount) {
+            // Pre-KIP-516 sources (Kafka < 2.8) return ZERO_UUID; fall back to name-based lookup
+            TopicImage destTopic = !tm.topicId().equals(Uuid.ZERO_UUID)
+                    ? metadataImage.topics().getTopic(tm.topicId())
+                    : metadataImage.topics().getTopic(tm.topic());
+
+            if (destTopic != null && destTopic.partitions().size() < sourcePartitionCount) {
                 createPartitionsTopics.add(new CreatePartitionsRequestData.CreatePartitionsTopic()
                         .setName(tm.topic())
                         .setCount(sourcePartitionCount)
                         .setAssignments(null)
                 );
-            } else if (metadataImage.topics().getTopic(tm.topicId()) == null &&
+            } else if (destTopic == null &&
                     metadataImage.topics().getTopic(tm.topic()) == null &&
                     tm.error() == Errors.NONE && sourcePartitionCount > 0) {
-                // create topic on destination using cluster default replication factor
-                this.createMirrorTopic(tm.topic(), tm.topicId(), sourcePartitionCount);
-            } else if (metadataImage.topics().getTopic(tm.topicId()) == null &&
+                if (pendingTopicCreations.add(tm.topic())) {
+                    creatableTopics.add(new CreateTopicsRequestData.CreatableTopic()
+                            .setName(tm.topic())
+                            .setNumPartitions(sourcePartitionCount)
+                            .setReplicationFactor(CreateTopicsRequest.NO_REPLICATION_FACTOR)
+                            .setMirrorInfo(new CreateTopicsRequestData.MirrorInfo().setTopicId(tm.topicId())));
+                }
+            } else if (destTopic == null &&
                     metadataImage.topics().getTopic(tm.topic()) != null &&
                     tm.error() == Errors.NONE) {
                 log.error("Mirror topic {} exists on destination with TopicId {} but source has TopicId {}. "
@@ -1343,23 +1301,63 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             }
         });
 
-        return createPartitionsTopics;
+        if (!creatableTopics.isEmpty()) {
+            createMirrorTopics(creatableTopics);
+        }
+
+        maybeScalePartitions(createPartitionsTopics);
+        maybeStopDeletedTopics(mirrorName, topicMetadata);
     }
 
-    /** Handles partition scaling by sending create partitions requests */
-    private void handlePartitionScaling(CreatePartitionsRequestData.CreatePartitionsTopicCollection createPartitionsTopics) {
-        if (!createPartitionsTopics.isEmpty()) {
-            log.debug("Detected partition count change, sending CreatePartitionsRequest: {}", createPartitionsTopics);
+    /**
+     * Creates mirror topics on the destination with the source's TopicId,
+     * preserving topic identity across clusters. Called during periodic metadata
+     * sync when topics have mirror.name config but don't exist on the destination yet.
+     * Once created, onMetadataUpdate will detect them and start the mirror state machine.
+     */
+    private void createMirrorTopics(List<CreateTopicsRequestData.CreatableTopic> creatableTopics) {
+        var topicNames = creatableTopics.stream().map(CreateTopicsRequestData.CreatableTopic::name).toList();
+        creatableTopics.forEach(t -> log.info("Creating mirror topic {} on destination (partitions={}, topicId={})",
+                t.name(), t.numPartitions(), t.mirrorInfo().topicId()));
+        var createTopicsData = new CreateTopicsRequestData().setTimeoutMs(brokerConfig.requestTimeoutMs());
+        creatableTopics.forEach(createTopicsData.topics()::add);
+        ControllerRequestCompletionHandler requestCompletionHandler = new ControllerRequestCompletionHandler() {
+            @Override
+            public void onTimeout() {
+                topicNames.forEach(pendingTopicCreations::remove);
+                log.warn("Create mirror topics timed out for {}", topicNames);
+            }
+
+            @Override
+            public void onComplete(ClientResponse response) {
+                topicNames.forEach(pendingTopicCreations::remove);
+                if (response.responseBody() instanceof CreateTopicsResponse createTopicsResponse) {
+                    createTopicsResponse.data().topics().forEach(topic -> {
+                        Errors error = Errors.forCode(topic.errorCode());
+                        if (error != Errors.NONE) {
+                            log.warn("Failed to create mirror topic {}: {}", topic.name(), error.message());
+                        }
+                    });
+                }
+            }
+        };
+        channelManager.sendRequest(
+                new CreateTopicsRequest.Builder(createTopicsData),
+                requestCompletionHandler);
+    }
+
+    private void maybeScalePartitions(CreatePartitionsRequestData.CreatePartitionsTopicCollection topics) {
+        if (!topics.isEmpty()) {
+            log.debug("Detected partition count change, sending CreatePartitionsRequest: {}", topics);
             channelManager.sendRequest(new CreatePartitionsRequest.Builder(
                     new CreatePartitionsRequestData()
-                            .setTopics(createPartitionsTopics)
+                            .setTopics(topics)
                             .setValidateOnly(false)
                             .setTimeoutMs(3000)
             ), new TimeoutHandler(log));
         }
     }
 
-    /** Transitions mirror partitions to STOPPING when the topic is deleted on the source cluster. */
     private void maybeStopDeletedTopics(String mirrorName, Collection<MetadataResponse.TopicMetadata> topicMetadata) {
         List<String> deletedSourceTopicNames = topicMetadata.stream()
                 .filter(tm -> tm.error() == Errors.UNKNOWN_TOPIC_OR_PARTITION)

@@ -113,6 +113,13 @@ class ClusterMirroringMigrationTest(MirrorHelpers, Test):
         for t in topics:
             self.produce_records(self.source_kafka.nodes[0], t, num_records)
 
+        self.logger.info("Creating consumer group on source by consuming my-topic-a")
+        self.consume_records("my-topic-a", self.source_kafka, max_messages=num_records, group="my-group")
+
+        self.logger.info("Setting dynamic topic config on source")
+        # Uses the source node's own binary: --zookeeper for pre-2.6, --bootstrap-server otherwise
+        self.source_kafka.alter_topic_config("my-topic-a", "retention.ms=100002")
+
         self.logger.info("Creating and starting cluster mirrors on destination")
         mirror_name = "my-mirror"
         mirror_cfg = MirrorConfig(self.source_kafka.bootstrap_servers())
@@ -133,6 +140,17 @@ class ClusterMirroringMigrationTest(MirrorHelpers, Test):
         self.logger.info("Waiting for all partitions to reach MIRRORING with zero lag")
         self.wait_mirror_lag_zero(
             self.dest_kafka, mirror_name, topics=list(topics.keys()))
+
+        self.logger.info("Verifying consumer group offset sync")
+        self.wait_for_metadata_sync(self.dest_kafka, mirror_name, num_cycles=2)
+        group_desc = self.dest_kafka.describe_consumer_group("my-group", self.client_node)
+        assert "my-topic-a" in group_desc, \
+            "Expected my-topic-a offset to be synced on destination, got: %s" % group_desc
+
+        self.logger.info("Verifying topic config sync")
+        dest_topic_desc = self.dest_kafka.describe_topic("my-topic-a", node=self.client_node)
+        assert "retention.ms=100002" in dest_topic_desc, \
+            "Expected retention.ms=100002 synced to destination, got: %s" % dest_topic_desc
 
         self.logger.info("Stopping mirroring (failover)")
         for regex in ["my-topic.*", "new-topic"]:
@@ -161,7 +179,7 @@ class ClusterMirroringMigrationTest(MirrorHelpers, Test):
     @cluster(num_nodes=7)
     @parametrize(metadata_quorum=quorum.zk)
     def test_migration_from_zk(self, metadata_quorum):
-        """Migrate data from Kafka 2.1.1 (ZooKeeper mode) to current dev build."""
+        """Migrate data from Kafka 2.1 (ZooKeeper mode) to current dev build."""
         self.zk = ZookeeperService(self.test_context, num_nodes=1)
         self.zk.start()
 
@@ -183,7 +201,7 @@ class ClusterMirroringMigrationTest(MirrorHelpers, Test):
     @cluster(num_nodes=7)
     @defaults(metadata_quorum=[quorum.isolated_kraft])
     def test_migration_from_kraft(self, metadata_quorum):
-        """Migrate data from Kafka 3.9.1 (KRaft mode) to current dev build."""
+        """Migrate data from Kafka 3.9 (KRaft mode) to current dev build."""
         self.source_kafka = KafkaService(
             self.test_context, num_nodes=2, zk=None,
             version=LATEST_3_9,
