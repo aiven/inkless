@@ -600,8 +600,7 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         self.port_mappings[listener_name].open = False
 
     def start_minikdc_if_necessary(self, add_principals=""):
-        has_sasl = self.security_config.has_sasl
-        if has_sasl:
+        if self.security_config.has_sasl_kerberos:
             if self.minikdc is None:
                 other_service = self.isolated_kafka if self.isolated_kafka else self.controller_quorum if self.quorum_info.using_kraft else None
                 if not other_service or not other_service.minikdc:
@@ -791,9 +790,9 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
             override_configs[config_property.UNSTABLE_API_VERSIONS_ENABLE] = str(True)
             override_configs[config_property.UNSTABLE_FEATURE_VERSIONS_ENABLE] = str(True)
 
-        if self.use_cluster_mirroring:
-            override_configs[config_property.UNSTABLE_API_VERSIONS_ENABLE] = 'true'
-            override_configs[config_property.UNSTABLE_FEATURE_VERSIONS_ENABLE] = 'true'
+        if self.use_cluster_mirroring is True:
+            override_configs[config_property.UNSTABLE_API_VERSIONS_ENABLE] = str(True)
+            override_configs[config_property.UNSTABLE_FEATURE_VERSIONS_ENABLE] = str(True)
 
         #update template configs with test override configs
         configs.update(override_configs)
@@ -947,18 +946,22 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         self.run_metadata_features_command("downgrade", new_version)
 
     def run_metadata_features_command(self, op, new_version):
-        cmd = self.path.script("kafka-features.sh ")
-        cmd += "--bootstrap-server %s " % self.bootstrap_servers()
-        cmd += "%s --metadata %s" % (op, new_version)
+        node = self.nodes[0]
+        env_prefix, cmd_suffix = self._cmd_security_opts(node)
+        cmd = "%s%s " % (env_prefix, self.path.script("kafka-features.sh "))
+        cmd += "--bootstrap-server %s" % self.bootstrap_servers(self.security_protocol)
+        cmd += "%s %s --metadata %s" % (cmd_suffix, op, new_version)
         self.logger.info("Running %s command...\n%s" % (op, cmd))
-        self.nodes[0].account.ssh(cmd)
+        node.account.ssh(cmd)
 
     def run_features_command(self, op, feature, new_version):
-        cmd = self.path.script("kafka-features.sh ")
-        cmd += "--bootstrap-server %s " % self.bootstrap_servers()
-        cmd += "%s --feature %s=%s" % (op, feature, new_version)
+        node = self.nodes[0]
+        env_prefix, cmd_suffix = self._cmd_security_opts(node)
+        cmd = "%s%s " % (env_prefix, self.path.script("kafka-features.sh "))
+        cmd += "--bootstrap-server %s" % self.bootstrap_servers(self.security_protocol)
+        cmd += "%s %s --feature %s=%s" % (cmd_suffix, op, feature, new_version)
         self.logger.info("Running %s command...\n%s" % (op, cmd))
-        self.nodes[0].account.ssh(cmd)
+        node.account.ssh(cmd)
 
     def pids(self, node):
         """Return process ids associated with running processes on the given node."""
@@ -1352,6 +1355,16 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         self.logger.info("Running alter message format command...\n%s" % cmd)
         node.account.ssh(cmd)
 
+    def alter_topic_config(self, topic, config, node=None):
+        if node is None:
+            node = self.nodes[0]
+        force_use_zk_connection = not self.all_nodes_configs_command_uses_bootstrap_server()
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --entity-name %s --entity-type topics --alter --add-config %s" % \
+              (self.kafka_configs_cmd_with_optional_security_settings(node, force_use_zk_connection), topic, config)
+        self.logger.info("Running alter topic config command...\n%s" % cmd)
+        node.account.ssh(cmd)
+
     def kafka_acls_cmd_with_optional_security_settings(self, node, kafka_security_protocol = None, override_command_config = None):
         if self.quorum_info.using_kraft and not self.quorum_info.has_brokers:
             raise Exception("Must invoke kafka-acls against a broker, not a KRaft controller")
@@ -1392,6 +1405,28 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
                (optional_jass_krb_system_props_prefix, kafka_acls_script,
                 bootstrap_server, optional_command_config_suffix)
 
+    def _cmd_security_opts(self, node):
+        """Returns (env_prefix, cmd_suffix) for wiring security into CLI commands.
+        When security is enabled, env_prefix sets KAFKA_OPTS with JAAS and KRB5
+        system properties, and cmd_suffix appends --command-config with the client
+        security properties (protocol, SSL stores, SASL mechanism).
+        Uses broker credentials (user "kafka") when client and inter-broker
+        protocols match, otherwise uses regular client credentials (user "client").
+        Returns empty strings for PLAINTEXT (no security needed)."""
+        security_protocol_to_use = self.security_protocol
+        if security_protocol_to_use == SecurityConfig.PLAINTEXT:
+            return ("", "")
+        if security_protocol_to_use == self.interbroker_security_protocol:
+            jaas_conf_prop = KafkaService.ADMIN_CLIENT_AS_BROKER_JAAS_CONF_PROPERTY
+            use_inter_broker_mechanism_for_client = True
+        else:
+            jaas_conf_prop = KafkaService.JAAS_CONF_PROPERTY
+            use_inter_broker_mechanism_for_client = False
+        using_sasl = security_protocol_to_use != "SSL"
+        env_prefix = "KAFKA_OPTS='-D%s -D%s' " % (jaas_conf_prop, KafkaService.KRB5_CONF) if using_sasl else ""
+        cmd_suffix = " --command-config <(echo '%s')" % (self.security_config.client_config(use_inter_broker_mechanism_for_client = use_inter_broker_mechanism_for_client))
+        return (env_prefix, cmd_suffix)
+
     def run_cli_tool(self, node, cmd):
         output = ""
         self.logger.debug(cmd)
@@ -1430,7 +1465,6 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
                  })
 
         return {"partitions": partitions}
-
 
     def _connect_setting_reassign_partitions(self, node):
         if self.all_nodes_reassign_partitions_command_supports_bootstrap_server():
@@ -1818,6 +1852,22 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         self.logger.debug(output)
         return output
 
+    def reset_consumer_group_offsets(self, node, group, topic, offset):
+        consumer_group_script = self.path.script("kafka-consumer-groups.sh", node)
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --bootstrap-server %s --group %s --topic %s --reset-offsets --to-offset %d --execute" % \
+               (consumer_group_script, self.bootstrap_servers(self.security_protocol),
+                group, topic, offset)
+        return self.run_cli_tool(node, cmd)
+
+    def reset_share_group_offsets(self, node, group, topic, strategy="--to-earliest"):
+        share_group_script = self.path.script("kafka-share-groups.sh", node)
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --bootstrap-server %s --group %s --topic %s --reset-offsets %s --execute" % \
+               (share_group_script, self.bootstrap_servers(self.security_protocol),
+                group, topic, strategy)
+        return self.run_cli_tool(node, cmd)
+
     def describe_share_group(self, group, node=None, command_config=None):
         """ Describe a share group.
         """
@@ -2021,64 +2071,118 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
     def java_class_name(self):
         return "kafka\.Kafka"
 
-    def create_cluster_mirror(self, node, mirror_name, mirror_config_file):
+    def create_cluster_mirror(self, node, mirror_name, mirror_config):
+        mirror_config_file = "/mnt/cluster_mirroring/cluster_mirror.properties"
+        node.account.ssh("mkdir -p /mnt/cluster_mirroring", allow_fail=False)
+        node.account.create_file(mirror_config_file, str(mirror_config))
+
+        env_prefix, cmd_suffix = self._cmd_security_opts(node)
         cluster_mirror_script = self.path.script("kafka-cluster-mirrors.sh", node)
 
         cmd = fix_opts_for_new_jvm(node)
-        cmd += "%s --bootstrap-server %s --create --mirror %s --mirror-config %s" % \
-               (cluster_mirror_script,
+        cmd += "%s%s --bootstrap-server %s --create --mirror %s --mirror-config %s%s" % \
+               (env_prefix,
+                cluster_mirror_script,
                 self.bootstrap_servers(self.security_protocol),
                 mirror_name,
-                mirror_config_file)
+                mirror_config_file,
+                cmd_suffix)
         return self.run_cli_tool(node, cmd)
 
-    def list_cluster_mirror(self, node):
+    def delete_cluster_mirror(self, node, mirror_name):
+        env_prefix, cmd_suffix = self._cmd_security_opts(node)
         cluster_mirror_script = self.path.script("kafka-cluster-mirrors.sh", node)
 
         cmd = fix_opts_for_new_jvm(node)
-        cmd += "%s --bootstrap-server %s --list" % \
-               (cluster_mirror_script,
-                self.bootstrap_servers(self.security_protocol))
+        cmd += "%s%s --bootstrap-server %s --delete --mirror %s%s" % \
+               (env_prefix,
+                cluster_mirror_script,
+                self.bootstrap_servers(self.security_protocol),
+                mirror_name,
+                cmd_suffix)
+        output = ""
+        self.logger.debug(cmd)
+        for line in node.account.ssh_capture(cmd, allow_fail=True):
+            if not line.startswith("SLF4J"):
+                output += line
+        self.logger.debug(output)
+        return output
+
+    def list_cluster_mirror(self, node):
+        env_prefix, cmd_suffix = self._cmd_security_opts(node)
+        cluster_mirror_script = self.path.script("kafka-cluster-mirrors.sh", node)
+
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s%s --bootstrap-server %s --list%s" % \
+               (env_prefix,
+                cluster_mirror_script,
+                self.bootstrap_servers(self.security_protocol),
+                cmd_suffix)
         return self.run_cli_tool(node, cmd)
 
     def describe_cluster_mirror(self, node):
+        env_prefix, cmd_suffix = self._cmd_security_opts(node)
         cluster_mirror_script = self.path.script("kafka-cluster-mirrors.sh", node)
 
         cmd = fix_opts_for_new_jvm(node)
-        cmd += "%s --bootstrap-server %s --describe --json" % \
-               (cluster_mirror_script,
-                self.bootstrap_servers(self.security_protocol))
+        cmd += "%s%s --bootstrap-server %s --describe --json%s" % \
+               (env_prefix,
+                cluster_mirror_script,
+                self.bootstrap_servers(self.security_protocol),
+                cmd_suffix)
         return self.run_cli_tool(node, cmd)
 
-
-    def _cluster_mirror_action(self, node, mirror_name, topics, action):
-        assert topics is not None and len(topics) > 0
+    def _cluster_mirror_action(self, node, mirror_name, topics_regex, action, exclude=None):
+        assert topics_regex is not None and len(topics_regex) > 0
+        env_prefix, cmd_suffix = self._cmd_security_opts(node)
         cluster_mirror_script = self.path.script("kafka-cluster-mirrors.sh", node)
 
         cmd = fix_opts_for_new_jvm(node)
-        topic_names = ' '.join(['--topics %s' % topic for topic in topics])
-        cmd += "%s --bootstrap-server %s --%s --mirror %s %s" % \
-               (cluster_mirror_script,
+        cmd += "%s%s --bootstrap-server %s --%s --mirror %s --topics %s" % \
+               (env_prefix,
+                cluster_mirror_script,
                 self.bootstrap_servers(self.security_protocol),
                 action,
                 mirror_name,
-                topic_names)
+                topics_regex)
+        if exclude is not None:
+            cmd += " --exclude %s" % exclude
+        cmd += cmd_suffix
         return self.run_cli_tool(node, cmd)
 
-    def start_cluster_mirror_topics(self, node, mirror_name, topics):
-        return self._cluster_mirror_action(node, mirror_name, topics, 'start')
+    def start_cluster_mirror_topics(self, node, mirror_name, topics_regex, exclude=None):
+        return self._cluster_mirror_action(node, mirror_name, topics_regex, 'start', exclude=exclude)
 
-    def delete_topics_from_cluster_mirror(self, node, mirror_name, topics):
-        return self._cluster_mirror_action(node, mirror_name, topics, 'delete')
+    def stop_cluster_mirror_topics(self, node, mirror_name, topics_regex):
+        return self._cluster_mirror_action(node, mirror_name, topics_regex, 'stop')
 
-    def delete_topics_from_cluster_mirror(self, node, mirror_name, topics):
-        return self._cluster_mirror_action(node, mirror_name, topics, 'pause')
+    def pause_cluster_mirror_topics(self, node, mirror_name, topics_regex):
+        return self._cluster_mirror_action(node, mirror_name, topics_regex, 'pause')
 
-    def delete_topics_from_cluster_mirror(self, node, mirror_name, topics):
-        return self._cluster_mirror_action(node, mirror_name, topics, 'resume')
+    def resume_cluster_mirror_topics(self, node, mirror_name, topics_regex):
+        return self._cluster_mirror_action(node, mirror_name, topics_regex, 'resume')
 
-    def stop_cluster_mirror_topics(self, node, mirror_name, topics):
-        return self._cluster_mirror_action(node, mirror_name, topics, 'stop')
+    def alter_mirror_config(self, node, mirror_name, config):
+        force_use_zk_connection = not self.all_nodes_configs_command_uses_bootstrap_server()
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --entity-type cluster-mirrors --entity-name %s --alter --add-config %s" % \
+               (self.kafka_configs_cmd_with_optional_security_settings(node, force_use_zk_connection),
+                mirror_name, config)
+        output = ""
+        self.logger.debug(cmd)
+        for line in node.account.ssh_capture(cmd, allow_fail=True):
+            if not line.startswith("SLF4J"):
+                output += line
+        self.logger.debug(output)
+        return output
+
+    def describe_mirror_config(self, node, mirror_name):
+        force_use_zk_connection = not self.all_nodes_configs_command_uses_bootstrap_server()
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --entity-type cluster-mirrors --entity-name %s --describe" % \
+               (self.kafka_configs_cmd_with_optional_security_settings(node, force_use_zk_connection),
+                mirror_name)
+        return self.run_cli_tool(node, cmd)
 
     def parse_describe_cluster_mirror(self, cluster_mirror_description):
         """Parse output of kafka-cluster-mirrors.sh --describe (or describe_cluster_mirror() method above), which is a string of form

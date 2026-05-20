@@ -16,8 +16,8 @@
 cffi 
 virtualenv 
 pyasn1 
-boto3 
-pycrypto
+boto3
+pycryptodome 
 pywinrm 
 ipaddress 
 debugpy 
