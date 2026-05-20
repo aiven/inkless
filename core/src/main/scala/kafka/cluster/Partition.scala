@@ -219,7 +219,7 @@ class Partition(val topicPartition: TopicPartition,
     }
   }
 
-  @volatile private var disklessStartOffset: Long = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
+  @volatile private var disklessLogStartOffset: Long = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
 
   this.logIdent = s"[Partition $topicPartition broker=$localBrokerId] "
 
@@ -261,9 +261,9 @@ class Partition(val topicPartition: TopicPartition,
    */
   def isAtMinIsr: Boolean = leaderLogIfLocal.exists { partitionState.isr.size == effectiveMinIsr(_) }
 
-  def setDisklessStartOffset(disklessStartOffset: Long) = this.disklessStartOffset = disklessStartOffset
+  def setDisklessLogStartOffset(newDisklessLogStartOffset: Long) = disklessLogStartOffset = newDisklessLogStartOffset
 
-  def getDisklessStartOffset() = disklessStartOffset
+  def getDisklessLogStartOffset() = disklessLogStartOffset
 
   def isSealed: Boolean = _sealed
 

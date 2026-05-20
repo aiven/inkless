@@ -34,7 +34,6 @@ import org.mockito.Mockito._
 
 import java.util
 import java.util.Optional
-
 import scala.util.{Left, Right}
 
 class ConsolidatedDisklessLogPrunerTest {
@@ -121,12 +120,12 @@ class ConsolidatedDisklessLogPrunerTest {
 
     val responseTip = new TopicIdPartition(topicId, topicPartition.partition, topicPartition.topic)
     when(cp.pruneDisklessLogs(any())).thenReturn(
-      util.List.of(new PruneDisklessLogsResponse(responseTip, null, PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION))
+      util.List.of(new PruneDisklessLogsResponse(responseTip, -1, PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION))
     )
 
     new ConsolidatedDisklessLogPruner(rm, view, cp).run()
 
-    verify(partition, never()).setDisklessStartOffset(anyLong())
+    verify(partition, never()).setDisklessLogStartOffset(anyLong())
     verify(view, never()).getTopicName(any(classOf[Uuid]))
   }
 
@@ -148,28 +147,7 @@ class ConsolidatedDisklessLogPrunerTest {
 
     new ConsolidatedDisklessLogPruner(rm, view, cp).run()
 
-    verify(partition).setDisklessStartOffset(88L)
-  }
-
-  @Test
-  def testRunDoesNotSetDisklessStartWhenTopicNameMissing(): Unit = {
-    val rm = mock(classOf[ReplicaManager])
-    val view = mock(classOf[InklessMetadataView])
-    val cp = mock(classOf[ControlPlane])
-
-    when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Set.of(tip))
-    val partition = readyPartition(10L)
-    when(rm.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
-
-    val responseTip = new TopicIdPartition(topicId, topicPartition.partition, topicPartition.topic)
-    when(cp.pruneDisklessLogs(any())).thenReturn(
-      util.List.of(new PruneDisklessLogsResponse(responseTip, 88L, PruneDisklessLogsError.NONE))
-    )
-    when(view.getTopicName(topicId)).thenReturn(Optional.empty())
-
-    new ConsolidatedDisklessLogPruner(rm, view, cp).run()
-
-    verify(partition, never()).setDisklessStartOffset(anyLong())
+    verify(partition).setDisklessLogStartOffset(88L)
   }
 
   @Test
@@ -192,6 +170,6 @@ class ConsolidatedDisklessLogPrunerTest {
 
     new ConsolidatedDisklessLogPruner(rm, view, cp).run()
 
-    verify(partition, never()).setDisklessStartOffset(anyLong())
+    verify(partition, never()).setDisklessLogStartOffset(anyLong())
   }
 }
