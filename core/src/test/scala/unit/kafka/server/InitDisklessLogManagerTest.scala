@@ -382,8 +382,8 @@ class InitDisklessLogManagerTest {
     assertEquals(Set(tp0, tp1, tp2), manager.getTrackedPartitions)
     assertTrue(initDisklessMetricsRegistered, "metrics should be registered while manager is alive")
 
-    val failedBefore = meterCount(InitDisklessLogManager.MigrationsFailedPerSecMetricName)
-    val completedBefore = meterCount(InitDisklessLogManager.MigrationsCompletedPerSecMetricName)
+    val failedBefore = meterCount(InitDisklessLogManager.InitDisklessLogFailedPerSecMetricName)
+    val completedBefore = meterCount(InitDisklessLogManager.InitDisklessLogCompletedPerSecMetricName)
 
     // When the manager is shut down
     manager.shutdown()
@@ -395,14 +395,14 @@ class InitDisklessLogManagerTest {
     assertEquals(
       failedBefore,
       meterCount(
-        InitDisklessLogManager.MigrationsFailedPerSecMetricName,
+        InitDisklessLogManager.InitDisklessLogFailedPerSecMetricName,
         defaultIfMissing = failedBefore
       )
     )
     assertEquals(
       completedBefore,
       meterCount(
-        InitDisklessLogManager.MigrationsCompletedPerSecMetricName,
+        InitDisklessLogManager.InitDisklessLogCompletedPerSecMetricName,
         defaultIfMissing = completedBefore
       )
     )
@@ -423,7 +423,7 @@ class InitDisklessLogManagerTest {
     fireLinger()
     assertEquals(1, channelManager.requests.size())
 
-    val retriedBefore = meterCount(InitDisklessLogManager.MigrationsRetriedPerSecMetricName)
+    val retriedBefore = meterCount(InitDisklessLogManager.InitDisklessLogRetriedPerSecMetricName)
 
     // When the partition is removed (e.g., leadership loss) and the
     // controller subsequently responds with a retriable error
@@ -437,7 +437,7 @@ class InitDisklessLogManagerTest {
     assertTrue(manager.getTrackedPartitions.isEmpty)
     assertEquals(
       retriedBefore,
-      meterCount(InitDisklessLogManager.MigrationsRetriedPerSecMetricName),
+      meterCount(InitDisklessLogManager.InitDisklessLogRetriedPerSecMetricName),
       "removed partition's retriable response must not increment the retried meter"
     )
 
@@ -458,7 +458,7 @@ class InitDisklessLogManagerTest {
     fireLinger()
     assertEquals(1, channelManager.requests.size())
 
-    val retriedBefore = meterCount(InitDisklessLogManager.MigrationsRetriedPerSecMetricName)
+    val retriedBefore = meterCount(InitDisklessLogManager.InitDisklessLogRetriedPerSecMetricName)
 
     manager.removePartition(tp0)
     channelManager.requests.poll().timeout()
@@ -466,7 +466,7 @@ class InitDisklessLogManagerTest {
     assertTrue(manager.getTrackedPartitions.isEmpty)
     assertEquals(
       retriedBefore,
-      meterCount(InitDisklessLogManager.MigrationsRetriedPerSecMetricName)
+      meterCount(InitDisklessLogManager.InitDisklessLogRetriedPerSecMetricName)
     )
 
     mockTime.sleep(manager.maxRetryTimeMs + 1)
@@ -482,20 +482,20 @@ class InitDisklessLogManagerTest {
     fireLinger()
     assertEquals(1, channelManager.requests.size())
 
-    val failedBefore = meterCount(InitDisklessLogManager.MigrationsFailedPerSecMetricName)
+    val failedBefore = meterCount(InitDisklessLogManager.InitDisklessLogFailedPerSecMetricName)
 
     // When the partition is removed before the response arrives
     // (e.g. on leadership loss), `removePartition` calls `queue.remove(tp)`
     // which completes the pending promise with `false`.
     manager.removePartition(tp0)
 
-    // Then the migration is no longer tracked and is NOT counted as a failure:
+    // Then the init diskless log operation is no longer tracked and is NOT counted as a failure:
     // the parasitic callback's `accepted = false` branch must distinguish a
     // cancellation (tracked already cleared) from a permanent failure.
     assertTrue(manager.getTrackedPartitions.isEmpty)
     assertEquals(
       failedBefore,
-      meterCount(InitDisklessLogManager.MigrationsFailedPerSecMetricName),
+      meterCount(InitDisklessLogManager.InitDisklessLogFailedPerSecMetricName),
       "removePartition during in-flight send must not increment the failed meter"
     )
 
@@ -505,11 +505,11 @@ class InitDisklessLogManagerTest {
     pollAndComplete(makeSuccessResponse(topicId, 0))
     assertEquals(
       failedBefore,
-      meterCount(InitDisklessLogManager.MigrationsFailedPerSecMetricName)
+      meterCount(InitDisklessLogManager.InitDisklessLogFailedPerSecMetricName)
     )
     assertEquals(
       0L,
-      meterCount(InitDisklessLogManager.MigrationsCompletedPerSecMetricName)
+      meterCount(InitDisklessLogManager.InitDisklessLogCompletedPerSecMetricName)
     )
   }
 

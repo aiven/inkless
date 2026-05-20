@@ -46,7 +46,7 @@ import org.mockito.Mockito.{mock, times, verify, when}
 import java.util
 import scala.jdk.CollectionConverters._
 
-class InitDisklessLogFlowTest {
+class DisklessSwitchFlowTest {
 
   private case class TestContext(
     config: kafka.server.KafkaConfig,
@@ -133,7 +133,7 @@ class InitDisklessLogFlowTest {
   }
 
   @Test
-  def testPerStateGaugesReflectMigrationProgress(): Unit = {
+  def testPerStateGaugesReflectSwitchProgress(): Unit = {
     // Walks a single partition through the full state machine and asserts that
     // the per-state JMX gauges and meters advance, and the oldest-age-per-state
     // gauges reset on transitions and return to 0 once the partition leaves
@@ -149,7 +149,7 @@ class InitDisklessLogFlowTest {
 
     try {
       // Initially: no partitions sealed, no entries tracked, every gauge is 0
-      // and no migrations have completed/failed/retried yet.
+      // and no init diskless log have completed/failed/retried yet.
       val createDelta = new TopicsDelta(TopicsImage.EMPTY)
       createDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
       createDelta.replay(new PartitionRecord()
@@ -160,8 +160,8 @@ class InitDisklessLogFlowTest {
       ctx.replicaManager.applyDelta(createDelta, createImage)
       assertCountGaugesAllZero()
       assertOldestAgesAllZero()
-      assertMeterCount(InitDisklessLogManager.MigrationsCompletedPerSecMetricName, 0L)
-      assertMeterCount(InitDisklessLogManager.MigrationsFailedPerSecMetricName, 0L)
+      assertMeterCount(InitDisklessLogManager.InitDisklessLogCompletedPerSecMetricName, 0L)
+      assertMeterCount(InitDisklessLogManager.InitDisklessLogFailedPerSecMetricName, 0L)
 
       // After alter -> diskless=true: the partition is sealed and registered.
       // With a fresh mock log (HW == LEO == 0), the state machine immediately
@@ -177,7 +177,7 @@ class InitDisklessLogFlowTest {
       val disklessImage = withClusterBrokers(disklessDelta.apply(MetadataProvenance.EMPTY))
       ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
 
-      assertGauge(InitDisklessLogManager.MigrationsInFlightMetricName, 1)
+      assertGauge(InitDisklessLogManager.InitDisklessLogInFlightMetricName, 1)
       assertGauge(InitDisklessLogManager.WaitingForReplicationCountMetricName, 0)
       assertGauge(InitDisklessLogManager.SendingToControllerCountMetricName, 1)
       assertGauge(InitDisklessLogManager.AwaitingMetadataCountMetricName, 0)
@@ -201,7 +201,7 @@ class InitDisklessLogFlowTest {
       )))
 
       assertTrackedStates(ctx, Map(tp -> classOf[AwaitingMetadata]))
-      assertGauge(InitDisklessLogManager.MigrationsInFlightMetricName, 1)
+      assertGauge(InitDisklessLogManager.InitDisklessLogInFlightMetricName, 1)
       assertGauge(InitDisklessLogManager.SendingToControllerCountMetricName, 0)
       assertGauge(InitDisklessLogManager.AwaitingMetadataCountMetricName, 1)
       // The oldest SendingToController age must reset to 0 (no partitions
@@ -227,8 +227,8 @@ class InitDisklessLogFlowTest {
 
       assertCountGaugesAllZero()
       assertOldestAgesAllZero()
-      assertMeterCount(InitDisklessLogManager.MigrationsCompletedPerSecMetricName, 1L)
-      assertMeterCount(InitDisklessLogManager.MigrationsFailedPerSecMetricName, 0L)
+      assertMeterCount(InitDisklessLogManager.InitDisklessLogCompletedPerSecMetricName, 1L)
+      assertMeterCount(InitDisklessLogManager.InitDisklessLogFailedPerSecMetricName, 0L)
     } finally {
       shutdown(ctx)
     }
@@ -484,17 +484,17 @@ class InitDisklessLogFlowTest {
       // When diskless is enabled and leadership moves to this broker in the same image.
       ctx.metadataPublisher._firstPublish = false
       when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
-      val migrationDelta = new MetadataDelta(createImage)
-      migrationDelta.replay(new ConfigRecord()
+      val switchDelta = new MetadataDelta(createImage)
+      switchDelta.replay(new ConfigRecord()
         .setResourceType(ConfigResource.Type.TOPIC.id())
         .setResourceName(topicName)
         .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
         .setValue("true"))
-      migrationDelta.replay(new PartitionChangeRecord()
+      switchDelta.replay(new PartitionChangeRecord()
         .setPartitionId(0).setTopicId(topicId)
         .setLeader(ctx.config.brokerId).setIsr(util.Arrays.asList(0, 1)))
-      val migratedImage = withClusterBrokers(migrationDelta.apply(MetadataProvenance.EMPTY))
-      ctx.metadataPublisher.onMetadataUpdate(migrationDelta, migratedImage, metadataManifest())
+      val switchedImage = withClusterBrokers(switchDelta.apply(MetadataProvenance.EMPTY))
+      ctx.metadataPublisher.onMetadataUpdate(switchDelta, switchedImage, metadataManifest())
 
       // Then the new local leader is sealed and tracked in SendingToController.
       assertTrue(partition.isLeader)
@@ -553,15 +553,15 @@ class InitDisklessLogFlowTest {
       broker1Ctx.metadataPublisher._firstPublish = false
       when(broker0Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       when(broker1Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
-      val migrationDelta = new MetadataDelta(createImage)
-      migrationDelta.replay(new ConfigRecord()
+      val switchDelta = new MetadataDelta(createImage)
+      switchDelta.replay(new ConfigRecord()
         .setResourceType(ConfigResource.Type.TOPIC.id())
         .setResourceName(topicName)
         .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
         .setValue("true"))
-      val migratedImage = withClusterBrokers(migrationDelta.apply(MetadataProvenance.EMPTY))
-      broker0Ctx.metadataPublisher.onMetadataUpdate(migrationDelta, migratedImage, metadataManifest())
-      broker1Ctx.metadataPublisher.onMetadataUpdate(migrationDelta, migratedImage, metadataManifest())
+      val switchedImage = withClusterBrokers(switchDelta.apply(MetadataProvenance.EMPTY))
+      broker0Ctx.metadataPublisher.onMetadataUpdate(switchDelta, switchedImage, metadataManifest())
+      broker1Ctx.metadataPublisher.onMetadataUpdate(switchDelta, switchedImage, metadataManifest())
 
       // Then each broker tracks only local-leader partitions, in SendingToController state.
       assertTrackedStates(broker0Ctx, Map(tp0 -> classOf[SendingToController]))
@@ -620,18 +620,18 @@ class InitDisklessLogFlowTest {
       broker1Ctx.metadataPublisher._firstPublish = false
       when(broker0Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       when(broker1Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
-      val migrationDelta = new MetadataDelta(createImage)
-      migrationDelta.replay(new ConfigRecord()
+      val switchDelta = new MetadataDelta(createImage)
+      switchDelta.replay(new ConfigRecord()
         .setResourceType(ConfigResource.Type.TOPIC.id())
         .setResourceName(topicName)
         .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
         .setValue("true"))
-      migrationDelta.replay(new PartitionChangeRecord()
+      switchDelta.replay(new PartitionChangeRecord()
         .setPartitionId(0).setTopicId(topicId)
         .setLeader(1).setIsr(util.Arrays.asList(0, 1)))
-      val migratedImage = withClusterBrokers(migrationDelta.apply(MetadataProvenance.EMPTY))
-      broker0Ctx.metadataPublisher.onMetadataUpdate(migrationDelta, migratedImage, metadataManifest())
-      broker1Ctx.metadataPublisher.onMetadataUpdate(migrationDelta, migratedImage, metadataManifest())
+      val switchedImage = withClusterBrokers(switchDelta.apply(MetadataProvenance.EMPTY))
+      broker0Ctx.metadataPublisher.onMetadataUpdate(switchDelta, switchedImage, metadataManifest())
+      broker1Ctx.metadataPublisher.onMetadataUpdate(switchDelta, switchedImage, metadataManifest())
 
       // Then only the new leader broker tracks the partition in SendingToController state.
       assertTrackedStates(broker0Ctx, Map.empty)
@@ -890,7 +890,7 @@ class InitDisklessLogFlowTest {
 
   private def assertCountGaugesAllZero(): Unit = {
     Set(
-      InitDisklessLogManager.MigrationsInFlightMetricName,
+      InitDisklessLogManager.InitDisklessLogInFlightMetricName,
       InitDisklessLogManager.WaitingForReplicationCountMetricName,
       InitDisklessLogManager.SendingToControllerCountMetricName,
       InitDisklessLogManager.AwaitingMetadataCountMetricName,

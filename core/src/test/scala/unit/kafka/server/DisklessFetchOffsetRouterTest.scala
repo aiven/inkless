@@ -154,7 +154,7 @@ class DisklessFetchOffsetRouterTest {
 
   @Test
   def routesToClassicWithoutFollowerAccessWhenMigrationPending(): Unit = {
-    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
     val status = route(newRouter(), timestamp = ListOffsetsRequest.LATEST_TIMESTAMP)
 
@@ -384,7 +384,7 @@ class DisklessFetchOffsetRouterTest {
     // simulate the realistic outcome by completing the diskless task future exceptionally and
     // assert the router forwards that failure verbatim.
     
-    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
     val controlPlaneFailure = new RuntimeException("partition not found in the diskless control plane")
     disklessTaskFuture.completeExceptionally(controlPlaneFailure)
 
@@ -401,7 +401,7 @@ class DisklessFetchOffsetRouterTest {
 
   @Test
   def routesToDisklessWhenMigrationPendingButConsolidatingTopic(): Unit = {
-    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
     when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
 
     val status = route(
