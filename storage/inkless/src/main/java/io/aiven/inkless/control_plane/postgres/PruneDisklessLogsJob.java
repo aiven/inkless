@@ -82,7 +82,6 @@ public class PruneDisklessLogsJob implements Callable<List<PruneDisklessLogsResp
             return FunctionResultProcessor.processWithMappingOrder(
                 requests,
                 functionResult,
-                // We don't care about the topic name for the key.
                 r -> new TopicIdPartition(r.topicIdPartition().topicId(), r.topicIdPartition().partition(), null),
                 r -> new TopicIdPartition(r.getTopicId(), r.getPartition(), null),
                 this::responseMapper
@@ -101,8 +100,8 @@ public class PruneDisklessLogsJob implements Callable<List<PruneDisklessLogsResp
             case unknown_topic_or_partition -> PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION;
         };
         return new PruneDisklessLogsResponse(
-            new TopicIdPartition(record.getTopicId(), record.getPartition(), null),
-            record.getLogStartOffset(),
+            new TopicIdPartition(record.getTopicId(), record.getPartition(), request.topicIdPartition().topic()),
+            record.getLogStartOffset() == null ? -1L : record.getLogStartOffset(),
             error);
     }
 }

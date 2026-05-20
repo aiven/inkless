@@ -21,6 +21,6 @@ import org.apache.kafka.common.TopicIdPartition;
 
 public record PruneDisklessLogsResponse(
     TopicIdPartition topicIdPartition,
-    Long disklessLogStartOffset,
+    long disklessLogStartOffset,
     PruneDisklessLogsError error
 ) {}
