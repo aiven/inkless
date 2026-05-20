@@ -95,7 +95,7 @@ docker compose exec broker /opt/kafka/bin/kafka-console-producer.sh \
   --topic test-classic
 ```
 
-**Step 3: SWitch to diskless**
+**Step 3: Switch to diskless**
 
 ```bash
 docker compose exec broker /opt/kafka/bin/kafka-configs.sh \
