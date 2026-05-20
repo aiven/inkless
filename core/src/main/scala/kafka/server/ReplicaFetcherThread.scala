@@ -47,7 +47,7 @@ class ReplicaFetcherThread(name: String,
   // Visible for testing
   private[server] val partitionsWithNewHighWatermark = mutable.Buffer[TopicPartition]()
 
-  // Partitions that have caught up to a fully-switch diskless topic's classicToDisklessStartOffset
+  // Partitions that have caught up to a fully-switched diskless topic's classicToDisklessStartOffset
   // and should be evicted from this fetcher.
   private[server] val partitionsToEvictAfterDisklessSwitch = mutable.Buffer[TopicPartition]()
 

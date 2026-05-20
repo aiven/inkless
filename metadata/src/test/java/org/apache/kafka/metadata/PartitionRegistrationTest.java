@@ -499,7 +499,7 @@ public class PartitionRegistrationTest {
     }
 
     @Test
-    public void testMigrationPendingRoundTrip() {
+    public void testSwitchPendingRoundTrip() {
         PartitionRegistration original = new PartitionRegistration.Builder().
             setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
             setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
@@ -517,7 +517,7 @@ public class PartitionRegistrationTest {
     }
 
     @Test
-    public void testMergeFromMigrationPendingToActualOffset() {
+    public void testMergeFromSwitchPendingToActualOffset() {
         PartitionRegistration original = new PartitionRegistration.Builder().
             setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
             setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
@@ -533,7 +533,7 @@ public class PartitionRegistrationTest {
     }
 
     @Test
-    public void testMergePreservesMigrationPending() {
+    public void testMergePreservesSwitchPending() {
         PartitionRegistration original = new PartitionRegistration.Builder().
             setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
             setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).

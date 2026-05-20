@@ -29,14 +29,14 @@ See [Releases](../../../../docs/inkless/RELEASES.md#docker-images) for all avail
 
 ## Diskless Tiered Storage Unification
 
-Test classic-to-diskless migration and tiered storage unification features. The Inkless image bundles the
+Test classic-to-diskless switch and tiered storage unification features. The Inkless image bundles the
 [Aiven Tiered Storage plugin](https://github.com/Aiven-Open/tiered-storage-for-apache-kafka) (v1.1.1) —
 no local plugin build required.
 
 ### Quick start
 
 ```bash
-# Start 2-broker cluster with classic TS + diskless + migration bridge
+# Start 2-broker cluster with classic TS + diskless + classic to diskless switch bridge
 make ts-unification
 
 # Or manually:
@@ -46,14 +46,14 @@ docker compose -f docker-compose.yml -f docker-compose.s3-local.yml \
 
 ### What's enabled
 
-| Config                                | Value  | Purpose                                         |
-|---------------------------------------|--------|--------------------------------------------------|
-| `remote.log.storage.system.enable`    | `true` | Classic tiered storage via Aiven TS plugin       |
-| `diskless.allow.from.classic.enable`  | `true` | Allow classic-to-diskless topic migration        |
+| Config                                | Value  | Purpose                                             |
+|---------------------------------------|--------|-----------------------------------------------------|
+| `remote.log.storage.system.enable`    | `true` | Classic tiered storage via Aiven TS plugin          |
+| `diskless.allow.from.classic.enable`  | `true` | Allow classic-to-diskless topic switch              |
 | `classic.remote.storage.force.enable` | `true` | All classic topics get `remote.storage.enable=true` |
-| `log.diskless.enable`                 | `false`| Topics start as classic (not diskless by default)|
-| `diskless.managed.rf.enable`          | `true` | Managed replicas with rack-aware placement       |
-| `default.replication.factor`          | `2`    | One replica per AZ                               |
+| `log.diskless.enable`                 | `false`| Topics start as classic (not diskless by default)   |
+| `diskless.managed.rf.enable`          | `true` | Managed replicas with rack-aware placement          |
+| `default.replication.factor`          | `2`    | One replica per AZ                                  |
 
 ### Cluster topology
 
@@ -95,7 +95,7 @@ docker compose exec broker /opt/kafka/bin/kafka-console-producer.sh \
   --topic test-classic
 ```
 
-**Step 3: Migrate to diskless**
+**Step 3: SWitch to diskless**
 
 ```bash
 docker compose exec broker /opt/kafka/bin/kafka-configs.sh \
@@ -104,7 +104,7 @@ docker compose exec broker /opt/kafka/bin/kafka-configs.sh \
   --add-config diskless.enable=true
 ```
 
-**Step 4: Verify migration**
+**Step 4: Verify switch**
 
 ```bash
 docker compose exec broker /opt/kafka/bin/kafka-topics.sh \

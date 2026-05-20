@@ -124,7 +124,7 @@ class DisklessFetchOffsetRouterTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  def routesToDisklessWhenNotMigrated(): Unit = {
+  def routesToDisklessWhenNotSwitched(): Unit = {
     when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
 
     val status = route(newRouter(), timestamp = ListOffsetsRequest.LATEST_TIMESTAMP)
@@ -149,32 +149,32 @@ class DisklessFetchOffsetRouterTest {
   }
 
   // ---------------------------------------------------------------------------
-  // Case 3: partition is being migrated from classic to diskless.
+  // Case 3: partition is being switched from classic to diskless.
   // ---------------------------------------------------------------------------
 
   @Test
-  def routesToClassicWithoutFollowerAccessWhenMigrationPending(): Unit = {
+  def routesToClassicWithoutFollowerAccessWhenSwitchPending(): Unit = {
     when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
     val status = route(newRouter(), timestamp = ListOffsetsRequest.LATEST_TIMESTAMP)
 
-    assertSame(defaultClassicResult, status, "migration-pending must return the classic status as-is")
+    assertSame(defaultClassicResult, status, "switch-pending must return the classic status as-is")
     assertClassicCalledWith(allowFromFollower = false)
     verify(job, never()).add(any(), any())
   }
 
   // ---------------------------------------------------------------------------
-  // Case 4: follower request on a migrated partition.
+  // Case 4: follower request on a switched partition.
   // ---------------------------------------------------------------------------
 
   @Test
-  def routesToClassicWithFollowerAccessWhenMigratedAndFollowerRequest(): Unit = {
+  def routesToClassicWithFollowerAccessWhenSwitchedAndFollowerRequest(): Unit = {
     when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
 
     val status = route(newRouter(), timestamp = ListOffsetsRequest.LATEST_TIMESTAMP, replicaId = followerReplicaId)
 
     assertSame(defaultClassicResult, status)
-    // followers may serve from their local log on a sealed (migrated) partition.
+    // followers may serve from their local log on a sealed (switched) partition.
     assertClassicCalledWith(allowFromFollower = true)
     verify(job, never()).add(any(), any())
   }
@@ -377,8 +377,8 @@ class DisklessFetchOffsetRouterTest {
   }
 
   @Test
-  def routesToDisklessAndForwardsControlPlaneFailureWhenMigrationPendingAndManagedReplicasDisabled(): Unit = {
-    // Migration to diskless is pending while managed replicas are disabled. Migration can only have been 
+  def routesToDisklessAndForwardsControlPlaneFailureWhenSwitchPendingAndManagedReplicasDisabled(): Unit = {
+    // Switch to diskless is pending while managed replicas are disabled. Switch can only have been 
     // initiated with managed replicas enabled, so this is a misconfiguration.
     // The control plane is not expected to have a committed diskless start offset for the partition yet, so we
     // simulate the realistic outcome by completing the diskless task future exceptionally and
@@ -400,7 +400,7 @@ class DisklessFetchOffsetRouterTest {
   }
 
   @Test
-  def routesToDisklessWhenMigrationPendingButConsolidatingTopic(): Unit = {
+  def routesToDisklessWhenSwitchPendingButConsolidatingTopic(): Unit = {
     when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
     when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
 
@@ -409,7 +409,7 @@ class DisklessFetchOffsetRouterTest {
       timestamp = ListOffsetsRequest.LATEST_TIMESTAMP
     )
 
-    assertTrue(classicCalls.isEmpty, "consolidating topics must not use migration-pending classic-only ListOffsets")
+    assertTrue(classicCalls.isEmpty, "consolidating topics must not use switch-pending classic-only ListOffsets")
     verify(job).add(eqTo(tp), any())
     assertTrue(status.futureHolderOpt.isPresent)
     assertFalse(status.responseOpt.isPresent)
