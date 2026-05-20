@@ -253,7 +253,7 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
             .satisfies(r -> {
                 assertThat(r.topicIdPartition().topicId()).isEqualTo(UNKNOWN_TOPIC_ID);
                 assertThat(r.error()).isEqualTo(PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION);
-                assertThat(r.disklessLogStartOffset()).isNull();
+                assertThat(r.disklessLogStartOffset()).isEqualTo(-1L);
             });
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()).stream()
