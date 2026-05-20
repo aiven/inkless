@@ -590,7 +590,7 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
-  private def sealTopicPartitions(topic: String): Unit = {
+  private def sealTopicPartitions(topic: String, newImage: MetadataImage): Unit = {
     if (initDisklessLogManager.isEmpty) {
       error(s"Cannot seal partitions for topic $topic: InitDisklessLogManager is not enabled.")
       return
@@ -603,7 +603,12 @@ class ReplicaManager(val config: KafkaConfig,
               case Some(id) =>
                 try {
                   partition.seal()
-                  initDisklessLogManager.foreach(_.registerPartition(partition, id))
+                  val topicImage = newImage.topics().getTopic(tp.topic())
+                  val partitionRegistration =
+                    if (topicImage == null) null else topicImage.partitions().get(tp.partition())
+                  if (partitionRegistration == null || partitionRegistration.classicToDisklessStartOffset < 0) {
+                    initDisklessLogManager.foreach(_.registerPartition(partition, id))
+                  }
                 } catch {
                   case e: KafkaStorageException =>
                     stateChangeLogger.error(s"Failed to seal partition ${partition.topicPartition} " +
@@ -631,7 +636,7 @@ class ReplicaManager(val config: KafkaConfig,
           val topicExistedBefore = delta.image().topics().getTopic(topicName) != null
           if (topicExistedBefore && !wasDiskless && isDiskless) {
             info(s"Topic $topicName transitioning from classic to diskless, sealing leader partitions")
-            sealTopicPartitions(topicName)
+            sealTopicPartitions(topicName, newImage)
           }
         }
       }
@@ -2957,43 +2962,44 @@ class ReplicaManager(val config: KafkaConfig,
       delta.changedTopics().forEach { (topicId, topicDelta) =>
         val topicName = topicDelta.name()
         topicDelta.partitionChanges().forEach { (partitionId, partitionRegistration) =>
-          val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
-            Option(topicImage.partitions().get(partitionId))
-          }
-          val shouldInitOnControlPlane = previousPartition.exists { previous =>
-            previous.classicToDisklessStartOffset < 0 &&
-              partitionRegistration.classicToDisklessStartOffset >= 0
-          }
+          if (partitionRegistration.classicToDisklessStartOffset >= 0) {
+            val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
+              Option(topicImage.partitions().get(partitionId))
+            }
+            val shouldInitOnControlPlane = previousPartition.exists { previous =>
+              previous.classicToDisklessStartOffset < 0
+            }
 
-          val tp = new TopicPartition(topicName, partitionId)
-          if (shouldInitOnControlPlane) {
-            onlinePartition(tp) match {
-              case Some(partition) if partition.isLeader =>
-                val producerStates = partitionRegistration.disklessProducerStates.asScala.map { producerState =>
-                  new InitDisklessLogProducerState(
-                    producerState.producerId(),
-                    producerState.producerEpoch(),
-                    producerState.baseSequence(),
-                    producerState.lastSequence(),
-                    producerState.assignedOffset(),
-                    producerState.batchMaxTimestamp()
+            val tp = new TopicPartition(topicName, partitionId)
+            if (shouldInitOnControlPlane) {
+              onlinePartition(tp) match {
+                case Some(partition) if partition.isLeader =>
+                  val producerStates = partitionRegistration.disklessProducerStates.asScala.map { producerState =>
+                    new InitDisklessLogProducerState(
+                      producerState.producerId(),
+                      producerState.producerEpoch(),
+                      producerState.baseSequence(),
+                      producerState.lastSequence(),
+                      producerState.assignedOffset(),
+                      producerState.batchMaxTimestamp()
+                    )
+                  }.asJava
+                  manager.initOnControlPlane(
+                    partition = partition,
+                    topicId = topicId,
+                    topicName = topicName,
+                    classicToDisklessStartOffset = partitionRegistration.classicToDisklessStartOffset,
+                    producerStates = producerStates
                   )
-                }.asJava
-                manager.initOnControlPlane(
-                  partition = partition,
-                  topicId = topicId,
-                  topicName = topicName,
-                  classicToDisklessStartOffset = partitionRegistration.classicToDisklessStartOffset,
-                  producerStates = producerStates
-                )
-              case Some(_) =>
-                stateChangeLogger.info(
-                  s"Skipping diskless init on control plane for $tp because the partition is not a local leader."
-                )
-              case None =>
-                stateChangeLogger.info(
-                  s"Skipping diskless init on control plane for $tp because the partition is not online locally."
-                )
+                case Some(_) =>
+                  stateChangeLogger.info(
+                    s"Skipping diskless init on control plane for $tp because the partition is not a local leader."
+                  )
+                case None =>
+                  stateChangeLogger.info(
+                    s"Skipping diskless init on control plane for $tp because the partition is not online locally."
+                  )
+              }
             }
           }
         }
@@ -3017,9 +3023,9 @@ class ReplicaManager(val config: KafkaConfig,
     val consolidatingDisklessPartitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     localLeaders.foreachEntry { (tp, info) =>
       val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic())
-      val isConsolidatingDisklessTopic =
+      val isConsolidatingDisklessTopic = isDiskless &&
         config.disklessRemoteStorageConsolidationEnabled &&
-          _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
+          _inklessMetadataView.isRemoteStorageEnabled(tp.topic)
       val existingPartition = onlinePartition(tp)
       if (!isDiskless || isConsolidatingDisklessTopic) {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
@@ -3052,7 +3058,14 @@ class ReplicaManager(val config: KafkaConfig,
           partition.seal()
           partition.makeLeader(info.partition, false, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
-          initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
+          // Only drive the init handshake while the switch is in flight. If the controller has
+          // already committed a seal offset, re-registering would push the partition through
+          // WaitingForReplication -> SendingToController -> AwaitingMetadata and get stuck
+          // retrying forever because no PartitionChangeRecord will arrive to supply the
+          // metadata payload.
+          if (info.partition.classicToDisklessStartOffset < 0) {
+            initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
+          }
           changedPartitions.add(partition)
         } catch {
           case e: KafkaStorageException =>
@@ -3125,10 +3138,11 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
-      val isConsolidatingDisklessTopic =
+      val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic())
+      val isConsolidatingDisklessTopic = isDiskless &&
         config.disklessRemoteStorageConsolidationEnabled &&
-          _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
-      if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
+          _inklessMetadataView.isRemoteStorageEnabled(tp.topic)
+      if (isDiskless) {
         // Clean up classic-to-diskless switch tracking since only the leader drives classic-to-diskless switch.
         initDisklessLogManager.foreach(_.removePartition(tp))
         val seal = _inklessMetadataView.getClassicToDisklessStartOffset(tp)
@@ -3143,7 +3157,7 @@ class ReplicaManager(val config: KafkaConfig,
         // progress without a committed seal (seal == -2), a missing local log means
         // there is no classic data to expose on this broker, so we leave the partition
         // unmanaged here.
-        if (!isConsolidatingDisklessTopic && (logManager.getLog(tp).isDefined || seal >= 0)) {
+        if (!isConsolidatingDisklessTopic && (seal >= 0 || logManager.getLog(tp).isDefined)) {
           getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
             try {
               val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
@@ -3174,7 +3188,7 @@ class ReplicaManager(val config: KafkaConfig,
           }
         }
       }
-      if (!_inklessMetadataView.isDisklessTopic(tp.topic()) || isConsolidatingDisklessTopic) {
+      if (!isDiskless || isConsolidatingDisklessTopic) {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             followerTopicSet.add(tp.topic)
@@ -3204,7 +3218,7 @@ class ReplicaManager(val config: KafkaConfig,
             case e: KafkaStorageException =>
               stateChangeLogger.error(s"Unable to start fetching $tp " +
                 s"with topic ID ${info.topicId} due to a storage error ${e.getMessage}", e)
-              if (_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic))
+              if (isConsolidatingDisklessTopic)
                 consolidationFetcherManager.foreach(_.addFailedPartition(tp))
               else
                 replicaFetcherManager.addFailedPartition(tp)
@@ -3217,7 +3231,7 @@ class ReplicaManager(val config: KafkaConfig,
             case e: Throwable =>
               stateChangeLogger.error(s"Unable to start fetching $tp " +
                 s"with topic ID ${info.topicId} due to ${e.getClass.getSimpleName}", e)
-              if (_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic))
+              if (isConsolidatingDisklessTopic)
                 consolidationFetcherManager.foreach(_.addFailedPartition(tp))
               else
                 replicaFetcherManager.addFailedPartition(tp)

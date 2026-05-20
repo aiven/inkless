@@ -116,6 +116,28 @@ class InitDisklessLogManager(
    * send. Otherwise, waits for HW advancement notifications.
    */
   def registerPartition(partition: Partition, topicId: Uuid): Unit = {
+    val tp = partition.topicPartition
+
+    def redriveTrackedState(): Unit = {
+      tracked.computeIfPresent(tp, (_, currentState) => currentState match {
+        case waitingForReplication: WaitingForReplication =>
+          handleWaitingOutcome(tp, waitingForReplication.maybeAdvanceState())
+        case sendingToController: SendingToController =>
+          enqueueSendingToController(tp, sendingToController)
+          sendingToController
+        case awaitingMetadata: AwaitingMetadata => awaitingMetadata
+        case done: Done => done
+        case _: Failed => null
+      })
+      refreshMetrics(tp)
+    }
+
+    if (tracked.get(tp) != null) {
+      redriveTrackedState()
+      info(s"Partition $tp already tracked in state ${Option(tracked.get(tp))}")
+      return
+    }
+
     val waitingState = WaitingForReplication(partition, topicId, onPartitionUpdate = (tp, outcome) => {
       tracked.computeIfPresent(tp, (_, currentState) => currentState match {
         case _: WaitingForReplication => handleWaitingOutcome(tp, outcome)
@@ -124,23 +146,11 @@ class InitDisklessLogManager(
       refreshMetrics(tp)
     })
 
-    val tp = partition.topicPartition
     val inserted = tracked.putIfAbsent(tp, waitingState) == null
 
-    // Evaluate immediately for both new and already tracked entries:
-    // - new entries may already be ready
-    // - duplicate registrations can re-drive a waiting or queued state
-    tracked.computeIfPresent(tp, (_, currentState) => currentState match {
-      case waitingForReplication: WaitingForReplication =>
-        handleWaitingOutcome(tp, waitingForReplication.maybeAdvanceState())
-      case sendingToController: SendingToController =>
-        enqueueSendingToController(tp, sendingToController)
-        sendingToController
-      case awaitingMetadata: AwaitingMetadata => awaitingMetadata
-      case done: Done => done
-      case _: Failed => null
-    })
-    refreshMetrics(tp)
+    // New entries may already be ready. If another caller inserted the same partition
+    // concurrently, this also re-drives the existing state without replacing its listener.
+    redriveTrackedState()
 
     if (inserted) {
       Option(tracked.get(tp)).foreach {
@@ -155,8 +165,10 @@ class InitDisklessLogManager(
           refreshMetrics(tp)
         case _ =>
       }
+      info(s"Registered new partition $tp in state ${Option(tracked.get(tp))}")
+    } else {
+      info(s"Partition $tp already tracked in state ${Option(tracked.get(tp))}")
     }
-    info(s"Registered new partition $tp in state ${Option(tracked.get(tp))}")
   }
 
   private def handleWaitingOutcome(tp: TopicPartition, outcome: WaitingForReplicationOutcome): InitDisklessLogState = {
