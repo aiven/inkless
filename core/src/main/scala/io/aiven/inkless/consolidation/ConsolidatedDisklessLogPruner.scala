@@ -25,7 +25,6 @@ import kafka.utils.Logging
 import org.apache.kafka.common.TopicIdPartition
 
 import scala.jdk.CollectionConverters.{CollectionHasAsScala, SeqHasAsJava}
-import scala.jdk.OptionConverters.RichOptional
 
 class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
                                     inklessMetadataView: InklessMetadataView,
@@ -68,25 +67,19 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
             pruneDisklessLogsResponse.topicIdPartition,
             pruneDisklessLogsResponse.error)
         } else {
-          inklessMetadataView.getTopicName(pruneDisklessLogsResponse.topicIdPartition.topicId).toScala match {
-            case Some(topicName) =>
-              val responseTopicIdPartition = new TopicIdPartition(pruneDisklessLogsResponse.topicIdPartition.topicId,
-                pruneDisklessLogsResponse.topicIdPartition.partition, topicName)
-              replicaManager.getPartitionOrError(responseTopicIdPartition.topicPartition) match {
-                case Right(partition) =>
-                  val o = pruneDisklessLogsResponse.disklessLogStartOffset
-                  if (o == null) {
-                    logger.warn("Prune diskless logs returned null start offset for {}", responseTopicIdPartition.topicPartition)
-                  } else {
-                    partition.setDisklessStartOffset(o.longValue())
-                  }
-                case Left(error) => logger.warn("Couldn't update diskless start offset for {} due to: {}",
-                  responseTopicIdPartition.topicPartition,
-                  error.message
-                )
+          replicaManager.getPartitionOrError(pruneDisklessLogsResponse.topicIdPartition.topicPartition) match {
+            case Right(partition) =>
+              val newDisklessLogStart = pruneDisklessLogsResponse.disklessLogStartOffset
+              if (partition.getDisklessLogStartOffset() > newDisklessLogStart) {
+                logger.error("Diskless log start offset is non-monotonic. The old one ({}) is greater than the new ({}).",
+                  partition.getDisklessLogStartOffset(), newDisklessLogStart)
+              } else {
+                partition.setDisklessLogStartOffset(newDisklessLogStart)
               }
-            case None =>
-              logger.warn("Couldn't update diskless start offset of topic with ID {} due to missing name", pruneDisklessLogsResponse.topicIdPartition.topicId)
+            case Left(error) => logger.warn("Couldn't update diskless start offset for {} due to: {}",
+              pruneDisklessLogsResponse.topicIdPartition.topicPartition,
+              error.message
+            )
           }
         }
       }
