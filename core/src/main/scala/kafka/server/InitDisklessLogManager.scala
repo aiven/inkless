@@ -248,34 +248,34 @@ object InitDisklessLogManager {
   private val MetricsPackage = "kafka.server"
   private val MetricsClassName = "InitDisklessLogManager"
 
-  private[server] val InitDisklessLogInFlightMetricName = "InitDisklessLogInFlight"
-  private[server] val WaitingForReplicationCountMetricName = "InitDisklessLogWaitingForReplicationCount"
-  private[server] val SendingToControllerCountMetricName = "InitDisklessLogSendingToControllerCount"
-  private[server] val AwaitingMetadataCountMetricName = "InitDisklessLogAwaitingMetadataCount"
+  private[server] val InFlightPartitionsMetricName = "InFlightPartitions"
+  private[server] val WaitingForReplicationPartitionsMetricName = "WaitingForReplicationPartitions"
+  private[server] val SendingToControllerPartitionsMetricName = "SendingToControllerPartitions"
+  private[server] val AwaitingMetadataPartitionsMetricName = "AwaitingMetadataPartitions"
 
   // Oldest-age-per-state gauges. Reads 0 when no partition is currently in the corresponding state.
-  private[server] val OldestWaitingForReplicationAgeMsMetricName = "InitDisklessLogOldestWaitingForReplicationAgeMs"
-  private[server] val OldestSendingToControllerAgeMsMetricName = "InitDisklessLogOldestSendingToControllerAgeMs"
-  private[server] val OldestAwaitingMetadataAgeMsMetricName = "InitDisklessLogOldestAwaitingMetadataAgeMs"
+  private[server] val OldestWaitingForReplicationAgeMsMetricName = "OldestWaitingForReplicationAgeMs"
+  private[server] val OldestSendingToControllerAgeMsMetricName = "OldestSendingToControllerAgeMs"
+  private[server] val OldestAwaitingMetadataAgeMsMetricName = "OldestAwaitingMetadataAgeMs"
 
-  private[server] val InitDisklessLogCompletedPerSecMetricName = "InitDisklessLogCompletedPerSec"
-  private[server] val InitDisklessLogFailedPerSecMetricName = "InitDisklessLogFailedPerSec"
-  private[server] val InitDisklessLogRetriedPerSecMetricName = "InitDisklessLogRetriedPerSec"
+  private[server] val InitCompletedPerSecMetricName = "InitCompletedPerSec"
+  private[server] val InitFailedPerSecMetricName = "InitFailedPerSec"
+  private[server] val InitRetriedPerSecMetricName = "InitRetriedPerSec"
 
   private[server] val GaugeMetricNames = Set(
-    InitDisklessLogInFlightMetricName,
-    WaitingForReplicationCountMetricName,
-    SendingToControllerCountMetricName,
-    AwaitingMetadataCountMetricName,
+    InFlightPartitionsMetricName,
+    WaitingForReplicationPartitionsMetricName,
+    SendingToControllerPartitionsMetricName,
+    AwaitingMetadataPartitionsMetricName,
     OldestWaitingForReplicationAgeMsMetricName,
     OldestSendingToControllerAgeMsMetricName,
     OldestAwaitingMetadataAgeMsMetricName,
   )
 
   private[server] val MeterMetricNames = Set(
-    InitDisklessLogCompletedPerSecMetricName,
-    InitDisklessLogFailedPerSecMetricName,
-    InitDisklessLogRetriedPerSecMetricName,
+    InitCompletedPerSecMetricName,
+    InitFailedPerSecMetricName,
+    InitRetriedPerSecMetricName,
   )
 
   private[server] val MetricNames: Set[String] = GaugeMetricNames union MeterMetricNames
@@ -302,17 +302,17 @@ object InitDisklessLogManager {
       classOf[AwaitingMetadata]      -> new ConcurrentHashMap[TopicPartition, java.lang.Long]()
     )
 
-    metricsGroup.newGauge(InitDisklessLogInFlightMetricName, () => trackedSize())
-    metricsGroup.newGauge(WaitingForReplicationCountMetricName, () => counters(classOf[WaitingForReplication]).get)
-    metricsGroup.newGauge(SendingToControllerCountMetricName,   () => counters(classOf[SendingToController]).get)
-    metricsGroup.newGauge(AwaitingMetadataCountMetricName,      () => counters(classOf[AwaitingMetadata]).get)
+    metricsGroup.newGauge(InFlightPartitionsMetricName, () => trackedSize())
+    metricsGroup.newGauge(WaitingForReplicationPartitionsMetricName, () => counters(classOf[WaitingForReplication]).get)
+    metricsGroup.newGauge(SendingToControllerPartitionsMetricName, () => counters(classOf[SendingToController]).get)
+    metricsGroup.newGauge(AwaitingMetadataPartitionsMetricName, () => counters(classOf[AwaitingMetadata]).get)
     metricsGroup.newGauge(OldestWaitingForReplicationAgeMsMetricName, () => oldestAgeMs(classOf[WaitingForReplication]))
     metricsGroup.newGauge(OldestSendingToControllerAgeMsMetricName,   () => oldestAgeMs(classOf[SendingToController]))
     metricsGroup.newGauge(OldestAwaitingMetadataAgeMsMetricName,      () => oldestAgeMs(classOf[AwaitingMetadata]))
 
-    private val completedMeter = metricsGroup.newMeter(InitDisklessLogCompletedPerSecMetricName, "completed", TimeUnit.SECONDS)
-    private val failedMeter    = metricsGroup.newMeter(InitDisklessLogFailedPerSecMetricName,    "failed",    TimeUnit.SECONDS)
-    private val retriedMeter   = metricsGroup.newMeter(InitDisklessLogRetriedPerSecMetricName,   "retries",   TimeUnit.SECONDS)
+    private val completedMeter = metricsGroup.newMeter(InitCompletedPerSecMetricName, "inits", TimeUnit.SECONDS)
+    private val failedMeter    = metricsGroup.newMeter(InitFailedPerSecMetricName,    "inits", TimeUnit.SECONDS)
+    private val retriedMeter   = metricsGroup.newMeter(InitRetriedPerSecMetricName,   "inits", TimeUnit.SECONDS)
 
     def markCompleted(): Unit = completedMeter.mark()
     def markFailed(): Unit    = failedMeter.mark()

@@ -160,8 +160,8 @@ class DisklessSwitchFlowTest {
       ctx.replicaManager.applyDelta(createDelta, createImage)
       assertCountGaugesAllZero()
       assertOldestAgesAllZero()
-      assertMeterCount(InitDisklessLogManager.InitDisklessLogCompletedPerSecMetricName, 0L)
-      assertMeterCount(InitDisklessLogManager.InitDisklessLogFailedPerSecMetricName, 0L)
+      assertMeterCount(InitDisklessLogManager.InitCompletedPerSecMetricName, 0L)
+      assertMeterCount(InitDisklessLogManager.InitFailedPerSecMetricName, 0L)
 
       // After alter -> diskless=true: the partition is sealed and registered.
       // With a fresh mock log (HW == LEO == 0), the state machine immediately
@@ -177,10 +177,10 @@ class DisklessSwitchFlowTest {
       val disklessImage = withClusterBrokers(disklessDelta.apply(MetadataProvenance.EMPTY))
       ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
 
-      assertGauge(InitDisklessLogManager.InitDisklessLogInFlightMetricName, 1)
-      assertGauge(InitDisklessLogManager.WaitingForReplicationCountMetricName, 0)
-      assertGauge(InitDisklessLogManager.SendingToControllerCountMetricName, 1)
-      assertGauge(InitDisklessLogManager.AwaitingMetadataCountMetricName, 0)
+      assertGauge(InitDisklessLogManager.InFlightPartitionsMetricName, 1)
+      assertGauge(InitDisklessLogManager.WaitingForReplicationPartitionsMetricName, 0)
+      assertGauge(InitDisklessLogManager.SendingToControllerPartitionsMetricName, 1)
+      assertGauge(InitDisklessLogManager.AwaitingMetadataPartitionsMetricName, 0)
       assertLongGauge(InitDisklessLogManager.OldestSendingToControllerAgeMsMetricName, 0L)
 
       // Age advances when virtual clock advances while the state class is unchanged.
@@ -201,9 +201,9 @@ class DisklessSwitchFlowTest {
       )))
 
       assertTrackedStates(ctx, Map(tp -> classOf[AwaitingMetadata]))
-      assertGauge(InitDisklessLogManager.InitDisklessLogInFlightMetricName, 1)
-      assertGauge(InitDisklessLogManager.SendingToControllerCountMetricName, 0)
-      assertGauge(InitDisklessLogManager.AwaitingMetadataCountMetricName, 1)
+      assertGauge(InitDisklessLogManager.InFlightPartitionsMetricName, 1)
+      assertGauge(InitDisklessLogManager.SendingToControllerPartitionsMetricName, 0)
+      assertGauge(InitDisklessLogManager.AwaitingMetadataPartitionsMetricName, 1)
       // The oldest SendingToController age must reset to 0 (no partitions
       // remain in that state) while AwaitingMetadata's age starts at 0.
       assertLongGauge(InitDisklessLogManager.OldestSendingToControllerAgeMsMetricName, 0L)
@@ -227,8 +227,8 @@ class DisklessSwitchFlowTest {
 
       assertCountGaugesAllZero()
       assertOldestAgesAllZero()
-      assertMeterCount(InitDisklessLogManager.InitDisklessLogCompletedPerSecMetricName, 1L)
-      assertMeterCount(InitDisklessLogManager.InitDisklessLogFailedPerSecMetricName, 0L)
+      assertMeterCount(InitDisklessLogManager.InitCompletedPerSecMetricName, 1L)
+      assertMeterCount(InitDisklessLogManager.InitFailedPerSecMetricName, 0L)
     } finally {
       shutdown(ctx)
     }
@@ -890,10 +890,10 @@ class DisklessSwitchFlowTest {
 
   private def assertCountGaugesAllZero(): Unit = {
     Set(
-      InitDisklessLogManager.InitDisklessLogInFlightMetricName,
-      InitDisklessLogManager.WaitingForReplicationCountMetricName,
-      InitDisklessLogManager.SendingToControllerCountMetricName,
-      InitDisklessLogManager.AwaitingMetadataCountMetricName,
+      InitDisklessLogManager.InFlightPartitionsMetricName,
+      InitDisklessLogManager.WaitingForReplicationPartitionsMetricName,
+      InitDisklessLogManager.SendingToControllerPartitionsMetricName,
+      InitDisklessLogManager.AwaitingMetadataPartitionsMetricName,
     ).foreach(name => assertGauge(name, 0))
   }
 
