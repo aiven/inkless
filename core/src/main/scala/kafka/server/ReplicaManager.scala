@@ -3053,7 +3053,14 @@ class ReplicaManager(val config: KafkaConfig,
           partition.seal()
           partition.makeLeader(info.partition, false, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
-          initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
+          // Only drive the init handshake while the switch is in flight. If the controller has
+          // already committed a seal offset, re-registering would push the partition through
+          // WaitingForReplication -> SendingToController -> AwaitingMetadata and get stuck
+          // retrying forever because no PartitionChangeRecord will arrive to supply the
+          // metadata payload.
+          if (info.partition.classicToDisklessStartOffset < 0) {
+            initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
+          }
           changedPartitions.add(partition)
         } catch {
           case e: KafkaStorageException =>

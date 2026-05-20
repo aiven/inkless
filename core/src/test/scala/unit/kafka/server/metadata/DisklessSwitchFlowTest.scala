@@ -656,6 +656,72 @@ class DisklessSwitchFlowTest {
   }
 
   @Test
+  def testLeadershipMoveToAlreadySwitchedPartitionDoesNotReRegister(): Unit = {
+    // Regression test: when a broker is currently a follower of a diskless topic whose
+    // classic-to-diskless switch has already been committed (`classicToDisklessStartOffset >= 0`)
+    // and then leadership moves to it, the local Partition exists but the switch is done.
+    // We must NOT re-register the partition with the InitDisklessLogManager: doing so would
+    // restart the WaitingForReplication -> SendingToController handshake, the controller would
+    // respond INVALID_REQUEST (idempotent success), and the partition would then be stuck in
+    // AwaitingMetadata with no metadataPayload, retrying indefinitely.
+    val ctx = newContext()
+    val topicName = "integration-leader-move-after-committed-switch"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+
+    when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(anyString())).thenReturn(false)
+
+    try {
+      // Given this broker is a follower of a fully-switched diskless partition: the partition
+      // metadata already carries a committed classicToDisklessStartOffset.
+      when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
+      val committedSwitchOffset = 100L
+      val createDelta = new TopicsDelta(TopicsImage.EMPTY)
+      createDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      val followerRecord = new PartitionRecord()
+        .setTopicId(topicId).setPartitionId(0).setReplicas(util.Arrays.asList(0, 1))
+        .setIsr(util.Arrays.asList(0, 1)).setLeader(1)
+        .setLeaderEpoch(0).setPartitionEpoch(0)
+      followerRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(committedSwitchOffset))
+      followerRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeProducerStates(util.List.of()))
+      createDelta.replay(followerRecord)
+      val createImage = imageFromTopics(createDelta.apply())
+      when(ctx.replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(committedSwitchOffset)
+      ctx.replicaManager.applyDelta(createDelta, createImage)
+
+      // Sanity: this broker holds the partition object (it was created as a follower because
+      // the seal is committed and classic data could be served from a local log).
+      assertTrue(ctx.replicaManager.onlinePartition(tp).isDefined)
+      assertTrackedStates(ctx, Map.empty)
+
+      // When leadership moves to this broker via a PartitionChangeRecord that keeps the
+      // committed classicToDisklessStartOffset.
+      ctx.metadataPublisher._firstPublish = false
+      val toLeaderDelta = new MetadataDelta(createImage)
+      val pcr = new PartitionChangeRecord()
+        .setPartitionId(0).setTopicId(topicId)
+        .setLeader(ctx.config.brokerId).setIsr(util.Arrays.asList(0, 1))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(committedSwitchOffset))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeProducerStates(util.List.of()))
+      toLeaderDelta.replay(pcr)
+      val leaderImage = withClusterBrokers(toLeaderDelta.apply(MetadataProvenance.EMPTY))
+      ctx.metadataPublisher.onMetadataUpdate(toLeaderDelta, leaderImage, metadataManifest())
+
+      // Then nothing is tracked in the InitDisklessLogManager (the switch is already complete).
+      assertTrackedStates(ctx, Map.empty)
+      assertEquals(None, ctx.initDisklessLogManager.getInitState(tp))
+
+      // And no request is emitted to the controller after linger.
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
+      ctx.scheduler.tick()
+      assertEquals(0, ctx.channelManager.requests.size())
+      verify(ctx.controlPlane, times(0)).initDisklessLog(any())
+    } finally {
+      shutdown(ctx)
+    }
+  }
+
+  @Test
   def testOnMetadataUpdatePartitionChangeRecordWithDisklessFieldsTriggersControlPlaneInit(): Unit = {
     val ctx = newContext()
     val topicName = "integration-diskless-pcr-triggers-control-plane"
