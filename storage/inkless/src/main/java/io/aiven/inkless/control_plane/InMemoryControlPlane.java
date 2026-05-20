@@ -754,7 +754,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         if (tidp == null
             || (logInfo = logs.get(tidp)) == null
             || (coordinates = batches.get(tidp)) == null) {
-            return new PruneDisklessLogsResponse(requestTip, null, PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION);
+            return new PruneDisklessLogsResponse(requestTip, -1, PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION);
         }
 
         final long highestRemote = request.highestRemoteOffset();

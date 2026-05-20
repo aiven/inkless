@@ -77,7 +77,7 @@ class InMemoryControlPlanePruneDisklessLogsTest {
             .satisfies(r -> {
                 assertThat(r.topicIdPartition()).isSameAs(requestTip);
                 assertThat(r.error()).isEqualTo(PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION);
-                assertThat(r.disklessLogStartOffset()).isNull();
+                assertThat(r.disklessLogStartOffset()).isEqualTo(-1L);
             });
 
         final GetLogInfoResponse after = cp.getLogInfo(List.of(new GetLogInfoRequest(TOPIC_ID, 0))).get(0);
