@@ -3018,9 +3018,9 @@ class ReplicaManager(val config: KafkaConfig,
     val consolidatingDisklessPartitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     localLeaders.foreachEntry { (tp, info) =>
       val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic())
-      val isConsolidatingDisklessTopic =
+      val isConsolidatingDisklessTopic = isDiskless &&
         config.disklessRemoteStorageConsolidationEnabled &&
-          _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
+          _inklessMetadataView.isRemoteStorageEnabled(tp.topic)
       val existingPartition = onlinePartition(tp)
       if (!isDiskless || isConsolidatingDisklessTopic) {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
@@ -3133,10 +3133,11 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
-      val isConsolidatingDisklessTopic =
+      val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic())
+      val isConsolidatingDisklessTopic = isDiskless &&
         config.disklessRemoteStorageConsolidationEnabled &&
-          _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
-      if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
+          _inklessMetadataView.isRemoteStorageEnabled(tp.topic)
+      if (isDiskless) {
         // Clean up classic-to-diskless switch tracking since only the leader drives classic-to-diskless switch.
         initDisklessLogManager.foreach(_.removePartition(tp))
         val seal = _inklessMetadataView.getClassicToDisklessStartOffset(tp)
@@ -3182,7 +3183,7 @@ class ReplicaManager(val config: KafkaConfig,
           }
         }
       }
-      if (!_inklessMetadataView.isDisklessTopic(tp.topic()) || isConsolidatingDisklessTopic) {
+      if (!isDiskless || isConsolidatingDisklessTopic) {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             followerTopicSet.add(tp.topic)
@@ -3212,7 +3213,7 @@ class ReplicaManager(val config: KafkaConfig,
             case e: KafkaStorageException =>
               stateChangeLogger.error(s"Unable to start fetching $tp " +
                 s"with topic ID ${info.topicId} due to a storage error ${e.getMessage}", e)
-              if (_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic))
+              if (isConsolidatingDisklessTopic)
                 consolidationFetcherManager.foreach(_.addFailedPartition(tp))
               else
                 replicaFetcherManager.addFailedPartition(tp)
@@ -3225,7 +3226,7 @@ class ReplicaManager(val config: KafkaConfig,
             case e: Throwable =>
               stateChangeLogger.error(s"Unable to start fetching $tp " +
                 s"with topic ID ${info.topicId} due to ${e.getClass.getSimpleName}", e)
-              if (_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic))
+              if (isConsolidatingDisklessTopic)
                 consolidationFetcherManager.foreach(_.addFailedPartition(tp))
               else
                 replicaFetcherManager.addFailedPartition(tp)
