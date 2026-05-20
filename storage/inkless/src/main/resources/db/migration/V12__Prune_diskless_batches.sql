@@ -30,7 +30,11 @@ DECLARE
     l_log logs%ROWTYPE;
 BEGIN
     IF arg_requests IS NOT NULL AND CARDINALITY(arg_requests) > 0 THEN
-        PERFORM 1
+        DROP TABLE IF EXISTS prune_batches_logs_tmp;
+        CREATE TEMPORARY TABLE prune_batches_logs_tmp
+        ON COMMIT DROP
+        AS
+        SELECT *
         FROM logs l
         WHERE EXISTS(
             SELECT 1
@@ -41,11 +45,9 @@ BEGIN
         FOR UPDATE;
         FOREACH l_request IN ARRAY arg_requests LOOP
             SELECT *
-            FROM logs
+            FROM prune_batches_logs_tmp
             WHERE topic_id = l_request.topic_id
               AND partition = l_request.partition
-            ORDER BY topic_id, partition
-            FOR UPDATE
             INTO l_log;
 
             IF NOT FOUND THEN
