@@ -33,7 +33,7 @@ import org.apache.kafka.clients.admin.{AlterConfigOp, EndpointType}
 import org.apache.kafka.common.Uuid.ZERO_UUID
 import org.apache.kafka.common.acl.AclOperation.{ALTER, ALTER_CONFIGS, CLUSTER_ACTION, CREATE, CREATE_TOKENS, DELETE, DESCRIBE, DESCRIBE_CONFIGS}
 import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
-import org.apache.kafka.common.errors.{ApiException, ClusterAuthorizationException, InvalidRequestException, ClusterMirrorAuthorizationException, TopicAuthorizationException, TopicDeletionDisabledException, UnsupportedVersionException}
+import org.apache.kafka.common.errors.{ApiException, ClusterAuthorizationException, ClusterMirrorAuthorizationException, InvalidRequestException, TopicAuthorizationException, TopicDeletionDisabledException, UnsupportedVersionException}
 import org.apache.kafka.common.internals.{FatalExitError, Plugin, Topic}
 import org.apache.kafka.common.message.AlterConfigsResponseData.{AlterConfigsResourceResponse => OldAlterConfigsResourceResponse}
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic
@@ -57,6 +57,7 @@ import org.apache.kafka.image.publisher.ControllerRegistrationsPublisher
 import org.apache.kafka.metadata.{BrokerHeartbeatReply, BrokerRegistrationReply}
 import org.apache.kafka.common.security.auth.KafkaPrincipal
 import org.apache.kafka.common.security.auth.SecurityProtocol
+import org.apache.kafka.network.Session
 import org.apache.kafka.server.{ApiVersionManager, DelegationTokenManager, ProcessRole}
 import org.apache.kafka.server.authorizer.Authorizer
 import org.apache.kafka.server.common.{ApiMessageAndVersion, RequestLocal}
@@ -213,6 +214,10 @@ class ControllerApis(
     }
 
     controller.createClusterMirror(context, createMirrorRequest.data().mirrorName(), altersByName)
+      .thenCompose[CreateClusterMirrorResponseData] { response =>
+        maybeCreateMirrorStateTopic(request.context, request.session, request.header)
+          .thenApply[CreateClusterMirrorResponseData](_ => response)
+      }
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
@@ -221,8 +226,15 @@ class ControllerApis(
             new CreateClusterMirrorResponse(response.setThrottleTimeMs(throttleMs)))
         }
       }
-    val topicMetadata = metadataCache.getTopicMetadata(Set(MIRROR_STATE_TOPIC_NAME).asJava, request.context.listenerName).asScala
-    if (topicMetadata.headOption.isEmpty) {
+  }
+
+  private def maybeCreateMirrorStateTopic(requestContext: RequestContext,
+                                          requestSession: Session,
+                                          requestHeader: RequestHeader): CompletableFuture[Unit] = {
+    val topicMetadata = metadataCache.getTopicMetadata(Set(MIRROR_STATE_TOPIC_NAME).asJava, requestContext.listenerName).asScala
+    if (topicMetadata.nonEmpty) {
+      CompletableFuture.completedFuture(())
+    } else {
       val properties = new Properties
       properties.put(TopicConfig.CLEANUP_POLICY_CONFIG, TopicConfig.CLEANUP_POLICY_COMPACT)
       properties.put(TopicConfig.COMPRESSION_TYPE_CONFIG, BrokerCompressionType.PRODUCER.name)
@@ -240,18 +252,30 @@ class ControllerApis(
           .setTimeoutMs(config.requestTimeoutMs)
           .setTopics(topicsToCreate)
       ).build()
-      val controllerMutationQuota = quotas.controllerMutation.newQuotaFor(request.session, request.header, 6)
+      val controllerMutationQuota = quotas.controllerMutation.newQuotaFor(requestSession, requestHeader, 6)
       val context = new ControllerRequestContext(
-        request.context.header.data, request.context.principal,
+        requestContext.header.data, requestContext.principal,
         requestTimeoutMsToDeadlineNs(time, createTopicsRequest.data.timeoutMs()),
         controllerMutationQuotaRecorderFor(controllerMutationQuota))
       createTopics(context, createTopicsRequest.data,
-        authHelper.authorize(request.context, CREATE, CLUSTER, CLUSTER_NAME, logIfDenied = false),
-        names => authHelper.filterByAuthorized(request.context, CREATE, TOPIC, names)(identity),
-        names => authHelper.filterByAuthorized(request.context, DESCRIBE_CONFIGS, TOPIC, names, logIfDenied = false)(identity))
+        authHelper.authorize(requestContext, CREATE, CLUSTER, CLUSTER_NAME, logIfDenied = false),
+        names => authHelper.filterByAuthorized(requestContext, CREATE, TOPIC, names)(identity),
+        names => authHelper.filterByAuthorized(requestContext, DESCRIBE_CONFIGS, TOPIC, names, logIfDenied = false)(identity))
+        .thenCompose { topicResp =>
+          topicResp.topics.asScala.find(_.name == MIRROR_STATE_TOPIC_NAME) match {
+            case Some(t) if t.errorCode == NONE.code =>
+              CompletableFuture.completedFuture(())
+            case Some(t) if t.errorCode == TOPIC_ALREADY_EXISTS.code =>
+              logger.info("Skipping {} creation as topic already exists", MIRROR_STATE_TOPIC_NAME)
+              CompletableFuture.completedFuture(())
+            case Some(t) =>
+              CompletableFuture.failedFuture(Errors.forCode(t.errorCode).exception(t.errorMessage))
+            case None =>
+              logger.error("Topic {} wasn't in response", MIRROR_STATE_TOPIC_NAME)
+              CompletableFuture.failedFuture(UNKNOWN_SERVER_ERROR.exception())
+          }
+        }
     }
-
-    CompletableFuture.completedFuture[Unit](())
   }
 
   def handleStartMirrorTopics(request: RequestChannel.Request): CompletableFuture[Unit] = {

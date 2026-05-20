@@ -108,6 +108,7 @@ public class AsyncClusterMirrorIntegrationTest {
                 .setConfigProp(ServerConfigs.UNSTABLE_FEATURE_VERSIONS_ENABLE_CONFIG, "true")
                 .setConfigProp(ClusterMirrorConfig.METADATA_REFRESH_INTERVAL_MS_CONFIG, "5000")
                 .setConfigProp(ServerLogConfigs.AUTO_CREATE_TOPICS_ENABLE_CONFIG, "false")
+                .setConfigProp(ClusterMirrorConfig.MIRROR_STATE_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
                 .build();
         destCluster.format();
         destCluster.startup();
