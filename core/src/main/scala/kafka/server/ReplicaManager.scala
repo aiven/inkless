@@ -3128,7 +3128,7 @@ class ReplicaManager(val config: KafkaConfig,
         // progress without a committed seal (seal == -2), a missing local log means
         // there is no classic data to expose on this broker, so we leave the partition
         // unmanaged here.
-        if (!isConsolidatingDisklessTopic && (logManager.getLog(tp).isDefined || seal >= 0)) {
+        if (!isConsolidatingDisklessTopic && (seal >= 0 || logManager.getLog(tp).isDefined)) {
           getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
             try {
               val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
