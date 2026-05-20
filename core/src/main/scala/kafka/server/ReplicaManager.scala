@@ -590,7 +590,7 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
-  private def sealTopicPartitions(topic: String): Unit = {
+  private def sealTopicPartitions(topic: String, newImage: MetadataImage): Unit = {
     if (initDisklessLogManager.isEmpty) {
       error(s"Cannot seal partitions for topic $topic: InitDisklessLogManager is not enabled.")
       return
@@ -603,7 +603,12 @@ class ReplicaManager(val config: KafkaConfig,
               case Some(id) =>
                 try {
                   partition.seal()
-                  initDisklessLogManager.foreach(_.registerPartition(partition, id))
+                  val topicImage = newImage.topics().getTopic(tp.topic())
+                  val partitionRegistration =
+                    if (topicImage == null) null else topicImage.partitions().get(tp.partition())
+                  if (partitionRegistration == null || partitionRegistration.classicToDisklessStartOffset < 0) {
+                    initDisklessLogManager.foreach(_.registerPartition(partition, id))
+                  }
                 } catch {
                   case e: KafkaStorageException =>
                     stateChangeLogger.error(s"Failed to seal partition ${partition.topicPartition} " +
@@ -631,7 +636,7 @@ class ReplicaManager(val config: KafkaConfig,
           val topicExistedBefore = delta.image().topics().getTopic(topicName) != null
           if (topicExistedBefore && !wasDiskless && isDiskless) {
             info(s"Topic $topicName transitioning from classic to diskless, sealing leader partitions")
-            sealTopicPartitions(topicName)
+            sealTopicPartitions(topicName, newImage)
           }
         }
       }
