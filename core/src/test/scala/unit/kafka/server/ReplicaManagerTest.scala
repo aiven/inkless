@@ -1984,12 +1984,12 @@ class ReplicaManagerTest {
       val followerImage = imageFromTopics(followerDelta.apply())
       replicaManager.applyDelta(followerDelta, followerImage)
 
-      // Mark this partition as migrated from classic to diskless (classicToDisklessStartOffset >= 0).
-      doReturn(true).when(replicaManager).isMigratedPartitionFromClassicToDiskless(tidp0)
+      // Mark this partition as switched from classic to diskless (classicToDisklessStartOffset >= 0).
+      doReturn(true).when(replicaManager).isPartitionSwitchedFromClassicToDiskless(tidp0)
 
       // Consumer fetch with empty ClientMetadata (older FETCH versions, no rackId) targeting
       // a non-leader broker. Without the override this would fail with NOT_LEADER_OR_FOLLOWER
-      // (see testFetchFollowerNotAllowedForOlderClients); migrated partitions allow any
+      // (see testFetchFollowerNotAllowedForOlderClients); switched partitions allow any
       // in-sync replica to serve the classic portion of the log, so the read should succeed.
       val partitionData = new FetchRequest.PartitionData(Uuid.ZERO_UUID, 0L, 0L, 100,
         Optional.of(0))
@@ -2001,8 +2001,8 @@ class ReplicaManagerTest {
   }
 
   @Test
-  def testFetchFromFollowerStillRequiresLeaderOnMigratedPartition(): Unit = {
-    // Regression test: the migrated-partition override must NOT relax leader-only for
+  def testFetchFromFollowerStillRequiresLeaderOnSwitchedPartition(): Unit = {
+    // Regression test: the switched-partition override must NOT relax leader-only for
     // broker-to-broker follower replication. Replication semantics (ISR/HWM) require
     // followers to fetch from the leader.
     val replicaManager = spy(setupReplicaManagerWithMockedPurgatories(new MockTimer(time), aliveBrokerIds = Seq(0, 1)))
@@ -2018,8 +2018,8 @@ class ReplicaManagerTest {
       val followerImage = imageFromTopics(followerDelta.apply())
       replicaManager.applyDelta(followerDelta, followerImage)
 
-      // Even if the partition is marked as migrated, follower fetches must keep failing.
-      doReturn(true).when(replicaManager).isMigratedPartitionFromClassicToDiskless(tidp0)
+      // Even if the partition is marked as switched, follower fetches must keep failing.
+      doReturn(true).when(replicaManager).isPartitionSwitchedFromClassicToDiskless(tidp0)
 
       val partitionData = new FetchRequest.PartitionData(Uuid.ZERO_UUID, 0L, 0L, 100,
         Optional.of(0))
@@ -6654,7 +6654,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testAppendDisklessMigrationPendingReturnsReplicaNotAvailable(): Unit = {
+    def testAppendDisklessSwitchPendingReturnsReplicaNotAvailable(): Unit = {
       val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
         case (mock, _) =>
           when(mock.handle(any(), any())).thenReturn(CompletableFuture.completedFuture[util.Map[TopicIdPartition, PartitionResponse]](
@@ -6669,7 +6669,7 @@ class ReplicaManagerTest {
       }
 
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
       val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
       replicaManager.appendRecords(
@@ -6687,13 +6687,13 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testAppendDisklessMigrationPendingWithReadyPartitions(): Unit = {
-      val migratedPartition = new TopicIdPartition(Uuid.randomUuid(), 1, "diskless")
-      val migratedPartitionResponse = Map(migratedPartition -> new PartitionResponse(Errors.NONE))
+    def testAppendDisklessSwitchPendingWithReadyPartitions(): Unit = {
+      val switchedPartition = new TopicIdPartition(Uuid.randomUuid(), 1, "diskless")
+      val switchedPartitionResponse = Map(switchedPartition -> new PartitionResponse(Errors.NONE))
       val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
         case (mock, _) =>
           when(mock.handle(any(), any())).thenReturn(CompletableFuture.completedFuture[util.Map[TopicIdPartition, PartitionResponse]](
-            migratedPartitionResponse.asJava
+            switchedPartitionResponse.asJava
           ))
       }
       val appendHandlerCtor = mockConstruction(classOf[AppendHandler], appendHandlerCtorMockInitializer)
@@ -6704,8 +6704,8 @@ class ReplicaManagerTest {
       }
 
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(migratedPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(switchedPartition.topicPartition()))
         .thenReturn(100L)
 
       val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
@@ -6714,21 +6714,21 @@ class ReplicaManagerTest {
         requiredAcks = -1,
         internalTopicsAllowed = true,
         origin = AppendOrigin.CLIENT,
-        entriesPerPartition = Map(disklessTopicPartition -> RECORDS, migratedPartition -> RECORDS),
+        entriesPerPartition = Map(disklessTopicPartition -> RECORDS, switchedPartition -> RECORDS),
         responseCallback = responseCallback,
       )
 
       verify(responseCallback, times(1))(
         Map(
           disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE),
-          migratedPartition -> new PartitionResponse(Errors.NONE),
+          switchedPartition -> new PartitionResponse(Errors.NONE),
         )
       )
     }
 
     @Test
-    def testAppendDisklessMigrationPendingWithHandlerFailure(): Unit = {
-      val migratedPartition = new TopicIdPartition(Uuid.randomUuid(), 1, "diskless")
+    def testAppendDisklessSwitchPendingWithHandlerFailure(): Unit = {
+      val switchedPartition = new TopicIdPartition(Uuid.randomUuid(), 1, "diskless")
       val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
         case (mock, _) =>
           when(mock.handle(any(), any())).thenReturn(CompletableFuture.failedFuture[util.Map[TopicIdPartition, PartitionResponse]](
@@ -6743,8 +6743,8 @@ class ReplicaManagerTest {
       }
 
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(migratedPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(switchedPartition.topicPartition()))
         .thenReturn(100L)
 
       val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
@@ -6753,7 +6753,7 @@ class ReplicaManagerTest {
         requiredAcks = -1,
         internalTopicsAllowed = true,
         origin = AppendOrigin.CLIENT,
-        entriesPerPartition = Map(disklessTopicPartition -> RECORDS, migratedPartition -> RECORDS),
+        entriesPerPartition = Map(disklessTopicPartition -> RECORDS, switchedPartition -> RECORDS),
         responseCallback = responseCallback,
       )
 
@@ -6761,13 +6761,13 @@ class ReplicaManagerTest {
       verify(responseCallback, times(1))(
         Map(
           disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE),
-          migratedPartition -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR),
+          switchedPartition -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR),
         )
       )
     }
 
     @Test
-    def testAppendDisklessMigrationPendingWithClassicEntries(): Unit = {
+    def testAppendDisklessSwitchPendingWithClassicEntries(): Unit = {
       val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
         case (mock, _) =>
           when(mock.handle(any(), any())).thenReturn(CompletableFuture.completedFuture[util.Map[TopicIdPartition, PartitionResponse]](
@@ -6782,7 +6782,7 @@ class ReplicaManagerTest {
       }
 
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
       val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
       replicaManager.appendRecords(
@@ -6925,15 +6925,15 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchDisklessMigrationPendingReadsFromClassicLogWhenManagedReplicasEnabled(): Unit = {
+    def testFetchDisklessSwitchPendingReadsFromClassicLogWhenManagedReplicasEnabled(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
       try {
         val cp = mock(classOf[ControlPlane])
         val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp), disklessManagedReplicasEnabled = true))
 
-        // Given a diskless topic with classicToDisklessStartOffset = -2 (migration pending)
+        // Given a diskless topic with classicToDisklessStartOffset = -2 (switch pending)
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
         doReturn(Seq(disklessTopicPartition ->
           new LogReadResult(
@@ -6956,7 +6956,7 @@ class ReplicaManagerTest {
         }
         replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
 
-        // Then the request is served from the unified log (classic path) because migration is still pending
+        // Then the request is served from the unified log (classic path) because switch is still pending
         assertNotNull(responseData)
         assertEquals(1, responseData.size)
         assertEquals(RECORDS, responseData(disklessTopicPartition).records)
@@ -6969,7 +6969,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchDisklessMigrationPendingFailsWhenManagedReplicasDisabled(): Unit = {
+    def testFetchDisklessSwitchPendingFailsWhenManagedReplicasDisabled(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
       try {
         val cp = mock(classOf[ControlPlane])
@@ -6979,9 +6979,9 @@ class ReplicaManagerTest {
           disklessManagedReplicasEnabled = false,
         ))
 
-        // Given a diskless topic with classicToDisklessStartOffset = -2 (migration pending)
+        // Given a diskless topic with classicToDisklessStartOffset = -2 (switch pending)
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
         val fetchParams = new FetchParams(
           -1, -1L,
@@ -7037,7 +7037,7 @@ class ReplicaManagerTest {
           disklessManagedReplicasEnabled = true,
         ))
 
-        // Given a full diskless topic with classicToDisklessStartOffset = -1 (never migrated)
+        // Given a full diskless topic with classicToDisklessStartOffset = -1 (never switched)
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
 
@@ -7070,7 +7070,7 @@ class ReplicaManagerTest {
     def testFetchFailDisklessWhenFromReplicaAndUnmanagedReplicas(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
       try {
-        // Given a topic partition that is fully diskless (never migrated) and managed replicas are disabled
+        // Given a topic partition that is fully diskless (never switched) and managed replicas are disabled
         val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = false))
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
@@ -7635,7 +7635,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchConsolidatingDisklessMigrationPendingReadsFromUnifiedLogWhenConsolidationEnabled(): Unit = {
+    def testFetchConsolidatingDisklessSwitchPendingReadsFromUnifiedLogWhenConsolidationEnabled(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
       try {
         val cp = mock(classOf[ControlPlane])
@@ -7647,7 +7647,7 @@ class ReplicaManagerTest {
           consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
         ))
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
         // Ensure we don't generate an additional invalid response from the consolidating-partition check.
         stubConsolidatingPartitionWithoutLocalLog(replicaManager)
 
@@ -8229,7 +8229,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchOffsetPureDisklessRoutesToDisklessPathWhenNoMigration(): Unit = {
+    def testFetchOffsetPureDisklessRoutesToDisklessPathWhenNoSwitch(): Unit = {
       val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
       when(jobMock.mustHandle(any())).thenReturn(true)
       doNothing().when(jobMock).start()
@@ -8250,7 +8250,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
-      // No migration — pure diskless: classicToDisklessStartOffset == -1. Combined with managed
+      // No switch — pure diskless: classicToDisklessStartOffset == -1. Combined with managed
       // replicas disabled, the router falls into case 1 and routes the lookup to the diskless
       // control plane.
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
@@ -8287,7 +8287,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchOffsetLatestUsesClassicPathWhenMigrationPending(): Unit = {
+    def testFetchOffsetLatestUsesClassicPathWhenSwitchPending(): Unit = {
       val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
       when(jobMock.mustHandle(any())).thenReturn(true)
       doNothing().when(jobMock).start()
@@ -8305,7 +8305,7 @@ class ReplicaManagerTest {
       }
 
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
       val resultHolder = new OffsetResultHolder(
         Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 50L, Optional.of[Integer](0))))
@@ -8338,7 +8338,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchOffsetLatestUsesDisklessPathWhenMigrationComplete(): Unit = {
+    def testFetchOffsetLatestUsesDisklessPathWhenSwitchComplete(): Unit = {
       val successResult = new OffsetResultHolder.FileRecordsOrError(
         Optional.empty(),
         Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 200L, Optional.of[Integer](0))))
@@ -8389,7 +8389,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchOffsetEarliestUsesClassicPathWhenMigrationPending(): Unit = {
+    def testFetchOffsetEarliestUsesClassicPathWhenSwitchPending(): Unit = {
       val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
       when(jobMock.mustHandle(any())).thenReturn(true)
       doNothing().when(jobMock).start()
@@ -8407,7 +8407,7 @@ class ReplicaManagerTest {
       }
 
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
       val resultHolder = new OffsetResultHolder(
         Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 0L, Optional.of[Integer](0))))
@@ -8440,7 +8440,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchOffsetEarliestUsesDisklessPathWhenMigrationCompleteAndManagedReplicasEnabled(): Unit = {
+    def testFetchOffsetEarliestUsesDisklessPathWhenSwitchCompleteAndManagedReplicasEnabled(): Unit = {
       val successResult = new OffsetResultHolder.FileRecordsOrError(
         Optional.empty(),
         Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 0L, Optional.of[Integer](0))))
@@ -8491,7 +8491,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchOffsetEarliestUsesDisklessPathWhenMigrationCompleteAndManagedReplicasDisabled(): Unit = {
+    def testFetchOffsetEarliestUsesDisklessPathWhenSwitchCompleteAndManagedReplicasDisabled(): Unit = {
       val successResult = new OffsetResultHolder.FileRecordsOrError(
         Optional.empty(),
         Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 0L, Optional.of[Integer](0))))
@@ -8542,7 +8542,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchOffsetEarliestUsesClassicPathWhenMigrationCompleteAndClassicHasData(): Unit = {
+    def testFetchOffsetEarliestUsesClassicPathWhenSwitchCompleteAndClassicHasData(): Unit = {
       val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
       when(jobMock.mustHandle(any())).thenReturn(true)
       doNothing().when(jobMock).start()
@@ -8601,7 +8601,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchOffsetEarliestLocalAlwaysUsesClassicWhenMigrationComplete(): Unit = {
+    def testFetchOffsetEarliestLocalAlwaysUsesClassicWhenSwitchComplete(): Unit = {
       val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
       when(jobMock.mustHandle(any())).thenReturn(true)
       doNothing().when(jobMock).start()
@@ -8652,7 +8652,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchOffsetLatestTieredAlwaysUsesClassicWhenMigrationComplete(): Unit = {
+    def testFetchOffsetLatestTieredAlwaysUsesClassicWhenSwitchComplete(): Unit = {
       val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
       when(jobMock.mustHandle(any())).thenReturn(true)
       doNothing().when(jobMock).start()
@@ -9555,7 +9555,7 @@ class ReplicaManagerTest {
     
     @Test
     def testApplyDeltaCreatesPartitionForDisklessTopicWithLocalLogOnLeader(): Unit = {
-      val topicName = "migrated-topic"
+      val topicName = "switched-topic"
       val topicId = Uuid.randomUuid()
       val tp = new TopicPartition(topicName, 0)
       val brokerId = 1
@@ -9702,7 +9702,7 @@ class ReplicaManagerTest {
 
     @Test
     def testApplyDeltaCreatesPartitionForDisklessTopicWithLocalLogOnFollower(): Unit = {
-      val topicName = "migrated-topic"
+      val topicName = "switched-topic"
       val topicId = Uuid.randomUuid()
       val tp = new TopicPartition(topicName, 0)
       val brokerId = 1
@@ -9783,7 +9783,7 @@ class ReplicaManagerTest {
 
     @Test
     def testApplyDeltaStartsCatchUpFetcherForDisklessFollowerWithLaggingHwm(): Unit = {
-      val topicName = "migrated-topic"
+      val topicName = "switched-topic"
       val topicId = Uuid.randomUuid()
       val tp = new TopicPartition(topicName, 0)
       val brokerId = 1
@@ -9801,7 +9801,7 @@ class ReplicaManagerTest {
         val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
         populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 5L)
 
-        // Mark the partition as fully migrated with classicToDisklessStartOffset = 10.
+        // Mark the partition as fully switched with classicToDisklessStartOffset = 10.
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(10L)
 
         // Apply the follower delta.
@@ -9823,7 +9823,7 @@ class ReplicaManagerTest {
 
     @Test
     def testApplyDeltaDoesNotStartCatchUpFetcherWhenDisklessFollowerHwmAtSealOffset(): Unit = {
-      val topicName = "migrated-topic"
+      val topicName = "switched-topic"
       val topicId = Uuid.randomUuid()
       val tp = new TopicPartition(topicName, 0)
       val brokerId = 1
@@ -9854,8 +9854,8 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testApplyDeltaDoesNotStartCatchUpFetcherForNeverMigratedDisklessFollower(): Unit = {
-      // Never-migrated diskless topic (seal == -1) on a broker that has no on-disk
+    def testApplyDeltaDoesNotStartCatchUpFetcherForNeverSwitchedDisklessFollower(): Unit = {
+      // Never-switched diskless topic (seal == -1) on a broker that has no on-disk
       // classic data: there is nothing here to expose to consumers below a seal, and
       // there is no upper bound to fetch up to. Nothing should be done on this path.
       val topicName = "fully-diskless-topic"
@@ -9887,13 +9887,13 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testApplyDeltaSchedulesFetcherForDisklessFollowerDuringMigrationPending(): Unit = {
+    def testApplyDeltaSchedulesFetcherForDisklessFollowerDuringSwitchPending(): Unit = {
       // PENDING window: the topic is already flagged diskless but the controller has
       // not yet committed the seal offset (-2). The leader has already sealed its log
       // and frozen its LEO; followers must keep replicating up to that frozen LEO
       // with a normal ReplicaFetcher. Verify that the first follower-side applyDelta
       // during PENDING arms a fetcher pointing at the leader from the follower's LEO.
-      val topicName = "migrated-topic"
+      val topicName = "switched-topic"
       val topicId = Uuid.randomUuid()
       val tp = new TopicPartition(topicName, 0)
       val brokerId = 1
@@ -9911,7 +9911,7 @@ class ReplicaManagerTest {
         populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 5L)
 
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
-          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
         val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
         replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
@@ -9929,13 +9929,13 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testApplyDeltaReschedulesFetcherForDisklessFollowerOnLeaderChangeDuringMigrationPending(): Unit = {
-      // PENDING + leader change: if the original leader crashes mid-migration and a
+    def testApplyDeltaReschedulesFetcherForDisklessFollowerOnLeaderChangeDuringSwitchPending(): Unit = {
+      // PENDING + leader change: if the original leader crashes mid-switch and a
       // new leader is elected, the follower's existing fetcher would still target the
       // dead broker and replication would stall (the leader can never commit the seal
       // because it sees no follower fetch traffic). This test pins down that a new
       // leader epoch during PENDING reschedules the fetcher onto the new leader.
-      val topicName = "migrated-topic"
+      val topicName = "switched-topic"
       val topicId = Uuid.randomUuid()
       val tp = new TopicPartition(topicName, 0)
       val brokerId = 1
@@ -9954,7 +9954,7 @@ class ReplicaManagerTest {
         populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 5L)
 
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
-          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
         // First apply: leader == firstLeaderId, leaderEpoch == 0.
         val delta1 = disklessFollowerDelta(topicName, topicId, brokerId, firstLeaderId)
@@ -9995,10 +9995,10 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testApplyDeltaDoesNotRescheduleFetcherForDisklessFollowerDuringMigrationPendingOnSameEpoch(): Unit = {
+    def testApplyDeltaDoesNotRescheduleFetcherForDisklessFollowerDuringSwitchPendingOnSameEpoch(): Unit = {
       // Same leader, same leader epoch: the existing fetcher is still valid, so a
       // second applyDelta during PENDING must not redundantly reschedule it.
-      val topicName = "migrated-topic"
+      val topicName = "switched-topic"
       val topicId = Uuid.randomUuid()
       val tp = new TopicPartition(topicName, 0)
       val brokerId = 1
@@ -10016,7 +10016,7 @@ class ReplicaManagerTest {
         populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 5L)
 
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
-          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
         val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
         replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
@@ -10040,7 +10040,7 @@ class ReplicaManagerTest {
           disklessManagedReplicasEnabled = true,
         ))
 
-        // Given a fully-migrated diskless topic with classicToDisklessStartOffset = 100
+        // Given a fully-switched diskless topic with classicToDisklessStartOffset = 100
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(100L)
 
@@ -10168,7 +10168,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testIsMigratedPartitionFromClassicToDiskless(): Unit = {
+    def testIsPartitionSwitchedFromClassicToDiskless(): Unit = {
       val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic())))
       try {
         val tp = disklessTopicPartition.topicPartition()
@@ -10176,27 +10176,27 @@ class ReplicaManagerTest {
         val classicTp = classicTopicPartition.topicPartition()
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(classicTp))
           .thenReturn(100L)
-        assertFalse(replicaManager.isMigratedPartitionFromClassicToDiskless(classicTopicPartition))
+        assertFalse(replicaManager.isPartitionSwitchedFromClassicToDiskless(classicTopicPartition))
 
-        // Diskless but never-migrated partition: classicToDisklessStartOffset == -1.
+        // Diskless but never-switched partition: classicToDisklessStartOffset == -1.
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
           .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
-        assertFalse(replicaManager.isMigratedPartitionFromClassicToDiskless(disklessTopicPartition))
+        assertFalse(replicaManager.isPartitionSwitchedFromClassicToDiskless(disklessTopicPartition))
 
-        // Migration pending: classicToDisklessStartOffset == -2 (sealed but offset not committed).
+        // Switch pending: classicToDisklessStartOffset == -2 (sealed but offset not committed).
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
-          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
-        assertFalse(replicaManager.isMigratedPartitionFromClassicToDiskless(disklessTopicPartition))
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+        assertFalse(replicaManager.isPartitionSwitchedFromClassicToDiskless(disklessTopicPartition))
 
-        // Migrated (just sealed, seal at offset 0).
+        // Switched (just sealed, seal at offset 0).
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
           .thenReturn(0L)
-        assertTrue(replicaManager.isMigratedPartitionFromClassicToDiskless(disklessTopicPartition))
+        assertTrue(replicaManager.isPartitionSwitchedFromClassicToDiskless(disklessTopicPartition))
 
-        // Migrated (seal at a later offset).
+        // Switched (seal at a later offset).
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
           .thenReturn(100L)
-        assertTrue(replicaManager.isMigratedPartitionFromClassicToDiskless(disklessTopicPartition))
+        assertTrue(replicaManager.isPartitionSwitchedFromClassicToDiskless(disklessTopicPartition))
       } finally {
         replicaManager.shutdown(checkpointHW = false)
       }
@@ -10211,9 +10211,9 @@ class ReplicaManagerTest {
 
       val replicaManager = spy(createReplicaManager(List(topicName)))
       try {
-        // Never-migrated diskless topic: no local log on this broker AND no committed
+        // Never-switched diskless topic: no local log on this broker AND no committed
         // classicToDisklessStartOffset. Without an explicit stub Mockito would return
-        // 0L which means "migrated, seal at offset 0" -- not what this test models.
+        // 0L which means "switched, seal at offset 0" -- not what this test models.
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
           .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
         assertTrue(replicaManager.logManager.getLog(tp).isEmpty)
@@ -10240,7 +10240,7 @@ class ReplicaManagerTest {
 
     @Test
     def testApplyDeltaCreatesPartitionAndStartsCatchUpFetcherForNewlyAddedDisklessReplica(): Unit = {
-      val topicName = "migrated-topic"
+      val topicName = "switched-topic"
       val topicId = Uuid.randomUuid()
       val tp = new TopicPartition(topicName, 0)
       val brokerId = 1
@@ -10254,7 +10254,7 @@ class ReplicaManagerTest {
         mockReplicaFetcherManager = Some(mockFetcherManager)
       ))
       try {
-        // Newly added replica on a *migrated* diskless topic: no local log yet, but
+        // Newly added replica on a *switched* diskless topic: no local log yet, but
         // the topic has a committed classicToDisklessStartOffset (seal). The broker
         // needs to create a local log on the fly and arm a catch-up fetcher to
         // backfill the classic-era prefix from another replica, so it can later
@@ -10290,13 +10290,13 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testApplyDeltaDoesNotStartCatchUpFetcherForNewlyAddedReplicaWhenMigrationPending(): Unit = {
+    def testApplyDeltaDoesNotStartCatchUpFetcherForNewlyAddedReplicaWhenSwitchPending(): Unit = {
       // A newly added replica must NOT spin up a local log + catch-up fetcher while
-      // the migration is still pending (seal == -2). There is no upper bound to
+      // the switch is still pending (seal == -2). There is no upper bound to
       // fetch up to yet, and the controller will re-trigger applyLocalFollowersDelta
       // once it commits the seal (bumping partitionEpoch), at which point the
       // standard path will create the log and arm the fetcher.
-      val topicName = "pending-migration-topic"
+      val topicName = "pending-switch-topic"
       val topicId = Uuid.randomUuid()
       val tp = new TopicPartition(topicName, 0)
       val brokerId = 1
@@ -10312,7 +10312,7 @@ class ReplicaManagerTest {
       try {
         assertTrue(replicaManager.logManager.getLog(tp).isEmpty)
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
-          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING)
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
         val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
         replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))

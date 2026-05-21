@@ -610,11 +610,11 @@ class ReplicaManager(val config: KafkaConfig,
                 } catch {
                   case e: KafkaStorageException =>
                     stateChangeLogger.error(s"Failed to seal partition ${partition.topicPartition} " +
-                      s"for diskless migration due to a storage error ${e.getMessage}")
+                      s"for diskless switch due to a storage error ${e.getMessage}")
                     markPartitionOffline(tp)
                 }
               case None =>
-                error(s"Partition ${partition.topicPartition} has no topic ID, skipping seal and migration registration")
+                error(s"Partition ${partition.topicPartition} has no topic ID, skipping seal and switch registration")
             }
           case _ =>
         }
@@ -622,7 +622,7 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
-  def sealExistingLeadersOfTopicsMigratedToDiskless(delta: MetadataDelta, newImage: MetadataImage): Unit = {
+  def sealExistingLeadersOfTopicsSwitchedToDiskless(delta: MetadataDelta, newImage: MetadataImage): Unit = {
     Option(delta.configsDelta()).foreach { configsDelta =>
       configsDelta.changes().forEach { (resource, _) =>
         if (resource.`type`() == ConfigResource.Type.TOPIC) {
@@ -804,11 +804,11 @@ class ReplicaManager(val config: KafkaConfig,
 
     val (disklessEntries, classicEntries) = entriesPerPartition.partition { case (k, _) => _inklessMetadataView.isDisklessTopic(k.topic()) }
 
-    val (pendingMigrationToDisklessEntries, readyDisklessEntries) = disklessEntries.partition { case (topicIdPartition, _) =>
+    val (pendingSwitchToDisklessEntries, readyDisklessEntries) = disklessEntries.partition { case (topicIdPartition, _) =>
       _inklessMetadataView.getClassicToDisklessStartOffset(topicIdPartition.topicPartition()) ==
-        PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING
+        PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
     }
-    val pendingDisklessMigrationResult = pendingMigrationToDisklessEntries.map { case (tp, _) =>
+    val pendingDisklessSwitchResult = pendingSwitchToDisklessEntries.map { case (tp, _) =>
       tp -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE)
     }
 
@@ -829,7 +829,7 @@ class ReplicaManager(val config: KafkaConfig,
         }
         // Diskless append results do not complete purgatory actions to avoid overloading the control-plane.
         // only classic append results complete purgatory actions.
-        responseCallback(disklessResult ++ pendingDisklessMigrationResult ++ classicResult)
+        responseCallback(disklessResult ++ pendingDisklessSwitchResult ++ classicResult)
       }
     }
 
@@ -1884,7 +1884,7 @@ class ReplicaManager(val config: KafkaConfig,
         classicFetchInfos += fetchInfo
       } else {
         val classicToDisklessStartOffset = _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition())
-        var shouldReadFromUnifiedLog = classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING
+        var shouldReadFromUnifiedLog = classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
         val isConsolidatingPartition =
           _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic) &&
             config.disklessRemoteStorageConsolidationEnabled
@@ -1912,7 +1912,7 @@ class ReplicaManager(val config: KafkaConfig,
 
         if (!partitionAlreadyHandled) {
           if (params.isFromFollower && !shouldReadFromUnifiedLog && classicToDisklessStartOffset >= 0) {
-            // The partition has fully migrated to diskless and the follower is asking for an offset at or beyond it.
+            // The partition has fully switched to diskless and the follower is asking for an offset at or beyond it.
             // Followers must never replicate diskless records into their local log. Return
             // an empty response with HW clamped to the seal offset so the fetcher loop sees the
             // partition as caught up and goes idle, rather than treating it as out of range.
@@ -2150,15 +2150,15 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
-   * Returns true for a partition that has been migrated from a classic topic to a diskless one
+   * Returns true for a partition that has been switched from a classic topic to a diskless one
    * (`diskless.enable=true`) and whose `classicToDisklessStartOffset` has been sealed at a
    * non-negative offset. For these partitions every replica still can host the classic local/remote
-   * log below the seal offset. Migration-pending (`-2`) and never-migrated (`-1`) partitions are excluded.
+   * log below the seal offset. Switch-pending (`-2`) and never-switched (`-1`) partitions are excluded.
    *
    * The `isDisklessTopic` check is also a guard against unnecessary metadata-image lookups in the
    * hot fetch path for the non-diskless case.
    */
-  private[server] def isMigratedPartitionFromClassicToDiskless(tp: TopicIdPartition): Boolean = {
+  private[server] def isPartitionSwitchedFromClassicToDiskless(tp: TopicIdPartition): Boolean = {
     _inklessMetadataView.isDisklessTopic(tp.topic) &&
       _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition) >= 0L
   }
@@ -2230,7 +2230,7 @@ class ReplicaManager(val config: KafkaConfig,
             if (preferredReadReplica.isDefined) OptionalInt.of(preferredReadReplica.get) else OptionalInt.empty(),
             Optional.empty())
         } else {
-          // For partitions that were migrated from classic to diskless and still have classic
+          // For partitions that were switched from classic to diskless and still have classic
           // local/remote data to read (classicToDisklessStartOffset >= 0), relax the leader-only
           // requirement so any in-sync replica can serve the classic portion of the read. This is
           // scoped to older consumer fetches that don't supply clientMetadata (pre-KIP-392 / no
@@ -2240,7 +2240,7 @@ class ReplicaManager(val config: KafkaConfig,
           // could actually apply.
           val isOlderConsumer = params.isFromConsumer && params.clientMetadata.isEmpty
           val allowReplica = !params.fetchOnlyLeader() ||
-            (isOlderConsumer && isMigratedPartitionFromClassicToDiskless(tp))
+            (isOlderConsumer && isPartitionSwitchedFromClassicToDiskless(tp))
           log = partition.localLogWithEpochOrThrow(fetchInfo.currentLeaderEpoch, !allowReplica)
 
           // Try the read first, this tells us whether we need all of adjustedFetchSize for this partition
@@ -3454,7 +3454,7 @@ class ReplicaManager(val config: KafkaConfig,
             changedPartitions.add(partition)
           } catch {
             case e: KafkaStorageException =>
-              stateChangeLogger.info(s"Skipped the become-leader state change for migrated partition $tp " +
+              stateChangeLogger.info(s"Skipped the become-leader state change for switched partition $tp " +
                 s"with topic id ${info.topicId} due to a storage error ${e.getMessage}")
               markPartitionOffline(tp)
           }
@@ -3512,17 +3512,17 @@ class ReplicaManager(val config: KafkaConfig,
         config.disklessRemoteStorageConsolidationEnabled &&
           _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
       if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
-        // Clean up migration tracking since only the leader drives classic -> diskless migration.
+        // Clean up classic-to-diskless switch tracking since only the leader drives classic-to-diskless switch.
         initDisklessLogManager.foreach(_.removePartition(tp))
         val seal = _inklessMetadataView.getClassicToDisklessStartOffset(tp)
         // Create the Partition (and a local log on the fly if missing) when either:
         //   (a) the broker already has classic data on disk -- typical post-restart case
         //       for a pre-existing replica; or
-        //   (b) the topic has already been migrated (seal >= 0) and this broker has been
+        //   (b) the topic has already been switched (seal >= 0) and this broker has been
         //       newly added to the replica set -- it needs a local log so it can fetch
         //       the classic-era prefix from another replica and serve reads below the
         //       seal if it ever takes over leadership.
-        // For never-migrated diskless topics (seal == -1) and migrations still in
+        // For never-switched diskless topics (seal == -1) and switches still in
         // progress without a committed seal (seal == -2), a missing local log means
         // there is no classic data to expose on this broker, so we leave the partition
         // unmanaged here.
@@ -3540,8 +3540,8 @@ class ReplicaManager(val config: KafkaConfig,
                 // were just added as a replica and have an empty local log. The
                 // ReplicaFetcher self-evicts once the follower has read past the seal.
                 partitionsToStartFetching.put(tp, partition)
-              } else if (seal == PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING && isNewLeaderEpoch) {
-                // Migration is in flight: the leader has already sealed its log and
+              } else if (seal == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING && isNewLeaderEpoch) {
+                // Switch is in flight: the leader has already sealed its log and
                 // frozen the LEO, but the controller has not yet committed the seal
                 // offset. Followers must keep replicating up to that frozen LEO via the
                 // classic ReplicaFetcher. Reschedule on any leader-epoch change so a
@@ -3551,7 +3551,7 @@ class ReplicaManager(val config: KafkaConfig,
               }
             } catch {
               case e: KafkaStorageException =>
-                stateChangeLogger.error(s"Unable to create follower for migrated partition $tp " +
+                stateChangeLogger.error(s"Unable to create follower for switched partition $tp " +
                   s"with topic ID ${info.topicId} due to a storage error ${e.getMessage}", e)
                 markPartitionOffline(tp)
             }

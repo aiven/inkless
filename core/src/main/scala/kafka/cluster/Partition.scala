@@ -341,7 +341,7 @@ class Partition(val topicPartition: TopicPartition,
   @volatile private[cluster] var partitionState: PartitionState = CommittedPartitionState(Set.empty, LeaderRecoveryState.RECOVERED)
   @volatile var assignmentState: AssignmentState = SimpleAssignmentState(Seq.empty)
 
-  // When true, the partition is sealed for classic-to-diskless migration.
+  // When true, the partition is sealed for classic-to-diskless switch.
   // A sealed partition rejects all produce requests via appendRecordsToLeader.
   // Set under the write lock to guarantee that once sealed, LEO cannot increase.
   @volatile private var _sealed: Boolean = false
@@ -418,14 +418,14 @@ class Partition(val topicPartition: TopicPartition,
         abortOngoingTransactions(leaderLog)
       }
       _sealed = true
-      stateChangeLogger.info(s"Sealed partition $topicPartition for diskless migration with LEO ${leaderLog.logEndOffset}")
+      stateChangeLogger.info(s"Sealed partition $topicPartition for diskless switch with LEO ${leaderLog.logEndOffset}")
     }
   }
 
   /**
    * Abort all ongoing transactions by appending ABORT markers directly to the log.
    * Diskless topics do not support transactions, so any in-flight transaction must
-   * be resolved before migration proceeds.
+   * be resolved before the switch from classic to diskless proceeds.
    * @throws KafkaStorageException If transaction abortion fails due to an I/O error.
    */
   private def abortOngoingTransactions(leaderLog: UnifiedLog): Unit = {
@@ -448,7 +448,7 @@ class Partition(val topicPartition: TopicPartition,
         RequestLocal.noCaching(), VerificationGuard.SENTINEL)
       stateChangeLogger.info(s"Aborted ongoing transaction for producer $producerId " +
         s"(epoch=$producerEpoch, txnFirstOffset=$txnFirstOffset) " +
-        s"on partition $topicPartition before sealing for diskless migration")
+        s"on partition $topicPartition before sealing for diskless switch")
     }
   }
 
@@ -1416,9 +1416,9 @@ class Partition(val topicPartition: TopicPartition,
                             requestLocal: RequestLocal, verificationGuard: VerificationGuard = VerificationGuard.SENTINEL): LogAppendInfo = {
     val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {
       if (_sealed) {
-        // Force metadata refresh and client retries while the migration from classic to diskless is still ongoing.
+        // Force metadata refresh and client retries while the switch from classic to diskless is still ongoing.
         throw new ReplicaNotAvailableException(
-          s"Partition $topicPartition is sealed for diskless migration on broker $localBrokerId")
+          s"Partition $topicPartition is sealed for diskless switch on broker $localBrokerId")
       }
 
       leaderLogIfLocal match {

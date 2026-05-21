@@ -167,7 +167,7 @@ public class PartitionRegistration {
     }
 
     public static final long NO_CLASSIC_TO_DISKLESS_START_OFFSET = -1L;
-    public static final long CLASSIC_TO_DISKLESS_MIGRATION_PENDING = -2L;
+    public static final long CLASSIC_TO_DISKLESS_SWITCH_PENDING = -2L;
 
     public final int[] replicas;
     public final Uuid[] directories;

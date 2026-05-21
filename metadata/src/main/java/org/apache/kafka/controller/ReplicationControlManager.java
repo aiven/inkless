@@ -2885,7 +2885,7 @@ public class ReplicationControlManager {
         }
     }
 
-    List<ApiMessageAndVersion> markClassicToDisklessMigrationStarted(
+    List<ApiMessageAndVersion> markClassicToDisklessSwitchStarted(
         Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
         Map<ConfigResource, ApiError> configResults
     ) {
@@ -2916,11 +2916,11 @@ public class ReplicationControlManager {
                         .setPartitionId(partEntry.getKey());
                     record.unknownTaggedFields().add(
                         InitDisklessLogFields.encodeClassicToDisklessStartOffset(
-                            PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING));
+                            PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING));
                     records.add(new ApiMessageAndVersion(record, (short) 0));
                 }
             }
-            log.info("Marked {} partition(s) for topic {} as classic-to-diskless migration pending",
+            log.info("Marked {} partition(s) for topic {} as classic-to-diskless switch pending",
                 records.size() - sizeBefore, topicName);
         }
         return records;

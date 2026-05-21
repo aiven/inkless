@@ -47,9 +47,9 @@ class ReplicaFetcherThread(name: String,
   // Visible for testing
   private[server] val partitionsWithNewHighWatermark = mutable.Buffer[TopicPartition]()
 
-  // Partitions that have caught up to a fully-migrated diskless topic's classicToDisklessStartOffset
+  // Partitions that have caught up to a fully-switched diskless topic's classicToDisklessStartOffset
   // and should be evicted from this fetcher.
-  private[server] val partitionsToEvictAfterDisklessMigration = mutable.Buffer[TopicPartition]()
+  private[server] val partitionsToEvictAfterDisklessSwitch = mutable.Buffer[TopicPartition]()
 
   override protected def latestEpoch(topicPartition: TopicPartition): Optional[Integer] = {
     replicaMgr.localLogOrException(topicPartition).latestEpoch
@@ -99,7 +99,7 @@ class ReplicaFetcherThread(name: String,
   override def doWork(): Unit = {
     super.doWork()
     completeDelayedFetchRequests()
-    evictFullyMigratedDisklessPartitions()
+    evictFullySwitchedDisklessPartitions()
   }
 
   // process fetched data
@@ -153,12 +153,12 @@ class ReplicaFetcherThread(name: String,
 
     brokerTopicStats.updateReplicationBytesIn(records.sizeInBytes)
 
-    // Stop fetching after the migration from classic to diskless is completed: once the controller
+    // Stop fetching after the switch from classic to diskless is completed: once the controller
     // has committed a classicToDisklessStartOffset for this partition AND our local LEO has reached it,
     // the follower is fully caught up to the leader's frozen classic log and must not keep fetching.
     val classicToDisklessStartOffset = replicaMgr.inklessMetadataView().getClassicToDisklessStartOffset(topicPartition)
     if (classicToDisklessStartOffset >= 0 && log.logEndOffset >= classicToDisklessStartOffset) {
-      partitionsToEvictAfterDisklessMigration += topicPartition
+      partitionsToEvictAfterDisklessSwitch += topicPartition
     }
 
     logAppendInfo
@@ -171,12 +171,12 @@ class ReplicaFetcherThread(name: String,
     }
   }
 
-  private def evictFullyMigratedDisklessPartitions(): Unit = {
-    if (partitionsToEvictAfterDisklessMigration.nonEmpty) {
-      val toEvict = partitionsToEvictAfterDisklessMigration.toSet
-      partitionsToEvictAfterDisklessMigration.clear()
+  private def evictFullySwitchedDisklessPartitions(): Unit = {
+    if (partitionsToEvictAfterDisklessSwitch.nonEmpty) {
+      val toEvict = partitionsToEvictAfterDisklessSwitch.toSet
+      partitionsToEvictAfterDisklessSwitch.clear()
       info(s"Evicting partitions from this replica fetcher because they have completed the " +
-        s"classic-to-diskless migration and the local log has caught up to the seal offset: $toEvict")
+        s"classic-to-diskless switch and the local log has caught up to the seal offset: $toEvict")
       replicaMgr.replicaFetcherManager.removeFetcherForPartitions(toEvict)
     }
   }
