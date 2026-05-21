@@ -27,6 +27,9 @@ import kafka.server.share.SharePartitionManager
 import kafka.utils.TestUtils
 import org.apache.kafka.common.{Node, TopicPartition, Uuid}
 import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
+import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.common.message.InitDisklessLogResponseData
+import org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE
 import org.apache.kafka.common.metadata.{ConfigRecord, PartitionChangeRecord, PartitionRecord, TopicRecord}
 import org.apache.kafka.image.{AclsImage, ClientQuotasImage, ClusterImageTest, ConfigurationsImage, DelegationTokenImage, FeaturesImage, MetadataDelta, MetadataImage, MetadataProvenance, ProducerIdsImage, ScramImage, TopicsDelta, TopicsImage}
 import org.apache.kafka.image.loader.LogDeltaManifest
@@ -694,7 +697,7 @@ class DisklessSwitchFlowTest {
           .setPartitions(util.List.of(
             new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
               .setPartitionId(0)
-              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+              .setErrorCode(Errors.NONE.code())
           ))
       )))
       assertTrackedStates(ctx, Map(tp -> classOf[AwaitingMetadata]))
@@ -759,12 +762,12 @@ class DisklessSwitchFlowTest {
       broker0Ctx.scheduler.tick()
       assertEquals(1, broker0Ctx.channelManager.requests.size())
       broker0Ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
-        new org.apache.kafka.common.message.InitDisklessLogResponseData.TopicResponse()
+        new InitDisklessLogResponseData.TopicResponse()
           .setTopicId(topicId)
           .setPartitions(util.List.of(
             new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
               .setPartitionId(0)
-              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+              .setErrorCode(Errors.NONE.code())
           ))
       )))
 
@@ -831,13 +834,13 @@ class DisklessSwitchFlowTest {
       broker0Ctx.scheduler.tick()
       assertEquals(1, broker0Ctx.channelManager.requests.size())
       assertEquals(0, broker1Ctx.channelManager.requests.size())
-      broker0Ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
-        new org.apache.kafka.common.message.InitDisklessLogResponseData.TopicResponse()
+      broker0Ctx.channelManager.requests.poll().complete(new InitDisklessLogResponseData().setTopics(util.List.of(
+        new InitDisklessLogResponseData.TopicResponse()
           .setTopicId(topicId)
           .setPartitions(util.List.of(
-            new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
+            new InitDisklessLogResponseData.PartitionResponse()
               .setPartitionId(0)
-              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+              .setErrorCode(Errors.NONE.code())
           ))
       )))
 
@@ -939,7 +942,7 @@ class DisklessSwitchFlowTest {
       sameLeaderDelta.replay(new PartitionChangeRecord()
         .setTopicId(topicId)
         .setPartitionId(0)
-        .setLeader(ctx.config.brokerId)
+        .setLeader(NO_LEADER_CHANGE)
         .setIsr(util.Arrays.asList(ctx.config.brokerId)))
       val sameLeaderImage = withClusterBrokers(sameLeaderDelta.apply(MetadataProvenance.EMPTY))
       ctx.metadataPublisher.onMetadataUpdate(sameLeaderDelta, sameLeaderImage, metadataManifest())

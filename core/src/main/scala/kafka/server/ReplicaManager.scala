@@ -2969,9 +2969,9 @@ class ReplicaManager(val config: KafkaConfig,
 
           val becameLocalLeader = previousPartition.forall(_.leader != config.nodeId) &&
             partitionRegistration.leader == config.nodeId
-          // Init Diskless Log on Control Plane if:
-          // - classicToDisklessStartOffset was just committed to the metadata log
-          // - this broker just became leader
+          // Init Diskless Log on Control Plane if this broker is leader and either:
+          // - classicToDisklessStartOffset was just committed to the metadata log (offset transition)
+          // - this broker just became leader (failover with already-committed offset)
           val shouldInitOnControlPlane = disklessStartOffsetJustCommitted || becameLocalLeader
 
           if (shouldInitOnControlPlane) {
