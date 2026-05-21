@@ -145,7 +145,7 @@ class BrokerMetadataPublisher(
 
       // Seal existing leader partitions for topics transitioning from classic to diskless.
       // New leaders elected are instead sealed inside ReplicaManager.applyLocalLeadersDelta.
-      replicaManager.sealExistingLeadersOfTopicsMigratedToDiskless(delta, newImage)
+      replicaManager.sealExistingLeadersOfTopicsSwitchedToDiskless(delta, newImage)
       // Apply topic deltas.
       Option(delta.topicsDelta()).foreach { topicsDelta =>
         try {

@@ -745,7 +745,7 @@ class ReplicaFetcherThreadTest {
 
   @Test
   def shouldEvictPartitionWhenLogEndOffsetReachesClassicToDisklessSealOffset(): Unit = {
-    verifyDisklessMigrationEviction(
+    verifyDisklessSwitchEviction(
       classicToDisklessStartOffset = 100L,
       logEndOffsetAfterAppend = 100L,
       expectEviction = true)
@@ -753,7 +753,7 @@ class ReplicaFetcherThreadTest {
 
   @Test
   def shouldEvictPartitionWhenLogEndOffsetExceedsClassicToDisklessSealOffset(): Unit = {
-    verifyDisklessMigrationEviction(
+    verifyDisklessSwitchEviction(
       classicToDisklessStartOffset = 100L,
       logEndOffsetAfterAppend = 150L,
       expectEviction = true)
@@ -761,29 +761,29 @@ class ReplicaFetcherThreadTest {
 
   @Test
   def shouldNotEvictPartitionWhenLogEndOffsetBelowClassicToDisklessSealOffset(): Unit = {
-    verifyDisklessMigrationEviction(
+    verifyDisklessSwitchEviction(
       classicToDisklessStartOffset = 100L,
       logEndOffsetAfterAppend = 50L,
       expectEviction = false)
   }
 
   @Test
-  def shouldNotEvictPartitionWhenNoClassicToDisklessMigration(): Unit = {
-    verifyDisklessMigrationEviction(
+  def shouldNotEvictPartitionWhenNoClassicToDisklessSwitch(): Unit = {
+    verifyDisklessSwitchEviction(
       classicToDisklessStartOffset = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
       logEndOffsetAfterAppend = 100L,
       expectEviction = false)
   }
 
   @Test
-  def shouldNotEvictPartitionWhenClassicToDisklessMigrationPending(): Unit = {
-    verifyDisklessMigrationEviction(
-      classicToDisklessStartOffset = PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING,
+  def shouldNotEvictPartitionWhenClassicToDisklessSwitchPending(): Unit = {
+    verifyDisklessSwitchEviction(
+      classicToDisklessStartOffset = PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
       logEndOffsetAfterAppend = 100L,
       expectEviction = false)
   }
 
-  private def verifyDisklessMigrationEviction(
+  private def verifyDisklessSwitchEviction(
     classicToDisklessStartOffset: Long,
     logEndOffsetAfterAppend: Long,
     expectEviction: Boolean
@@ -846,7 +846,7 @@ class ReplicaFetcherThreadTest {
     } else {
       verify(replicaFetcherManager, times(0)).removeFetcherForPartitions(any())
     }
-    assertEquals(mutable.Buffer.empty, thread.partitionsToEvictAfterDisklessMigration)
+    assertEquals(mutable.Buffer.empty, thread.partitionsToEvictAfterDisklessSwitch)
   }
 
   private def newOffsetForLeaderPartitionResult(
