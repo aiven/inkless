@@ -27,6 +27,9 @@ import kafka.server.share.SharePartitionManager
 import kafka.utils.TestUtils
 import org.apache.kafka.common.{Node, TopicPartition, Uuid}
 import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
+import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.common.message.InitDisklessLogResponseData
+import org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE
 import org.apache.kafka.common.metadata.{ConfigRecord, PartitionChangeRecord, PartitionRecord, TopicRecord}
 import org.apache.kafka.image.{AclsImage, ClientQuotasImage, ClusterImageTest, ConfigurationsImage, DelegationTokenImage, FeaturesImage, MetadataDelta, MetadataImage, MetadataProvenance, ProducerIdsImage, ScramImage, TopicsDelta, TopicsImage}
 import org.apache.kafka.image.loader.LogDeltaManifest
@@ -694,7 +697,7 @@ class DisklessSwitchFlowTest {
           .setPartitions(util.List.of(
             new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
               .setPartitionId(0)
-              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+              .setErrorCode(Errors.NONE.code())
           ))
       )))
       assertTrackedStates(ctx, Map(tp -> classOf[AwaitingMetadata]))
@@ -759,12 +762,12 @@ class DisklessSwitchFlowTest {
       broker0Ctx.scheduler.tick()
       assertEquals(1, broker0Ctx.channelManager.requests.size())
       broker0Ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
-        new org.apache.kafka.common.message.InitDisklessLogResponseData.TopicResponse()
+        new InitDisklessLogResponseData.TopicResponse()
           .setTopicId(topicId)
           .setPartitions(util.List.of(
             new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
               .setPartitionId(0)
-              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+              .setErrorCode(Errors.NONE.code())
           ))
       )))
 
@@ -790,6 +793,167 @@ class DisklessSwitchFlowTest {
     } finally {
       shutdown(broker0Ctx)
       shutdown(broker1Ctx)
+    }
+  }
+
+  @Test
+  def testLeaderFailoverRedrivesControlPlaneInitAfterCommittedMetadata(): Unit = {
+    val broker0Ctx = newContext(brokerId = 0)
+    val broker1Ctx = newContext(brokerId = 1)
+    val topicName = "integration-failover-redrives-control-plane-init"
+    val topicId = Uuid.randomUuid()
+
+    when(broker0Ctx.replicaManager.inklessMetadataView().isDisklessTopic(anyString())).thenReturn(false)
+    when(broker1Ctx.replicaManager.inklessMetadataView().isDisklessTopic(anyString())).thenReturn(false)
+
+    try {
+      val createDelta = new TopicsDelta(TopicsImage.EMPTY)
+      createDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      createDelta.replay(new PartitionRecord()
+        .setTopicId(topicId).setPartitionId(0).setReplicas(util.Arrays.asList(0, 1))
+        .setIsr(util.Arrays.asList(0, 1)).setLeader(0).setLeaderEpoch(0).setPartitionEpoch(0))
+      val createImage = imageFromTopics(createDelta.apply())
+      broker0Ctx.replicaManager.applyDelta(createDelta, createImage)
+      broker1Ctx.replicaManager.applyDelta(createDelta, createImage)
+
+      broker0Ctx.metadataPublisher._firstPublish = false
+      broker1Ctx.metadataPublisher._firstPublish = false
+      when(broker0Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
+      when(broker1Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
+      val disklessDelta = new MetadataDelta(createImage)
+      disklessDelta.replay(new ConfigRecord()
+        .setResourceType(ConfigResource.Type.TOPIC.id())
+        .setResourceName(topicName)
+        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+        .setValue("true"))
+      val disklessImage = withClusterBrokers(disklessDelta.apply(MetadataProvenance.EMPTY))
+      broker0Ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
+      broker1Ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
+
+      broker0Ctx.time.sleep(broker0Ctx.initDisklessLogManager.lingerMs)
+      broker0Ctx.scheduler.tick()
+      assertEquals(1, broker0Ctx.channelManager.requests.size())
+      assertEquals(0, broker1Ctx.channelManager.requests.size())
+      broker0Ctx.channelManager.requests.poll().complete(new InitDisklessLogResponseData().setTopics(util.List.of(
+        new InitDisklessLogResponseData.TopicResponse()
+          .setTopicId(topicId)
+          .setPartitions(util.List.of(
+            new InitDisklessLogResponseData.PartitionResponse()
+              .setPartitionId(0)
+              .setErrorCode(Errors.NONE.code())
+          ))
+      )))
+
+      val pcrDelta = new MetadataDelta(disklessImage)
+      val pcr = new PartitionChangeRecord()
+        .setTopicId(topicId)
+        .setPartitionId(0)
+        .setIsr(util.Arrays.asList(0, 1))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeProducerStates(util.List.of()))
+      pcrDelta.replay(pcr)
+      val pcrImage = withClusterBrokers(pcrDelta.apply(MetadataProvenance.EMPTY))
+
+      // Broker 1 sees the committed KRaft switch metadata while it is still a follower.
+      broker1Ctx.metadataPublisher.onMetadataUpdate(pcrDelta, pcrImage, metadataManifest())
+      broker1Ctx.time.sleep(broker1Ctx.initDisklessLogManager.lingerMs)
+      broker1Ctx.scheduler.tick()
+      verify(broker1Ctx.controlPlane, times(0)).initDisklessLog(any())
+      assertEquals(0, broker1Ctx.channelManager.requests.size())
+
+      val leaderDelta = new MetadataDelta(pcrImage)
+      leaderDelta.replay(new PartitionChangeRecord()
+        .setTopicId(topicId)
+        .setPartitionId(0)
+        .setLeader(1)
+        .setIsr(util.Arrays.asList(0, 1)))
+      val leaderImage = withClusterBrokers(leaderDelta.apply(MetadataProvenance.EMPTY))
+      broker1Ctx.metadataPublisher.onMetadataUpdate(leaderDelta, leaderImage, metadataManifest())
+
+      broker1Ctx.time.sleep(broker1Ctx.initDisklessLogManager.lingerMs)
+      broker1Ctx.scheduler.tick()
+
+      assertEquals(1, broker1Ctx.channelManager.requests.size())
+      verify(broker1Ctx.controlPlane, times(1)).initDisklessLog(any())
+    } finally {
+      shutdown(broker0Ctx)
+      shutdown(broker1Ctx)
+    }
+  }
+
+  @Test
+  def testCommittedMetadataDoesNotRedriveControlPlaneForSameLeaderPartitionChange(): Unit = {
+    val ctx = newContext()
+    val topicName = "integration-committed-metadata-same-leader-change"
+    val topicId = Uuid.randomUuid()
+
+    when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(anyString())).thenReturn(false)
+
+    try {
+      val createDelta = new TopicsDelta(TopicsImage.EMPTY)
+      createDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      createDelta.replay(new PartitionRecord()
+        .setTopicId(topicId).setPartitionId(0).setReplicas(util.Arrays.asList(0, 1))
+        .setIsr(util.Arrays.asList(0, 1)).setLeader(ctx.config.brokerId)
+        .setLeaderEpoch(0).setPartitionEpoch(0))
+      val createImage = imageFromTopics(createDelta.apply())
+      ctx.replicaManager.applyDelta(createDelta, createImage)
+
+      ctx.metadataPublisher._firstPublish = false
+      when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
+      val disklessDelta = new MetadataDelta(createImage)
+      disklessDelta.replay(new ConfigRecord()
+        .setResourceType(ConfigResource.Type.TOPIC.id())
+        .setResourceName(topicName)
+        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+        .setValue("true"))
+      val disklessImage = withClusterBrokers(disklessDelta.apply(MetadataProvenance.EMPTY))
+      ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
+
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
+      ctx.scheduler.tick()
+      assertEquals(1, ctx.channelManager.requests.size())
+      ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
+        new org.apache.kafka.common.message.InitDisklessLogResponseData.TopicResponse()
+          .setTopicId(topicId)
+          .setPartitions(util.List.of(
+            new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
+              .setPartitionId(0)
+              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+          ))
+      )))
+
+      val pcrDelta = new MetadataDelta(disklessImage)
+      val pcr = new PartitionChangeRecord()
+        .setTopicId(topicId)
+        .setPartitionId(0)
+        .setIsr(util.Arrays.asList(0, 1))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L))
+      pcr.unknownTaggedFields().add(InitDisklessLogFields.encodeProducerStates(util.List.of()))
+      pcrDelta.replay(pcr)
+      val pcrImage = withClusterBrokers(pcrDelta.apply(MetadataProvenance.EMPTY))
+      ctx.metadataPublisher.onMetadataUpdate(pcrDelta, pcrImage, metadataManifest())
+
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
+      ctx.scheduler.tick()
+      verify(ctx.controlPlane, times(1)).initDisklessLog(any())
+
+      val sameLeaderDelta = new MetadataDelta(pcrImage)
+      sameLeaderDelta.replay(new PartitionChangeRecord()
+        .setTopicId(topicId)
+        .setPartitionId(0)
+        .setLeader(NO_LEADER_CHANGE)
+        .setIsr(util.Arrays.asList(ctx.config.brokerId)))
+      val sameLeaderImage = withClusterBrokers(sameLeaderDelta.apply(MetadataProvenance.EMPTY))
+      ctx.metadataPublisher.onMetadataUpdate(sameLeaderDelta, sameLeaderImage, metadataManifest())
+
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
+      ctx.scheduler.tick()
+
+      assertEquals(1, ctx.channelManager.requests.size())
+      verify(ctx.controlPlane, times(1)).initDisklessLog(any())
+    } finally {
+      shutdown(ctx)
     }
   }
 
