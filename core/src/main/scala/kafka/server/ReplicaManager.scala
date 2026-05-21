@@ -2949,23 +2949,31 @@ class ReplicaManager(val config: KafkaConfig,
       }
     }
 
-    initDisklessLogOnControlPlane(delta)
+    initDisklessLogOnControlPlane(delta, localChanges.leaders.asScala)
   }
 
-  private def initDisklessLogOnControlPlane(delta: TopicsDelta): Unit = {
+  private def initDisklessLogOnControlPlane(
+    delta: TopicsDelta,
+    localLeaders: mutable.Map[TopicPartition, LocalReplicaChanges.PartitionInfo]
+  ): Unit = {
     initDisklessLogManager.foreach { manager =>
-      delta.changedTopics().forEach { (topicId, topicDelta) =>
-        val topicName = topicDelta.name()
-        topicDelta.partitionChanges().forEach { (partitionId, partitionRegistration) =>
-          val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
-            Option(topicImage.partitions().get(partitionId))
+      localLeaders.foreachEntry { (tp, info) =>
+        val partitionRegistration = info.partition
+        if (partitionRegistration.classicToDisklessStartOffset >= 0) {
+          val previousPartition = Option(delta.image().getTopic(info.topicId)).flatMap { topicImage =>
+            Option(topicImage.partitions().get(tp.partition))
           }
-          val shouldInitOnControlPlane = previousPartition.exists { previous =>
-            previous.classicToDisklessStartOffset < 0 &&
-              partitionRegistration.classicToDisklessStartOffset >= 0
+          val disklessStartOffsetJustCommitted = previousPartition.exists { previous =>
+            previous.classicToDisklessStartOffset < 0
           }
 
-          val tp = new TopicPartition(topicName, partitionId)
+          val becameLocalLeader = previousPartition.forall(_.leader != config.nodeId) &&
+            partitionRegistration.leader == config.nodeId
+          // Init Diskless Log on Control Plane if:
+          // - classicToDisklessStartOffset was just committed to the metadata log
+          // - this broker just became leader
+          val shouldInitOnControlPlane = disklessStartOffsetJustCommitted || becameLocalLeader
+
           if (shouldInitOnControlPlane) {
             onlinePartition(tp) match {
               case Some(partition) if partition.isLeader =>
@@ -2981,8 +2989,8 @@ class ReplicaManager(val config: KafkaConfig,
                 }.asJava
                 manager.initOnControlPlane(
                   partition = partition,
-                  topicId = topicId,
-                  topicName = topicName,
+                  topicId = info.topicId,
+                  topicName = tp.topic,
                   classicToDisklessStartOffset = partitionRegistration.classicToDisklessStartOffset,
                   producerStates = producerStates
                 )
