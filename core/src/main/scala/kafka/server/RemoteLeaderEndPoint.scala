@@ -213,7 +213,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
           // Pre-KIP-595 sources (Fetch < v12) don't support lastFetchedEpoch;
           // skip it until we confirm the source version from the first response.
           val lastFetchedEpoch = if (isTruncationOnFetchSupported
-            && (negotiatedFetchVersion < 0 || negotiatedFetchVersion >= 12))
+            && (!isClusterMirror || negotiatedFetchVersion < 0 || negotiatedFetchVersion >= 12))
             fetchState.lastFetchedEpoch()
           else
             Optional.empty[Integer]

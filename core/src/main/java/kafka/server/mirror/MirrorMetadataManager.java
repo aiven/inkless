@@ -1290,7 +1290,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                             .setName(tm.topic())
                             .setNumPartitions(sourcePartitionCount)
                             .setReplicationFactor(CreateTopicsRequest.NO_REPLICATION_FACTOR)
-                            .setMirrorInfo(new CreateTopicsRequestData.MirrorInfo().setTopicId(tm.topicId())));
+                            .setMirrorInfo(new CreateTopicsRequestData.MirrorInfo().setTopicId(
+                                    tm.topicId().equals(Uuid.ZERO_UUID) ? Uuid.randomUuid() : tm.topicId())));
                 }
             } else if (destTopic == null &&
                     metadataImage.topics().getTopic(tm.topic()) != null &&
