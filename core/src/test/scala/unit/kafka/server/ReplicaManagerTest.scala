@@ -9343,6 +9343,92 @@ class ReplicaManagerTest {
     }
 
     @Test
+    def testApplyDeltaAdvancesHwmToSealOffsetForSealedLeaderWithStaleCheckpoint(): Unit = {
+      // After restart, makeLeader reloads HW from the on-disk checkpoint file.
+      // If the checkpoint is stale (e.g. unclean shutdown, or checkpoint interval
+      // hadn't fired since HW advanced), HW will be below the seal offset.
+      // Since the partition is sealed, no produces or follower fetches can ever
+      // advance HW naturally — consumers cannot read classic data below the seal.
+      // applyDelta must detect this and restore HW to the seal offset.
+      val topicName = "switched-topic"
+      val topicId = Uuid.randomUuid()
+      val tp = new TopicPartition(topicName, 0)
+      val brokerId = 1
+
+      val replicaManager = spy(createReplicaManager(List(topicName)))
+      try {
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 5L)
+
+        // Mark the partition as fully switched with classicToDisklessStartOffset = 10.
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(10L)
+
+        // Apply a delta that makes this broker the leader (post-restart path).
+        val delta = new TopicsDelta(TopicsImage.EMPTY)
+        delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+        delta.replay(new PartitionRecord()
+          .setPartitionId(0)
+          .setTopicId(topicId)
+          .setReplicas(util.Arrays.asList(brokerId, brokerId + 1))
+          .setIsr(util.Arrays.asList(brokerId, brokerId + 1))
+          .setLeader(brokerId)
+          .setLeaderEpoch(0)
+          .setPartitionEpoch(0)
+        )
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        val partition = replicaManager.getPartition(tp)
+        assertTrue(partition.isInstanceOf[HostedPartition.Online], "Partition should be online")
+        val onlinePartition = partition.asInstanceOf[HostedPartition.Online].partition
+        assertTrue(onlinePartition.isLeader, "Partition should be leader")
+        assertTrue(onlinePartition.isSealed, "Partition should be sealed")
+        // HW must have been advanced to the seal offset.
+        assertEquals(10L, onlinePartition.localLogOrException.highWatermark,
+          "High watermark should be advanced to the seal offset")
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testApplyDeltaDoesNotAdvanceHwmForSealedLeaderWithCurrentCheckpoint(): Unit = {
+      // Post-restart with a fresh checkpoint (HW == seal): no advancement needed.
+      val topicName = "switched-topic"
+      val topicId = Uuid.randomUuid()
+      val tp = new TopicPartition(topicName, 0)
+      val brokerId = 1
+
+      val replicaManager = spy(createReplicaManager(List(topicName)))
+      try {
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 10L)
+
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(10L)
+
+        val delta = new TopicsDelta(TopicsImage.EMPTY)
+        delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+        delta.replay(new PartitionRecord()
+          .setPartitionId(0)
+          .setTopicId(topicId)
+          .setReplicas(util.Arrays.asList(brokerId, brokerId + 1))
+          .setIsr(util.Arrays.asList(brokerId, brokerId + 1))
+          .setLeader(brokerId)
+          .setLeaderEpoch(0)
+          .setPartitionEpoch(0)
+        )
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        val partition = replicaManager.getPartition(tp)
+        val onlinePartition = partition.asInstanceOf[HostedPartition.Online].partition
+        // HW should remain at 10 (unchanged, since it's already at the seal).
+        assertEquals(10L, onlinePartition.localLogOrException.highWatermark,
+          "High watermark should remain at seal offset when already caught up")
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
     def testApplyDeltaSkipsPartitionForConsolidatingDisklessTopicWithLocalLogOnLeader(): Unit = {
       val topicName = "consolidating-topic"
       val topicId = Uuid.randomUuid()
