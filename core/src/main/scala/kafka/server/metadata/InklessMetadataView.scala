@@ -26,10 +26,10 @@ import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.storage.internals.log.LogConfig
 
 import java.util
-import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 import java.util.function.Supplier
 import java.util.stream.{Collectors, IntStream}
+import java.util.{Optional, Properties}
 import scala.jdk.CollectionConverters._
 
 class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[util.Map[String, Object]]) extends MetadataView {
@@ -67,6 +67,10 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
     metadataCache.getTopicId(topicName)
   }
 
+  override def getTopicName(topicId: Uuid): Optional[String] = {
+    metadataCache.getTopicName(topicId)
+  }
+
   override def isDisklessTopic(topicName: String): Boolean = {
     metadataCache.topicConfig(topicName).getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
   }
@@ -82,6 +86,14 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
   override def getDisklessTopicPartitions: util.Set[TopicIdPartition] = {
     metadataCache.getAllTopics().stream()
       .filter(isDisklessTopic)
+      .flatMap(t => IntStream.range(0, metadataCache.numPartitions(t).get())
+        .mapToObj(p => new TopicIdPartition(metadataCache.getTopicId(t), p, t)))
+      .collect(Collectors.toSet[TopicIdPartition]())
+  }
+
+  override def getConsolidatingDisklessTopicPartitions: util.Set[TopicIdPartition] = {
+    metadataCache.getAllTopics().stream()
+      .filter(isConsolidatingDisklessTopic)
       .flatMap(t => IntStream.range(0, metadataCache.numPartitions(t).get())
         .mapToObj(p => new TopicIdPartition(metadataCache.getTopicId(t), p, t)))
       .collect(Collectors.toSet[TopicIdPartition]())

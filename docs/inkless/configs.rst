@@ -79,6 +79,14 @@ Under ``inkless.``
   * Valid Values: [0,...]
   * Importance: medium
 
+``consolidation.cleanup.interval.ms``
+  The interval with which to run consolidated diskless WAL pruning on each broker.
+
+  * Type: int
+  * Default: 300000 (5 minutes)
+  * Valid Values: [1,...]
+  * Importance: low
+
 ``consume.batch.coordinate.cache.enabled``
   If true, the Batch Coordinate cache is enabled.
 
