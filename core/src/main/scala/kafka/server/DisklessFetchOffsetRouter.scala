@@ -45,12 +45,12 @@ import scala.jdk.OptionConverters.RichOptional
  *   2. Hybrid diskless partition (`classicToDisklessStartOffset > 0` and managed replicas enabled,
  *      or a consolidating diskless topic): fetch offset in classic and/or diskless path, depending
  *      on the requested timestamp. Consolidating topics also allow followers on the classic leg
- *      (same rationale as sealed migrated replicas: clients may be routed to any ISR replica).
- *   3. Partition that is being migrated from classic to diskless
- *      (`classicToDisklessStartOffset == CLASSIC_TO_DISKLESS_MIGRATION_PENDING` and managed
+ *      (same rationale as sealed switched replicas: clients may be routed to any ISR replica).
+ *   3. Partition that is being switched from classic to diskless
+ *      (`classicToDisklessStartOffset == CLASSIC_TO_DISKLESS_SWITCH_PENDING` and managed
  *      replicas enabled, and not a consolidating diskless topic): fetch offset only in the
  *      classic path.
- *   4. Follower requests on a migrated partition: ListOffsets requests (used by ReplicaFetcher
+ *   4. Follower requests on a switched partition: ListOffsets requests (used by ReplicaFetcher
  *      for truncation / initial offset bootstrap) must never see diskless offsets, otherwise the
  *      follower would try to truncate to or fetch from offsets that live only in object storage:
  *      fetch offset only in the classic path.
@@ -93,34 +93,34 @@ class DisklessFetchOffsetRouter(
     classicFetchOffset: (TopicPartition, ListOffsetsPartition, Boolean) => ListOffsetsPartitionStatus
   ): ListOffsetsPartitionStatus = {
     val classicToDisklessStartOffset = inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
-    val migrationPending = classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_MIGRATION_PENDING
-    val isMigratedWithClassicAccess = (classicToDisklessStartOffset > 0 && disklessManagedReplicasEnabled)
+    val switchPending = classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
+    val isSwitchedWithClassicAccess = (classicToDisklessStartOffset > 0 && disklessManagedReplicasEnabled)
     val isConsolidatingPartition = disklessConsolidationEnabled && inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
 
-    // Migrated partitions seal their classic local log: once classicToDisklessStartOffset is
+    // Switched partitions seal their classic local log: once classicToDisklessStartOffset is
     // committed the LEO can no longer grow and every ISR replica has the same data on disk.
     // Any replica can therefore safely answer ListOffsets from its local log, so we let
     // followers serve the classic-side query as well.
     // Since consolidating partitions contain only data that has been stored in the diskless
     // coordinator and its offsets won't change, we can allow follower requests.
-    val allowFromFollower = isMigratedWithClassicAccess || isConsolidatingPartition
+    val allowFromFollower = isSwitchedWithClassicAccess || isConsolidatingPartition
     val isFollowerRequest = replicaId >= 0
 
     def classicLookup(): ListOffsetsPartitionStatus = classicFetchOffset(topicPartition, partition, allowFromFollower)
     def disklessLookup: Lookup = disklessLookupOnJob(job, topicPartition, partition)
     def disklessLookupOnNewJob: Lookup = disklessLookupOnJob(newJob(), topicPartition, partition, startNow = true)
 
-    // Consolidating diskless topics can still carry CLASSIC_TO_DISKLESS_MIGRATION_PENDING in
+    // Consolidating diskless topics can still carry CLASSIC_TO_DISKLESS_SWITCH_PENDING in
     // metadata while the leader serves (or is catching up) from object storage; ListOffsets must
     // not be forced down the classic-only path in that case (see ReplicaManager diskless fetch
     // routing for the analogous consolidating carve-out).
-    if (migrationPending && disklessManagedReplicasEnabled && !isConsolidatingPartition) {
+    if (switchPending && disklessManagedReplicasEnabled && !isConsolidatingPartition) {
       // Case 3.
       classicFetchOffset(topicPartition, partition, false)
-    } else if (isMigratedWithClassicAccess && isFollowerRequest) {
+    } else if (isSwitchedWithClassicAccess && isFollowerRequest) {
       // Case 4.
       classicLookup()
-    } else if (isMigratedWithClassicAccess || isConsolidatingPartition) {
+    } else if (isSwitchedWithClassicAccess || isConsolidatingPartition) {
       // Case 2: hybrid, route by timestamp.
       partition.timestamp() match {
         case ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP | ListOffsetsRequest.LATEST_TIERED_TIMESTAMP =>

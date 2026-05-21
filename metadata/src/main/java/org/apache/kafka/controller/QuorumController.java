@@ -1931,7 +1931,7 @@ public final class QuorumController implements Controller {
                 return result.withoutRecords();
             } else {
                 List<ApiMessageAndVersion> migrationRecords =
-                    replicationControl.markClassicToDisklessMigrationStarted(configChanges, result.response());
+                    replicationControl.markClassicToDisklessSwitchStarted(configChanges, result.response());
                 if (!migrationRecords.isEmpty()) {
                     List<ApiMessageAndVersion> allRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
                     allRecords.addAll(result.records());

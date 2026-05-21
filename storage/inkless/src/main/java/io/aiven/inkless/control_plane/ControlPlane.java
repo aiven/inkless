@@ -56,7 +56,7 @@ public interface ControlPlane extends Closeable, Configurable {
     void createTopicAndPartitions(Set<CreateTopicAndPartitionsRequest> requests);
 
     /**
-     * Initialize diskless logs for classic-to-diskless migration.
+     * Initialize diskless logs for classic-to-diskless switch.
      * <p>
      * An error is returned if the diskless log is already initialized.
      * This method should only be called by the leader of the partition after the disklessStartOffset
