@@ -727,6 +727,17 @@ public class ConfigurationControlManager {
         return false;
     }
 
+    /**
+     * Check if unclean leader election would be enabled for a topic after its topic-level
+     * override is removed (i.e., resolving from node/cluster/static config only).
+     */
+    boolean uncleanLeaderElectionEnabledExcludingTopicOverride(String topicName) {
+        String value = configSchema.resolveEffectiveTopicConfig(
+            UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG,
+            staticConfig, clusterConfig(), currentControllerConfig(), Map.of()).value();
+        return !value.isEmpty() && Boolean.parseBoolean(value);
+    }
+
     Map<String, ConfigEntry> computeEffectiveTopicConfigs(Map<String, String> creationConfigs) {
         return configSchema.resolveEffectiveTopicConfigs(staticConfig, clusterConfig(),
             currentControllerConfig(), creationConfigs);

@@ -1952,20 +1952,55 @@ public final class QuorumController implements Controller {
             return CompletableFuture.completedFuture(Map.of());
         }
         return appendWriteEvent("incrementalAlterConfigs", context.deadlineNs(), () -> {
-            ControllerResult<Map<ConfigResource, ApiError>> result =
-                configurationControl.incrementalAlterConfigs(configChanges, false);
-            if (validateOnly) {
-                return result.withoutRecords();
+            // Pre-validate switch preconditions and unclean leader election changes
+            Map<ConfigResource, ApiError> preconditionErrors =
+                replicationControl.validateClassicToDisklessSwitchPreconditions(configChanges);
+            Map<ConfigResource, ApiError> uncleanErrors =
+                replicationControl.validateUncleanLeaderElectionChange(configChanges);
+
+            // Merge pre-validation errors and remove failing resources from configChanges
+            Map<ConfigResource, ApiError> preErrors = new HashMap<>(preconditionErrors);
+            preErrors.putAll(uncleanErrors);
+
+            Map<ConfigResource, Map<String, Entry<OpType, String>>> filteredChanges;
+            if (preErrors.isEmpty()) {
+                filteredChanges = configChanges;
             } else {
-                List<ApiMessageAndVersion> migrationRecords =
-                    replicationControl.markClassicToDisklessSwitchStarted(configChanges, result.response());
-                if (!migrationRecords.isEmpty()) {
+                filteredChanges = new HashMap<>(configChanges);
+                preErrors.keySet().forEach(filteredChanges::remove);
+            }
+
+            ControllerResult<Map<ConfigResource, ApiError>> result;
+            if (filteredChanges.isEmpty()) {
+                result = ControllerResult.atomicOf(List.of(), Map.of());
+            } else {
+                result = configurationControl.incrementalAlterConfigs(filteredChanges, false);
+            }
+
+            // Merge pre-validation errors into the result
+            Map<ConfigResource, ApiError> mergedResponse;
+            if (preErrors.isEmpty()) {
+                mergedResponse = result.response();
+            } else {
+                mergedResponse = new HashMap<>(result.response());
+                mergedResponse.putAll(preErrors);
+            }
+
+            if (validateOnly) {
+                return ControllerResult.atomicOf(List.of(), mergedResponse);
+            } else {
+                List<ApiMessageAndVersion> switchRecords =
+                    replicationControl.markClassicToDisklessSwitchStarted(filteredChanges, mergedResponse);
+                if (!switchRecords.isEmpty()) {
                     List<ApiMessageAndVersion> allRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
                     allRecords.addAll(result.records());
-                    allRecords.addAll(migrationRecords);
-                    return ControllerResult.atomicOf(allRecords, result.response());
+                    allRecords.addAll(switchRecords);
+                    return ControllerResult.atomicOf(allRecords, mergedResponse);
                 }
-                return result;
+                if (preErrors.isEmpty()) {
+                    return result;
+                }
+                return ControllerResult.atomicOf(result.records(), mergedResponse);
             }
         });
     }

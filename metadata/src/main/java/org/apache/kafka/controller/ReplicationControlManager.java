@@ -128,14 +128,17 @@ import java.util.function.IntPredicate;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
+import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.DELETE;
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
 import static org.apache.kafka.common.config.ConfigResource.Type.TOPIC;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG;
 import static org.apache.kafka.common.internals.Topic.CLUSTER_METADATA_TOPIC_NAME;
 import static org.apache.kafka.common.protocol.Errors.FENCED_LEADER_EPOCH;
 import static org.apache.kafka.common.protocol.Errors.INELIGIBLE_REPLICA;
+import static org.apache.kafka.common.protocol.Errors.INVALID_CONFIG;
 import static org.apache.kafka.common.protocol.Errors.INVALID_REQUEST;
 import static org.apache.kafka.common.protocol.Errors.INVALID_UPDATE_VERSION;
 import static org.apache.kafka.common.protocol.Errors.NEW_LEADER_ELECTED;
@@ -1151,7 +1154,7 @@ public class ReplicationControlManager {
 
     /**
      * Create a topic assignment for a diskless topic.
-     * @return the assignment or {@code null} if there are no brokers avaiable.
+     * @return the assignment or {@code null} if there are no brokers available.
      */
     private TopicAssignment createDisklessAssignment(int numPartitions) {
         final Iterator<UsableBroker> usableBrokers = clusterControl.usableBrokers();
@@ -1447,7 +1450,7 @@ public class ReplicationControlManager {
                     getTopicEffectiveMinIsr(topic.name)
                 )
                     .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
-                if (configurationControl.uncleanLeaderElectionEnabledForTopic(topic.name())) {
+                if (isUncleanElectionEligible(topic.name(), partition)) {
                     builder.setElection(PartitionChangeBuilder.Election.UNCLEAN);
                 }
                 Optional<ApiMessageAndVersion> record = builder
@@ -2251,7 +2254,8 @@ public class ReplicationControlManager {
         while (iterator.hasNext() && records.size() < maxElections) {
             TopicIdPartition topicIdPartition = iterator.next();
             TopicControlInfo topic = topics.get(topicIdPartition.topicId());
-            if (configurationControl.uncleanLeaderElectionEnabledForTopic(topic.name)) {
+            PartitionRegistration partition = topic.parts.get(topicIdPartition.partitionId());
+            if (isUncleanElectionEligible(topic.name, partition)) {
                 ApiError result = electLeader(topic.name, topicIdPartition.partitionId(),
                         ElectionType.UNCLEAN, records);
                 if (result.error().equals(Errors.NONE)) {
@@ -2263,7 +2267,7 @@ public class ReplicationControlManager {
                 }
             } else if (log.isDebugEnabled()) {
                 log.debug("Cannot trigger unclean leader election for offline partition {}-{} " +
-                                "because unclean leader election is disabled for this topic.",
+                                "because unclean leader election is not eligible for this partition.",
                         topic.name, topicIdPartition.partitionId());
             }
         }
@@ -2499,7 +2503,7 @@ public class ReplicationControlManager {
                 getTopicEffectiveMinIsr(topic.name)
             );
             builder.setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
-            if (configurationControl.uncleanLeaderElectionEnabledForTopic(topic.name)) {
+            if (isUncleanElectionEligible(topic.name, partition)) {
                 builder.setElection(PartitionChangeBuilder.Election.UNCLEAN);
             }
             if (brokerWithUncleanShutdown != NO_LEADER) {
@@ -2605,10 +2609,14 @@ public class ReplicationControlManager {
         }
         PartitionReassignmentRevert revert = new PartitionReassignmentRevert(part);
         if (revert.unclean()) {
-            if (!configurationControl.uncleanLeaderElectionEnabledForTopic(topicName)) {
+            if (!isUncleanElectionEligible(topicName, part)) {
+                String reason = part.classicToDisklessStartOffset ==
+                    PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
+                    ? "it has a pending classic-to-diskless switch"
+                    : "unclean leader election is not enabled";
                 throw new InvalidReplicaAssignmentException("Unable to revert partition " +
                     "assignment for " + topicName + ":" + tp.partitionId() + " because " +
-                    "it would require an unclean leader election.");
+                    reason + ".");
             }
         }
         PartitionChangeBuilder builder = new PartitionChangeBuilder(
@@ -2620,7 +2628,7 @@ public class ReplicationControlManager {
             getTopicEffectiveMinIsr(topicName)
         );
         builder.setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
-        if (configurationControl.uncleanLeaderElectionEnabledForTopic(topicName)) {
+        if (isUncleanElectionEligible(topicName, part)) {
             builder.setElection(PartitionChangeBuilder.Election.UNCLEAN);
         }
         return builder
@@ -2957,6 +2965,148 @@ public class ReplicationControlManager {
     }
 
     /**
+     * Validate that a classic-to-diskless switch can proceed for each topic in the config changes.
+     * Returns a map of ConfigResource to ApiError for topics that fail validation.
+     * Only checks topics where diskless.enable is being set to true.
+     */
+    Map<ConfigResource, ApiError> validateClassicToDisklessSwitchPreconditions(
+        Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges
+    ) {
+        Map<ConfigResource, ApiError> errors = new HashMap<>();
+        for (Entry<ConfigResource, Map<String, Entry<OpType, String>>> entry : configChanges.entrySet()) {
+            ConfigResource resource = entry.getKey();
+            if (resource.type() != TOPIC) continue;
+            Map<String, Entry<OpType, String>> changes = entry.getValue();
+            if (isNotSettingConfigToTrue(changes, DISKLESS_ENABLE_CONFIG)) continue;
+            if (isDisklessTopic(resource.name())) continue;
+
+            String topicName = resource.name();
+            Optional<TopicControlInfo> maybeTopicInfo = getTopicInfo(topicName);
+            if (maybeTopicInfo.isEmpty()) continue;
+            TopicControlInfo topicInfo = maybeTopicInfo.get();
+
+            // Check unclean leader election enabled (considering both existing config and the requested changes)
+            if (isUncleanLeaderElectionEnabledConsideringChanges(topicName, changes)) {
+                errors.put(resource, new ApiError(INVALID_CONFIG,
+                    "Cannot switch topic " + topicName + " to diskless: " +
+                    "unclean leader election is enabled."));
+                continue;
+            }
+
+            // Check each partition for unhealthy state
+            validatePartitionsForSwitch(topicName, topicInfo)
+                .ifPresent(error -> errors.put(resource, error));
+        }
+        return errors;
+    }
+
+    /**
+     * Check if unclean leader election is eligible for a partition, considering both
+     * the topic configuration and whether a classic-to-diskless switch is pending.
+     */
+    boolean isUncleanElectionEligible(String topicName, PartitionRegistration partition) {
+        if (!configurationControl.uncleanLeaderElectionEnabledForTopic(topicName)) {
+            return false;
+        }
+        return partition.classicToDisklessStartOffset !=
+            PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING;
+    }
+
+    private boolean isUncleanLeaderElectionEnabledConsideringChanges(
+        String topicName,
+        Map<String, Entry<OpType, String>> changes
+    ) {
+        Entry<OpType, String> uncleanChange = changes.get(UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG);
+        if (uncleanChange != null) {
+            if (uncleanChange.getKey() == SET) {
+                return Boolean.parseBoolean(uncleanChange.getValue());
+            }
+            if (uncleanChange.getKey() == DELETE) {
+                // Topic-level override is being removed; resolve without it
+                return configurationControl.uncleanLeaderElectionEnabledExcludingTopicOverride(topicName);
+            }
+        }
+        // Fall back to existing effective config
+        return configurationControl.uncleanLeaderElectionEnabledForTopic(topicName);
+    }
+
+    private Optional<ApiError> validatePartitionsForSwitch(String topicName, TopicControlInfo topicInfo) {
+        for (Entry<Integer, PartitionRegistration> partEntry : topicInfo.parts.entrySet()) {
+            int partitionId = partEntry.getKey();
+            PartitionRegistration partition = partEntry.getValue();
+
+            if (!partition.hasLeader()) {
+                return Optional.of(new ApiError(INVALID_CONFIG,
+                    "Cannot switch topic " + topicName + " to diskless: " +
+                    "partition " + partitionId + " is offline (has no leader)."));
+            }
+
+            if (partition.leaderRecoveryState == LeaderRecoveryState.RECOVERING) {
+                return Optional.of(new ApiError(INVALID_CONFIG,
+                    "Cannot switch topic " + topicName + " to diskless: " +
+                    "partition " + partitionId + " is recovering from an unclean leader election."));
+            }
+
+            if (isReassignmentInProgress(partition)) {
+                return Optional.of(new ApiError(INVALID_CONFIG,
+                    "Cannot switch topic " + topicName + " to diskless: " +
+                    "partition " + partitionId + " has a reassignment in progress."));
+            }
+
+            if (partition.elr.length > 0) {
+                return Optional.of(new ApiError(INVALID_CONFIG,
+                    "Cannot switch topic " + topicName + " to diskless: " +
+                    "partition " + partitionId + " has a non-empty ELR."));
+            }
+
+            if (partition.lastKnownElr.length > 0) {
+                return Optional.of(new ApiError(INVALID_CONFIG,
+                    "Cannot switch topic " + topicName + " to diskless: " +
+                    "partition " + partitionId + " has a non-empty last-known ELR."));
+            }
+
+            if (partition.isr.length < partition.replicas.length) {
+                return Optional.of(new ApiError(INVALID_CONFIG,
+                    "Cannot switch topic " + topicName + " to diskless: " +
+                    "partition " + partitionId + " is under-replicated " +
+                    "(ISR size " + partition.isr.length + " < replicas " + partition.replicas.length + ")."));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Validate that unclean.leader.election.enable=true is not being set on a topic
+     * that has any partition with a pending classic-to-diskless switch.
+     */
+    Map<ConfigResource, ApiError> validateUncleanLeaderElectionChange(
+        Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges
+    ) {
+        Map<ConfigResource, ApiError> errors = new HashMap<>();
+        for (Entry<ConfigResource, Map<String, Entry<OpType, String>>> entry : configChanges.entrySet()) {
+            ConfigResource resource = entry.getKey();
+            if (resource.type() != TOPIC) continue;
+            Map<String, Entry<OpType, String>> changes = entry.getValue();
+            if (isNotSettingConfigToTrue(changes, UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG)) continue;
+
+            String topicName = resource.name();
+            Optional<TopicControlInfo> maybeTopicInfo = getTopicInfo(topicName);
+            if (maybeTopicInfo.isEmpty()) continue;
+
+            for (Entry<Integer, PartitionRegistration> partEntry : maybeTopicInfo.get().parts.entrySet()) {
+                if (partEntry.getValue().classicToDisklessStartOffset ==
+                        PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
+                    errors.put(resource, new ApiError(INVALID_CONFIG,
+                        "Cannot enable unclean leader election on topic " + topicName + ": " +
+                        "partition " + partEntry.getKey() + " has a pending classic-to-diskless switch."));
+                    break;
+                }
+            }
+        }
+        return errors;
+    }
+
+    /**
      * For every topic whose {@code diskless.enable} flips from {@code false} to {@code true},
      * emit a {@link PartitionChangeRecord} per partition marking
      * {@code classicToDisklessStartOffset = CLASSIC_TO_DISKLESS_SWITCH_PENDING} (-2).
@@ -2975,16 +3125,13 @@ public class ReplicationControlManager {
             ApiError error = configResults.get(resource);
             if (error != null && error != ApiError.NONE) continue;
             Map<String, Entry<OpType, String>> changes = entry.getValue();
-            Entry<OpType, String> disklessChange = changes.get(DISKLESS_ENABLE_CONFIG);
-            if (disklessChange == null) continue;
-            if (disklessChange.getKey() != SET || !Boolean.parseBoolean(disklessChange.getValue())) continue;
+            if (isNotSettingConfigToTrue(changes, DISKLESS_ENABLE_CONFIG)) continue;
             if (isDisklessTopic(resource.name())) continue;
 
             String topicName = resource.name();
-            Uuid topicId = topicsByName.get(topicName);
-            if (topicId == null) continue;
-            TopicControlInfo topicInfo = topics.get(topicId);
-            if (topicInfo == null) continue;
+            Optional<TopicControlInfo> maybeTopicInfo = getTopicInfo(topicName);
+            if (maybeTopicInfo.isEmpty()) continue;
+            TopicControlInfo topicInfo = maybeTopicInfo.get();
 
             int sizeBefore = records.size();
             for (Entry<Integer, PartitionRegistration> partEntry : topicInfo.parts.entrySet()) {
@@ -2995,7 +3142,7 @@ public class ReplicationControlManager {
                             "remain pending until a leader is elected", topicName, partEntry.getKey());
                     }
                     PartitionChangeRecord record = new PartitionChangeRecord()
-                        .setTopicId(topicId)
+                        .setTopicId(topicInfo.id)
                         .setPartitionId(partEntry.getKey())
                         .setLeader(partition.leader); // Force leader epoch bump to trigger makeLeader on broker
                     record.unknownTaggedFields().add(
@@ -3008,6 +3155,18 @@ public class ReplicationControlManager {
                 records.size() - sizeBefore, topicName);
         }
         return records;
+    }
+
+    private static boolean isNotSettingConfigToTrue(Map<String, Entry<OpType, String>> changes, String configKey) {
+        Entry<OpType, String> change = changes.get(configKey);
+        return change == null || change.getKey() != SET || !Boolean.parseBoolean(change.getValue());
+    }
+
+    private Optional<TopicControlInfo> getTopicInfo(String topicName) {
+        Uuid topicId = topicsByName.get(topicName);
+        if (topicId == null) return Optional.empty();
+        TopicControlInfo info = topics.get(topicId);
+        return Optional.ofNullable(info);
     }
 
     private boolean isDisklessTopic(String topicName) {

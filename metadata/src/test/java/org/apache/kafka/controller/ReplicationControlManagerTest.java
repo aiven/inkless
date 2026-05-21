@@ -6640,6 +6640,448 @@ public class ReplicationControlManagerTest {
                 InitDisklessLogFields.decodeClassicToDisklessStartOffset(record.unknownTaggedFields()));
         }
 
+        @Test
+        public void testSwitchRejectedWhenPartitionIsOffline() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            // Fence all brokers to make the partition offline
+            ctx.fenceBrokers(0, 1, 2);
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            Map<ConfigResource, ApiError> errors =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(configChanges);
+
+            assertEquals(1, errors.size());
+            ApiError error = errors.get(resource);
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertTrue(error.message().contains("offline"), "Expected 'offline' in: " + error.message());
+        }
+
+        @Test
+        public void testSwitchRejectedWhenReassignmentInProgress() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            ctx.registerBrokers(0, 1, 2, 3);
+            ctx.unfenceBrokers(0, 1, 2, 3);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            // Start a reassignment
+            ControllerResult<AlterPartitionReassignmentsResponseData> alterResult =
+                ctx.replicationControl.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName("foo").setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0).
+                                setReplicas(List.of(1, 2, 3)))))));
+            ctx.replay(alterResult.records());
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            Map<ConfigResource, ApiError> errors =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(configChanges);
+
+            assertEquals(1, errors.size());
+            ApiError error = errors.get(resource);
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertTrue(error.message().contains("reassignment"), "Expected 'reassignment' in: " + error.message());
+        }
+
+        @Test
+        public void testSwitchRejectedWhenUnderReplicated() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+
+            // Shrink ISR to make it under-replicated (fence one broker then unfence it without rejoining ISR)
+            ctx.fenceBrokers(2);
+            // Now partition has ISR < replicas but still has a leader
+            PartitionRegistration partition = ctx.replicationControl.getPartition(fooId, 0);
+            assertTrue(partition.hasLeader());
+            assertTrue(partition.isr.length < partition.replicas.length);
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            Map<ConfigResource, ApiError> errors =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(configChanges);
+
+            assertEquals(1, errors.size());
+            ApiError error = errors.get(resource);
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertTrue(error.message().contains("under-replicated"), "Expected 'under-replicated' in: " + error.message());
+        }
+
+        @Test
+        public void testSwitchRejectedWhenElrIsNonEmpty() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setStaticConfig(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "3")
+                .setIsElrEnabled(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+
+            // Fence broker 2 — ISR drops below minISR (3), so broker 2 goes to ELR
+            ctx.fenceBrokers(2);
+            PartitionRegistration partition = ctx.replicationControl.getPartition(fooId, 0);
+            assertTrue(partition.elr.length > 0,
+                "Expected ELR to be non-empty after fencing with minISR=3, got elr=" +
+                Arrays.toString(partition.elr));
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            Map<ConfigResource, ApiError> errors =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(configChanges);
+
+            assertEquals(1, errors.size());
+            ApiError error = errors.get(resource);
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertTrue(error.message().contains("non-empty ELR"),
+                "Expected 'non-empty ELR' in: " + error.message());
+        }
+
+        @Test
+        public void testSwitchRejectedWhenLastKnownElrIsNonEmpty() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setStaticConfig(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "3")
+                .setIsElrEnabled(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+
+            // Fence broker 2 — ISR drops below minISR (3), so broker 2 goes to ELR
+            ctx.fenceBrokers(2);
+            PartitionRegistration partition = ctx.replicationControl.getPartition(fooId, 0);
+            assertTrue(partition.elr.length > 0 || partition.lastKnownElr.length > 0,
+                "Expected ELR or lastKnownElr to be non-empty after fencing, got elr=" +
+                Arrays.toString(partition.elr) + " lastKnownElr=" + Arrays.toString(partition.lastKnownElr));
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            Map<ConfigResource, ApiError> errors =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(configChanges);
+
+            assertEquals(1, errors.size());
+            ApiError error = errors.get(resource);
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertTrue(error.message().contains("ELR") || error.message().contains("last-known ELR"),
+                "Expected 'ELR' or 'last-known ELR' in: " + error.message());
+        }
+
+        @Test
+        public void testReassignmentRevertBlockedForPendingSwitchPartition() {
+            // Enable unclean so the revert would normally be allowed (without pending switch)
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")
+                .build();
+            ctx.registerBrokers(0, 1, 2, 3);
+            ctx.unfenceBrokers(0, 1, 2, 3);
+            // Create topic with replicas [0 (leader), 1]
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1}}).topicId();
+
+            // Reassign from [0, 1] to [2, 3]. Adding=[2,3], Removing=[0,1]
+            ControllerResult<AlterPartitionReassignmentsResponseData> alterResult =
+                ctx.replicationControl.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName("foo").setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0).
+                                setReplicas(List.of(2, 3)))))));
+            ctx.replay(alterResult.records());
+
+            // Expand ISR to include only ONE adding replica (broker 2).
+            // If we added both [2,3], the reassignment would auto-complete.
+            TopicIdPartition tp = new TopicIdPartition(fooId, 0);
+            ctx.alterPartition(tp, 0, isrWithDefaultEpoch(0, 1, 2), LeaderRecoveryState.RECOVERED);
+
+            // Fence original replicas. ISR becomes [2] (only an adding replica).
+            // Reassignment stays in progress because not all targets [2,3] are in ISR.
+            ctx.fenceBrokers(0, 1);
+            PartitionRegistration partition = ctx.replicationControl.getPartition(fooId, 0);
+            assertEquals(2, partition.leader);
+
+            // Mark the partition as switch pending
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> disklessChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            List<ApiMessageAndVersion> switchRecords =
+                ctx.replicationControl.markClassicToDisklessSwitchStarted(
+                    disklessChanges, Map.of(resource, ApiError.NONE));
+            ctx.replay(switchRecords);
+
+            // Cancel the reassignment — reverting would require unclean election because
+            // ISR=[2] and adding=[2,3], so ISR-adding=empty → revert.unclean()=true.
+            // Normally allowed (unclean enabled), but pending switch blocks it.
+            ControllerResult<AlterPartitionReassignmentsResponseData> cancelResult =
+                ctx.replicationControl.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName("foo").setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0).
+                                setReplicas(null))))));
+            ReassignablePartitionResponse partitionResponse =
+                cancelResult.response().responses().get(0).partitions().get(0);
+            assertEquals(INVALID_REPLICA_ASSIGNMENT.code(), partitionResponse.errorCode());
+            assertTrue(partitionResponse.errorMessage().contains("pending classic-to-diskless switch"),
+                "Expected 'pending classic-to-diskless switch' in: " + partitionResponse.errorMessage());
+        }
+
+        @Test
+        public void testSwitchRejectedWhenRecovering() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setStaticConfig(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+
+            // Fence brokers 1, 2 to shrink ISR to [0]
+            ctx.fenceBrokers(1, 2);
+            // Fence broker 0 to make partition leaderless
+            ctx.fenceBrokers(0, 1, 2);
+            // Unfence broker 1 to trigger unclean election (RECOVERING state)
+            ctx.unfenceBrokers(1);
+
+            PartitionRegistration partition = ctx.replicationControl.getPartition(fooId, 0);
+            assertEquals(LeaderRecoveryState.RECOVERING, partition.leaderRecoveryState);
+
+            // Disable unclean leader election so the unclean check doesn't fire first
+            ctx.replay(ctx.configurationControl.incrementalAlterConfigs(
+                Map.of(new ConfigResource(ConfigResource.Type.TOPIC, "foo"),
+                    Map.of(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG,
+                        new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "false"))),
+                false).records());
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            Map<ConfigResource, ApiError> errors =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(configChanges);
+
+            assertEquals(1, errors.size());
+            ApiError error = errors.get(resource);
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertTrue(error.message().contains("recovering"),
+                "Expected 'recovering' in: " + error.message());
+        }
+
+        @Test
+        public void testSwitchRejectedWhenUncleanLeaderElectionAlreadyEnabled() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            // Enable unclean leader election on the topic
+            ctx.replay(ctx.configurationControl.incrementalAlterConfigs(
+                Map.of(new ConfigResource(ConfigResource.Type.TOPIC, "foo"),
+                    Map.of(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG,
+                        new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true"))),
+                false).records());
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            Map<ConfigResource, ApiError> errors =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(configChanges);
+
+            assertEquals(1, errors.size());
+            ApiError error = errors.get(resource);
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertTrue(error.message().contains("unclean leader election"),
+                "Expected 'unclean leader election' in: " + error.message());
+        }
+
+        @Test
+        public void testSwitchRejectedWhenUncleanLeaderElectionSetInSameRequest() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            // Set both diskless.enable=true and unclean.leader.election.enable=true in the same request
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(
+                    DISKLESS_ENABLE_CONFIG,
+                        new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true"),
+                    TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG,
+                        new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            Map<ConfigResource, ApiError> errors =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(configChanges);
+
+            assertEquals(1, errors.size());
+            ApiError error = errors.get(resource);
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertTrue(error.message().contains("unclean leader election"),
+                "Expected 'unclean leader election' in: " + error.message());
+        }
+
+        @Test
+        public void testUncleanLeaderElectionRejectedWhileSwitchPending() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            // Mark the partition as switch pending
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> disklessChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            List<ApiMessageAndVersion> switchRecords =
+                ctx.replicationControl.markClassicToDisklessSwitchStarted(
+                    disklessChanges, Map.of(resource, ApiError.NONE));
+            ctx.replay(switchRecords);
+
+            // Now try to enable unclean leader election
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> uncleanChanges = Map.of(
+                resource, Map.of(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            Map<ConfigResource, ApiError> errors =
+                ctx.replicationControl.validateUncleanLeaderElectionChange(uncleanChanges);
+
+            assertEquals(1, errors.size());
+            ApiError error = errors.get(resource);
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertTrue(error.message().contains("pending classic-to-diskless switch"),
+                "Expected 'pending classic-to-diskless switch' in: " + error.message());
+        }
+
+        @Test
+        public void testUncleanLeaderElectionAllowedAfterSwitchCompletes() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+
+            // Mark the partition as switch pending
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> disklessChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            List<ApiMessageAndVersion> switchRecords =
+                ctx.replicationControl.markClassicToDisklessSwitchStarted(
+                    disklessChanges, Map.of(resource, ApiError.NONE));
+            ctx.replay(switchRecords);
+
+            // Complete the switch by setting a real start offset via initDisklessLog
+            PartitionRegistration partition = ctx.replicationControl.getPartition(fooId, 0);
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
+            InitDisklessLogRequestData initRequest = singlePartitionRequest(
+                0, defaultBrokerEpoch(0), fooId, 0, 100L, partition.leaderEpoch, List.of());
+            ControllerResult<InitDisklessLogResponseData> initResult =
+                ctx.replicationControl.initDisklessLog(requestContext, initRequest);
+            ctx.replay(initResult.records());
+
+            // Now unclean leader election should be allowed
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> uncleanChanges = Map.of(
+                resource, Map.of(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            Map<ConfigResource, ApiError> errors =
+                ctx.replicationControl.validateUncleanLeaderElectionChange(uncleanChanges);
+
+            assertTrue(errors.isEmpty(), "Expected no errors but got: " + errors);
+        }
+
+        @Test
+        public void testMaybeTriggerUncleanElectionSkipsPendingSwitchPartition() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            // Mark the partition as switch pending
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> disklessChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            List<ApiMessageAndVersion> switchRecords =
+                ctx.replicationControl.markClassicToDisklessSwitchStarted(
+                    disklessChanges, Map.of(resource, ApiError.NONE));
+            ctx.replay(switchRecords);
+
+            // Fence all brokers to make partition leaderless
+            ctx.fenceBrokers(0, 1, 2);
+
+            // Unfence one broker
+            ctx.unfenceBrokers(1);
+
+            // Try unclean election — should NOT happen because of pending switch
+            List<ApiMessageAndVersion> electionRecords = new ArrayList<>();
+            ctx.replicationControl.maybeTriggerUncleanLeaderElectionForLeaderlessPartitions(
+                electionRecords, Integer.MAX_VALUE);
+
+            assertEquals(0, electionRecords.size(),
+                "Expected no unclean election for partition with pending switch");
+        }
+
+        @Test
+        public void testBrokerFencingDoesNotTriggerUncleanElectionForPendingSwitchPartition() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+
+            // Mark the partition as switch pending
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> disklessChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            List<ApiMessageAndVersion> switchRecords =
+                ctx.replicationControl.markClassicToDisklessSwitchStarted(
+                    disklessChanges, Map.of(resource, ApiError.NONE));
+            ctx.replay(switchRecords);
+
+            // Fence the leader — with unclean enabled but pending switch, should NOT do unclean election
+            ctx.fenceBrokers(0, 1, 2);
+            PartitionRegistration partition = ctx.replicationControl.getPartition(fooId, 0);
+
+            // Partition should be leaderless, not unclean-elected
+            assertFalse(partition.hasLeader());
+        }
+
     }
 
 }

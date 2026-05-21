@@ -77,6 +77,7 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
@@ -364,6 +365,103 @@ public class InklessTopicTypeSwitcherClusterTest {
             .map(entry -> new AlterConfigOp(new ConfigEntry(entry.getKey(), entry.getValue()), AlterConfigOp.OpType.SET))
             .toList();
         admin.incrementalAlterConfigs(Map.of(topicResource, operations)).all().get(20, TimeUnit.SECONDS);
+    }
+
+    @Test
+    public void testSwitchRejectedWhenPartitionIsOfflineOrUnderReplicated() throws Exception {
+        final String topic = "switch-unhealthy-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            // Create a classic topic with RF=3
+            admin.createTopics(List.of(
+                new NewTopic(topic, 1, (short) 3)
+                    .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(30, TimeUnit.SECONDS);
+
+            // Shut down a broker to make the partition under-replicated
+            final int brokerToShutdown = 2;
+            cluster.brokers().get(brokerToShutdown).shutdown();
+            waitForIsrShrink(admin, topic, 0, 3);
+
+            // Attempt to switch to diskless (should fail with INVALID_CONFIG)
+            final ExecutionException ex = assertThrows(ExecutionException.class, () ->
+                alterTopicConfig(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")));
+            assertTrue(ex.getCause().getMessage().contains("INVALID_CONFIG") ||
+                       ex.getCause().getMessage().contains("under-replicated") ||
+                       ex.getCause().getMessage().contains("offline"),
+                "Expected INVALID_CONFIG for unhealthy topic, got: " + ex.getCause().getMessage());
+
+            // Restart the broker
+            cluster.brokers().get(brokerToShutdown).startup();
+        }
+    }
+
+    @Test
+    public void testUncleanLeaderElectionRejectedWhileSwitchPending() throws Exception {
+        final String topic = "switch-unclean-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            // Create a classic topic and switch it to diskless
+            admin.createTopics(List.of(
+                new NewTopic(topic, 1, (short) 3)
+                    .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(30, TimeUnit.SECONDS);
+
+            // Enable diskless to mark partition as switch pending
+            alterTopicConfig(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+
+            // Should fail trying to enable unclean leader election
+            final ExecutionException ex = assertThrows(ExecutionException.class, () ->
+                alterTopicConfig(admin, topic, Map.of(
+                    TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")));
+            assertTrue(ex.getCause().getMessage().contains("INVALID_CONFIG") ||
+                       ex.getCause().getMessage().contains("pending classic-to-diskless switch"),
+                "Expected INVALID_CONFIG for pending switch, got: " + ex.getCause().getMessage());
+        }
+    }
+
+    @Test
+    public void testSwitchRejectedWhenUncleanLeaderElectionEnabledAtClusterLevel() throws Exception {
+        final String topic = "switch-cluster-unclean-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            // Enable unclean leader election at cluster level first
+            final ConfigResource clusterResource = new ConfigResource(ConfigResource.Type.BROKER, "");
+            admin.incrementalAlterConfigs(Map.of(clusterResource, List.of(
+                new AlterConfigOp(new ConfigEntry(
+                    TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true"),
+                    AlterConfigOp.OpType.SET)
+            ))).all().get(20, TimeUnit.SECONDS);
+
+            // Create a classic topic
+            admin.createTopics(List.of(
+                new NewTopic(topic, 1, (short) 3)
+                    .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(30, TimeUnit.SECONDS);
+
+            // Attempt to switch to diskless — should fail because unclean leader election
+            // is enabled (via cluster-level config)
+            final ExecutionException ex = assertThrows(ExecutionException.class, () ->
+                alterTopicConfig(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")));
+            assertTrue(ex.getCause().getMessage().contains("unclean leader election"),
+                "Expected 'unclean leader election' in error, got: " + ex.getCause().getMessage());
+        }
+    }
+
+    private void waitForIsrShrink(final Admin admin, final String topic,
+                                   final int partition, final int maxIsrSize) throws Exception {
+        final long deadline = System.currentTimeMillis() + Duration.ofSeconds(30).toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            final var description = admin.describeTopics(List.of(topic)).allTopicNames()
+                .get(10, TimeUnit.SECONDS).get(topic);
+            final int isrSize = description.partitions().get(partition).isr().size();
+            if (isrSize < maxIsrSize) {
+                return;
+            }
+            Thread.sleep(200);
+        }
+        throw new AssertionError("ISR for " + topic + "-" + partition +
+            " did not shrink below " + maxIsrSize + " within timeout");
     }
 
     private Map<String, String> getTopicConfig(final Admin admin, final String topic) throws Exception {
