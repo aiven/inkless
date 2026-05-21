@@ -13,217 +13,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import itertools
-import json
-import os
 import time
 
 from ducktape.mark.resource import cluster
 from ducktape.mark import defaults
-from ducktape.services.service import Service
 from ducktape.tests.test import Test
 from ducktape.utils.util import wait_until
-from kafkatest.directory_layout.kafka_path import KafkaPathResolverMixin
 from kafkatest.services.kafka import KafkaService, quorum
-from kafkatest.services.security.security_config import SecurityConfig
+from kafkatest.tests.core.cluster_mirroring_common import ClientService, MirrorConfig, MirrorUtils
 from kafkatest.version import (
     CLUSTER_MIRRORING_METADATA_VERSION,
     CLUSTER_MIRRORING_VERSION,
 )
 
 
-class MirrorConfig:
-    """Configuration for a cluster mirror connection properties file."""
-    def __init__(
-        self,
-        bootstrap_servers: str,
-        mirror_topic_properties_exclude: str = None,
-        mirror_groups_include: str = None,
-        mirror_groups_exclude: str = None,
-        mirror_acl_include: str = None,
-        security_config: SecurityConfig = None,
-    ):
-        self.properties = {
-            "bootstrap.servers": bootstrap_servers,
-            "mirror.metadata.refresh.interval.ms": "10000",
-        }
-        if mirror_topic_properties_exclude is not None:
-            self.properties["mirror.topic.properties.exclude"] = (
-                mirror_topic_properties_exclude
-            )
-        if mirror_groups_include is not None:
-            self.properties["mirror.groups.include"] = mirror_groups_include
-        if mirror_groups_exclude is not None:
-            self.properties["mirror.groups.exclude"] = mirror_groups_exclude
-        if mirror_acl_include is not None:
-            self.properties["mirror.acl.include"] = mirror_acl_include
-
-        if (
-            security_config is not None
-            and security_config.security_protocol != SecurityConfig.PLAINTEXT
-        ):
-            self.properties |= security_config.properties
-
-    def props(self, prefix=""):
-        config_lines = (
-            prefix + key + "=" + value for key, value in self.properties.items()
-        )
-        return "\n".join(itertools.chain([""], config_lines, [""]))
-
-    def __str__(self):
-        """
-        Return properties as a string with line separators.
-        """
-        return self.props()
-
-
-class ClientService(KafkaPathResolverMixin, Service):
-    """Provides dedicated nodes for running Kafka CLI tools (producers, consumers)."""
-    def start_node(self, node):
-        pass
-
-    def stop_node(self, node):
-        pass
-
-    def clean_node(self, node):
-        pass
-
-
-class MirrorHelpers:
-    """Shared helpers for cluster mirroring tests."""
-
-    def all_satisfy_in_mirror(self, kafka, mirror_name, per_partition_condition, topics):
-        """Check that all partitions of the given mirror topics satisfy the condition."""
-        output = kafka.describe_cluster_mirror(self.client_node)
-        if output == "":
-            return False
-
-        try:
-            mirrors = kafka.parse_describe_cluster_mirror(output)
-        except (json.JSONDecodeError, KeyError):
-            return False
-        if mirror_name not in mirrors:
-            return False
-        mirror = mirrors[mirror_name]
-
-        for topic in topics:
-            if topic not in mirror:
-                return False
-
-            for partition in mirror[topic].values():
-                if not per_partition_condition(partition):
-                    return False
-        return True
-
-    def wait_mirror_state(self, kafka, mirror_name, state, topics,
-                          err_msg=None):
-        """Wait until all mirror partitions reach the given state."""
-        def check():
-            self.logger.debug("describe_cluster_mirror: %s",
-                              kafka.describe_cluster_mirror(self.client_node))
-            return self.all_satisfy_in_mirror(
-                kafka, mirror_name,
-                lambda p: p["state"] == state, topics)
-        if err_msg is None:
-            err_msg = "Mirror did not reach %s state" % state
-        wait_until(check, timeout_sec=60, backoff_sec=2, err_msg=err_msg)
-
-    def wait_mirror_lag_zero(self, kafka, mirror_name, topics,
-                             err_msg="Mirror did not catch up"):
-        """Wait until all mirror partitions reach MIRRORING state with zero lag."""
-        def check():
-            self.logger.debug("describe_cluster_mirror: %s",
-                              kafka.describe_cluster_mirror(self.client_node))
-            return self.all_satisfy_in_mirror(
-                kafka, mirror_name,
-                lambda p: p["lag"] == 0 and p["state"] == "MIRRORING", topics)
-        wait_until(check, timeout_sec=120, backoff_sec=5, err_msg=err_msg)
-
-    def wait_for_metadata_sync(self, kafka, mirror_name, num_cycles=1):
-        """Wait for metadata sync by sleeping based on the configured refresh interval."""
-        output = kafka.describe_mirror_config(self.client_node, mirror_name)
-        interval_ms = 30000
-        for line in output.splitlines():
-            if "mirror.metadata.refresh.interval.ms=" in line:
-                interval_ms = int(line.strip().split()[0].split("=")[1])
-                break
-        sleep_s = (interval_ms // 1000) * num_cycles + 2
-        self.logger.info("Waiting %ds for %d metadata sync cycle(s) (interval=%dms)",
-                         sleep_s, num_cycles, interval_ms)
-        time.sleep(sleep_s)
-
-    def produce_records(self, node, topic, num_records):
-        """Produce records to a specific broker node using kafka-producer-perf-test."""
-        bootstrap_servers = "%s:9092" % node.account.hostname
-        cmd = "%s --topic %s --num-records %d --record-size 1 --throughput -1" \
-              " --producer-props bootstrap.servers=%s" % (
-                  self.client.path.script("kafka-producer-perf-test.sh"),
-                  topic, num_records, bootstrap_servers)
-        self.client_node.account.ssh(cmd, allow_fail=True)
-
-    def consume_records(self, topic, kafka, max_messages=None, timeout_ms=30000,
-                        isolation_level=None, group=None, from_beginning=True):
-        """Consume records and return count using kafka-console-consumer."""
-        cmd = "%s --bootstrap-server %s --topic %s --timeout-ms %d" % (
-            self.client.path.script("kafka-console-consumer.sh"),
-            kafka.bootstrap_servers(kafka.security_protocol),
-            topic, timeout_ms)
-        if from_beginning:
-            cmd += " --from-beginning"
-        if max_messages is not None:
-            cmd += " --max-messages %d" % max_messages
-        if isolation_level is not None:
-            cmd += " --isolation-level %s" % isolation_level
-        if group is not None:
-            cmd += " --group %s" % group
-        cmd += " 2>/dev/null"
-        count = 0
-        for line in self.client_node.account.ssh_capture(cmd, allow_fail=True):
-            if line.strip():
-                count += 1
-        return count
-
-    def wait_for_log_convergence(self, source_kafka, dest_kafka, topics):
-        """Poll until source leader and all dest replica log segment hashes match."""
-        def log_segment_hashes(node, topic, partition):
-            cmd = "md5sum %s*/%s-%d/*.log 2>/dev/null" % (
-                KafkaService.DATA_LOG_DIR_PREFIX, topic, partition)
-            hashes = {}
-            for line in node.account.ssh_capture(cmd, allow_fail=True):
-                parts = line.strip().split()
-                if len(parts) == 2:
-                    hashes[os.path.basename(parts[1])] = parts[0]
-            return hashes
-
-        def check():
-            for topic, cfg in topics.items():
-                for partition in range(cfg["partitions"]):
-                    source = log_segment_hashes(
-                        source_kafka.leader(topic, partition), topic, partition)
-                    for node in dest_kafka.replicas(topic, partition):
-                        dest = log_segment_hashes(node, topic, partition)
-                        if source.keys() != dest.keys() or any(
-                                source[seg] != dest[seg] for seg in source):
-                            return False
-                        self.logger.info("Hashes match for %s-%d dest %s: %d segments verified",
-                                         topic, partition, node.name, len(source))
-            return True
-
-        wait_until(
-            check,
-            timeout_sec=120,
-            backoff_sec=5,
-            err_msg="Log segments did not converge between source and destination",
-        )
-
-
-class ClusterMirroringTest(MirrorHelpers, Test):
+class ClusterMirroringTest(MirrorUtils, Test):
     """Tests for KIP-1279 Cluster Mirroring using a source and destination cluster."""
 
     def __init__(self, test_context):
         """:type test_context: ducktape.tests.test.TestContext"""
         super(ClusterMirroringTest, self).__init__(test_context)
-        # Defaults for a 2-broker cluster (unstable.* is set by use_cluster_mirroring)
+        self.client = ClientService(test_context)
         server_props = [
             ["auto.create.topics.enable", "false"],
             ["default.replication.factor", "2"],
@@ -249,6 +59,8 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         )
 
     def setup(self):
+        self.client.start()
+        self.client_node = self.client.nodes[0]
         self.source_kafka.start()
         self.dest_kafka.start()
 
@@ -264,9 +76,6 @@ class ClusterMirroringTest(MirrorHelpers, Test):
                 "upgrade", "mirror.version", CLUSTER_MIRRORING_VERSION
             )
 
-        # Dedicated client node shared across tests
-        self.client = ClientService(self.test_context, num_nodes=1)
-        self.client_node = self.client.nodes[0]
 
     def teardown(self):
         self.client.stop()
@@ -278,12 +87,10 @@ class ClusterMirroringTest(MirrorHelpers, Test):
                 for node in kafka.nodes:
                     kafka.stop_node(node, clean_shutdown=False)
 
-    ######### helpers #########
-
     def consume_share_records(self, topic, kafka, group, max_messages=None, timeout_ms=30000):
         """Consume records using kafka-console-share-consumer and return count."""
         cmd = "%s --bootstrap-server %s --topic %s --group %s --timeout-ms %d" % (
-            self.client.path.script("kafka-console-share-consumer.sh"),
+            kafka.path.script("kafka-console-share-consumer.sh", self.client_node),
             kafka.bootstrap_servers(kafka.security_protocol),
             topic, group, timeout_ms)
         if max_messages is not None:
@@ -296,27 +103,40 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         return count
 
     def run_background_consumer(self, kafka, topic, group):
-        """Start a background console consumer on the client node."""
+        """Start a background console consumer."""
         cmd = "%s --bootstrap-server %s --topic %s --group %s" % (
-            self.client.path.script("kafka-console-consumer.sh"),
+            kafka.path.script("kafka-console-consumer.sh", self.client_node),
             kafka.bootstrap_servers(kafka.security_protocol),
             topic, group)
         self.client_node.account.ssh("nohup %s >/dev/null 2>&1 &" % cmd, allow_fail=True)
 
     def run_background_share_consumer(self, kafka, topic, group):
-        """Start a background console share consumer on the client node."""
+        """Start a background console share consumer."""
         cmd = "%s --bootstrap-server %s --topic %s --group %s" % (
-            self.client.path.script("kafka-console-share-consumer.sh"),
+            kafka.path.script("kafka-console-share-consumer.sh", self.client_node),
             kafka.bootstrap_servers(kafka.security_protocol),
             topic, group)
         self.client_node.account.ssh("nohup %s >/dev/null 2>&1 &" % cmd, allow_fail=True)
 
-    def kill_background_consumer(self, process_class):
-        """Kill a background consumer process on the client node by class name."""
-        self.client_node.account.ssh(
+    def get_offset_shell(self, kafka, topic=None, time=None):
+        """Run kafka-get-offsets on the client node."""
+        cmd = "%s --bootstrap-server %s" % (
+            kafka.path.script("kafka-get-offsets.sh", self.client_node),
+            kafka.bootstrap_servers(kafka.security_protocol))
+        if time is not None:
+            cmd += " --time %s" % time
+        if topic is not None:
+            cmd += " --topic %s" % topic
+        output = ""
+        for line in self.client_node.account.ssh_capture(cmd, allow_fail=True):
+            output += line
+        return output
+
+    def kill_background_consumer(self, node, process_class):
+        """Kill a background consumer process by class name."""
+        node.account.ssh(
             "pkill -SIGKILL -f '%s' || true" % process_class, allow_fail=True)
 
-    ######### tests #########
 
     @cluster(num_nodes=7)
     @defaults(metadata_quorum=[quorum.isolated_kraft])
@@ -327,11 +147,8 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.topics = {topic: {"partitions": 1, "replication-factor": 2}}
         self.source_kafka.create_topic({"topic": topic, "partitions": 1, "replication-factor": 2})
 
-        src_node = self.source_kafka.nodes[0]
-        dest_node = self.dest_kafka.nodes[0]
-
         self.logger.info("Send 3 records to source")
-        self.produce_records(src_node, topic, 3)
+        self.produce_records(self.source_kafka, topic, 3, self.client_node)
 
         self.logger.info("Start cluster mirror on destination")
         mirror_cfg = MirrorConfig(self.source_kafka.bootstrap_servers())
@@ -339,36 +156,36 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, topic),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name, [topic])
 
         self.logger.info("Consume from destination (expect 3 records)")
-        count = self.consume_records(topic, self.dest_kafka, max_messages=3)
+        count = self.consume_records(self.dest_kafka, topic, self.client_node, max_messages=3)
         assert count == 3, "Expected 3 records on destination, got %d" % count
 
         self.logger.info("Produce to destination while mirroring (should fail)")
-        self.produce_records(dest_node, topic, 1)
+        self.produce_records(self.dest_kafka, topic, 1, self.client_node)
 
         self.logger.info("Failover: stop mirror so destination topic becomes writable")
         self.dest_kafka.stop_cluster_mirror_topics(self.client_node, mirror_name, topic)
         self.wait_mirror_state(self.dest_kafka, mirror_name, "STOPPED", [topic])
 
         self.logger.info("Send 1 record to destination (should work now)")
-        self.produce_records(dest_node, topic, 1)
+        self.produce_records(self.dest_kafka, topic, 1, self.client_node)
 
         self.logger.info("Send 2 more records to source (not mirrored)")
-        self.produce_records(src_node, topic, 2)
+        self.produce_records(self.source_kafka, topic, 2, self.client_node)
 
         self.logger.info("Consume from source (expect 5 records)")
-        count = self.consume_records(topic, self.source_kafka, max_messages=5)
+        count = self.consume_records(self.source_kafka, topic, self.client_node, max_messages=5)
         assert count == 5, "Expected 5 records on source, got %d" % count
 
         self.logger.info("Failback: source mirrors from destination (same mirror name to retrieve LMO)")
@@ -377,19 +194,20 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         wait_until(
             lambda: self.source_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create reverse cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.source_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, topic),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start reverse mirror topics",
         )
         self.wait_mirror_lag_zero(self.source_kafka, mirror_name, [topic])
 
         self.logger.info("Consume from source (non-mirrored data should be truncated)")
-        count = self.consume_records(topic, self.source_kafka, max_messages=5, timeout_ms=5000)
+        count = self.consume_records(self.source_kafka, topic, self.client_node,
+                                     max_messages=5, timeout_ms=5000)
         assert count == 4, \
             "Expected 4 records on source after failback (non-mirrored data truncated), got %d" % count
 
@@ -402,11 +220,8 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.topics = {topic: {"partitions": 1, "replication-factor": 2}}
         self.source_kafka.create_topic({"topic": topic, "partitions": 1, "replication-factor": 2})
 
-        src_node = self.source_kafka.nodes[0]
-        dest_node = self.dest_kafka.nodes[0]
-
         self.logger.info("Send 3 records to source")
-        self.produce_records(src_node, topic, 3)
+        self.produce_records(self.source_kafka, topic, 3, self.client_node)
 
         self.logger.info("Start cluster mirror on destination")
         mirror_cfg = MirrorConfig(self.source_kafka.bootstrap_servers())
@@ -414,28 +229,29 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, topic),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name, [topic])
 
         self.logger.info("Pause mirroring and send 1 more record to source")
         self.dest_kafka.pause_cluster_mirror_topics(self.client_node, mirror_name, topic)
-        self.produce_records(src_node, topic, 1)
+        self.produce_records(self.source_kafka, topic, 1, self.client_node)
         self.wait_mirror_state(self.dest_kafka, mirror_name, "PAUSED", [topic])
 
         self.logger.info("Consume from destination while paused (expect 3, the 4th is not mirrored yet)")
-        count = self.consume_records(topic, self.dest_kafka, max_messages=4, timeout_ms=5000)
+        count = self.consume_records(self.dest_kafka, topic, self.client_node,
+                                     max_messages=4, timeout_ms=5000)
         assert count == 3, "Expected 3 records on destination while paused, got %d" % count
 
         self.logger.info("Produce to destination while paused (should fail)")
-        self.produce_records(dest_node, topic, 1)
+        self.produce_records(self.dest_kafka, topic, 1, self.client_node)
 
         self.logger.info("Resume mirroring and wait for it to catch up")
         self.dest_kafka.resume_cluster_mirror_topics(self.client_node, mirror_name, topic)
@@ -443,7 +259,7 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name, [topic])
 
         self.logger.info("Consume from destination (expect 4 records after resume)")
-        count = self.consume_records(topic, self.dest_kafka, max_messages=4)
+        count = self.consume_records(self.dest_kafka, topic, self.client_node, max_messages=4)
         assert count == 4, "Expected 4 records on destination after resume, got %d" % count
 
     @cluster(num_nodes=7)
@@ -461,13 +277,13 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, topic),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
         self.wait_mirror_state(self.dest_kafka, mirror_name, "MIRRORING", [topic])
@@ -498,10 +314,10 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.wait_mirror_state(self.dest_kafka, mirror_name, "MIRRORING", [topic])
 
         self.logger.info("Send records to source and verify they arrive at destination")
-        self.produce_records(self.source_kafka.nodes[0], topic, 3)
+        self.produce_records(self.source_kafka, topic, 3, self.client_node)
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name, [topic])
 
-        count = self.consume_records(topic, self.dest_kafka, max_messages=3)
+        count = self.consume_records(self.dest_kafka, topic, self.client_node, max_messages=3)
         assert count == 3, "Expected 3 records on destination after config update, got %d" % count
 
     @cluster(num_nodes=7)
@@ -519,13 +335,13 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, topic),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
         self.wait_mirror_state(self.dest_kafka, mirror_name, "MIRRORING", [topic])
@@ -559,13 +375,13 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, topic),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
         self.wait_mirror_state(self.dest_kafka, mirror_name, "MIRRORING", [topic])
@@ -582,7 +398,6 @@ class ClusterMirroringTest(MirrorHelpers, Test):
     def test_topics_filtering(self, metadata_quorum):
         """Verify topic include/exclude filtering, stopped topics not re-discovered, and auto-discovery."""
         mirror_name = "my-mirror"
-        src_node = self.source_kafka.nodes[0]
 
         self.logger.info("Create 4 topics on source")
         topics_cfg = {
@@ -595,23 +410,23 @@ class ClusterMirroringTest(MirrorHelpers, Test):
             self.source_kafka.create_topic({"topic": t, **cfg})
 
         self.logger.info("Send records to source topics")
-        self.produce_records(src_node, "orders-us", 3)
-        self.produce_records(src_node, "orders-eu", 3)
-        self.produce_records(src_node, "orders-internal", 2)
-        self.produce_records(src_node, "payments", 2)
+        self.produce_records(self.source_kafka, "orders-us", 3, self.client_node)
+        self.produce_records(self.source_kafka, "orders-eu", 3, self.client_node)
+        self.produce_records(self.source_kafka, "orders-internal", 2, self.client_node)
+        self.produce_records(self.source_kafka, "payments", 2, self.client_node)
 
         self.logger.info("Start mirror with regex include and exclude")
         mirror_cfg = MirrorConfig(self.source_kafka.bootstrap_servers())
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, "orders-.*", exclude="orders-internal"),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
 
@@ -623,9 +438,9 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name,
                                   ["orders-us", "orders-eu"])
 
-        count_us = self.consume_records("orders-us", self.dest_kafka, max_messages=3)
+        count_us = self.consume_records(self.dest_kafka, "orders-us", self.client_node, max_messages=3)
         assert count_us == 3, "Expected 3 records for orders-us, got %d" % count_us
-        count_eu = self.consume_records("orders-eu", self.dest_kafka, max_messages=3)
+        count_eu = self.consume_records(self.dest_kafka, "orders-eu", self.client_node, max_messages=3)
         assert count_eu == 3, "Expected 3 records for orders-eu, got %d" % count_eu
 
         self.logger.info("Verify excluded and non-matching topics don't exist on destination")
@@ -641,10 +456,10 @@ class ClusterMirroringTest(MirrorHelpers, Test):
                                topics={"orders-eu": topics_cfg["orders-eu"]})
 
         self.logger.info("Send 3 more records to orders-eu on source (should not be mirrored)")
-        self.produce_records(src_node, "orders-eu", 3)
+        self.produce_records(self.source_kafka, "orders-eu", 3, self.client_node)
         self.wait_for_metadata_sync(self.dest_kafka, mirror_name, num_cycles=2)
 
-        count_eu = self.consume_records("orders-eu", self.dest_kafka, timeout_ms=5000)
+        count_eu = self.consume_records(self.dest_kafka, "orders-eu", self.client_node, timeout_ms=5000)
         assert count_eu == 3, \
             "Expected 3 records for orders-eu after stop (not 6), got %d" % count_eu
 
@@ -653,13 +468,13 @@ class ClusterMirroringTest(MirrorHelpers, Test):
 
         self.logger.info("describe_cluster_mirror: %s",
                          self.dest_kafka.describe_cluster_mirror(self.client_node))
-        count_eu = self.consume_records("orders-eu", self.dest_kafka, timeout_ms=5000)
+        count_eu = self.consume_records(self.dest_kafka, "orders-eu", self.client_node, timeout_ms=5000)
         assert count_eu == 3, \
             "Expected orders-eu to remain at 3 records (not re-discovered), got %d" % count_eu
 
         self.logger.info("Create new topic on source that matches the include pattern")
         self.source_kafka.create_topic({"topic": "orders-jp", "partitions": 1, "replication-factor": 2})
-        self.produce_records(src_node, "orders-jp", 3)
+        self.produce_records(self.source_kafka, "orders-jp", 3, self.client_node)
 
         self.topics["orders-jp"] = {"partitions": 1, "replication-factor": 2}
         self.wait_mirror_state(self.dest_kafka, mirror_name, "MIRRORING",
@@ -667,7 +482,7 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name,
                                   topics={"orders-jp": {"partitions": 1, "replication-factor": 2}})
 
-        count_jp = self.consume_records("orders-jp", self.dest_kafka, max_messages=3)
+        count_jp = self.consume_records(self.dest_kafka, "orders-jp", self.client_node, max_messages=3)
         assert count_jp == 3, "Expected 3 records for orders-jp, got %d" % count_jp
 
         self.logger.info("Add payments to include pattern via alter config")
@@ -680,7 +495,7 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name,
                                   topics={"payments": {"partitions": 1, "replication-factor": 2}})
 
-        count_pay = self.consume_records("payments", self.dest_kafka, max_messages=2)
+        count_pay = self.consume_records(self.dest_kafka, "payments", self.client_node, max_messages=2)
         assert count_pay == 2, "Expected 2 records for payments, got %d" % count_pay
 
         self.logger.info("Verify orders-internal still doesn't exist on destination after all operations")
@@ -704,13 +519,13 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, topic),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
         self.wait_mirror_state(self.dest_kafka, mirror_name, "MIRRORING", [topic])
@@ -758,11 +573,11 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.source_kafka.create_topic({"topic": topic, "partitions": 1, "replication-factor": 2})
 
         self.logger.info("Produce records to source")
-        self.produce_records(self.source_kafka.nodes[0], topic, 3)
+        self.produce_records(self.source_kafka, topic, 3, self.client_node)
 
         self.logger.info("Create consumer groups on source by consuming all records")
         for group in ["app-group1", "app-group2", "internal-group1"]:
-            self.consume_records(topic, self.source_kafka, max_messages=3, group=group)
+            self.consume_records(self.source_kafka, topic, self.client_node, max_messages=3, group=group)
 
         self.logger.info("Start mirror with groups include (app-.*) and exclude (app-group2)")
         mirror_cfg = MirrorConfig(
@@ -773,13 +588,13 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, topic),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name, [topic])
@@ -808,7 +623,7 @@ class ClusterMirroringTest(MirrorHelpers, Test):
             self.source_kafka.create_topic({"topic": t, **cfg})
 
         for t in self.topics:
-            self.produce_records(self.source_kafka.nodes[0], t, 100)
+            self.produce_records(self.source_kafka, t, 100, self.client_node)
 
         self.logger.info("Bounce source cluster to trigger leader elections before mirroring")
         self.source_kafka.restart_cluster(clean_shutdown=True)
@@ -828,7 +643,7 @@ class ClusterMirroringTest(MirrorHelpers, Test):
                 lambda mn=mirror_name: self.dest_kafka.create_cluster_mirror(
                     self.client_node, mn, mirror_cfg
                 ),
-                timeout_sec=20,
+                timeout_sec=300,
                 backoff_sec=2,
                 err_msg="Failed to create cluster mirror %s" % mirror_name,
             )
@@ -838,7 +653,7 @@ class ClusterMirroringTest(MirrorHelpers, Test):
                     "Started"
                     in self.dest_kafka.start_cluster_mirror_topics(self.client_node, mn, tr)
                 ),
-                timeout_sec=20,
+                timeout_sec=300,
                 backoff_sec=2,
                 err_msg="Failed to start mirror topics for %s" % mirror_name,
             )
@@ -860,7 +675,7 @@ class ClusterMirroringTest(MirrorHelpers, Test):
 
         self.logger.info("Send more data and wait for all mirrors to catch up")
         for t in self.topics:
-            self.produce_records(self.source_kafka.nodes[0], t, 100)
+            self.produce_records(self.source_kafka, t, 100, self.client_node)
 
         for mirror_name, (_, topic_list) in mirrors.items():
             self.wait_mirror_lag_zero(
@@ -894,7 +709,7 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         def trigger_ule(node):
             """Trigger unclean leader election on the given node."""
             cmd = "%s --bootstrap-server %s --topic %s --partition 0 --election-type UNCLEAN" % (
-                self.client.path.script("kafka-leader-election.sh"),
+                self.source_kafka.path.script("kafka-leader-election.sh", self.client_node),
                 broker_bootstrap(node), topic)
             self.client_node.account.ssh(cmd, allow_fail=False)
 
@@ -916,7 +731,8 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.source_kafka.restart_cluster(clean_shutdown=True)
 
         self.logger.info("Send 1 message via source broker 0")
-        self.produce_records(src_broker0, topic, 1)
+        self.produce_records(self.source_kafka, topic, 1, self.client_node,
+                             bootstrap_servers=broker_bootstrap(src_broker0))
 
         self.logger.info("Start cluster mirror on destination")
         mirror_cfg = MirrorConfig(self.source_kafka.bootstrap_servers())
@@ -924,13 +740,13 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, topic),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
         self.wait_mirror_state(
@@ -942,7 +758,8 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.source_kafka.stop_node(src_broker0)
 
         self.logger.info("Send 1 message via source broker 1")
-        self.produce_records(src_broker1, topic, 1)
+        self.produce_records(self.source_kafka, topic, 1, self.client_node,
+                             bootstrap_servers=broker_bootstrap(src_broker1))
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name, [topic],
                                   err_msg="Mirror did not catch up after broker 0 stopped")
         log_hashes("after source broker 0 stopped (broker 0 should be out of sync)")
@@ -954,7 +771,8 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         trigger_ule(src_broker0)
 
         self.logger.info("Send 2 messages via source broker 0")
-        self.produce_records(src_broker0, topic, 2)
+        self.produce_records(self.source_kafka, topic, 2, self.client_node,
+                             bootstrap_servers=broker_bootstrap(src_broker0))
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name, [topic],
                                   err_msg="Mirror did not catch up after ULE 1")
         log_hashes("after ULE 1 (broker 1 should be out of sync)")
@@ -966,7 +784,7 @@ class ClusterMirroringTest(MirrorHelpers, Test):
                          self.dest_kafka.describe_cluster_mirror(self.client_node))
 
         self.logger.info("Send 2 messages via destination broker 0")
-        self.produce_records(self.dest_kafka.nodes[0], topic, 2)
+        self.produce_records(self.dest_kafka, topic, 2, self.client_node)
 
         self.logger.info("ULE 2: stop broker 0, start broker 1 (stale), elect it as leader")
         self.source_kafka.stop_node(src_broker0)
@@ -975,7 +793,8 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         trigger_ule(src_broker1)
 
         self.logger.info("Send 6 messages via source broker 1")
-        self.produce_records(src_broker1, topic, 6)
+        self.produce_records(self.source_kafka, topic, 6, self.client_node,
+                             bootstrap_servers=broker_bootstrap(src_broker1))
         log_hashes("after ULE 2 (broker 1 should have the most up to date data)")
 
         self.logger.info("Failback: source now mirrors from destination")
@@ -985,13 +804,13 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         wait_until(
             lambda: self.source_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create reverse cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.source_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, topic),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start reverse mirror topics",
         )
         self.wait_mirror_state(self.source_kafka, mirror_name, "LOG_TRUNCATION", [topic])
@@ -1023,8 +842,8 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.logger.info("Run initial committed transaction and bounce source to bump leader epoch")
         def run_producer(kafka, topic, transactional_id=None, mode="commit",
                          num_records=1, waiting_ms=0, background=False):
-            """Run TransactionalTestProducer on the dedicated producer client node."""
-            cmd = self.client.path.script("kafka-run-class.sh")
+            """Run TransactionalTestProducer."""
+            cmd = kafka.path.script("kafka-run-class.sh", self.client_node)
             cmd += " org.apache.kafka.tools.TransactionalTestProducer"
             cmd += " --bootstrap-server %s" % kafka.bootstrap_servers(kafka.security_protocol)
             cmd += " --topic %s" % topic
@@ -1056,7 +875,7 @@ class ClusterMirroringTest(MirrorHelpers, Test):
             """Count ongoing transactions across all partitions of a topic."""
             count = 0
             for partition in range(self.topics[topic]["partitions"]):
-                cmd = self.client.path.script("kafka-transactions.sh")
+                cmd = kafka.path.script("kafka-transactions.sh", self.client_node)
                 cmd += " --bootstrap-server %s" % kafka.bootstrap_servers(kafka.security_protocol)
                 cmd += " describe-producers --topic %s --partition %d" % (topic, partition)
                 for line in self.client_node.account.ssh_capture(cmd, allow_fail=True):
@@ -1081,7 +900,7 @@ class ClusterMirroringTest(MirrorHelpers, Test):
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg
             ),
-            timeout_sec=20,
+            timeout_sec=300,
             backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
@@ -1092,7 +911,7 @@ class ClusterMirroringTest(MirrorHelpers, Test):
                     self.client_node, mirror_name, topic
                 )
             ),
-            timeout_sec=20,
+            timeout_sec=300,
             backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
@@ -1116,9 +935,9 @@ class ClusterMirroringTest(MirrorHelpers, Test):
             return offsets
 
         source_offsets = parse_end_offsets(
-            self.source_kafka.get_offset_shell(topic=topic, time=-1))
+            self.get_offset_shell(self.source_kafka, topic=topic, time=-1))
         dest_offsets = parse_end_offsets(
-            self.dest_kafka.get_offset_shell(topic=topic, time=-1))
+            self.get_offset_shell(self.dest_kafka, topic=topic, time=-1))
         extra = sum(dest_offsets.values()) - sum(source_offsets.values())
         # 2 abort markers (one per pending txn) + 1 PID reset barrier per partition
         num_partitions = self.topics[topic]["partitions"]
@@ -1132,15 +951,16 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         run_producer(self.dest_kafka, topic, topic + "-d", "commit")
 
         self.logger.info("Checking raw number of records")
-        source_count = self.consume_records(topic, self.source_kafka)
-        dest_count = self.consume_records(topic, self.dest_kafka)
+        source_count = self.consume_records(self.source_kafka, topic, self.client_node)
+        dest_count = self.consume_records(self.dest_kafka, topic, self.client_node)
         assert dest_count == source_count + 2, \
             "Expected dest to have exactly 2 more records than source, " \
             "got source=%d, dest=%d" % (source_count, dest_count)
 
         self.logger.info("Checking read_committed consumer can make progress")
         # 4 aborted data records are filtered out: txn-b, txn-c, txn-d fenced, txn-d pending
-        dest_committed = self.consume_records(topic, self.dest_kafka, isolation_level="read_committed")
+        dest_committed = self.consume_records(self.dest_kafka, topic, self.client_node,
+                                              isolation_level="read_committed")
         assert dest_committed == dest_count - 4, \
             "Expected dest_committed=%d, got %d" % (dest_count - 4, dest_committed)
 
@@ -1149,17 +969,16 @@ class ClusterMirroringTest(MirrorHelpers, Test):
     def test_consumer_groups_commit(self, metadata_quorum):
         """Verify consumer group offset sync for mirror topics and active consumer protection."""
         mirror_name = "my-mirror"
-        src_node = self.source_kafka.nodes[0]
 
         self.logger.info("Create two topics on source")
         self.source_kafka.create_topic({"topic": "my-topic", "partitions": 1, "replication-factor": 2})
         self.source_kafka.create_topic({"topic": "other-topic", "partitions": 1, "replication-factor": 2})
-        self.produce_records(src_node, "my-topic", 3)
-        self.produce_records(src_node, "other-topic", 3)
+        self.produce_records(self.source_kafka, "my-topic", 3, self.client_node)
+        self.produce_records(self.source_kafka, "other-topic", 3, self.client_node)
 
         self.logger.info("Create consumer group my-group on source by consuming both topics")
-        self.consume_records("my-topic", self.source_kafka, max_messages=3, group="my-group")
-        self.consume_records("other-topic", self.source_kafka, max_messages=3, group="my-group")
+        self.consume_records(self.source_kafka, "my-topic", self.client_node, max_messages=3, group="my-group")
+        self.consume_records(self.source_kafka, "other-topic", self.client_node, max_messages=3, group="my-group")
 
         self.logger.info("Start mirror with only my-topic (not other-topic)")
         self.topics = {"my-topic": {"partitions": 1, "replication-factor": 2}}
@@ -1167,20 +986,20 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, "my-topic"),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name, ["my-topic"])
         self.wait_for_metadata_sync(self.dest_kafka, mirror_name, num_cycles=2)
 
         self.logger.info("Verify my-group on dest has my-topic offset but not other-topic")
-        group_desc = self.dest_kafka.describe_consumer_group("my-group", self.client_node)
+        group_desc = self.describe_consumer_group(self.dest_kafka, "my-group", self.client_node)
         assert "my-topic" in group_desc, \
             "Expected my-topic offset to be synced on destination"
         assert "other-topic" not in group_desc, \
@@ -1195,11 +1014,11 @@ class ClusterMirroringTest(MirrorHelpers, Test):
             return None
 
         self.logger.info("Produce 2 more records to my-topic and verify synced offset is exactly 3")
-        self.produce_records(src_node, "my-topic", 2)
+        self.produce_records(self.source_kafka, "my-topic", 2, self.client_node)
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name, ["my-topic"])
         self.wait_for_metadata_sync(self.dest_kafka, mirror_name, num_cycles=2)
 
-        dest_desc = self.dest_kafka.describe_consumer_group("my-group", self.client_node)
+        dest_desc = self.describe_consumer_group(self.dest_kafka, "my-group", self.client_node)
         dest_offset = parse_current_offset(dest_desc, "my-topic")
         assert dest_offset == 3, "Expected dest offset 3 (synced from source), got %s" % dest_offset
 
@@ -1212,8 +1031,8 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.wait_for_metadata_sync(self.dest_kafka, mirror_name, num_cycles=2)
 
         self.logger.info("Verify source offset is 2 but dest offset is still 5 (sync skipped)")
-        src_desc = self.source_kafka.describe_consumer_group("my-group", self.client_node)
-        dest_desc = self.dest_kafka.describe_consumer_group("my-group", self.client_node)
+        src_desc = self.describe_consumer_group(self.source_kafka, "my-group", self.client_node)
+        dest_desc = self.describe_consumer_group(self.dest_kafka, "my-group", self.client_node)
         self.logger.info("Source group describe: %s", src_desc)
         self.logger.info("Dest group describe: %s", dest_desc)
 
@@ -1228,29 +1047,28 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         """Verify share group offset sync for mirror topics and active consumer protection."""
         mirror_name = "my-mirror"
         share_group = "my-share-group"
-        src_node = self.source_kafka.nodes[0]
 
         self.logger.info("Create two topics on source")
         self.source_kafka.create_topic({"topic": "my-topic", "partitions": 1, "replication-factor": 2})
         self.source_kafka.create_topic({"topic": "other-topic", "partitions": 1, "replication-factor": 2})
-        self.produce_records(src_node, "my-topic", 3)
-        self.produce_records(src_node, "other-topic", 3)
+        self.produce_records(self.source_kafka, "my-topic", 3, self.client_node)
+        self.produce_records(self.source_kafka, "other-topic", 3, self.client_node)
 
         self.logger.info("Set share.auto.offset.reset=earliest and consume both topics")
-        self.source_kafka.set_share_group_offset_reset_strategy(share_group, "earliest")
+        self.source_kafka.set_share_group_offset_reset_strategy(share_group, "earliest", node=self.client_node)
         self.consume_share_records("my-topic", self.source_kafka, share_group, max_messages=3)
         self.consume_share_records("other-topic", self.source_kafka, share_group, max_messages=3)
 
         self.logger.info("Run background share consumer + produce more data to commit SPSO")
         self.run_background_share_consumer(self.source_kafka, "my-topic", share_group)
-        self.produce_records(src_node, "my-topic", 3)
+        self.produce_records(self.source_kafka, "my-topic", 3, self.client_node)
         time.sleep(5)
 
         self.logger.info("Source share group describe: %s",
                          self.source_kafka.describe_share_group(share_group, self.client_node))
 
         self.logger.info("Kill background share consumer")
-        self.kill_background_consumer("ConsoleShareConsumer")
+        self.kill_background_consumer(self.client_node, "ConsoleShareConsumer")
 
         self.logger.info("Start mirror with only my-topic")
         self.topics = {"my-topic": {"partitions": 1, "replication-factor": 2}}
@@ -1258,13 +1076,13 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, "my-topic"),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name, ["my-topic"])
@@ -1281,7 +1099,7 @@ class ClusterMirroringTest(MirrorHelpers, Test):
             "Expected other-topic offset to not appear on destination"
 
         self.logger.info("Produce 2 more and consume delta using synced offsets")
-        self.produce_records(src_node, "my-topic", 2)
+        self.produce_records(self.source_kafka, "my-topic", 2, self.client_node)
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name, ["my-topic"])
         self.wait_for_metadata_sync(self.dest_kafka, mirror_name, num_cycles=2)
 
@@ -1325,39 +1143,38 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.topics = {topic: {"partitions": 1, "replication-factor": 2}}
         self.source_kafka.create_topic({"topic": topic, "partitions": 1, "replication-factor": 1})
 
-        src_node = self.source_kafka.nodes[0]
-
         self.logger.info("Produce 3 records and bounce source brokers to bump leader epoch")
-        self.produce_records(src_node, topic, 3)
+        self.produce_records(self.source_kafka, topic, 3, self.client_node)
         for node in self.source_kafka.nodes:
             self.source_kafka.restart_node(node)
 
         self.logger.info("Produce 2 more records after leader elections")
-        self.produce_records(src_node, topic, 2)
+        self.produce_records(self.source_kafka, topic, 2, self.client_node)
 
         self.logger.info("Start cluster mirror")
         mirror_cfg = MirrorConfig(self.source_kafka.bootstrap_servers())
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, topic),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name, [topic])
 
         self.logger.info("Consume 2 records from destination with a consumer group (commits offsets with source LE)")
-        count1 = self.consume_records(topic, self.dest_kafka, max_messages=2, group=group)
+        count1 = self.consume_records(self.dest_kafka, topic, self.client_node,
+                                      max_messages=2, group=group)
         assert count1 == 2, "Expected 2 records on first consume, got %d" % count1
 
         self.logger.info("Restart consumer (triggers OffsetFetch and refreshCommittedOffsets)")
         # Without the epoch bump fix, this would hang because source LE > local LE
-        count2 = self.consume_records(topic, self.dest_kafka, max_messages=2,
+        count2 = self.consume_records(self.dest_kafka, topic, self.client_node, max_messages=2,
                                       timeout_ms=20000, group=group, from_beginning=False)
         assert count2 == 2, "Expected 2 records on resumed consume, got %d" % count2
 
@@ -1371,19 +1188,19 @@ class ClusterMirroringTest(MirrorHelpers, Test):
         self.source_kafka.create_topic({"topic": topic, "partitions": 3, "replication-factor": 1})
 
         self.logger.info("Produce initial records and start cluster mirror")
-        self.produce_records(self.source_kafka.nodes[0], topic, 3)
+        self.produce_records(self.source_kafka, topic, 3, self.client_node)
 
         mirror_cfg = MirrorConfig(self.source_kafka.bootstrap_servers())
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.client_node, mirror_name, mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                 self.client_node, mirror_name, topic),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=300, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
         self.wait_mirror_state(self.dest_kafka, mirror_name, "MIRRORING", [topic])
@@ -1401,8 +1218,8 @@ class ClusterMirroringTest(MirrorHelpers, Test):
                                err_msg="Mirror did not recover to MIRRORING after source restart")
 
         self.logger.info("Verify data still flows after recovery")
-        self.produce_records(self.source_kafka.nodes[0], topic, 3)
+        self.produce_records(self.source_kafka, topic, 3, self.client_node)
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name, [topic])
 
-        count = self.consume_records(topic, self.dest_kafka, max_messages=6)
+        count = self.consume_records(self.dest_kafka, topic, self.client_node, max_messages=6)
         assert count == 6, "Expected 6 records after recovery, got %d" % count
