@@ -33,7 +33,6 @@ import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
-import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
 import org.apache.kafka.common.message.DeleteRecordsResponseData.DeleteRecordsPartitionResult
@@ -56,7 +55,7 @@ import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.utils.{Exit, Time, Utils}
 import org.apache.kafka.coordinator.transaction.{AddPartitionsToTxnConfig, TransactionLogConfig}
-import org.apache.kafka.image.{LocalReplicaChanges, MetadataDelta, MetadataImage, TopicsDelta}
+import org.apache.kafka.image.{LocalReplicaChanges, MetadataImage, TopicsDelta}
 import org.apache.kafka.logger.StateChangeLogger
 import org.apache.kafka.metadata.{LeaderAndIsr, MetadataCache, PartitionRegistration}
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
@@ -587,54 +586,6 @@ class ReplicaManager(val config: KafkaConfig,
     allPartitions.values.asScala.iterator.flatMap {
       case HostedPartition.Online(partition) => Some(partition)
       case _ => None
-    }
-  }
-
-  private def sealTopicPartitions(topic: String): Unit = {
-    if (initDisklessLogManager.isEmpty) {
-      error(s"Cannot seal partitions for topic $topic: InitDisklessLogManager is not enabled.")
-      return
-    }
-    allPartitions.forEach { (tp, hostedPartition) =>
-      if (tp.topic() == topic) {
-        hostedPartition match {
-          case HostedPartition.Online(partition) if partition.isLeader =>
-            partition.topicId match {
-              case Some(id) =>
-                try {
-                  partition.seal()
-                  initDisklessLogManager.foreach(_.registerPartition(partition, id))
-                } catch {
-                  case e: KafkaStorageException =>
-                    stateChangeLogger.error(s"Failed to seal partition ${partition.topicPartition} " +
-                      s"for diskless switch due to a storage error ${e.getMessage}")
-                    markPartitionOffline(tp)
-                }
-              case None =>
-                error(s"Partition ${partition.topicPartition} has no topic ID, skipping seal and switch registration")
-            }
-          case _ =>
-        }
-      }
-    }
-  }
-
-  def sealExistingLeadersOfTopicsSwitchedToDiskless(delta: MetadataDelta, newImage: MetadataImage): Unit = {
-    Option(delta.configsDelta()).foreach { configsDelta =>
-      configsDelta.changes().forEach { (resource, _) =>
-        if (resource.`type`() == ConfigResource.Type.TOPIC) {
-          val topicName = resource.name()
-          val oldProps = delta.image().configs().configProperties(resource)
-          val wasDiskless = oldProps.getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
-          val newProps = newImage.configs().configProperties(resource)
-          val isDiskless = newProps.getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
-          val topicExistedBefore = delta.image().topics().getTopic(topicName) != null
-          if (topicExistedBefore && !wasDiskless && isDiskless) {
-            info(s"Topic $topicName transitioning from classic to diskless, sealing leader partitions")
-            sealTopicPartitions(topicName)
-          }
-        }
-      }
     }
   }
 
@@ -3052,15 +3003,25 @@ class ReplicaManager(val config: KafkaConfig,
           }
         }
       } else if (existingPartition.isDefined && !isConsolidatingDisklessTopic) {
-        // Classic-to-diskless transition: seal the partition before making it leader
-        // so that no produce request can ever be processed by the new leader.
+        // Classic-to-diskless switch. The controller writes the diskless.enable=true
+        // ConfigRecord and the per-partition PartitionChangeRecord (with
+        // classicToDisklessStartOffset = CLASSIC_TO_DISKLESS_SWITCH_PENDING) in the
+        // same atomic op so the partition shows up here in localChanges.leaders whenever
+        // this broker is (or just became) the leader.
         val partition = existingPartition.get
         try {
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+          // Seal BEFORE makeLeader so:
+          // - if this broker was already the leader, no further classic append can succeed after this point
+          // - if this broker is being newly elected leader, the partition is sealed before
+          //   it is ever placed in the leader role, guaranteeing that no produce request
+          //   can be processed against the classic log by the new leader.
           partition.seal()
           partition.makeLeader(info.partition, false, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
-          initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
+          if (info.partition.classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
+            initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
+          }
           changedPartitions.add(partition)
         } catch {
           case e: KafkaStorageException =>
