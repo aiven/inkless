@@ -10112,8 +10112,12 @@ class ReplicaManagerTest {
       val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
       val sharedState = mock(classOf[SharedState], Answers.RETURNS_DEEP_STUBS)
       when(sharedState.time()).thenReturn(Time.SYSTEM)
-      when(sharedState.config()).thenReturn(new InklessConfig(new util.HashMap[String, Object]()))
+      val inklessConfigMap = new util.HashMap[String, Object]()
+      // Disable lagging consumer feature to match the empty lagging fetch storage
+      inklessConfigMap.put("fetch.lagging.consumer.thread.pool.size", Integer.valueOf(0))
+      when(sharedState.config()).thenReturn(new InklessConfig(inklessConfigMap))
       when(sharedState.controlPlane()).thenReturn(controlPlane.getOrElse(mock(classOf[ControlPlane])))
+      when(sharedState.maybeLaggingFetchStorage()).thenReturn(Optional.empty())
       val inklessMetadata = mock(classOf[InklessMetadataView])
       when(inklessMetadata.isDisklessTopic(any())).thenReturn(false)
       when(inklessMetadata.getTopicId(anyString())).thenAnswer{ invocation =>

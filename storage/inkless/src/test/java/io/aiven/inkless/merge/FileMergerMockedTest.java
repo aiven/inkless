@@ -114,16 +114,19 @@ class FileMergerMockedTest {
 
     @BeforeEach
     void setup() {
+        // Mocking only the methods that are relevant for the FileMerger, other methods will throw by default due to strict stubs.
         when(inklessConfig.objectKeyPrefix()).thenReturn("prefix");
         when(inklessConfig.fileMergeWorkDir()).thenReturn(WORK_DIR);
-        when(inklessConfig.cacheMaxCount()).thenReturn(10000L);
+        // Storage backends are now created eagerly during SharedState.initialize()
+        when(inklessConfig.storage(any())).thenReturn(storage);
 
         sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig, mock(MetadataView.class), controlPlane,
             mock(BrokerTopicStats.class), mock(Supplier.class));
     }
 
     @AfterEach
-    void tearDown() {
+    void tearDown() throws Exception {
+        sharedState.close();
         assertThat(WORK_DIR).isEmptyDirectory();
     }
 
@@ -131,7 +134,6 @@ class FileMergerMockedTest {
     void singleFileSingleBatch() throws StorageBackendException, IOException {
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
-        when(inklessConfig.storage(any())).thenReturn(storage);
 
         final String obj1 = "obj1";
 
@@ -187,7 +189,6 @@ class FileMergerMockedTest {
     void twoFilesWithGaps(final boolean directFileOrder, final boolean directBatchOrder) throws StorageBackendException, IOException {
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
-        when(inklessConfig.storage(any())).thenReturn(storage);
 
         final String obj1 = "obj1";
         final String obj2 = "obj2";
@@ -317,8 +318,6 @@ class FileMergerMockedTest {
 
     @Test
     void errorInReading() throws Exception {
-        when(inklessConfig.storage(any())).thenReturn(storage);
-
         final String obj1 = "obj1";
         final long batch1Id = 1;
         when(storage.fetch(any(ObjectKey.class), isNull()))
@@ -345,7 +344,6 @@ class FileMergerMockedTest {
 
     @Test
     void errorInWriting() throws Exception {
-        when(inklessConfig.storage(any())).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
 
@@ -387,7 +385,6 @@ class FileMergerMockedTest {
     @ParameterizedTest
     @ValueSource(booleans = {true, false})
     void errorInCommittingFromControlPlane(boolean isSafeToDelete) throws Exception {
-        when(inklessConfig.storage(any())).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
 
@@ -431,7 +428,6 @@ class FileMergerMockedTest {
 
     @Test
     void errorInCommittingNotFromControlPlane() throws Exception {
-        when(inklessConfig.storage(any())).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
 
