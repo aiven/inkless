@@ -276,7 +276,9 @@ object DisklessSwitchInvariantsTest {
       // propagate the correct HW when the seal commits.
       Arguments.of(0L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, 0L: java.lang.Long),
       Arguments.of(5L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, 0L: java.lang.Long),
-      // No switch (-1): partition is sealed but HW is not advanced (no seal offset to target).
+      // No switch (-1): not realistic today but documents defensive behavior of the
+      // post-restart path which seals unconditionally. Relevant if diskless topics
+      // eventually use local logs as a read cache.
       Arguments.of(0L: java.lang.Long,  NO_CLASSIC_TO_DISKLESS_START_OFFSET: java.lang.Long, 0L: java.lang.Long),
       Arguments.of(5L: java.lang.Long,  NO_CLASSIC_TO_DISKLESS_START_OFFSET: java.lang.Long, 0L: java.lang.Long),
     )
@@ -292,7 +294,7 @@ object DisklessSwitchInvariantsTest {
       // Pending seal (-2): fetcher starts (new leader epoch triggers catch-up)
       Arguments.of(0L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, true: java.lang.Boolean),
       Arguments.of(5L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, true: java.lang.Boolean),
-      // No switch (-1): sealed but no fetcher needed
+      // No switch (-1): defensive — documents post-restart seal behavior (see leader scenarios)
       Arguments.of(0L: java.lang.Long,  NO_CLASSIC_TO_DISKLESS_START_OFFSET: java.lang.Long, false: java.lang.Boolean),
       Arguments.of(5L: java.lang.Long,  NO_CLASSIC_TO_DISKLESS_START_OFFSET: java.lang.Long, false: java.lang.Boolean),
     )
