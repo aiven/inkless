@@ -181,22 +181,6 @@ Under ``inkless.``
   * Valid Values: [1,...]
   * Importance: low
 
-``file.merger.interval.ms``
-  The interval with which to merge files.
-
-  * Type: int
-  * Default: 60000 (1 minute)
-  * Valid Values: [1,...]
-  * Importance: low
-
-``file.merger.temp.dir``
-  The temporary directory for file merging.
-
-  * Type: string
-  * Default: /tmp/inkless/merger
-  * Valid Values: non-null string
-  * Importance: low
-
 ``object.key.log.prefix.masked``
   Whether to log full object key path, or mask the prefix.
 
@@ -235,22 +219,6 @@ InMemoryControlPlaneConfig
 -----------------
 Under ``inkless.control.plane.``
 
-``file.merge.lock.period.ms``
-  The period of time when the file merge job is locked (assumed being performed).
-
-  * Type: long
-  * Default: 3600000 (1 hour)
-  * Valid Values: [1,...]
-  * Importance: medium
-
-``file.merge.size.threshold.bytes``
-  The total minimum volume of files to be merged together.
-
-  * Type: long
-  * Default: 104857600 (100 mebibytes)
-  * Valid Values: [1,...]
-  * Importance: medium
-
 
 
 -----------------
@@ -278,22 +246,6 @@ Under ``inkless.control.plane.``
   * Type: password
   * Default: null
   * Importance: high
-
-``file.merge.lock.period.ms``
-  The period of time when the file merge job is locked (assumed being performed).
-
-  * Type: long
-  * Default: 3600000 (1 hour)
-  * Valid Values: [1,...]
-  * Importance: medium
-
-``file.merge.size.threshold.bytes``
-  The total minimum volume of files to be merged together.
-
-  * Type: long
-  * Default: 104857600 (100 mebibytes)
-  * Valid Values: [1,...]
-  * Importance: medium
 
 ``max.connections``
   Maximum number of connections to the database
@@ -331,22 +283,6 @@ Under ``inkless.control.plane.read.``
   * Default: null
   * Importance: high
 
-``file.merge.lock.period.ms``
-  The period of time when the file merge job is locked (assumed being performed).
-
-  * Type: long
-  * Default: 3600000 (1 hour)
-  * Valid Values: [1,...]
-  * Importance: medium
-
-``file.merge.size.threshold.bytes``
-  The total minimum volume of files to be merged together.
-
-  * Type: long
-  * Default: 104857600 (100 mebibytes)
-  * Valid Values: [1,...]
-  * Importance: medium
-
 ``max.connections``
   Maximum number of connections to the database
 
@@ -382,22 +318,6 @@ Under ``inkless.control.plane.write.``
   * Type: password
   * Default: null
   * Importance: high
-
-``file.merge.lock.period.ms``
-  The period of time when the file merge job is locked (assumed being performed).
-
-  * Type: long
-  * Default: 3600000 (1 hour)
-  * Valid Values: [1,...]
-  * Importance: medium
-
-``file.merge.size.threshold.bytes``
-  The total minimum volume of files to be merged together.
-
-  * Type: long
-  * Default: 104857600 (100 mebibytes)
-  * Valid Values: [1,...]
-  * Importance: medium
 
 ``max.connections``
   Maximum number of connections to the database

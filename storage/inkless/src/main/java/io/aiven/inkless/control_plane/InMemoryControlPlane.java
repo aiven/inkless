@@ -39,7 +39,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.TimeUtils;
@@ -54,7 +53,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
     private final AtomicLong fileIdCounter = new AtomicLong(0);
     private final AtomicLong batchIdCounter = new AtomicLong(0);
-    private final AtomicLong fileMergeWorkItemIdCounter = new AtomicLong(0);
     private final Map<TopicIdPartition, LogInfo> logs = new HashMap<>();
     // LinkedHashMap to preserve the insertion order, to select files for merging in order.
     // The key is the object key.
@@ -62,7 +60,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     // The key is the partition. The inner map key is the last offset in the batch.
     private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfoInternal>> batches = new HashMap<>();
     // The key is the ID.
-    private final Map<Long, FileMergeWorkItem> fileMergeWorkItems = new HashMap<>();
     private final HashMap<TopicIdPartition, TreeMap<Long, LatestProducerState>> producers = new HashMap<>();
 
     private InMemoryControlPlaneConfig controlPlaneConfig;
@@ -483,194 +480,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         } else {
             LOGGER.error("listOffset request for timestamp {} in {} unsupported", timestamp, request.topicIdPartition());
             return ListOffsetsResponse.unknownServerError(request.topicIdPartition());
-        }
-    }
-
-    @Override
-    public synchronized FileMergeWorkItem getFileMergeWorkItem() {
-        final Instant now = TimeUtils.now(time);
-
-        // Before looking into the locked files, clear the merge work items older than the lock period.
-        for (final var entry : fileMergeWorkItems.entrySet()) {
-            final var id = entry.getKey();
-            final var workItem = entry.getValue();
-            final Instant expiresAt = workItem.createdAt().plus(controlPlaneConfig.fileMergeLockPeriod());
-            if (now.isAfter(expiresAt) || expiresAt.equals(now)) {
-                fileMergeWorkItems.remove(id);
-            }
-        }
-
-        // Find the locked files, i.e. the files that are already a part of some file merge work item.
-        final Set<Long> lockedFiles = fileMergeWorkItems.values().stream()
-            .flatMap(wi -> wi.files().stream())
-            .map(FileMergeWorkItem.File::fileId)
-            .collect(Collectors.toSet());
-
-        long totalMergeableSize = 0;
-        final List<FileMergeWorkItem.File> mergeableFiles = new ArrayList<>();
-        // This iterates in the insertion order.
-        for (final var entry : files.entrySet()) {
-            if (totalMergeableSize >= controlPlaneConfig.fileMergeSizeThresholdBytes()) {
-                break;
-            }
-
-            final FileInfo fileInfo = entry.getValue();
-            // This file is deleted.
-            if (fileInfo.fileState == FileState.DELETING) {
-                continue;
-            }
-            // This file is already in some merge work item -- skip.
-            if (lockedFiles.contains(fileInfo.fileId)) {
-                continue;
-            }
-
-            // This file is already the result of a merging operation -- skip.
-            if (fileInfo.fileReason == FileReason.MERGE) {
-                continue;
-            }
-
-            mergeableFiles.add(new FileMergeWorkItem.File(
-                fileInfo.fileId,
-                fileInfo.objectKey,
-                fileInfo.format,
-                fileInfo.fileSize,
-                batchesFromFileToMerge(fileInfo)
-            ));
-            totalMergeableSize += fileInfo.fileSize;
-        }
-
-        // Have we found enough data to merge?
-        if (totalMergeableSize < controlPlaneConfig.fileMergeSizeThresholdBytes()) {
-            return null;
-        } else {
-            final long id = fileMergeWorkItemIdCounter.incrementAndGet();
-            final FileMergeWorkItem workItem = new FileMergeWorkItem(id, now, mergeableFiles);
-            fileMergeWorkItems.put(id, workItem);
-            return workItem;
-        }
-    }
-
-    private List<BatchInfo> batchesFromFileToMerge(final FileInfo fileInfo) {
-        final List<BatchInfo> result = new ArrayList<>();
-
-        for (final var coordinatesEntry : this.batches.entrySet()) {
-            for (final var batchInfoInternal : coordinatesEntry.getValue().values()) {
-                if (batchInfoInternal.fileInfo == fileInfo) {
-                    final BatchInfo batchInfo = batchInfoInternal.batchInfo;
-                    result.add(batchInfo);
-                }
-            }
-        }
-
-        return result;
-    }
-
-    @Override
-    public synchronized void commitFileMergeWorkItem(final long workItemId,
-                                                     final String objectKey,
-                                                     final ObjectFormat format,
-                                                     final int uploaderBrokerId,
-                                                     final long fileSize,
-                                                     final List<MergedFileBatch> batches) {
-        final FileMergeWorkItem workItem = fileMergeWorkItems.get(workItemId);
-        if (workItem == null) {
-            // Do not delete the file here, it may be a retry of a successful commit.
-            // Only delete the file if a failure condition is found.
-
-            throw new FileMergeWorkItemNotExist(workItemId);
-        }
-
-        final Set<Long> workItemFileIds = workItem.files().stream()
-            .map(FileMergeWorkItem.File::fileId)
-            .collect(Collectors.toSet());
-
-        // Before we start doing modifications, verify we can finish them without errors.
-        for (final MergedFileBatch mergedFileBatch : batches) {
-            // We don't support compaction or concatenation yet, so the only correct number of parent batches is 1.
-            if (mergedFileBatch.parentBatches().size() != 1) {
-                createEmptyDeletingFile(objectKey, uploaderBrokerId);
-
-                throw new ControlPlaneException(
-                    String.format("Invalid parent batch count %d in %s",
-                        mergedFileBatch.parentBatches().size(),
-                        mergedFileBatch
-                    )
-                );
-            }
-
-            // Check the parent batches: if they exist, they must be part of this work item (through their files).
-            final Set<Long> parentBatches = new HashSet<>(mergedFileBatch.parentBatches());
-            final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(mergedFileBatch.metadata().topicIdPartition());
-            if (coordinates != null) {
-                final var parentBatchesFound = coordinates.values().stream()
-                    .filter(b -> parentBatches.contains(b.batchInfo.batchId()))
-                    .toList();
-                for (final var parentBatch : parentBatchesFound) {
-                    if (!workItemFileIds.contains(parentBatch.fileInfo.fileId)) {
-                        createEmptyDeletingFile(objectKey, uploaderBrokerId);
-
-                        throw new ControlPlaneException(
-                            String.format("Batch %d is not part of work item in %s",
-                                parentBatch.batchInfo.batchId(), mergedFileBatch));
-                    }
-                }
-            }
-        }
-
-        // Commit after all the checks.
-        fileMergeWorkItems.remove(workItemId);
-
-        // Delete the old files and insert the new one.
-        for (final var oldFile : workItem.files()) {
-            final FileInfo oldFileInfo = this.files.get(oldFile.objectKey());
-            if (oldFileInfo != null && oldFileInfo.fileState == FileState.UPLOADED) {
-                oldFileInfo.markDeleted(TimeUtils.now(time));
-            }
-        }
-        final FileInfo mergedFile = FileInfo.createUploaded(fileIdCounter.incrementAndGet(), objectKey, format, FileReason.MERGE, uploaderBrokerId, fileSize);
-        this.files.put(objectKey, mergedFile);
-
-        // Delete the old batches and insert the new one.
-        for (final MergedFileBatch batch : batches) {
-            final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(batch.metadata().topicIdPartition());
-            // Probably the partition was deleted -- skip the new batch (exclude it from the file too).
-            if (coordinates == null) {
-                continue;
-            }
-
-            // We now support only a single parent batch now.
-            final Set<Long> parentBatches = new HashSet<>(batch.parentBatches());
-            final Optional<Map.Entry<Long, BatchInfoInternal>> parentBatchFound = coordinates.entrySet().stream()
-                .filter(kv -> parentBatches.contains(kv.getValue().batchInfo.batchId()))
-                .findFirst();
-            // Probably the parent batch was deleted -- skip the new batch (exclude it from the file too).
-            if (parentBatchFound.isEmpty()) {
-                continue;
-            }
-            coordinates.remove(parentBatchFound.get().getKey());
-
-            final BatchInfo batchInfo = new BatchInfo(batchIdCounter.incrementAndGet(), objectKey, batch.metadata());
-            coordinates.put(batch.metadata().lastOffset(), new BatchInfoInternal(batchInfo, mergedFile));
-            mergedFile.addBatch(batchInfo);
-        }
-
-        // It may happen that the new file is absolutely empty after taking into account all the deleted batches.
-        // In this case, delete it as well.
-        if (mergedFile.allBatchesDeleted()) {
-            mergedFile.markDeleted(TimeUtils.now(time));
-        }
-    }
-
-    private void createEmptyDeletingFile(final String objectKey, final int uploaderBrokerId) {
-        final FileInfo fileInfo = FileInfo.createDeleting(fileIdCounter.incrementAndGet(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, FileReason.MERGE, uploaderBrokerId, 0, TimeUtils.now(time));
-        this.files.put(objectKey, fileInfo);
-    }
-
-    @Override
-    public synchronized void releaseFileMergeWorkItem(final long workItemId) {
-        final FileMergeWorkItem workItem = fileMergeWorkItems.remove(workItemId);
-        if (workItem == null) {
-            throw new FileMergeWorkItemNotExist(workItemId);
         }
     }
 

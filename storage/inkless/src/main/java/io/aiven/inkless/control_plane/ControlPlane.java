@@ -79,18 +79,6 @@ public interface ControlPlane extends Closeable, Configurable {
 
     List<ListOffsetsResponse> listOffsets(List<ListOffsetsRequest> requests);
 
-    FileMergeWorkItem getFileMergeWorkItem();
-
-    void commitFileMergeWorkItem(
-            long workItemId,
-            String objectKey,
-            ObjectFormat format,
-            int uploaderBrokerId,
-            long fileSize,
-            List<MergedFileBatch> batches);
-
-    void releaseFileMergeWorkItem(long workItemId);
-
     static ControlPlane create(final InklessConfig config, final Time time) {
         final Class<ControlPlane> controlPlaneClass = config.controlPlaneClass();
         try {

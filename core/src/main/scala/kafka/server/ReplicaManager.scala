@@ -21,7 +21,6 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
-import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendHandler
 import io.aiven.inkless.consolidation.{ConsolidationFetcherManager, ConsolidationMetrics}
 import kafka.cluster.Partition
@@ -283,8 +282,6 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessRetentionEnforcer: Option[RetentionEnforcer] = inklessSharedState.map(new RetentionEnforcer(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
-  // FIXME: FileMerger is having issues with hanging queries. Disabling until fixed.
-  private val inklessFileMerger: Option[FileMerger] = None // inklessSharedState.map(new FileMerger(_))
   private val consolidationMetrics: Option[ConsolidationMetrics] =
     if (config.disklessRemoteStorageConsolidationEnabled && inklessFetchHandler.isDefined && inklessFetchOffsetHandler.isDefined)
       Some(new ConsolidationMetrics())
@@ -393,9 +390,6 @@ class ReplicaManager(val config: KafkaConfig,
       scheduler.schedule("inkless-retention-enforcer", () => inklessRetentionEnforcer.foreach(_.run()), config.logInitialTaskDelayMs, 500L)  // the real interval is inside
 
       scheduler.schedule("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run()), sharedState.config().fileCleanerInterval().toMillis, sharedState.config().fileCleanerInterval().toMillis)
-
-      // There are internal delays in case of errors or absence of work items, no need for extra delays here.
-      scheduler.schedule("inkless-file-merger", () => inklessFileMerger.foreach(_.run()), sharedState.config().fileMergerInterval().toMillis, sharedState.config().fileMergerInterval().toMillis)
     }
   }
 

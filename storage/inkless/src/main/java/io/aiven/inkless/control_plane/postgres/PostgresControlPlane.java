@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
@@ -28,12 +27,9 @@ import com.zaxxer.hikari.util.IsolationLevel;
 
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
-import org.jooq.generated.udt.records.CommitFileMergeWorkItemBatchV1Record;
-import org.jooq.generated.udt.records.CommitFileMergeWorkItemResponseV1Record;
 import org.jooq.impl.DSL;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -42,7 +38,6 @@ import java.util.stream.Stream;
 
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.AbstractControlPlane;
-import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlaneException;
@@ -52,8 +47,6 @@ import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
 import io.aiven.inkless.control_plane.EnforceRetentionRequest;
 import io.aiven.inkless.control_plane.EnforceRetentionResponse;
-import io.aiven.inkless.control_plane.FileMergeWorkItem;
-import io.aiven.inkless.control_plane.FileMergeWorkItemNotExist;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
@@ -65,7 +58,6 @@ import io.aiven.inkless.control_plane.InitDisklessLogRequest;
 import io.aiven.inkless.control_plane.InitDisklessLogResponse;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
-import io.aiven.inkless.control_plane.MergedFileBatch;
 
 public class PostgresControlPlane extends AbstractControlPlane {
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(PostgresControlPlane.class);
@@ -235,101 +227,6 @@ public class PostgresControlPlane extends AbstractControlPlane {
             job.run();
         } catch (final Exception e) {
             throw new ControlPlaneException("Failed to delete files", e);
-        }
-    }
-
-    @Override
-    public FileMergeWorkItem getFileMergeWorkItem() {
-        final GetFileMergeWorkItemJob job = new GetFileMergeWorkItemJob(
-            time,
-            controlPlaneConfig.fileMergeLockPeriod(),
-            controlPlaneConfig.fileMergeSizeThresholdBytes(),
-            jobsJooqCtx,
-            pgMetrics::onGetFileMergeWorkItemCompleted
-        );
-        return job.call();
-    }
-
-    @Override
-    public void commitFileMergeWorkItem(
-        final long workItemId,
-        final String objectKey,
-        final ObjectFormat format,
-        final int uploaderBrokerId,
-        final long fileSize,
-        final List<MergedFileBatch> batches
-    ) {
-        final CommitFileMergeWorkItemJob job = new CommitFileMergeWorkItemJob(
-            time,
-            workItemId,
-            objectKey,
-            format,
-            uploaderBrokerId,
-            fileSize,
-            batches,
-            jobsJooqCtx,
-            pgMetrics::onCommitFileMergeWorkItemCompleted
-        );
-        final var result = job.call();
-        switch (result.getError()) {
-            case none:
-                break;
-            case file_merge_work_item_not_found:
-                throw new FileMergeWorkItemNotExist(workItemId);
-            case invalid_parent_batch_count: {
-                final MergedFileBatch mergedFileBatch = getMergedFileBatch(result);
-                throw new ControlPlaneException(
-                    String.format("Invalid parent batch count %d in %s",
-                        mergedFileBatch.parentBatches().size(),
-                        mergedFileBatch
-                    )
-                );
-            }
-            case batch_not_part_of_work_item: {
-                final MergedFileBatch mergedFileBatch = getMergedFileBatch(result);
-                throw new ControlPlaneException(
-                    String.format(
-                        "Batch %d is not part of work item in %s",
-                        mergedFileBatch.parentBatches().get(0),
-                        mergedFileBatch
-                    )
-                );
-            }
-        }
-    }
-
-    private static MergedFileBatch getMergedFileBatch(CommitFileMergeWorkItemResponseV1Record result) {
-        final CommitFileMergeWorkItemBatchV1Record errorBatch = result.getErrorBatch();
-        return new MergedFileBatch(
-            new BatchMetadata(
-                errorBatch.getMetadata().getMagic().byteValue(),
-                new TopicIdPartition(
-                    errorBatch.getMetadata().getTopicId(),
-                    errorBatch.getMetadata().getPartition(),
-                    errorBatch.getMetadata().getTopicName()
-                ),
-                errorBatch.getMetadata().getByteOffset(),
-                errorBatch.getMetadata().getByteSize(),
-                errorBatch.getMetadata().getBaseOffset(),
-                errorBatch.getMetadata().getLastOffset(),
-                errorBatch.getMetadata().getLogAppendTimestamp(),
-                errorBatch.getMetadata().getBatchMaxTimestamp(),
-                errorBatch.getMetadata().getTimestampType()
-            ),
-            Arrays.asList(errorBatch.getParentBatchIds())
-        );
-    }
-
-    @Override
-    public void releaseFileMergeWorkItem(final long workItemId) {
-        final ReleaseFileMergeWorkItemJob job =
-            new ReleaseFileMergeWorkItemJob( time, workItemId, jobsJooqCtx, pgMetrics::onReleaseFileMergeWorkItemCompleted);
-        final var result = job.call();
-        switch (result.getError()) {
-            case none:
-                break;
-            case file_merge_work_item_not_found:
-                throw new FileMergeWorkItemNotExist(workItemId);
         }
     }
 
