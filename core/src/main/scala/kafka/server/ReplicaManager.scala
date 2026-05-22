@@ -3008,6 +3008,11 @@ class ReplicaManager(val config: KafkaConfig,
         // classicToDisklessStartOffset = CLASSIC_TO_DISKLESS_SWITCH_PENDING) in the
         // same atomic op so the partition shows up here in localChanges.leaders whenever
         // this broker is (or just became) the leader.
+        if (initDisklessLogManager.isEmpty) {
+          error(s"Cannot proceed with classic to diskless switch for partition $tp: InitDisklessLogManager is not enabled.")
+          return
+        }
+
         val partition = existingPartition.get
         try {
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
