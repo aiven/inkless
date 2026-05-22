@@ -262,7 +262,7 @@ class Partition(val topicPartition: TopicPartition,
   def isAtMinIsr: Boolean = leaderLogIfLocal.exists { partitionState.isr.size == effectiveMinIsr(_) }
 
   def maybeUpdateDisklessLogStartOffset(newDisklessLogStartOffset: Long): Boolean = {
-    if (newDisklessLogStartOffset > disklessLogStartOffset) {
+    if (newDisklessLogStartOffset >= disklessLogStartOffset) {
       disklessLogStartOffset = newDisklessLogStartOffset
       true
     } else {
