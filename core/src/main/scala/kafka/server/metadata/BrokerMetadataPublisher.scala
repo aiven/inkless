@@ -142,10 +142,6 @@ class BrokerMetadataPublisher(
         debug(s"Publishing metadata at offset $highestOffsetAndEpoch with $metadataVersionLogMsg.")
       }
 
-      // Seal existing leader partitions for topics transitioning from classic to diskless.
-      // New leaders elected are instead sealed inside ReplicaManager.applyLocalLeadersDelta.
-      replicaManager.sealExistingLeadersOfTopicsSwitchedToDiskless(delta, newImage)
-      // Apply topic deltas.
       Option(delta.topicsDelta()).foreach { topicsDelta =>
         try {
           // Notify the replica manager about changes to topics.

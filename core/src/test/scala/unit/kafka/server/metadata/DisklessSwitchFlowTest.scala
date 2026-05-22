@@ -30,6 +30,7 @@ import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.message.InitDisklessLogResponseData
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE
+import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.common.metadata.{ConfigRecord, PartitionChangeRecord, PartitionRecord, TopicRecord}
 import org.apache.kafka.image.{AclsImage, ClientQuotasImage, ClusterImageTest, ConfigurationsImage, DelegationTokenImage, FeaturesImage, MetadataDelta, MetadataImage, MetadataProvenance, ProducerIdsImage, ScramImage, TopicsDelta, TopicsImage}
 import org.apache.kafka.image.loader.LogDeltaManifest
@@ -87,14 +88,13 @@ class DisklessSwitchFlowTest {
       assertFalse(partition.isSealed)
 
       // Step 1: enable diskless and trigger sealing + controller init request path.
+      // The controller writes the config flip and the per-partition switch-pending marker
+      // in the same atomic op (see markClassicToDisklessSwitchStarted).
       ctx.metadataPublisher._firstPublish = false
       when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       val enableDisklessDelta = new MetadataDelta(createImage)
-      enableDisklessDelta.replay(new ConfigRecord()
-        .setResourceType(ConfigResource.Type.TOPIC.id())
-        .setResourceName(topicName)
-        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
-        .setValue("true"))
+      replayClassicToDisklessSwitchStarted(enableDisklessDelta, topicName, topicId,
+        partitions = Seq((0, util.Arrays.asList(0, 1))))
       val disklessImage = withClusterBrokers(enableDisklessDelta.apply(MetadataProvenance.EMPTY))
       ctx.metadataPublisher.onMetadataUpdate(enableDisklessDelta, disklessImage, metadataManifest())
 
@@ -104,13 +104,13 @@ class DisklessSwitchFlowTest {
       assertEquals(1, ctx.channelManager.requests.size())
 
       // Simulate successful controller response.
-      ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
-        new org.apache.kafka.common.message.InitDisklessLogResponseData.TopicResponse()
+      ctx.channelManager.requests.poll().complete(new InitDisklessLogResponseData().setTopics(util.List.of(
+        new InitDisklessLogResponseData.TopicResponse()
           .setTopicId(topicId)
           .setPartitions(util.List.of(
-            new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
+            new InitDisklessLogResponseData.PartitionResponse()
               .setPartitionId(0)
-              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+              .setErrorCode(Errors.NONE.code())
           ))
       )))
 
@@ -172,11 +172,8 @@ class DisklessSwitchFlowTest {
       ctx.metadataPublisher._firstPublish = false
       when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       val disklessDelta = new MetadataDelta(createImage)
-      disklessDelta.replay(new ConfigRecord()
-        .setResourceType(ConfigResource.Type.TOPIC.id())
-        .setResourceName(topicName)
-        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
-        .setValue("true"))
+      replayClassicToDisklessSwitchStarted(disklessDelta, topicName, topicId,
+        partitions = Seq((0, util.Arrays.asList(0, 1))))
       val disklessImage = withClusterBrokers(disklessDelta.apply(MetadataProvenance.EMPTY))
       ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
 
@@ -193,13 +190,13 @@ class DisklessSwitchFlowTest {
       // After linger elapses + RPC completes: state advances to AwaitingMetadata.
       ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
       ctx.scheduler.tick()
-      ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
-        new org.apache.kafka.common.message.InitDisklessLogResponseData.TopicResponse()
+      ctx.channelManager.requests.poll().complete(new InitDisklessLogResponseData().setTopics(util.List.of(
+        new InitDisklessLogResponseData.TopicResponse()
           .setTopicId(topicId)
           .setPartitions(util.List.of(
-            new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
+            new InitDisklessLogResponseData.PartitionResponse()
               .setPartitionId(0)
-              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+              .setErrorCode(Errors.NONE.code())
           ))
       )))
 
@@ -268,11 +265,8 @@ class DisklessSwitchFlowTest {
       ctx.metadataPublisher._firstPublish = false
       when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       val disklessDelta = new MetadataDelta(createImage)
-      disklessDelta.replay(new ConfigRecord()
-        .setResourceType(ConfigResource.Type.TOPIC.id())
-        .setResourceName(topicName)
-        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
-        .setValue("true"))
+      replayClassicToDisklessSwitchStarted(disklessDelta, topicName, topicId,
+        partitions = Seq((0, util.Arrays.asList(0, 1))))
       val updatedImage = withClusterBrokers(disklessDelta.apply(MetadataProvenance.EMPTY))
       ctx.metadataPublisher.onMetadataUpdate(disklessDelta, updatedImage, metadataManifest())
 
@@ -422,14 +416,9 @@ class DisklessSwitchFlowTest {
       ctx.metadataPublisher._firstPublish = false
       when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       val toLeaderDelta = new MetadataDelta(createImage)
-      toLeaderDelta.replay(new ConfigRecord()
-        .setResourceType(ConfigResource.Type.TOPIC.id())
-        .setResourceName(topicName)
-        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
-        .setValue("true"))
-      toLeaderDelta.replay(new PartitionChangeRecord()
-        .setPartitionId(0).setTopicId(topicId)
-        .setLeader(ctx.config.brokerId).setIsr(util.Arrays.asList(0, 1)))
+      replayClassicToDisklessSwitchStarted(toLeaderDelta, topicName, topicId,
+        partitions = Seq((0, util.Arrays.asList(0, 1))),
+        newLeaders = Map(0 -> ctx.config.brokerId))
       val leaderImage = withClusterBrokers(toLeaderDelta.apply(MetadataProvenance.EMPTY))
       ctx.metadataPublisher.onMetadataUpdate(toLeaderDelta, leaderImage, metadataManifest())
 
@@ -488,14 +477,9 @@ class DisklessSwitchFlowTest {
       ctx.metadataPublisher._firstPublish = false
       when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       val switchDelta = new MetadataDelta(createImage)
-      switchDelta.replay(new ConfigRecord()
-        .setResourceType(ConfigResource.Type.TOPIC.id())
-        .setResourceName(topicName)
-        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
-        .setValue("true"))
-      switchDelta.replay(new PartitionChangeRecord()
-        .setPartitionId(0).setTopicId(topicId)
-        .setLeader(ctx.config.brokerId).setIsr(util.Arrays.asList(0, 1)))
+      replayClassicToDisklessSwitchStarted(switchDelta, topicName, topicId,
+        partitions = Seq((0, util.Arrays.asList(0, 1))),
+        newLeaders = Map(0 -> ctx.config.brokerId))
       val switchedImage = withClusterBrokers(switchDelta.apply(MetadataProvenance.EMPTY))
       ctx.metadataPublisher.onMetadataUpdate(switchDelta, switchedImage, metadataManifest())
 
@@ -557,11 +541,11 @@ class DisklessSwitchFlowTest {
       when(broker0Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       when(broker1Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       val switchDelta = new MetadataDelta(createImage)
-      switchDelta.replay(new ConfigRecord()
-        .setResourceType(ConfigResource.Type.TOPIC.id())
-        .setResourceName(topicName)
-        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
-        .setValue("true"))
+      replayClassicToDisklessSwitchStarted(switchDelta, topicName, topicId,
+        partitions = Seq(
+          (0, util.Arrays.asList(0, 1)),
+          (1, util.Arrays.asList(0, 1)),
+          (2, util.Arrays.asList(0, 1))))
       val switchedImage = withClusterBrokers(switchDelta.apply(MetadataProvenance.EMPTY))
       broker0Ctx.metadataPublisher.onMetadataUpdate(switchDelta, switchedImage, metadataManifest())
       broker1Ctx.metadataPublisher.onMetadataUpdate(switchDelta, switchedImage, metadataManifest())
@@ -624,14 +608,9 @@ class DisklessSwitchFlowTest {
       when(broker0Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       when(broker1Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       val switchDelta = new MetadataDelta(createImage)
-      switchDelta.replay(new ConfigRecord()
-        .setResourceType(ConfigResource.Type.TOPIC.id())
-        .setResourceName(topicName)
-        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
-        .setValue("true"))
-      switchDelta.replay(new PartitionChangeRecord()
-        .setPartitionId(0).setTopicId(topicId)
-        .setLeader(1).setIsr(util.Arrays.asList(0, 1)))
+      replayClassicToDisklessSwitchStarted(switchDelta, topicName, topicId,
+        partitions = Seq((0, util.Arrays.asList(0, 1))),
+        newLeaders = Map(0 -> 1))
       val switchedImage = withClusterBrokers(switchDelta.apply(MetadataProvenance.EMPTY))
       broker0Ctx.metadataPublisher.onMetadataUpdate(switchDelta, switchedImage, metadataManifest())
       broker1Ctx.metadataPublisher.onMetadataUpdate(switchDelta, switchedImage, metadataManifest())
@@ -680,22 +659,19 @@ class DisklessSwitchFlowTest {
       ctx.metadataPublisher._firstPublish = false
       when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       val disklessDelta = new MetadataDelta(createImage)
-      disklessDelta.replay(new ConfigRecord()
-        .setResourceType(ConfigResource.Type.TOPIC.id())
-        .setResourceName(topicName)
-        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
-        .setValue("true"))
+      replayClassicToDisklessSwitchStarted(disklessDelta, topicName, topicId,
+        partitions = Seq((0, util.Arrays.asList(0, 1))))
       val disklessImage = withClusterBrokers(disklessDelta.apply(MetadataProvenance.EMPTY))
       ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
 
       ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
       ctx.scheduler.tick()
       assertEquals(1, ctx.channelManager.requests.size())
-      ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
-        new org.apache.kafka.common.message.InitDisklessLogResponseData.TopicResponse()
+      ctx.channelManager.requests.poll().complete(new InitDisklessLogResponseData().setTopics(util.List.of(
+        new InitDisklessLogResponseData.TopicResponse()
           .setTopicId(topicId)
           .setPartitions(util.List.of(
-            new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
+            new InitDisklessLogResponseData.PartitionResponse()
               .setPartitionId(0)
               .setErrorCode(Errors.NONE.code())
           ))
@@ -749,11 +725,8 @@ class DisklessSwitchFlowTest {
       when(broker0Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       when(broker1Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       val disklessDelta = new MetadataDelta(createImage)
-      disklessDelta.replay(new ConfigRecord()
-        .setResourceType(ConfigResource.Type.TOPIC.id())
-        .setResourceName(topicName)
-        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
-        .setValue("true"))
+      replayClassicToDisklessSwitchStarted(disklessDelta, topicName, topicId,
+        partitions = Seq((0, util.Arrays.asList(0, 1))))
       val disklessImage = withClusterBrokers(disklessDelta.apply(MetadataProvenance.EMPTY))
       broker0Ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
       broker1Ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
@@ -761,11 +734,11 @@ class DisklessSwitchFlowTest {
       broker0Ctx.time.sleep(broker0Ctx.initDisklessLogManager.lingerMs)
       broker0Ctx.scheduler.tick()
       assertEquals(1, broker0Ctx.channelManager.requests.size())
-      broker0Ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
+      broker0Ctx.channelManager.requests.poll().complete(new InitDisklessLogResponseData().setTopics(util.List.of(
         new InitDisklessLogResponseData.TopicResponse()
           .setTopicId(topicId)
           .setPartitions(util.List.of(
-            new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
+            new InitDisklessLogResponseData.PartitionResponse()
               .setPartitionId(0)
               .setErrorCode(Errors.NONE.code())
           ))
@@ -821,11 +794,8 @@ class DisklessSwitchFlowTest {
       when(broker0Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       when(broker1Ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       val disklessDelta = new MetadataDelta(createImage)
-      disklessDelta.replay(new ConfigRecord()
-        .setResourceType(ConfigResource.Type.TOPIC.id())
-        .setResourceName(topicName)
-        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
-        .setValue("true"))
+      replayClassicToDisklessSwitchStarted(disklessDelta, topicName, topicId,
+        partitions = Seq((0, util.Arrays.asList(0, 1))))
       val disklessImage = withClusterBrokers(disklessDelta.apply(MetadataProvenance.EMPTY))
       broker0Ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
       broker1Ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
@@ -873,7 +843,7 @@ class DisklessSwitchFlowTest {
       broker1Ctx.time.sleep(broker1Ctx.initDisklessLogManager.lingerMs)
       broker1Ctx.scheduler.tick()
 
-      assertEquals(1, broker1Ctx.channelManager.requests.size())
+      assertEquals(0, broker1Ctx.channelManager.requests.size())
       verify(broker1Ctx.controlPlane, times(1)).initDisklessLog(any())
     } finally {
       shutdown(broker0Ctx)
@@ -902,24 +872,21 @@ class DisklessSwitchFlowTest {
       ctx.metadataPublisher._firstPublish = false
       when(ctx.replicaManager.inklessMetadataView().isDisklessTopic(topicName)).thenReturn(true)
       val disklessDelta = new MetadataDelta(createImage)
-      disklessDelta.replay(new ConfigRecord()
-        .setResourceType(ConfigResource.Type.TOPIC.id())
-        .setResourceName(topicName)
-        .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
-        .setValue("true"))
+      replayClassicToDisklessSwitchStarted(disklessDelta, topicName, topicId,
+        partitions = Seq((0, util.Arrays.asList(0, 1))))
       val disklessImage = withClusterBrokers(disklessDelta.apply(MetadataProvenance.EMPTY))
       ctx.metadataPublisher.onMetadataUpdate(disklessDelta, disklessImage, metadataManifest())
 
       ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
       ctx.scheduler.tick()
       assertEquals(1, ctx.channelManager.requests.size())
-      ctx.channelManager.requests.poll().complete(new org.apache.kafka.common.message.InitDisklessLogResponseData().setTopics(util.List.of(
-        new org.apache.kafka.common.message.InitDisklessLogResponseData.TopicResponse()
+      ctx.channelManager.requests.poll().complete(new InitDisklessLogResponseData().setTopics(util.List.of(
+        new InitDisklessLogResponseData.TopicResponse()
           .setTopicId(topicId)
           .setPartitions(util.List.of(
-            new org.apache.kafka.common.message.InitDisklessLogResponseData.PartitionResponse()
+            new InitDisklessLogResponseData.PartitionResponse()
               .setPartitionId(0)
-              .setErrorCode(org.apache.kafka.common.protocol.Errors.NONE.code())
+              .setErrorCode(Errors.NONE.code())
           ))
       )))
 
@@ -950,7 +917,7 @@ class DisklessSwitchFlowTest {
       ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
       ctx.scheduler.tick()
 
-      assertEquals(1, ctx.channelManager.requests.size())
+      assertEquals(0, ctx.channelManager.requests.size())
       verify(ctx.controlPlane, times(1)).initDisklessLog(any())
     } finally {
       shutdown(ctx)
@@ -1095,6 +1062,38 @@ class DisklessSwitchFlowTest {
     assertEquals(expectedTopicId, topicData.topicId())
     val partitionIds = topicData.partitions().asScala.map(_.partitionId()).toSet
     assertEquals(expectedPartitions, partitionIds)
+  }
+
+  /**
+   * Replays the records the controller's `markClassicToDisklessSwitchStarted` would emit
+   * atomically in a single op: a `ConfigRecord` flipping `diskless.enable=true` and one
+   * `PartitionChangeRecord` per partition with `classicToDisklessStartOffset` set to
+   * `CLASSIC_TO_DISKLESS_SWITCH_PENDING` (-2). Optional `newLeaders` lets a test simulate
+   * a leader election happening in the same delta (`newLeaders(partitionId)` overrides
+   * the leader for that partition).
+   */
+  private def replayClassicToDisklessSwitchStarted(
+    delta: MetadataDelta,
+    topicName: String,
+    topicId: Uuid,
+    partitions: Seq[(Int, java.util.List[Integer])],
+    newLeaders: Map[Int, Int] = Map.empty
+  ): Unit = {
+    delta.replay(new ConfigRecord()
+      .setResourceType(ConfigResource.Type.TOPIC.id())
+      .setResourceName(topicName)
+      .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+      .setValue("true"))
+    partitions.foreach { case (partitionId, isr) =>
+      val record = new PartitionChangeRecord()
+        .setTopicId(topicId)
+        .setPartitionId(partitionId)
+        .setIsr(isr)
+      newLeaders.get(partitionId).foreach(leader => record.setLeader(leader))
+      record.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+        PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING))
+      delta.replay(record)
+    }
   }
 
   private def metadataManifest(): LogDeltaManifest = {
