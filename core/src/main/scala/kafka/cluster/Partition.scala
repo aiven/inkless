@@ -261,9 +261,14 @@ class Partition(val topicPartition: TopicPartition,
    */
   def isAtMinIsr: Boolean = leaderLogIfLocal.exists { partitionState.isr.size == effectiveMinIsr(_) }
 
-  def setDisklessLogStartOffset(newDisklessLogStartOffset: Long) = disklessLogStartOffset = newDisklessLogStartOffset
-
-  def getDisklessLogStartOffset() = disklessLogStartOffset
+  def maybeUpdateDisklessLogStartOffset(newDisklessLogStartOffset: Long): Boolean = {
+    if (newDisklessLogStartOffset > disklessLogStartOffset) {
+      disklessLogStartOffset = newDisklessLogStartOffset
+      true
+    } else {
+      false
+    }
+  }
 
   def isSealed: Boolean = _sealed
 

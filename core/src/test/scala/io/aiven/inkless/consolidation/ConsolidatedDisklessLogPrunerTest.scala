@@ -125,7 +125,7 @@ class ConsolidatedDisklessLogPrunerTest {
 
     new ConsolidatedDisklessLogPruner(rm, view, cp).run()
 
-    verify(partition, never()).setDisklessLogStartOffset(anyLong())
+    verify(partition, never()).maybeUpdateDisklessLogStartOffset(anyLong())
     verify(view, never()).getTopicName(any(classOf[Uuid]))
   }
 
@@ -147,7 +147,7 @@ class ConsolidatedDisklessLogPrunerTest {
 
     new ConsolidatedDisklessLogPruner(rm, view, cp).run()
 
-    verify(partition).setDisklessLogStartOffset(88L)
+    verify(partition).maybeUpdateDisklessLogStartOffset(88L)
   }
 
   @Test
@@ -170,6 +170,6 @@ class ConsolidatedDisklessLogPrunerTest {
 
     new ConsolidatedDisklessLogPruner(rm, view, cp).run()
 
-    verify(partition, never()).setDisklessLogStartOffset(anyLong())
+    verify(partition, never()).maybeUpdateDisklessLogStartOffset(anyLong())
   }
 }
