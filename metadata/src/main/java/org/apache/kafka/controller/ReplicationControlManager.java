@@ -2890,6 +2890,14 @@ public class ReplicationControlManager {
         }
     }
 
+    /**
+     * For every topic whose {@code diskless.enable} flips from {@code false} to {@code true},
+     * emit a {@link PartitionChangeRecord} per partition marking
+     * {@code classicToDisklessStartOffset = CLASSIC_TO_DISKLESS_SWITCH_PENDING} (-2).
+     * These records MUST be committed atomically with the {@code diskless.enable=true} {@link ConfigRecord}.
+     * Brokers rely on seeing both in the same {@code MetadataDelta} to seal the local leader before
+     * any produce hits the classic log and to register the partition for diskless log initialization.
+     */
     List<ApiMessageAndVersion> markClassicToDisklessSwitchStarted(
         Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
         Map<ConfigResource, ApiError> configResults
