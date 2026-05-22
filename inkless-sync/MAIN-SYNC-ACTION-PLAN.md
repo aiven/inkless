@@ -120,7 +120,6 @@ git commit -m "sync(test): [description]"
    import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
    import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, MetadataView}
    import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
-   import io.aiven.inkless.merge.FileMerger
    import io.aiven.inkless.produce.AppendHandler
    import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
    ```

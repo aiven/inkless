@@ -12,7 +12,6 @@ flowchart LR
     subgraph Service[Broker]
         Writer[Writer]
         Reader[Reader]
-        Merger[FileMerger]
         ObjectCache[Object Cache]
     end
     subgraph Cloud[Object Storage]
@@ -22,11 +21,9 @@ flowchart LR
         BatchIndex[SQL Database]
     end
     Producer == ProduceRequest ==> Writer ==> ObjectStorage & ObjectCache
-    ObjectStorage <==> Merger
     Reader -- FindBatches --> BatchIndex
     ObjectStorage & ObjectCache ==> Reader == FetchRequest ==> Consumer
     Writer -- CommitBatches --> BatchIndex
-    Merger -- CommitMerge --> BatchIndex 
 ```
 Data from ProduceRequests is written to object storage without assigning offsets.
 Multiple ProduceRequests from multiple clients may be combined together into a single object to reduce the number of object writes.
