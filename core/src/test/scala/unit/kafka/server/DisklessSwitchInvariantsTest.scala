@@ -142,6 +142,7 @@ class DisklessSwitchInvariantsTest {
     // --- Assert invariant ---
     val partition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online].partition
     assertTrue(partition.isSealed, "Partition must be sealed")
+    assertFalse(partition.isLeader, "Partition must be follower")
 
     if (expectFetcher) {
       verify(mockFetcherManager).addFetcherForPartitions(any())
@@ -263,7 +264,8 @@ object DisklessSwitchInvariantsTest {
     // The post-restart path (getOrCreatePartition + makeLeader) creates a new Partition object
     // that re-initializes HW from the checkpoint via LazyOffsetCheckpoints. However, since the
     // log already exists, LogManager returns it without re-reading the checkpoint. The seal
-    // offset advancement at line 3050 compensates by forcing HW = sealOffset.
+    // offset advancement in applyLocalLeadersDelta (sealOffset >= 0 && HW < sealOffset guard)
+    // compensates by forcing HW = sealOffset.
     java.util.stream.Stream.of(
       Arguments.of(0L: java.lang.Long,  10L: java.lang.Long, 10L: java.lang.Long),  // unclean shutdown
       Arguments.of(5L: java.lang.Long,  10L: java.lang.Long, 10L: java.lang.Long),  // partial flush
