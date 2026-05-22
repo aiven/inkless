@@ -57,7 +57,15 @@ import scala.jdk.CollectionConverters._
  *
  *   - Role after restart: leader vs follower
  *   - Checkpoint HW: stale (0, partial) vs fresh (== seal)
- *   - Seal state: committed (>= 0) vs pending (-2) vs none (-1)
+ *   - Seal state: committed (>= 0) vs pending (CLASSIC_TO_DISKLESS_SWITCH_PENDING = -2)
+ *                 vs none (NO_CLASSIC_TO_DISKLESS_START_OFFSET = -1)
+ *
+ * Key invariants:
+ *   - Committed seal → leader HW is advanced to seal offset regardless of checkpoint
+ *   - Committed seal → follower fetcher starts only when HW < seal
+ *   - Pending seal → partition is sealed, HW not advanced (seal offset unknown);
+ *                     follower starts fetcher on new leader epoch
+ *   - No switch → partition is sealed, HW not advanced, no fetcher
  */
 class DisklessSwitchInvariantsTest {
 
@@ -82,7 +90,8 @@ class DisklessSwitchInvariantsTest {
     val topicName = "switched-topic"
     val topicId = Uuid.randomUuid()
     val tp = new TopicPartition(topicName, 0)
-    val leo = sealOffset // LEO == seal for a fully-replicated partition
+    // For committed seals, LEO == seal (fully replicated). For pending/none, use a fixed LEO.
+    val leo = if (sealOffset >= 0) sealOffset else 10L
 
     replicaManager = createReplicaManager(List(topicName))
     val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
@@ -112,7 +121,7 @@ class DisklessSwitchInvariantsTest {
     val topicId = Uuid.randomUuid()
     val tp = new TopicPartition(topicName, 0)
     val leaderId = 2
-    val leo = sealOffset
+    val leo = if (sealOffset >= 0) sealOffset else 10L
 
     val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
     when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
@@ -190,7 +199,7 @@ class DisklessSwitchInvariantsTest {
     disklessTopics: Seq[String],
     mockReplicaFetcherManager: Option[ReplicaFetcherManager] = None
   ): ReplicaManager = {
-    val props = TestUtils.createBrokerConfig(brokerId, logDirCount = 2)
+    val props = TestUtils.createBrokerConfig(brokerId, logDirCount = 1)
     props.put(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
     val config = KafkaConfig.fromProps(props)
     val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
@@ -246,21 +255,44 @@ class DisklessSwitchInvariantsTest {
 
 object DisklessSwitchInvariantsTest {
 
+  import org.apache.kafka.metadata.PartitionRegistration._
+
   def sealedLeaderScenarios(): java.util.stream.Stream[Arguments] = {
     // (checkpointHw, sealOffset, expectedHwAfterApplyDelta)
+    // Committed seal (>= 0): HW is always advanced to sealOffset regardless of checkpoint.
+    // The post-restart path (getOrCreatePartition + makeLeader) creates a new Partition object
+    // that re-initializes HW from the checkpoint via LazyOffsetCheckpoints. However, since the
+    // log already exists, LogManager returns it without re-reading the checkpoint. The seal
+    // offset advancement at line 3050 compensates by forcing HW = sealOffset.
     java.util.stream.Stream.of(
       Arguments.of(0L: java.lang.Long,  10L: java.lang.Long, 10L: java.lang.Long),  // unclean shutdown
       Arguments.of(5L: java.lang.Long,  10L: java.lang.Long, 10L: java.lang.Long),  // partial flush
       Arguments.of(10L: java.lang.Long, 10L: java.lang.Long, 10L: java.lang.Long),  // clean shutdown
+      // Pending seal (-2): partition is sealed. The HW is NOT advanced because the seal
+      // offset is not yet committed. The post-restart path does not restore HW from
+      // checkpoint for pending seals — the pending fetcher (follower side) will eventually
+      // propagate the correct HW when the seal commits.
+      Arguments.of(0L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, 0L: java.lang.Long),
+      Arguments.of(5L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, 0L: java.lang.Long),
+      // No switch (-1): partition is sealed but HW is not advanced (no seal offset to target).
+      Arguments.of(0L: java.lang.Long,  NO_CLASSIC_TO_DISKLESS_START_OFFSET: java.lang.Long, 0L: java.lang.Long),
+      Arguments.of(5L: java.lang.Long,  NO_CLASSIC_TO_DISKLESS_START_OFFSET: java.lang.Long, 0L: java.lang.Long),
     )
   }
 
   def sealedFollowerScenarios(): java.util.stream.Stream[Arguments] = {
     // (checkpointHw, sealOffset, expectFetcher)
+    // Committed seal (>= 0): fetcher starts when HW < seal
     java.util.stream.Stream.of(
       Arguments.of(0L: java.lang.Long,  10L: java.lang.Long, true: java.lang.Boolean),   // stale
       Arguments.of(5L: java.lang.Long,  10L: java.lang.Long, true: java.lang.Boolean),   // partial
       Arguments.of(10L: java.lang.Long, 10L: java.lang.Long, false: java.lang.Boolean),  // fresh
+      // Pending seal (-2): fetcher starts (new leader epoch triggers catch-up)
+      Arguments.of(0L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, true: java.lang.Boolean),
+      Arguments.of(5L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, true: java.lang.Boolean),
+      // No switch (-1): sealed but no fetcher needed
+      Arguments.of(0L: java.lang.Long,  NO_CLASSIC_TO_DISKLESS_START_OFFSET: java.lang.Long, false: java.lang.Boolean),
+      Arguments.of(5L: java.lang.Long,  NO_CLASSIC_TO_DISKLESS_START_OFFSET: java.lang.Long, false: java.lang.Boolean),
     )
   }
 }
