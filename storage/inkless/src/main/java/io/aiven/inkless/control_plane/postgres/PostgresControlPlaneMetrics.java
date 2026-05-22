@@ -34,10 +34,10 @@ public class PostgresControlPlaneMetrics implements Closeable {
     private static final String GROUP = PostgresControlPlane.class.getSimpleName();
 
     private static final List<String> QUERY_NAMES = List.of(
-        "FindBatches", "GetLogs", "CommitFile", "CommitFileMergeWorkItem",
+        "FindBatches", "GetLogs", "CommitFile",
         "TopicCreate", "TopicDelete", "FilesDelete", "ListOffsets",
         "DeleteRecords", "EnforceRetention", "GetFilesToDelete",
-        "GetFileMergeWorkItem", "ReleaseFileMergeWorkItem", "SafeDeleteFileCheck",
+        "SafeDeleteFileCheck",
         "GetLogInfo", "InitDisklessLog", "GetProducerState"
     );
 
@@ -63,7 +63,6 @@ public class PostgresControlPlaneMetrics implements Closeable {
     private final QueryMetrics findBatchesMetrics = new QueryMetrics("FindBatches");
     private final QueryMetrics getLogsMetrics = new QueryMetrics("GetLogs");
     private final QueryMetrics commitFileMetrics = new QueryMetrics("CommitFile");
-    private final QueryMetrics commitFileMergeWorkItemMetrics = new QueryMetrics("CommitFileMergeWorkItem");
     private final QueryMetrics topicCreateMetrics = new QueryMetrics("TopicCreate");
     private final QueryMetrics topicDeleteMetrics = new QueryMetrics("TopicDelete");
     private final QueryMetrics fileDeleteMetrics = new QueryMetrics("FilesDelete");
@@ -71,8 +70,6 @@ public class PostgresControlPlaneMetrics implements Closeable {
     private final QueryMetrics deleteRecordsMetrics = new QueryMetrics("DeleteRecords");
     private final QueryMetrics enforceRetentionMetrics = new QueryMetrics("EnforceRetention");
     private final QueryMetrics getFilesToDeleteMetrics = new QueryMetrics("GetFilesToDelete");
-    private final QueryMetrics getFileMergeWorkItemMetrics = new QueryMetrics("GetFileMergeWorkItem");
-    private final QueryMetrics releaseFileMergeWorkItemMetrics = new QueryMetrics("ReleaseFileMergeWorkItem");
     private final QueryMetrics safeDeleteFileCheckMetrics = new QueryMetrics("SafeDeleteFileCheck");
     private final QueryMetrics getLogInfoMetrics = new QueryMetrics("GetLogInfo");
     private final QueryMetrics initDisklessLogMetrics = new QueryMetrics("InitDisklessLog");
@@ -80,10 +77,6 @@ public class PostgresControlPlaneMetrics implements Closeable {
 
     public PostgresControlPlaneMetrics(Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
-    }
-
-    public void onCommitFileMergeWorkItemCompleted(final Long duration) {
-        commitFileMergeWorkItemMetrics.record(duration);
     }
 
     public void onFindBatchesCompleted(Long duration) {
@@ -126,14 +119,6 @@ public class PostgresControlPlaneMetrics implements Closeable {
         getFilesToDeleteMetrics.record(duration);
     }
 
-    public void onGetFileMergeWorkItemCompleted(Long duration) {
-        getFileMergeWorkItemMetrics.record(duration);
-    }
-
-    public void onReleaseFileMergeWorkItemCompleted(Long duration) {
-        releaseFileMergeWorkItemMetrics.record(duration);
-    }
-
     public void onSafeDeleteFileCheckCompleted(Long duration) {
         safeDeleteFileCheckMetrics.record(duration);
     }
@@ -155,7 +140,6 @@ public class PostgresControlPlaneMetrics implements Closeable {
         findBatchesMetrics.remove();
         getLogsMetrics.remove();
         commitFileMetrics.remove();
-        commitFileMergeWorkItemMetrics.remove();
         topicCreateMetrics.remove();
         topicDeleteMetrics.remove();
         fileDeleteMetrics.remove();
@@ -163,8 +147,6 @@ public class PostgresControlPlaneMetrics implements Closeable {
         deleteRecordsMetrics.remove();
         enforceRetentionMetrics.remove();
         getFilesToDeleteMetrics.remove();
-        getFileMergeWorkItemMetrics.remove();
-        releaseFileMergeWorkItemMetrics.remove();
         safeDeleteFileCheckMetrics.remove();
         getLogInfoMetrics.remove();
         initDisklessLogMetrics.remove();

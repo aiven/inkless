@@ -57,13 +57,6 @@ A marker embedded in the `client.id` configuration to communicate the client's a
 
 ---
 
-## F
-
-**File Merger**
-A background process running on brokers that consolidates multiple small objects into larger, optimized objects. This improves read performance for lagging consumers by reducing the number of object storage requests and improving partition data locality.
-
----
-
 ## H
 
 **Hot Path**

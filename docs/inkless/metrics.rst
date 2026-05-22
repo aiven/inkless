@@ -229,23 +229,6 @@ RetentionEnforcementTotalTime             Total time spent on a retention enforc
 ========================================  =================================================================
 
 
-FileMerger metrics
-==================================
-
-io.aiven.inkless.merge:type=FileMerger
---------------------------------------
-
-===================  ======================================================================
-Attribute name       Description                                                           
-===================  ======================================================================
-FileMergeErrorRate   Total number of file merge errors                                     
-FileMergeFilesRate   Total number of files produced by merge operations                    
-FileMergeRate        Total number of file merge operations started                         
-FileMergeTotalTime   Total time spent on a file merge operation in milliseconds            
-FileUploadTime       Time spent uploading the merged file to object storage in milliseconds
-===================  ======================================================================
-
-
 ClientAzAwareness metrics
 ==================================
 
@@ -270,44 +253,38 @@ PostgresControlPlane metrics
 io.aiven.inkless.control_plane.postgres:type=PostgresControlPlane
 -----------------------------------------------------------------
 
-==================================  =======================================================================
-Attribute name                      Description                                                            
-==================================  =======================================================================
-CommitFileMergeWorkItemQueryRate    Total number of CommitFileMergeWorkItem queries executed               
-CommitFileMergeWorkItemQueryTime    Time spent executing the CommitFileMergeWorkItem query in milliseconds 
-CommitFileQueryRate                 Total number of CommitFile queries executed                            
-CommitFileQueryTime                 Time spent executing the CommitFile query in milliseconds              
-DeleteRecordsQueryRate              Total number of DeleteRecords queries executed                         
-DeleteRecordsQueryTime              Time spent executing the DeleteRecords query in milliseconds           
-EnforceRetentionQueryRate           Total number of EnforceRetention queries executed                      
-EnforceRetentionQueryTime           Time spent executing the EnforceRetention query in milliseconds        
-FilesDeleteQueryRate                Total number of FilesDelete queries executed                           
-FilesDeleteQueryTime                Time spent executing the FilesDelete query in milliseconds             
-FindBatchesQueryRate                Total number of FindBatches queries executed                           
-FindBatchesQueryTime                Time spent executing the FindBatches query in milliseconds             
-GetFileMergeWorkItemQueryRate       Total number of GetFileMergeWorkItem queries executed                  
-GetFileMergeWorkItemQueryTime       Time spent executing the GetFileMergeWorkItem query in milliseconds    
-GetFilesToDeleteQueryRate           Total number of GetFilesToDelete queries executed                      
-GetFilesToDeleteQueryTime           Time spent executing the GetFilesToDelete query in milliseconds        
-GetLogInfoQueryRate                 Total number of GetLogInfo queries executed                            
-GetLogInfoQueryTime                 Time spent executing the GetLogInfo query in milliseconds              
-GetLogsQueryRate                    Total number of GetLogs queries executed                               
-GetLogsQueryTime                    Time spent executing the GetLogs query in milliseconds                 
-GetProducerStateQueryRate           Total number of GetProducerState queries executed                      
-GetProducerStateQueryTime           Time spent executing the GetProducerState query in milliseconds        
-InitDisklessLogQueryRate            Total number of InitDisklessLog queries executed                       
-InitDisklessLogQueryTime            Time spent executing the InitDisklessLog query in milliseconds         
-ListOffsetsQueryRate                Total number of ListOffsets queries executed                           
-ListOffsetsQueryTime                Time spent executing the ListOffsets query in milliseconds             
-ReleaseFileMergeWorkItemQueryRate   Total number of ReleaseFileMergeWorkItem queries executed              
-ReleaseFileMergeWorkItemQueryTime   Time spent executing the ReleaseFileMergeWorkItem query in milliseconds
-SafeDeleteFileCheckQueryRate        Total number of SafeDeleteFileCheck queries executed                   
-SafeDeleteFileCheckQueryTime        Time spent executing the SafeDeleteFileCheck query in milliseconds     
-TopicCreateQueryRate                Total number of TopicCreate queries executed                           
-TopicCreateQueryTime                Time spent executing the TopicCreate query in milliseconds             
-TopicDeleteQueryRate                Total number of TopicDelete queries executed                           
-TopicDeleteQueryTime                Time spent executing the TopicDelete query in milliseconds             
-==================================  =======================================================================
+=============================  ==================================================================
+Attribute name                 Description                                                       
+=============================  ==================================================================
+CommitFileQueryRate            Total number of CommitFile queries executed                       
+CommitFileQueryTime            Time spent executing the CommitFile query in milliseconds         
+DeleteRecordsQueryRate         Total number of DeleteRecords queries executed                    
+DeleteRecordsQueryTime         Time spent executing the DeleteRecords query in milliseconds      
+EnforceRetentionQueryRate      Total number of EnforceRetention queries executed                 
+EnforceRetentionQueryTime      Time spent executing the EnforceRetention query in milliseconds   
+FilesDeleteQueryRate           Total number of FilesDelete queries executed                      
+FilesDeleteQueryTime           Time spent executing the FilesDelete query in milliseconds        
+FindBatchesQueryRate           Total number of FindBatches queries executed                      
+FindBatchesQueryTime           Time spent executing the FindBatches query in milliseconds        
+GetFilesToDeleteQueryRate      Total number of GetFilesToDelete queries executed                 
+GetFilesToDeleteQueryTime      Time spent executing the GetFilesToDelete query in milliseconds   
+GetLogInfoQueryRate            Total number of GetLogInfo queries executed                       
+GetLogInfoQueryTime            Time spent executing the GetLogInfo query in milliseconds         
+GetLogsQueryRate               Total number of GetLogs queries executed                          
+GetLogsQueryTime               Time spent executing the GetLogs query in milliseconds            
+GetProducerStateQueryRate      Total number of GetProducerState queries executed                 
+GetProducerStateQueryTime      Time spent executing the GetProducerState query in milliseconds   
+InitDisklessLogQueryRate       Total number of InitDisklessLog queries executed                  
+InitDisklessLogQueryTime       Time spent executing the InitDisklessLog query in milliseconds    
+ListOffsetsQueryRate           Total number of ListOffsets queries executed                      
+ListOffsetsQueryTime           Time spent executing the ListOffsets query in milliseconds        
+SafeDeleteFileCheckQueryRate   Total number of SafeDeleteFileCheck queries executed              
+SafeDeleteFileCheckQueryTime   Time spent executing the SafeDeleteFileCheck query in milliseconds
+TopicCreateQueryRate           Total number of TopicCreate queries executed                      
+TopicCreateQueryTime           Time spent executing the TopicCreate query in milliseconds        
+TopicDeleteQueryRate           Total number of TopicDelete queries executed                      
+TopicDeleteQueryTime           Time spent executing the TopicDelete query in milliseconds        
+=============================  ==================================================================
 
 
 PostgresConnectionPool metrics

@@ -51,7 +51,6 @@ class InklessConfigTest {
         configs.put("inkless.storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName());
         configs.put("inkless.file.cleaner.interval.ms", "100");
         configs.put("inkless.file.cleaner.retention.period.ms", "200");
-        configs.put("inkless.file.merger.interval.ms", "100");
         configs.put("inkless.consume.cache.max.count", "100");
         configs.put("inkless.consume.cache.max.bytes", "1048576");
         configs.put("inkless.consume.cache.expiration.lifespan.sec", "200");
@@ -72,7 +71,6 @@ class InklessConfigTest {
         assertThat(config.storage(storageMetrics)).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
-        assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.cacheMaxCount()).isEqualTo(100);
         assertThat(config.cacheMaxBytes()).isEqualTo(1048576L);
         assertThat(config.cacheExpirationLifespanSec()).isEqualTo(200);
@@ -102,7 +100,6 @@ class InklessConfigTest {
         assertThat(config.storage(storageMetrics)).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMinutes(5));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMinutes(1));
-        assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.cacheMaxCount()).isEqualTo(1000);
         assertThat(config.cacheMaxBytes()).isEqualTo(0L);
         assertThat(config.cacheExpirationLifespanSec()).isEqualTo(60);
@@ -126,7 +123,6 @@ class InklessConfigTest {
         configs.put("storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName());
         configs.put("file.cleaner.interval.ms", "100");
         configs.put("file.cleaner.retention.period.ms", "200");
-        configs.put("file.merger.interval.ms", "100");
         configs.put("consume.cache.max.count", "100");
         configs.put("consume.cache.max.bytes", "1048576");
         configs.put("consume.cache.expiration.lifespan.sec", "200");
@@ -151,7 +147,6 @@ class InklessConfigTest {
         assertThat(config.storage(storageMetrics)).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
-        assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.cacheMaxCount()).isEqualTo(100);
         assertThat(config.cacheMaxBytes()).isEqualTo(1048576L);
         assertThat(config.cacheExpirationLifespanSec()).isEqualTo(200);
@@ -558,7 +553,6 @@ class InklessConfigTest {
         configs.put("storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName());
         configs.put("file.cleaner.interval.ms", "100");
         configs.put("file.cleaner.retention.period.ms", "200");
-        configs.put("file.merger.interval.ms", "100");
         configs.put("consume.cache.max.count", "100");
         configs.put("consume.cache.max.bytes", "1048576");
         configs.put("consume.cache.expiration.lifespan.sec", "200");
@@ -583,7 +577,6 @@ class InklessConfigTest {
         assertThat(config.storage(storageMetrics)).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
-        assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.cacheMaxCount()).isEqualTo(100);
         assertThat(config.cacheMaxBytes()).isEqualTo(1048576L);
         assertThat(config.cacheExpirationLifespanSec()).isEqualTo(200);
