@@ -3459,6 +3459,16 @@ class ReplicaManager(val config: KafkaConfig,
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
             partition.makeLeader(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
             partition.seal()
+            // makeLeader reloads HW from the on-disk checkpoint, which may be stale
+            // (unclean shutdown, or checkpoint interval hadn't fired). Since the
+            // partition is sealed, no produces or follower fetches can ever advance
+            // HW naturally — restore it to the seal offset so consumers can read.
+            val sealOffset = _inklessMetadataView.getClassicToDisklessStartOffset(tp)
+            if (sealOffset >= 0 && partition.localLogOrException.highWatermark < sealOffset) {
+              partition.localLogOrException.maybeUpdateHighWatermark(sealOffset)
+              stateChangeLogger.info(s"Advanced high watermark to seal offset $sealOffset for " +
+                s"switched leader partition $tp after restart")
+            }
             changedPartitions.add(partition)
           } catch {
             case e: KafkaStorageException =>
