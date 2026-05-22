@@ -55,6 +55,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -203,6 +204,55 @@ class FetchOffsetHandlerTest {
         }
 
         verify(submittedFuture).cancel(eq(true));
+    }
+
+    @Test
+    void topicIdNotFound() throws ExecutionException, InterruptedException {
+        // Simulate a topic whose UUID cannot be resolved (returns ZERO_UUID).
+        when(metadataView.getTopicId(TOPIC_0)).thenReturn(Uuid.ZERO_UUID);
+
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, executor, time, metrics);
+        final var future1 = job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(-1));
+
+        job.start();
+
+        // Should not submit anything to the executor since enrichment failed before reaching control plane.
+        verify(executor, never()).submit((Runnable) any());
+        verify(controlPlane, never()).listOffsets(any());
+
+        // All futures should be completed with an error rather than left hanging or throwing.
+        assertThat(future1.isDone()).isTrue();
+        assertThat(future1.get().exception()).isNotEmpty();
+        assertThat(future1.get().exception().get()).isInstanceOf(RuntimeException.class);
+        assertThat(future1.get().exception().get()).message().contains("Topic ID not found");
+        assertThat(future1.get().timestampAndOffset()).isEmpty();
+    }
+
+    @Test
+    void topicIdNotFoundMultiplePartitions() throws ExecutionException, InterruptedException {
+        // First topic resolves fine, second does not — enrichment fails for the batch.
+        // HashMap iteration order is non-deterministic, so TOPIC_0 stub may not be called
+        // if TOPIC_1 (ZERO_UUID) is encountered first by TopicIdEnricher.
+        lenient().when(metadataView.getTopicId(TOPIC_0)).thenReturn(TOPIC_ID_0);
+        when(metadataView.getTopicId(TOPIC_1)).thenReturn(Uuid.ZERO_UUID);
+
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, executor, time, metrics);
+        final var future1 = job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(-1));
+        final var future2 = job.add(T1P1, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(1).setTimestamp(-3));
+
+        job.start();
+
+        verify(executor, never()).submit((Runnable) any());
+        verify(controlPlane, never()).listOffsets(any());
+
+        // All futures in the batch should be completed with the error.
+        for (final var future : List.of(future1, future2)) {
+            assertThat(future.isDone()).isTrue();
+            assertThat(future.get().exception()).isNotEmpty();
+            assertThat(future.get().exception().get()).isInstanceOf(RuntimeException.class);
+            assertThat(future.get().exception().get()).message().contains("Topic ID not found");
+            assertThat(future.get().timestampAndOffset()).isEmpty();
+        }
     }
 
     @Test

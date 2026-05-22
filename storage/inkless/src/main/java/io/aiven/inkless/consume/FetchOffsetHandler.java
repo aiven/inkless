@@ -149,7 +149,17 @@ public class FetchOffsetHandler implements Closeable {
                 // This should not happen during normal execution, non-Diskless topics won't get here.
                 LOGGER.error("Cannot find UUID for topic {}", e.topicName);
                 metrics.fetchOffsetFailed();
-                throw new RuntimeException();
+                // Complete all pending futures with the error rather than throwing an unchecked
+                // exception that propagates to the request handler, which may log the full request
+                // context (all topic names) producing an oversized log entry.
+                final var exception = new RuntimeException("Topic ID not found: " + e.topicName, e);
+                for (final var future : futures.values()) {
+                    future.complete(new OffsetResultHolder.FileRecordsOrError(
+                        Optional.of(exception),
+                        Optional.empty()
+                    ));
+                }
+                return;
             }
             final Future<?> submitted = executor.submit(() -> queryControlPlane(requestsEnriched));
             cancelHandler.handle((_ignored, e) -> {
