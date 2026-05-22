@@ -70,11 +70,8 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
           replicaManager.getPartitionOrError(pruneDisklessLogsResponse.topicIdPartition.topicPartition) match {
             case Right(partition) =>
               val newDisklessLogStart = pruneDisklessLogsResponse.disklessLogStartOffset
-              if (partition.getDisklessLogStartOffset() > newDisklessLogStart) {
-                logger.error("Diskless log start offset is non-monotonic. The old one ({}) is greater than the new ({}).",
-                  partition.getDisklessLogStartOffset(), newDisklessLogStart)
-              } else {
-                partition.setDisklessLogStartOffset(newDisklessLogStart)
+              if (!partition.maybeUpdateDisklessLogStartOffset(newDisklessLogStart)) {
+                logger.error("Diskless log start offset is non-monotonic. The old one ({}) is greater than the new ({}).")
               }
             case Left(error) => logger.warn("Couldn't update diskless start offset for {} due to: {}",
               pruneDisklessLogsResponse.topicIdPartition.topicPartition,
