@@ -37,7 +37,6 @@ import io.aiven.inkless.control_plane.postgres.PostgresConnectionPoolMetrics;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlaneMetrics;
 import io.aiven.inkless.delete.FileCleanerMetrics;
 import io.aiven.inkless.delete.RetentionEnforcerMetrics;
-import io.aiven.inkless.merge.FileMergerMetrics;
 import io.aiven.inkless.metadata.ClientAzAwarenessMetrics;
 import io.aiven.inkless.produce.FileCommitterMetrics;
 import io.aiven.inkless.produce.WriterMetrics;
@@ -92,11 +91,6 @@ public class MetricsDocs {
         printHeading("RetentionEnforcer metrics");
         out.println();
         out.println(toRstTable("io.aiven.inkless.delete", RetentionEnforcerMetrics.all()));
-
-        // Merge metrics
-        printHeading("FileMerger metrics");
-        out.println();
-        out.println(toRstTable("io.aiven.inkless.merge", FileMergerMetrics.all()));
 
         // Metadata metrics
         printHeading("ClientAzAwareness metrics");

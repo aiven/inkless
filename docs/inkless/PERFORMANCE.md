@@ -261,15 +261,12 @@ Where `<rack>` matches the `broker.rack` configuration. This ensures:
 2. **Align consumer rack with data**: Configure `client.id` with the appropriate `diskless_az` to stay within the same rack/AZ
 3. **Understand cold path behavior**: Lagging consumers bypass the cache to avoid evicting hot data; consider rate limiting and thread pool sizing
 4. **Monitor cache metrics**: Track cache hit rates to understand performance characteristics
-5. **File merging**: The background file merger consolidates small objects, improving read performance for lagging consumers over time
 
 ### Read Amplification
 
 Unlike traditional Kafka where each partition's data is stored contiguously, Inkless stores data from multiple partitions in the same object. This can lead to read amplification when:
 - Reading from a single partition requires fetching objects containing data from multiple partitions
 - The `inkless.consume.cache.block.bytes` setting controls the granularity of fetches (default 16 MiB blocks)
-
-File merging helps reduce this over time by reorganizing data for better partition locality in merged objects.
 
 ### Tuning the Read Path
 

@@ -23,7 +23,6 @@ import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.metrics.Metrics;
 
 import java.lang.reflect.InvocationTargetException;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 
@@ -122,13 +121,6 @@ public class InklessConfig extends AbstractConfig {
     private static final String FILE_CLEANER_RETENTION_PERIOD_MS_DOC = "The retention period for files marked for deletion.";
     private static final int FILE_CLEANER_RETENTION_PERIOD_MS_DEFAULT = 60 * 1000;  // 1 minute
 
-    public static final String FILE_MERGER_INTERVAL_MS_CONFIG = "file.merger.interval.ms";
-    private static final String FILE_MERGER_INTERVAL_MS_DOC = "The interval with which to merge files.";
-    private static final int FILE_MERGER_INTERVAL_MS_DEFAULT = 60 * 1000;  // 1 minute
-
-    public static final String FILE_MERGER_TEMP_DIR_CONFIG = "file.merger.temp.dir";
-    private static final String FILE_MERGER_TEMP_DIR_DOC = "The temporary directory for file merging.";
-    private static final String FILE_MERGER_TEMP_DIR_DEFAULT = "/tmp/inkless/merger";
 
     public static final String PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG = "produce.upload.thread.pool.size";
     private static final String PRODUCE_UPLOAD_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently upload files to remote storage";
@@ -308,22 +300,6 @@ public class InklessConfig extends AbstractConfig {
             FILE_CLEANER_RETENTION_PERIOD_MS_DOC
         );
 
-        configDef.define(
-            FILE_MERGER_INTERVAL_MS_CONFIG,
-            ConfigDef.Type.INT,
-            FILE_MERGER_INTERVAL_MS_DEFAULT,
-            ConfigDef.Range.atLeast(1),
-            ConfigDef.Importance.LOW,
-            FILE_MERGER_INTERVAL_MS_DOC
-        );
-        configDef.define(
-            FILE_MERGER_TEMP_DIR_CONFIG,
-            ConfigDef.Type.STRING,
-            FILE_MERGER_TEMP_DIR_DEFAULT,
-            new ConfigDef.NonNullValidator(),
-            ConfigDef.Importance.LOW,
-            FILE_MERGER_TEMP_DIR_DOC
-        );
         configDef.define(
             CONSUME_CACHE_MAX_COUNT_CONFIG,
             ConfigDef.Type.LONG,
@@ -572,14 +548,6 @@ public class InklessConfig extends AbstractConfig {
         return Duration.ofMillis(getInt(FILE_CLEANER_RETENTION_PERIOD_MS_CONFIG));
     }
 
-    public Duration fileMergerInterval() {
-        return Duration.ofMillis(getInt(FILE_MERGER_INTERVAL_MS_CONFIG));
-    }
-
-    public Path fileMergeWorkDir() {
-        final String path = getString(FILE_MERGER_TEMP_DIR_CONFIG);
-        return Path.of(path);
-    }
 
     public Long cacheMaxCount() {
         return getLong(CONSUME_CACHE_MAX_COUNT_CONFIG);
