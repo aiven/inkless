@@ -181,7 +181,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     // lets the transition handler skip partitions that are already being processed
     private final Map<TopicPartition, MirrorPartitionState> pendingPartitionStates = new ConcurrentHashMap<>();
-    private final Map<TopicPartition, MirrorPartitionState> prevStateBeforeFailure = new ConcurrentHashMap<>();
     private final Map<TopicPartition, Integer> failedRetryAttempts = new ConcurrentHashMap<>();
     private final Set<String> pendingTopicCreations = ConcurrentHashMap.newKeySet();
 
@@ -352,10 +351,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return pendingPartitionStates;
     }
 
-    public Map<TopicPartition, MirrorPartitionState> prevStateBeforeFailure() {
-        return prevStateBeforeFailure;
-    }
-
     public Map<TopicPartition, Integer> failedRetryAttempts() {
         return failedRetryAttempts;
     }
@@ -385,6 +380,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     public void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorPartitionState state) {
         stateTransitioner.ifPresent(st -> st.transitionTo(mirrorName, topicPartition, state));
+    }
+
+    // immediately update the source cluster metadata
+    public void scheduleRediscoverSource(String mirrorName) {
+        scheduler.scheduleOnce("rediscover-source", () -> {
+            discoverSourceBrokers(mirrorName);
+            syncSourceTopicState(mirrorName);
+        });
     }
 
     private static final Set<String> NON_CONNECTION_CONFIGS = Set.of(

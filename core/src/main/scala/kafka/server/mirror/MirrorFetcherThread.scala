@@ -18,7 +18,7 @@ package kafka.server.mirror
 
 import kafka.cluster.Partition
 import kafka.server._
-import kafka.server.mirror.ClusterMirrorUtils.LEADER_EPOCH_BUMP_THRESHOLD
+import kafka.server.mirror.ClusterMirrorUtils.{LEADER_EPOCH_BUMP_THRESHOLD, PartitionKey}
 import org.apache.kafka.common.errors.MirrorLeaderEpochExceededException
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.record.Records
@@ -74,7 +74,11 @@ class MirrorFetcherThread(name: String,
   // Transition to FAILED so the coordinator can schedule exponential backoff retries.
   override protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {
     mirrorPartitions.foreach { tp =>
-      replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, tp, MirrorPartitionState.FAILED))
+      replicaMgr.mirrorMetadataManager.foreach( mmm => {
+        // the leader node in the source cluster might have unclean shutdown, we need to aggressively discover new leader
+        mmm.scheduleRediscoverSource(mirrorName);
+        mmm.transitionTo(mirrorName, tp, MirrorPartitionState.FAILED)
+      })
     }
   }
 
@@ -105,6 +109,10 @@ class MirrorFetcherThread(name: String,
       // When source batch is close to the local epoch (within LEADER_EPOCH_BUMP_THRESHOLD),
       // schedule a proactive local epoch bump while still allowing the current batch to append.
       replicaMgr.mirrorMetadataManager.foreach { mmm =>
+        // successful fetch, remove the failed metadata
+        mmm.failedRetryAttempts.remove(topicPartition)
+        mmm.partitionPreviousStates().remove(new PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()))
+
         mmm.scheduleBumpLeaderEpochs(partition.getMirrorName().get(), java.util.Set.of(topicPartition))
           .whenComplete { (_, ex) =>
             if (ex != null) log.warn(s"Proactive epoch bump failed for $topicPartition", ex)
