@@ -1419,14 +1419,88 @@ class ReplicaManager(val config: KafkaConfig,
                     responseCallback: Map[TopicPartition, DeleteRecordsPartitionResult] => Unit,
                     allowInternalTopicDeletion: Boolean = false): Unit = {
 
-    if (inklessDeleteRecordsInterceptor.exists(_.intercept(
-      offsetPerPartition.view.mapValues(java.lang.Long.valueOf).toMap.asJava,
-      r => responseCallback(r.asScala)))) {
+    val disklessStartOffsetPerPartition = offsetPerPartition.keys.flatMap { topicPartition =>
+      if (_inklessMetadataView.isDisklessTopic(topicPartition.topic)) {
+        Some(topicPartition -> _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition))
+      } else {
+        None
+      }
+    }.toMap
+    val disklessDeleteRecordsRequested = disklessStartOffsetPerPartition.nonEmpty
+
+    val failedDisklessDeleteRecords = if (disklessDeleteRecordsRequested && inklessDeleteRecordsInterceptor.isEmpty) {
+      error(s"Cannot delete records from diskless partitions ${disklessStartOffsetPerPartition.keys.mkString(", ")}: DeleteRecordsInterceptor is not enabled")
+      disklessStartOffsetPerPartition.keys.map { topicPartition =>
+        topicPartition -> new DeleteRecordsPartitionResult()
+          .setPartitionIndex(topicPartition.partition)
+          .setLowWatermark(DeleteRecordsResponse.INVALID_LOW_WATERMARK)
+          .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code)
+      }.toMap
+    } else {
+      Map.empty[TopicPartition, DeleteRecordsPartitionResult]
+    }
+
+    val localOffsetPerPartition = mutable.Map.empty[TopicPartition, Long]
+    val disklessOffsetPerPartition = mutable.Map.empty[TopicPartition, Long]
+    val hybridDisklessPartitions = mutable.Set.empty[TopicPartition]
+
+    if (disklessDeleteRecordsRequested) {
+      offsetPerPartition.filterNot { case (topicPartition, _) =>
+        failedDisklessDeleteRecords.contains(topicPartition)
+      }.foreach { case (topicPartition, requestedOffset) =>
+        disklessStartOffsetPerPartition.get(topicPartition) match {
+          case Some(classicToDisklessStartOffset) if classicToDisklessStartOffset >= 0 =>
+            // partition switched from classic to diskless
+            val needsDisklessDelete = requestedOffset == DeleteRecordsRequest.HIGH_WATERMARK ||
+              requestedOffset > classicToDisklessStartOffset
+            val localOffset = if (needsDisklessDelete && requestedOffset != DeleteRecordsRequest.HIGH_WATERMARK) {
+              classicToDisklessStartOffset
+            } else {
+              requestedOffset
+            }
+            localOffsetPerPartition += topicPartition -> localOffset
+            if (needsDisklessDelete) {
+              disklessOffsetPerPartition += topicPartition -> requestedOffset
+              hybridDisklessPartitions += topicPartition
+            }
+          case Some(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) =>
+            // partition not switched yet to diskless: data is only available in local log
+            localOffsetPerPartition += topicPartition -> requestedOffset
+          case Some(_) =>
+            // pure-diskless partition
+            disklessOffsetPerPartition += topicPartition -> requestedOffset
+          case None =>
+            // classic partition
+            localOffsetPerPartition += topicPartition -> requestedOffset
+        }
+      }
+    } else {
+      // No diskless partitions are present, so keep the existing local delete path.
+      localOffsetPerPartition ++= offsetPerPartition
+    }
+
+    def maybeDeleteFromDiskless(localResponse: Map[TopicPartition, DeleteRecordsPartitionResult]): Unit = {
+      // Keep pure diskless partitions and only the hybrid partitions whose local phase succeeded.
+      val disklessOffsetsAfterLocalDelete = disklessOffsetPerPartition.filterNot { case (topicPartition, _) =>
+        hybridDisklessPartitions.contains(topicPartition) &&
+          localResponse.get(topicPartition).exists(_.errorCode != Errors.NONE.code)
+      }
+      if (disklessOffsetsAfterLocalDelete.isEmpty) {
+        responseCallback(localResponse ++ failedDisklessDeleteRecords)
+      } else {
+        inklessDeleteRecordsInterceptor.get.intercept(
+          disklessOffsetsAfterLocalDelete.view.mapValues(java.lang.Long.valueOf).toMap.asJava,
+          r => responseCallback(localResponse ++ failedDisklessDeleteRecords ++ r.asScala))
+      }
+    }
+
+    if (localOffsetPerPartition.isEmpty) {
+      maybeDeleteFromDiskless(Map.empty)
       return
     }
 
     val timeBeforeLocalDeleteRecords = time.milliseconds
-    val localDeleteRecordsResults = deleteRecordsOnLocalLog(offsetPerPartition, allowInternalTopicDeletion)
+    val localDeleteRecordsResults = deleteRecordsOnLocalLog(localOffsetPerPartition, allowInternalTopicDeletion)
     debug("Delete records on local log in %d ms".format(time.milliseconds - timeBeforeLocalDeleteRecords))
 
     val deleteRecordsStatus = localDeleteRecordsResults.map { case (topicPartition, result) =>
@@ -1464,10 +1538,10 @@ class ReplicaManager(val config: KafkaConfig,
         }
       }
       // create delayed delete records operation
-      val delayedDeleteRecords = new DelayedDeleteRecords(timeout, deleteRecordsStatus.asJava, onAcks,  response => responseCallback(response.asScala))
+      val delayedDeleteRecords = new DelayedDeleteRecords(timeout, deleteRecordsStatus.asJava, onAcks, response => maybeDeleteFromDiskless(response.asScala))
 
       // create a list of (topic, partition) pairs to use as keys for this delayed delete records operation
-      val deleteRecordsRequestKeys = offsetPerPartition.keys.map(new TopicPartitionOperationKey(_)).toList
+      val deleteRecordsRequestKeys = localOffsetPerPartition.keys.map(new TopicPartitionOperationKey(_)).toList
 
       // try to complete the request immediately, otherwise put it into the purgatory
       // this is because while the delayed delete records operation is being created, new
@@ -1476,7 +1550,7 @@ class ReplicaManager(val config: KafkaConfig,
     } else {
       // we can respond immediately
       val deleteRecordsResponseStatus = deleteRecordsStatus.map { case (k, status) => k -> status.responseStatus }
-      responseCallback(deleteRecordsResponseStatus)
+      maybeDeleteFromDiskless(deleteRecordsResponseStatus)
     }
   }
 
