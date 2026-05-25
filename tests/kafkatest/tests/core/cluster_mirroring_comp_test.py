@@ -141,6 +141,9 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
         for t, cfg in topics.items():
             self.source_kafka.create_topic({"topic": t, **cfg})
 
+        # restart source cluster to bump the partitions leader epoch
+        self.source_kafka.restart_cluster(clean_shutdown=True)
+
         self.logger.info("Producing %d records to each source topic", num_records)
         for t in topics:
             self.produce_records(self.source_kafka, t, num_records, self.source_client_node)
@@ -172,6 +175,17 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
         self.logger.info("Waiting for all partitions to reach MIRRORING with zero lag")
         self.wait_mirror_lag_zero(
             self.dest_kafka, mirror_name, topics=list(topics.keys()))
+
+        leader_node = self.source_kafka.leader("my-topic-b", 0)
+        self.source_kafka.stop_node(leader_node)
+
+        self.logger.info("Producing %d more records to each source topic", num_records)
+            for t in topics:
+                self.produce_records(self.source_kafka, t, num_records, self.source_client_node)
+
+        self.logger.info("Waiting for all partitions to reach MIRRORING with zero lag after one source node down")
+            self.wait_mirror_lag_zero(
+                self.dest_kafka, mirror_name, topics=list(topics.keys()))
 
         self.logger.info("Verifying consumer group offset sync")
         self.wait_for_metadata_sync(self.dest_kafka, mirror_name, num_cycles=2)
