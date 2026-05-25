@@ -43,6 +43,7 @@ import org.apache.kafka.common.acl.AclBindingFilter;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.SecurityDisabledException;
+import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.message.BumpLeaderEpochsRequestData;
 import org.apache.kafka.common.message.CreateAclsRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
@@ -169,7 +170,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     private final Map<String, Uuid> sourceClusterIds = new ConcurrentHashMap<>();
     private final Map<String, List<MirrorSourceSender>> sourceSenders = new ConcurrentHashMap<>();
-    private final Map<String, Map<TopicPartition, Node>> sourceLeaders = new ConcurrentHashMap<>();
+    private final Map<String, Map<TopicPartition, ClusterMirrorUtils.LeaderInfo>> sourceLeaders = new ConcurrentHashMap<>();
     private final Map<ClusterMirrorUtils.PartitionKey, MirrorPartitionState> partitionStates = new ConcurrentHashMap<>();
     private final Map<ClusterMirrorUtils.PartitionKey, MirrorPartitionState> partitionPreviousStates = new ConcurrentHashMap<>();
     private final Map<MirrorPartitionState, AtomicLong> partitionStateCounts = new ConcurrentHashMap<>();
@@ -847,15 +848,15 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /** Updates cached source leader for a specific partition. */
-    public void updateSourceLeader(String mirrorName, TopicPartition tp, Node leader) {
+    public void updateSourceLeader(String mirrorName, TopicPartition tp, ClusterMirrorUtils.LeaderInfo leader) {
         sourceLeaders.computeIfAbsent(mirrorName, k -> new ConcurrentHashMap<>()).put(tp, leader);
     }
 
     /** Resolves source partition leader from cache, falling back to bootstrap server if not cached. */
-    public Node resolveSourceLeader(String mirrorName, TopicPartition tp) {
+    public ClusterMirrorUtils.LeaderInfo resolveSourceLeader(String mirrorName, TopicPartition tp) {
         var partitionLeaders = sourceLeaders.get(mirrorName);
         if (partitionLeaders != null) {
-            Node leader = partitionLeaders.get(tp);
+            ClusterMirrorUtils.LeaderInfo leader = partitionLeaders.get(tp);
             if (leader != null) {
                 return leader;
             }
@@ -870,7 +871,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         if (senders != null && !senders.isEmpty()) {
             log.info("No cached leader for mirror {} partition {}. Using bootstrap server as initial target.", mirrorName, tp);
             BrokerEndPoint ep = senders.get(0).brokerEndPoint();
-            return new Node(ep.id(), ep.host(), ep.port());
+            // set leaderEpoch to 0 if unknown to trigger source epoch discovery through fencing
+            return new ClusterMirrorUtils.LeaderInfo(new Node(ep.id(), ep.host(), ep.port()), 0);
         }
 
         throw new IllegalStateException("No source senders available for mirror " + mirrorName);
@@ -1269,7 +1271,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 if (partitionMetadata.leaderId.isPresent()) {
                     Node leader = brokerNodes.get(partitionMetadata.leaderId.get());
                     if (leader != null) {
-                        partitionLeaders.put(partitionMetadata.topicPartition, leader);
+                        // set leaderEpoch to 0 if unknown to trigger source epoch discovery through fencing
+                        partitionLeaders.put(partitionMetadata.topicPartition, new ClusterMirrorUtils.LeaderInfo(leader, partitionMetadata.leaderEpoch.orElse(0)));
                     }
                 }
             });
@@ -1573,8 +1576,18 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
         shareGroupOffsetSyncError.incrementAndGet();
         try {
-            List<String> sourceGroupIds = listSourceGroupIds(srcAdmin, ListGroupsOptions.forShareGroups(),
-                    groupsIncludePattern, groupsExcludePattern);
+            List<String> sourceGroupIds;
+            try {
+                sourceGroupIds = listSourceGroupIds(srcAdmin, ListGroupsOptions.forShareGroups(),
+                        groupsIncludePattern, groupsExcludePattern);
+            } catch (ExecutionException e) {
+                if (e.getCause() instanceof UnsupportedVersionException) {
+                    log.debug("The source cluster doesn't support share group, skipping share group offset sync");
+                    return;
+                } else {
+                    throw e;
+                }
+            }
             if (sourceGroupIds.isEmpty()) {
                 return;
             }

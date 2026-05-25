@@ -113,7 +113,7 @@ abstract class AbstractFetcherThread(name: String,
 
   protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {}
 
-  protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {}
+  protected def refreshSourceClusterMetadata(mirrorPartitions: Set[TopicPartition]): Unit = {}
 
   protected def shouldUpdateMirrorLeaderEpoch(topicPartition: TopicPartition): Boolean = {
     false
@@ -166,7 +166,7 @@ abstract class AbstractFetcherThread(name: String,
       if (fetchException.exists(_.isInstanceOf[IOException]) && mirrorName.nonEmpty && isRunning) {
         try {
           partitions.foreach(markPartitionRemoved)
-          handleMirrorFetchConnectionFailure(partitions.toSet)
+          refreshSourceClusterMetadata(partitions.toSet)
         } catch {
           case t: Throwable =>
             warn(s"Failed to re-resolve source leader for mirror $mirrorName", t)
@@ -276,22 +276,34 @@ abstract class AbstractFetcherThread(name: String,
    * current leader epoch, enabling proper epoch validation when fetching from the source.
    */
   private def updateMirrorFetchEpoch(partitionToData: Map[TopicPartition, PartitionData]): Unit = inLock(partitionMapLock) {
-    val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStateMap.asScala
+    val newStates: java.util.Map[TopicPartition, PartitionFetchState] = new util.HashMap[TopicPartition, PartitionFetchState]()
+    val partitionsToBeRemoved: java.util.Set[TopicPartition] = new util.HashSet[TopicPartition]()
+    partitionStates.partitionStateMap.asScala
       .map { case (topicPartition, currentFetchState) =>
         val updatedFetchState = partitionToData.get(topicPartition) match {
           case Some(partitionData) =>
             // Updating currentLeaderEpoch with source cluster leader epoch to pass epoch validation when fetching from source cluster
             val newCurrentLeaderEpoch = partitionData.currentLeader().leaderEpoch()
-            info(s"Discovered new fetch epoch for mirrored partition $topicPartition, " +
-              s"currentLeaderEpoch: ${currentFetchState.currentLeaderEpoch} -> $newCurrentLeaderEpoch")
-            new PartitionFetchState(currentFetchState.topicId, currentFetchState.fetchOffset(), currentFetchState.lag,
-              newCurrentLeaderEpoch, currentFetchState.delay, currentFetchState.state(), currentFetchState.lastFetchedEpoch(),
-              currentFetchState.dueMs(), currentFetchState.mirrorName(), currentFetchState.mirrorLeaderEpoch())
-          case None => currentFetchState
+
+            if (newCurrentLeaderEpoch > -1) {
+              info(s"Discovered new fetch epoch for mirrored partition $topicPartition, " +
+                s"currentLeaderEpoch: ${currentFetchState.currentLeaderEpoch} -> $newCurrentLeaderEpoch")
+              newStates.put(topicPartition, new PartitionFetchState(currentFetchState.topicId, currentFetchState.fetchOffset(), currentFetchState.lag,
+                newCurrentLeaderEpoch, currentFetchState.delay, currentFetchState.state(), currentFetchState.lastFetchedEpoch(),
+                currentFetchState.dueMs(), currentFetchState.mirrorName(), currentFetchState.mirrorLeaderEpoch()))
+            } else {
+              // the returned leaderEpoch is < 0, which means the source cluster doesn't support fetch API v9
+              partitionsToBeRemoved.add(topicPartition)
+            }
+          case None => newStates.put(topicPartition, currentFetchState)
         }
         (topicPartition, updatedFetchState)
       }
-    partitionStates.set(newStates.asJava)
+    partitionStates.set(newStates)
+    if (!partitionsToBeRemoved.isEmpty) {
+      removeFetcherForPartitions(partitionsToBeRemoved.asScala)
+      refreshSourceClusterMetadata(partitionsToBeRemoved.asScala)
+    }
   }
 
   /** Reassigns mirrored partitions to new fetcher threads after source leader change. */
@@ -413,8 +425,9 @@ abstract class AbstractFetcherThread(name: String,
     var fetchException: Option[Throwable] = None
 
     try {
-      debug(s"!!! Sending fetch request $fetchRequest")
+      info(s"!!! Sending fetch request $fetchRequest")
       responseData = leader.fetch(fetchRequest).asScala
+      info(s"!!! response: $responseData")
     } catch {
       case t: Throwable =>
         fetchException = Some(t)
