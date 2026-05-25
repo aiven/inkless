@@ -177,7 +177,7 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
         self.wait_mirror_lag_zero(
             self.dest_kafka, mirror_name, topics=list(topics.keys()))
 
-        leader_node = self.source_kafka.leader("my-topic-b", 0)
+        leader_node = self.source_kafka.leader("my-topic-a", 0)
         self.source_kafka.stop_node(leader_node)
 
         self.logger.info("Producing %d more records to each source topic", num_records)
