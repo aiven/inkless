@@ -134,7 +134,7 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
         topics = {
             "my-topic-a": {"partitions": 1, "replication-factor": 2},
 #             "my-topic-b": {"partitions": 1, "replication-factor": 2},
-#             "new-topic": {"partitions": 2, "replication-factor": 2},
+            "new-topic": {"partitions": 1, "replication-factor": 2},
         }
 
         self.logger.info("Creating topics on source cluster")
@@ -165,8 +165,8 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
             timeout_sec=20, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
-#         for regex in ["my-topic.*", "new-topic"]:
-        for regex in ["my-topic.*"]:
+        for regex in ["my-topic.*", "new-topic"]:
+#         for regex in ["my-topic.*"]:
             wait_until(
                 lambda r=regex: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                     self.dest_client_node, mirror_name, r),
