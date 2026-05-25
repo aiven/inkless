@@ -20,7 +20,7 @@ package kafka.server
 import java.util.{Collections, Optional}
 import kafka.utils.Logging
 import org.apache.kafka.clients.FetchSessionHandler
-import org.apache.kafka.common.errors.KafkaStorageException
+import org.apache.kafka.common.errors.{KafkaStorageException, UnsupportedVersionException}
 import org.apache.kafka.common.{IsolationLevel, Node, TopicPartition, Uuid}
 import org.apache.kafka.common.message.{FetchResponseData, OffsetForLeaderEpochRequestData}
 import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
@@ -82,7 +82,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
   private val lastSeenEndpointList = new util.HashMap[Integer, Node]()
 
   // cached from the first fetch response; lastFetchedEpoch requires Fetch v12+ (KIP-595)
-  @volatile private var negotiatedFetchVersion: Short = -1
+  @volatile private var supportFetchV12: Boolean = true
 
   override def isTruncationOnFetchSupported: Boolean = true
 
@@ -98,12 +98,18 @@ class RemoteLeaderEndPoint(logPrefix: String,
     val clientResponse = try {
       blockingSender.sendRequest(fetchRequest)
     } catch {
+      case t: UnsupportedVersionException =>
+        if (t.getMessage.contains("Attempted to write a non-default lastFetchedEpoch")) {
+          supportFetchV12 = false
+        }
+        fetchSessionHandler.handleError(t)
+        throw t
       case t: Throwable =>
         fetchSessionHandler.handleError(t)
         throw t
     }
+
     val fetchResponse = clientResponse.responseBody.asInstanceOf[FetchResponse]
-    negotiatedFetchVersion = clientResponse.requestHeader().apiVersion()
     debug("!!! Got fetch response: " + fetchResponse)
     lastSeenEndpointList.clear()
     fetchResponse.data().nodeEndpoints().forEach(
@@ -213,7 +219,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
           // Pre-KIP-595 sources (Fetch < v12) don't support lastFetchedEpoch;
           // skip it until we confirm the source version from the first response.
           val lastFetchedEpoch = if (isTruncationOnFetchSupported
-            && (!isClusterMirror || negotiatedFetchVersion < 0 || negotiatedFetchVersion >= 12))
+            && (!isClusterMirror || supportFetchV12))
             fetchState.lastFetchedEpoch()
           else
             Optional.empty[Integer]

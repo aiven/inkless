@@ -18,6 +18,7 @@ package kafka.server.mirror;
 
 import kafka.server.KafkaConfig;
 
+import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.utils.LogContext;
@@ -100,6 +101,8 @@ public final class ClusterMirrorUtils {
     public record PartitionKey(String mirrorName, String topic, int partition) { }
 
     public record LeaderEpochBump(CompletableFuture<Void> future, Map<TopicPartition, Integer> partitionToEpoch) { }
+
+    public record LeaderInfo(Node node, int leaderEpoch) { }
 
     interface StateTransitioner {
         void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorPartitionState state);
