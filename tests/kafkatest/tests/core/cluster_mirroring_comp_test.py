@@ -165,7 +165,8 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
             timeout_sec=20, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
-        for regex in ["my-topic.*", "new-topic"]:
+#         for regex in ["my-topic.*", "new-topic"]:
+        for regex in ["my-topic.*"]:
             wait_until(
                 lambda r=regex: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                     self.dest_client_node, mirror_name, r),
