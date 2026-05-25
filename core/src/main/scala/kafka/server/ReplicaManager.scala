@@ -1466,6 +1466,33 @@ class ReplicaManager(val config: KafkaConfig,
           case Some(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) =>
             // partition not switched yet to diskless: data is only available in local log
             localOffsetPerPartition += topicPartition -> requestedOffset
+          case Some(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+            if config.disklessRemoteStorageConsolidationEnabled &&
+              _inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic) =>
+            getPartitionOrError(topicPartition) match {
+              case Right(partition) =>
+                partition.log match {
+                  case Some(log) =>
+                    // consolidating diskless partition with local data
+                    val localLogEndOffset = log.logEndOffset
+                    val needsDisklessDelete = requestedOffset == DeleteRecordsRequest.HIGH_WATERMARK ||
+                      requestedOffset > localLogEndOffset
+                    val localOffset = if (needsDisklessDelete && requestedOffset != DeleteRecordsRequest.HIGH_WATERMARK) {
+                      localLogEndOffset
+                    } else {
+                      requestedOffset
+                    }
+                    localOffsetPerPartition += topicPartition -> localOffset
+                    if (needsDisklessDelete) {
+                      disklessOffsetPerPartition += topicPartition -> requestedOffset
+                      hybridDisklessPartitions += topicPartition
+                    }
+                  case None =>
+                    disklessOffsetPerPartition += topicPartition -> requestedOffset
+                }
+              case Left(_) =>
+                disklessOffsetPerPartition += topicPartition -> requestedOffset
+            }
           case Some(_) =>
             // pure-diskless partition
             disklessOffsetPerPartition += topicPartition -> requestedOffset

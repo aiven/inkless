@@ -6644,38 +6644,6 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testDeleteRecordsHybridPastStartOffsetDeletesBothWhenManagedReplicasDisabled(): Unit = {
-      val controlPlane = mock(classOf[ControlPlane])
-      when(controlPlane.deleteRecords(anyList())).thenReturn(util.List.of(CpDeleteRecordsResponse.success(150L)))
-      val replicaManager = createReplicaManager(
-        List(disklessTopicPartition.topic()),
-        controlPlane = Some(controlPlane),
-        topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
-        disklessManagedReplicasEnabled = false,
-      )
-      try {
-        val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
-        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-          .thenReturn(101L)
-
-        @volatile var responseData: Map[TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult] = Map.empty
-        replicaManager.deleteRecords(
-          timeout = 0L,
-          offsetPerPartition = Map(disklessTopicPartition.topicPartition() -> 150L),
-          responseCallback = response => responseData = response,
-        )
-
-        waitUntilTrue(() => responseData.nonEmpty, "Hybrid delete records response was not completed")
-        assertEquals(Errors.NONE.code, responseData(disklessTopicPartition.topicPartition()).errorCode)
-        assertEquals(150L, responseData(disklessTopicPartition.topicPartition()).lowWatermark)
-        assertEquals(101L, partition.localLogOrException.logStartOffset)
-        verify(controlPlane, timeout(5000)).deleteRecords(anyList())
-      } finally {
-        replicaManager.shutdown(checkpointHW = false)
-      }
-    }
-
-    @Test
     def testDeleteRecordsMixedClassicAndPureDisklessSplitsRequest(): Unit = {
       val controlPlane = mock(classOf[ControlPlane])
       when(controlPlane.deleteRecords(anyList())).thenReturn(util.List.of(CpDeleteRecordsResponse.success(80L)))
@@ -6737,6 +6705,40 @@ class ReplicaManagerTest {
         assertEquals(20L, classicPartition.localLogOrException.logStartOffset)
         assertEquals(Errors.UNKNOWN_SERVER_ERROR.code, responseData(disklessTopicPartition.topicPartition()).errorCode)
         assertEquals(DeleteRecordsResponse.INVALID_LOW_WATERMARK, responseData(disklessTopicPartition.topicPartition()).lowWatermark)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testDeleteRecordsConsolidatingDisklessWithLocalLogDeletesLocalThenDiskless(): Unit = {
+      val controlPlane = mock(classOf[ControlPlane])
+      when(controlPlane.deleteRecords(anyList())).thenReturn(util.List.of(CpDeleteRecordsResponse.success(150L)))
+      val replicaManager = createReplicaManager(
+        List(disklessTopicPartition.topic()),
+        controlPlane = Some(controlPlane),
+        topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+        disklessManagedReplicasEnabled = true,
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      )
+      try {
+        val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+
+        @volatile var responseData: Map[TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult] = Map.empty
+        replicaManager.deleteRecords(
+          timeout = 0L,
+          offsetPerPartition = Map(disklessTopicPartition.topicPartition() -> 150L),
+          responseCallback = response => responseData = response,
+        )
+
+        waitUntilTrue(() => responseData.nonEmpty, "Consolidating delete records response was not completed")
+        assertEquals(Errors.NONE.code, responseData(disklessTopicPartition.topicPartition()).errorCode)
+        assertEquals(150L, responseData(disklessTopicPartition.topicPartition()).lowWatermark)
+        assertEquals(101L, partition.localLogOrException.logStartOffset)
+        verify(controlPlane, timeout(5000)).deleteRecords(anyList())
       } finally {
         replicaManager.shutdown(checkpointHW = false)
       }
