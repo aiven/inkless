@@ -133,7 +133,7 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
         num_records = 100
         topics = {
             "my-topic-a": {"partitions": 1, "replication-factor": 2},
-#             "my-topic-b": {"partitions": 1, "replication-factor": 2},
+            "my-topic-b": {"partitions": 1, "replication-factor": 2},
             "new-topic": {"partitions": 1, "replication-factor": 2},
         }
 
