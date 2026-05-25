@@ -75,7 +75,6 @@ class MirrorFetcherThread(name: String,
   override protected def refreshSourceClusterMetadata(mirrorPartitions: Set[TopicPartition]): Unit = {
     mirrorPartitions.foreach { tp =>
       replicaMgr.mirrorMetadataManager.foreach( mmm => {
-        // the leader node in the source cluster might have unclean shutdown, we need to aggressively discover new leader
         mmm.scheduleRediscoverSource(mirrorName);
         mmm.transitionTo(mirrorName, tp, MirrorPartitionState.FAILED)
       })

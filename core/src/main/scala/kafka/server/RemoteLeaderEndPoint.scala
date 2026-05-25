@@ -100,6 +100,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
     } catch {
       case t: UnsupportedVersionException =>
         if (t.getMessage.contains("Attempted to write a non-default lastFetchedEpoch")) {
+          debug("The source cluster doesn't support fetch API v12. Don't set `lastFetchedEpoch` field.")
           supportFetchV12 = false
         }
         fetchSessionHandler.handleError(t)
@@ -110,7 +111,6 @@ class RemoteLeaderEndPoint(logPrefix: String,
     }
 
     val fetchResponse = clientResponse.responseBody.asInstanceOf[FetchResponse]
-    debug("!!! Got fetch response: " + fetchResponse)
     lastSeenEndpointList.clear()
     fetchResponse.data().nodeEndpoints().forEach(
       node => lastSeenEndpointList.put(node.nodeId(), new Node(node.nodeId(), node.host(), node.port(), node.rack())))

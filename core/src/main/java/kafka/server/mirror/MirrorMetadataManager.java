@@ -1244,10 +1244,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         );
 
         if (response.responseBody() instanceof MetadataResponse metadataResponse) {
-            log.info("Periodic metadata response: {}", metadataResponse);
-            if (!metadataResponse.errors().isEmpty()) {
-                return Optional.empty();
-            }
+            log.debug("Periodic metadata response: {}", metadataResponse);
             Map<Integer, Node> brokerNodes = new HashMap<>();
             metadataResponse.brokers().forEach(broker -> brokerNodes.put(broker.id(), broker));
             processTopicMetadata(mirrorName, metadataResponse.topicMetadata(), brokerNodes);

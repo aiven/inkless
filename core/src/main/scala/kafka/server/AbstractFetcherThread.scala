@@ -293,6 +293,7 @@ abstract class AbstractFetcherThread(name: String,
                 currentFetchState.dueMs(), currentFetchState.mirrorName(), currentFetchState.mirrorLeaderEpoch()))
             } else {
               // the returned leaderEpoch is < 0, which means the source cluster doesn't support fetch API v9
+              // need to refresh source cluster metadata and retry
               partitionsToBeRemoved.add(topicPartition)
             }
           case None => newStates.put(topicPartition, currentFetchState)
