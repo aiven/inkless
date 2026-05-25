@@ -209,8 +209,7 @@ public class ClusterMirrorCoordinator {
         if (newState == MirrorPartitionState.FAILED) {
             metadataManager.failedRetryAttempts().merge(tp, 1, Integer::sum);
             metadataManager.partitionPreviousStates().putIfAbsent(key, currentState);
-        } else if (newState == MirrorPartitionState.MIRRORING
-                || newState == MirrorPartitionState.STOPPED
+        } else if (newState == MirrorPartitionState.STOPPED
                 || newState == MirrorPartitionState.PAUSED) {
             metadataManager.failedRetryAttempts().remove(tp);
             metadataManager.partitionPreviousStates().remove(key);

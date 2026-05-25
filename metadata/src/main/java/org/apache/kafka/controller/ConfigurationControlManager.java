@@ -441,9 +441,11 @@ public class ConfigurationControlManager {
                 }
             }
 
-            if (!topic.topicId().equals(Uuid.ZERO_UUID) && topic.numPartitions() > 0) {
+            // create a random uuid if the provided topic id is ZERO_UUID (i.e. the source topic has no topic ID attached)
+            Uuid topicId = topic.topicId().equals(Uuid.ZERO_UUID) ? Uuid.randomUuid() : topic.topicId();
+            if (topic.numPartitions() > 0) {
                 ApiError createError = replicationControl.createMirrorTopic(
-                        topicName, topic.topicId(), topic.numPartitions(), records);
+                        topicName, topicId, topic.numPartitions(), records);
                 if (createError.isFailure() && createError.error() != Errors.TOPIC_ALREADY_EXISTS) {
                     // TODO: emit metric for mirror topic creation failure with error type (e.g. INVALID_REPLICATION_FACTOR)
                     topicRes.setErrorCode(createError.error().code()).setName(topicName);
