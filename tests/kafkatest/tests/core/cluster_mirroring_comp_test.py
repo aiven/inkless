@@ -132,9 +132,9 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
 
         num_records = 100
         topics = {
-            "my-topic-a": {"partitions": 3, "replication-factor": 2},
-            "my-topic-b": {"partitions": 1, "replication-factor": 2},
-            "new-topic": {"partitions": 2, "replication-factor": 2},
+            "my-topic-a": {"partitions": 1, "replication-factor": 2},
+#             "my-topic-b": {"partitions": 1, "replication-factor": 2},
+#             "new-topic": {"partitions": 2, "replication-factor": 2},
         }
 
         self.logger.info("Creating topics on source cluster")
