@@ -4977,7 +4977,7 @@ class ReplicaManagerInklessTest {
     val sharedState = mock(classOf[SharedState], Answers.RETURNS_DEEP_STUBS)
     when(sharedState.time()).thenReturn(Time.SYSTEM)
     val inklessConfigMap = new util.HashMap[String, Object]()
-    // Disable lagging consumer feature to match the empty lagging fetch storage
+    // Disable lagging consumer feature — not relevant for these tests
     inklessConfigMap.put("fetch.lagging.consumer.thread.pool.size", Integer.valueOf(0))
     when(sharedState.config()).thenReturn(new InklessConfig(inklessConfigMap))
     when(sharedState.controlPlane()).thenReturn(controlPlane.getOrElse(mock(classOf[ControlPlane])))

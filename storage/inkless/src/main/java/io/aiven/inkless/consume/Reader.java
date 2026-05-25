@@ -137,7 +137,11 @@ public class Reader implements AutoCloseable {
             maxBatchesPerPartitionToFind,
             Executors.newFixedThreadPool(fetchMetadataThreadPoolSize, new InklessThreadFactory("inkless-fetch-metadata-", false)),
             Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory("inkless-fetch-data-", false)),
-            maybeLaggingFetchStorage.orElse(null),
+            laggingConsumerThreadPoolSize > 0
+                ? maybeLaggingFetchStorage.orElseThrow(() -> new IllegalStateException(
+                    "Lagging consumer thread pool size is " + laggingConsumerThreadPoolSize
+                        + " but no lagging fetch storage was provided"))
+                : null,
             laggingConsumerThresholdMs,
             laggingConsumerRequestRateLimit,
             // Only create lagging consumer resources when feature is enabled (pool size > 0).
