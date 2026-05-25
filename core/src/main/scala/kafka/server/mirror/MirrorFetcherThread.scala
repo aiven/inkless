@@ -101,17 +101,20 @@ class MirrorFetcherThread(name: String,
       // The exception will mark this partition as failed and transition mirror state to EPOCH_FENCING.
       throw new MirrorLeaderEpochExceededException(s"Rejecting the batch because the batch leader " +
         s"epoch $highestBatchLeaderEpoch is higher than local leader epoch $localLeaderEpoch")
-    } else if (highestBatchLeaderEpoch > localLeaderEpoch - LEADER_EPOCH_BUMP_THRESHOLD) {
-      // When source batch is close to the local epoch (within LEADER_EPOCH_BUMP_THRESHOLD),
-      // schedule a proactive local epoch bump while still allowing the current batch to append.
+    } else {
       replicaMgr.mirrorMetadataManager.foreach { mmm =>
         // successful fetch, remove the failed metadata
         mmm.failedRetryAttempts.remove(topicPartition)
         mmm.partitionPreviousStates().remove(new PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()))
-        mmm.scheduleBumpLeaderEpochs(partition.getMirrorName().get(), java.util.Set.of(topicPartition))
-          .whenComplete { (_, ex) =>
-            if (ex != null) log.warn(s"Proactive epoch bump failed for $topicPartition", ex)
-          }
+
+        if (highestBatchLeaderEpoch > localLeaderEpoch - LEADER_EPOCH_BUMP_THRESHOLD) {
+          // When source batch is close to the local epoch (within LEADER_EPOCH_BUMP_THRESHOLD),
+          // schedule a proactive local epoch bump while still allowing the current batch to append.
+          mmm.scheduleBumpLeaderEpochs(partition.getMirrorName().get(), java.util.Set.of(topicPartition))
+            .whenComplete { (_, ex) =>
+              if (ex != null) log.warn(s"Proactive epoch bump failed for $topicPartition", ex)
+            }
+        }
       }
     }
   }
