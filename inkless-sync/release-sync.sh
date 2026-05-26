@@ -19,6 +19,7 @@ TARGET_TAG=""
 INCLUDE_RC=false
 WORKING_BRANCH=""
 YES=false
+SHOW_ALL_COMMITS=false
 
 usage() {
     cat <<EOF
@@ -35,6 +36,7 @@ Options:
   --list-tags       List available upstream tags for this release
   --include-rc      Include release candidates when listing tags
   --branch BRANCH   Working branch name (if different from inkless-branch)
+  --show-commits    Show all commits to be merged (not just top 20)
   --dry-run         Preview conflicts without merging
   --yes, -y         Skip confirmation prompts (for non-interactive use)
   -h, --help        Show this help
@@ -90,6 +92,10 @@ parse_args() {
                 fi
                 WORKING_BRANCH="$2"
                 shift 2
+                ;;
+            --show-commits)
+                SHOW_ALL_COMMITS=true
+                shift
                 ;;
             --dry-run)
                 DRY_RUN=true
@@ -345,10 +351,16 @@ do_sync() {
     echo "New version:     $new_version"
     echo ""
 
-    # Validate target is newer
+    # Validate target is newer (allow equal version when current is SNAPSHOT — first sync)
+    local is_initial_sync=false
     if [[ "$target_type" == "tag" ]] && ! version_less_than "$base_version" "$target"; then
-        error "Target tag '$target' is not newer than current base '$base_version'"
-        exit 1
+        if [[ "$current_version" == *-SNAPSHOT ]] && [[ "$base_version" == "$target" ]]; then
+            is_initial_sync=true
+            info "Initial release sync: incorporating upstream $target into newly created branch"
+        else
+            error "Target tag '$target' is not newer than current base '$base_version'"
+            exit 1
+        fi
     fi
 
     # Count commits to merge
@@ -362,7 +374,48 @@ do_sync() {
     local commits_to_merge
     commits_to_merge=$(count_commits "$merge_base" "$target")
 
-    info "Commits to merge: $commits_to_merge"
+    # Show per-version breakdown of commits to be included
+    echo "Commits to merge: $commits_to_merge"
+    echo ""
+    local version_prefix
+    version_prefix=$(get_upstream_branch "$inkless_branch")
+    local intermediate_tags
+    if [[ "$is_initial_sync" == "true" ]]; then
+        # For initial sync, show all tags up to and including target
+        intermediate_tags=$(git tag -l "${version_prefix}.*" --sort=v:refname \
+            | grep -v '\-rc' | grep -v '\-inkless' \
+            | awk -v target="$target" '{ tags[NR]=$0 } END { for(i=1;i<=NR;i++) if(tags[i]==target) print tags[i] }')
+    else
+        # Show tags between current base (exclusive) and target (inclusive)
+        intermediate_tags=$(git tag -l "${version_prefix}.*" --sort=v:refname \
+            | grep -v '\-rc' | grep -v '\-inkless' \
+            | awk -v base="$base_version" -v target="$target" '
+                BEGIN { past_base=0 }
+                { if($0==base) { past_base=1; next } if(past_base) { print $0; if($0==target) exit } }')
+    fi
+
+    if [[ -n "$intermediate_tags" ]]; then
+        echo "Versions included:"
+        local prev_ref="$merge_base"
+        while IFS= read -r tag; do
+            local tag_commits
+            tag_commits=$(count_commits "$prev_ref" "$tag")
+            printf "  %-12s %s commits\n" "$tag" "$tag_commits"
+            prev_ref="$tag"
+        done <<< "$intermediate_tags"
+        echo ""
+    fi
+
+    if [[ "$SHOW_ALL_COMMITS" == "true" ]]; then
+        echo "Commit log ($commits_to_merge commits):"
+        git log --oneline "$merge_base..$target"
+    else
+        echo "Commit log (20 most recent of $commits_to_merge):"
+        git log --oneline -20 "$merge_base..$target"
+        if [[ "$commits_to_merge" -gt 20 ]]; then
+            echo "  ... and $((commits_to_merge - 20)) more (use --show-commits to list all)"
+        fi
+    fi
     echo ""
 
     # Confirm before proceeding (skip if --yes was specified)
