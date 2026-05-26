@@ -6773,6 +6773,37 @@ class ReplicaManagerTest {
     }
 
     @Test
+    def testDeleteRecordsHybridHighWatermarkDeletesLocalThenDiskless(): Unit = {
+      val controlPlane = mock(classOf[ControlPlane])
+      when(controlPlane.deleteRecords(anyList())).thenReturn(util.List.of(CpDeleteRecordsResponse.success(200L)))
+      val replicaManager = createReplicaManager(
+        List(disklessTopicPartition.topic()),
+        controlPlane = Some(controlPlane),
+        topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+        disklessManagedReplicasEnabled = true,
+      )
+      try {
+        val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(101L)
+        @volatile var responseData: Map[TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult] = Map.empty
+        replicaManager.deleteRecords(
+          timeout = 0L,
+          offsetPerPartition = Map(disklessTopicPartition.topicPartition() -> DeleteRecordsRequest.HIGH_WATERMARK),
+          responseCallback = response => responseData = response,
+        )
+        waitUntilTrue(() => responseData.nonEmpty, "HIGH_WATERMARK hybrid delete records response was not completed")
+        assertEquals(Errors.NONE.code, responseData(disklessTopicPartition.topicPartition()).errorCode)
+        assertEquals(200L, responseData(disklessTopicPartition.topicPartition()).lowWatermark)
+        // Local log should be deleted up to classicToDisklessStartOffset (not HIGH_WATERMARK)
+        assertEquals(101L, partition.localLogOrException.logStartOffset)
+        verify(controlPlane, timeout(5000)).deleteRecords(anyList())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
     def testFetchDisklessBelowStartOffsetReadsFromClassicLogWhenManagedReplicasEnabled(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
       try {

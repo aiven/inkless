@@ -1488,9 +1488,11 @@ class ReplicaManager(val config: KafkaConfig,
                       hybridDisklessPartitions += topicPartition
                     }
                   case None =>
+                    // consolidating partition has no local log, so only diskless data can be deleted
                     disklessOffsetPerPartition += topicPartition -> requestedOffset
                 }
               case Left(_) =>
+                // cannot inspect the local log, no local component to delete, treat as pure-diskless
                 disklessOffsetPerPartition += topicPartition -> requestedOffset
             }
           case Some(_) =>
