@@ -279,7 +279,7 @@ abstract class AbstractFetcherThread(name: String,
     val newStates: java.util.Map[TopicPartition, PartitionFetchState] = new util.HashMap[TopicPartition, PartitionFetchState]()
     val partitionsToBeRemoved: java.util.Set[TopicPartition] = new util.HashSet[TopicPartition]()
     partitionStates.partitionStateMap.asScala
-      .map { case (topicPartition, currentFetchState) =>
+      .foreach { case (topicPartition, currentFetchState) =>
         val updatedFetchState = partitionToData.get(topicPartition) match {
           case Some(partitionData) =>
             // Updating currentLeaderEpoch with source cluster leader epoch to pass epoch validation when fetching from source cluster

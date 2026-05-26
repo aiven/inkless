@@ -307,14 +307,22 @@ public class FetchRequest extends AbstractRequest {
                     fetchRequestData.topics().add(fetchTopic);
                 }
 
+
+
                 FetchRequestData.FetchPartition fetchPartition = new FetchRequestData.FetchPartition()
                     .setPartition(topicPartition.partition())
                     .setCurrentLeaderEpoch(partitionData.currentLeaderEpoch.orElse(RecordBatch.NO_PARTITION_LEADER_EPOCH))
-                    .setLastFetchedEpoch(partitionData.lastFetchedEpoch.orElse(RecordBatch.NO_PARTITION_LEADER_EPOCH))
-                    .setMirrorLeaderEpoch(partitionData.mirrorLeaderEpoch.orElse(RecordBatch.NO_PARTITION_LEADER_EPOCH))
                     .setFetchOffset(partitionData.fetchOffset)
                     .setLogStartOffset(partitionData.logStartOffset)
                     .setPartitionMaxBytes(partitionData.maxBytes);
+
+                if (version >= 12) {
+                    fetchPartition.setLastFetchedEpoch(partitionData.lastFetchedEpoch.orElse(RecordBatch.NO_PARTITION_LEADER_EPOCH));
+                }
+
+                if (version >= 19) {
+                    fetchPartition.setMirrorLeaderEpoch(partitionData.mirrorLeaderEpoch.orElse(RecordBatch.NO_PARTITION_LEADER_EPOCH));
+                }
 
                 fetchTopic.partitions().add(fetchPartition);
             }

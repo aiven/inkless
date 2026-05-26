@@ -81,9 +81,6 @@ class RemoteLeaderEndPoint(logPrefix: String,
   private val fetchSize = brokerConfig.replicaFetchMaxBytes
   private val lastSeenEndpointList = new util.HashMap[Integer, Node]()
 
-  // cached from the first fetch response; lastFetchedEpoch requires Fetch v12+ (KIP-595)
-  @volatile private var supportFetchV12: Boolean = true
-
   override def isTruncationOnFetchSupported: Boolean = true
 
   override def initiateClose(): Unit = blockingSender.initiateClose()
@@ -98,13 +95,6 @@ class RemoteLeaderEndPoint(logPrefix: String,
     val clientResponse = try {
       blockingSender.sendRequest(fetchRequest)
     } catch {
-      case t: UnsupportedVersionException =>
-        if (t.getMessage.contains("Attempted to write a non-default lastFetchedEpoch")) {
-          debug("The source cluster doesn't support fetch API v12. Don't set `lastFetchedEpoch` field.")
-          supportFetchV12 = false
-        }
-        fetchSessionHandler.handleError(t)
-        throw t
       case t: Throwable =>
         fetchSessionHandler.handleError(t)
         throw t
@@ -218,8 +208,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
           val logStartOffset = replicaManager.localLogOrException(topicPartition).logStartOffset
           // Pre-KIP-595 sources (Fetch < v12) don't support lastFetchedEpoch;
           // skip it until we confirm the source version from the first response.
-          val lastFetchedEpoch = if (isTruncationOnFetchSupported
-            && (!isClusterMirror || supportFetchV12))
+          val lastFetchedEpoch = if (isTruncationOnFetchSupported)
             fetchState.lastFetchedEpoch()
           else
             Optional.empty[Integer]
