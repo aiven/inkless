@@ -181,7 +181,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     // lets the transition handler skip partitions that are already being processed
     private final Map<TopicPartition, MirrorPartitionState> pendingPartitionStates = new ConcurrentHashMap<>();
-    private final Map<TopicPartition, MirrorPartitionState> prevStateBeforeFailure = new ConcurrentHashMap<>();
     private final Map<TopicPartition, Integer> failedRetryAttempts = new ConcurrentHashMap<>();
     private final Set<String> pendingTopicCreations = ConcurrentHashMap.newKeySet();
 
@@ -350,10 +349,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     public Map<TopicPartition, MirrorPartitionState> pendingPartitionStates() {
         return pendingPartitionStates;
-    }
-
-    public Map<TopicPartition, MirrorPartitionState> prevStateBeforeFailure() {
-        return prevStateBeforeFailure;
     }
 
     public Map<TopicPartition, Integer> failedRetryAttempts() {
