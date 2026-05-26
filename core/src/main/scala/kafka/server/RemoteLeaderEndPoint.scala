@@ -20,7 +20,7 @@ package kafka.server
 import java.util.{Collections, Optional}
 import kafka.utils.Logging
 import org.apache.kafka.clients.FetchSessionHandler
-import org.apache.kafka.common.errors.{KafkaStorageException, UnsupportedVersionException}
+import org.apache.kafka.common.errors.KafkaStorageException
 import org.apache.kafka.common.{IsolationLevel, Node, TopicPartition, Uuid}
 import org.apache.kafka.common.message.{FetchResponseData, OffsetForLeaderEpochRequestData}
 import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}

@@ -307,8 +307,6 @@ public class FetchRequest extends AbstractRequest {
                     fetchRequestData.topics().add(fetchTopic);
                 }
 
-
-
                 FetchRequestData.FetchPartition fetchPartition = new FetchRequestData.FetchPartition()
                     .setPartition(topicPartition.partition())
                     .setCurrentLeaderEpoch(partitionData.currentLeaderEpoch.orElse(RecordBatch.NO_PARTITION_LEADER_EPOCH))
