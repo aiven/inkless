@@ -108,12 +108,15 @@ class MirrorUtils:
                   topic, num_records, bootstrap_servers,
                   cmd_suffix.replace("--command-config", "--producer.config")
                   if cmd_suffix else "")
-        client_node.account.ssh(cmd, allow_fail=True)
+        output = ""
+        for line in client_node.account.ssh_capture(cmd, allow_fail=True):
+            output += line
+        self.logger.debug("Producer output for %s:\n%s", topic, output.strip())
 
     def consume_records(self, kafka, topic, client_node, max_messages=None,
                         timeout_ms=30000, isolation_level=None, group=None,
-                        from_beginning=True):
-        """Consume records on a client node and return count."""
+                        from_beginning=True, expected_count=None,
+                        wait_timeout_sec=240):
         env_prefix, cmd_suffix = kafka._cmd_security_opts(client_node)
         cmd = "%s%s --bootstrap-server %s --topic %s --timeout-ms %d" % (
             env_prefix,
@@ -131,11 +134,30 @@ class MirrorUtils:
         if cmd_suffix:
             cmd += cmd_suffix.replace("--command-config", "--consumer.config")
         cmd += " 2>/dev/null"
-        count = 0
-        for line in client_node.account.ssh_capture(cmd, allow_fail=True):
-            if line.strip():
-                count += 1
-        return count
+
+        count = [0]
+        def try_consume():
+            for line in client_node.account.ssh_capture(cmd, allow_fail=True):
+                if line.strip():
+                    count[0] += 1
+            self.logger.info("Consumed %d records from %s so far (expected %s)",
+                             count[0], topic, expected_count)
+            return expected_count is None or count[0] >= expected_count
+
+        # When expected_count is set, retry consumption because the high watermark on
+        # destination replicas may not have advanced yet when mirror lag reaches zero.
+        if expected_count is not None:
+            deadline = time.time() + wait_timeout_sec
+            try_consume()
+            while count[0] < expected_count:
+                if time.time() >= deadline:
+                    raise AssertionError(
+                        "Expected %d records on %s, got %d" % (expected_count, topic, count[0]))
+                time.sleep(5)
+                try_consume()
+        else:
+            try_consume()
+        return count[0]
 
     def all_satisfy_in_mirror(self, kafka, mirror_name, per_partition_condition, topics):
         """Check that all partitions of the given mirror topics satisfy the condition."""
