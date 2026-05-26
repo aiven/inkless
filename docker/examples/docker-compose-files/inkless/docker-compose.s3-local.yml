@@ -21,6 +21,17 @@ services:
     environment:
       <<: *base-broker-env
 
+  broker3:
+    environment:
+      <<: *base-broker-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      storage:
+        condition: service_started
+      create_bucket:
+        condition: service_completed_successfully
+
   # Object storage
   storage:
     image: quay.io/minio/minio

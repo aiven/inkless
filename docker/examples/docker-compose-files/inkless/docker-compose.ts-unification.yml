@@ -54,3 +54,8 @@ services:
       <<: *ts-unification-env
       KAFKA_BROKER_RACK: "az2"
 
+  broker3:
+    environment:
+      <<: *ts-unification-env
+      KAFKA_BROKER_RACK: "az1"
+
