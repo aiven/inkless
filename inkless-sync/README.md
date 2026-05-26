@@ -14,6 +14,7 @@ The sync process follows the [Versioning Strategy](../docs/inkless/VERSIONING-ST
 Start a sync session with Claude Code using the appropriate prompt:
 - **Main Sync** → [MAIN-SYNC-PROMPT.md](MAIN-SYNC-PROMPT.md) — weekly/biweekly sync with Apache Kafka trunk
 - **Release Sync** → [RELEASE-SYNC-PROMPT.md](RELEASE-SYNC-PROMPT.md) — sync release branches with upstream patches
+- **Cherry-pick Sync** → [CHERRY-PICK-SYNC-GUIDE.md](CHERRY-PICK-SYNC-GUIDE.md) — backport inkless features from main to release branches
 
 Context for the agent:
 - Scripts are in `inkless-sync/`
@@ -32,17 +33,19 @@ Context for the agent:
 | `create-release-branch.sh` | Create new inkless release branches |
 | `cherry-pick-to-release.sh` | Cherry-pick inkless commits to release branches |
 
-## Two Types of Sync
+## Three Types of Sync
 
 | Type | Branch | Script | Use Case |
 |------|--------|--------|----------|
 | **Main Sync** | `main` | `main-sync.sh` | Weekly/biweekly sync with Apache Kafka trunk |
 | **Release Sync** | `inkless-4.0`, etc. | `release-sync.sh` | Sync release branches with upstream patch releases |
+| **Cherry-pick Sync** | `inkless-4.0`, etc. | `cherry-pick-to-release.sh` | Backport inkless features from main to release branches |
 
 ### When to Use Each
 
 - **Main Sync**: Regular development sync to keep up with Apache Kafka trunk
 - **Release Sync**: When Apache releases a patch (e.g., 4.0.1) and we need to incorporate fixes into our release branch
+- **Cherry-pick Sync**: When inkless features land on main and need to be backported to active release branches
 
 ## Quick Start
 
@@ -138,6 +141,8 @@ After creating the branch, sync with upstream to set the release version:
 ./inkless-sync/cherry-pick-to-release.sh inkless-4.0 abc123 def456
 ```
 
+For detailed cherry-pick workflow, conflict resolution patterns, and session tracking, see [CHERRY-PICK-SYNC-GUIDE.md](CHERRY-PICK-SYNC-GUIDE.md).
+
 ## How It Works (Main Sync)
 
 ### Phase 1: Preparation
@@ -177,6 +182,8 @@ inkless-sync/
 ├── README.md                     # This file
 ├── RELEASE-SYNC-GUIDE.md         # Release sync documentation
 ├── RELEASE-SYNC-PROMPT.md        # AI prompt for release syncs
+├── CHERRY-PICK-SYNC-GUIDE.md    # Cherry-pick sync documentation
+├── CHERRY-PICK-SESSION-TEMPLATE.md  # Session template for cherry-pick syncs
 ├── CONFLICT-RESOLUTION-STRATEGY.md     # Conflict resolution guidance
 ├── MAIN-SYNC-PROMPT.md                 # AI prompt for main branch syncs
 ├── MAIN-SYNC-SESSION-TEMPLATE.md       # Session template for main syncs
@@ -305,5 +312,6 @@ The structured commit approach makes it easy to:
 - [Versioning Strategy](../docs/inkless/VERSIONING-STRATEGY.md)
 - [Inkless README](../docs/inkless/README.md)
 - [Release Sync Guide](RELEASE-SYNC-GUIDE.md)
+- [Cherry-pick Sync Guide](CHERRY-PICK-SYNC-GUIDE.md)
 - [Conflict Resolution Strategy](CONFLICT-RESOLUTION-STRATEGY.md)
 - [Main Sync Prompt](MAIN-SYNC-PROMPT.md)
