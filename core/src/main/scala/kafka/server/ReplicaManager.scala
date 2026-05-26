@@ -1491,9 +1491,11 @@ class ReplicaManager(val config: KafkaConfig,
                     // consolidating partition has no local log, so only diskless data can be deleted
                     disklessOffsetPerPartition += topicPartition -> requestedOffset
                 }
-              case Left(_) =>
+              case Left(error) =>
                 // cannot inspect the local log, no local component to delete, treat as pure-diskless
                 disklessOffsetPerPartition += topicPartition -> requestedOffset
+                warn(s"Cannot find local partition for consolidating diskless topic " +
+                  s"${topicPartition}, routing delete exclusively to diskless. Error: $error")
             }
           case Some(_) =>
             // pure-diskless partition
