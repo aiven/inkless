@@ -1054,6 +1054,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
         dest_offset = parse_current_offset(dest_desc, "my-topic")
         assert src_offset == 2, "Expected source offset 2, got %s" % src_offset
         assert dest_offset == 5, "Expected dest offset 5 (sync skipped), got %s" % dest_offset
+        self.kill_background_consumer(self.client_node, "ConsoleConsumer")
 
     @cluster(num_nodes=7)
     @defaults(metadata_quorum=[quorum.isolated_kraft])
