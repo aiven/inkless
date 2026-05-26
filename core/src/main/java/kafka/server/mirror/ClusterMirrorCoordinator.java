@@ -209,8 +209,7 @@ public class ClusterMirrorCoordinator {
         if (newState == MirrorPartitionState.FAILED) {
             metadataManager.failedRetryAttempts().merge(tp, 1, Integer::sum);
             metadataManager.partitionPreviousStates().putIfAbsent(key, currentState);
-        } else if (newState == MirrorPartitionState.MIRRORING
-                || newState == MirrorPartitionState.STOPPED
+        } else if (newState == MirrorPartitionState.STOPPED
                 || newState == MirrorPartitionState.PAUSED) {
             metadataManager.failedRetryAttempts().remove(tp);
             metadataManager.partitionPreviousStates().remove(key);
@@ -227,9 +226,8 @@ public class ClusterMirrorCoordinator {
             }
             long delay = failedRetryBackoff.backoff(attempt);
             MirrorPartitionState targetState = metadataManager.partitionPreviousStates().getOrDefault(new ClusterMirrorUtils.PartitionKey(mirrorName, tp.topic(), tp.partition()), MirrorPartitionState.MIRRORING);
-            log.info("Scheduling retry #{} for partition {} in {} ms with target state {}.", attempt + 1, tp, delay, targetState);
-            scheduler.scheduleOnce("MirrorFailedRetry-" + tp,
-                () -> transitionTo(mirrorName, Set.of(tp), targetState), delay);
+            log.info("Scheduling retry attempt #{} for partition {} in {} ms with target state {}.", attempt, tp, delay, targetState);
+            scheduler.scheduleOnce("MirrorFailedRetry-" + tp, () -> transitionTo(mirrorName, Set.of(tp), targetState), delay);
         });
     }
 
