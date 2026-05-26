@@ -740,8 +740,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                 if (partition.state() != -1) {
                                     partitionStates.put(mpk, MirrorPartitionState.fromValue(partition.state()));
                                 }
-                                // putIfAbsent to avoid overwriting a locally-set previous state from a FAILED transition
-                                partitionPreviousStates.putIfAbsent(mpk, MirrorPartitionState.fromValue(partition.previousState()));
+                                MirrorPartitionState prevState = MirrorPartitionState.fromValue(partition.previousState());
+                                if (prevState != MirrorPartitionState.UNKNOWN) {
+                                    partitionPreviousStates.putIfAbsent(mpk, prevState);
+                                }
                                 failedRetryAttempts.put(tp, (int) partition.retryAttempt());
                             });
                         });
