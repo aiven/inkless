@@ -73,11 +73,9 @@ class MirrorFetcherThread(name: String,
 
   // Transition to FAILED so the coordinator can schedule exponential backoff retries.
   override protected def refreshSourceClusterMetadata(mirrorPartitions: Set[TopicPartition]): Unit = {
+    replicaMgr.mirrorMetadataManager.foreach(_.scheduleRediscoverSource(mirrorName))
     mirrorPartitions.foreach { tp =>
-      replicaMgr.mirrorMetadataManager.foreach( mmm => {
-        mmm.scheduleRediscoverSource(mirrorName);
-        mmm.transitionTo(mirrorName, tp, MirrorPartitionState.FAILED)
-      })
+      replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, tp, MirrorPartitionState.FAILED))
     }
   }
 
