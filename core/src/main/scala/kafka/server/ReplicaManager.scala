@@ -38,7 +38,7 @@ import org.apache.kafka.common.message.DeleteRecordsResponseData.DeleteRecordsPa
 import org.apache.kafka.common.message.DescribeLogDirsResponseData.DescribeLogDirsTopic
 import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
 import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
-import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.OffsetForLeaderTopic
+import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetForLeaderPartition, OffsetForLeaderTopic}
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.{EpochEndOffset, OffsetForLeaderTopicResult}
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse
 import org.apache.kafka.common.message.{DescribeLogDirsResponseData, DescribeProducersResponseData}
@@ -2788,103 +2788,133 @@ class ReplicaManager(val config: KafkaConfig,
   def lastOffsetForLeaderEpoch(
     requestedEpochInfo: Seq[OffsetForLeaderTopic]
   ): Seq[OffsetForLeaderTopicResult] = {
-    // First start job to collect diskless offsets
-    val inklessFetchOffsetHandlerJob: Option[FetchOffsetHandler.Job] = inklessFetchOffsetHandler.map(_.createJob())
+    lazy val inklessFetchOffsetHandlerJob: Option[FetchOffsetHandler.Job] = inklessFetchOffsetHandler.map(_.createJob())
+    var disklessOffsetForLeaderEpochRequested = false
 
-    val inklessOffsetFuturesByTopic: Map[String, Seq[CompletableFuture[EpochEndOffset]]] = requestedEpochInfo
-      .filter { offsetForLeaderTopic =>
-        inklessFetchOffsetHandlerJob.exists(_.mustHandle(offsetForLeaderTopic.topic))
+    def localOffsetForLeaderEpoch(topicPartition: TopicPartition, offsetForLeaderPartition: OffsetForLeaderPartition): EpochEndOffset = {
+      getPartition(topicPartition) match {
+        case HostedPartition.Online(partition) =>
+          val currentLeaderEpochOpt =
+            if (offsetForLeaderPartition.currentLeaderEpoch == RecordBatch.NO_PARTITION_LEADER_EPOCH)
+              Optional.empty[Integer]
+            else
+              Optional.of[Integer](offsetForLeaderPartition.currentLeaderEpoch)
+
+          partition.lastOffsetForLeaderEpoch(
+            currentLeaderEpochOpt,
+            offsetForLeaderPartition.leaderEpoch,
+            fetchOnlyFromLeader = true)
+
+        case HostedPartition.Offline(_) =>
+          new EpochEndOffset()
+            .setPartition(offsetForLeaderPartition.partition)
+            .setErrorCode(Errors.KAFKA_STORAGE_ERROR.code)
+
+        case HostedPartition.None if metadataCache.contains(topicPartition) =>
+          new EpochEndOffset()
+            .setPartition(offsetForLeaderPartition.partition)
+            .setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
+
+        case HostedPartition.None =>
+          new EpochEndOffset()
+            .setPartition(offsetForLeaderPartition.partition)
+            .setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code)
       }
-      .map { offsetForLeaderTopic =>
-        val topic = offsetForLeaderTopic.topic()
-        val partitions = offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
-          val partition = offsetForLeaderPartition.partition
-          val leaderEpoch = offsetForLeaderPartition.leaderEpoch()
-          val tp = new TopicPartition(topic, partition)
+    }
 
+    def disklessOffsetForLeaderEpoch(topicPartition: TopicPartition, offsetForLeaderPartition: OffsetForLeaderPartition): () => EpochEndOffset = {
+      if (offsetForLeaderPartition.leaderEpoch == OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH) {
+        () => new EpochEndOffset()
+          .setPartition(topicPartition.partition)
+          .setErrorCode(Errors.NONE.code)
+      } else inklessFetchOffsetHandlerJob match {
+        case Some(job) =>
+          disklessOffsetForLeaderEpochRequested = true
           val partitionRequest = new ListOffsetsPartition()
-            .setPartitionIndex(partition)
+            .setPartitionIndex(topicPartition.partition)
             .setCurrentLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH)
             .setTimestamp(ListOffsetsRequest.LATEST_TIMESTAMP)
 
-          inklessFetchOffsetHandlerJob.get
-            .add(tp, partitionRequest)
+          val future = job.add(topicPartition, partitionRequest)
             .thenApply[EpochEndOffset](epochEndOffset => {
               val error = epochEndOffset.exception()
                 .map[Errors](e => Errors.forException(e))
                 .orElse(Errors.NONE)
               if (error != Errors.NONE) {
-                warn(s"Error fetching offset for leader epoch from control plane for $tp: $error",
+                warn(s"Error fetching offset for leader epoch from control plane for $topicPartition: $error",
                   epochEndOffset.exception().orElse(null))
               }
               val endOffset = epochEndOffset.timestampAndOffset()
                 .map[Long](_.offset)
                 .orElse(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET)
               new EpochEndOffset()
-                .setPartition(tp.partition())
+                .setPartition(topicPartition.partition)
                 .setErrorCode(error.code)
-                .setLeaderEpoch(leaderEpoch)
+                .setLeaderEpoch(offsetForLeaderPartition.leaderEpoch)
                 .setEndOffset(endOffset)
             })
-        }.toSeq
-        topic -> partitions
-      }.toMap
 
-    inklessFetchOffsetHandlerJob.foreach(_.start())
+          () => future.get()
 
-    // Then build response
-    requestedEpochInfo
-      .map { offsetForLeaderTopic =>
-        if (_inklessMetadataView.isDisklessTopic(offsetForLeaderTopic.topic())) {
-          inklessOffsetFuturesByTopic.get(offsetForLeaderTopic.topic())
-            .map { futures =>
-              // Wait until offsetForLeaderTopic is completed
-              // TODO check if this can be bound -- currently as last offset is available locally on classic topics
-              //   it is not needed to have a purgatory; but it may be needed.
-              val offsets = futures.map(_.get())
-              new OffsetForLeaderTopicResult()
-                .setTopic(offsetForLeaderTopic.topic())
-                .setPartitions(offsets.toList.asJava)
-            }
-            .get
-        } else {
-          val partitions = offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
-            val tp = new TopicPartition(offsetForLeaderTopic.topic, offsetForLeaderPartition.partition)
-            getPartition(tp) match {
-              case HostedPartition.Online(partition) =>
-                val currentLeaderEpochOpt =
-                  if (offsetForLeaderPartition.currentLeaderEpoch == RecordBatch.NO_PARTITION_LEADER_EPOCH)
-                    Optional.empty[Integer]
-                  else
-                    Optional.of[Integer](offsetForLeaderPartition.currentLeaderEpoch)
-
-                partition.lastOffsetForLeaderEpoch(
-                  currentLeaderEpochOpt,
-                  offsetForLeaderPartition.leaderEpoch,
-                  fetchOnlyFromLeader = true)
-
-              case HostedPartition.Offline(_) =>
-                new EpochEndOffset()
-                  .setPartition(offsetForLeaderPartition.partition)
-                  .setErrorCode(Errors.KAFKA_STORAGE_ERROR.code)
-
-              case HostedPartition.None if metadataCache.contains(tp) =>
-                new EpochEndOffset()
-                  .setPartition(offsetForLeaderPartition.partition)
-                  .setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
-
-              case HostedPartition.None =>
-                new EpochEndOffset()
-                  .setPartition(offsetForLeaderPartition.partition)
-                  .setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code)
-            }
-          }
-
-          new OffsetForLeaderTopicResult()
-            .setTopic(offsetForLeaderTopic.topic)
-            .setPartitions(partitions.toList.asJava)
-        }
+        case None =>
+          error(s"Cannot fetch offset for leader epoch from diskless partition $topicPartition: FetchOffsetHandler is not enabled")
+          () => new EpochEndOffset()
+            .setPartition(topicPartition.partition)
+            .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code)
+            .setEndOffset(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET)
       }
+    }
+
+    val routedResponses = requestedEpochInfo.map { offsetForLeaderTopic =>
+      val partitions = offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
+        val topic = offsetForLeaderTopic.topic
+        val topicPartition = new TopicPartition(topic, offsetForLeaderPartition.partition)
+        if (!_inklessMetadataView.isDisklessTopic(topic)) {
+          () => localOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
+        } else {
+          _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition) match {
+            case PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING =>
+              // Switch is still in progress: only the classic log has authoritative epoch data.
+              () => localOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
+
+            case PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET =>
+              disklessOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
+
+            case classicToDisklessStartOffset if classicToDisklessStartOffset >= 0L =>
+              val localResult = localOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
+              val localError = Errors.forCode(localResult.errorCode)
+              if (localError != Errors.NONE) {
+                () => localResult
+              } else if (localResult.endOffset != OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET && localResult.endOffset <= classicToDisklessStartOffset) {
+                // The requested epoch ends at or before the switch point, so the classic log answers it completely.
+                () => localResult
+              } else {
+                disklessOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
+              }
+
+            case invalidClassicToDisklessStartOffset =>
+              // classicToDisklessStartOffset < -2, should never happen, raise an error
+              error(s"Cannot fetch offset for leader epoch from diskless partition $topicPartition: " +
+                s"invalid classicToDisklessStartOffset $invalidClassicToDisklessStartOffset")
+              () => new EpochEndOffset()
+                .setPartition(topicPartition.partition)
+                .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code)
+                .setEndOffset(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET)
+          }
+        }
+      }.toSeq
+      offsetForLeaderTopic -> partitions
+    }
+
+    if (disklessOffsetForLeaderEpochRequested) {
+      inklessFetchOffsetHandlerJob.foreach(_.start())
+    }
+
+    routedResponses.map { case (offsetForLeaderTopic, partitions) =>
+      new OffsetForLeaderTopicResult()
+        .setTopic(offsetForLeaderTopic.topic)
+        .setPartitions(partitions.map(_.apply()).toList.asJava)
+    }
   }
 
   def activeProducerState(requestPartition: TopicPartition): DescribeProducersResponseData.PartitionResponse = {
