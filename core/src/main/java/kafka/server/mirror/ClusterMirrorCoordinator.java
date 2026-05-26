@@ -370,17 +370,17 @@ public class ClusterMirrorCoordinator {
             tps.put(topic, partitionIndices);
         });
 
+        // wait until partition states and LME update complete then return the response
         CompletableFuture<Void> updateLastMirrorEpochsFuture = updateLastMirrorEpochs(updatedMirrorName, offsets);
         CompletableFuture.allOf(updateMirrorPartitionStateFutures.toArray(CompletableFuture[]::new))
             .thenCompose((v) -> updateLastMirrorEpochsFuture)
             .whenComplete((v, e) -> {
                 WriteMirrorStatesResponseData data = new WriteMirrorStatesResponseData();
                 if  (e != null) {
-                    log.error("Failed to update last mirror partition state and LME for {}: {}", updatedMirrorName, e);
+                    log.error("Failed to update last mirror partition state and LME for {}: {}", mirrorName, e);
                     data.setErrorCode(Errors.forException(e).code());
                     data.setErrorMessage(e.getMessage());
                 } else {
-                    log.info("!!! write completes:" + topicMetadata);
                     List<WriteMirrorStatesResponseData.TopicResult> topicResults = new ArrayList<>();
                     tps.forEach((topic, indices) -> {
                         List<WriteMirrorStatesResponseData.PartitionResult> partitionResults = new ArrayList<>();
