@@ -41,7 +41,7 @@ class ClientService(KafkaPathResolverMixin, Service):
         pass
 
     def stop_node(self, node):
-        pass
+        node.account.ssh("pkill -SIGKILL -f 'kafka\\.tools\\.' || true", allow_fail=True)
 
     def clean_node(self, node):
         pass
