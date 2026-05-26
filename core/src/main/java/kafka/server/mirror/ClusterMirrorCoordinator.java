@@ -226,9 +226,8 @@ public class ClusterMirrorCoordinator {
             }
             long delay = failedRetryBackoff.backoff(attempt);
             MirrorPartitionState targetState = metadataManager.partitionPreviousStates().getOrDefault(new ClusterMirrorUtils.PartitionKey(mirrorName, tp.topic(), tp.partition()), MirrorPartitionState.MIRRORING);
-            log.info("Scheduling retry #{} for partition {} in {} ms with target state {}.", attempt, tp, delay, targetState);
-            scheduler.scheduleOnce("MirrorFailedRetry-" + tp,
-                () -> transitionTo(mirrorName, Set.of(tp), targetState), delay);
+            log.info("Scheduling retry attempt #{} for partition {} in {} ms with target state {}.", attempt, tp, delay, targetState);
+            scheduler.scheduleOnce("MirrorFailedRetry-" + tp, () -> transitionTo(mirrorName, Set.of(tp), targetState), delay);
         });
     }
 
@@ -775,7 +774,8 @@ public class ClusterMirrorCoordinator {
                 .setTopicName(topicPartition.topic())
                 .setPartition(topicPartition.partition())
                 .setState(state.value())
-                .setPreviousState(metadataManager.partitionPreviousStates().getOrDefault(new ClusterMirrorUtils.PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()), MirrorPartitionState.UNKNOWN).value())
+                .setPreviousState(metadataManager.partitionPreviousStates().getOrDefault(
+                        new ClusterMirrorUtils.PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()), MirrorPartitionState.UNKNOWN).value())
                 .setRetryAttempt(retryAttempt);
         var apiVersion = new ApiMessageAndVersion(val, MirrorPartitionStateValue.HIGHEST_SUPPORTED_VERSION);
         return CoordinatorRecord.record(key, apiVersion);
