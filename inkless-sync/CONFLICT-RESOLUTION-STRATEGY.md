@@ -174,6 +174,91 @@ After each sync, these files typically need inkless additions re-applied:
    - Constructor: split `classicFetchPartitionStatus`/`disklessFetchPartitionStatus`
    - Methods: `tryCompleteDiskless`
 
+## Cherry-pick Sync Conflicts
+
+Cherry-picking inkless commits from main to release branches produces a distinct class of conflicts caused by **divergence between main and the release branch**, rather than upstream changes.
+
+### Category 6: Type Divergence (TopicPartition vs TopicIdPartition)
+**Strategy: Keep release branch's type, adapt cherry-pick logic**
+
+On main, the produce path uses `TopicIdPartition` directly. On release branches (4.0, 4.1), it uses `TopicPartition` with `TopicIdEnricher` to convert.
+
+**Resolution**:
+1. Keep the release branch's `TopicPartition`-based method signatures
+2. Use `TopicIdEnricher.enrich()` where topic IDs are needed
+3. Pass enriched `Set<TopicIdPartition>` to internal methods that require it
+
+### Category 7: Missing Features on Release Branch
+**Strategy: Skip feature blocks that don't exist on the release branch**
+
+Cherry-picks from main may include code for features not present on the release branch (e.g., share coordinator on 4.0, KRaft-only APIs).
+
+**Resolution**:
+1. Identify blocks related to the missing feature
+2. Skip those blocks entirely during conflict resolution
+3. Keep only the inkless-specific additions
+
+### Category 8: Interface/API Expansion
+**Strategy: Add new methods, don't replace existing ones**
+
+Cherry-picks may replace interface methods that are still called by existing code on the release branch.
+
+**Resolution**:
+1. Keep ALL existing methods that have callers on the release branch
+2. Add new methods from the cherry-pick as additions
+3. Verify no callers are broken: `grep -r "methodName" --include="*.java" --include="*.scala"`
+
+### Category 9: Class/Object Coexistence
+**Strategy: Keep both when main split or moved code that still exists on the release branch**
+
+Cherry-picks may assume code was refactored (e.g., `DynamicThreadPool` moved to separate class on main but still exists as object on 4.0).
+
+**Resolution**:
+1. Keep the existing class/object on the release branch
+2. Add the new class/code from the cherry-pick alongside it
+
+### Category 10: Cross-Module Dependency
+**Strategy: Inline constants or restructure to avoid the dependency**
+
+Cherry-picks from main may introduce imports that cross module boundaries differently than on the release branch. For example, `metadata` module importing `ServerConfigs` from `server` module works on main but not on 4.0.
+
+**Resolution**:
+1. Identify the constant or class being referenced
+2. If it's a simple constant (string, boolean), inline the value directly
+3. If it's a class, check if an equivalent exists in an accessible module
+4. Document the inlining so it can be revisited when module structure changes
+
+### Category 11: Enum/Switch Expansion
+**Strategy: Add only the new inkless entry, skip entries from features not on the release branch**
+
+Cherry-picks that add new entries to enums or switch statements (e.g., `ApiKeys`, `AbstractRequest.parseRequest`, `AbstractResponse.parseResponse`) may carry additional entries from features not present on the release branch.
+
+**Resolution**:
+1. Keep all existing entries from HEAD (the release branch)
+2. Add ONLY the new inkless entry (e.g., `INIT_DISKLESS_LOG`)
+3. Drop entries for features not on the release branch (e.g., `STREAMS_GROUP_HEARTBEAT`, `DESCRIBE_SHARE_GROUP_OFFSETS` on 4.0)
+4. Ensure parameter types match the release branch (e.g., `ByteBuffer` not `Readable`)
+
+### Category 12: Java Language Feature Divergence
+**Strategy: Downgrade to the release branch's Java version features**
+
+Main may use newer Java features (records, sealed classes, pattern matching) that don't exist on the release branch's Java version.
+
+**Resolution**:
+1. Replace `record` declarations with `static final class` + explicit fields/constructor
+2. Replace `sealed` interfaces with regular interfaces
+3. Replace pattern matching switches with if/else chains
+4. Keep the same logic and field names for minimal divergence
+
+### Cherry-pick Conflict Tracking
+
+Use `.inkless-sync/CHERRY-PICK-SESSION-*.md` files to track:
+- Each commit's conflict details
+- Resolution decisions and reasoning
+- Compilation errors and fixes
+
+See [CHERRY-PICK-SYNC-GUIDE.md](CHERRY-PICK-SYNC-GUIDE.md) for the full workflow and session template.
+
 ## Guiding Principles
 
 ### Principle 1: Minimize Future Conflicts

@@ -88,40 +88,25 @@ parse_args() {
     RELEASE_BRANCH="${positional[0]}"
 }
 
-# Check if commit is inkless-specific (not a sync/merge commit)
-# Only considers commits that:
-# 1. Have a PR number (squash-merged PRs)
-# 2. Mention inkless/diskless
-# 3. Are not merge or sync commits
-is_inkless_commit() {
+# Check if commit should be excluded from cherry-pick consideration.
+# With --first-parent, we only see commits directly landed on main (PRs),
+# so we only need to exclude sync fix-up commits and non-PR commits.
+is_excluded_commit() {
     local commit_msg="$1"
 
-    # MUST have a PR number - this filters out merge conflict resolution commits
-    # PR merges have pattern (#XXX)
+    # Must have a PR number — squash-merged PRs have pattern (#XXX).
+    # Commits without PR numbers are manual fixes that can't be reliably
+    # matched against the release branch.
     if [[ ! "$commit_msg" =~ \(#[0-9]+\) ]]; then
-        return 1
+        return 0
     fi
 
-    # Exclude merge commits
-    if [[ "$commit_msg" =~ ^[Mm]erge ]]; then
-        return 1
-    fi
-
-    # Exclude sync-specific commits (these are main-trunk sync related)
+    # Exclude sync-specific commits (main-trunk sync related)
     if [[ "$commit_msg" =~ ^(sync\(|fix\(sync\)|docs\(sync\)|refactor\(sync\)) ]]; then
-        return 1
-    fi
-
-    # Include commits that mention inkless or diskless
-    if [[ "$commit_msg" =~ (inkless|diskless|Inkless|Diskless) ]]; then
         return 0
     fi
 
-    # Include commits with inkless-related prefixes
-    if [[ "$commit_msg" =~ ^(feat|fix|refactor|chore|docs|test)\((inkless|diskless|storage:inkless|metadata:diskless) ]]; then
-        return 0
-    fi
-
+    # Not excluded
     return 1
 }
 
@@ -179,7 +164,10 @@ check_consistency() {
     echo "Branch diverged at: $diverge_desc"
     echo ""
 
-    # First, get all inkless commits on main since divergence
+    # Get all inkless commits on main since divergence.
+    # --first-parent only walks the main branch lineage, so upstream commits
+    # brought in via merge are excluded. Only PRs landed directly on main
+    # (and sync fix-ups) appear. We then filter out sync fix-ups.
     info "Scanning main branch for inkless commits..."
 
     local inkless_commits_file
@@ -189,10 +177,10 @@ check_consistency() {
 
     while IFS= read -r line; do
         local msg="${line#* }"
-        if is_inkless_commit "$msg"; then
+        if ! is_excluded_commit "$msg"; then
             echo "$line" >> "$inkless_commits_file"
         fi
-    done < <(git log --oneline --no-merges "$diverge_point..origin/main")
+    done < <(git log --first-parent --no-merges --oneline "$diverge_point..origin/main")
 
     local inkless_count
     inkless_count=$(wc -l < "$inkless_commits_file" | tr -d ' ')
