@@ -1508,10 +1508,14 @@ class ReplicaManager(val config: KafkaConfig,
       localOffsetPerPartition ++= offsetPerPartition
     }
 
+    // Convert to immutable before passing to the async closure to prevent accidental mutation.
+    val immutableDisklessOffsets = disklessOffsetPerPartition.toMap
+    val immutableHybridPartitions = hybridDisklessPartitions.toSet
+
     def maybeDeleteFromDiskless(localResponse: Map[TopicPartition, DeleteRecordsPartitionResult]): Unit = {
       // Keep pure diskless partitions and only the hybrid partitions whose local phase succeeded.
-      val disklessOffsetsAfterLocalDelete = disklessOffsetPerPartition.filterNot { case (topicPartition, _) =>
-        hybridDisklessPartitions.contains(topicPartition) &&
+      val disklessOffsetsAfterLocalDelete = immutableDisklessOffsets.filterNot { case (topicPartition, _) =>
+        immutableHybridPartitions.contains(topicPartition) &&
           localResponse.get(topicPartition).exists(_.errorCode != Errors.NONE.code)
       }
       if (disklessOffsetsAfterLocalDelete.isEmpty) {
