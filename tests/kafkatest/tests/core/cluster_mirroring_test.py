@@ -163,7 +163,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         """Verify failover makes destination writable and failback truncates non-mirrored data."""
         topic = "my-topic"
         mirror_name = "my-mirror"
-        self.topics = {topic: {"partitions": 1, "replication-factor": 2}}
         self.source_kafka.create_topic({"topic": topic, "partitions": 1, "replication-factor": 2})
 
         self.logger.info("Send 3 records to source")
@@ -234,7 +233,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         """Verify that pausing stops replication and resuming catches up."""
         topic = "my-topic"
         mirror_name = "my-mirror"
-        self.topics = {topic: {"partitions": 1, "replication-factor": 2}}
         self.source_kafka.create_topic({"topic": topic, "partitions": 1, "replication-factor": 2})
 
         self.logger.info("Send 3 records to source")
@@ -285,7 +283,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         """Verify that updating mirror config triggers reconnection and mirroring continues."""
         topic = "my-topic"
         mirror_name = "my-mirror"
-        self.topics = {topic: {"partitions": 1, "replication-factor": 2}}
         self.source_kafka.create_topic({"topic": topic, "partitions": 1, "replication-factor": 1})
 
         self.logger.info("Start cluster mirror on destination")
@@ -343,7 +340,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         """Verify that a mirror cannot be deleted while not empty, but can after stopping all topics."""
         topic = "my-topic"
         mirror_name = "my-mirror"
-        self.topics = {topic: {"partitions": 1, "replication-factor": 2}}
         self.source_kafka.create_topic({"topic": topic, "partitions": 1, "replication-factor": 1})
 
         self.logger.info("Start cluster mirror on destination")
@@ -383,7 +379,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         """Verify that deleting a source topic transitions mirror partitions to STOPPED."""
         topic = "my-topic"
         mirror_name = "my-mirror"
-        self.topics = {topic: {"partitions": 1, "replication-factor": 2}}
         self.source_kafka.create_topic({"topic": topic, "partitions": 1, "replication-factor": 2})
 
         self.logger.info("Start cluster mirror on destination")
@@ -448,10 +443,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         )
 
         self.logger.info("Only orders-us and orders-eu should be mirrored")
-        self.topics = {
-            "orders-us": topics_cfg["orders-us"],
-            "orders-eu": topics_cfg["orders-eu"],
-        }
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name,
                                   ["orders-us", "orders-eu"])
 
@@ -493,7 +484,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         self.source_kafka.create_topic({"topic": "orders-jp", "partitions": 1, "replication-factor": 2})
         self.produce_records(self.source_kafka, "orders-jp", 3, self.client_node)
 
-        self.topics["orders-jp"] = {"partitions": 1, "replication-factor": 2}
         self.wait_mirror_state(self.dest_kafka, mirror_name, "MIRRORING",
                                topics={"orders-jp": {"partitions": 1, "replication-factor": 2}})
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name,
@@ -506,7 +496,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         self.dest_kafka.alter_mirror_config(
             self.client_node, mirror_name, "mirror.topics.include=[orders-.*,payments]")
 
-        self.topics["payments"] = {"partitions": 1, "replication-factor": 2}
         self.wait_mirror_state(self.dest_kafka, mirror_name, "MIRRORING",
                                topics={"payments": {"partitions": 1, "replication-factor": 2}})
         self.wait_mirror_lag_zero(self.dest_kafka, mirror_name,
@@ -526,7 +515,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         """Verify that excluded topic properties are not synced to destination."""
         topic = "my-topic"
         mirror_name = "my-mirror"
-        self.topics = {topic: {"partitions": 1, "replication-factor": 2}}
         self.source_kafka.create_topic({"topic": topic, "partitions": 1, "replication-factor": 1})
 
         self.logger.info("Starting cluster mirror with properties exclude")
@@ -586,7 +574,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         """Verify consumer group offset mirroring with include/exclude filtering."""
         topic = "my-topic"
         mirror_name = "my-mirror"
-        self.topics = {topic: {"partitions": 1, "replication-factor": 2}}
         self.source_kafka.create_topic({"topic": topic, "partitions": 1, "replication-factor": 2})
 
         self.logger.info("Produce records to source")
@@ -631,15 +618,15 @@ class ClusterMirroringTest(MirrorUtils, Test):
     def test_log_convergence(self, metadata_quorum):
         """Verify that mirrored log segments are byte identical to source after bouncing both clusters."""
         self.logger.info("Create source topics and produce initial data")
-        self.topics = {
+        topics = {
             "my-topic-a": {"partitions": 3, "replication-factor": 2},
             "my-topic-b": {"partitions": 2, "replication-factor": 2},
             "new-topic": {"partitions": 1, "replication-factor": 2},
         }
-        for t, cfg in self.topics.items():
+        for t, cfg in topics.items():
             self.source_kafka.create_topic({"topic": t, **cfg})
 
-        for t in self.topics:
+        for t in topics:
             self.produce_records(self.source_kafka, t, 100, self.client_node)
 
         self.logger.info("Bounce source cluster to trigger leader elections before mirroring")
@@ -691,7 +678,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
             kafka.restart_node(node)
 
         self.logger.info("Send more data and wait for all mirrors to catch up")
-        for t in self.topics:
+        for t in topics:
             self.produce_records(self.source_kafka, t, 100, self.client_node)
 
         for mirror_name, (_, topic_list) in mirrors.items():
@@ -700,7 +687,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
                 err_msg="Mirror %s did not catch up" % mirror_name)
 
         self.logger.info("Poll until source and destination log segment hashes converge")
-        self.wait_for_log_convergence(self.source_kafka, self.dest_kafka, self.topics)
+        self.wait_for_log_convergence(self.source_kafka, self.dest_kafka, topics)
 
     @cluster(num_nodes=7)
     @defaults(metadata_quorum=[quorum.isolated_kraft])
@@ -709,10 +696,10 @@ class ClusterMirroringTest(MirrorUtils, Test):
         self.logger.info("Create source topic with ULE support enabled")
         topic = "my-topic"
         mirror_name = "new-mirror"
-        self.topics = {topic: {"partitions": 1, "replication-factor": 2}}
+        topics = {topic: {"partitions": 1, "replication-factor": 2}}
 
         self.source_kafka.create_topic({
-            "topic": topic, "partitions": 1, "replication-factor": 2,
+            "topic": topic, **topics[topic],
             "configs": {"mirror.support.unclean.leader.election": "true"},
         })
 
@@ -844,7 +831,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
                                   err_msg="Reverse mirror did not catch up")
 
         self.logger.info("Poll until log segment hashes converge (dest is source of truth after failback)")
-        self.wait_for_log_convergence(self.dest_kafka, self.source_kafka, self.topics)
+        self.wait_for_log_convergence(self.dest_kafka, self.source_kafka, topics)
 
     @cluster(num_nodes=7)
     @defaults(metadata_quorum=[quorum.isolated_kraft])
@@ -852,8 +839,8 @@ class ClusterMirroringTest(MirrorUtils, Test):
         """Verify that stop operation aborts pending transactions and allows committed reads."""
         self.logger.info("Create source topic")
         topic = "my-topic"
-        self.topics = {topic: {"partitions": 1, "replication-factor": 2}}
-        for t, cfg in self.topics.items():
+        topics = {topic: {"partitions": 1, "replication-factor": 2}}
+        for t, cfg in topics.items():
             self.source_kafka.create_topic({"topic": t, **cfg})
 
         self.logger.info("Run initial committed transaction and bounce source to bump leader epoch")
@@ -891,7 +878,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
         def count_ongoing_txns(kafka, topic):
             """Count ongoing transactions across all partitions of a topic."""
             count = 0
-            for partition in range(self.topics[topic]["partitions"]):
+            for partition in range(topics[topic]["partitions"]):
                 cmd = kafka.path.script("kafka-transactions.sh", self.client_node)
                 cmd += " --bootstrap-server %s" % kafka.bootstrap_servers(kafka.security_protocol)
                 cmd += " describe-producers --topic %s --partition %d" % (topic, partition)
@@ -957,7 +944,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
             self.get_offset_shell(self.dest_kafka, topic=topic, time=-1))
         extra = sum(dest_offsets.values()) - sum(source_offsets.values())
         # 2 abort markers (one per pending txn) + 1 PID reset barrier per partition
-        num_partitions = self.topics[topic]["partitions"]
+        num_partitions = topics[topic]["partitions"]
         expected_extra = 2 + num_partitions
         assert extra == expected_extra, \
             "Expected %d extra records (2 abort + %d PID reset) on destination, got %d. " \
@@ -995,7 +982,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         self.consume_records(self.source_kafka, "other-topic", self.client_node, max_messages=3, group="my-group")
 
         self.logger.info("Start mirror with only my-topic (not other-topic)")
-        self.topics = {"my-topic": {"partitions": 1, "replication-factor": 2}}
         mirror_cfg = MirrorConfig(self.source_kafka.bootstrap_servers())
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
@@ -1085,7 +1071,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         self.kill_background_consumer(self.client_node, "ConsoleShareConsumer")
 
         self.logger.info("Start mirror with only my-topic")
-        self.topics = {"my-topic": {"partitions": 1, "replication-factor": 2}}
         mirror_cfg = MirrorConfig(self.source_kafka.bootstrap_servers())
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
@@ -1154,7 +1139,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         topic = "my-topic"
         mirror_name = "my-mirror"
         group = "my-group"
-        self.topics = {topic: {"partitions": 1, "replication-factor": 2}}
         self.source_kafka.create_topic({"topic": topic, "partitions": 1, "replication-factor": 1})
 
         self.logger.info("Produce 3 records and bounce source brokers to bump leader epoch")
@@ -1197,7 +1181,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         """Verify that mirror recovers from FAILED state after source cluster comes back."""
         topic = "my-topic"
         mirror_name = "my-mirror"
-        self.topics = {topic: {"partitions": 3, "replication-factor": 2}}
         self.source_kafka.create_topic({"topic": topic, "partitions": 3, "replication-factor": 1})
 
         self.logger.info("Produce initial records and start cluster mirror")
