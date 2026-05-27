@@ -281,8 +281,11 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessRetentionEnforcer: Option[RetentionEnforcer] = inklessSharedState.map(new RetentionEnforcer(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
-  private val inklessConsolidatedDisklessLogPruner: Option[ConsolidatedDisklessLogPruner] = inklessSharedState.map(st =>
-    new ConsolidatedDisklessLogPruner(this, _inklessMetadataView, st.controlPlane))
+  private val inklessConsolidatedDisklessLogPruner: Option[ConsolidatedDisklessLogPruner] =
+    if (config.disklessRemoteStorageConsolidationEnabled)
+      inklessSharedState.map(st => new ConsolidatedDisklessLogPruner(this, _inklessMetadataView, st.controlPlane))
+    else
+      None
   private val consolidationMetrics: Option[ConsolidationMetrics] =
     if (config.disklessRemoteStorageConsolidationEnabled && inklessFetchHandler.isDefined && inklessFetchOffsetHandler.isDefined)
       Some(new ConsolidationMetrics())
@@ -392,8 +395,10 @@ class ReplicaManager(val config: KafkaConfig,
 
       scheduler.schedule("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run()), sharedState.config().fileCleanerInterval().toMillis, sharedState.config().fileCleanerInterval().toMillis)
 
-      scheduler.schedule("inkless-consolidated-diskless-log-pruner", () => inklessConsolidatedDisklessLogPruner.foreach(_.run()),
-        sharedState.config.consolidationCleanupInterval.toMillis, sharedState.config.consolidationCleanupInterval.toMillis)
+      inklessConsolidatedDisklessLogPruner.foreach { pruner =>
+        scheduler.schedule("inkless-consolidated-diskless-log-pruner", () => pruner.run(),
+          sharedState.config.consolidationCleanupInterval.toMillis, sharedState.config.consolidationCleanupInterval.toMillis)
+      }
     }
   }
 
