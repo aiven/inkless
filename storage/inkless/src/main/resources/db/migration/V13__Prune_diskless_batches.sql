@@ -25,7 +25,9 @@ CREATE FUNCTION prune_batches_below_highest_tiered_offset_v1(
     RETURNS SETOF prune_batches_below_highest_tiered_offset_response_v1 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
     l_request prune_batches_below_highest_tiered_offset_request_v1;
-    l_file_id BIGINT;
+    l_deleted_file_id BIGINT;
+    l_deleted_file_ids BIGINT[];
+    l_deleted_bytes BIGINT;
     l_new_log_start_offset BIGINT;
     l_log logs%ROWTYPE;
 BEGIN
@@ -58,20 +60,22 @@ BEGIN
                 CONTINUE;
             END IF;
 
-            FOR l_file_id IN
-                WITH deleted AS (
-                    DELETE FROM batches
-                        WHERE topic_id = l_request.topic_id
-                            AND partition = l_request.partition
-                            AND last_offset <= l_request.highest_tiered_offset
-                        RETURNING file_id
-                )
-                SELECT DISTINCT file_id FROM deleted
-                LOOP
-                    IF NOT EXISTS(SELECT 1 FROM batches WHERE file_id = l_file_id LIMIT 1) THEN
-                        PERFORM mark_file_to_delete_v1(arg_now, l_file_id);
-                    END IF;
-                END LOOP;
+            WITH deleted AS (
+                DELETE FROM batches
+                    WHERE topic_id = l_request.topic_id
+                        AND partition = l_request.partition
+                        AND last_offset <= l_request.highest_tiered_offset
+                    RETURNING file_id, byte_size
+            )
+            SELECT COALESCE(SUM(byte_size), 0), COALESCE(ARRAY_AGG(DISTINCT file_id), ARRAY[]::BIGINT[])
+            FROM deleted
+            INTO l_deleted_bytes, l_deleted_file_ids;
+
+            FOREACH l_deleted_file_id IN ARRAY l_deleted_file_ids LOOP
+                IF NOT EXISTS(SELECT 1 FROM batches WHERE file_id = l_deleted_file_id LIMIT 1) THEN
+                    PERFORM mark_file_to_delete_v1(arg_now, l_deleted_file_id);
+                END IF;
+            END LOOP;
 
             SELECT MIN(base_offset)
             FROM batches
@@ -89,7 +93,8 @@ BEGIN
             END IF;
 
             UPDATE logs
-            SET log_start_offset = l_new_log_start_offset
+            SET log_start_offset = l_new_log_start_offset,
+                byte_size = byte_size - l_deleted_bytes
             WHERE topic_id = l_request.topic_id AND partition = l_request.partition;
 
             RETURN NEXT (

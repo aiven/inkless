@@ -200,6 +200,38 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
     }
 
     @Test
+    void subtractsDeletedBatchBytesFromLogByteSize() throws Exception {
+        final String objectKey = "obj-prune-bytes";
+        final int b1 = 300;
+        final int b2 = 500;
+        new CommitFileJob(
+            time,
+            pgContainer.getJooqCtx(),
+            objectKey,
+            ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+            BROKER_ID,
+            b1 + b2,
+            List.of(
+                CommitBatchRequest.of(0, T0P0, 0, b1, 0L, 10L, 1000L, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P0, b1, b2, 11L, 25L, 1000L, TimestampType.CREATE_TIME)
+            ),
+            durationCallback
+        ).call();
+        assertThat(singleLog().getByteSize()).isEqualTo(b1 + b2);
+
+        new PruneDisklessLogsJob(
+            time,
+            pgContainer.getJooqCtx(),
+            List.of(new PruneDisklessLogsRequest(T0P0, 10L)),
+            durationCallback
+        ).call();
+
+        final LogsRecord after = singleLog();
+        assertThat(after.getLogStartOffset()).isEqualTo(11L);
+        assertThat(after.getByteSize()).isEqualTo(b2);
+    }
+
+    @Test
     void preservesLogStartWhenDeleteRecordsAdvancedIntoRemainingBatch() throws Exception {
         final String objectKey = "obj-prune-delete-records-partial";
         final int b1 = 300;
