@@ -228,8 +228,7 @@ public class ClusterMirrorCoordinator {
             MirrorPartitionState targetState = metadataManager.partitionPreviousStates()
                     .getOrDefault(new ClusterMirrorUtils.PartitionKey(mirrorName, tp.topic(), tp.partition()), MirrorPartitionState.MIRRORING);
             log.info("Scheduling retry attempt #{} for partition {} in {} ms with target state {}.", attempt, tp, delay, targetState);
-            scheduler.scheduleOnce("MirrorFailedRetry-" + tp,
-                () -> transitionTo(mirrorName, Set.of(tp), targetState), delay);
+            scheduler.scheduleOnce("MirrorFailedRetry-" + tp, () -> transitionTo(mirrorName, Set.of(tp), targetState), delay);
         });
     }
 
