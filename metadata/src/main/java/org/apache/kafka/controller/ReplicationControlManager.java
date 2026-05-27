@@ -131,6 +131,7 @@ import java.util.function.Supplier;
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
 import static org.apache.kafka.common.config.ConfigResource.Type.TOPIC;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
 import static org.apache.kafka.common.internals.Topic.CLUSTER_METADATA_TOPIC_NAME;
 import static org.apache.kafka.common.protocol.Errors.FENCED_LEADER_EPOCH;
@@ -176,6 +177,7 @@ public class ReplicationControlManager {
         private boolean defaultDisklessEnable = false;
         private boolean isDisklessStorageSystemEnabled = false;
         private boolean isDisklessManagedReplicasEnabled = false;
+        private boolean isDisklessRemoteStorageConsolidationEnabled = false;
         private boolean classicRemoteStorageForceEnabled = false;
         private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
 
@@ -217,6 +219,11 @@ public class ReplicationControlManager {
 
         public Builder setDisklessManagedReplicasEnabled(boolean isDisklessManagedReplicasEnabled) {
             this.isDisklessManagedReplicasEnabled = isDisklessManagedReplicasEnabled;
+            return this;
+        }
+
+        public Builder setDisklessRemoteStorageConsolidationEnabled(boolean isDisklessRemoteStorageConsolidationEnabled) {
+            this.isDisklessRemoteStorageConsolidationEnabled = isDisklessRemoteStorageConsolidationEnabled;
             return this;
         }
 
@@ -273,6 +280,7 @@ public class ReplicationControlManager {
                 defaultDisklessEnable,
                 isDisklessStorageSystemEnabled,
                 isDisklessManagedReplicasEnabled,
+                isDisklessRemoteStorageConsolidationEnabled,
                 classicRemoteStorageForceEnabled,
                 classicRemoteStorageForceExcludeTopicRegexes,
                 maxElectionsPerImbalance,
@@ -356,6 +364,7 @@ public class ReplicationControlManager {
      * When true, the diskless storage system is enabled, allowing diskless topics to be created.
      */
     private final boolean isDisklessStorageSystemEnabled;
+    private final boolean isDisklessRemoteStorageConsolidationEnabled;
     private final ClassicTopicRemoteStorageForcePolicy classicTopicRemoteStorageForcePolicy;
 
     /**
@@ -456,6 +465,7 @@ public class ReplicationControlManager {
         boolean defaultDisklessEnable,
         boolean isDisklessStorageSystemEnabled,
         boolean isDisklessManagedReplicasEnabled,
+        boolean isDisklessRemoteStorageConsolidationEnabled,
         boolean classicRemoteStorageForceEnabled,
         List<String> classicRemoteStorageForceExcludeTopicRegexes,
         int maxElectionsPerImbalance,
@@ -471,6 +481,7 @@ public class ReplicationControlManager {
         this.defaultDisklessEnable = defaultDisklessEnable;
         this.isDisklessStorageSystemEnabled = isDisklessStorageSystemEnabled;
         this.isDisklessManagedReplicasEnabled = isDisklessManagedReplicasEnabled;
+        this.isDisklessRemoteStorageConsolidationEnabled = isDisklessRemoteStorageConsolidationEnabled;
         this.classicTopicRemoteStorageForcePolicy = new ClassicTopicRemoteStorageForcePolicy(
             classicRemoteStorageForceEnabled,
             classicRemoteStorageForceExcludeTopicRegexes
@@ -819,6 +830,10 @@ public class ReplicationControlManager {
         // Re-apply ClassicTopicRemoteStorageForcePolicy on this creation configs view for validations and to include forced configs in the response payload.
         final boolean disklessEnabledForRemotePolicy = disklessEnabledOnTopicCreation(creationConfigs);
         classicTopicRemoteStorageForcePolicy.maybeForceRemoteStorageEnable(topic.name(), disklessEnabledForRemotePolicy, creationConfigs);
+        // Auto-enable remote.storage.enable for diskless topics when consolidation is on
+        if (disklessEnabledForRemotePolicy && isDisklessRemoteStorageConsolidationEnabled) {
+            creationConfigs.putIfAbsent(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+        }
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
 
         String disklessEnableConfigValue = creationConfigs.get(DISKLESS_ENABLE_CONFIG);
@@ -1038,6 +1053,20 @@ public class ReplicationControlManager {
                 .setValue(String.valueOf(disklessEnabled))
                 .setResourceName(topic.name())
                 .setResourceType(ResourceType.TOPIC.code()), (short) 0));
+        }
+        // When consolidation is enabled, auto-persist remote.storage.enable=true for diskless topics.
+        // This ensures diskless topics always have remote storage in the consolidated model,
+        // without requiring the operator to explicitly include it in the create request.
+        if (disklessEnabled && isDisklessRemoteStorageConsolidationEnabled) {
+            boolean isRemoteStorageEnableDefined = validConfigRecord.stream()
+                .anyMatch(r -> ((ConfigRecord) r.message()).name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+            if (!isRemoteStorageEnableDefined) {
+                validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
+                    .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+                    .setValue("true")
+                    .setResourceName(topic.name())
+                    .setResourceType(ResourceType.TOPIC.code()), (short) 0));
+            }
         }
         return validConfigRecord;
     }
