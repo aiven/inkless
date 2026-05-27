@@ -197,10 +197,5 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
 
         self.logger.info("Verifying destination records after failover")
         for topic in topics:
-            wait_until(
-                lambda t=topic: self.consume_records(
-                    self.dest_kafka, t, self.dest_client_node, max_messages=num_records
-                ) == num_records,
-                timeout_sec=60, backoff_sec=5,
-                err_msg="Expected %d records on destination for %s" % (num_records, topic),
-            )
+            self.consume_records(self.dest_kafka, topic, self.dest_client_node,
+                                max_messages=num_records, expected_count=num_records)

@@ -18,7 +18,7 @@ package kafka.server.mirror
 
 import kafka.cluster.Partition
 import kafka.server._
-import kafka.server.mirror.ClusterMirrorUtils.{LEADER_EPOCH_BUMP_THRESHOLD, PartitionKey}
+import kafka.server.mirror.ClusterMirrorUtils.{LEADER_EPOCH_BUMP_THRESHOLD, LeaderInfo, PartitionKey}
 import org.apache.kafka.common.errors.MirrorLeaderEpochExceededException
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.record.Records
@@ -65,14 +65,15 @@ class MirrorFetcherThread(name: String,
     replicaMgr.mirrorMetadataManager.foreach { mmm =>
       partitionAndOffsets.foreach { case (tp, state) =>
         mmm.updateSourceLeader(mirrorName, tp,
-          new Node(state.leader.id(), state.leader.host(), state.leader.port()))
+          new LeaderInfo(new Node(state.leader.id(), state.leader.host(), state.leader.port()), state.currentLeaderEpoch))
       }
     }
     replicaMgr.mirrorFetcherManager.addFetcherForPartitions(partitionAndOffsets)
   }
 
   // Transition to FAILED so the coordinator can schedule exponential backoff retries.
-  override protected def handleMirrorFetchConnectionFailure(mirrorPartitions: Set[TopicPartition]): Unit = {
+  override protected def refreshSourceClusterMetadata(mirrorPartitions: Set[TopicPartition]): Unit = {
+    replicaMgr.mirrorMetadataManager.foreach(_.scheduleRediscoverSource(mirrorName))
     mirrorPartitions.foreach { tp =>
       replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, tp, MirrorPartitionState.FAILED))
     }

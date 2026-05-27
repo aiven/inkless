@@ -178,10 +178,14 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
                   topic, num_records,
                   kafka.bootstrap_servers(kafka.security_protocol),
                   client_props)
-        client_node.account.ssh(cmd, allow_fail=False)
+        output = ""
+        for line in client_node.account.ssh_capture(cmd, allow_fail=False):
+            output += line
+        self.logger.debug("Producer output for %s:\n%s", topic, output.strip())
 
     def consume_as_client(self, kafka, topic, client_node, max_messages,
-                          group=None, timeout_ms=30000):
+                          group=None, timeout_ms=30000, expected_count=None,
+                          wait_timeout_sec=240):
         client_env = "KAFKA_OPTS='-D%s -D%s' " % (
             KafkaService.JAAS_CONF_PROPERTY, KafkaService.KRB5_CONF)
         client_props = str(kafka.security_config.client_config(
@@ -195,11 +199,30 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
         if group is not None:
             cmd += " --group %s" % group
         cmd += " --consumer.config <(echo '%s') 2>/dev/null" % client_props
-        count = 0
-        for line in client_node.account.ssh_capture(cmd, allow_fail=True):
-            if line.strip():
-                count += 1
-        return count
+
+        count = [0]
+        def try_consume():
+            for line in client_node.account.ssh_capture(cmd, allow_fail=True):
+                if line.strip():
+                    count[0] += 1
+            self.logger.debug("Consumed %d records from %s so far (expected %s)",
+                              count[0], topic, expected_count)
+            return expected_count is None or count[0] >= expected_count
+
+        # When expected_count is set, retry consumption because the high watermark on
+        # destination replicas may not have advanced yet when mirror lag reaches zero.
+        if expected_count is not None:
+            deadline = time.time() + wait_timeout_sec
+            try_consume()
+            while count[0] < expected_count:
+                if time.time() >= deadline:
+                    raise AssertionError(
+                        "Expected %d records on %s, got %d" % (expected_count, topic, count[0]))
+                time.sleep(5)
+                try_consume()
+        else:
+            _try_consume()
+        return count[0]
 
     def list_acls(self, kafka, client_node):
         return self.run_acl_cmd(kafka, "--list", client_node)
@@ -273,11 +296,11 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
         self.wait_mirror_lag_zero(
             self.dest_kafka, mirror_name, topics=list(topics.keys()))
 
+        # Retry consuming because the HW may lag behind mirror lag reaching zero.
         self.logger.info("Consuming 10 records from my-topic-a on destination as client user")
-        count = self.consume_as_client(self.dest_kafka, "my-topic-a",
-                                       self.dest_client_node, max_messages=10,
-                                       group="my-group")
-        assert count == 10, "Expected 10 records on destination for my-topic-a, got %d" % count
+        self.consume_as_client(self.dest_kafka, "my-topic-a",
+                               self.dest_client_node, max_messages=10,
+                               group="my-group", expected_count=10)
 
         self.logger.info("Verifying ACL filtering: my-topic-a ACL synced, new-topic ACL filtered out")
         self.wait_for_acl_condition(

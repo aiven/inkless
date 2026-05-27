@@ -225,7 +225,8 @@ public class ClusterMirrorCoordinator {
                 return;
             }
             long delay = failedRetryBackoff.backoff(attempt);
-            MirrorPartitionState targetState = metadataManager.partitionPreviousStates().getOrDefault(new ClusterMirrorUtils.PartitionKey(mirrorName, tp.topic(), tp.partition()), MirrorPartitionState.MIRRORING);
+            MirrorPartitionState targetState = metadataManager.partitionPreviousStates()
+                    .getOrDefault(new ClusterMirrorUtils.PartitionKey(mirrorName, tp.topic(), tp.partition()), MirrorPartitionState.MIRRORING);
             log.info("Scheduling retry attempt #{} for partition {} in {} ms with target state {}.", attempt, tp, delay, targetState);
             scheduler.scheduleOnce("MirrorFailedRetry-" + tp, () -> transitionTo(mirrorName, Set.of(tp), targetState), delay);
         });
@@ -938,7 +939,9 @@ public class ClusterMirrorCoordinator {
                                 ClusterMirrorUtils.PartitionKey pk = new ClusterMirrorUtils.PartitionKey(
                                         clusterName, value.topic(), value.partition());
                                 metadataManager.updatePartitionState(pk, value.state());
-                                metadataManager.partitionPreviousStates().put(pk, value.previousState());
+                                if (value.previousState() != MirrorPartitionState.UNKNOWN) {
+                                    metadataManager.partitionPreviousStates().putIfAbsent(pk, value.previousState());
+                                }
                                 TopicPartition tp = new TopicPartition(value.topic(), value.partition());
                                 if (value.state() == MirrorPartitionState.FAILED && value.retryAttempt() > 0) {
                                     metadataManager.failedRetryAttempts().put(tp, value.retryAttempt());

@@ -2648,12 +2648,13 @@ class ReplicaManager(val config: KafkaConfig,
             if (mirrorName != null && !mirrorName.isEmpty) {
               // Get the source partition leader
               val sourceLeader = mirrorMetadataManager.get.resolveSourceLeader(mirrorName, tp)
-              val leaderEndpoint = new BrokerEndPoint(sourceLeader.id(), sourceLeader.host(), sourceLeader.port())
+              val sourceLeaderNode = sourceLeader.node()
+              val leaderEndpoint = new BrokerEndPoint(sourceLeaderNode.id(), sourceLeaderNode.host(), sourceLeaderNode.port())
 
               val fetchState = InitialFetchState(
                 topicId = Some(metadataCache.getTopicId(tp.topic)),
                 leader = leaderEndpoint,
-                currentLeaderEpoch = 0, // this will trigger source epoch discovery through fencing
+                currentLeaderEpoch = sourceLeader.leaderEpoch(),
                 initOffset = partition.localLogOrException.logEndOffset,
                 mirrorName = mirrorName,
                 mirrorLeaderEpoch = Optional.empty()
