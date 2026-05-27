@@ -37,7 +37,7 @@ import org.apache.kafka.common.record.{ControlRecordType, EndTransactionMarker, 
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.{UNDEFINED_EPOCH, UNDEFINED_EPOCH_OFFSET}
 import org.apache.kafka.common.utils.Time
-import org.apache.kafka.metadata.{LeaderAndIsr, LeaderRecoveryState, MetadataCache}
+import org.apache.kafka.metadata.{LeaderAndIsr, LeaderRecoveryState, MetadataCache, PartitionRegistration}
 import org.apache.kafka.server.common.RequestLocal
 import org.apache.kafka.server.log.remote.TopicPartitionLog
 import org.apache.kafka.server.log.remote.storage.RemoteLogManager
@@ -365,6 +365,11 @@ class Partition(val topicPartition: TopicPartition,
     }
   }
 
+  // Broker-local watermark for the latest diskless log start offset applied from pruning responses.
+  // The control plane owns the persisted log start offset; this value only catches stale or
+  // out-of-order pruner responses before they can regress local partition state.
+  @volatile private var lastAppliedDisklessLogStartOffset: Long = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
+
   this.logIdent = s"[Partition $topicPartition broker=$localBrokerId] "
 
   private val tags = Map("topic" -> topic, "partition" -> partitionId.toString).asJava
@@ -404,6 +409,18 @@ class Partition(val topicPartition: TopicPartition,
    * the effectiveMinIsr().
    */
   def isAtMinIsr: Boolean = leaderLogIfLocal.exists { partitionState.isr.size == effectiveMinIsr(_) }
+
+  def maybeAdvanceLastAppliedDisklessLogStartOffset(newDisklessLogStartOffset: Long): Unit = {
+    inWriteLock(leaderIsrUpdateLock) {
+      if (newDisklessLogStartOffset >= lastAppliedDisklessLogStartOffset) {
+        lastAppliedDisklessLogStartOffset = newDisklessLogStartOffset
+      } else {
+        warn(s"Ignoring stale diskless log start offset for $topicPartition. " +
+          s"The new value ($newDisklessLogStartOffset) is less than the last locally applied value " +
+          s"($lastAppliedDisklessLogStartOffset).")
+      }
+    }
+  }
 
   def isSealed: Boolean = _sealed
 

@@ -98,4 +98,6 @@ public interface ControlPlane extends Closeable, Configurable {
     List<GetLogInfoResponse> getLogInfo(List<GetLogInfoRequest> requests);
 
     List<GetProducerStateResponse> getProducerState(List<GetProducerStateRequest> requests);
+
+    List<PruneDisklessLogsResponse> pruneDisklessLogs(List<PruneDisklessLogsRequest> pruneDisklessLogsRequests);
 }

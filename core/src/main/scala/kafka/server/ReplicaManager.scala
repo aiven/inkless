@@ -24,7 +24,7 @@ import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, Retention
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.PartitionListener
 import kafka.controller.StateChangeLogger
-import io.aiven.inkless.consolidation.{ConsolidationFetcherManager, ConsolidationMetrics}
+import io.aiven.inkless.consolidation.{ConsolidationFetcherManager, ConsolidatedDisklessLogPruner, ConsolidationMetrics}
 import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
@@ -288,6 +288,11 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessRetentionEnforcer: Option[RetentionEnforcer] = inklessSharedState.map(new RetentionEnforcer(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
+  private val inklessConsolidatedDisklessLogPruner: Option[ConsolidatedDisklessLogPruner] =
+    if (config.disklessRemoteStorageConsolidationEnabled)
+      inklessSharedState.map(st => new ConsolidatedDisklessLogPruner(this, _inklessMetadataView, st.controlPlane))
+    else
+      None
   private val consolidationMetrics: Option[ConsolidationMetrics] =
     if (config.disklessRemoteStorageConsolidationEnabled && inklessFetchHandler.isDefined && inklessFetchOffsetHandler.isDefined)
       Some(new ConsolidationMetrics())
@@ -397,6 +402,11 @@ class ReplicaManager(val config: KafkaConfig,
       scheduler.schedule("inkless-retention-enforcer", () => inklessRetentionEnforcer.foreach(_.run()), config.logInitialTaskDelayMs, 500L)  // the real interval is inside
 
       scheduler.schedule("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run()), sharedState.config().fileCleanerInterval().toMillis, sharedState.config().fileCleanerInterval().toMillis)
+
+      inklessConsolidatedDisklessLogPruner.foreach { pruner =>
+        scheduler.schedule("inkless-consolidated-diskless-log-pruner", () => pruner.run(),
+          sharedState.config.consolidationCleanupInterval.toMillis, sharedState.config.consolidationCleanupInterval.toMillis)
+      }
     }
   }
 
