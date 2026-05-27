@@ -31,6 +31,11 @@ import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.fault.FaultHandler;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
@@ -45,6 +50,8 @@ import java.util.Optional;
  *
  */
 public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
+    private static final Logger log = LoggerFactory.getLogger(ControllerMetadataMetricsPublisher.class);
+
     private final ControllerMetadataMetrics metrics;
     private final FaultHandler faultHandler;
     private MetadataImage prevImage = MetadataImage.EMPTY;
@@ -166,11 +173,17 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         int disklessTopics = 0;
         int disklessPartitions = 0;
         int disklessOfflinePartitions = 0;
+        int disklessWithoutRemoteStorage = 0;
+        List<String> misconfiguredTopicNames = new ArrayList<>();
         for (TopicImage topicImage : newImage.topics().topicsById().values()) {
             // Check diskless from newImage configs directly for consistency with delta path
             final boolean isDiskless = isDisklessTopic(newImage.configs(), topicImage.name());
             if (isDiskless) {
                 disklessTopics++;
+                if (!hasRemoteStorageEnabled(newImage.configs(), topicImage.name())) {
+                    disklessWithoutRemoteStorage++;
+                    misconfiguredTopicNames.add(topicImage.name());
+                }
             }
             for (PartitionRegistration partition : topicImage.partitions().values()) {
                 totalPartitions++;
@@ -195,12 +208,24 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         metrics.setDisklessTopicCount(disklessTopics);
         metrics.setDisklessPartitionCount(disklessPartitions);
         metrics.setDisklessOfflinePartitionCount(disklessOfflinePartitions);
+        metrics.setDisklessWithoutRemoteStorageCount(disklessWithoutRemoteStorage);
+        if (disklessWithoutRemoteStorage > 0) {
+            log.warn("Found {} diskless topic(s) without remote.storage.enable=true: {}. "
+                + "Enable remote storage consolidation and set remote.storage.enable=true on these topics.",
+                disklessWithoutRemoteStorage, misconfiguredTopicNames);
+        }
     }
 
     private static boolean isDisklessTopic(ConfigurationsImage configsImage, String topicName) {
         ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
         Map<String, String> configMap = configsImage.configMapForResource(resource);
         return Boolean.parseBoolean(configMap.getOrDefault(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
+    }
+
+    private static boolean hasRemoteStorageEnabled(ConfigurationsImage configsImage, String topicName) {
+        ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
+        Map<String, String> configMap = configsImage.configMapForResource(resource);
+        return Boolean.parseBoolean(configMap.getOrDefault(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
     }
 
     @Override
