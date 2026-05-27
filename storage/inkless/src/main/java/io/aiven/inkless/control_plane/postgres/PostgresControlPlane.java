@@ -58,6 +58,8 @@ import io.aiven.inkless.control_plane.InitDisklessLogRequest;
 import io.aiven.inkless.control_plane.InitDisklessLogResponse;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
+import io.aiven.inkless.control_plane.PruneDisklessLogsRequest;
+import io.aiven.inkless.control_plane.PruneDisklessLogsResponse;
 
 public class PostgresControlPlane extends AbstractControlPlane {
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(PostgresControlPlane.class);
@@ -266,6 +268,20 @@ public class PostgresControlPlane extends AbstractControlPlane {
                 throw (ControlPlaneException) e;
             } else {
                 throw new ControlPlaneException("Failed to get producer state", e);
+            }
+        }
+    }
+
+    @Override
+    public List<PruneDisklessLogsResponse> pruneDisklessLogs(List<PruneDisklessLogsRequest> pruneDisklessLogsRequests) {
+        try {
+            final PruneDisklessLogsJob job = new PruneDisklessLogsJob(time, jobsJooqCtx, pruneDisklessLogsRequests, pgMetrics::onPruneDisklessLogsCompleted);
+            return job.call();
+        } catch (Exception e) {
+            if (e instanceof ControlPlaneException) {
+                throw (ControlPlaneException) e;
+            } else {
+                throw new ControlPlaneException("Failed to prune diskless logs", e);
             }
         }
     }

@@ -543,6 +543,65 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized List<PruneDisklessLogsResponse> pruneDisklessLogs(final List<PruneDisklessLogsRequest> pruneDisklessLogsRequests) {
+        if (pruneDisklessLogsRequests.isEmpty()) {
+            return List.of();
+        }
+        final Instant now = TimeUtils.now(time);
+        final List<PruneDisklessLogsResponse> responses = new ArrayList<>();
+        for (final PruneDisklessLogsRequest request : pruneDisklessLogsRequests) {
+            responses.add(pruneDisklessLogsForPartition(request, now));
+        }
+        return responses;
+    }
+
+    private PruneDisklessLogsResponse pruneDisklessLogsForPartition(final PruneDisklessLogsRequest request, final Instant now) {
+        final TopicIdPartition requestTip = request.topicIdPartition();
+        final TopicIdPartition tidp = findTopicIdPartition(requestTip.topicId(), requestTip.partition());
+        final LogInfo logInfo;
+        final TreeMap<Long, BatchInfoInternal> coordinates;
+        if (tidp == null
+            || (logInfo = logs.get(tidp)) == null
+            || (coordinates = batches.get(tidp)) == null) {
+            return new PruneDisklessLogsResponse(requestTip, -1, PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION);
+        }
+
+        final long highestRemote = request.highestRemoteOffset();
+        final long logStartBefore = logInfo.logStartOffset;
+        final long highWatermark = logInfo.highWatermark;
+
+        final List<Long> keysToRemove = new ArrayList<>();
+        for (final long lastOffsetKey : coordinates.keySet()) {
+            if (lastOffsetKey <= highestRemote) {
+                keysToRemove.add(lastOffsetKey);
+            }
+        }
+        Collections.sort(keysToRemove);
+        for (final long key : keysToRemove) {
+            final BatchInfoInternal removed = coordinates.remove(key);
+            if (removed == null) {
+                continue;
+            }
+            removed.fileInfo().deleteBatch(removed.batchInfo(), now);
+            logInfo.byteSize -= removed.batchInfo().metadata().byteSize();
+            if (logInfo.byteSize < 0) {
+                throw new IllegalStateException("byteSize underflow for " + tidp);
+            }
+        }
+
+        final long newLogStart;
+        if (coordinates.isEmpty()) {
+            newLogStart = Math.min(highWatermark, Math.max(highestRemote + 1, logStartBefore));
+        } else {
+            final long firstRemainingBaseOffset = coordinates.firstEntry().getValue().batchInfo().metadata().baseOffset();
+            newLogStart = Math.max(logStartBefore, firstRemainingBaseOffset);
+        }
+        logInfo.logStartOffset = newLogStart;
+
+        return new PruneDisklessLogsResponse(requestTip, newLogStart, PruneDisklessLogsError.NONE);
+    }
+
+    @Override
     public void close() throws IOException {
         // Do nothing.
     }

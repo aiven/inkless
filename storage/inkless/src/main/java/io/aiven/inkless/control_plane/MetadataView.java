@@ -42,4 +42,6 @@ public interface MetadataView {
     LogConfig getTopicConfig(String topicName);
 
     Set<TopicIdPartition> getDisklessTopicPartitions();
+
+    Set<TopicIdPartition> getConsolidatingDisklessTopicPartitions();
 }

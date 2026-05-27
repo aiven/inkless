@@ -20,7 +20,7 @@ package kafka.server
 import com.yammer.metrics.core.{Gauge, Meter, Timer}
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
-import io.aiven.inkless.consolidation.ConsolidationFetcherManager
+import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager}
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, DeleteRecordsResponse => CpDeleteRecordsResponse, FindBatchResponse}
 import kafka.server.metadata.InklessMetadataView
@@ -9423,6 +9423,41 @@ class ReplicaManagerTest {
           replicaManager.shutdown(checkpointHW = false)
         }
       } finally {
+        consolidationCtor.close()
+      }
+    }
+
+    @Test
+    def testConsolidatedDisklessLogPrunerNotConstructedWhenRemoteStorageConsolidationDisabled(): Unit = {
+      val prunerCtor = mockConstruction(classOf[ConsolidatedDisklessLogPruner])
+      try {
+        val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+        try {
+          assertEquals(0, prunerCtor.constructed().size())
+        } finally {
+          replicaManager.shutdown(checkpointHW = false)
+        }
+      } finally {
+        prunerCtor.close()
+      }
+    }
+
+    @Test
+    def testConsolidatedDisklessLogPrunerConstructedWhenRemoteStorageConsolidationEnabled(): Unit = {
+      val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager])
+      val prunerCtor = mockConstruction(classOf[ConsolidatedDisklessLogPruner])
+      try {
+        val replicaManager = createReplicaManager(
+          List(disklessTopicPartition.topic()),
+          disklessRemoteStorageConsolidationEnabled = true,
+        )
+        try {
+          assertEquals(1, prunerCtor.constructed().size())
+        } finally {
+          replicaManager.shutdown(checkpointHW = false)
+        }
+      } finally {
+        prunerCtor.close()
         consolidationCtor.close()
       }
     }
