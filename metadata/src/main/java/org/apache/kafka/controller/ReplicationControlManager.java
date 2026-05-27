@@ -370,7 +370,7 @@ public class ReplicationControlManager {
      * classic tiered storage behavior, which is controlled by {@code classicTopicRemoteStorageForcePolicy}.
      */
     private final boolean isDisklessRemoteStorageConsolidationEnabled;
-    private final ClassicTopicRemoteStorageForcePolicy classicTopicRemoteStorageForcePolicy;
+    private final CreateTopicConfigInterceptors createTopicConfigInterceptors;
 
     /**
      * When true, diskless topics use managed replicas with user-defined RF
@@ -487,9 +487,10 @@ public class ReplicationControlManager {
         this.isDisklessStorageSystemEnabled = isDisklessStorageSystemEnabled;
         this.isDisklessManagedReplicasEnabled = isDisklessManagedReplicasEnabled;
         this.isDisklessRemoteStorageConsolidationEnabled = isDisklessRemoteStorageConsolidationEnabled;
-        this.classicTopicRemoteStorageForcePolicy = new ClassicTopicRemoteStorageForcePolicy(
+        this.createTopicConfigInterceptors = CreateTopicConfigInterceptors.create(
             classicRemoteStorageForceEnabled,
-            classicRemoteStorageForceExcludeTopicRegexes
+            classicRemoteStorageForceExcludeTopicRegexes,
+            defaultDisklessEnable
         );
         this.maxElectionsPerImbalance = maxElectionsPerImbalance;
         this.configurationControl = configurationControl;
@@ -752,17 +753,15 @@ public class ReplicationControlManager {
             // Figure out what ConfigRecords should be created, if any.
             ConfigResource configResource = new ConfigResource(TOPIC, topic.name());
             Map<String, Entry<OpType, String>> keyToOps = configChanges.get(configResource);
-            // Add remote.storage.enable=true to config records if ClassicTopicRemoteStorageForcePolicy is enabled
+            // Apply CREATE_TOPICS config interceptors (e.g. remote storage force)
             final Map<String, String> requestConfigs = new HashMap<>(translateCreationConfigs(topic.configs()));
-            final boolean disklessEnabled = disklessEnabledOnTopicCreation(requestConfigs);
             if (keyToOps == null) {
                 keyToOps = new HashMap<>();
             } else {
                 keyToOps = new HashMap<>(keyToOps);
             }
-            classicTopicRemoteStorageForcePolicy.maybeForceRemoteStorageEnable(
+            createTopicConfigInterceptors.intercept(
                 topic.name(),
-                disklessEnabled,
                 requestConfigs,
                 keyToOps
             );
@@ -831,14 +830,13 @@ public class ReplicationControlManager {
                                  List<ApiMessageAndVersion> configRecords,
                                  boolean authorizedToReturnConfigs) {
         final Map<String, String> creationConfigs = new HashMap<>(translateCreationConfigs(topic.configs()));
-        // Configs here are rebuilt from the request (creationConfigs).
-        // Re-apply ClassicTopicRemoteStorageForcePolicy on this creation configs view for validations and to include forced configs in the response payload.
-        final boolean disklessEnabledOnCreation = disklessEnabledOnTopicCreation(creationConfigs);
-        classicTopicRemoteStorageForcePolicy.maybeForceRemoteStorageEnable(topic.name(), disklessEnabledOnCreation, creationConfigs);
+        // Re-apply CREATE_TOPICS config interceptors on this creation configs view for validations and to include forced configs in the response payload.
+        createTopicConfigInterceptors.intercept(topic.name(), creationConfigs);
         // Include remote.storage.enable=true in creationConfigs for diskless topics.
         // This affects the CreateTopicsResponse effective-config view and topic policy checks.
         // The actual persistence happens in validConfigRecords() via ConfigRecord.
         // Exclude system topics — they are never diskless regardless of defaultDisklessEnable.
+        final boolean disklessEnabledOnCreation = disklessEnabledOnTopicCreation(creationConfigs);
         if (disklessEnabledOnCreation &&
                 isDisklessRemoteStorageConsolidationEnabled &&
                 !isSystemTopic(topic.name())) {
