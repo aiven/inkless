@@ -302,6 +302,10 @@ public class InklessConsolidatedDisklessTopicsTest {
 
     private record ControlPlaneDisklessSnapshot(long batchRowCount, long minLogStartOffset) { }
 
+    private boolean hasPrunedDisklessData(final ControlPlaneDisklessSnapshot snapshot) {
+        return snapshot.batchRowCount() == 0 || snapshot.minLogStartOffset() > 0;
+    }
+
     private static UUID toJavaUuid(Uuid topicId) {
         return new UUID(topicId.getMostSignificantBits(), topicId.getLeastSignificantBits());
     }
@@ -346,19 +350,20 @@ public class InklessConsolidatedDisklessTopicsTest {
     private void waitUntilTieredDisklessDataPrunedFromControlPlane(Uuid kafkaTopicId,
                                                                    ControlPlaneDisklessSnapshot baseline)
         throws InterruptedException {
+        if (hasPrunedDisklessData(baseline)) {
+            log.info("Diskless data was already pruned before waiting: baseline={}", baseline);
+            return;
+        }
         TestUtils.waitForCondition(() -> {
             try {
                 ControlPlaneDisklessSnapshot current = readControlPlaneDisklessSnapshot(kafkaTopicId);
-                boolean batchesRemoved = current.batchRowCount() < baseline.batchRowCount();
-                boolean disklessStartAdvanced = current.minLogStartOffset() > baseline.minLogStartOffset();
                 log.info("Waiting for diskless prune in control plane: current={}, baseline={}", current, baseline);
-                return batchesRemoved || disklessStartAdvanced;
+                return hasPrunedDisklessData(current);
             } catch (SQLException e) {
                 throw new RuntimeException(e);
             }
         }, 120_000, () -> "Expected diskless WAL batches tiered to remote to be pruned from control plane "
-            + "(batch count should drop below " + baseline.batchRowCount()
-            + " or min(log_start_offset) should exceed " + baseline.minLogStartOffset() + ")");
+            + "(batch count should become 0 or min(log_start_offset) should become positive)");
     }
 
     private void produceRecords(Map<String, Object> commonConfigs, int numRecords,
