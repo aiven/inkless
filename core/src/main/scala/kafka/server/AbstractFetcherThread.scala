@@ -333,6 +333,12 @@ abstract class AbstractFetcherThread(name: String,
       info("!!! maybeCreateMirrorFetchers: " + newStates)
       removeFetcherForPartitions(newStates.keySet)
       addFetcherForPartitions(newStates)
+    } else if (partitionToData.nonEmpty && leader.lastSeenEndpoints().isEmpty) {
+      // Old source without nodeEndpoints in Fetch response, so we need to rediscover via metadata
+      val stalePartitions = partitionToData.keySet
+      warn(s"No endpoint info to redirect mirror partitions $stalePartitions, refreshing source metadata")
+      stalePartitions.foreach(markPartitionRemoved)
+      refreshSourceClusterMetadata(stalePartitions)
     }
   }
 
