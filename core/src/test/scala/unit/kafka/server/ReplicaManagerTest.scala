@@ -8197,6 +8197,291 @@ class ReplicaManagerTest {
     }
 
     @Test
+    def testLastOffsetForLeaderEpochSwitchPendingUsesLocalLog(): Unit = {
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true)
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+      try {
+        setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+
+        val requestedEpochInfo = Seq(
+          new OffsetForLeaderTopic()
+            .setTopic(disklessTopicPartition.topic())
+            .setPartitions(util.List.of(
+              new OffsetForLeaderPartition()
+                .setPartition(disklessTopicPartition.partition())
+                .setLeaderEpoch(0)
+            ))
+        )
+
+        val result = replicaManager.lastOffsetForLeaderEpoch(requestedEpochInfo)
+
+        val partitionResult = result.head.partitions().get(0)
+        assertEquals(Errors.NONE.code, partitionResult.errorCode())
+        assertEquals(101L, partitionResult.endOffset())
+        verify(jobMock, never()).add(any(), any())
+        verify(jobMock, never()).start()
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testLastOffsetForLeaderEpochHybridAtSwitchBoundaryUsesLocalLog(): Unit = {
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true)
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+      try {
+        setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(101L)
+
+        val requestedEpochInfo = Seq(
+          new OffsetForLeaderTopic()
+            .setTopic(disklessTopicPartition.topic())
+            .setPartitions(util.List.of(
+              new OffsetForLeaderPartition()
+                .setPartition(disklessTopicPartition.partition())
+                .setLeaderEpoch(0)
+            ))
+        )
+
+        val result = replicaManager.lastOffsetForLeaderEpoch(requestedEpochInfo)
+
+        val partitionResult = result.head.partitions().get(0)
+        assertEquals(Errors.NONE.code, partitionResult.errorCode())
+        assertEquals(101L, partitionResult.endOffset())
+        verify(jobMock, never()).add(any(), any())
+        verify(jobMock, never()).start()
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testLastOffsetForLeaderEpochHybridFallsBackToDisklessWhenClassicLogCannotAnswer(): Unit = {
+      val disklessResult = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 200L, Optional.of[Integer](0))))
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.mustHandle(any())).thenReturn(true)
+      when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(disklessResult))
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true)
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+      try {
+        setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(100L)
+
+        val requestedEpochInfo = Seq(
+          new OffsetForLeaderTopic()
+            .setTopic(disklessTopicPartition.topic())
+            .setPartitions(util.List.of(
+              new OffsetForLeaderPartition()
+                .setPartition(disklessTopicPartition.partition())
+                .setLeaderEpoch(0)
+            ))
+        )
+
+        val result = replicaManager.lastOffsetForLeaderEpoch(requestedEpochInfo)
+
+        val partitionResult = result.head.partitions().get(0)
+        assertEquals(Errors.NONE.code, partitionResult.errorCode())
+        assertEquals(200L, partitionResult.endOffset())
+        verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+        verify(jobMock).start()
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testLastOffsetForLeaderEpochHybridFallsBackToDisklessWhenClassicOffsetIsUndefined(): Unit = {
+      val disklessResult = new OffsetResultHolder.FileRecordsOrError(
+        Optional.empty(),
+        Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 200L, Optional.of[Integer](1))))
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(disklessResult))
+      doNothing().when(jobMock).start()
+
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true)
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+      try {
+        setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(100L)
+
+        val requestedEpochInfo = Seq(
+          new OffsetForLeaderTopic()
+            .setTopic(disklessTopicPartition.topic())
+            .setPartitions(util.List.of(
+              new OffsetForLeaderPartition()
+                .setPartition(disklessTopicPartition.partition())
+                .setLeaderEpoch(1)
+            ))
+        )
+
+        val result = replicaManager.lastOffsetForLeaderEpoch(requestedEpochInfo)
+
+        val partitionResult = result.head.partitions().get(0)
+        assertEquals(Errors.NONE.code, partitionResult.errorCode())
+        assertEquals(200L, partitionResult.endOffset())
+        verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+        verify(jobMock).start()
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testLastOffsetForLeaderEpochHybridInvalidSwitchOffsetReturnsError(): Unit = {
+      val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true)
+      try {
+        setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(-3L)
+
+        val requestedEpochInfo = Seq(
+          new OffsetForLeaderTopic()
+            .setTopic(disklessTopicPartition.topic())
+            .setPartitions(util.List.of(
+              new OffsetForLeaderPartition()
+                .setPartition(disklessTopicPartition.partition())
+                .setLeaderEpoch(0)
+            ))
+        )
+
+        val result = replicaManager.lastOffsetForLeaderEpoch(requestedEpochInfo)
+
+        val partitionResult = result.head.partitions().get(0)
+        assertEquals(Errors.UNKNOWN_SERVER_ERROR.code, partitionResult.errorCode())
+        assertEquals(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET, partitionResult.endOffset())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testLastOffsetForLeaderEpochDisklessWithoutFetchOffsetHandlerReturnsError(): Unit = {
+      val replicaManager = createReplicaManager(
+        List(disklessTopicPartition.topic()),
+        disklessManagedReplicasEnabled = true,
+        inklessSharedStateEnabled = false)
+      try {
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+
+        val requestedEpochInfo = Seq(
+          new OffsetForLeaderTopic()
+            .setTopic(disklessTopicPartition.topic())
+            .setPartitions(util.List.of(
+              new OffsetForLeaderPartition()
+                .setPartition(disklessTopicPartition.partition())
+                .setLeaderEpoch(0)
+            ))
+        )
+
+        val result = replicaManager.lastOffsetForLeaderEpoch(requestedEpochInfo)
+
+        val partitionResult = result.head.partitions().get(0)
+        assertEquals(Errors.UNKNOWN_SERVER_ERROR.code, partitionResult.errorCode())
+        assertEquals(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET, partitionResult.endOffset())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
+    def testLastOffsetForLeaderEpochDisklessUndefinedEpochDoesNotFetchOffset(): Unit = {
+      val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+      var fetchOffsetHandlerMock: FetchOffsetHandler = null
+      val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+        case (handlerMock, _) =>
+          fetchOffsetHandlerMock = handlerMock
+          when(handlerMock.createJob()).thenReturn(jobMock)
+      }
+      val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+      val replicaManager = try {
+        createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true)
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+      try {
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+
+        val requestedEpochInfo = Seq(
+          new OffsetForLeaderTopic()
+            .setTopic(disklessTopicPartition.topic())
+            .setPartitions(util.List.of(
+              new OffsetForLeaderPartition()
+                .setPartition(disklessTopicPartition.partition())
+                .setLeaderEpoch(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH)
+            ))
+        )
+
+        val result = replicaManager.lastOffsetForLeaderEpoch(requestedEpochInfo)
+
+        val partitionResult = result.head.partitions().get(0)
+        assertEquals(Errors.NONE.code, partitionResult.errorCode())
+        assertEquals(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET, partitionResult.endOffset())
+        assertEquals(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH, partitionResult.leaderEpoch())
+        verify(fetchOffsetHandlerMock, never()).createJob()
+        verify(jobMock, never()).add(any(), any())
+        verify(jobMock, never()).start()
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    }
+
+    @Test
     def testFetchOffsetPureDisklessRoutesToDisklessPathWhenNoSwitch(): Unit = {
       val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
       when(jobMock.mustHandle(any())).thenReturn(true)
@@ -10501,6 +10786,8 @@ class ReplicaManagerTest {
       when(sharedState.controlPlane()).thenReturn(controlPlane.getOrElse(mock(classOf[ControlPlane])))
       val inklessMetadata = mock(classOf[InklessMetadataView])
       when(inklessMetadata.isDisklessTopic(any())).thenReturn(false)
+      when(inklessMetadata.getClassicToDisklessStartOffset(any()))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
       when(inklessMetadata.getTopicId(anyString())).thenAnswer{ invocation =>
         val topicName = invocation.getArgument(0, classOf[String])
         topicIdMapping.getOrElse(topicName, Uuid.ZERO_UUID)
