@@ -44,6 +44,7 @@ import java.util.stream.Collectors;
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
+import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.PruneDisklessLogsError;
 import io.aiven.inkless.control_plane.PruneDisklessLogsRequest;
 import io.aiven.inkless.control_plane.PruneDisklessLogsResponse;
@@ -196,6 +197,46 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
         assertThat(remaining.iterator().next().getLastOffset()).isEqualTo(25L);
 
         assertThat(singleLog().getLogStartOffset()).isEqualTo(11L);
+    }
+
+    @Test
+    void preservesLogStartWhenDeleteRecordsAdvancedIntoRemainingBatch() throws Exception {
+        final String objectKey = "obj-prune-delete-records-partial";
+        final int b1 = 300;
+        final int b2 = 300;
+        new CommitFileJob(
+            time,
+            pgContainer.getJooqCtx(),
+            objectKey,
+            ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+            BROKER_ID,
+            b1 + b2,
+            List.of(
+                CommitBatchRequest.of(0, T0P0, 0, b1, 0L, 10L, 1000L, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P0, b1, b2, 11L, 25L, 1000L, TimestampType.CREATE_TIME)
+            ),
+            durationCallback
+        ).call();
+        new DeleteRecordsJob(
+            time,
+            pgContainer.getJooqCtx(),
+            List.of(new DeleteRecordsRequest(T0P0, 5L)),
+            durationCallback
+        ).call();
+
+        final List<PruneDisklessLogsResponse> responses = new PruneDisklessLogsJob(
+            time,
+            pgContainer.getJooqCtx(),
+            List.of(new PruneDisklessLogsRequest(T0P0, 9L)),
+            durationCallback
+        ).call();
+
+        assertThat(responses).singleElement()
+            .satisfies(r -> {
+                assertThat(r.error()).isEqualTo(PruneDisklessLogsError.NONE);
+                assertThat(r.disklessLogStartOffset()).isEqualTo(5L);
+            });
+        assertThat(singleLog().getLogStartOffset()).isEqualTo(5L);
     }
 
     @Test

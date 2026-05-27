@@ -144,6 +144,31 @@ class InMemoryControlPlanePruneDisklessLogsTest {
     }
 
     @Test
+    void preservesLogStartWhenDeleteRecordsAdvancedIntoRemainingBatch() {
+        final int b1 = 300;
+        final int b2 = 300;
+        cp.commitFile(
+            "obj-delete-records-partial",
+            ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+            BROKER_ID,
+            b1 + b2,
+            List.of(
+                CommitBatchRequest.of(0, T0P0, 0, b1, 0L, 10L, 1000L, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P0, b1, b2, 11L, 25L, 1000L, TimestampType.CREATE_TIME)
+            ));
+        cp.deleteRecords(List.of(new DeleteRecordsRequest(T0P0, 5L)));
+
+        final List<PruneDisklessLogsResponse> responses = cp.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(T0P0, 9L)));
+
+        assertThat(responses).singleElement()
+            .satisfies(r -> {
+                assertThat(r.error()).isEqualTo(PruneDisklessLogsError.NONE);
+                assertThat(r.disklessLogStartOffset()).isEqualTo(5L);
+            });
+        assertThat(cp.getLogInfo(List.of(new GetLogInfoRequest(TOPIC_ID, 0))).get(0).logStartOffset()).isEqualTo(5L);
+    }
+
+    @Test
     void whenNoBatchesRemainDisklessStartIsMinOfHighWatermarkAndGreaterTieredFrontier() {
         final int batchBytes = 400;
         cp.commitFile(

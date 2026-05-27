@@ -84,6 +84,8 @@ BEGIN
                     l_log.high_watermark,
                     GREATEST(l_request.highest_tiered_offset + 1, l_log.log_start_offset)
                 );
+            ELSE
+                l_new_log_start_offset := GREATEST(l_log.log_start_offset, l_new_log_start_offset);
             END IF;
 
             UPDATE logs

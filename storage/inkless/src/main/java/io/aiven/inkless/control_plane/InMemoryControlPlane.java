@@ -593,7 +593,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         if (coordinates.isEmpty()) {
             newLogStart = Math.min(highWatermark, Math.max(highestRemote + 1, logStartBefore));
         } else {
-            newLogStart = coordinates.firstEntry().getValue().batchInfo().metadata().baseOffset();
+            final long firstRemainingBaseOffset = coordinates.firstEntry().getValue().batchInfo().metadata().baseOffset();
+            newLogStart = Math.max(logStartBefore, firstRemainingBaseOffset);
         }
         logInfo.logStartOffset = newLogStart;
 
