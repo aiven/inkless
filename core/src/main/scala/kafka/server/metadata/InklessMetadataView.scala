@@ -29,7 +29,7 @@ import java.util
 import java.util.concurrent.ConcurrentHashMap
 import java.util.function.Supplier
 import java.util.stream.{Collectors, IntStream}
-import java.util.{Optional, Properties}
+import java.util.Properties
 import scala.jdk.CollectionConverters._
 
 class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[util.Map[String, Object]]) extends MetadataView {
@@ -65,10 +65,6 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
 
   override def getTopicId(topicName: String): Uuid = {
     metadataCache.getTopicId(topicName)
-  }
-
-  override def getTopicName(topicId: Uuid): Optional[String] = {
-    metadataCache.getTopicName(topicId)
   }
 
   override def isDisklessTopic(topicName: String): Boolean = {
