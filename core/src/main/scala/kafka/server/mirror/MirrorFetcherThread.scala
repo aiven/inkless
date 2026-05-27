@@ -92,7 +92,8 @@ class MirrorFetcherThread(name: String,
     replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, topicPartition, MirrorPartitionState.EPOCH_FENCING))
   }
 
-  def validateLeaderEpoch(topicPartition: TopicPartition, partition: Partition, records: Records, partitionLeaderEpoch: Int): Unit = {
+  // Validates batch epoch against local epoch (destination) and partition epoch (source metadata).
+  private def validateLeaderEpoch(topicPartition: TopicPartition, partition: Partition, records: Records, partitionLeaderEpoch: Int): Unit = {
     val localLeaderEpoch = partition.getLeaderEpoch
     val highestBatchLeaderEpoch = if (records.lastBatch().isPresent)
       records.lastBatch().get().partitionLeaderEpoch() else -1
@@ -125,7 +126,7 @@ class MirrorFetcherThread(name: String,
       // With the fix of KAFKA-18723, the follower node will reject the batches and endlessly re-fetch.
       // Fix it by throwing exception and handle it by refresh the source cluster metadata.
       throw new MirrorPartitionStaleMetadataException(s"Rejecting the batch because the batch leader " +
-        s"epoch $highestBatchLeaderEpoch is higher than previously known leader epoch $partitionLeaderEpoch." +
+        s"epoch $highestBatchLeaderEpoch is higher than previously known leader epoch $partitionLeaderEpoch. " +
         s"Will refresh the source cluster metadata and retry.")
     }
   }

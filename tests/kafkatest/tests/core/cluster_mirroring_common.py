@@ -115,7 +115,7 @@ class MirrorUtils:
 
     def consume_records(self, kafka, topic, client_node, max_messages=None,
                         timeout_ms=30000, isolation_level=None, group=None,
-                        from_beginning=True, expected_count=None,
+                            from_beginning=True, expected_count=None,
                         wait_timeout_sec=240):
         env_prefix, cmd_suffix = kafka._cmd_security_opts(client_node)
         cmd = "%s%s --bootstrap-server %s --topic %s --timeout-ms %d" % (

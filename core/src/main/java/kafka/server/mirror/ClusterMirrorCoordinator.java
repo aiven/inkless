@@ -370,13 +370,13 @@ public class ClusterMirrorCoordinator {
             tps.put(topic, partitionIndices);
         });
 
-        // wait until partition states and LME update complete then return the response
+        // execute in parallel for efficiency, but wait for all partition state updates first, THEN wait for LME update
         CompletableFuture<Void> updateLastMirrorEpochsFuture = updateLastMirrorEpochs(updatedMirrorName, offsets);
         CompletableFuture.allOf(updateMirrorPartitionStateFutures.toArray(CompletableFuture[]::new))
             .thenCompose(v -> updateLastMirrorEpochsFuture)
             .whenComplete((v, e) -> {
                 WriteMirrorStatesResponseData data = new WriteMirrorStatesResponseData();
-                if  (e != null) {
+                if (e != null) {
                     log.error("Failed to update last mirror partition state and LME for {}: {}", mirrorName, e);
                     data.setErrorCode(Errors.forException(e).code());
                     data.setErrorMessage(e.getMessage());
@@ -892,6 +892,7 @@ public class ClusterMirrorCoordinator {
         }
     }
 
+    // Replays the mirror state log to rebuild in-memory partition states, epochs, and retry metadata.
     private void loadMirrorMetadata(TopicPartition topicPartition) {
         log.info("Loading mirror metadata from {}.", topicPartition);
         long logEndOffset = replicaManager.getLogEndOffset(topicPartition).getOrElse(() -> -1L);
