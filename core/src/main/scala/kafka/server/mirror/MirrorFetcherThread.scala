@@ -120,12 +120,13 @@ class MirrorFetcherThread(name: String,
     }
 
     if (highestBatchLeaderEpoch > partitionLeaderEpoch) {
-      // When this happens in intra-cluster, UnifiedLog will reject the batch and wait for the partition change
-      // metadata log to recreate fetcher thread.
-      // But if it happens in inter-cluster mirroring, we will never get the partition change metadata log,
-      // so we need to handle that by refreshing the source cluster metadata
+      // In old version, the leader epoch will be incremented "when follower is down". When this happens, the leader
+      // will still serve the fetch request with "currentLeaderEpoch=X", even though the leader's leader epoch is "X+1".
+      // With the fix of KAFKA-18723, the follower node will reject the batches and endlessly re-fetch.
+      // Fix it by throwing exception and handle it by refresh the source cluster metadata.
       throw new MirrorPartitionStaleMetadataException(s"Rejecting the batch because the batch leader " +
-        s"epoch $highestBatchLeaderEpoch is higher than previously known leader epoch $partitionLeaderEpoch")
+        s"epoch $highestBatchLeaderEpoch is higher than previously known leader epoch $partitionLeaderEpoch." +
+        s"Will refresh the source cluster metadata and retry.")
     }
   }
 
