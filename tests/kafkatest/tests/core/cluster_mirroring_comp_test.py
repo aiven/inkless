@@ -132,16 +132,16 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
 
         num_records = 100
         topics = {
-            "my-topic-a": {"partitions": 1, "replication-factor": 2},
+            "my-topic-a": {"partitions": 3, "replication-factor": 2},
             "my-topic-b": {"partitions": 1, "replication-factor": 2},
-            "new-topic": {"partitions": 1, "replication-factor": 2},
+            "new-topic": {"partitions": 2, "replication-factor": 2},
         }
 
         self.logger.info("Creating topics on source cluster")
         for t, cfg in topics.items():
             self.source_kafka.create_topic({"topic": t, **cfg})
 
-        # restart source cluster to bump the partitions leader epoch
+        self.logger.info("Restart source cluster to bump the partitions leader epoch")
         self.source_kafka.restart_cluster(clean_shutdown=True)
 
         self.logger.info("Producing %d records to each source topic", num_records)
@@ -166,7 +166,6 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
             err_msg="Failed to create cluster mirror",
         )
         for regex in ["my-topic.*", "new-topic"]:
-#         for regex in ["my-topic.*"]:
             wait_until(
                 lambda r=regex: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                     self.dest_client_node, mirror_name, r),
@@ -177,8 +176,9 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
         self.wait_mirror_lag_zero(
             self.dest_kafka, mirror_name, topics=list(topics.keys()))
 
-        leader_node = self.source_kafka.leader("my-topic-a", 0)
-        self.source_kafka.stop_node(leader_node)
+        self.logger.info("Shutting down the leader of one topic, and send more records and make sure the mirror can still work.")
+        leader_node = self.source_kafka.leader("my-topic-b", 0)
+        self.source_kafka.stop_node(leader_node, clean_shutdown=False)
 
         self.logger.info("Producing %d more records to each source topic", num_records)
         for t in topics:

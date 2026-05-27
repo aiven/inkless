@@ -548,6 +548,11 @@ abstract class AbstractFetcherThread(name: String,
                         s"at offset ${currentFetchState.fetchOffset}, waiting for leader epoch bump.", e)
                       markPartitionRemoved(topicPartition)
                       handleMirrorLeaderEpochExceeded(currentFetchState.mirrorName(), topicPartition)
+                    case e: MirrorPartitionStaleMetadataException =>
+                      error(s"Error while processing data for mirror partition $topicPartition " +
+                        s"at offset ${currentFetchState.fetchOffset}, waiting for metadata update.", e)
+                      markPartitionRemoved(topicPartition)
+                      refreshSourceClusterMetadata(Set(topicPartition))
                     case t: Throwable =>
                       // stop monitoring this partition and add it to the set of failed partitions
                       error(s"Unexpected error occurred while processing data for partition $topicPartition " +

@@ -19,7 +19,7 @@ package kafka.server.mirror
 import kafka.cluster.Partition
 import kafka.server._
 import kafka.server.mirror.ClusterMirrorUtils.{LEADER_EPOCH_BUMP_THRESHOLD, LeaderInfo, PartitionKey}
-import org.apache.kafka.common.errors.MirrorLeaderEpochExceededException
+import org.apache.kafka.common.errors.{MirrorLeaderEpochExceededException, MirrorPartitionStaleMetadataException}
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.record.Records
 import org.apache.kafka.common.requests.FetchResponse
@@ -92,11 +92,11 @@ class MirrorFetcherThread(name: String,
     replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, topicPartition, MirrorPartitionState.EPOCH_FENCING))
   }
 
-  def validateLeaderEpoch(topicPartition: TopicPartition, partition: Partition, records: Records): Unit = {
+  def validateLeaderEpoch(topicPartition: TopicPartition, partition: Partition, records: Records, partitionLeaderEpoch: Int): Unit = {
     val localLeaderEpoch = partition.getLeaderEpoch
     val highestBatchLeaderEpoch = if (records.lastBatch().isPresent)
       records.lastBatch().get().partitionLeaderEpoch() else -1
-    log.trace(s"Current highestBatchLeaderEpoch: $highestBatchLeaderEpoch, localLeaderEpoch: $localLeaderEpoch")
+    log.trace(s"Current highestBatchLeaderEpoch: $highestBatchLeaderEpoch, localLeaderEpoch: $localLeaderEpoch, partition: $topicPartition, partitionLE: $partitionLeaderEpoch")
     if (highestBatchLeaderEpoch > localLeaderEpoch) {
       // React by fencing this partition when source records are already ahead of the local leader epoch.
       // The exception will mark this partition as failed and transition mirror state to EPOCH_FENCING.
@@ -117,6 +117,15 @@ class MirrorFetcherThread(name: String,
             }
         }
       }
+    }
+
+    if (highestBatchLeaderEpoch > partitionLeaderEpoch) {
+      // When this happens in intra-cluster, UnifiedLog will reject the batch and wait for the partition change
+      // metadata log to recreate fetcher thread.
+      // But if it happens in inter-cluster mirroring, we will never get the partition change metadata log,
+      // so we need to handle that by refreshing the source cluster metadata
+      throw new MirrorPartitionStaleMetadataException(s"Rejecting the batch because the batch leader " +
+        s"epoch $highestBatchLeaderEpoch is higher than previously known leader epoch $partitionLeaderEpoch")
     }
   }
 
@@ -140,7 +149,7 @@ class MirrorFetcherThread(name: String,
       trace("Mirror follower has replica log end offset %d for partition %s. Received %d bytes of messages and leader hw %d"
         .format(log.logEndOffset, topicPartition, records.sizeInBytes, partitionData.highWatermark))
 
-    validateLeaderEpoch(topicPartition, partition, records)
+    validateLeaderEpoch(topicPartition, partition, records, partitionLeaderEpoch)
 
     // Append batches from the source cluster to the destination partition's log.
     val logAppendInfo = partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, partitionLeaderEpoch, isMirrorLeader = true)

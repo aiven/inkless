@@ -119,7 +119,9 @@ public enum MirrorPartitionState {
     @SuppressWarnings("checkstyle:cyclomaticComplexity")
     public static boolean isValidTransition(MirrorPartitionState source, MirrorPartitionState target) {
         if (source == target) {
-            return true;
+            // Re-running MIRRORING is needed because the fetcher thread might be removed
+            // For other states, to avoid unnecessary duplicated operation, skip it.
+            return target == MIRRORING;
         }
         switch (target) {
             case LOG_TRUNCATION:
