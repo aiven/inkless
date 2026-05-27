@@ -579,10 +579,21 @@ public class LogConfig extends AbstractConfig {
         }
 
         public boolean isSwitchedFromClassicWithRemoteStorage() {
-            return isDisklessAllowFromClassicEnabled
-                && isDisklessEnabled()
-                && wasRemoteStorageExplicitlySet() && wasRemoteStorageEnabled()
-                && requestedRemoteStorageEnabled();
+            // Allows both diskless and remote-storage to be set when:
+            // - The allow-from-classic flag is on, AND
+            // - Diskless is being enabled, AND
+            // - Remote-Storage was already enabled (TIERED→DISKLESS switch), OR
+            //   Remote-Storage is being enabled in the same request
+            //   AND consolidation is on (CLASSIC→DISKLESS direct switch)
+            if (!isDisklessAllowFromClassicEnabled || !isDisklessEnabled() || !requestedRemoteStorageEnabled()) {
+                return false;
+            }
+            // TIERED→DISKLESS: Remote-Storage was already explicitly set and enabled
+            if (wasRemoteStorageExplicitlySet() && wasRemoteStorageEnabled()) {
+                return true;
+            }
+            // CLASSIC→DISKLESS (single request): Remote-Storage is being newly enabled, requires consolidation gate
+            return isRemoteStorageConsolidationEnabled && isRemoteStorageBecomesEnabled();
         }
 
         /** Both overrides were already present and remain off; used to skip mutual exclusion without consolidation. */
@@ -653,6 +664,13 @@ public class LogConfig extends AbstractConfig {
             && !isBothExplicitlyDisabledSteadyState) {
             validateDisklessAndRemoteStorageMutualExclusion(logConfigHelper);
         }
+
+        // When consolidation is enabled, enforce that diskless topics must have remote storage.
+        // This replaces mutual exclusion with a stricter invariant: diskless.enable=true requires
+        // remote.storage.enable=true.
+        if (isRemoteStorageConsolidationEnabled) {
+            validateDisklessRequiresRemoteStorage(logConfigHelper);
+        }
     }
 
     private static void validateDisklessTransition(LogConfigHelper logConfigHelper,
@@ -679,6 +697,29 @@ public class LogConfig extends AbstractConfig {
         }
     }
 
+    private static void validateDisklessRequiresRemoteStorage(LogConfigHelper logConfigHelper) {
+        // Diskless topics must have remote storage enabled.
+        // Only reject when remote.storage.enable is explicitly set to false.
+        // If remote.storage.enable was never set (implicit default), allow —
+        // the controller will auto-enable remote storage via config record.
+        if (!logConfigHelper.isDisklessEnabled() || logConfigHelper.isRemoteStorageEnabled()) {
+            return;
+        }
+        // Since we returned above if remote storage is enabled, explicit-set here implies set-to-false.
+        boolean isRemoteStorageExplicitlySetToFalse = logConfigHelper.wasRemoteStorageExplicitlySet()
+            || logConfigHelper.isRemoteStorageExplicitlySet();
+        if (!isRemoteStorageExplicitlySetToFalse) {
+            return;
+        }
+        boolean isDisklessBeingEnabled = logConfigHelper.isCreation()
+            || (logConfigHelper.isDisklessExplicitlySet() && !logConfigHelper.wasDisklessEnabled());
+        boolean isRemoteStorageBeingDisabled = logConfigHelper.isRemoteStorageExplicitlySet() && !logConfigHelper.isRemoteStorageEnabled();
+        // Reject either transition that independently creates diskless + remote.storage.enable=false
+        if (isDisklessBeingEnabled || isRemoteStorageBeingDisabled) {
+            throw new InvalidConfigurationException(
+                "Diskless topics must have remote storage enabled. Set remote.storage.enable=true when enabling diskless.");
+        }
+    }
 
     /**
      * Validates the values of the given properties. Should be called only by the broker.
