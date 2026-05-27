@@ -50,7 +50,7 @@ public class CreateTopicConfigInterceptorsTest {
 
     @Test
     public void noInterceptorWhenDisabled() {
-        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false);
+        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, false, List.of());
         final Map<String, String> targetConfigs = new HashMap<>();
 
         interceptors.intercept("test-topic", targetConfigs);
@@ -60,7 +60,7 @@ public class CreateTopicConfigInterceptorsTest {
 
     @Test
     public void remoteStorageInterceptorAppliesWhenEnabled() {
-        final var interceptors = CreateTopicConfigInterceptors.create(true, List.of(), false);
+        final var interceptors = CreateTopicConfigInterceptors.create(true, List.of(), false, false, List.of());
         final Map<String, String> requestConfigs = new HashMap<>();
         final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
         final Map<String, String> targetConfigs = new HashMap<>();
@@ -74,7 +74,7 @@ public class CreateTopicConfigInterceptorsTest {
 
     @Test
     public void remoteStorageInterceptorDoesNotApplyForExcludedTopic() {
-        final var interceptors = CreateTopicConfigInterceptors.create(true, List.of("excluded-.*"), false);
+        final var interceptors = CreateTopicConfigInterceptors.create(true, List.of("excluded-.*"), false, false, List.of());
         final Map<String, String> requestConfigs = new HashMap<>();
         final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
         final Map<String, String> targetConfigs = new HashMap<>();
@@ -84,5 +84,61 @@ public class CreateTopicConfigInterceptorsTest {
 
         assertFalse(targetConfigOps.containsKey(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
         assertNull(targetConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+    }
+
+    @Test
+    public void disklessInterceptorAppliesWhenEnabledAndTopicMatches() {
+        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, true, List.of("my-topic-.*"));
+        final Map<String, String> requestConfigs = new HashMap<>();
+        final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
+        final Map<String, String> targetConfigs = new HashMap<>();
+
+        interceptors.intercept("my-topic-1", requestConfigs, targetConfigOps);
+        interceptors.intercept("my-topic-1", targetConfigs);
+
+        assertEquals(Map.entry(SET, "true"), targetConfigOps.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+        assertEquals("true", targetConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+    }
+
+    @Test
+    public void disklessInterceptorDoesNotApplyWhenTopicDoesNotMatch() {
+        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, true, List.of("my-topic-.*"));
+        final Map<String, String> targetConfigs = new HashMap<>();
+
+        interceptors.intercept("other-topic", targetConfigs);
+
+        assertNull(targetConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+    }
+
+    @Test
+    public void disklessInterceptorTakesPriorityOverRemoteStorage() {
+        // Both enabled, no explicit exclude regex needed — diskless wins by chain order
+        final var interceptors = CreateTopicConfigInterceptors.create(
+            true, List.of(), false,
+            true, List.of("diskless-.*")
+        );
+
+        // A classic topic (not matching diskless regex) gets remote storage forced
+        final Map<String, String> classicConfigs = new HashMap<>();
+        interceptors.intercept("classic-topic", classicConfigs);
+        assertEquals("true", classicConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+        assertNull(classicConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+
+        // A diskless topic (matching diskless regex) gets diskless forced, NOT remote storage
+        final Map<String, String> disklessConfigs = new HashMap<>();
+        interceptors.intercept("diskless-topic", disklessConfigs);
+        assertNull(disklessConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+        assertEquals("true", disklessConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+    }
+
+    @Test
+    public void disklessInterceptorSkipsTopicsWithDoubleUnderscorePrefix() {
+        final CreateTopicConfigInterceptors interceptors =
+            CreateTopicConfigInterceptors.create(false, List.of(), false, true, List.of(".*"));
+
+        final Map<String, String> targetConfigs = new HashMap<>();
+        interceptors.intercept("__consumer_offsets", targetConfigs);
+
+        assertNull(targetConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
     }
 }

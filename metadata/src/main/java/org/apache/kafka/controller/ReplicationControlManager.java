@@ -180,6 +180,8 @@ public class ReplicationControlManager {
         private boolean isDisklessRemoteStorageConsolidationEnabled = false;
         private boolean classicRemoteStorageForceEnabled = false;
         private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
+        private boolean disklessForceEnabled = false;
+        private List<String> disklessForceIncludeTopicRegexes = List.of();
 
         private int maxElectionsPerImbalance = MAX_ELECTIONS_PER_IMBALANCE;
         private ConfigurationControlManager configurationControl = null;
@@ -237,6 +239,16 @@ public class ReplicationControlManager {
             return this;
         }
 
+        public Builder setDisklessForceEnabled(boolean disklessForceEnabled) {
+            this.disklessForceEnabled = disklessForceEnabled;
+            return this;
+        }
+
+        public Builder setDisklessForceIncludeTopicRegexes(List<String> disklessForceIncludeTopicRegexes) {
+            this.disklessForceIncludeTopicRegexes = disklessForceIncludeTopicRegexes;
+            return this;
+        }
+
         Builder setMaxElectionsPerImbalance(int maxElectionsPerImbalance) {
             this.maxElectionsPerImbalance = maxElectionsPerImbalance;
             return this;
@@ -283,6 +295,8 @@ public class ReplicationControlManager {
                 isDisklessRemoteStorageConsolidationEnabled,
                 classicRemoteStorageForceEnabled,
                 classicRemoteStorageForceExcludeTopicRegexes,
+                disklessForceEnabled,
+                disklessForceIncludeTopicRegexes,
                 maxElectionsPerImbalance,
                 configurationControl,
                 clusterControl,
@@ -473,6 +487,8 @@ public class ReplicationControlManager {
         boolean isDisklessRemoteStorageConsolidationEnabled,
         boolean classicRemoteStorageForceEnabled,
         List<String> classicRemoteStorageForceExcludeTopicRegexes,
+        boolean disklessForceEnabled,
+        List<String> disklessForceIncludeTopicRegexes,
         int maxElectionsPerImbalance,
         ConfigurationControlManager configurationControl,
         ClusterControlManager clusterControl,
@@ -490,7 +506,9 @@ public class ReplicationControlManager {
         this.createTopicConfigInterceptors = CreateTopicConfigInterceptors.create(
             classicRemoteStorageForceEnabled,
             classicRemoteStorageForceExcludeTopicRegexes,
-            defaultDisklessEnable
+            defaultDisklessEnable,
+            disklessForceEnabled,
+            disklessForceIncludeTopicRegexes
         );
         this.maxElectionsPerImbalance = maxElectionsPerImbalance;
         this.configurationControl = configurationControl;
