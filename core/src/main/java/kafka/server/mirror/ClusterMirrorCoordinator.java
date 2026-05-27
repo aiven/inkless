@@ -373,7 +373,7 @@ public class ClusterMirrorCoordinator {
         // wait until partition states and LME update complete then return the response
         CompletableFuture<Void> updateLastMirrorEpochsFuture = updateLastMirrorEpochs(updatedMirrorName, offsets);
         CompletableFuture.allOf(updateMirrorPartitionStateFutures.toArray(CompletableFuture[]::new))
-            .thenCompose((v) -> updateLastMirrorEpochsFuture)
+            .thenCompose(v -> updateLastMirrorEpochsFuture)
             .whenComplete((v, e) -> {
                 WriteMirrorStatesResponseData data = new WriteMirrorStatesResponseData();
                 if  (e != null) {
