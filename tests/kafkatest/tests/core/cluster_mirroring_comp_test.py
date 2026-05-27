@@ -212,5 +212,6 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
 
         self.logger.info("Verifying destination records after failover")
         for topic in topics:
-            self.consume_records(self.dest_kafka, topic, self.dest_client_node,
-                                max_messages=num_records, expected_count=num_records)
+            count = self.consume_records(self.dest_kafka, topic, self.dest_client_node,
+                                         max_messages=num_records, expected_count=num_records)
+            assert count >= num_records, "Expected %d records on %s, got %d" % (num_records, topic, count)

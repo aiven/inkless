@@ -214,14 +214,11 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
         if expected_count is not None:
             deadline = time.time() + wait_timeout_sec
             try_consume()
-            while count[0] < expected_count:
-                if time.time() >= deadline:
-                    raise AssertionError(
-                        "Expected %d records on %s, got %d" % (expected_count, topic, count[0]))
+            while count[0] < expected_count and time.time() < deadline:
                 time.sleep(5)
                 try_consume()
         else:
-            _try_consume()
+            try_consume()
         return count[0]
 
     def list_acls(self, kafka, client_node):
@@ -298,9 +295,10 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
 
         # Retry consuming because the HW may lag behind mirror lag reaching zero.
         self.logger.info("Consuming 10 records from my-topic-a on destination as client user")
-        self.consume_as_client(self.dest_kafka, "my-topic-a",
-                               self.dest_client_node, max_messages=10,
-                               group="my-group", expected_count=10)
+        count = self.consume_as_client(self.dest_kafka, "my-topic-a",
+                                       self.dest_client_node, max_messages=10,
+                                       group="my-group", expected_count=10)
+        assert count >= 10, "Expected 10 records on my-topic-a, got %d" % count
 
         self.logger.info("Verifying ACL filtering: my-topic-a ACL synced, new-topic ACL filtered out")
         self.wait_for_acl_condition(
