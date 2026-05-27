@@ -219,7 +219,10 @@ class Partition(val topicPartition: TopicPartition,
     }
   }
 
-  @volatile private var disklessLogStartOffset: Long = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
+  // Broker-local watermark for the latest diskless log start offset applied from pruning responses.
+  // The control plane owns the persisted log start offset; this value only catches stale or
+  // out-of-order pruner responses before they can regress local partition state.
+  @volatile private var lastAppliedDisklessLogStartOffset: Long = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
 
   this.logIdent = s"[Partition $topicPartition broker=$localBrokerId] "
 
@@ -261,13 +264,14 @@ class Partition(val topicPartition: TopicPartition,
    */
   def isAtMinIsr: Boolean = leaderLogIfLocal.exists { partitionState.isr.size == effectiveMinIsr(_) }
 
-  def maybeUpdateDisklessLogStartOffset(newDisklessLogStartOffset: Long): Boolean = {
+  def maybeAdvanceLastAppliedDisklessLogStartOffset(newDisklessLogStartOffset: Long): Unit = {
     inWriteLock(leaderIsrUpdateLock) {
-      if (newDisklessLogStartOffset >= disklessLogStartOffset) {
-        disklessLogStartOffset = newDisklessLogStartOffset
-        true
+      if (newDisklessLogStartOffset >= lastAppliedDisklessLogStartOffset) {
+        lastAppliedDisklessLogStartOffset = newDisklessLogStartOffset
       } else {
-        false
+        warn(s"Ignoring stale diskless log start offset for $topicPartition. " +
+          s"The new value ($newDisklessLogStartOffset) is less than the last locally applied value " +
+          s"($lastAppliedDisklessLogStartOffset).")
       }
     }
   }
