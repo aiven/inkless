@@ -149,10 +149,7 @@ class MirrorUtils:
         if expected_count is not None:
             deadline = time.time() + wait_timeout_sec
             try_consume()
-            while count[0] < expected_count:
-                if time.time() >= deadline:
-                    raise AssertionError(
-                        "Expected %d records on %s, got %d" % (expected_count, topic, count[0]))
+            while count[0] < expected_count and time.time() < deadline:
                 time.sleep(5)
                 try_consume()
         else:

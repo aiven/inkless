@@ -333,6 +333,13 @@ abstract class AbstractFetcherThread(name: String,
       info("!!! maybeCreateMirrorFetchers: " + newStates)
       removeFetcherForPartitions(newStates.keySet)
       addFetcherForPartitions(newStates)
+    } else if (partitionToData.nonEmpty && leader.lastSeenEndpoints().isEmpty) {
+      // Old source without nodeEndpoints in Fetch response, so we need to rediscover via metadata
+      val stalePartitions = partitionToData.keySet
+      warn(s"No endpoint info to redirect mirror partitions $stalePartitions, refreshing source metadata")
+      stalePartitions.foreach(markPartitionRemoved)
+      removeFetcherForPartitions(stalePartitions)
+      refreshSourceClusterMetadata(stalePartitions)
     }
   }
 
@@ -545,9 +552,14 @@ abstract class AbstractFetcherThread(name: String,
                       markPartitionFailed(topicPartition)
                     case e: MirrorLeaderEpochExceededException =>
                       error(s"Error while processing data for mirror partition $topicPartition " +
-                        s"at offset ${currentFetchState.fetchOffset}, waiting for leader epoch bump.", e)
+                        s"at offset ${currentFetchState.fetchOffset}, triggering leader epoch bump.", e)
                       markPartitionRemoved(topicPartition)
                       handleMirrorLeaderEpochExceeded(currentFetchState.mirrorName(), topicPartition)
+                    case e: MirrorPartitionStaleMetadataException =>
+                      error(s"Error while processing data for mirror partition $topicPartition " +
+                        s"at offset ${currentFetchState.fetchOffset}, triggering metadata update.", e)
+                      markPartitionRemoved(topicPartition)
+                      refreshSourceClusterMetadata(Set(topicPartition))
                     case t: Throwable =>
                       // stop monitoring this partition and add it to the set of failed partitions
                       error(s"Unexpected error occurred while processing data for partition $topicPartition " +

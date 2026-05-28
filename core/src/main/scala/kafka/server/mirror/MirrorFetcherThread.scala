@@ -19,7 +19,7 @@ package kafka.server.mirror
 import kafka.cluster.Partition
 import kafka.server._
 import kafka.server.mirror.ClusterMirrorUtils.{LEADER_EPOCH_BUMP_THRESHOLD, LeaderInfo, PartitionKey}
-import org.apache.kafka.common.errors.MirrorLeaderEpochExceededException
+import org.apache.kafka.common.errors.{MirrorLeaderEpochExceededException, MirrorPartitionStaleMetadataException}
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.record.Records
 import org.apache.kafka.common.requests.FetchResponse
@@ -92,11 +92,12 @@ class MirrorFetcherThread(name: String,
     replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, topicPartition, MirrorPartitionState.EPOCH_FENCING))
   }
 
-  def validateLeaderEpoch(topicPartition: TopicPartition, partition: Partition, records: Records): Unit = {
+  // Validates batch epoch against local epoch (destination) and partition epoch (source metadata).
+  private def validateLeaderEpoch(topicPartition: TopicPartition, partition: Partition, records: Records, partitionLeaderEpoch: Int): Unit = {
     val localLeaderEpoch = partition.getLeaderEpoch
     val highestBatchLeaderEpoch = if (records.lastBatch().isPresent)
       records.lastBatch().get().partitionLeaderEpoch() else -1
-    log.trace(s"Current highestBatchLeaderEpoch: $highestBatchLeaderEpoch, localLeaderEpoch: $localLeaderEpoch")
+    log.trace(s"Current highestBatchLeaderEpoch: $highestBatchLeaderEpoch, localLeaderEpoch: $localLeaderEpoch, partition: $topicPartition, partitionLE: $partitionLeaderEpoch")
     if (highestBatchLeaderEpoch > localLeaderEpoch) {
       // React by fencing this partition when source records are already ahead of the local leader epoch.
       // The exception will mark this partition as failed and transition mirror state to EPOCH_FENCING.
@@ -117,6 +118,16 @@ class MirrorFetcherThread(name: String,
             }
         }
       }
+    }
+
+    if (highestBatchLeaderEpoch > partitionLeaderEpoch) {
+      // In old version, the leader epoch will be incremented "when follower is down". When this happens, the leader
+      // will still serve the fetch request with "currentLeaderEpoch=X", even though the leader's leader epoch is "X+1".
+      // With the fix of KAFKA-18723, the follower node will reject the batches and endlessly re-fetch.
+      // Fix it by throwing exception and handle it by refresh the source cluster metadata.
+      throw new MirrorPartitionStaleMetadataException(s"Rejecting the batch because the batch leader " +
+        s"epoch $highestBatchLeaderEpoch is higher than previously known leader epoch $partitionLeaderEpoch. " +
+        s"Will refresh the source cluster metadata and retry.")
     }
   }
 
@@ -140,7 +151,7 @@ class MirrorFetcherThread(name: String,
       trace("Mirror follower has replica log end offset %d for partition %s. Received %d bytes of messages and leader hw %d"
         .format(log.logEndOffset, topicPartition, records.sizeInBytes, partitionData.highWatermark))
 
-    validateLeaderEpoch(topicPartition, partition, records)
+    validateLeaderEpoch(topicPartition, partition, records, partitionLeaderEpoch)
 
     // Append batches from the source cluster to the destination partition's log.
     val logAppendInfo = partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, partitionLeaderEpoch, isMirrorLeader = true)
