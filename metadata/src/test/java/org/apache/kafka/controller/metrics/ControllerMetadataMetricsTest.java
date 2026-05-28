@@ -68,6 +68,7 @@ public class ControllerMetadataMetricsTest {
                         "kafka.controller:type=KafkaController,name=DisklessTopicCount",
                         "kafka.controller:type=KafkaController,name=DisklessPartitionCount",
                         "kafka.controller:type=KafkaController,name=DisklessOfflinePartitionCount",
+                        "kafka.controller:type=KafkaController,name=DisklessWithoutRemoteStorageCount",
                         "kafka.controller:type=ControllerStats,name=UncleanLeaderElectionsPerSec",
                         "kafka.controller:type=ControllerStats,name=ElectionFromEligibleLeaderReplicasPerSec"
                     )));
@@ -331,5 +332,22 @@ public class ControllerMetadataMetricsTest {
             (m, v) -> m.setDisklessOfflinePartitionCount(v),
             (m, v) -> m.addToDisklessOfflinePartitionCount(v)
         );
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testDisklessWithoutRemoteStorageCountMetric() {
+        MetricsRegistry registry = new MetricsRegistry();
+        try (ControllerMetadataMetrics metrics = new ControllerMetadataMetrics(Optional.of(registry))) {
+            assertEquals(0, metrics.disklessWithoutRemoteStorageCount());
+            assertEquals(0, ((Gauge<Integer>) registry.allMetrics().
+                    get(metricName("KafkaController", "DisklessWithoutRemoteStorageCount"))).value());
+            metrics.setDisklessWithoutRemoteStorageCount(5);
+            assertEquals(5, metrics.disklessWithoutRemoteStorageCount());
+            assertEquals(5, ((Gauge<Integer>) registry.allMetrics().
+                    get(metricName("KafkaController", "DisklessWithoutRemoteStorageCount"))).value());
+        } finally {
+            registry.shutdown();
+        }
     }
 }
