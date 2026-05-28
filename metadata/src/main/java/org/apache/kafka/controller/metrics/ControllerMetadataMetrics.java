@@ -76,6 +76,8 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
         "KafkaController", "DisklessPartitionCount");
     private static final MetricName DISKLESS_OFFLINE_PARTITION_COUNT = getMetricName(
         "KafkaController", "DisklessOfflinePartitionCount");
+    private static final MetricName DISKLESS_WITHOUT_REMOTE_STORAGE_COUNT = getMetricName(
+        "KafkaController", "DisklessWithoutRemoteStorageCount");
 
     private final Optional<MetricsRegistry> registry;
     private final AtomicInteger fencedBrokerCount = new AtomicInteger(0);
@@ -93,6 +95,7 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
     private final AtomicInteger disklessTopicCount = new AtomicInteger(0);
     private final AtomicInteger disklessPartitionCount = new AtomicInteger(0);
     private final AtomicInteger disklessOfflinePartitionCount = new AtomicInteger(0);
+    private final AtomicInteger disklessWithoutRemoteStorageCount = new AtomicInteger(0);
 
     /**
      * Create a new ControllerMetadataMetrics object.
@@ -176,6 +179,12 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
             @Override
             public Integer value() {
                 return disklessOfflinePartitionCount();
+            }
+        }));
+        registry.ifPresent(r -> r.newGauge(DISKLESS_WITHOUT_REMOTE_STORAGE_COUNT, new Gauge<Integer>() {
+            @Override
+            public Integer value() {
+                return disklessWithoutRemoteStorageCount();
             }
         }));
     }
@@ -372,6 +381,14 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
         return this.disklessOfflinePartitionCount.get();
     }
 
+    public void setDisklessWithoutRemoteStorageCount(int count) {
+        this.disklessWithoutRemoteStorageCount.set(count);
+    }
+
+    public int disklessWithoutRemoteStorageCount() {
+        return this.disklessWithoutRemoteStorageCount.get();
+    }
+
     @Override
     public void close() {
         registry.ifPresent(r -> List.of(
@@ -388,7 +405,8 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
             IGNORED_STATIC_VOTERS,
             DISKLESS_TOPIC_COUNT,
             DISKLESS_PARTITION_COUNT,
-            DISKLESS_OFFLINE_PARTITION_COUNT
+            DISKLESS_OFFLINE_PARTITION_COUNT,
+            DISKLESS_WITHOUT_REMOTE_STORAGE_COUNT
         ).forEach(r::removeMetric));
         for (int brokerId : brokerRegistrationStates.keySet()) {
             removeBrokerRegistrationStateMetric(brokerId);
