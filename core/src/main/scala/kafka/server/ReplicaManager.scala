@@ -2801,7 +2801,11 @@ class ReplicaManager(val config: KafkaConfig,
     lazy val inklessFetchOffsetHandlerJob: Option[FetchOffsetHandler.Job] = inklessFetchOffsetHandler.map(_.createJob())
     var disklessOffsetForLeaderEpochRequested = false
 
-    def localOffsetForLeaderEpoch(topicPartition: TopicPartition, offsetForLeaderPartition: OffsetForLeaderPartition): EpochEndOffset = {
+    def localOffsetForLeaderEpoch(
+      topicPartition: TopicPartition,
+      offsetForLeaderPartition: OffsetForLeaderPartition,
+      fetchOnlyFromLeader: Boolean = true
+    ): EpochEndOffset = {
       getPartition(topicPartition) match {
         case HostedPartition.Online(partition) =>
           val currentLeaderEpochOpt =
@@ -2813,7 +2817,7 @@ class ReplicaManager(val config: KafkaConfig,
           partition.lastOffsetForLeaderEpoch(
             currentLeaderEpochOpt,
             offsetForLeaderPartition.leaderEpoch,
-            fetchOnlyFromLeader = true)
+            fetchOnlyFromLeader = fetchOnlyFromLeader)
 
         case HostedPartition.Offline(_) =>
           new EpochEndOffset()
@@ -2891,7 +2895,17 @@ class ReplicaManager(val config: KafkaConfig,
               disklessOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
 
             case classicToDisklessStartOffset if classicToDisklessStartOffset >= 0L =>
-              val localResult = localOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
+              // The classic prefix is sealed at the switch offset, so any replica with the
+              // complete local classic log can answer epoch lookups for that prefix.
+              val hasCompleteLocalClassicPrefix = getPartition(topicPartition) match {
+                case HostedPartition.Online(partition) =>
+                  partition.log.exists(_.highWatermark >= classicToDisklessStartOffset)
+                case _ => false
+              }
+              val localResult = localOffsetForLeaderEpoch(
+                topicPartition,
+                offsetForLeaderPartition,
+                fetchOnlyFromLeader = !hasCompleteLocalClassicPrefix)
               val localError = Errors.forCode(localResult.errorCode)
               if (localError != Errors.NONE) {
                 () => localResult
