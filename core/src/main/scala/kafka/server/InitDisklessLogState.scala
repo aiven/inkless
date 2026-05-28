@@ -187,13 +187,15 @@ object SendingToController {
     val states = new util.ArrayList[InitDisklessLogRequestData.ProducerState]()
     log.producerStateManager().activeProducers().forEach { (producerId, entry) =>
       if (!entry.isEmpty) {
-        states.add(new InitDisklessLogRequestData.ProducerState()
-          .setProducerId(producerId)
-          .setProducerEpoch(entry.producerEpoch())
-          .setBaseSequence(entry.firstSeq())
-          .setLastSequence(entry.lastSeq())
-          .setAssignedOffset(entry.lastDataOffset())
-          .setBatchMaxTimestamp(entry.lastTimestamp()))
+        entry.batchMetadata().asScala.foreach { batch =>
+          states.add(new InitDisklessLogRequestData.ProducerState()
+            .setProducerId(producerId)
+            .setProducerEpoch(entry.producerEpoch())
+            .setBaseSequence(batch.firstSeq())
+            .setLastSequence(batch.lastSeq())
+            .setAssignedOffset(batch.firstOffset())
+            .setBatchMaxTimestamp(batch.timestamp()))
+        }
       }
     }
     states

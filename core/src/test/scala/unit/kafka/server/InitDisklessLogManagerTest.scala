@@ -29,7 +29,7 @@ import org.apache.kafka.server.partition.PartitionListener
 import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.util.MockScheduler
 import org.apache.kafka.common.utils.MockTime
-import org.apache.kafka.storage.internals.log.{ProducerStateEntry, ProducerStateManager, UnifiedLog}
+import org.apache.kafka.storage.internals.log.{BatchMetadata, ProducerStateEntry, ProducerStateManager, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.mockito.ArgumentMatchers.any
@@ -231,6 +231,7 @@ class InitDisklessLogManagerTest {
       java.util.OptionalLong.empty(),
       Optional.of(new org.apache.kafka.storage.internals.log.BatchMetadata(14, 99, 4, 5000L))
     )
+    producerEntry.addBatch(1.toShort, 19, 104, 4, 6000L)
     val producers = new util.HashMap[java.lang.Long, ProducerStateEntry]()
     producers.put(42L, producerEntry)
     when(producerStateManager.activeProducers()).thenReturn(producers)
@@ -260,15 +261,89 @@ class InitDisklessLogManagerTest {
     assertEquals(0, partitionData.partitionId())
     assertEquals(100, partitionData.disklessStartOffset())
     assertEquals(5, partitionData.leaderEpoch())
-    assertEquals(1, partitionData.producerStates().size())
+    assertEquals(2, partitionData.producerStates().size())
 
     val ps = partitionData.producerStates().get(0)
     assertEquals(42L, ps.producerId())
     assertEquals(1.toShort, ps.producerEpoch())
     assertEquals(10, ps.baseSequence())
     assertEquals(14, ps.lastSequence())
-    assertEquals(99, ps.assignedOffset())
+    assertEquals(95, ps.assignedOffset())
     assertEquals(5000L, ps.batchMaxTimestamp())
+
+    val ps2 = partitionData.producerStates().get(1)
+    assertEquals(42L, ps2.producerId())
+    assertEquals(1.toShort, ps2.producerEpoch())
+    assertEquals(15, ps2.baseSequence())
+    assertEquals(19, ps2.lastSequence())
+    assertEquals(100, ps2.assignedOffset())
+    assertEquals(6000L, ps2.batchMaxTimestamp())
+
+    captured.complete(makeSuccessResponse(topicId, 0))
+  }
+
+  @Test
+  def testRequestContainsAllRetainedBatchesForAllActiveProducers(): Unit = {
+    // Given a partition with multiple active producers and several retained batches per producer
+    val partition = mockPartition(hw = 250, leo = 250, leaderEpoch = 7)
+
+    // Producer id 42, epoch 1, with three retained batches.
+    val producerEntry = new ProducerStateEntry(
+      42L, 1.toShort, 0, 1000L,
+      java.util.OptionalLong.empty(),
+      Optional.of(new BatchMetadata(12, 112, 2, 1000L))
+    )
+    producerEntry.addBatch(1.toShort, 15, 120, 2, 2000L)
+    producerEntry.addBatch(1.toShort, 17, 130, 1, 3000L)
+
+    // Producer id 77, epoch 3, with two retained batches.
+    val otherProducerEntry = new ProducerStateEntry(
+      77L, 3.toShort, 0, 4000L,
+      java.util.OptionalLong.empty(),
+      Optional.of(new BatchMetadata(4, 204, 4, 4000L))
+    )
+    otherProducerEntry.addBatch(3.toShort, 7, 208, 2, 5000L)
+
+    val producers = new util.HashMap[java.lang.Long, ProducerStateEntry]()
+    producers.put(producerEntry.producerId(), producerEntry)
+    producers.put(otherProducerEntry.producerId(), otherProducerEntry)
+    // Producer id 88 is empty and should not be included in the request.
+    producers.put(88L, ProducerStateEntry.empty(88L))
+
+    val producerStateManager = partition.log.get.producerStateManager()
+    when(producerStateManager.activeProducers()).thenReturn(producers)
+
+    // When the partition is registered and the init request is sent
+    manager.registerPartition(partition, topicId)
+    fireLinger()
+
+    // Then every non-empty retained batch is represented as its own producer state
+    assertEquals(1, channelManager.requests.size())
+    val captured = channelManager.requests.poll()
+    val request = captured.requestData
+    val partitionData = request.topics().get(0).partitions().get(0)
+    val producerStates = partitionData.producerStates().asScala.toSeq
+
+    assertEquals(250, partitionData.disklessStartOffset())
+    assertEquals(7, partitionData.leaderEpoch())
+    assertEquals(5, producerStates.size)
+    assertFalse(producerStates.exists(_.producerId() == 88L))
+
+    // Tuple format: (producerEpoch, baseSequence, lastSequence, assignedOffset, batchMaxTimestamp).
+    def statesFor(producerId: Long): Seq[(Short, Int, Int, Long, Long)] =
+      producerStates
+        .filter(_.producerId() == producerId)
+        .map(ps => (ps.producerEpoch(), ps.baseSequence(), ps.lastSequence(), ps.assignedOffset(), ps.batchMaxTimestamp()))
+
+    assertEquals(Seq(
+      (1.toShort, 10, 12, 110L, 1000L),
+      (1.toShort, 13, 15, 118L, 2000L),
+      (1.toShort, 16, 17, 129L, 3000L)
+    ), statesFor(producerEntry.producerId()))
+    assertEquals(Seq(
+      (3.toShort, 0, 4, 200L, 4000L),
+      (3.toShort, 5, 7, 206L, 5000L)
+    ), statesFor(otherProducerEntry.producerId()))
 
     captured.complete(makeSuccessResponse(topicId, 0))
   }
