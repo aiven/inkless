@@ -94,6 +94,7 @@ class DisklessFetchOffsetRouterTest {
                     replicaId: Int = consumerReplicaId,
                     version: Short = 7,
                     classicLogStartOffset: Option[Long] = None,
+                    hasCompleteClassicPrefix: Boolean = true,
                     classicResult: ListOffsetsPartitionStatus = defaultClassicResult,
                     newJob: () => FetchOffsetHandler.Job = () =>
                       throw new AssertionError("newJob() should not be called by this routing path")): ListOffsetsPartitionStatus = {
@@ -105,6 +106,7 @@ class DisklessFetchOffsetRouterTest {
       replicaId = replicaId,
       version = version,
       classicLogStartOffsetProvider = _ => classicLogStartOffset,
+      hasCompleteClassicPrefix = (_, _) => hasCompleteClassicPrefix,
       classicFetchOffset = (tpArg, partition, allow) => {
         classicCalls += ((tpArg, partition, allow))
         classicResult
@@ -176,6 +178,21 @@ class DisklessFetchOffsetRouterTest {
     assertSame(defaultClassicResult, status)
     // followers may serve from their local log on a sealed (switched) partition.
     assertClassicCalledWith(allowFromFollower = true)
+    verify(job, never()).add(any(), any())
+  }
+
+  @Test
+  def routesToClassicWithoutFollowerAccessWhenSwitchedFollowerClassicPrefixIsIncomplete(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+
+    val status = route(
+      newRouter(),
+      timestamp = ListOffsetsRequest.LATEST_TIMESTAMP,
+      replicaId = followerReplicaId,
+      hasCompleteClassicPrefix = false)
+
+    assertSame(defaultClassicResult, status)
+    assertClassicCalledWith(allowFromFollower = false)
     verify(job, never()).add(any(), any())
   }
 
@@ -478,6 +495,23 @@ class DisklessFetchOffsetRouterTest {
     verify(job).add(eqTo(tp), any())
     assertTrue(status.futureHolderOpt.isPresent, "fallback to diskless surfaces an async holder")
     assertNotSame(noMatch, status)
+  }
+
+  @Test
+  def hybridConsolidatingWithCommittedBoundaryRequiresCompleteClassicPrefixForFollowerAccess(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+
+    val status = route(
+      newRouter(disklessConsolidationEnabled = true),
+      timestamp = ListOffsetsRequest.EARLIEST_TIMESTAMP,
+      classicLogStartOffset = Some(0L),
+      hasCompleteClassicPrefix = false
+    )
+
+    assertSame(defaultClassicResult, status)
+    assertClassicCalledWith(allowFromFollower = false)
+    verify(job, never()).add(any(), any())
   }
 
   @Test
