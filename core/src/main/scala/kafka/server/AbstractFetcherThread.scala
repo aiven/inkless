@@ -338,6 +338,7 @@ abstract class AbstractFetcherThread(name: String,
       val stalePartitions = partitionToData.keySet
       warn(s"No endpoint info to redirect mirror partitions $stalePartitions, refreshing source metadata")
       stalePartitions.foreach(markPartitionRemoved)
+      removeFetcherForPartitions(stalePartitions)
       refreshSourceClusterMetadata(stalePartitions)
     }
   }
