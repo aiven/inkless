@@ -35,6 +35,30 @@ import org.apache.kafka.storage.internals.log.{LogConfig, ThrottledReplicaListVa
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 
+/**
+ * Topic type transition matrix (consolidation enabled):
+ *
+ * Topic types:
+ *   CLASSIC  (diskless.enable=false, remote.storage.enable=false) — local-only storage
+ *   TIERED   (diskless.enable=false, remote.storage.enable=true)  — tiered storage
+ *   DISKLESS (diskless.enable=true, remote.storage.enable=true)   — diskless with remote storage
+ * Forbidden state: diskless.enable=true, remote.storage.enable=false
+ *
+ * Creation:
+ *   diskless.enable=true, no remote.storage.enable          → VALID (controller auto-enables)
+ *   diskless.enable=true, remote.storage.enable=true        → VALID
+ *   diskless.enable=true, remote.storage.enable=false       → REJECTED (mutual exclusion)
+ *
+ * Alter (allow-from-classic + consolidation):
+ *   CLASSIC → DISKLESS (diskless.enable=true, remote.storage.enable=true)   → VALID (switch)
+ *   CLASSIC → DISKLESS (diskless.enable=true, no remote.storage.enable)     → VALID (controller auto-enables)
+ *   CLASSIC (remote.storage.enable=false) → DISKLESS (diskless.enable=true) → REJECTED (mutual exclusion)
+ *   TIERED → DISKLESS (diskless.enable=true, remote.storage.enable=true)    → VALID (switch)
+ *   DISKLESS → set remote.storage.enable=false                              → REJECTED (mutual exclusion)
+ *   DISKLESS → set diskless.enable=false                                    → REJECTED (unsupported)
+ *
+ * See also: DisklessAndRemoteStorageConfigsTest (integration-level equivalent)
+ */
 class LogConfigTest {
 
   @Test
