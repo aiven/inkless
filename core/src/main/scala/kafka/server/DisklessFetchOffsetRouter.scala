@@ -79,6 +79,8 @@ class DisklessFetchOffsetRouter(
    * @param classicLogStartOffsetProvider returns the local UnifiedLog's `logStartOffset` for the
    *                                      given partition, used to decide whether the EARLIEST
    *                                      timestamp can be served by the classic path.
+   * @param hasCompleteClassicPrefix      returns whether the local UnifiedLog's high watermark has
+   *                                      reached the classic-to-diskless switch offset.
    * @param classicFetchOffset            runs the standard Kafka classic-path lookup for the
    *                                      given `(topicPartition, partition, allowFromFollower)`.
    */
@@ -90,20 +92,26 @@ class DisklessFetchOffsetRouter(
     replicaId: Int,
     version: Short,
     classicLogStartOffsetProvider: TopicPartition => Option[Long],
+    hasCompleteClassicPrefix: (TopicPartition, Long) => Boolean,
     classicFetchOffset: (TopicPartition, ListOffsetsPartition, Boolean) => ListOffsetsPartitionStatus
   ): ListOffsetsPartitionStatus = {
     val classicToDisklessStartOffset = inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
     val switchPending = classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
-    val isSwitchedWithClassicAccess = (classicToDisklessStartOffset > 0 && disklessManagedReplicasEnabled)
+    val hasCommittedSwitchOffset = classicToDisklessStartOffset > 0
+    val isSwitchedWithClassicAccess = hasCommittedSwitchOffset && disklessManagedReplicasEnabled
     val isConsolidatingPartition = disklessConsolidationEnabled && inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
 
     // Switched partitions seal their classic local log: once classicToDisklessStartOffset is
-    // committed the LEO can no longer grow and every ISR replica has the same data on disk.
-    // Any replica can therefore safely answer ListOffsets from its local log, so we let
-    // followers serve the classic-side query as well.
-    // Since consolidating partitions contain only data that has been stored in the diskless
-    // coordinator and its offsets won't change, we can allow follower requests.
-    val allowFromFollower = isSwitchedWithClassicAccess || isConsolidatingPartition
+    // committed the LEO can no longer grow. Any replica whose local HW has reached the seal
+    // can therefore safely answer ListOffsets from its local log, so we let those followers
+    // serve the classic-side query as well.
+    // Consolidating partitions can also allow follower requests, except when they are switched
+    // and this broker has not caught up to the sealed classic prefix.
+    val switchedAllowsFollower =
+      isSwitchedWithClassicAccess && hasCompleteClassicPrefix(topicPartition, classicToDisklessStartOffset)
+    val consolidatingAllowsFollower =
+      isConsolidatingPartition && (!hasCommittedSwitchOffset || hasCompleteClassicPrefix(topicPartition, classicToDisklessStartOffset))
+    val allowFromFollower = switchedAllowsFollower || consolidatingAllowsFollower
     val isFollowerRequest = replicaId >= 0
 
     def classicLookup(): ListOffsetsPartitionStatus = classicFetchOffset(topicPartition, partition, allowFromFollower)
