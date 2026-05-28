@@ -212,6 +212,38 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(7, env.metrics.disklessPartitionCount());
             // 3 partitions from "quux" topic are offline (leader=-1)
             assertEquals(3, env.metrics.disklessOfflinePartitionCount());
+            // remote.storage.enable absent (never configured) — not counted; only explicit false triggers the metric
+            assertEquals(0, env.metrics.disklessWithoutRemoteStorageCount());
+        }
+    }
+
+    @Test
+    public void testDisklessWithoutRemoteStorageCountsOnlyExplicitFalse() {
+        // Only diskless topics with remote.storage.enable explicitly stored as "false" are counted.
+        try (TestEnv env = new TestEnv()) {
+            // Build image with 3 diskless topics: remote.storage.enable=true, =false, and absent
+            Map<ConfigResource, ConfigurationImage> configs = new HashMap<>();
+            for (TopicImage topicImage : TOPICS_IMAGE1.topicsById().values()) {
+                ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicImage.name());
+                Map<String, String> configMap = new HashMap<>();
+                configMap.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
+                if (topicImage.name().equals("foo")) {
+                    configMap.put(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+                } else if (topicImage.name().equals("bar")) {
+                    configMap.put(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false");
+                }
+                // "quux" has no remote.storage.enable config (absent)
+                configs.put(resource, new ConfigurationImage(resource, configMap));
+            }
+            MetadataImage image = fakeImageFromTopicsImage(TOPICS_IMAGE1, new ConfigurationsImage(configs));
+            MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
+            ImageReWriter writer = new ImageReWriter(delta);
+            image.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
+            env.publisher.onMetadataUpdate(delta, image, fakeManifest(true));
+
+            assertEquals(3, env.metrics.disklessTopicCount());
+            // Only "bar" (remote.storage.enable explicitly false) is counted
+            assertEquals(1, env.metrics.disklessWithoutRemoteStorageCount());
         }
     }
 
