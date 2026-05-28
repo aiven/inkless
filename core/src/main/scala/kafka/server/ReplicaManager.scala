@@ -1691,6 +1691,8 @@ class ReplicaManager(val config: KafkaConfig,
         classicFetchOffset(tp, p, replicaId, isolationLevel, version,
           correlationId, clientId, buildErrorResponse, allowFromFollower = allowFromFollower)
     val classicLogStart: TopicPartition => Option[Long] = tp => logManager.getLog(tp).map(_.logStartOffset)
+    val hasCompleteClassicPrefix: (TopicPartition, Long) => Boolean =
+      (tp, classicToDisklessStartOffset) => logManager.getLog(tp).exists(_.highWatermark >= classicToDisklessStartOffset)
 
     topics.foreach { topic =>
       topic.partitions.asScala.foreach { partition =>
@@ -1706,7 +1708,7 @@ class ReplicaManager(val config: KafkaConfig,
         } else if (maybeFetchOffsetJob.exists(_.mustHandle(topic.name))) {
           statusByPartition += topicPartition ->
             disklessFetchOffsetRouter.route(maybeFetchOffsetJob.get, () => inklessFetchOffsetHandler.get.createJob(),
-              topicPartition, partition, replicaId, version, classicLogStart, classicFetch)
+              topicPartition, partition, replicaId, version, classicLogStart, hasCompleteClassicPrefix, classicFetch)
         } else {
           statusByPartition += topicPartition -> classicFetch(topicPartition, partition, false)
         }
@@ -3181,7 +3183,11 @@ class ReplicaManager(val config: KafkaConfig,
     lazy val inklessFetchOffsetHandlerJob: Option[FetchOffsetHandler.Job] = inklessFetchOffsetHandler.map(_.createJob())
     var disklessOffsetForLeaderEpochRequested = false
 
-    def localOffsetForLeaderEpoch(topicPartition: TopicPartition, offsetForLeaderPartition: OffsetForLeaderPartition): EpochEndOffset = {
+    def localOffsetForLeaderEpoch(
+      topicPartition: TopicPartition,
+      offsetForLeaderPartition: OffsetForLeaderPartition,
+      fetchOnlyFromLeader: Boolean = true
+    ): EpochEndOffset = {
       getPartition(topicPartition) match {
         case HostedPartition.Online(partition) =>
           val currentLeaderEpochOpt =
@@ -3193,7 +3199,7 @@ class ReplicaManager(val config: KafkaConfig,
           partition.lastOffsetForLeaderEpoch(
             currentLeaderEpochOpt,
             offsetForLeaderPartition.leaderEpoch,
-            fetchOnlyFromLeader = true)
+            fetchOnlyFromLeader = fetchOnlyFromLeader)
 
         case HostedPartition.Offline(_) =>
           new EpochEndOffset()
@@ -3271,7 +3277,17 @@ class ReplicaManager(val config: KafkaConfig,
               disklessOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
 
             case classicToDisklessStartOffset if classicToDisklessStartOffset >= 0L =>
-              val localResult = localOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
+              // The classic prefix is sealed at the switch offset, so any replica with the
+              // complete local classic log can answer epoch lookups for that prefix.
+              val hasCompleteLocalClassicPrefix = getPartition(topicPartition) match {
+                case HostedPartition.Online(partition) =>
+                  partition.log.exists(_.highWatermark >= classicToDisklessStartOffset)
+                case _ => false
+              }
+              val localResult = localOffsetForLeaderEpoch(
+                topicPartition,
+                offsetForLeaderPartition,
+                fetchOnlyFromLeader = !hasCompleteLocalClassicPrefix)
               val localError = Errors.forCode(localResult.errorCode)
               if (localError != Errors.NONE) {
                 () => localResult
