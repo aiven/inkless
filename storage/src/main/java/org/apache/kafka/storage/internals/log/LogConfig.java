@@ -585,6 +585,9 @@ public class LogConfig extends AbstractConfig {
             // - Remote-Storage was already enabled (TIERED→DISKLESS switch), OR
             //   Remote-Storage is being enabled in the same request
             //   AND consolidation is on (CLASSIC→DISKLESS direct switch)
+            // If remote.storage.enable doesn't resolve to true, no valid switch is happening:
+            // either mutual exclusion won't fire (remote.storage.enable absent) or the request
+            // is invalid (remote.storage.enable=false).
             if (!isDisklessAllowFromClassicEnabled || !isDisklessEnabled() || !requestedRemoteStorageEnabled()) {
                 return false;
             }
@@ -660,8 +663,10 @@ public class LogConfig extends AbstractConfig {
         // Exception 4: both keys were already present and remain explicitly false (no-op alter); allowed even
         // when cluster consolidation is off, so routine config updates do not trip mutual exclusion.
         final boolean isBothExplicitlyDisabledSteadyState = logConfigHelper.isBothExplicitlyDisabledSteadyStateUpdate();
-        if (!isSwitchedFromClassicWithRemoteStorage && !isDisklessConsolidationOnCreation && !isValidConsolidationModeTransitionOnUpdate
-            && !isBothExplicitlyDisabledSteadyState) {
+        if (!isSwitchedFromClassicWithRemoteStorage &&
+            !isDisklessConsolidationOnCreation &&
+            !isValidConsolidationModeTransitionOnUpdate &&
+            !isBothExplicitlyDisabledSteadyState) {
             validateDisklessAndRemoteStorageMutualExclusion(logConfigHelper);
         }
 
