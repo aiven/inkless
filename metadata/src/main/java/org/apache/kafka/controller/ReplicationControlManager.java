@@ -833,14 +833,15 @@ public class ReplicationControlManager {
         final Map<String, String> creationConfigs = new HashMap<>(translateCreationConfigs(topic.configs()));
         // Configs here are rebuilt from the request (creationConfigs).
         // Re-apply ClassicTopicRemoteStorageForcePolicy on this creation configs view for validations and to include forced configs in the response payload.
-        final boolean disklessEnabledForRemotePolicy = disklessEnabledOnTopicCreation(creationConfigs);
-        classicTopicRemoteStorageForcePolicy.maybeForceRemoteStorageEnable(topic.name(), disklessEnabledForRemotePolicy, creationConfigs);
+        final boolean disklessEnabledOnCreation = disklessEnabledOnTopicCreation(creationConfigs);
+        classicTopicRemoteStorageForcePolicy.maybeForceRemoteStorageEnable(topic.name(), disklessEnabledOnCreation, creationConfigs);
         // Include remote.storage.enable=true in creationConfigs for diskless topics.
         // This affects the CreateTopicsResponse effective-config view and topic policy checks.
         // The actual persistence happens in validConfigRecords() via ConfigRecord.
         // Exclude system topics — they are never diskless regardless of defaultDisklessEnable.
-        if (disklessEnabledForRemotePolicy && isDisklessRemoteStorageConsolidationEnabled
-                && !isSystemTopic(topic.name())) {
+        if (disklessEnabledOnCreation &&
+                isDisklessRemoteStorageConsolidationEnabled &&
+                !isSystemTopic(topic.name())) {
             creationConfigs.putIfAbsent(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
         }
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
@@ -876,8 +877,8 @@ public class ReplicationControlManager {
             // Undefined (absent) is fine — validConfigRecords() will auto-enable it.
             // Invalid boolean formats (e.g. "foo") are handled by ConfigurationControlManager's
             // config validation pipeline, not here.
-            if (isDisklessRemoteStorageConsolidationEnabled
-                    && "false".equalsIgnoreCase(creationConfigs.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG))) {
+            if (isDisklessRemoteStorageConsolidationEnabled &&
+                    "false".equalsIgnoreCase(creationConfigs.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG))) {
                 return new ApiError(Errors.INVALID_CONFIG,
                     "Diskless topics must have remote storage enabled. "
                         + "Cannot set remote.storage.enable=false when diskless is enabled.");

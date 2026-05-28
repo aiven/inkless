@@ -5866,9 +5866,14 @@ public class ReplicationControlManagerTest {
             final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
                 anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
             assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
-            assertTrue(result.records().stream()
+            List<ConfigRecord> configRecords = result.records().stream()
                 .filter(m -> m.message() instanceof ConfigRecord)
                 .map(m -> (ConfigRecord) m.message())
+                .toList();
+            assertTrue(configRecords.stream()
+                .anyMatch(r -> r.name().equals(DISKLESS_ENABLE_CONFIG) && r.value().equals("true")),
+                "ConfigRecord for diskless.enable=true should be persisted via defaultDisklessEnable");
+            assertTrue(configRecords.stream()
                 .anyMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")),
                 "ConfigRecord for remote.storage.enable=true should be persisted via defaultDisklessEnable");
         }
