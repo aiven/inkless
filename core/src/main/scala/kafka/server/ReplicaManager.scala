@@ -1711,6 +1711,8 @@ class ReplicaManager(val config: KafkaConfig,
         classicFetchOffset(tp, p, replicaId, isolationLevel, version,
           correlationId, clientId, buildErrorResponse, allowFromFollower = allowFromFollower)
     val classicLogStart: TopicPartition => Option[Long] = tp => logManager.getLog(tp).map(_.logStartOffset)
+    val hasCompleteClassicPrefix: (TopicPartition, Long) => Boolean =
+      (tp, classicToDisklessStartOffset) => logManager.getLog(tp).exists(_.highWatermark >= classicToDisklessStartOffset)
 
     topics.foreach { topic =>
       topic.partitions.asScala.foreach { partition =>
@@ -1726,7 +1728,7 @@ class ReplicaManager(val config: KafkaConfig,
         } else if (maybeFetchOffsetJob.exists(_.mustHandle(topic.name))) {
           statusByPartition += topicPartition ->
             disklessFetchOffsetRouter.route(maybeFetchOffsetJob.get, () => inklessFetchOffsetHandler.get.createJob(),
-              topicPartition, partition, replicaId, version, classicLogStart, classicFetch)
+              topicPartition, partition, replicaId, version, classicLogStart, hasCompleteClassicPrefix, classicFetch)
         } else {
           statusByPartition += topicPartition -> classicFetch(topicPartition, partition, false)
         }
