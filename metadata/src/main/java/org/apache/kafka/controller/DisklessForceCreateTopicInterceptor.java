@@ -34,6 +34,7 @@ import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
  *
  * <p>Excluded from forcing:
  * <ul>
+ *   <li>Topics starting with "__"</li>
  *   <li>System topics (as determined by {@link ReplicationControlManager#isSystemTopic})</li>
  *   <li>Topics with a cleanup policy containing "compact"</li>
  * </ul>
