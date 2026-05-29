@@ -26,23 +26,39 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import scala.jdk.CollectionConverters._
 
+/**
+ * Tracks consolidation pipeline lag per partition and aggregated at broker level.
+ * All lag values are in offsets (messages).
+ *
+ * Pipeline: Diskless WAL → Local Log → Remote/Tiered Storage
+ *
+ * - ConsolidationLocalLag: disklessLEO - localLogEndOffset (first hop: diskless → local)
+ * - ConsolidationTotalLag: disklessLEO - remoteLogEndOffset (full pipeline: diskless → remote).
+ *   Only updated when remote storage is active (highestOffsetInRemoteStorage ≥ 0); stays at 0 otherwise.
+ * - ConsolidationDeletableMessages: messages already in remote storage eligible for WAL pruning
+ */
 class ConsolidationMetrics extends Closeable {
-  private val Lag = "inkless.remote.consolidation.lag"
-  private val LocalLag = "inkless.remote.consolidation.local.lag"
-  private val DeletableMessages = "inkless.remote.consolidation.deletable.messages"
+  private val TotalLag = "ConsolidationTotalLag"
+  private val LocalLag = "ConsolidationLocalLag"
+  private val DeletableMessages = "ConsolidationDeletableMessages"
 
   private val metricsGroup = new KafkaMetricsGroup("io.aiven.inkless.consolidation", "ConsolidationMetrics")
 
-  private val lagByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
+  private val totalLagByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val localLagByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val deletableByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
+
+  // Broker-level aggregate gauges (sum across all partitions)
+  metricsGroup.newGauge(TotalLag, () => sumValues(totalLagByPartition))
+  metricsGroup.newGauge(LocalLag, () => sumValues(localLagByPartition))
+  metricsGroup.newGauge(DeletableMessages, () => sumValues(deletableByPartition))
 
   def registerPartition(tp: TopicPartition): Unit = {
     val tags = Map("topic" -> tp.topic, "partition" -> tp.partition.toString).asJava
 
-    lagByPartition.computeIfAbsent(tp, _ => {
+    totalLagByPartition.computeIfAbsent(tp, _ => {
       val value = new AtomicLong(0)
-      metricsGroup.newGauge(Lag, () => value.get, tags)
+      metricsGroup.newGauge(TotalLag, () => value.get, tags)
       value
     }).set(0)
     localLagByPartition.computeIfAbsent(tp, _ => {
@@ -57,8 +73,8 @@ class ConsolidationMetrics extends Closeable {
     }).set(0)
   }
 
-  def updateLag(tp: TopicPartition, lag: Long): Unit =
-    Option(lagByPartition.get(tp)).foreach(_.set(lag))
+  def updateTotalLag(tp: TopicPartition, lag: Long): Unit =
+    Option(totalLagByPartition.get(tp)).foreach(_.set(lag))
 
   def updateLocalLag(tp: TopicPartition, lag: Long): Unit =
     Option(localLagByPartition.get(tp)).foreach(_.set(lag))
@@ -68,15 +84,23 @@ class ConsolidationMetrics extends Closeable {
 
   def unregisterPartition(tp: TopicPartition): Unit = {
     val tags = Map("topic" -> tp.topic, "partition" -> tp.partition.toString).asJava
-    lagByPartition.remove(tp)
+    totalLagByPartition.remove(tp)
     localLagByPartition.remove(tp)
     deletableByPartition.remove(tp)
-    metricsGroup.removeMetric(Lag, tags)
+    metricsGroup.removeMetric(TotalLag, tags)
     metricsGroup.removeMetric(LocalLag, tags)
     metricsGroup.removeMetric(DeletableMessages, tags)
   }
 
   override def close(): Unit = {
-    lagByPartition.keys.asScala.toList.foreach(unregisterPartition)
+    // Using same keys to unregister all partition-level metrics
+    totalLagByPartition.keys.asScala.toList.foreach(unregisterPartition)
+    // Unregistering aggregated metrics
+    metricsGroup.removeMetric(TotalLag)
+    metricsGroup.removeMetric(LocalLag)
+    metricsGroup.removeMetric(DeletableMessages)
   }
+
+  private def sumValues(map: ConcurrentHashMap[TopicPartition, AtomicLong]): Long =
+    map.values.asScala.foldLeft(0L)(_ + _.get)
 }
