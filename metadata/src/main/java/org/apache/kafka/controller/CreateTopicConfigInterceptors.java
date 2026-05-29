@@ -19,6 +19,9 @@ package org.apache.kafka.controller;
 
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +35,8 @@ import java.util.Map.Entry;
  * This ensures that topics matching the diskless allow list are not also forced to remote storage.
  */
 final class CreateTopicConfigInterceptors {
+    private static final Logger LOG = LoggerFactory.getLogger(CreateTopicConfigInterceptors.class);
+
     static final CreateTopicConfigInterceptors EMPTY = new CreateTopicConfigInterceptors(List.of());
 
     private final List<CreateTopicConfigInterceptor> interceptors;
@@ -48,6 +53,7 @@ final class CreateTopicConfigInterceptors {
      * @param classicRemoteStorageForceEnabled whether the remote storage force interceptor is enabled
      * @param classicRemoteStorageForceExcludeTopicRegexes topic regexes to exclude from remote storage forcing
      * @param defaultDisklessEnable whether diskless is enabled by default
+     * @param disklessStorageSystemEnabled whether the system-level diskless storage is enabled
      * @param disklessForceEnabled whether the diskless force interceptor is enabled
      * @param disklessForceIncludeTopicRegexes topic regexes that define the allow list for diskless forcing
      * @return the configured interceptors chain
@@ -56,13 +62,19 @@ final class CreateTopicConfigInterceptors {
         final boolean classicRemoteStorageForceEnabled,
         final List<String> classicRemoteStorageForceExcludeTopicRegexes,
         final boolean defaultDisklessEnable,
+        final boolean disklessStorageSystemEnabled,
         final boolean disklessForceEnabled,
         final List<String> disklessForceIncludeTopicRegexes
     ) {
         final List<CreateTopicConfigInterceptor> chain = new ArrayList<>();
         // Diskless interceptor is first in the chain (higher priority)
         if (disklessForceEnabled) {
-            chain.add(new DisklessForceCreateTopicInterceptor(disklessForceIncludeTopicRegexes));
+            if (disklessStorageSystemEnabled) {
+                chain.add(new DisklessForceCreateTopicInterceptor(disklessForceIncludeTopicRegexes));
+            } else {
+                LOG.warn("diskless.force.enable is set to true but system-level diskless storage is not enabled. " +
+                    "The diskless force interceptor will not be activated.");
+            }
         }
         if (classicRemoteStorageForceEnabled) {
             chain.add(new ClassicTopicRemoteStorageForceCreateTopicInterceptor(classicRemoteStorageForceExcludeTopicRegexes, defaultDisklessEnable));

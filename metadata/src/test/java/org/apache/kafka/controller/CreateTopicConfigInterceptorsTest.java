@@ -50,7 +50,7 @@ public class CreateTopicConfigInterceptorsTest {
 
     @Test
     public void noInterceptorWhenDisabled() {
-        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, false, List.of());
+        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, false, false, List.of());
         final Map<String, String> targetConfigs = new HashMap<>();
 
         interceptors.intercept("test-topic", targetConfigs);
@@ -60,7 +60,7 @@ public class CreateTopicConfigInterceptorsTest {
 
     @Test
     public void remoteStorageInterceptorAppliesWhenEnabled() {
-        final var interceptors = CreateTopicConfigInterceptors.create(true, List.of(), false, false, List.of());
+        final var interceptors = CreateTopicConfigInterceptors.create(true, List.of(), false, false, false, List.of());
         final Map<String, String> requestConfigs = new HashMap<>();
         final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
         final Map<String, String> targetConfigs = new HashMap<>();
@@ -74,7 +74,7 @@ public class CreateTopicConfigInterceptorsTest {
 
     @Test
     public void remoteStorageInterceptorDoesNotApplyForExcludedTopic() {
-        final var interceptors = CreateTopicConfigInterceptors.create(true, List.of("excluded-.*"), false, false, List.of());
+        final var interceptors = CreateTopicConfigInterceptors.create(true, List.of("excluded-.*"), false, false, false, List.of());
         final Map<String, String> requestConfigs = new HashMap<>();
         final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
         final Map<String, String> targetConfigs = new HashMap<>();
@@ -88,7 +88,7 @@ public class CreateTopicConfigInterceptorsTest {
 
     @Test
     public void disklessInterceptorAppliesWhenEnabledAndTopicMatches() {
-        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, true, List.of("my-topic-.*"));
+        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, true, true, List.of("my-topic-.*"));
         final Map<String, String> requestConfigs = new HashMap<>();
         final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
         final Map<String, String> targetConfigs = new HashMap<>();
@@ -102,7 +102,7 @@ public class CreateTopicConfigInterceptorsTest {
 
     @Test
     public void disklessInterceptorDoesNotApplyWhenTopicDoesNotMatch() {
-        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, true, List.of("my-topic-.*"));
+        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, true, true, List.of("my-topic-.*"));
         final Map<String, String> targetConfigs = new HashMap<>();
 
         interceptors.intercept("other-topic", targetConfigs);
@@ -115,7 +115,7 @@ public class CreateTopicConfigInterceptorsTest {
         // Both enabled, no explicit exclude regex needed — diskless wins by chain order
         final var interceptors = CreateTopicConfigInterceptors.create(
             true, List.of(), false,
-            true, List.of("diskless-.*")
+            true, true, List.of("diskless-.*")
         );
 
         // A classic topic (not matching diskless regex) gets remote storage forced
@@ -134,10 +134,21 @@ public class CreateTopicConfigInterceptorsTest {
     @Test
     public void disklessInterceptorSkipsTopicsWithDoubleUnderscorePrefix() {
         final CreateTopicConfigInterceptors interceptors =
-            CreateTopicConfigInterceptors.create(false, List.of(), false, true, List.of(".*"));
+            CreateTopicConfigInterceptors.create(false, List.of(), false, true, true, List.of(".*"));
 
         final Map<String, String> targetConfigs = new HashMap<>();
         interceptors.intercept("__consumer_offsets", targetConfigs);
+
+        assertNull(targetConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+    }
+
+    @Test
+    public void disklessInterceptorNotActivatedWhenSystemDisklessDisabled() {
+        // disklessForceEnabled=true but disklessStorageSystemEnabled=false
+        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, false, true, List.of("my-topic-.*"));
+        final Map<String, String> targetConfigs = new HashMap<>();
+
+        interceptors.intercept("my-topic-1", targetConfigs);
 
         assertNull(targetConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
     }

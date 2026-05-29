@@ -507,6 +507,7 @@ public class ReplicationControlManager {
             classicRemoteStorageForceEnabled,
             classicRemoteStorageForceExcludeTopicRegexes,
             defaultDisklessEnable,
+            isDisklessStorageSystemEnabled,
             disklessForceEnabled,
             disklessForceIncludeTopicRegexes
         );
