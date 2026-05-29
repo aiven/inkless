@@ -1,0 +1,68 @@
+# Overlay for testing diskless tiered storage consolidation.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.s3-local.yml \
+#                  -f docker-compose.consolidation.yml up -d
+#
+# This enables:
+#   - Diskless storage (Inkless)
+#   - Classic tiered storage via Aiven TS plugin (same bucket, "tiered-storage/" prefix)
+#   - diskless.remote.storage.consolidation.enable=true (diskless topics also get remote.storage.enable)
+#   - Managed replicas with rack-aware placement (az1, az2)
+#
+# With consolidation enabled:
+#   - New diskless topics get both diskless.enable=true AND remote.storage.enable=true
+#   - Data flows: produce -> diskless (object storage) -> consolidation fetcher -> local replica -> tiered storage
+#   - Read path: consumer reads from tiered storage (local replica) OR diskless depending on offsets
+
+services:
+  broker:
+    environment: &consolidation-env
+      # --- Classic Tiered Storage (Aiven TS plugin) ---
+      KAFKA_REMOTE_LOG_STORAGE_SYSTEM_ENABLE: "true"
+      KAFKA_REMOTE_LOG_MANAGER_TASK_INTERVAL_MS: "5000"
+      # Remote Log Metadata Manager (built-in, topic-based)
+      KAFKA_REMOTE_LOG_METADATA_MANAGER_CLASS_NAME: "org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager"
+      KAFKA_REMOTE_LOG_METADATA_MANAGER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_RLMM_CONFIG_REMOTE_LOG_METADATA_TOPIC_REPLICATION_FACTOR: "2"
+      # Remote Storage Manager (Aiven TS plugin)
+      KAFKA_REMOTE_LOG_STORAGE_MANAGER_CLASS_PATH: "/opt/tiered-storage-plugin/core/*:/opt/tiered-storage-plugin/s3/*"
+      KAFKA_REMOTE_LOG_STORAGE_MANAGER_CLASS_NAME: "io.aiven.kafka.tieredstorage.RemoteStorageManager"
+      KAFKA_RSM_CONFIG_CHUNK_SIZE: "4194304"
+      KAFKA_RSM_CONFIG_STORAGE_BACKEND_CLASS: "io.aiven.kafka.tieredstorage.storage.s3.S3Storage"
+      KAFKA_RSM_CONFIG_STORAGE_S3_ENDPOINT_URL: "http://storage:9000"
+      KAFKA_RSM_CONFIG_STORAGE_S3_BUCKET_NAME: "inkless"
+      KAFKA_RSM_CONFIG_KEY_PREFIX: "tiered-storage/"
+      KAFKA_RSM_CONFIG_STORAGE_S3_REGION: "us-east-1"
+      KAFKA_RSM_CONFIG_STORAGE_S3_PATH_STYLE_ACCESS_ENABLED: "true"
+      KAFKA_RSM_CONFIG_STORAGE_AWS_ACCESS_KEY_ID: "minioadmin"
+      KAFKA_RSM_CONFIG_STORAGE_AWS_SECRET_ACCESS_KEY: "minioadmin"
+
+      # --- Consolidation mode ---
+      KAFKA_DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE: "true"
+      KAFKA_DISKLESS_MANAGED_RF_ENABLE: "true"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: "2"
+
+      # --- Migration bridge (allows switching classic → diskless) ---
+      KAFKA_DISKLESS_ALLOW_FROM_CLASSIC_ENABLE: "true"
+      KAFKA_CLASSIC_REMOTE_STORAGE_FORCE_ENABLE: "true"
+
+      # Topics are classic by default; explicitly enable diskless per-topic
+      KAFKA_LOG_DISKLESS_ENABLE: "false"
+
+      # --- Rack-aware placement ---
+      KAFKA_BROKER_RACK: "az1"
+
+      # --- Faster segment rolling + tiering for testing ---
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: "10000"
+      KAFKA_LOG_SEGMENT_BYTES: "1048576"
+
+  broker2:
+    environment:
+      <<: *consolidation-env
+      KAFKA_BROKER_RACK: "az2"
+
+  broker3:
+    environment:
+      <<: *consolidation-env
+      KAFKA_BROKER_RACK: "az1"
