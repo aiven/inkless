@@ -164,7 +164,7 @@ jobs:
           timeout ${TIMEOUT_MINUTES}m \
           ./gradlew ${GRADLE_ARGS} :storage:inkless:test :storage:inkless:integrationTest && \
           ./gradlew ${GRADLE_ARGS} :metadata:test --tests "org.apache.kafka.controller.*" && \
-          ./gradlew ${GRADLE_ARGS} :core:test --tests "*Inkless*" --tests "*Diskless*" --tests "kafka.log.LogConfigTest"
+          ./gradlew ${GRADLE_ARGS} :core:test --tests "*Inkless*" --tests "*Diskless*" --tests "kafka.log.LogConfigTest" --tests "kafka.server.KafkaConfigTest"
           exitcode="$?"
           echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
       - name: Archive JUnit HTML reports
