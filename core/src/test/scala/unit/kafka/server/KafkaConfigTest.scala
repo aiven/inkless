@@ -905,6 +905,8 @@ class KafkaConfigTest {
         case ServerConfigs.DELETE_TOPIC_ENABLE_CONFIG => assertPropertyInvalid(baseProperties, name, "not_a_boolean", "0")
         case ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG =>
           assertPropertyInvalid(baseProperties, name, "topicA,topicA")
+        case ServerConfigs.DISKLESS_FORCE_INCLUDE_TOPIC_REGEXES_CONFIG =>
+          assertPropertyInvalid(baseProperties, name, "topicA,topicA")
 
         case MetricConfigs.METRIC_NUM_SAMPLES_CONFIG => assertPropertyInvalid(baseProperties, name, "not_a_number", "-1", "0")
         case MetricConfigs.METRIC_SAMPLE_WINDOW_MS_CONFIG => assertPropertyInvalid(baseProperties, name, "not_a_number", "-1", "0")
