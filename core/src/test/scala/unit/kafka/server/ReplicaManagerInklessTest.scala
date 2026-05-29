@@ -26,10 +26,12 @@ import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.Partition
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
+import kafka.server.share.DelayedShareFetch
 import kafka.utils.TestUtils
 import kafka.utils.TestUtils.waitUntilTrue
 import kafka.log.LogManager
-import org.apache.kafka.common.{DirectoryId, IsolationLevel, TopicIdPartition, TopicPartition, Uuid}
+import org.apache.kafka.common.{Node, DirectoryId, IsolationLevel, TopicIdPartition, TopicPartition, Uuid}
+import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.compress.Compression
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException
 import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
@@ -51,9 +53,11 @@ import org.apache.kafka.server.config.ServerConfigs
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.PartitionFetchState
-import org.apache.kafka.server.purgatory.TopicPartitionOperationKey
+import org.apache.kafka.server.purgatory.{DelayedDeleteRecords, DelayedOperationPurgatory, DelayedRemoteFetch, DelayedRemoteListOffsets, TopicPartitionOperationKey}
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
-import org.apache.kafka.server.util.MockTime
+import org.apache.kafka.server.util.{MockScheduler, MockTime}
+import org.apache.kafka.server.util.timer.MockTimer
+import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.apache.kafka.storage.internals.checkpoint.LazyOffsetCheckpoints
 import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadResult, OffsetResultHolder, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
@@ -5098,5 +5102,166 @@ class ReplicaManagerInklessTest {
       ScramImage.EMPTY,
       DelegationTokenImage.EMPTY
     )
+  }
+
+  // --- Helpers for hybrid/switched partition fetch tests ---
+
+  private val switchedTopic = "test-topic"
+  private val switchedTopicId = Uuid.fromString("YK2ed2GaTH2JpgzUaJ8tgg")
+
+  private def setupReplicaManagerWithMockedPurgatories(
+    aliveBrokerIds: Seq[Int]
+  ): ReplicaManager = {
+    val props = TestUtils.createBrokerConfig(0)
+    val path1 = TestUtils.tempRelativeDir("data").getAbsolutePath
+    val path2 = TestUtils.tempRelativeDir("data2").getAbsolutePath
+    props.put("log.dirs", path1 + "," + path2)
+    val config = KafkaConfig.fromProps(props)
+    val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
+    val aliveBrokers = aliveBrokerIds.map(brokerId => new Node(brokerId, s"host$brokerId", brokerId))
+
+    val metadataCache: KRaftMetadataCache = mock(classOf[KRaftMetadataCache])
+    when(metadataCache.topicConfig(anyString())).thenReturn(new Properties())
+    when(metadataCache.topicIdsToNames()).thenReturn(Map(switchedTopicId -> switchedTopic).asJava)
+    when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_VERSION)
+    when(metadataCache.hasAliveBroker(anyInt)).thenAnswer { invocation =>
+      aliveBrokers.map(_.id()).contains(invocation.getArgument(0).asInstanceOf[Int])
+    }
+    when(metadataCache.getAliveBrokerNode(anyInt, any[ListenerName])).thenAnswer { invocation =>
+      Optional.of(aliveBrokers.find(_.id == invocation.getArgument(0).asInstanceOf[Integer]).get)
+    }
+    when(metadataCache.getAliveBrokerNodes(any[ListenerName])).thenReturn(aliveBrokers.asJava)
+    when(metadataCache.getAliveBrokerEpoch(1)).thenReturn(util.Optional.of(0L))
+    when(metadataCache.contains(new TopicPartition(switchedTopic, 0))).thenReturn(true)
+
+    val timer = new MockTimer(time)
+    val mockProducePurgatory = new DelayedOperationPurgatory[DelayedProduce]("Produce", timer, 0, false)
+    val mockFetchPurgatory = new DelayedOperationPurgatory[DelayedFetch]("Fetch", timer, 0, false)
+    val mockDeleteRecordsPurgatory = new DelayedOperationPurgatory[DelayedDeleteRecords]("DeleteRecords", timer, 0, false)
+    val mockDelayedRemoteFetchPurgatory = new DelayedOperationPurgatory[DelayedRemoteFetch]("DelayedRemoteFetch", timer, 0, false)
+    val mockDelayedRemoteListOffsetsPurgatory = new DelayedOperationPurgatory[DelayedRemoteListOffsets]("RemoteListOffsets", timer, 0, false)
+    val mockDelayedShareFetchPurgatory = new DelayedOperationPurgatory[DelayedShareFetch]("ShareFetch", timer, 0, false)
+
+    KafkaRequestHandler.setBypassThreadCheck(true)
+
+    new ReplicaManager(
+      metrics = metrics,
+      config = config,
+      time = time,
+      scheduler = new MockScheduler(time),
+      logManager = mockLogMgr,
+      quotaManagers = quotaManager,
+      metadataCache = metadataCache,
+      logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size),
+      alterPartitionManager = alterPartitionManager,
+      brokerTopicStats = new BrokerTopicStats(false),
+      delayedProducePurgatoryParam = Some(mockProducePurgatory),
+      delayedFetchPurgatoryParam = Some(mockFetchPurgatory),
+      delayedDeleteRecordsPurgatoryParam = Some(mockDeleteRecordsPurgatory),
+      delayedRemoteFetchPurgatoryParam = Some(mockDelayedRemoteFetchPurgatory),
+      delayedRemoteListOffsetsPurgatoryParam = Some(mockDelayedRemoteListOffsetsPurgatory),
+      delayedShareFetchPurgatoryParam = Some(mockDelayedShareFetchPurgatory),
+    )
+  }
+
+  private class CallbackResult[T] {
+    private var value: Option[T] = None
+
+    def assertFired: T = {
+      assertTrue(hasFired, "Callback has not been fired")
+      value.get
+    }
+
+    def hasFired: Boolean = value.isDefined
+
+    def fire(value: T): Unit = {
+      this.value = Some(value)
+    }
+  }
+
+  private def fetchPartitionAsConsumer(
+    replicaManager: ReplicaManager,
+    partition: TopicIdPartition,
+    partitionData: PartitionData,
+  ): CallbackResult[FetchPartitionData] = {
+    val result = new CallbackResult[FetchPartitionData]()
+    def fetchCallback(responseStatus: Seq[(TopicIdPartition, FetchPartitionData)]): Unit = {
+      assertEquals(1, responseStatus.size)
+      result.fire(responseStatus.head._2)
+    }
+    val params = new FetchParams(FetchRequest.ORDINARY_CONSUMER_ID, 1, 0L, 1, 1024 * 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty())
+    replicaManager.fetchMessages(params, Seq(partition -> partitionData), QuotaFactory.UNBOUNDED_QUOTA, fetchCallback)
+    result
+  }
+
+  private def fetchPartitionAsFollower(
+    replicaManager: ReplicaManager,
+    partition: TopicIdPartition,
+    partitionData: PartitionData,
+    replicaId: Int,
+  ): CallbackResult[FetchPartitionData] = {
+    val result = new CallbackResult[FetchPartitionData]()
+    def fetchCallback(responseStatus: Seq[(TopicIdPartition, FetchPartitionData)]): Unit = {
+      assertEquals(1, responseStatus.size)
+      result.fire(responseStatus.head._2)
+    }
+    val params = new FetchParams(replicaId, 1, 0L, 1, 1024 * 1024, FetchIsolation.LOG_END, Optional.empty())
+    replicaManager.fetchMessages(params, Seq(partition -> partitionData), QuotaFactory.UNBOUNDED_QUOTA, fetchCallback)
+    result
+  }
+
+  @Test
+  def testFetchFollowerAllowedForOlderClientsOnHybridDisklessPartition(): Unit = {
+    val replicaManager = spy(setupReplicaManagerWithMockedPurgatories(aliveBrokerIds = Seq(0, 1)))
+
+    try {
+      val tp0 = new TopicPartition(switchedTopic, 0)
+      val tidp0 = new TopicIdPartition(switchedTopicId, tp0)
+      val offsetCheckpoints = new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava)
+      replicaManager.createPartition(tp0).createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
+
+      val followerDelta = createFollowerDelta(switchedTopicId, tp0, 0, 1)
+      val followerImage = imageFromTopics(followerDelta.apply())
+      replicaManager.applyDelta(followerDelta, followerImage)
+
+      // Mark this partition as switched from classic to diskless (classicToDisklessStartOffset >= 0).
+      doReturn(true).when(replicaManager).isPartitionSwitchedFromClassicToDiskless(tidp0)
+
+      // Consumer fetch with empty ClientMetadata (older FETCH versions, no rackId) targeting
+      // a non-leader broker. Without the override this would fail with NOT_LEADER_OR_FOLLOWER;
+      // switched partitions allow any in-sync replica to serve the classic portion of the log.
+      val partitionData = new FetchRequest.PartitionData(Uuid.ZERO_UUID, 0L, 0L, 100, Optional.of(0))
+      val fetchResult = fetchPartitionAsConsumer(replicaManager, tidp0, partitionData)
+      assertEquals(Errors.NONE, fetchResult.assertFired.error)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testFetchFromFollowerStillRequiresLeaderOnSwitchedPartition(): Unit = {
+    // Regression test: the switched-partition override must NOT relax leader-only for
+    // broker-to-broker follower replication.
+    val replicaManager = spy(setupReplicaManagerWithMockedPurgatories(aliveBrokerIds = Seq(0, 1)))
+
+    try {
+      val tp0 = new TopicPartition(switchedTopic, 0)
+      val tidp0 = new TopicIdPartition(switchedTopicId, tp0)
+      val offsetCheckpoints = new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava)
+      replicaManager.createPartition(tp0).createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
+
+      val followerDelta = createFollowerDelta(switchedTopicId, tp0, 0, 1)
+      val followerImage = imageFromTopics(followerDelta.apply())
+      replicaManager.applyDelta(followerDelta, followerImage)
+
+      // Even if the partition is marked as switched, follower fetches must keep failing.
+      doReturn(true).when(replicaManager).isPartitionSwitchedFromClassicToDiskless(tidp0)
+
+      val partitionData = new FetchRequest.PartitionData(Uuid.ZERO_UUID, 0L, 0L, 100, Optional.of(0))
+      val fetchResult = fetchPartitionAsFollower(replicaManager, tidp0, partitionData, replicaId = 1)
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, fetchResult.assertFired.error)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
   }
 }

@@ -1675,66 +1675,6 @@ class ReplicaManagerTest {
   }
 
   @Test
-  def testFetchFollowerAllowedForOlderClientsOnHybridDisklessPartition(): Unit = {
-    val replicaManager = spy(setupReplicaManagerWithMockedPurgatories(new MockTimer(time), aliveBrokerIds = Seq(0, 1)))
-
-    try {
-      val tp0 = new TopicPartition(topic, 0)
-      val tidp0 = new TopicIdPartition(topicId, tp0)
-      val offsetCheckpoints = new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava)
-      replicaManager.createPartition(tp0).createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
-
-      val followerDelta = createFollowerDelta(topicId, tp0, 0, 1)
-      val followerImage = imageFromTopics(followerDelta.apply())
-      replicaManager.applyDelta(followerDelta, followerImage)
-
-      // Mark this partition as switched from classic to diskless (classicToDisklessStartOffset >= 0).
-      doReturn(true).when(replicaManager).isPartitionSwitchedFromClassicToDiskless(tidp0)
-
-      // Consumer fetch with empty ClientMetadata (older FETCH versions, no rackId) targeting
-      // a non-leader broker. Without the override this would fail with NOT_LEADER_OR_FOLLOWER
-      // (see testFetchFollowerNotAllowedForOlderClients); switched partitions allow any
-      // in-sync replica to serve the classic portion of the log, so the read should succeed.
-      val partitionData = new FetchRequest.PartitionData(Uuid.ZERO_UUID, 0L, 0L, 100,
-        Optional.of(0))
-      val fetchResult = fetchPartitionAsConsumer(replicaManager, tidp0, partitionData)
-      assertEquals(Errors.NONE, fetchResult.assertFired.error)
-    } finally {
-      replicaManager.shutdown(checkpointHW = false)
-    }
-  }
-
-  @Test
-  def testFetchFromFollowerStillRequiresLeaderOnSwitchedPartition(): Unit = {
-    // Regression test: the switched-partition override must NOT relax leader-only for
-    // broker-to-broker follower replication. Replication semantics (ISR/HWM) require
-    // followers to fetch from the leader.
-    val replicaManager = spy(setupReplicaManagerWithMockedPurgatories(new MockTimer(time), aliveBrokerIds = Seq(0, 1)))
-
-    try {
-      val tp0 = new TopicPartition(topic, 0)
-      val tidp0 = new TopicIdPartition(topicId, tp0)
-      val offsetCheckpoints = new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava)
-      replicaManager.createPartition(tp0).createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
-
-      // Make broker 0 a follower of broker 1 (i.e. this broker is NOT the leader).
-      val followerDelta = createFollowerDelta(topicId, tp0, 0, 1)
-      val followerImage = imageFromTopics(followerDelta.apply())
-      replicaManager.applyDelta(followerDelta, followerImage)
-
-      // Even if the partition is marked as switched, follower fetches must keep failing.
-      doReturn(true).when(replicaManager).isPartitionSwitchedFromClassicToDiskless(tidp0)
-
-      val partitionData = new FetchRequest.PartitionData(Uuid.ZERO_UUID, 0L, 0L, 100,
-        Optional.of(0))
-      val fetchResult = fetchPartitionAsFollower(replicaManager, tidp0, partitionData, replicaId = 1)
-      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, fetchResult.assertFired.error)
-    } finally {
-      replicaManager.shutdown(checkpointHW = false)
-    }
-  }
-
-  @Test
   def testFetchRequestRateMetrics(): Unit = {
     val localId = 0
     val mockTimer = new MockTimer(time)
