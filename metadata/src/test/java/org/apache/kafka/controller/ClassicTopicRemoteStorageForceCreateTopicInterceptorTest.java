@@ -33,38 +33,24 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
-public class ClassicTopicRemoteStorageForcePolicyTest {
+public class ClassicTopicRemoteStorageForceCreateTopicInterceptorTest {
     @Test
     public void forcesRemoteStorageForClassicTopic() {
-        final var policy = new ClassicTopicRemoteStorageForcePolicy(true, List.of());
+        final var interceptor = new ClassicTopicRemoteStorageForceCreateTopicInterceptor(List.of(), false);
         final String topicName = "classic-topic-force-enabled";
         final Map<String, String> requestConfigs = new HashMap<>();
         final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
         final Map<String, String> targetConfigs = new HashMap<>();
 
-        policy.maybeForceRemoteStorageEnable(topicName, false, requestConfigs, targetConfigOps);
-        policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
+        interceptor.intercept(topicName, requestConfigs, targetConfigOps);
+        interceptor.intercept(topicName, targetConfigs);
 
         assertRemoteStorageEnabled(targetConfigOps, targetConfigs);
     }
 
     @Test
-    public void doesNotForceWhenPolicyDisabled() {
-        final var policy = new ClassicTopicRemoteStorageForcePolicy(false, List.of());
-        final String topicName = "classic-topic-policy-disabled";
-        final Map<String, String> requestConfigs = new HashMap<>();
-        final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
-        final Map<String, String> targetConfigs = new HashMap<>();
-
-        policy.maybeForceRemoteStorageEnable(topicName, false, requestConfigs, targetConfigOps);
-        policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
-
-        assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
-    }
-
-    @Test
     public void doesNotForceForCompactedTopicCleanupPolicyCompact() {
-        final var policy = new ClassicTopicRemoteStorageForcePolicy(true, List.of());
+        final var interceptor = new ClassicTopicRemoteStorageForceCreateTopicInterceptor(List.of(), false);
         final String topicName = "compacted-topic-only-compact";
         final Map<String, String> requestConfigs = Map.of(
             TopicConfig.CLEANUP_POLICY_CONFIG, TopicConfig.CLEANUP_POLICY_COMPACT
@@ -72,15 +58,15 @@ public class ClassicTopicRemoteStorageForcePolicyTest {
         final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
         final Map<String, String> targetConfigs = new HashMap<>(requestConfigs);
 
-        policy.maybeForceRemoteStorageEnable(topicName, false, requestConfigs, targetConfigOps);
-        policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
+        interceptor.intercept(topicName, requestConfigs, targetConfigOps);
+        interceptor.intercept(topicName, targetConfigs);
 
         assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
     }
 
     @Test
     public void doesNotForceForCompactedTopicCleanupPolicyDeleteCompact() {
-        final var policy = new ClassicTopicRemoteStorageForcePolicy(true, List.of());
+        final var interceptor = new ClassicTopicRemoteStorageForceCreateTopicInterceptor(List.of(), false);
         final String topicName = "compacted-topic-delete-compact";
         final Map<String, String> requestConfigs = Map.of(
             TopicConfig.CLEANUP_POLICY_CONFIG, TopicConfig.CLEANUP_POLICY_DELETE + ", " + TopicConfig.CLEANUP_POLICY_COMPACT
@@ -88,15 +74,15 @@ public class ClassicTopicRemoteStorageForcePolicyTest {
         final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
         final Map<String, String> targetConfigs = new HashMap<>(requestConfigs);
 
-        policy.maybeForceRemoteStorageEnable(topicName, false, requestConfigs, targetConfigOps);
-        policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
+        interceptor.intercept(topicName, requestConfigs, targetConfigOps);
+        interceptor.intercept(topicName, targetConfigs);
 
         assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
     }
 
     @Test
     public void doesNotForceForCompactedTopicCleanupPolicyCompactDelete() {
-        final var policy = new ClassicTopicRemoteStorageForcePolicy(true, List.of());
+        final var interceptor = new ClassicTopicRemoteStorageForceCreateTopicInterceptor(List.of(), false);
         final String topicName = "compacted-topic-compact-delete";
         final Map<String, String> requestConfigs = Map.of(
             TopicConfig.CLEANUP_POLICY_CONFIG, TopicConfig.CLEANUP_POLICY_COMPACT + "," + TopicConfig.CLEANUP_POLICY_DELETE
@@ -104,27 +90,27 @@ public class ClassicTopicRemoteStorageForcePolicyTest {
         final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
         final Map<String, String> targetConfigs = new HashMap<>(requestConfigs);
 
-        policy.maybeForceRemoteStorageEnable(topicName, false, requestConfigs, targetConfigOps);
-        policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
+        interceptor.intercept(topicName, requestConfigs, targetConfigOps);
+        interceptor.intercept(topicName, targetConfigs);
 
         assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
     }
 
     @Test
     public void doesNotForceForExcludedTopicRegex() {
-        final var policy = new ClassicTopicRemoteStorageForcePolicy(true, List.of("_schemas", "mm2-(.*)"));
+        final var interceptor = new ClassicTopicRemoteStorageForceCreateTopicInterceptor(List.of("_schemas", "mm2-(.*)"), false);
         final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
         final Map<String, String> targetConfigs = new HashMap<>();
 
-        policy.maybeForceRemoteStorageEnable("_schemas", false, Map.of(), targetConfigOps);
-        policy.maybeForceRemoteStorageEnable("mm2-heartbeats", false, targetConfigs);
+        interceptor.intercept("_schemas", Map.of(), targetConfigOps);
+        interceptor.intercept("mm2-heartbeats", targetConfigs);
 
         assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
     }
 
     @Test
     public void doesNotForceForCompactedExcludedTopicRegex() {
-        final var policy = new ClassicTopicRemoteStorageForcePolicy(true, List.of("_schemas", "mm2-(.*)"));
+        final var interceptor = new ClassicTopicRemoteStorageForceCreateTopicInterceptor(List.of("_schemas", "mm2-(.*)"), false);
         final String topicName = "_schemas";
         final Map<String, String> compactedConfigs = Map.of(
             TopicConfig.CLEANUP_POLICY_CONFIG, TopicConfig.CLEANUP_POLICY_COMPACT
@@ -132,29 +118,43 @@ public class ClassicTopicRemoteStorageForcePolicyTest {
         final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
         final Map<String, String> targetConfigs = new HashMap<>(compactedConfigs);
 
-        policy.maybeForceRemoteStorageEnable(topicName, false, compactedConfigs, targetConfigOps);
-        policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
+        interceptor.intercept(topicName, compactedConfigs, targetConfigOps);
+        interceptor.intercept(topicName, targetConfigs);
 
         assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
     }
 
     @Test
-    public void doesNotForceForDisklessTopic() {
-        final var policy = new ClassicTopicRemoteStorageForcePolicy(true, List.of());
+    public void doesNotForceForDisklessTopicExplicit() {
+        final var interceptor = new ClassicTopicRemoteStorageForceCreateTopicInterceptor(List.of(), false);
         final String topicName = "diskless-topic";
+        final Map<String, String> requestConfigs = new HashMap<>(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+        final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
+        final Map<String, String> targetConfigs = new HashMap<>(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+
+        interceptor.intercept(topicName, requestConfigs, targetConfigOps);
+        interceptor.intercept(topicName, targetConfigs);
+
+        assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
+    }
+
+    @Test
+    public void doesNotForceForDisklessTopicByDefault() {
+        final var interceptor = new ClassicTopicRemoteStorageForceCreateTopicInterceptor(List.of(), true);
+        final String topicName = "diskless-topic-by-default";
         final Map<String, String> requestConfigs = new HashMap<>();
         final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
         final Map<String, String> targetConfigs = new HashMap<>();
 
-        policy.maybeForceRemoteStorageEnable(topicName, true, requestConfigs, targetConfigOps);
-        policy.maybeForceRemoteStorageEnable(topicName, true, targetConfigs);
+        interceptor.intercept(topicName, requestConfigs, targetConfigOps);
+        interceptor.intercept(topicName, targetConfigs);
 
         assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
     }
 
     @Test
     public void doesNotForceForAllExcludedInternalTopics() {
-        final var policy = new ClassicTopicRemoteStorageForcePolicy(true, List.of());
+        final var interceptor = new ClassicTopicRemoteStorageForceCreateTopicInterceptor(List.of(), false);
         for (String topicName : List.of(
             Topic.GROUP_METADATA_TOPIC_NAME,
             Topic.TRANSACTION_STATE_TOPIC_NAME,
@@ -166,8 +166,8 @@ public class ClassicTopicRemoteStorageForcePolicyTest {
             final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
             final Map<String, String> targetConfigs = new HashMap<>();
 
-            policy.maybeForceRemoteStorageEnable(topicName, false, requestConfigs, targetConfigOps);
-            policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
+            interceptor.intercept(topicName, requestConfigs, targetConfigOps);
+            interceptor.intercept(topicName, targetConfigs);
 
             assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
         }
