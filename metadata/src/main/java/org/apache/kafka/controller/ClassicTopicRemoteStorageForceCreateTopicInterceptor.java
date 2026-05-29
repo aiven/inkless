@@ -28,52 +28,63 @@ import java.util.regex.Pattern;
 
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
 
-final class ClassicTopicRemoteStorageForcePolicy {
-    private final boolean enabled;
+/**
+ * A {@link CreateTopicConfigInterceptor} that forces {@code remote.storage.enable=true} on
+ * classic (non-diskless) topics, unless the topic is excluded by cleanup policy, regex, or
+ * system topic rules.
+ *
+ * <p>Controlled by the {@code classic.remote.storage.force.enable} config.
+ */
+final class ClassicTopicRemoteStorageForceCreateTopicInterceptor implements CreateTopicConfigInterceptor {
     private final List<Pattern> excludeTopicPatterns;
+    private final boolean defaultDisklessEnable;
 
-
-    ClassicTopicRemoteStorageForcePolicy(final boolean enabled, final List<String> excludeTopicRegexes) {
-        this.enabled = enabled;
+    ClassicTopicRemoteStorageForceCreateTopicInterceptor(final List<String> excludeTopicRegexes, final boolean defaultDisklessEnable) {
         this.excludeTopicPatterns = excludeTopicRegexes.stream().map(Pattern::compile).toList();
+        this.defaultDisklessEnable = defaultDisklessEnable;
     }
 
-    void maybeForceRemoteStorageEnable(
+    @Override
+    public boolean intercept(
         final String topicName,
-        final boolean disklessEnabled,
         final Map<String, String> requestConfigs,
         final Map<String, Entry<OpType, String>> targetConfigOps
     ) {
-        if (!enabled) {
-            return;
-        }
-        if (shouldForceRemoteStorageEnable(topicName, disklessEnabled, requestConfigs)) {
+        if (shouldForceRemoteStorageEnable(topicName, requestConfigs)) {
             targetConfigOps.put(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, new SimpleImmutableEntry<>(SET, "true"));
+            return true;
         }
+        return false;
     }
 
-    void maybeForceRemoteStorageEnable(
+    @Override
+    public boolean intercept(
         final String topicName,
-        final boolean disklessEnabled,
         final Map<String, String> targetConfigs
     ) {
-        if (!enabled) {
-            return;
-        }
-        if (shouldForceRemoteStorageEnable(topicName, disklessEnabled, targetConfigs)) {
+        if (shouldForceRemoteStorageEnable(topicName, targetConfigs)) {
             targetConfigs.put(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+            return true;
         }
+        return false;
     }
 
     private boolean shouldForceRemoteStorageEnable(
         final String topicName,
-        final boolean disklessEnabled,
         final Map<String, String> topicConfigs
     ) {
-        return !(disklessEnabled
+        return !(disklessEnabled(topicConfigs)
             || ReplicationControlManager.isSystemTopic(topicName)
             || topicExcludedByRegex(topicName)
             || cleanupPolicyContainsCompact(topicConfigs));
+    }
+
+    private boolean disklessEnabled(final Map<String, String> topicConfigs) {
+        final String disklessEnableConfigValue = topicConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG);
+        if (disklessEnableConfigValue != null) {
+            return Boolean.parseBoolean(disklessEnableConfigValue);
+        }
+        return defaultDisklessEnable;
     }
 
     private boolean cleanupPolicyContainsCompact(final Map<String, String> topicConfigs) {

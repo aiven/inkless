@@ -171,6 +171,19 @@ public class ServerConfigs {
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DOC = "A list of topic name regular expressions excluded from " +
         "classic.remote.storage.force.enable.";
 
+    public static final String DISKLESS_FORCE_ENABLE_CONFIG = "diskless.force.enable";
+    public static final boolean DISKLESS_FORCE_ENABLE_DEFAULT = false;
+    public static final String DISKLESS_FORCE_ENABLE_DOC = "Force topics to be created with diskless.enable=true when their name matches " +
+        "at least one regex in diskless.force.include.topic.regexes. Excluded: system topics and compacted topics. " +
+        "Can be enabled simultaneously with classic.remote.storage.force.enable; the diskless interceptor takes priority " +
+        "for matching topics (first-match-wins).";
+
+    public static final String DISKLESS_FORCE_INCLUDE_TOPIC_REGEXES_CONFIG = "diskless.force.include.topic.regexes";
+    public static final List<String> DISKLESS_FORCE_INCLUDE_TOPIC_REGEXES_DEFAULT = List.of();
+    public static final String DISKLESS_FORCE_INCLUDE_TOPIC_REGEXES_DOC = "A list of topic name regular expressions that define " +
+        "the allow list for diskless.force.enable. Topics matching at least one regex will be forced to diskless.enable=true. " +
+        "Topics starting with \"__\" are always excluded regardless of regex matches.";
+
 
     /************* Authorizer Configuration ***********/
     public static final String AUTHORIZER_CLASS_NAME_CONFIG = "authorizer.class.name";
@@ -239,6 +252,22 @@ public class ServerConfigs {
                         }
                     },
                     () -> "non-duplicate list"), LOW, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DOC)
+            .define(DISKLESS_FORCE_ENABLE_CONFIG, BOOLEAN, DISKLESS_FORCE_ENABLE_DEFAULT, LOW,
+                DISKLESS_FORCE_ENABLE_DOC)
+            .define(DISKLESS_FORCE_INCLUDE_TOPIC_REGEXES_CONFIG, LIST, DISKLESS_FORCE_INCLUDE_TOPIC_REGEXES_DEFAULT,
+                ConfigDef.LambdaValidator.with(
+                    (name, value) -> {
+                        @SuppressWarnings("unchecked")
+                        List<String> values = (List<String>) value;
+                        if (values == null) {
+                            return;
+                        }
+                        HashSet<String> uniqueValues = new HashSet<>(values);
+                        if (uniqueValues.size() != values.size()) {
+                            throw new ConfigException(name, value, "List values must not contain duplicates");
+                        }
+                    },
+                    () -> "non-duplicate list"), LOW, DISKLESS_FORCE_INCLUDE_TOPIC_REGEXES_DOC)
             /** Internal Configurations **/
             // This indicates whether unreleased APIs should be advertised by this node.
             .defineInternal(UNSTABLE_API_VERSIONS_ENABLE_CONFIG, BOOLEAN, false, HIGH)

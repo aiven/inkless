@@ -435,6 +435,10 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   val classicRemoteStorageForceExcludeTopicRegexes: java.util.List[String] =
     getList(ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG)
 
+  val disklessForceEnabled: Boolean = getBoolean(ServerConfigs.DISKLESS_FORCE_ENABLE_CONFIG)
+  val disklessForceIncludeTopicRegexes: java.util.List[String] =
+    getList(ServerConfigs.DISKLESS_FORCE_INCLUDE_TOPIC_REGEXES_CONFIG)
+
   def addReconfigurable(reconfigurable: Reconfigurable): Unit = {
     dynamicConfig.addReconfigurable(reconfigurable)
   }

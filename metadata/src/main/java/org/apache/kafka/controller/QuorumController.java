@@ -230,6 +230,8 @@ public final class QuorumController implements Controller {
         private boolean disklessRemoteStorageConsolidationEnabled = false;
         private boolean classicRemoteStorageForceEnabled = false;
         private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
+        private boolean disklessForceEnabled = false;
+        private List<String> disklessForceIncludeTopicRegexes = List.of();
 
         public Builder(int nodeId, String clusterId) {
             this.nodeId = nodeId;
@@ -317,6 +319,16 @@ public final class QuorumController implements Controller {
 
         public Builder setClassicRemoteStorageForceExcludeTopicRegexes(List<String> classicRemoteStorageForceExcludeTopicRegexes) {
             this.classicRemoteStorageForceExcludeTopicRegexes = classicRemoteStorageForceExcludeTopicRegexes;
+            return this;
+        }
+
+        public Builder setDisklessForceEnabled(boolean disklessForceEnabled) {
+            this.disklessForceEnabled = disklessForceEnabled;
+            return this;
+        }
+
+        public Builder setDisklessForceIncludeTopicRegexes(List<String> disklessForceIncludeTopicRegexes) {
+            this.disklessForceIncludeTopicRegexes = disklessForceIncludeTopicRegexes;
             return this;
         }
 
@@ -466,6 +478,8 @@ public final class QuorumController implements Controller {
                     disklessRemoteStorageConsolidationEnabled,
                     classicRemoteStorageForceEnabled,
                     classicRemoteStorageForceExcludeTopicRegexes,
+                    disklessForceEnabled,
+                    disklessForceIncludeTopicRegexes,
                     replicaPlacer,
                     leaderImbalanceCheckIntervalNs,
                     maxIdleIntervalNs,
@@ -1516,6 +1530,8 @@ public final class QuorumController implements Controller {
         boolean disklessRemoteStorageConsolidationEnabled,
         boolean classicRemoteStorageForceEnabled,
         List<String> classicRemoteStorageForceExcludeTopicRegexes,
+        boolean disklessForceEnabled,
+        List<String> disklessForceIncludeTopicRegexes,
         ReplicaPlacer replicaPlacer,
         OptionalLong leaderImbalanceCheckIntervalNs,
         OptionalLong maxIdleIntervalNs,
@@ -1604,6 +1620,8 @@ public final class QuorumController implements Controller {
             setDisklessRemoteStorageConsolidationEnabled(disklessRemoteStorageConsolidationEnabled).
             setClassicRemoteStorageForceEnabled(classicRemoteStorageForceEnabled).
             setClassicRemoteStorageForceExcludeTopicRegexes(classicRemoteStorageForceExcludeTopicRegexes).
+            setDisklessForceEnabled(disklessForceEnabled).
+            setDisklessForceIncludeTopicRegexes(disklessForceIncludeTopicRegexes).
             setMaxElectionsPerImbalance(ReplicationControlManager.MAX_ELECTIONS_PER_IMBALANCE).
             setConfigurationControl(configurationControl).
             setClusterControl(clusterControl).
