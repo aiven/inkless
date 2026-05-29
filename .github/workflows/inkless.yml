@@ -163,8 +163,33 @@ jobs:
           # inkless tests
           timeout ${TIMEOUT_MINUTES}m \
           ./gradlew ${GRADLE_ARGS} :storage:inkless:test :storage:inkless:integrationTest && \
-          ./gradlew ${GRADLE_ARGS} :metadata:test --tests "org.apache.kafka.controller.*" && \
-          ./gradlew ${GRADLE_ARGS} :core:test --tests "*Inkless*" --tests "*Diskless*" --tests "kafka.log.LogConfigTest" --tests "kafka.server.KafkaConfigTest"
+          ./gradlew ${GRADLE_ARGS} :metadata:test \
+            --tests "org.apache.kafka.controller.*" \
+            --tests "org.apache.kafka.controller.metrics.*" \
+            --tests "org.apache.kafka.metadata.PartitionRegistrationTest" \
+            --tests "org.apache.kafka.image.TopicsImageTest" && \
+          ./gradlew ${GRADLE_ARGS} :core:test \
+            --tests "*Inkless*" --tests "*Diskless*" \
+            --tests "kafka.log.LogConfigTest" \
+            --tests "kafka.server.KafkaConfigTest" \
+            --tests "kafka.server.ReplicaManagerTest" \
+            --tests "kafka.server.KafkaApisTest" \
+            --tests "kafka.cluster.PartitionTest" \
+            --tests "kafka.server.DynamicBrokerConfigTest" \
+            --tests "kafka.server.DynamicConfigChangeTest" \
+            --tests "kafka.server.ReplicaFetcherThreadTest" \
+            --tests "kafka.server.metadata.BrokerMetadataPublisherTest" \
+            --tests "kafka.server.ControllerApisTest" \
+            --tests "kafka.server.ControllerConfigurationValidatorTest" \
+            --tests "kafka.server.DelayedFetchTest" && \
+          ./gradlew ${GRADLE_ARGS} :clients:test \
+            --tests "org.apache.kafka.common.requests.RequestResponseTest" \
+            --tests "org.apache.kafka.common.utils.FlattenedIteratorTest" && \
+          ./gradlew ${GRADLE_ARGS} :storage:test \
+            --tests "org.apache.kafka.storage.log.metrics.BrokerTopicMetricsTest" \
+            --tests "org.apache.kafka.storage.log.metrics.BrokerTopicStatsTest" && \
+          ./gradlew ${GRADLE_ARGS} :server:test \
+            --tests "org.apache.kafka.network.RequestConvertToJsonTest"
           exitcode="$?"
           echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
       - name: Archive JUnit HTML reports
