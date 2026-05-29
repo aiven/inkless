@@ -139,9 +139,9 @@ class ConsolidationFetcherThreadTest {
 
     thread.processPartitionData(topicPartition, localLEO, Int.MaxValue, buildPartitionData(disklessLEO))
 
-    assertEquals(40L, findGaugeValue("inkless.remote.consolidation.lag", topicPartition))
-    assertEquals(20L, findGaugeValue("inkless.remote.consolidation.local.lag", topicPartition))
-    assertEquals(50L, findGaugeValue("inkless.remote.consolidation.deletable.messages", topicPartition))
+    assertEquals(40L, findGaugeValue("ConsolidationTotalLag", topicPartition))
+    assertEquals(20L, findGaugeValue("ConsolidationLocalLag", topicPartition))
+    assertEquals(50L, findGaugeValue("ConsolidationDeletableMessages", topicPartition))
   }
 
   @Test
@@ -158,9 +158,9 @@ class ConsolidationFetcherThreadTest {
 
     thread.processPartitionData(topicPartition, localLEO, Int.MaxValue, buildPartitionData(disklessLEO))
 
-    assertEquals(20L, findGaugeValue("inkless.remote.consolidation.local.lag", topicPartition))
-    assertEquals(0L, findGaugeValue("inkless.remote.consolidation.lag", topicPartition))
-    assertEquals(0L, findGaugeValue("inkless.remote.consolidation.deletable.messages", topicPartition))
+    assertEquals(20L, findGaugeValue("ConsolidationLocalLag", topicPartition))
+    assertEquals(0L, findGaugeValue("ConsolidationTotalLag", topicPartition))
+    assertEquals(0L, findGaugeValue("ConsolidationDeletableMessages", topicPartition))
   }
 
   @Test
@@ -178,9 +178,9 @@ class ConsolidationFetcherThreadTest {
 
     thread.processPartitionData(topicPartition, localLEO, Int.MaxValue, buildPartitionData(disklessLEO))
 
-    assertEquals(0L, findGaugeValue("inkless.remote.consolidation.lag", topicPartition))
-    assertEquals(0L, findGaugeValue("inkless.remote.consolidation.local.lag", topicPartition))
-    assertEquals(70L, findGaugeValue("inkless.remote.consolidation.deletable.messages", topicPartition))
+    assertEquals(0L, findGaugeValue("ConsolidationTotalLag", topicPartition))
+    assertEquals(0L, findGaugeValue("ConsolidationLocalLag", topicPartition))
+    assertEquals(70L, findGaugeValue("ConsolidationDeletableMessages", topicPartition))
   }
 
   @Test
@@ -191,9 +191,35 @@ class ConsolidationFetcherThreadTest {
 
     thread.processPartitionData(topicPartition, 80L, Int.MaxValue, buildPartitionData(100L))
 
-    assertNull(findGaugeOrNull("inkless.remote.consolidation.lag", topicPartition))
-    assertNull(findGaugeOrNull("inkless.remote.consolidation.local.lag", topicPartition))
-    assertNull(findGaugeOrNull("inkless.remote.consolidation.deletable.messages", topicPartition))
+    assertNull(findGaugeOrNull("ConsolidationTotalLag", topicPartition))
+    assertNull(findGaugeOrNull("ConsolidationLocalLag", topicPartition))
+    assertNull(findGaugeOrNull("ConsolidationDeletableMessages", topicPartition))
+  }
+
+  @Test
+  def testBrokerLevelAggregateGauges(): Unit = {
+    val tp0 = new TopicPartition("topic-a", 0)
+    val tp1 = new TopicPartition("topic-a", 1)
+
+    metrics.registerPartition(tp0)
+    metrics.registerPartition(tp1)
+
+    metrics.updateTotalLag(tp0, 30L)
+    metrics.updateTotalLag(tp1, 50L)
+    metrics.updateLocalLag(tp0, 10L)
+    metrics.updateLocalLag(tp1, 20L)
+    metrics.updateDeletableMessages(tp0, 5L)
+    metrics.updateDeletableMessages(tp1, 15L)
+
+    assertEquals(80L, findBrokerGaugeValue("ConsolidationTotalLag"))
+    assertEquals(30L, findBrokerGaugeValue("ConsolidationLocalLag"))
+    assertEquals(20L, findBrokerGaugeValue("ConsolidationDeletableMessages"))
+
+    metrics.unregisterPartition(tp0)
+
+    assertEquals(50L, findBrokerGaugeValue("ConsolidationTotalLag"))
+    assertEquals(20L, findBrokerGaugeValue("ConsolidationLocalLag"))
+    assertEquals(15L, findBrokerGaugeValue("ConsolidationDeletableMessages"))
   }
 
   private def findGaugeOrNull(name: String, tp: TopicPartition): com.yammer.metrics.core.Gauge[_] = {
@@ -210,5 +236,16 @@ class ConsolidationFetcherThreadTest {
     val gauge = findGaugeOrNull(name, tp)
     assertNotNull(gauge, s"Gauge $name not found for $tp")
     gauge.asInstanceOf[com.yammer.metrics.core.Gauge[Long]].value()
+  }
+
+  private def findBrokerGaugeValue(name: String): Long = {
+    val gauge = KafkaYammerMetrics.defaultRegistry.allMetrics.asScala
+      .find { case (metricName, _) =>
+        metricName.getName == name && metricName.getScope == null
+      }
+      .map(_._2.asInstanceOf[com.yammer.metrics.core.Gauge[Long]])
+      .orNull
+    assertNotNull(gauge, s"Broker-level gauge $name not found")
+    gauge.value()
   }
 }
