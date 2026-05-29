@@ -237,6 +237,7 @@ class ControllerServer(
           setDefaultDisklessEnable(config.logDisklessEnable).
           setDisklessStorageSystemEnabled(config.disklessStorageSystemEnabled).
           setDisklessManagedReplicasEnabled(config.disklessManagedReplicasEnabled).
+          setDisklessRemoteStorageConsolidationEnabled(config.disklessRemoteStorageConsolidationEnabled).
           setClassicRemoteStorageForceEnabled(config.classicRemoteStorageForceEnabled).
           setClassicRemoteStorageForceExcludeTopicRegexes(config.classicRemoteStorageForceExcludeTopicRegexes).
           setSessionTimeoutNs(TimeUnit.NANOSECONDS.convert(config.brokerSessionTimeoutMs.longValue(),

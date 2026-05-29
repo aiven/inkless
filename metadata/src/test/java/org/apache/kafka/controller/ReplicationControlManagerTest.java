@@ -189,6 +189,7 @@ public class ReplicationControlManagerTest {
             private boolean defaultDisklessEnable = false;
             private boolean disklessStorageSystemEnable = false;
             private boolean disklessManagedReplicasEnable = false;
+            private boolean disklessRemoteStorageConsolidationEnabled = false;
             private boolean classicRemoteStorageForceEnabled = false;
             private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
 
@@ -232,6 +233,11 @@ public class ReplicationControlManagerTest {
                 return this;
             }
 
+            Builder setDisklessRemoteStorageConsolidationEnabled(boolean enabled) {
+                this.disklessRemoteStorageConsolidationEnabled = enabled;
+                return this;
+            }
+
             Builder setClassicRemoteStorageForceEnabled(final boolean classicRemoteStorageForceEnabled) {
                 this.classicRemoteStorageForceEnabled = classicRemoteStorageForceEnabled;
                 return this;
@@ -251,6 +257,7 @@ public class ReplicationControlManagerTest {
                     defaultDisklessEnable,
                     disklessStorageSystemEnable,
                     disklessManagedReplicasEnable,
+                    disklessRemoteStorageConsolidationEnabled,
                     classicRemoteStorageForceEnabled,
                     classicRemoteStorageForceExcludeTopicRegexes);
             }
@@ -281,6 +288,7 @@ public class ReplicationControlManagerTest {
             boolean defaultDisklessEnable,
             boolean disklessStorageSystemEnable,
             boolean disklessManagedReplicasEnable,
+            boolean disklessRemoteStorageConsolidationEnabled,
             final boolean classicRemoteStorageForceEnabled,
             final List<String> classicRemoteStorageForceExcludeTopicRegexes
         ) {
@@ -329,6 +337,7 @@ public class ReplicationControlManagerTest {
                 setDefaultDisklessEnable(defaultDisklessEnable).
                 setDisklessStorageSystemEnabled(disklessStorageSystemEnable).
                 setDisklessManagedReplicasEnabled(disklessManagedReplicasEnable).
+                setDisklessRemoteStorageConsolidationEnabled(disklessRemoteStorageConsolidationEnabled).
                 setClassicRemoteStorageForceEnabled(classicRemoteStorageForceEnabled).
                 setClassicRemoteStorageForceExcludeTopicRegexes(classicRemoteStorageForceExcludeTopicRegexes).
                 build();
@@ -5764,6 +5773,215 @@ public class ReplicationControlManagerTest {
                 replication.createTopics(requestContext, request, Set.of("foo"));
             assertEquals(Errors.INVALID_REPLICATION_FACTOR.code(),
                 result.response().topics().find("foo").errorCode());
+        }
+    }
+
+    @Nested
+    class DisklessRemoteStorageConsolidationTests {
+
+        @Test
+        void testAutoEnableRemoteStorageOnDisklessTopicCreation() {
+            // When consolidation is enabled and a diskless topic is created with explicit
+            // diskless.enable=true but no remote.storage.enable, auto-persist it.
+            final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final CreateTopicsRequestData request = new CreateTopicsRequestData();
+            final CreateTopicsRequestData.CreatableTopicConfigCollection configs =
+                new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue("true"));
+            request.topics().add(new CreatableTopic()
+                .setName("foo")
+                .setNumPartitions(-1)
+                .setReplicationFactor((short) -1)
+                .setConfigs(configs));
+
+            final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+                anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+            assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+            assertTrue(result.records().stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .anyMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")),
+                "ConfigRecord for remote.storage.enable=true should be persisted");
+        }
+
+        @Test
+        void testAutoEnableRemoteStorageViaDefaultDisklessEnable() {
+            // When defaultDisklessEnable=true and topic is created with no explicit configs,
+            // remote.storage.enable=true is still auto-persisted.
+            final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final CreateTopicsRequestData request = new CreateTopicsRequestData();
+            request.topics().add(new CreatableTopic()
+                .setName("foo")
+                .setNumPartitions(-1)
+                .setReplicationFactor((short) -1)
+                .setConfigs(new CreateTopicsRequestData.CreatableTopicConfigCollection()));
+
+            final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+                anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+            assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+            List<ConfigRecord> configRecords = result.records().stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .toList();
+            assertTrue(configRecords.stream()
+                .anyMatch(r -> r.name().equals(DISKLESS_ENABLE_CONFIG) && r.value().equals("true")),
+                "ConfigRecord for diskless.enable=true should be persisted via defaultDisklessEnable");
+            assertTrue(configRecords.stream()
+                .anyMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")),
+                "ConfigRecord for remote.storage.enable=true should be persisted via defaultDisklessEnable");
+        }
+
+        @Test
+        void testExplicitRemoteStorageEnableDoesNotDuplicate() {
+            // When the request already includes remote.storage.enable=true,
+            // no duplicate ConfigRecord is produced.
+            final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final CreateTopicsRequestData request = new CreateTopicsRequestData();
+            final CreateTopicsRequestData.CreatableTopicConfigCollection configs =
+                new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue("true"));
+            configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+                .setValue("true"));
+            request.topics().add(new CreatableTopic()
+                .setName("foo")
+                .setNumPartitions(-1)
+                .setReplicationFactor((short) -1)
+                .setConfigs(configs));
+
+            final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+                anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+            assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+            long remoteStorageConfigCount = result.records().stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .filter(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG))
+                .count();
+            assertEquals(1, remoteStorageConfigCount,
+                "Only one ConfigRecord for remote.storage.enable should exist (no duplicate)");
+        }
+
+        @Test
+        void testSystemTopicExcludedFromAutoEnable() {
+            // System topics are never diskless, so remote.storage.enable should not be auto-added
+            // even when defaultDisklessEnable=true and consolidation is enabled.
+            final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final CreateTopicsRequestData request = new CreateTopicsRequestData();
+            request.topics().add(new CreatableTopic()
+                .setName(Topic.GROUP_METADATA_TOPIC_NAME)
+                .setNumPartitions(1)
+                .setReplicationFactor((short) 1)
+                .setConfigs(new CreateTopicsRequestData.CreatableTopicConfigCollection()));
+
+            final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+                anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of(Topic.GROUP_METADATA_TOPIC_NAME));
+            assertEquals(NONE.code(), result.response().topics().find(Topic.GROUP_METADATA_TOPIC_NAME).errorCode());
+            assertTrue(result.records().stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG)),
+                "System topics should not get remote.storage.enable ConfigRecord");
+        }
+
+        @Test
+        void testConsolidationDisabledDoesNotAutoEnable() {
+            // When consolidation is disabled, remote.storage.enable is not auto-added
+            // even for diskless topics.
+            final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(false)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final CreateTopicsRequestData request = new CreateTopicsRequestData();
+            final CreateTopicsRequestData.CreatableTopicConfigCollection configs =
+                new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue("true"));
+            request.topics().add(new CreatableTopic()
+                .setName("foo")
+                .setNumPartitions(-1)
+                .setReplicationFactor((short) -1)
+                .setConfigs(configs));
+
+            final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+                anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+            assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+            assertTrue(result.records().stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG)),
+                "remote.storage.enable should not be auto-added when consolidation is disabled");
+        }
+
+        @Test
+        void testExplicitRemoteStorageFalseRejected() {
+            // Creating a diskless topic with remote.storage.enable=false when consolidation
+            // is enabled must fail — the controller rejects the invalid combination.
+            final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final CreateTopicsRequestData request = new CreateTopicsRequestData();
+            final CreateTopicsRequestData.CreatableTopicConfigCollection configs =
+                new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue("true"));
+            configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+                .setValue("false"));
+            request.topics().add(new CreatableTopic()
+                .setName("foo")
+                .setNumPartitions(-1)
+                .setReplicationFactor((short) -1)
+                .setConfigs(configs));
+
+            final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+                anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+            assertEquals(Errors.INVALID_CONFIG.code(), result.response().topics().find("foo").errorCode(),
+                "Diskless topic with remote.storage.enable=false should be rejected");
         }
     }
 
