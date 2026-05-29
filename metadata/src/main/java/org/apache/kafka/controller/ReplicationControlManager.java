@@ -180,6 +180,8 @@ public class ReplicationControlManager {
         private boolean isDisklessRemoteStorageConsolidationEnabled = false;
         private boolean classicRemoteStorageForceEnabled = false;
         private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
+        private boolean disklessForceEnabled = false;
+        private List<String> disklessForceIncludeTopicRegexes = List.of();
 
         private int maxElectionsPerImbalance = MAX_ELECTIONS_PER_IMBALANCE;
         private ConfigurationControlManager configurationControl = null;
@@ -237,6 +239,16 @@ public class ReplicationControlManager {
             return this;
         }
 
+        public Builder setDisklessForceEnabled(boolean disklessForceEnabled) {
+            this.disklessForceEnabled = disklessForceEnabled;
+            return this;
+        }
+
+        public Builder setDisklessForceIncludeTopicRegexes(List<String> disklessForceIncludeTopicRegexes) {
+            this.disklessForceIncludeTopicRegexes = disklessForceIncludeTopicRegexes;
+            return this;
+        }
+
         Builder setMaxElectionsPerImbalance(int maxElectionsPerImbalance) {
             this.maxElectionsPerImbalance = maxElectionsPerImbalance;
             return this;
@@ -283,6 +295,8 @@ public class ReplicationControlManager {
                 isDisklessRemoteStorageConsolidationEnabled,
                 classicRemoteStorageForceEnabled,
                 classicRemoteStorageForceExcludeTopicRegexes,
+                disklessForceEnabled,
+                disklessForceIncludeTopicRegexes,
                 maxElectionsPerImbalance,
                 configurationControl,
                 clusterControl,
@@ -370,7 +384,7 @@ public class ReplicationControlManager {
      * classic tiered storage behavior, which is controlled by {@code classicTopicRemoteStorageForcePolicy}.
      */
     private final boolean isDisklessRemoteStorageConsolidationEnabled;
-    private final ClassicTopicRemoteStorageForcePolicy classicTopicRemoteStorageForcePolicy;
+    private final CreateTopicConfigInterceptors createTopicConfigInterceptors;
 
     /**
      * When true, diskless topics use managed replicas with user-defined RF
@@ -473,6 +487,8 @@ public class ReplicationControlManager {
         boolean isDisklessRemoteStorageConsolidationEnabled,
         boolean classicRemoteStorageForceEnabled,
         List<String> classicRemoteStorageForceExcludeTopicRegexes,
+        boolean disklessForceEnabled,
+        List<String> disklessForceIncludeTopicRegexes,
         int maxElectionsPerImbalance,
         ConfigurationControlManager configurationControl,
         ClusterControlManager clusterControl,
@@ -487,9 +503,13 @@ public class ReplicationControlManager {
         this.isDisklessStorageSystemEnabled = isDisklessStorageSystemEnabled;
         this.isDisklessManagedReplicasEnabled = isDisklessManagedReplicasEnabled;
         this.isDisklessRemoteStorageConsolidationEnabled = isDisklessRemoteStorageConsolidationEnabled;
-        this.classicTopicRemoteStorageForcePolicy = new ClassicTopicRemoteStorageForcePolicy(
+        this.createTopicConfigInterceptors = CreateTopicConfigInterceptors.create(
             classicRemoteStorageForceEnabled,
-            classicRemoteStorageForceExcludeTopicRegexes
+            classicRemoteStorageForceExcludeTopicRegexes,
+            defaultDisklessEnable,
+            isDisklessStorageSystemEnabled,
+            disklessForceEnabled,
+            disklessForceIncludeTopicRegexes
         );
         this.maxElectionsPerImbalance = maxElectionsPerImbalance;
         this.configurationControl = configurationControl;
@@ -752,17 +772,15 @@ public class ReplicationControlManager {
             // Figure out what ConfigRecords should be created, if any.
             ConfigResource configResource = new ConfigResource(TOPIC, topic.name());
             Map<String, Entry<OpType, String>> keyToOps = configChanges.get(configResource);
-            // Add remote.storage.enable=true to config records if ClassicTopicRemoteStorageForcePolicy is enabled
+            // Apply CREATE_TOPICS config interceptors (e.g. remote storage force)
             final Map<String, String> requestConfigs = new HashMap<>(translateCreationConfigs(topic.configs()));
-            final boolean disklessEnabled = disklessEnabledOnTopicCreation(requestConfigs);
             if (keyToOps == null) {
                 keyToOps = new HashMap<>();
             } else {
                 keyToOps = new HashMap<>(keyToOps);
             }
-            classicTopicRemoteStorageForcePolicy.maybeForceRemoteStorageEnable(
+            createTopicConfigInterceptors.intercept(
                 topic.name(),
-                disklessEnabled,
                 requestConfigs,
                 keyToOps
             );
@@ -831,14 +849,13 @@ public class ReplicationControlManager {
                                  List<ApiMessageAndVersion> configRecords,
                                  boolean authorizedToReturnConfigs) {
         final Map<String, String> creationConfigs = new HashMap<>(translateCreationConfigs(topic.configs()));
-        // Configs here are rebuilt from the request (creationConfigs).
-        // Re-apply ClassicTopicRemoteStorageForcePolicy on this creation configs view for validations and to include forced configs in the response payload.
-        final boolean disklessEnabledOnCreation = disklessEnabledOnTopicCreation(creationConfigs);
-        classicTopicRemoteStorageForcePolicy.maybeForceRemoteStorageEnable(topic.name(), disklessEnabledOnCreation, creationConfigs);
+        // Re-apply CREATE_TOPICS config interceptors on this creation configs view for validations and to include forced configs in the response payload.
+        createTopicConfigInterceptors.intercept(topic.name(), creationConfigs);
         // Include remote.storage.enable=true in creationConfigs for diskless topics.
         // This affects the CreateTopicsResponse effective-config view and topic policy checks.
         // The actual persistence happens in validConfigRecords() via ConfigRecord.
         // Exclude system topics — they are never diskless regardless of defaultDisklessEnable.
+        final boolean disklessEnabledOnCreation = disklessEnabledOnTopicCreation(creationConfigs);
         if (disklessEnabledOnCreation &&
                 isDisklessRemoteStorageConsolidationEnabled &&
                 !isSystemTopic(topic.name())) {

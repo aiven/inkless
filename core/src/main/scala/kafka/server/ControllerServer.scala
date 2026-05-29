@@ -244,6 +244,8 @@ class ControllerServer(
           setDisklessRemoteStorageConsolidationEnabled(config.disklessRemoteStorageConsolidationEnabled).
           setClassicRemoteStorageForceEnabled(config.classicRemoteStorageForceEnabled).
           setClassicRemoteStorageForceExcludeTopicRegexes(config.classicRemoteStorageForceExcludeTopicRegexes).
+          setDisklessForceEnabled(config.disklessForceEnabled).
+          setDisklessForceIncludeTopicRegexes(config.disklessForceIncludeTopicRegexes).
           setSessionTimeoutNs(TimeUnit.NANOSECONDS.convert(config.brokerSessionTimeoutMs.longValue(),
             TimeUnit.MILLISECONDS)).
           setLeaderImbalanceCheckIntervalNs(leaderImbalanceCheckIntervalNs).
