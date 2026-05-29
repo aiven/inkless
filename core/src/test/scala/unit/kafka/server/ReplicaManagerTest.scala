@@ -6198,17 +6198,21 @@ class ReplicaManagerTest {
         appendHandlerCtor.close()
       }
 
-      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
-      replicaManager.appendRecords(
-        timeout = 0,
-        requiredAcks = -1,
-        internalTopicsAllowed = true,
-        origin = AppendOrigin.CLIENT,
-        entriesPerPartition = entriesPerPartition,
-        responseCallback = responseCallback,
-      )
+      try {
+        val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+        replicaManager.appendRecords(
+          timeout = 0,
+          requiredAcks = -1,
+          internalTopicsAllowed = true,
+          origin = AppendOrigin.CLIENT,
+          entriesPerPartition = entriesPerPartition,
+          responseCallback = responseCallback,
+        )
 
-      verify(responseCallback, times(1)).apply(disklessResponse)
+        verify(responseCallback, times(1)).apply(disklessResponse)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -6232,22 +6236,26 @@ class ReplicaManagerTest {
         appendHandlerCtor.close()
       }
 
-      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
-      replicaManager.appendRecords(
-        timeout = 0,
-        requiredAcks = -1,
-        internalTopicsAllowed = true,
-        origin = AppendOrigin.CLIENT,
-        entriesPerPartition = entriesPerPartition,
-        responseCallback = responseCallback,
-      )
-
-      verify(responseCallback, times(1))
-        .apply(
-          disklessResponse ++
-            // ReplicaManager will always reply with UNKNOWN_TOPIC_OR_PARTITION because topic does not exist.
-            Map(classicTopicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION))
+      try {
+        val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+        replicaManager.appendRecords(
+          timeout = 0,
+          requiredAcks = -1,
+          internalTopicsAllowed = true,
+          origin = AppendOrigin.CLIENT,
+          entriesPerPartition = entriesPerPartition,
+          responseCallback = responseCallback,
         )
+
+        verify(responseCallback, times(1))
+          .apply(
+            disklessResponse ++
+              // ReplicaManager will always reply with UNKNOWN_TOPIC_OR_PARTITION because topic does not exist.
+              Map(classicTopicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION))
+          )
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -6271,39 +6279,43 @@ class ReplicaManagerTest {
         appendHandlerCtor.close()
       }
 
-      val topicDelta = new TopicsDelta(TopicsImage.EMPTY)
-      topicDelta.replay(new TopicRecord()
-        .setName(classicTopicPartition.topic)
-        .setTopicId(classicTopicPartition.topicId)
-      )
-      topicDelta.replay(new PartitionRecord()
-        .setTopicId(classicTopicPartition.topicId)
-        .setPartitionId(classicTopicPartition.partition)
-        .setLeader(1)
-        .setLeaderEpoch(0)
-        .setPartitionEpoch(0)
-        .setReplicas(List[Integer](1).asJava)
-        .setIsr(List[Integer](1).asJava)
-      )
-
-      val metadataImage = imageFromTopics(topicDelta.apply())
-      replicaManager.applyDelta(topicDelta, metadataImage)
-
-      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
-      replicaManager.appendRecords(
-        timeout = 0,
-        requiredAcks = -1,
-        internalTopicsAllowed = true,
-        origin = AppendOrigin.CLIENT,
-        entriesPerPartition = entriesPerPartition,
-        responseCallback = responseCallback,
-      )
-
-      verify(responseCallback, times(1))
-        .apply(
-          disklessResponse ++
-            Map(classicTopicPartition -> new PartitionResponse(Errors.NONE, 0, -1, 0))
+      try {
+        val topicDelta = new TopicsDelta(TopicsImage.EMPTY)
+        topicDelta.replay(new TopicRecord()
+          .setName(classicTopicPartition.topic)
+          .setTopicId(classicTopicPartition.topicId)
         )
+        topicDelta.replay(new PartitionRecord()
+          .setTopicId(classicTopicPartition.topicId)
+          .setPartitionId(classicTopicPartition.partition)
+          .setLeader(1)
+          .setLeaderEpoch(0)
+          .setPartitionEpoch(0)
+          .setReplicas(List[Integer](1).asJava)
+          .setIsr(List[Integer](1).asJava)
+        )
+
+        val metadataImage = imageFromTopics(topicDelta.apply())
+        replicaManager.applyDelta(topicDelta, metadataImage)
+
+        val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+        replicaManager.appendRecords(
+          timeout = 0,
+          requiredAcks = -1,
+          internalTopicsAllowed = true,
+          origin = AppendOrigin.CLIENT,
+          entriesPerPartition = entriesPerPartition,
+          responseCallback = responseCallback,
+        )
+
+        verify(responseCallback, times(1))
+          .apply(
+            disklessResponse ++
+              Map(classicTopicPartition -> new PartitionResponse(Errors.NONE, 0, -1, 0))
+          )
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -6325,41 +6337,45 @@ class ReplicaManagerTest {
         appendHandlerCtor.close()
       }
 
-      val topicDelta = new TopicsDelta(TopicsImage.EMPTY)
-      topicDelta.replay(new TopicRecord()
-        .setName(classicTopicPartition.topic)
-        .setTopicId(classicTopicPartition.topicId)
-      )
-      topicDelta.replay(new PartitionRecord()
-        .setTopicId(classicTopicPartition.topicId)
-        .setPartitionId(classicTopicPartition.partition)
-        .setLeader(1)
-        .setLeaderEpoch(0)
-        .setPartitionEpoch(0)
-        .setReplicas(List[Integer](1).asJava)
-        .setIsr(List[Integer](1).asJava)
-      )
+      try {
+        val topicDelta = new TopicsDelta(TopicsImage.EMPTY)
+        topicDelta.replay(new TopicRecord()
+          .setName(classicTopicPartition.topic)
+          .setTopicId(classicTopicPartition.topicId)
+        )
+        topicDelta.replay(new PartitionRecord()
+          .setTopicId(classicTopicPartition.topicId)
+          .setPartitionId(classicTopicPartition.partition)
+          .setLeader(1)
+          .setLeaderEpoch(0)
+          .setPartitionEpoch(0)
+          .setReplicas(List[Integer](1).asJava)
+          .setIsr(List[Integer](1).asJava)
+        )
 
-      val metadataImage = imageFromTopics(topicDelta.apply())
-      replicaManager.applyDelta(topicDelta, metadataImage)
+        val metadataImage = imageFromTopics(topicDelta.apply())
+        replicaManager.applyDelta(topicDelta, metadataImage)
 
-      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
-      replicaManager.appendRecords(
-        timeout = 0,
-        requiredAcks = -1,
-        internalTopicsAllowed = true,
-        origin = AppendOrigin.CLIENT,
-        entriesPerPartition = entriesPerPartition,
-        responseCallback = responseCallback,
-      )
+        val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+        replicaManager.appendRecords(
+          timeout = 0,
+          requiredAcks = -1,
+          internalTopicsAllowed = true,
+          origin = AppendOrigin.CLIENT,
+          entriesPerPartition = entriesPerPartition,
+          responseCallback = responseCallback,
+        )
 
-      verify(responseCallback, times(1))
-        .apply(Map(
-          // diskless entries get an INVALID_REQUEST
-          disklessTopicPartition -> new PartitionResponse(Errors.INVALID_REQUEST),
-          // classic entries get a regular response, in this case the topic does not exist
-          classicTopicPartition -> new PartitionResponse(Errors.NONE, 0, -1, 0)
-        ))
+        verify(responseCallback, times(1))
+          .apply(Map(
+            // diskless entries get an INVALID_REQUEST
+            disklessTopicPartition -> new PartitionResponse(Errors.INVALID_REQUEST),
+            // classic entries get a regular response, in this case the topic does not exist
+            classicTopicPartition -> new PartitionResponse(Errors.NONE, 0, -1, 0)
+          ))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -6381,23 +6397,27 @@ class ReplicaManagerTest {
         appendHandlerCtor.close()
       }
 
-      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
-      replicaManager.appendRecords(
-        timeout = 0,
-        requiredAcks = -1,
-        internalTopicsAllowed = true,
-        origin = AppendOrigin.CLIENT,
-        entriesPerPartition = entriesPerPartition,
-        responseCallback = responseCallback,
-      )
+      try {
+        val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+        replicaManager.appendRecords(
+          timeout = 0,
+          requiredAcks = -1,
+          internalTopicsAllowed = true,
+          origin = AppendOrigin.CLIENT,
+          entriesPerPartition = entriesPerPartition,
+          responseCallback = responseCallback,
+        )
 
-      verify(responseCallback, times(1))
-        .apply(Map(
-          // diskless entries get an UNKNOWN_SERVER_ERROR for the write failure
-          disklessTopicPartition -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR),
-          // classic entries get a regular response, in this case the topic does not exist
-          classicTopicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION),
-        ))
+        verify(responseCallback, times(1))
+          .apply(Map(
+            // diskless entries get an UNKNOWN_SERVER_ERROR for the write failure
+            disklessTopicPartition -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR),
+            // classic entries get a regular response, in this case the topic does not exist
+            classicTopicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION),
+          ))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -6415,22 +6435,26 @@ class ReplicaManagerTest {
         appendHandlerCtor.close()
       }
 
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      try {
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
-      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
-      replicaManager.appendRecords(
-        timeout = 0,
-        requiredAcks = -1,
-        internalTopicsAllowed = true,
-        origin = AppendOrigin.CLIENT,
-        entriesPerPartition = Map(disklessTopicPartition -> RECORDS),
-        responseCallback = responseCallback,
-      )
+        val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+        replicaManager.appendRecords(
+          timeout = 0,
+          requiredAcks = -1,
+          internalTopicsAllowed = true,
+          origin = AppendOrigin.CLIENT,
+          entriesPerPartition = Map(disklessTopicPartition -> RECORDS),
+          responseCallback = responseCallback,
+        )
 
-      verify(responseCallback, times(1))(
-        Map(disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE))
-      )
+        verify(responseCallback, times(1))(
+          Map(disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE))
+        )
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -6450,27 +6474,31 @@ class ReplicaManagerTest {
         appendHandlerCtor.close()
       }
 
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(switchedPartition.topicPartition()))
-        .thenReturn(100L)
+      try {
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(switchedPartition.topicPartition()))
+          .thenReturn(100L)
 
-      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
-      replicaManager.appendRecords(
-        timeout = 0,
-        requiredAcks = -1,
-        internalTopicsAllowed = true,
-        origin = AppendOrigin.CLIENT,
-        entriesPerPartition = Map(disklessTopicPartition -> RECORDS, switchedPartition -> RECORDS),
-        responseCallback = responseCallback,
-      )
-
-      verify(responseCallback, times(1))(
-        Map(
-          disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE),
-          switchedPartition -> new PartitionResponse(Errors.NONE),
+        val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+        replicaManager.appendRecords(
+          timeout = 0,
+          requiredAcks = -1,
+          internalTopicsAllowed = true,
+          origin = AppendOrigin.CLIENT,
+          entriesPerPartition = Map(disklessTopicPartition -> RECORDS, switchedPartition -> RECORDS),
+          responseCallback = responseCallback,
         )
-      )
+
+        verify(responseCallback, times(1))(
+          Map(
+            disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE),
+            switchedPartition -> new PartitionResponse(Errors.NONE),
+          )
+        )
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -6489,28 +6517,32 @@ class ReplicaManagerTest {
         appendHandlerCtor.close()
       }
 
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(switchedPartition.topicPartition()))
-        .thenReturn(100L)
+      try {
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(switchedPartition.topicPartition()))
+          .thenReturn(100L)
 
-      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
-      replicaManager.appendRecords(
-        timeout = 0,
-        requiredAcks = -1,
-        internalTopicsAllowed = true,
-        origin = AppendOrigin.CLIENT,
-        entriesPerPartition = Map(disklessTopicPartition -> RECORDS, switchedPartition -> RECORDS),
-        responseCallback = responseCallback,
-      )
-
-      // Pending partition is unaffected by the handler failure — only ready entries get the error fallback
-      verify(responseCallback, times(1))(
-        Map(
-          disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE),
-          switchedPartition -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR),
+        val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+        replicaManager.appendRecords(
+          timeout = 0,
+          requiredAcks = -1,
+          internalTopicsAllowed = true,
+          origin = AppendOrigin.CLIENT,
+          entriesPerPartition = Map(disklessTopicPartition -> RECORDS, switchedPartition -> RECORDS),
+          responseCallback = responseCallback,
         )
-      )
+
+        // Pending partition is unaffected by the handler failure — only ready entries get the error fallback
+        verify(responseCallback, times(1))(
+          Map(
+            disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE),
+            switchedPartition -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR),
+          )
+        )
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -6528,25 +6560,29 @@ class ReplicaManagerTest {
         appendHandlerCtor.close()
       }
 
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      try {
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
-      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
-      replicaManager.appendRecords(
-        timeout = 0,
-        requiredAcks = -1,
-        internalTopicsAllowed = true,
-        origin = AppendOrigin.CLIENT,
-        entriesPerPartition = Map(disklessTopicPartition -> RECORDS, classicTopicPartition -> RECORDS),
-        responseCallback = responseCallback,
-      )
-
-      verify(responseCallback, times(1))(
-        Map(
-          disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE),
-          classicTopicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION),
+        val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+        replicaManager.appendRecords(
+          timeout = 0,
+          requiredAcks = -1,
+          internalTopicsAllowed = true,
+          origin = AppendOrigin.CLIENT,
+          entriesPerPartition = Map(disklessTopicPartition -> RECORDS, classicTopicPartition -> RECORDS),
+          responseCallback = responseCallback,
         )
-      )
+
+        verify(responseCallback, times(1))(
+          Map(
+            disklessTopicPartition -> new PartitionResponse(Errors.REPLICA_NOT_AVAILABLE),
+            classicTopicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION),
+          )
+        )
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -6559,9 +6595,8 @@ class ReplicaManagerTest {
           ))
       }
       val appendHandlerCtor = mockConstruction(classOf[AppendHandler], appendHandlerCtorMockInitializer)
+      val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
       try {
-        val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
-
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
 
@@ -6578,6 +6613,7 @@ class ReplicaManagerTest {
         verify(responseCallback, times(1))(expectedResponse)
         verify(appendHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         appendHandlerCtor.close()
       }
     }
@@ -6806,11 +6842,11 @@ class ReplicaManagerTest {
     @Test
     def testFetchDisklessBelowStartOffsetReadsFromClassicLogWhenManagedReplicasEnabled(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      val cp = mock(classOf[ControlPlane])
+      // Given managed replicas enabled
+      val replicaManager =
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp), disklessManagedReplicasEnabled = true))
       try {
-        val cp = mock(classOf[ControlPlane])
-        // Given managed replicas enabled
-        val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp), disklessManagedReplicasEnabled = true))
-        
         // Given a diskless topic with classicToDisklessStartOffset = 100
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition())).thenReturn(100L)
 
@@ -6845,6 +6881,7 @@ class ReplicaManagerTest {
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
         verify(cp, never()).findBatches(any(), any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -6852,15 +6889,16 @@ class ReplicaManagerTest {
     @Test
     def testFetchDisklessBelowStartOffsetFailsWhenManagedReplicasDisabled(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
-      try {
-        val cp = mock(classOf[ControlPlane])
-        // Given managed replicas are disabled
-        val replicaManager = spy(createReplicaManager(
+      val cp = mock(classOf[ControlPlane])
+      // Given managed replicas are disabled
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic()),
           controlPlane = Some(cp),
           disklessManagedReplicasEnabled = false,
-        ))
+      ))
         
+      try {
         // Given a diskless topic with classicToDisklessStartOffset = 100
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition())).thenReturn(100L)
 
@@ -6888,6 +6926,7 @@ class ReplicaManagerTest {
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
         verify(cp, never()).findBatches(any(), any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -6895,10 +6934,11 @@ class ReplicaManagerTest {
     @Test
     def testFetchDisklessSwitchPendingReadsFromClassicLogWhenManagedReplicasEnabled(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
-      try {
-        val cp = mock(classOf[ControlPlane])
-        val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp), disklessManagedReplicasEnabled = true))
+      val cp = mock(classOf[ControlPlane])
+      val replicaManager =
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp), disklessManagedReplicasEnabled = true))
 
+      try {
         // Given a diskless topic with classicToDisklessStartOffset = -2 (switch pending)
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
@@ -6932,6 +6972,7 @@ class ReplicaManagerTest {
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
         verify(cp, never()).findBatches(any(), any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -6939,14 +6980,15 @@ class ReplicaManagerTest {
     @Test
     def testFetchDisklessSwitchPendingFailsWhenManagedReplicasDisabled(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
-      try {
-        val cp = mock(classOf[ControlPlane])
-        val replicaManager = spy(createReplicaManager(
+      val cp = mock(classOf[ControlPlane])
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic()),
           controlPlane = Some(cp),
           disklessManagedReplicasEnabled = false,
-        ))
+      ))
 
+      try {
         // Given a diskless topic with classicToDisklessStartOffset = -2 (switch pending)
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
@@ -6973,6 +7015,7 @@ class ReplicaManagerTest {
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
         verify(cp, never()).findBatches(any(), any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -6987,24 +7030,24 @@ class ReplicaManagerTest {
           Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
       )
       val fetchHandlerCtor = mockFetchHandler(disklessResponse)
-      try {
-        val batchMetadata = mock(classOf[BatchMetadata])
-        when(batchMetadata.topicIdPartition()).thenReturn(disklessTopicPartition)
-        val batch = mock(classOf[BatchInfo])
-        when(batch.metadata()).thenReturn(batchMetadata)
-        val findBatchResponse = mock(classOf[FindBatchResponse])
-        when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
-        when(findBatchResponse.highWatermark()).thenReturn(110L)
-        when(findBatchResponse.estimatedByteSize(50L)).thenReturn(RECORDS.sizeInBytes())
-        when(findBatchResponse.errors()).thenReturn(Errors.NONE)
-        val cp = mock(classOf[ControlPlane])
-        when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
-        val replicaManager = spy(createReplicaManager(
+      val batchMetadata = mock(classOf[BatchMetadata])
+      when(batchMetadata.topicIdPartition()).thenReturn(disklessTopicPartition)
+      val batch = mock(classOf[BatchInfo])
+      when(batch.metadata()).thenReturn(batchMetadata)
+      val findBatchResponse = mock(classOf[FindBatchResponse])
+      when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+      when(findBatchResponse.highWatermark()).thenReturn(110L)
+      when(findBatchResponse.estimatedByteSize(50L)).thenReturn(RECORDS.sizeInBytes())
+      when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+      val cp = mock(classOf[ControlPlane])
+      when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic()),
           controlPlane = Some(cp),
           disklessManagedReplicasEnabled = true,
-        ))
-
+      ))
+      try {
         // Given a full diskless topic with classicToDisklessStartOffset = -1 (never switched)
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
@@ -7030,6 +7073,7 @@ class ReplicaManagerTest {
         verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
         verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -7037,9 +7081,10 @@ class ReplicaManagerTest {
     @Test
     def testFetchFailDisklessWhenFromReplicaAndUnmanagedReplicas(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      // Given a topic partition that is fully diskless (never switched) and managed replicas are disabled
+      val replicaManager =
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = false))
       try {
-        // Given a topic partition that is fully diskless (never switched) and managed replicas are disabled
-        val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = false))
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
         val fetchParams = new FetchParams(
@@ -7063,6 +7108,7 @@ class ReplicaManagerTest {
         assertEquals(0, responseData.size)
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -7078,24 +7124,24 @@ class ReplicaManagerTest {
           Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
       )
       val fetchHandlerCtor = mockFetchHandler(disklessResponse)
-      try {
-        val batchMetadata = mock(classOf[BatchMetadata])
-        when(batchMetadata.topicIdPartition()).thenReturn(disklessTopicPartition)
-        val batch = mock(classOf[BatchInfo])
-        when(batch.metadata()).thenReturn(batchMetadata)
-        val findBatchResponse = mock(classOf[FindBatchResponse])
-        when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
-        when(findBatchResponse.highWatermark()).thenReturn(110L)
-        when(findBatchResponse.estimatedByteSize(100L)).thenReturn(RECORDS.sizeInBytes())
-        when(findBatchResponse.errors()).thenReturn(Errors.NONE)
-        val cp = mock(classOf[ControlPlane])
-        when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
-        val replicaManager = spy(createReplicaManager(
+      val batchMetadata = mock(classOf[BatchMetadata])
+      when(batchMetadata.topicIdPartition()).thenReturn(disklessTopicPartition)
+      val batch = mock(classOf[BatchInfo])
+      when(batch.metadata()).thenReturn(batchMetadata)
+      val findBatchResponse = mock(classOf[FindBatchResponse])
+      when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+      when(findBatchResponse.highWatermark()).thenReturn(110L)
+      when(findBatchResponse.estimatedByteSize(100L)).thenReturn(RECORDS.sizeInBytes())
+      when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+      val cp = mock(classOf[ControlPlane])
+      when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic()),
           controlPlane = Some(cp),
           disklessManagedReplicasEnabled = managedReplicasEnabled,
-        ))
-        
+      ))
+      try {
         // Given a diskless topic with classicToDisklessStartOffset = 100
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition())).thenReturn(100L)
 
@@ -7123,6 +7169,7 @@ class ReplicaManagerTest {
         verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
         verify(cp, times(1)).findBatches(any(), any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -7159,15 +7206,16 @@ class ReplicaManagerTest {
     @Test
     def testFetchConsolidatingDisklessBelowLocalLeoReadsFromUnifiedLogWhenManagedReplicasEnabled(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
-      try {
-        val cp = mock(classOf[ControlPlane])
-        val replicaManager = spy(createReplicaManager(
+      val cp = mock(classOf[ControlPlane])
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic()),
           controlPlane = Some(cp),
           disklessManagedReplicasEnabled = true,
           disklessRemoteStorageConsolidationEnabled = true,
           consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
-        ))
+      ))
+      try {
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(100L)
         stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 200L)
@@ -7199,6 +7247,7 @@ class ReplicaManagerTest {
         verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -7213,13 +7262,14 @@ class ReplicaManagerTest {
           Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
       )
       val fetchHandlerCtor = mockFetchHandler(disklessResponse)
-      try {
-        val replicaManager = spy(createReplicaManager(
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic()),
           disklessManagedReplicasEnabled = true,
           disklessRemoteStorageConsolidationEnabled = true,
           consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
-        ))
+      ))
+      try {
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
         stubConsolidatingPartitionAsError(replicaManager, Errors.KAFKA_STORAGE_ERROR)
@@ -7243,6 +7293,7 @@ class ReplicaManagerTest {
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
         verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -7257,13 +7308,14 @@ class ReplicaManagerTest {
           Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
       )
       val fetchHandlerCtor = mockFetchHandler(disklessResponse)
-      try {
-        val replicaManager = spy(createReplicaManager(
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic()),
           disklessManagedReplicasEnabled = true,
           disklessRemoteStorageConsolidationEnabled = true,
           consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
-        ))
+      ))
+      try {
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
         stubConsolidatingPartitionAsError(replicaManager, Errors.NOT_LEADER_OR_FOLLOWER)
@@ -7287,6 +7339,7 @@ class ReplicaManagerTest {
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
         verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -7301,13 +7354,14 @@ class ReplicaManagerTest {
           Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
       )
       val fetchHandlerCtor = mockFetchHandler(disklessResponse)
-      try {
-        val replicaManager = spy(createReplicaManager(
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic()),
           disklessManagedReplicasEnabled = true,
           disklessRemoteStorageConsolidationEnabled = true,
           consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
-        ))
+      ))
+      try {
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
         stubConsolidatingPartitionAsError(replicaManager, Errors.UNKNOWN_TOPIC_OR_PARTITION)
@@ -7331,6 +7385,7 @@ class ReplicaManagerTest {
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
         verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -7339,16 +7394,17 @@ class ReplicaManagerTest {
     def testFetchConsolidatingDisklessErrorAppendedWhenOtherPartitionReadsFromUnifiedLog(): Unit = {
       val disklessTopicPartition2 = new TopicIdPartition(Uuid.randomUuid(), 0, "diskless2")
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
-      try {
-        val cp = mock(classOf[ControlPlane])
-        val replicaManager = spy(createReplicaManager(
+      val cp = mock(classOf[ControlPlane])
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic(), disklessTopicPartition2.topic()),
           controlPlane = Some(cp),
           disklessManagedReplicasEnabled = true,
           disklessRemoteStorageConsolidationEnabled = true,
           consolidatingDisklessTopics = Set(disklessTopicPartition.topic(), disklessTopicPartition2.topic()),
           topicIdMapping = Map(disklessTopicPartition2.topic() -> disklessTopicPartition2.topicId()),
-        ))
+      ))
+      try {
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition2.topicPartition()))
@@ -7389,6 +7445,7 @@ class ReplicaManagerTest {
         verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -7396,15 +7453,16 @@ class ReplicaManagerTest {
     @Test
     def testFetchConsolidatingDisklessAboveClassicStartButBelowLocalLeoReadsFromUnifiedLog(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
-      try {
-        val cp = mock(classOf[ControlPlane])
-        val replicaManager = spy(createReplicaManager(
+      val cp = mock(classOf[ControlPlane])
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic()),
           controlPlane = Some(cp),
           disklessManagedReplicasEnabled = true,
           disklessRemoteStorageConsolidationEnabled = true,
           consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
-        ))
+      ))
+      try {
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(50L)
         stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 200L)
@@ -7436,6 +7494,7 @@ class ReplicaManagerTest {
         verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -7450,26 +7509,26 @@ class ReplicaManagerTest {
           Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
       )
       val fetchHandlerCtor = mockFetchHandler(disklessResponse)
-      try {
-        val batchMetadata = mock(classOf[BatchMetadata])
-        when(batchMetadata.topicIdPartition()).thenReturn(disklessTopicPartition)
-        val batch = mock(classOf[BatchInfo])
-        when(batch.metadata()).thenReturn(batchMetadata)
-        val findBatchResponse = mock(classOf[FindBatchResponse])
-        when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
-        when(findBatchResponse.highWatermark()).thenReturn(110L)
-        when(findBatchResponse.estimatedByteSize(100L)).thenReturn(RECORDS.sizeInBytes())
-        when(findBatchResponse.errors()).thenReturn(Errors.NONE)
-        val cp = mock(classOf[ControlPlane])
-        when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
-
-        val replicaManager = spy(createReplicaManager(
+      val batchMetadata = mock(classOf[BatchMetadata])
+      when(batchMetadata.topicIdPartition()).thenReturn(disklessTopicPartition)
+      val batch = mock(classOf[BatchInfo])
+      when(batch.metadata()).thenReturn(batchMetadata)
+      val findBatchResponse = mock(classOf[FindBatchResponse])
+      when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+      when(findBatchResponse.highWatermark()).thenReturn(110L)
+      when(findBatchResponse.estimatedByteSize(100L)).thenReturn(RECORDS.sizeInBytes())
+      when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+      val cp = mock(classOf[ControlPlane])
+      when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic()),
           controlPlane = Some(cp),
           disklessManagedReplicasEnabled = true,
           disklessRemoteStorageConsolidationEnabled = true,
           consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
-        ))
+      ))
+      try {
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(100L)
         stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 100L)
@@ -7495,6 +7554,7 @@ class ReplicaManagerTest {
         verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
         verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -7509,26 +7569,26 @@ class ReplicaManagerTest {
           Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
       )
       val fetchHandlerCtor = mockFetchHandler(disklessResponse)
-      try {
-        val batchMetadata = mock(classOf[BatchMetadata])
-        when(batchMetadata.topicIdPartition()).thenReturn(disklessTopicPartition)
-        val batch = mock(classOf[BatchInfo])
-        when(batch.metadata()).thenReturn(batchMetadata)
-        val findBatchResponse = mock(classOf[FindBatchResponse])
-        when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
-        when(findBatchResponse.highWatermark()).thenReturn(110L)
-        when(findBatchResponse.estimatedByteSize(50L)).thenReturn(RECORDS.sizeInBytes())
-        when(findBatchResponse.errors()).thenReturn(Errors.NONE)
-        val cp = mock(classOf[ControlPlane])
-        when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
-
-        val replicaManager = spy(createReplicaManager(
+      val batchMetadata = mock(classOf[BatchMetadata])
+      when(batchMetadata.topicIdPartition()).thenReturn(disklessTopicPartition)
+      val batch = mock(classOf[BatchInfo])
+      when(batch.metadata()).thenReturn(batchMetadata)
+      val findBatchResponse = mock(classOf[FindBatchResponse])
+      when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+      when(findBatchResponse.highWatermark()).thenReturn(110L)
+      when(findBatchResponse.estimatedByteSize(50L)).thenReturn(RECORDS.sizeInBytes())
+      when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+      val cp = mock(classOf[ControlPlane])
+      when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic()),
           controlPlane = Some(cp),
           disklessManagedReplicasEnabled = true,
           disklessRemoteStorageConsolidationEnabled = true,
           consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
-        ))
+      ))
+      try {
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(100L)
         stubConsolidatingPartitionWithoutLocalLog(replicaManager)
@@ -7553,6 +7613,7 @@ class ReplicaManagerTest {
         verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
         verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -7560,14 +7621,15 @@ class ReplicaManagerTest {
     @Test
     def testFetchConsolidatingMetadataButConsolidationDisabledUsesClassicStartOffsetRule(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
-      try {
-        val cp = mock(classOf[ControlPlane])
-        val replicaManager = spy(createReplicaManager(
+      val cp = mock(classOf[ControlPlane])
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic()),
           controlPlane = Some(cp),
           disklessManagedReplicasEnabled = true,
           consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
-        ))
+      ))
+      try {
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(100L)
 
@@ -7598,6 +7660,7 @@ class ReplicaManagerTest {
         verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -7605,15 +7668,16 @@ class ReplicaManagerTest {
     @Test
     def testFetchConsolidatingDisklessSwitchPendingReadsFromUnifiedLogWhenConsolidationEnabled(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
-      try {
-        val cp = mock(classOf[ControlPlane])
-        val replicaManager = spy(createReplicaManager(
+      val cp = mock(classOf[ControlPlane])
+      val replicaManager =
+        spy(createReplicaManager(
           List(disklessTopicPartition.topic()),
           controlPlane = Some(cp),
           disklessManagedReplicasEnabled = true,
           disklessRemoteStorageConsolidationEnabled = true,
           consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
-        ))
+      ))
+      try {
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
         // Ensure we don't generate an additional invalid response from the consolidating-partition check.
@@ -7646,6 +7710,7 @@ class ReplicaManagerTest {
         verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -7690,6 +7755,7 @@ class ReplicaManagerTest {
         fetchHandlerCtor.close()
       }
 
+      try {
       // When we try to fetch messages from the diskless topic partitions with a consumer fetch, with a request that
       // does not specify the topic id
       val fetchParams = new FetchParams(
@@ -7711,6 +7777,9 @@ class ReplicaManagerTest {
       assertNotNull(responseData)
       assertEquals(2, responseData.size)
       assertEquals(disklessResponse, responseData)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -7751,6 +7820,7 @@ class ReplicaManagerTest {
         fetchHandlerCtor.close()
       }
 
+      try {
       // When we try to fetch messages from the diskless topic partition with a consumer fetch
       val fetchParams = new FetchParams(
         -1, -1L, // not follower fetch
@@ -7769,6 +7839,9 @@ class ReplicaManagerTest {
       assertNotNull(responseData)
       assertEquals(1, responseData.size)
       assertEquals(disklessResponse(disklessTopicPartition), responseData(disklessTopicPartition))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -7810,6 +7883,7 @@ class ReplicaManagerTest {
         fetchHandlerCtor.close()
       }
 
+      try {
       // Prepare the classic topic partition response
       doReturn(Seq(classicTopicPartition ->
         new LogReadResult(
@@ -7849,6 +7923,9 @@ class ReplicaManagerTest {
       assertEquals(0L, classicPartitionResponse.logStartOffset)
       assertEquals(10L, classicPartitionResponse.highWatermark)
       assertEquals(RECORDS, classicPartitionResponse.records)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -7890,6 +7967,7 @@ class ReplicaManagerTest {
         fetchHandlerCtor.close()
       }
 
+      try {
       // Prepare the classic topic partition response
       doReturn(Seq(classicTopicPartition ->
         new LogReadResult(
@@ -7929,6 +8007,9 @@ class ReplicaManagerTest {
       assertEquals(0L, classicPartitionResponse.logStartOffset)
       assertEquals(10L, classicPartitionResponse.highWatermark)
       assertEquals(RECORDS, classicPartitionResponse.records)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -7964,6 +8045,7 @@ class ReplicaManagerTest {
         fetchHandlerCtor.close()
       }
 
+      try {
       val fetchParams = new FetchParams(
         -1, -1L, // not follower fetch
         maxWaitMs, minBytes, maxBytes, FetchIsolation.HIGH_WATERMARK, Optional.empty()
@@ -7992,6 +8074,9 @@ class ReplicaManagerTest {
       assertNotNull(responseData)
       assertEquals(1, responseData.size)
       assertEquals(disklessResponse(disklessTopicPartition), responseData(disklessTopicPartition))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -8027,6 +8112,7 @@ class ReplicaManagerTest {
         fetchHandlerCtor.close()
       }
 
+      try {
       // Prepare the classic topic partition response
       doReturn(Seq(classicTopicPartition ->
         new LogReadResult(
@@ -8077,6 +8163,9 @@ class ReplicaManagerTest {
       assertEquals(0L, classicPartitionResponse.logStartOffset)
       assertEquals(10L, classicPartitionResponse.highWatermark)
       assertEquals(RECORDS, classicPartitionResponse.records)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -8102,6 +8191,7 @@ class ReplicaManagerTest {
         fetchHandlerCtor.close()
       }
 
+      try {
       // Prepare the classic topic partition response
       doReturn(Seq(classicTopicPartition ->
         new LogReadResult(
@@ -8149,6 +8239,9 @@ class ReplicaManagerTest {
       assertEquals(0L, classicPartitionResponse.logStartOffset)
       assertEquals(10L, classicPartitionResponse.highWatermark)
       assertEquals(RECORDS, classicPartitionResponse.records)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -8175,6 +8268,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       val requestedEpochInfo = Seq(
         new OffsetForLeaderTopic()
           .setTopic(disklessTopicPartition.topic())
@@ -8194,6 +8288,9 @@ class ReplicaManagerTest {
       val partitionResult = topicResult.partitions().get(0)
       assertEquals(Errors.UNKNOWN_TOPIC_OR_PARTITION.code, partitionResult.errorCode())
       assertEquals(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET, partitionResult.endOffset())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -8614,6 +8711,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       // No switch — pure diskless: classicToDisklessStartOffset == -1. Combined with managed
       // replicas disabled, the router falls into case 1 and routes the lookup to the diskless
       // control plane.
@@ -8648,6 +8746,9 @@ class ReplicaManagerTest {
 
       verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
       verify(replicaManager, never()).fetchOffsetForTimestamp(any(), anyLong(), any(), any(), anyBoolean())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -8668,6 +8769,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
@@ -8699,6 +8801,9 @@ class ReplicaManagerTest {
       verify(replicaManager).fetchOffsetForTimestamp(
         ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
       verify(jobMock, never()).add(any(), any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -8725,6 +8830,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -8750,6 +8856,9 @@ class ReplicaManagerTest {
 
       verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
       verify(replicaManager, never()).fetchOffsetForTimestamp(any(), anyLong(), any(), any(), anyBoolean())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -8770,6 +8879,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
 
@@ -8801,6 +8911,9 @@ class ReplicaManagerTest {
       verify(replicaManager).fetchOffsetForTimestamp(
         ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
       verify(jobMock, never()).add(any(), any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -8827,6 +8940,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -8852,6 +8966,9 @@ class ReplicaManagerTest {
 
       verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
       verify(replicaManager, never()).fetchOffsetForTimestamp(any(), anyLong(), any(), any(), anyBoolean())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -8878,6 +8995,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -8903,6 +9021,9 @@ class ReplicaManagerTest {
 
       verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
       verify(replicaManager, never()).fetchOffsetForTimestamp(any(), anyLong(), any(), any(), anyBoolean())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -8923,6 +9044,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -8962,6 +9084,9 @@ class ReplicaManagerTest {
       verify(replicaManager).fetchOffsetForTimestamp(
         ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
       verify(jobMock, never()).add(any(), any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -8982,6 +9107,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -9013,6 +9139,9 @@ class ReplicaManagerTest {
       verify(replicaManager).fetchOffsetForTimestamp(
         ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
       verify(jobMock, never()).add(any(), any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -9033,6 +9162,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -9064,6 +9194,9 @@ class ReplicaManagerTest {
       verify(replicaManager).fetchOffsetForTimestamp(
         ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
       verify(jobMock, never()).add(any(), any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -9084,6 +9217,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -9116,6 +9250,9 @@ class ReplicaManagerTest {
       verify(replicaManager).fetchOffsetForTimestamp(
         ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
       verify(jobMock, never()).add(any(), any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -9142,6 +9279,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -9174,6 +9312,9 @@ class ReplicaManagerTest {
       verify(replicaManager).fetchOffsetForTimestamp(
         ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
       verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -9194,6 +9335,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -9225,6 +9367,9 @@ class ReplicaManagerTest {
       verify(replicaManager).fetchOffsetForTimestamp(
         ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
       verify(jobMock, never()).add(any(), any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -9266,6 +9411,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -9303,6 +9449,9 @@ class ReplicaManagerTest {
       // exactly one job (the outer batch) was created and started exactly once.
       verify(batchJobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
       verify(batchJobMock).start()
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -9345,6 +9494,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -9399,6 +9549,9 @@ class ReplicaManagerTest {
       // The diskless fallback was issued on a fresh job created on demand.
       verify(fallbackJobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
       verify(fallbackJobMock).start()
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -9430,6 +9583,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -9464,6 +9618,9 @@ class ReplicaManagerTest {
         ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
       // No diskless fallback should fire when classic remote answered authoritatively.
       verify(batchJobMock, never()).add(any(), any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -9491,6 +9648,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -9525,6 +9683,9 @@ class ReplicaManagerTest {
       verify(replicaManager).fetchOffsetForTimestamp(
         ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
       verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -9554,6 +9715,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -9596,6 +9758,9 @@ class ReplicaManagerTest {
       verify(replicaManager).fetchOffsetForTimestamp(
         ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyLong(), any(), any(), anyBoolean())
       verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -9627,6 +9792,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -9661,6 +9827,9 @@ class ReplicaManagerTest {
       assertNotNull(responseTopics)
       val partitionResponse = responseTopics.asScala.head.partitions().get(0)
       assertEquals(Errors.OFFSET_NOT_AVAILABLE.code, partitionResponse.errorCode())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -9693,6 +9862,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -9728,6 +9898,9 @@ class ReplicaManagerTest {
       assertNotNull(responseTopics)
       val partitionResponse = responseTopics.asScala.head.partitions().get(0)
       assertEquals(Errors.OFFSET_NOT_AVAILABLE.code, partitionResponse.errorCode())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -9764,6 +9937,7 @@ class ReplicaManagerTest {
         fetchOffsetHandlerCtor.close()
       }
 
+      try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
 
@@ -9803,6 +9977,9 @@ class ReplicaManagerTest {
       assertEquals(456L, partitionResponse.timestamp())
       verify(batchJobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
       verify(batchJobMock).start()
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
     }
 
     @Test
@@ -10517,14 +10694,13 @@ class ReplicaManagerTest {
     @Test
     def testFollowerFetchAtClassicToDisklessStartOffsetReturnsEmptyAndIdle(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      val cp = mock(classOf[ControlPlane])
+      val replicaManager = spy(createReplicaManager(
+        List(disklessTopicPartition.topic()),
+        controlPlane = Some(cp),
+        disklessManagedReplicasEnabled = true,
+      ))
       try {
-        val cp = mock(classOf[ControlPlane])
-        val replicaManager = spy(createReplicaManager(
-          List(disklessTopicPartition.topic()),
-          controlPlane = Some(cp),
-          disklessManagedReplicasEnabled = true,
-        ))
-
         // Given a fully-switched diskless topic with classicToDisklessStartOffset = 100
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(100L)
@@ -10558,6 +10734,7 @@ class ReplicaManagerTest {
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
         verify(cp, never()).findBatches(any(), any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -10565,14 +10742,13 @@ class ReplicaManagerTest {
     @Test
     def testFollowerFetchAtClassicToDisklessStartOffsetEmptyEvenWhenManagedReplicasDisabled(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      val cp = mock(classOf[ControlPlane])
+      val replicaManager = spy(createReplicaManager(
+        List(disklessTopicPartition.topic()),
+        controlPlane = Some(cp),
+        disklessManagedReplicasEnabled = false,
+      ))
       try {
-        val cp = mock(classOf[ControlPlane])
-        val replicaManager = spy(createReplicaManager(
-          List(disklessTopicPartition.topic()),
-          controlPlane = Some(cp),
-          disklessManagedReplicasEnabled = false,
-        ))
-
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(100L)
 
@@ -10601,6 +10777,7 @@ class ReplicaManagerTest {
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
         verify(cp, never()).findBatches(any(), any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
@@ -10608,14 +10785,13 @@ class ReplicaManagerTest {
     @Test
     def testFollowerFetchBelowClassicToDisklessStartOffsetReadsFromClassicLog(): Unit = {
       val fetchHandlerCtor = mockFetchHandler(Map.empty)
+      val cp = mock(classOf[ControlPlane])
+      val replicaManager = spy(createReplicaManager(
+        List(disklessTopicPartition.topic()),
+        controlPlane = Some(cp),
+        disklessManagedReplicasEnabled = true,
+      ))
       try {
-        val cp = mock(classOf[ControlPlane])
-        val replicaManager = spy(createReplicaManager(
-          List(disklessTopicPartition.topic()),
-          controlPlane = Some(cp),
-          disklessManagedReplicasEnabled = true,
-        ))
-
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
           .thenReturn(100L)
 
@@ -10648,6 +10824,7 @@ class ReplicaManagerTest {
         verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
         verify(cp, never()).findBatches(any(), any(), any())
       } finally {
+        replicaManager.shutdown(checkpointHW = false)
         fetchHandlerCtor.close()
       }
     }
