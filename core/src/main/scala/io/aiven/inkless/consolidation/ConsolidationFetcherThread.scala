@@ -60,7 +60,7 @@ class ConsolidationFetcherThread(name: String,
 
         metrics.updateLocalLag(topicPartition, Math.max(0L, disklessLogEndOffset - localLogEndOffset))
         if (remoteLogEndOffset >= 0) {
-          metrics.updateLag(topicPartition, Math.max(0L, disklessLogEndOffset - remoteLogEndOffset))
+          metrics.updateTotalLag(topicPartition, Math.max(0L, disklessLogEndOffset - remoteLogEndOffset))
           metrics.updateDeletableMessages(topicPartition, Math.max(0L, remoteLogEndOffset - log.localLogStartOffset()))
         }
       }
