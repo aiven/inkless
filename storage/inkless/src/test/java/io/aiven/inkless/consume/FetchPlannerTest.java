@@ -2380,5 +2380,144 @@ public class FetchPlannerTest {
                 cache.close();
             }
         }
+
+        @Test
+        void hedgeNotTriggeredDuringRateLimitWait() throws Exception {
+            // Scenario: Cold path with rate limiting. The rate limiter blocks the primary for longer
+            // than the hedge threshold. With deferred timer scheduling, hedge timers only start after
+            // rate limiting completes — so no hedge fires when the fetch itself is fast.
+            final long oldTimestamp = time.milliseconds() - 120_000L; // 2 minutes ago, well past 60s threshold
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, oldTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final byte[] data = {1, 2, 3};
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(data));
+
+            // Rate limiter with 0 initial tokens and slow refill (~200ms for first token).
+            // hedgeThresholdMs = 50ms. Without deferred scheduling, the hedge would fire at ~50ms
+            // while the primary waits for the rate limit token. With deferral, timers start at ~200ms
+            // (after rate limit releases), and the fetch completes instantly — no hedge fires.
+            final Bucket rateLimiter = Bucket.builder()
+                .addLimit(limit -> limit.capacity(1).refillGreedy(1, java.time.Duration.ofMillis(200))
+                    .initialTokens(0))
+                .build();
+
+            final ExecutorService multiExecutor = Executors.newFixedThreadPool(2);
+            try {
+                final FetchPlanner planner = new FetchPlanner(
+                    time,
+                    OBJECT_KEY_CREATOR,
+                    keyAlignmentStrategy,
+                    new NullCache(),
+                    fetcher,
+                    fetchDataExecutor,  // hot path executor (not used)
+                    fetcher,
+                    60 * 1000L,         // lagging threshold
+                    rateLimiter,        // rate limiter that blocks ~200ms
+                    multiExecutor,      // cold path executor
+                    hedgeScheduler,
+                    0,                  // TTFB hedging disabled
+                    hedgeThresholdMs,   // 50ms total-time threshold
+                    hedgeGuards,
+                    coordinates,
+                    metrics
+                );
+
+                final List<FetchPlanner.FetchRequestWithFuture> results = planner.get();
+                assertThat(results).hasSize(1);
+
+                // Primary should complete successfully (after ~200ms rate limit wait + instant fetch)
+                final FileExtent result = results.get(0).future().get(5, TimeUnit.SECONDS);
+                assertThat(result.object()).isEqualTo(OBJECT_KEY_A.value());
+
+                // Hedge should NOT have fired: timers deferred until after rate limiting,
+                // fetch completed instantly after that, so threshold was never exceeded.
+                verify(metrics, never()).recordHedgeRequest();
+                verify(metrics, never()).recordHedgeTotalTimeTriggered();
+                verify(metrics, never()).recordHedgeWon();
+
+                // Confirm it went through the cold path with rate limiting
+                verify(metrics).recordLaggingConsumerRequest();
+                verify(metrics).recordRateLimitWaitTime(any(Long.class));
+            } finally {
+                multiExecutor.shutdownNow();
+            }
+        }
+
+        @Test
+        void hedgeStillFiresWhenFetchIsSlowAfterRateLimit() throws Exception {
+            // Verify: after rate limiting completes, if the actual fetch is slow,
+            // the hedge still fires correctly.
+            final long oldTimestamp = time.milliseconds() - 120_000L;
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, oldTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final CountDownLatch primaryBlocked = new CountDownLatch(1);
+            final CountDownLatch releasePrimary = new CountDownLatch(1);
+            final byte[] data = {1, 2, 3};
+
+            // Primary blocks after rate limit; hedge returns immediately
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any()))
+                .thenAnswer(invocation -> {
+                    primaryBlocked.countDown();
+                    releasePrimary.await(10, TimeUnit.SECONDS);
+                    return ByteBuffer.wrap(data);
+                })
+                .thenAnswer(invocation -> ByteBuffer.wrap(data));
+
+            // Generous rate limiter (won't block significantly)
+            final Bucket rateLimiter = Bucket.builder()
+                .addLimit(limit -> limit.capacity(10).refillGreedy(10, java.time.Duration.ofSeconds(1)))
+                .build();
+
+            final ExecutorService multiExecutor = Executors.newFixedThreadPool(2);
+            try {
+                final FetchPlanner planner = new FetchPlanner(
+                    time,
+                    OBJECT_KEY_CREATOR,
+                    keyAlignmentStrategy,
+                    new NullCache(),
+                    fetcher,
+                    fetchDataExecutor,
+                    fetcher,
+                    60 * 1000L,
+                    rateLimiter,        // non-blocking rate limiter
+                    multiExecutor,
+                    hedgeScheduler,
+                    0,                  // TTFB disabled
+                    hedgeThresholdMs,   // 50ms total-time threshold
+                    hedgeGuards,
+                    coordinates,
+                    metrics
+                );
+
+                final List<FetchPlanner.FetchRequestWithFuture> results = planner.get();
+                assertThat(results).hasSize(1);
+
+                // Wait for primary to start the actual fetch (past rate limiting)
+                assertThat(primaryBlocked.await(5, TimeUnit.SECONDS)).isTrue();
+
+                // Hedge fires after threshold and wins
+                final FileExtent result = results.get(0).future().get(5, TimeUnit.SECONDS);
+                assertThat(result.object()).isEqualTo(OBJECT_KEY_A.value());
+
+                verify(metrics).recordHedgeRequest();
+                verify(metrics).recordHedgeTotalTimeTriggered();
+                verify(metrics).recordHedgeWon();
+            } finally {
+                releasePrimary.countDown();
+                multiExecutor.shutdownNow();
+            }
+        }
     }
 }
