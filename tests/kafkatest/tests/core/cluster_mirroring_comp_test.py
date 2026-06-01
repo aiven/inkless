@@ -234,6 +234,7 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
 
         self.source_kafka.create_topic({
             "topic": topic, **topics[topic],
+            # this is needed because we started to support manual ULE only in 2.4
             "configs": {"unclean.leader.election.enable": "true"},
         })
 
@@ -282,7 +283,6 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
         self.logger.info("Send 2 messages via source broker 0")
         MirrorUtils.produce_records(self.logger, self.source_kafka, topic, 2, self.source_client_node,
                              bootstrap_servers=MirrorUtils.broker_bootstrap(src_broker0))
-
         MirrorUtils.wait_for_log_convergence(self.logger, self.source_kafka, self.dest_kafka, topics)
 
         self.logger.info("Failover: stop mirror so destination topic becomes writable")
