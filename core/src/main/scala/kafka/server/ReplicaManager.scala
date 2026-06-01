@@ -31,7 +31,7 @@ import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrU
 import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
-import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
+import org.apache.kafka.common.{IsolationLevel, KafkaException, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
 import org.apache.kafka.common.message.DeleteRecordsResponseData.DeleteRecordsPartitionResult
@@ -296,7 +296,8 @@ class ReplicaManager(val config: KafkaConfig,
   private val consolidationFetcherManager: Option[ConsolidationFetcherManager] =
     if (config.disklessRemoteStorageConsolidationEnabled) {
       if (inklessFetchHandler.isEmpty || inklessFetchOffsetHandler.isEmpty) {
-        logger.warn("Remote storage consolidation is enabled, however Inkless doesn't seem to be configured properly.")
+        throw new KafkaException("Remote storage consolidation is enabled, however Inkless doesn't seem to have " +
+          "configured fetch handler or fetch offset handler ready.")
       }
       inklessFetchHandler.zip(inklessFetchOffsetHandler).map { case (fetchHandler, fetchOffsetHandler) =>
         new ConsolidationFetcherManager(config, this, quotaManagers.follower, fetchHandler, fetchOffsetHandler, consolidationMetrics)
@@ -321,12 +322,13 @@ class ReplicaManager(val config: KafkaConfig,
   this.logIdent = s"[ReplicaManager broker=$localBrokerId] "
   protected val stateChangeLogger = new StateChangeLogger(localBrokerId)
 
-  // Defined after stateChangeLogger so the reconciler is constructed with a non-null logger.
   private val consolidationReconciler: Option[ConsolidationReconciler] =
     if (config.disklessRemoteStorageConsolidationEnabled) {
-      consolidationFetcherManager.flatMap(cfm =>
-        consolidationMetrics.map(metrics =>
-          new ConsolidationReconciler(this, stateChangeLogger, metrics, _inklessMetadataView, initialFetchOffset, cfm)))
+      if (!consolidationFetcherManager.isDefined || !consolidationMetrics.isDefined) {
+        throw new KafkaException("Remote storage consolidation is enabled, however Inkless doesn't seem to " +
+          "have configured consolidation fetch manager or metrics ready.")
+      }
+      Some(new ConsolidationReconciler(this, stateChangeLogger, consolidationMetrics.get, _inklessMetadataView, initialFetchOffset, consolidationFetcherManager.get))
     } else {
       None
     }
@@ -3106,8 +3108,8 @@ class ReplicaManager(val config: KafkaConfig,
     val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
       Option(topicImage.partitions().get(tp.partition()))
     }
-    val sealAlreadyCommittedInPreviousImage = previousPartition.exists(_.classicToDisklessStartOffset >= 0)
-    if (sealAlreadyCommittedInPreviousImage) return
+    val sealJustCommitted = previousPartition.exists(_.classicToDisklessStartOffset < 0)
+    if (!sealJustCommitted) return
 
     onlinePartition(tp).foreach { partition =>
       try {
@@ -3115,10 +3117,14 @@ class ReplicaManager(val config: KafkaConfig,
         if (log.logEndOffset > seal) {
           stateChangeLogger.info(s"Truncating switched partition $tp from LEO ${log.logEndOffset} " +
             s"to classic-to-diskless start offset $seal")
+          // Seal is the classicToDisklessStartOffset, which is the first offset after switching.
+          // Since truncateTo removes all log entries <= target offset (seal in this case) the
+          // resulting log will end at seal-1.
           partition.truncateTo(seal, isFuture = false)
         } else if (log.logEndOffset < seal && partition.isLeader) {
-          stateChangeLogger.warn(s"Leader partition $tp has LEO ${log.logEndOffset} below " +
+          stateChangeLogger.error(s"Leader partition $tp has LEO ${log.logEndOffset} below " +
             s"classic-to-diskless start offset $seal; cannot catch up from another replica")
+          markPartitionOffline(tp)
         }
       } catch {
         case e: KafkaStorageException =>
