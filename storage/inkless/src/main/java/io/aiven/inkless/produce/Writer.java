@@ -232,7 +232,6 @@ class Writer implements Closeable {
             // Rotate file before closing the uploader so the file gets into the queue first.
             rotateFile(true);
             fileCommitter.close();
-            // SharedState owns the storage backend lifecycle.
             writerMetrics.close();
         } finally {
             lock.unlock();
