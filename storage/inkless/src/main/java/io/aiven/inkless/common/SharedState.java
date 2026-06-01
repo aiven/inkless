@@ -60,9 +60,8 @@ public final class SharedState implements Closeable {
     // 2. Allow independent tuning of timeouts/retries for cold storage access patterns
     private final Optional<StorageBackend> maybeLaggingFetchStorage;
     private final StorageBackend produceStorage;
-    // backgroundStorage is shared by FileCleaner and FileMerger executors which run concurrently.
-    // Kafka storage backends are required to be thread-safe (they share the same Metrics instance).
-    // A dedicated backend instance guarantees they don't contend with hot-path fetch/produce clients.
+    // backgroundStorage is used by FileCleaner executor.
+    // A dedicated backend instance guarantees it doesn't contend with hot-path fetch/produce clients.
     private final StorageBackend backgroundStorage;
     private final ObjectKeyCreator objectKeyCreator;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
