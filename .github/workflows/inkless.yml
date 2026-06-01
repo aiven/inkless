@@ -165,7 +165,6 @@ jobs:
           ./gradlew ${GRADLE_ARGS} :storage:inkless:test :storage:inkless:integrationTest && \
           ./gradlew ${GRADLE_ARGS} :metadata:test \
             --tests "org.apache.kafka.controller.*" \
-            --tests "org.apache.kafka.controller.metrics.*" \
             --tests "org.apache.kafka.metadata.PartitionRegistrationTest" \
             --tests "org.apache.kafka.image.TopicsImageTest" && \
           ./gradlew ${GRADLE_ARGS} :core:test \
