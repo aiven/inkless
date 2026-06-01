@@ -167,7 +167,10 @@ class RemoteLeaderEndPoint(logPrefix: String,
       topic.partitions.add(epochData)
     }
 
-    val epochRequest = OffsetsForLeaderEpochRequest.Builder.forFollower(topics, brokerConfig.brokerId)
+    val epochRequest = if (isClusterMirror)
+      OffsetsForLeaderEpochRequest.Builder.forMirrorConsumer(topics)
+    else
+      OffsetsForLeaderEpochRequest.Builder.forFollower(topics, brokerConfig.brokerId)
     debug(s"Sending offset for leader epoch request $epochRequest")
 
     try {
@@ -258,7 +261,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
       Optional.of(new ReplicaFetch(fetchData.sessionPartitions(), requestBuilder))
     }
 
-    new ResultWithPartitions(fetchRequestOpt, partitionsWithError.asJava)
+    new ResultWithPartitions(fetchRequestOpt, partitionsWithError.asJava, util.Set.of())
   }
 
   /**

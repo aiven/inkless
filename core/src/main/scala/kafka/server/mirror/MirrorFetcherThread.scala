@@ -186,6 +186,10 @@ class MirrorFetcherThread(name: String,
     logAppendInfo
   }
 
+  override def leaderEpochFromSource(tp: TopicPartition): Option[Int] = {
+    replicaMgr.mirrorMetadataManager.map(mmm => mmm.resolveSourceLeader(mirrorName, tp).leaderEpoch())
+  }
+
   // return the mirror partition lag
   // TODO: Since we already record the lag in stats, maybe we don't cache the logInfo in mirrorFetcherManager anymore.
   override def getPartitionLag(topicPartition: TopicPartition, leaderHW: Long, nextOffset: Long, mirrorName: String): Long = {

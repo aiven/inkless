@@ -871,8 +871,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         ensureConnection(mirrorName);
         List<MirrorSourceSender> senders = sourceSenders.get(mirrorName);
         if (senders != null && !senders.isEmpty()) {
-            log.info("No cached leader for mirror {} partition {}. Using bootstrap server as initial target.", mirrorName, tp);
-            BrokerEndPoint ep = senders.get(0).brokerEndPoint();
+            log.info("No cached leader for mirror {} partition {}. Using one of the bootstrap server as initial target.", mirrorName, tp);
+            BrokerEndPoint ep = senders.get(random.nextInt(senders.size())).brokerEndPoint();
             // set leaderEpoch to 0 if unknown to trigger source epoch discovery through fencing
             return new ClusterMirrorUtils.LeaderInfo(new Node(ep.id(), ep.host(), ep.port()), 0);
         }
@@ -1368,9 +1368,29 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private void maybeStopDeletedTopics(String mirrorName, Collection<MetadataResponse.TopicMetadata> topicMetadata) {
-        List<String> deletedSourceTopicNames = topicMetadata.stream()
+        List<String> deletedSourceTopicNames = new ArrayList<>(topicMetadata.stream()
                 .filter(tm -> tm.error() == Errors.UNKNOWN_TOPIC_OR_PARTITION)
-                .map(MetadataResponse.TopicMetadata::topic).toList();
+                .map(MetadataResponse.TopicMetadata::topic).toList());
+
+        if (deletedSourceTopicNames.isEmpty()) {
+            return;
+        }
+
+        // In old cluster, it is possible the broker metadata update in progress, and the returned metadata response is stale.
+        // list topic again to make sure it is indeed deleted.
+        Admin srcAdmin = srcAdmins.get(mirrorName);
+        if (srcAdmin == null) {
+            log.error("Source admin client not initialized for mirror {}, skipping config sync", mirrorName);
+            return;
+        }
+        try {
+            Set<String> allTopics = srcAdmin.listTopics().names().get();
+            log.debug("Source topic name list: {}", allTopics);
+            deletedSourceTopicNames.removeAll(allTopics);
+        } catch (Exception e) {
+            log.warn("Failed to describe topic for mirror {}: {}", mirrorName, e.getMessage());
+        }
+
         getConfiguredTopics(mirrorName, true).forEach(name -> {
             if (deletedSourceTopicNames.contains(name)) {
                 log.info("Detected topic {} deleted in remote cluster {}, stopping mirror partitions", name, mirrorName);

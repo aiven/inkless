@@ -97,6 +97,11 @@ class MirrorUtils:
     """Shared helpers for Cluster Mirroring tests."""
 
     @staticmethod
+    def broker_bootstrap(node):
+        """Return bootstrap server address for a single broker node."""
+        return "%s:9092" % node.account.hostname
+
+    @staticmethod
     def produce_records(logger, kafka, topic, num_records, client_node,
                         bootstrap_servers=None):
         """Produce records on a client node using kafka-producer-perf-test."""

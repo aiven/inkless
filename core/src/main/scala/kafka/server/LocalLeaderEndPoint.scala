@@ -164,14 +164,14 @@ class LocalLeaderEndPoint(sourceBroker: BrokerEndPoint,
   override def buildFetch(partitions: util.Map[TopicPartition, PartitionFetchState]): ResultWithPartitions[util.Optional[ReplicaFetch]] = {
     // Only include replica in the fetch request if it is not throttled.
     if (quota.isQuotaExceeded) {
-      new ResultWithPartitions(util.Optional.empty(), util.Set.of())
+      new ResultWithPartitions(util.Optional.empty(), util.Set.of(), util.Set.of())
     } else {
       val selectPartition = selectPartitionToFetch(partitions)
       if (selectPartition.isPresent) {
         val (tp, fetchState) = selectPartition.get()
         buildFetchForPartition(tp, fetchState)
       } else {
-        new ResultWithPartitions(util.Optional.empty(), util.Set.of())
+        new ResultWithPartitions(util.Optional.empty(), util.Set.of(), util.Set.of())
       }
     }
   }
@@ -235,7 +235,7 @@ class LocalLeaderEndPoint(sourceBroker: BrokerEndPoint,
       Optional.of(new ReplicaFetch(requestMap, requestBuilder))
     }
 
-    new ResultWithPartitions(fetchRequestOpt, partitionsWithError.asJava)
+    new ResultWithPartitions(fetchRequestOpt, partitionsWithError.asJava, util.Set.of())
   }
 
   private def nextReadyPartition(partitions: Map[TopicPartition, PartitionFetchState]): Option[(TopicPartition, PartitionFetchState)] = {

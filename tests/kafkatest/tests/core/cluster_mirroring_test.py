@@ -123,12 +123,6 @@ class ClusterMirroringTest(MirrorUtils, Test):
         client_node.account.ssh(
             "pkill -SIGKILL -f '%s' || true" % pattern, allow_fail=True)
 
-
-    @staticmethod
-    def broker_bootstrap(node):
-        """Return bootstrap server address for a single broker node."""
-        return "%s:9092" % node.account.hostname
-
     @staticmethod
     def consume_share_records(logger, kafka, client_node, topic, group,
                               max_messages=None, timeout_ms=30000,
@@ -197,7 +191,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
         """Trigger unclean leader election on the given node."""
         cmd = "%s --bootstrap-server %s --topic %s --partition 0 --election-type UNCLEAN" % (
             source_kafka.path.script("kafka-leader-election.sh", client_node),
-            ClusterMirroringTest.broker_bootstrap(node), topic)
+            MirrorUtils.broker_bootstrap(node), topic)
         try:
             client_node.account.ssh(cmd, allow_fail=False)
             return True
@@ -808,7 +802,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
 
         self.logger.info("Send 1 message via source broker 0")
         MirrorUtils.produce_records(self.logger, self.source_kafka, topic, 1, self.client_node,
-                             bootstrap_servers=ClusterMirroringTest.broker_bootstrap(src_broker0))
+                             bootstrap_servers=MirrorUtils.broker_bootstrap(src_broker0))
 
         self.logger.info("Start cluster mirror on destination")
         mirror_cfg = MirrorConfig(self.source_kafka.bootstrap_servers())
@@ -835,7 +829,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
 
         self.logger.info("Send 1 message via source broker 1")
         MirrorUtils.produce_records(self.logger, self.source_kafka, topic, 1, self.client_node,
-                             bootstrap_servers=ClusterMirroringTest.broker_bootstrap(src_broker1))
+                             bootstrap_servers=MirrorUtils.broker_bootstrap(src_broker1))
         MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest_kafka, self.client_node, mirror_name, [topic],
                                   err_msg="Mirror did not catch up after broker 0 stopped")
         ClusterMirroringTest.log_hashes(
@@ -853,7 +847,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
 
         self.logger.info("Send 2 messages via source broker 0")
         MirrorUtils.produce_records(self.logger, self.source_kafka, topic, 2, self.client_node,
-                             bootstrap_servers=ClusterMirroringTest.broker_bootstrap(src_broker0))
+                             bootstrap_servers=MirrorUtils.broker_bootstrap(src_broker0))
         MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest_kafka, self.client_node, mirror_name, [topic],
                                   err_msg="Mirror did not catch up after ULE 1")
         ClusterMirroringTest.log_hashes(
@@ -880,7 +874,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
 
         self.logger.info("Send 6 messages via source broker 1")
         MirrorUtils.produce_records(self.logger, self.source_kafka, topic, 6, self.client_node,
-                             bootstrap_servers=ClusterMirroringTest.broker_bootstrap(src_broker1))
+                             bootstrap_servers=MirrorUtils.broker_bootstrap(src_broker1))
         ClusterMirroringTest.log_hashes(
             self.logger, self.source_kafka, self.dest_kafka, topic,
             "After ULE 2 (broker 1 should have the most up to date data)")
