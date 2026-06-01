@@ -52,7 +52,6 @@ import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 
@@ -121,7 +120,7 @@ public class Reader implements AutoCloseable {
         BrokerTopicStats brokerTopicStats,
         int fetchMetadataThreadPoolSize,
         int fetchDataThreadPoolSize,
-        Optional<StorageBackend> maybeLaggingFetchStorage,
+        Optional<? extends ObjectFetcher> maybeLaggingFetchStorage,
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
         int laggingConsumerThreadPoolSize,
