@@ -71,6 +71,7 @@ import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -1116,6 +1117,72 @@ public class ReaderTest {
                 // Verify rate limit wait time metrics were NOT recorded (hot path bypasses rate limiting)
                 verify(fetchMetrics, never()).recordRateLimitWaitTime(anyLong());
             }
+        }
+    }
+
+    @Nested
+    class ConstructorValidation {
+        @Test
+        void poolSizeZeroWithEmptyStorageDisablesLaggingConsumer() throws Exception {
+            final Reader reader = new Reader(
+                time,
+                OBJECT_KEY_CREATOR,
+                KEY_ALIGNMENT_STRATEGY,
+                OBJECT_CACHE,
+                controlPlane,
+                objectFetcher,
+                mock(BrokerTopicStats.class),
+                1, // fetchMetadataThreadPoolSize
+                1, // fetchDataThreadPoolSize
+                Optional.empty(),
+                60_000L, // laggingConsumerThresholdMs
+                0, // laggingConsumerRequestRateLimit
+                0, // laggingConsumerThreadPoolSize — feature disabled
+                10 // maxBatchesPerPartitionToFind
+            );
+            reader.close();
+        }
+
+        @Test
+        void poolSizePositiveWithStoragePresentEnablesLaggingConsumer() throws Exception {
+            final Reader reader = new Reader(
+                time,
+                OBJECT_KEY_CREATOR,
+                KEY_ALIGNMENT_STRATEGY,
+                OBJECT_CACHE,
+                controlPlane,
+                objectFetcher,
+                mock(BrokerTopicStats.class),
+                1, // fetchMetadataThreadPoolSize
+                1, // fetchDataThreadPoolSize
+                Optional.of(mock(StorageBackend.class)),
+                60_000L, // laggingConsumerThresholdMs
+                0, // laggingConsumerRequestRateLimit
+                4, // laggingConsumerThreadPoolSize — feature enabled
+                10 // maxBatchesPerPartitionToFind
+            );
+            reader.close();
+        }
+
+        @Test
+        void poolSizePositiveWithEmptyStorageThrows() {
+            assertThatThrownBy(() -> new Reader(
+                time,
+                OBJECT_KEY_CREATOR,
+                KEY_ALIGNMENT_STRATEGY,
+                OBJECT_CACHE,
+                controlPlane,
+                objectFetcher,
+                mock(BrokerTopicStats.class),
+                1, // fetchMetadataThreadPoolSize
+                1, // fetchDataThreadPoolSize
+                Optional.empty(), // no storage provided
+                60_000L, // laggingConsumerThresholdMs
+                0, // laggingConsumerRequestRateLimit
+                4, // laggingConsumerThreadPoolSize — feature enabled but no storage
+                10 // maxBatchesPerPartitionToFind
+            )).isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("no lagging fetch storage was provided");
         }
     }
 }

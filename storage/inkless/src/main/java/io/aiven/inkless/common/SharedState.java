@@ -31,6 +31,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 import io.aiven.inkless.cache.BatchCoordinateCache;
@@ -43,6 +44,7 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 public final class SharedState implements Closeable {
@@ -53,6 +55,15 @@ public final class SharedState implements Closeable {
     private final InklessConfig config;
     private final MetadataView metadata;
     private final ControlPlane controlPlane;
+    private final StorageBackend fetchStorage;
+    // Separate storage client for lagging consumers to:
+    // 1. Isolate connection pool usage (lagging consumers shouldn't exhaust connections for hot path)
+    // 2. Allow independent tuning of timeouts/retries for cold storage access patterns
+    private final Optional<ObjectFetcher> maybeLaggingFetchStorage;
+    private final StorageBackend produceStorage;
+    // backgroundStorage is used by FileCleaner executor.
+    // A dedicated backend instance guarantees it doesn't contend with hot-path fetch/produce clients.
+    private final StorageBackend backgroundStorage;
     private final ObjectKeyCreator objectKeyCreator;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache cache;
@@ -61,12 +72,17 @@ public final class SharedState implements Closeable {
     private final Supplier<LogConfig> defaultTopicConfigs;
     private final Metrics storageMetrics;
 
-    public SharedState(
+    private SharedState(
         final Time time,
         final int brokerId,
         final InklessConfig config,
         final MetadataView metadata,
         final ControlPlane controlPlane,
+        final StorageBackend fetchStorage,
+        final Optional<ObjectFetcher> maybeLaggingFetchStorage,
+        final StorageBackend produceStorage,
+        final StorageBackend backgroundStorage,
+        final Metrics storageMetrics,
         final ObjectKeyCreator objectKeyCreator,
         final KeyAlignmentStrategy keyAlignmentStrategy,
         final ObjectCache cache,
@@ -79,18 +95,17 @@ public final class SharedState implements Closeable {
         this.config = config;
         this.metadata = metadata;
         this.controlPlane = controlPlane;
+        this.fetchStorage = fetchStorage;
+        this.maybeLaggingFetchStorage = maybeLaggingFetchStorage;
+        this.produceStorage = produceStorage;
+        this.backgroundStorage = backgroundStorage;
+        this.storageMetrics = storageMetrics;
         this.objectKeyCreator = objectKeyCreator;
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.cache = cache;
         this.batchCoordinateCache = batchCoordinateCache;
         this.brokerTopicStats = brokerTopicStats;
         this.defaultTopicConfigs = defaultTopicConfigs;
-
-        final MetricsReporter reporter = new JmxReporter();
-        this.storageMetrics = new Metrics(
-            new MetricConfig(), List.of(reporter), Time.SYSTEM,
-            new KafkaMetricsContext(STORAGE_METRIC_CONTEXT)
-        );
     }
 
     public static SharedState initialize(
@@ -108,33 +123,77 @@ public final class SharedState implements Closeable {
                 "Value of consume.batch.coordinate.cache.ttl.ms exceeds file.cleaner.retention.period.ms / 2"
             );
         }
-        return new SharedState(
-            time,
-            brokerId,
-            config,
-            metadata,
-            controlPlane,
-            ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
-            new FixedBlockAlignment(config.fetchCacheBlockBytes()),
-            new CaffeineCache(
+
+        CaffeineCache objectCache = null;
+        BatchCoordinateCache batchCoordinateCache = null;
+        StorageBackend fetchStorage = null;
+        StorageBackend laggingFetchStorage = null;
+        StorageBackend produceStorage = null;
+        StorageBackend backgroundStorage = null;
+        Metrics storageMetrics = null;
+        try {
+            objectCache = new CaffeineCache(
                 config.cacheMaxCount(),
                 config.cacheMaxBytes(),
                 config.cacheExpirationLifespanSec(),
                 config.cacheExpirationMaxIdleSec()
-            ),
-            config.isBatchCoordinateCacheEnabled() ? new CaffeineBatchCoordinateCache(config.batchCoordinateCacheTtl()) : new NullBatchCoordinateCache(),
-            brokerTopicStats,
-            defaultTopicConfigs
-        );
+            );
+            batchCoordinateCache = config.isBatchCoordinateCacheEnabled()
+                ? new CaffeineBatchCoordinateCache(config.batchCoordinateCacheTtl())
+                : new NullBatchCoordinateCache();
+
+            final MetricsReporter reporter = new JmxReporter();
+            storageMetrics = new Metrics(
+                new MetricConfig(), List.of(reporter), Time.SYSTEM,
+                new KafkaMetricsContext(STORAGE_METRIC_CONTEXT)
+            );
+            fetchStorage = config.storage(storageMetrics);
+            // If thread pool size is 0, lagging consumer support is disabled — don't create a separate client.
+            // Enabling lagging consumer support requires a broker restart so that a new storage client can be created.
+            laggingFetchStorage = config.fetchLaggingConsumerThreadPoolSize() > 0 ? config.storage(storageMetrics) : null;
+            produceStorage = config.storage(storageMetrics);
+            backgroundStorage = config.storage(storageMetrics);
+            final var objectKeyCreator = ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked());
+            final var keyAlignmentStrategy = new FixedBlockAlignment(config.fetchCacheBlockBytes());
+            return new SharedState(
+                time,
+                brokerId,
+                config,
+                metadata,
+                controlPlane,
+                fetchStorage,
+                Optional.<ObjectFetcher>ofNullable(laggingFetchStorage),
+                produceStorage,
+                backgroundStorage,
+                storageMetrics,
+                objectKeyCreator,
+                keyAlignmentStrategy,
+                objectCache,
+                batchCoordinateCache,
+                brokerTopicStats,
+                defaultTopicConfigs
+            );
+        } catch (Exception e) {
+            Utils.closeQuietly(backgroundStorage, "backgroundStorage");
+            Utils.closeQuietly(produceStorage, "produceStorage");
+            Utils.closeQuietly(laggingFetchStorage, "laggingFetchStorage");
+            Utils.closeQuietly(fetchStorage, "fetchStorage");
+            Utils.closeQuietly(storageMetrics, "storageMetrics");
+            Utils.closeQuietly(batchCoordinateCache, "batchCoordinateCache");
+            Utils.closeQuietly(objectCache, "objectCache");
+            throw new RuntimeException("Failed to initialize SharedState", e);
+        }
     }
 
     @Override
     public void close() throws IOException {
-        try {
-            Utils.closeAll(cache, controlPlane, storageMetrics);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        Utils.closeQuietly(backgroundStorage, "backgroundStorage");
+        Utils.closeQuietly(produceStorage, "produceStorage");
+        maybeLaggingFetchStorage.ifPresent(s -> Utils.closeQuietly(s, "laggingFetchStorage"));
+        Utils.closeQuietly(fetchStorage, "fetchStorage");
+        Utils.closeQuietly(storageMetrics, "storageMetrics");
+        Utils.closeQuietly(batchCoordinateCache, "batchCoordinateCache");
+        Utils.closeQuietly(cache, "objectCache");
     }
 
     public Time time() {
@@ -185,7 +244,25 @@ public final class SharedState implements Closeable {
         return defaultTopicConfigs;
     }
 
-    public StorageBackend buildStorage() {
-        return config.storage(storageMetrics);
+    public StorageBackend fetchStorage() {
+        return fetchStorage;
+    }
+
+    /**
+     * Optional access to the lagging fetch storage backend.
+     *
+     * <p>When {@code fetch.lagging.consumer.thread.pool.size == 0}, the lagging consumer
+     * path is disabled and this storage backend is not created.</p>
+     */
+    public Optional<ObjectFetcher> maybeLaggingFetchStorage() {
+        return maybeLaggingFetchStorage;
+    }
+
+    public StorageBackend produceStorage() {
+        return produceStorage;
+    }
+
+    public StorageBackend backgroundStorage() {
+        return backgroundStorage;
     }
 }
