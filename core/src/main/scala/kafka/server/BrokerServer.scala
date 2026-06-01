@@ -166,6 +166,7 @@ class BrokerServer(
 
   var persister: Persister = _
 
+  private var maybeInklessSharedState: Option[SharedState] = None
   private var maybeInitDisklessLogManager: Option[InitDisklessLogManager] = None
   private var initDisklessLogChannelManager: NodeToControllerChannelManager = _
 
@@ -344,7 +345,7 @@ class BrokerServer(
       val defaultActionQueue = new DelayedActionQueue
 
       val inklessMetadataView = new InklessMetadataView(metadataCache, () => config.extractLogConfigMap)
-      val inklessSharedState = sharedServer.inklessControlPlane.map { controlPlane =>
+      maybeInklessSharedState = sharedServer.inklessControlPlane.map { controlPlane =>
         SharedState.initialize(
           time,
           config.brokerId,
@@ -355,6 +356,7 @@ class BrokerServer(
           () => logManager.currentDefaultConfig
         )
       }
+      val inklessSharedState = maybeInklessSharedState
 
       initDisklessLogChannelManager = new NodeToControllerChannelManagerImpl(
         controllerNodeProvider,
@@ -879,6 +881,12 @@ class BrokerServer(
 
       if (replicaManager != null)
         CoreUtils.swallow(replicaManager.shutdown(), this)
+
+      // Close SharedState if ReplicaManager was never created (e.g., startup failed between
+      // SharedState.initialize() and ReplicaManager construction). When ReplicaManager exists,
+      // it already closes SharedState during its own shutdown.
+      if (replicaManager == null)
+        maybeInklessSharedState.foreach(s => CoreUtils.swallow(s.close(), this))
 
       maybeInitDisklessLogManager.foreach(m => CoreUtils.swallow(m.shutdown(), this))
 
