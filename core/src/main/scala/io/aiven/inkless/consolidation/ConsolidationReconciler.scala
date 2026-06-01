@@ -30,6 +30,13 @@ import org.apache.kafka.storage.internals.log.UnifiedLog
 import scala.collection.{Set, mutable}
 import scala.jdk.OptionConverters.RichOptional
 
+/**
+ * Outcome of per-partition reconciliation before consolidation can start.
+ *  - Ready: the partition is safe to hand to the consolidation fetcher at the given offset.
+ *  - Retry: the partition cannot consolidate yet (e.g., pending seal, LEO below seal) — skip
+ *    this round; a later metadata delta or classic-fetcher catch-up will re-trigger.
+ *  - Failed: an unrecoverable error; mark the partition as failed in the fetcher manager.
+ */
 private sealed trait ConsolidationStartState
 private object ConsolidationStartState {
   final case class Ready(offset: Long) extends ConsolidationStartState
@@ -46,11 +53,18 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
                               initialFetchOffset: UnifiedLog => Long,
                               consolidationFetcherManager: ConsolidationFetcherManager) {
 
-  def startConsolidationFetchers(consolidatingDisklessPartitionsToStartFetching: mutable.HashMap[TopicPartition, Partition]
-                                        ): Unit = {
-    if (consolidatingDisklessPartitionsToStartFetching.nonEmpty) {
+  /**
+   * Starts the consolidation fetchers for the given partitions in the parameter. These partitions
+   * must be ready for consolidation in order to be started (meaning LEO == seal offset).
+   * If a partition wasn't ready for consolidation because of some error or the LEO for the given
+   * partition was behind the seal offset, then it will be logged and won't be started.
+   *
+   * @param consolidatingPartitions the consolidating partitions to start fetching.
+   */
+  def startConsolidationFetchers(consolidatingPartitions: mutable.HashMap[TopicPartition, Partition]): Unit = {
+    if (consolidatingPartitions.nonEmpty) {
       val consolidatingPartitionAndOffsets: mutable.HashMap[TopicPartition, InitialFetchState] =
-        initConsolidatingPartitionFetching(consolidatingDisklessPartitionsToStartFetching)
+        initConsolidatingPartitionFetching(consolidatingPartitions)
 
       consolidationFetcherManager.addFetcherForPartitions(consolidatingPartitionAndOffsets)
       consolidatingPartitionAndOffsets.keys.foreach(tp => consolidationMetrics.registerPartition(tp))

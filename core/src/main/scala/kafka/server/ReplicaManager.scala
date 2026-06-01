@@ -3106,8 +3106,8 @@ class ReplicaManager(val config: KafkaConfig,
     val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
       Option(topicImage.partitions().get(tp.partition()))
     }
-    val sealJustCommitted = previousPartition.exists(_.classicToDisklessStartOffset < 0)
-    if (!sealJustCommitted) return
+    val sealAlreadyCommittedInPreviousImage = previousPartition.exists(_.classicToDisklessStartOffset >= 0)
+    if (sealAlreadyCommittedInPreviousImage) return
 
     onlinePartition(tp).foreach { partition =>
       try {
@@ -3145,7 +3145,7 @@ class ReplicaManager(val config: KafkaConfig,
    *    the classic fetcher, which self-evicts and hands off to consolidation at the seal.
    * Non-consolidating topics are never routed to the consolidation fetcher.
    */
-  private def isConsolidatingFollowerReadyForConsolidation(tp: TopicPartition, partition: Partition): Boolean = {
+  private def isReadyForConsolidation(tp: TopicPartition, partition: Partition): Boolean = {
     if (!_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)) return false
     _inklessMetadataView.getClassicToDisklessStartOffset(tp) match {
       case PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET => true
@@ -3470,7 +3470,7 @@ class ReplicaManager(val config: KafkaConfig,
       // Routing a below-seal/pending partition straight to the reconciler would strand it: the
       // reconciler returns Retry and no classic fetcher would ever bring it up to the seal.
       val (consolidatingDisklessPartitionsToStartFetching, classicPartitionsToStartFetching) = partitionsToStartFetching.partition { case (tp, partition) =>
-        isConsolidatingFollowerReadyForConsolidation(tp, partition)
+        isReadyForConsolidation(tp, partition)
       }
       replicaFetcherManager.removeFetcherForPartitions(classicPartitionsToStartFetching.keySet)
       consolidationFetcherManager.foreach(_.removeFetcherForPartitions(consolidatingDisklessPartitionsToStartFetching.keySet))
