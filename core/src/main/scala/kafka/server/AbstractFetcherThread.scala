@@ -244,8 +244,9 @@ abstract class AbstractFetcherThread(name: String,
    * the latest offset for each partition's leader epoch that they should truncate to,
    * then perform the truncation and mark the truncation complete under lock.
    *
-   * for mirror threads the currentLeaderEpoch provided might be a fenced leader epoch, which means the source leadership
-   * changed in-flight and the partition will retry on the next doWork cycle.
+   * For mirror threads the currentLeaderEpoch provided might be a fenced leader epoch,
+   * which means the source leadership changed in-flight and the partition will retry
+   * on the next doWork cycle.
    */
   private def truncateToEpochEndOffsets(latestEpochsForPartitions: Map[TopicPartition, EpochData]): Unit = {
     val endOffsets = leader.fetchEpochEndOffsets(latestEpochsForPartitions.asJava)
@@ -273,7 +274,7 @@ abstract class AbstractFetcherThread(name: String,
     // We will need to acquire both MirrorFetcherThread lock and partitionMapLock when removing fetchers, which might cause potential deadlock
     // if we keep the partitionMapLock here.
     if (!partitionsNeedsRefreshMetadata.isEmpty) {
-      info(s"refreshing source metadata for mirror name $mirrorName with partitions: $partitionsNeedsRefreshMetadata")
+      info(s"Refreshing source metadata for mirror name $mirrorName with partitions: $partitionsNeedsRefreshMetadata")
       removeFetcherForPartitions(partitionsNeedsRefreshMetadata.asScala)
       refreshSourceClusterMetadata(partitionsNeedsRefreshMetadata.asScala)
     }
