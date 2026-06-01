@@ -44,6 +44,7 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 public final class SharedState implements Closeable {
@@ -58,7 +59,7 @@ public final class SharedState implements Closeable {
     // Separate storage client for lagging consumers to:
     // 1. Isolate connection pool usage (lagging consumers shouldn't exhaust connections for hot path)
     // 2. Allow independent tuning of timeouts/retries for cold storage access patterns
-    private final Optional<StorageBackend> maybeLaggingFetchStorage;
+    private final Optional<ObjectFetcher> maybeLaggingFetchStorage;
     private final StorageBackend produceStorage;
     // backgroundStorage is used by FileCleaner executor.
     // A dedicated backend instance guarantees it doesn't contend with hot-path fetch/produce clients.
@@ -78,7 +79,7 @@ public final class SharedState implements Closeable {
         final MetadataView metadata,
         final ControlPlane controlPlane,
         final StorageBackend fetchStorage,
-        final Optional<StorageBackend> maybeLaggingFetchStorage,
+        final Optional<ObjectFetcher> maybeLaggingFetchStorage,
         final StorageBackend produceStorage,
         final StorageBackend backgroundStorage,
         final Metrics storageMetrics,
@@ -161,7 +162,7 @@ public final class SharedState implements Closeable {
                 metadata,
                 controlPlane,
                 fetchStorage,
-                Optional.ofNullable(laggingFetchStorage),
+                Optional.<ObjectFetcher>ofNullable(laggingFetchStorage),
                 produceStorage,
                 backgroundStorage,
                 storageMetrics,
@@ -253,7 +254,7 @@ public final class SharedState implements Closeable {
      * <p>When {@code fetch.lagging.consumer.thread.pool.size == 0}, the lagging consumer
      * path is disabled and this storage backend is not created.</p>
      */
-    public Optional<StorageBackend> maybeLaggingFetchStorage() {
+    public Optional<ObjectFetcher> maybeLaggingFetchStorage() {
         return maybeLaggingFetchStorage;
     }
 

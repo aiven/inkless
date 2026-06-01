@@ -120,7 +120,7 @@ public class Reader implements AutoCloseable {
         BrokerTopicStats brokerTopicStats,
         int fetchMetadataThreadPoolSize,
         int fetchDataThreadPoolSize,
-        Optional<? extends ObjectFetcher> maybeLaggingFetchStorage,
+        Optional<ObjectFetcher> maybeLaggingFetchStorage,
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
         int laggingConsumerThreadPoolSize,
