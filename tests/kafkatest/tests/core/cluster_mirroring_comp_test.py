@@ -76,6 +76,7 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
             self.zk.stop()
 
     def setup_source(self, source_version, metadata_quorum):
+        # Separate client node with matching CLI version for the older source cluster.
         self.source_client = ClientService(self.test_context, version=source_version)
         self.source_client.start()
         self.source_client_node = self.source_client.nodes[0]
@@ -99,6 +100,7 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
         self.source_kafka.start()
 
     def setup_dest(self):
+        # Separate client node with DEV_BRANCH CLI for the destination cluster.
         self.dest_client = ClientService(self.test_context)
         self.dest_client.start()
         self.dest_client_node = self.dest_client.nodes[0]
@@ -146,10 +148,10 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
 
         self.logger.info("Producing %d records to each source topic", num_records)
         for t in topics:
-            self.produce_records(self.source_kafka, t, num_records, self.source_client_node)
+            MirrorUtils.produce_records(self.logger, self.source_kafka, t, num_records, self.source_client_node)
 
         self.logger.info("Creating consumer group on source by consuming my-topic-a")
-        self.consume_records(self.source_kafka, "my-topic-a", self.source_client_node,
+        MirrorUtils.consume_records(self.logger, self.source_kafka, "my-topic-a", self.source_client_node,
                              max_messages=num_records, group="my-group")
 
         self.logger.info("Setting dynamic topic config on source")
@@ -173,25 +175,24 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
                 err_msg="Failed to start mirror topics for %s" % regex,
             )
         self.logger.info("Waiting for all partitions to reach MIRRORING with zero lag")
-        self.wait_mirror_lag_zero(
-            self.dest_kafka, mirror_name, topics=list(topics.keys()))
+        MirrorUtils.wait_mirror_lag_zero(self.logger,
+            self.dest_kafka, self.dest_client_node, mirror_name, topics=list(topics.keys()))
 
-        self.logger.info("Shutting down the leader of one topic, and send more records and make sure the mirror can still work.")
+        self.logger.info("Shutting down the leader of one topic, and send more records to make sure the mirror can still work.")
         leader_node = self.source_kafka.leader("my-topic-b", 0)
         self.source_kafka.stop_node(leader_node, clean_shutdown=False)
 
         self.logger.info("Producing %d more records to each source topic", num_records)
         for t in topics:
-            self.produce_records(self.source_kafka, t, num_records, self.source_client_node)
+            MirrorUtils.produce_records(self.logger, self.source_kafka, t, num_records, self.source_client_node)
 
         self.logger.info("Waiting for all partitions to reach MIRRORING with zero lag after one source node down")
-        self.wait_mirror_lag_zero(
-            self.dest_kafka, mirror_name, topics=list(topics.keys()))
+        MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest_kafka, self.dest_client_node, mirror_name, topics=list(topics.keys()))
 
         self.logger.info("Verifying consumer group offset sync")
-        self.wait_for_metadata_sync(self.dest_kafka, mirror_name, num_cycles=2)
+        MirrorUtils.wait_for_metadata_sync(self.logger, self.dest_kafka, self.dest_client_node, mirror_name, num_cycles=2)
         wait_until(
-            lambda: "my-topic-a" in self.describe_consumer_group(
+            lambda: "my-topic-a" in MirrorUtils.describe_consumer_group(
                 self.dest_kafka, "my-group", self.dest_client_node),
             timeout_sec=60, backoff_sec=5,
             err_msg="Expected my-topic-a offset to be synced on destination",
@@ -206,12 +207,12 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
         for regex in ["my-topic.*", "new-topic"]:
             self.dest_kafka.stop_cluster_mirror_topics(
                 self.dest_client_node, mirror_name, regex)
-        self.wait_mirror_state(
-            self.dest_kafka, mirror_name, "STOPPED",
+        MirrorUtils.wait_mirror_state(self.logger,
+            self.dest_kafka, self.dest_client_node, mirror_name, "STOPPED",
             topics=list(topics.keys()))
 
         self.logger.info("Verifying destination records after failover")
         for topic in topics:
-            count = self.consume_records(self.dest_kafka, topic, self.dest_client_node,
+            count = MirrorUtils.consume_records(self.logger, self.dest_kafka, topic, self.dest_client_node,
                                          max_messages=num_records, expected_count=num_records)
             assert count >= num_records, "Expected %d records on %s, got %d" % (num_records, topic, count)

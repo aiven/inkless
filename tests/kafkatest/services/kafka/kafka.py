@@ -2185,8 +2185,7 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         return self.run_cli_tool(node, cmd)
 
     def parse_describe_cluster_mirror(self, cluster_mirror_description):
-        """Parse output of kafka-cluster-mirrors.sh --describe (or describe_cluster_mirror() method above), which is a string of form
-        """
+        """Parse output of kafka-cluster-mirrors.sh --describe"""
         parsed = json.loads(cluster_mirror_description)
         mirrors = {}
         for item in parsed:

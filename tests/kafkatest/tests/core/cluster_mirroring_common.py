@@ -41,6 +41,7 @@ class ClientService(KafkaPathResolverMixin, Service):
         pass
 
     def stop_node(self, node):
+        # kill any hanging or backgroung client
         node.account.ssh("pkill -SIGKILL -f 'kafka\\.tools\\.' || true", allow_fail=True)
 
     def clean_node(self, node):
@@ -93,9 +94,10 @@ class MirrorConfig:
 
 
 class MirrorUtils:
-    """Shared helpers for cluster mirroring tests."""
+    """Shared helpers for Cluster Mirroring tests."""
 
-    def produce_records(self, kafka, topic, num_records, client_node,
+    @staticmethod
+    def produce_records(logger, kafka, topic, num_records, client_node,
                         bootstrap_servers=None):
         """Produce records on a client node using kafka-producer-perf-test."""
         if bootstrap_servers is None:
@@ -111,9 +113,10 @@ class MirrorUtils:
         output = ""
         for line in client_node.account.ssh_capture(cmd, allow_fail=True):
             output += line
-        self.logger.debug("Producer output for %s:\n%s", topic, output.strip())
+        logger.debug("Producer output for %s:\n%s", topic, output.strip())
 
-    def consume_records(self, kafka, topic, client_node, max_messages=None,
+    @staticmethod
+    def consume_records(logger, kafka, topic, client_node, max_messages=None,
                         timeout_ms=30000, isolation_level=None, group=None,
                         from_beginning=True, expected_count=None,
                         wait_timeout_sec=240):
@@ -140,8 +143,8 @@ class MirrorUtils:
             for line in client_node.account.ssh_capture(cmd, allow_fail=True):
                 if line.strip():
                     count[0] += 1
-            self.logger.info("Consumed %d records from %s so far (expected %s)",
-                             count[0], topic, expected_count)
+            logger.info("Consumed %d records from %s so far (expected %s)",
+                        count[0], topic, expected_count)
             return expected_count is None or count[0] >= expected_count
 
         # When expected_count is set, retry consumption because the high watermark on
@@ -156,9 +159,10 @@ class MirrorUtils:
             try_consume()
         return count[0]
 
-    def all_satisfy_in_mirror(self, kafka, mirror_name, per_partition_condition, topics):
+    @staticmethod
+    def all_satisfy_in_mirror(logger, kafka, client_node, mirror_name, per_partition_condition, topics):
         """Check that all partitions of the given mirror topics satisfy the condition."""
-        output = kafka.describe_cluster_mirror(kafka.nodes[0])
+        output = kafka.describe_cluster_mirror(client_node)
         if output == "":
             return False
 
@@ -166,6 +170,8 @@ class MirrorUtils:
             mirrors = kafka.parse_describe_cluster_mirror(output)
         except (json.JSONDecodeError, KeyError):
             return False
+
+        logger.debug("describe_cluster_mirror: %s", mirrors)
         if mirror_name not in mirrors:
             return False
         mirror = mirrors[mirror_name]
@@ -179,44 +185,44 @@ class MirrorUtils:
                     return False
         return True
 
-    def wait_mirror_state(self, kafka, mirror_name, state, topics,
-                          err_msg=None):
+    @staticmethod
+    def wait_mirror_state(logger, kafka, client_node, mirror_name, state,
+                          topics, err_msg=None):
         """Wait until all mirror partitions reach the given state."""
         def check():
-            self.logger.debug("describe_cluster_mirror: %s",
-                              kafka.describe_cluster_mirror(kafka.nodes[0]))
-            return self.all_satisfy_in_mirror(
-                kafka, mirror_name,
+            return MirrorUtils.all_satisfy_in_mirror(logger,
+                kafka, client_node, mirror_name,
                 lambda p: p["state"] == state, topics)
         if err_msg is None:
             err_msg = "Mirror did not reach %s state" % state
         wait_until(check, timeout_sec=300, backoff_sec=2, err_msg=err_msg)
 
-    def wait_for_metadata_sync(self, kafka, mirror_name, num_cycles=1):
+    @staticmethod
+    def wait_for_metadata_sync(logger, kafka, client_node, mirror_name, num_cycles=1):
         """Wait for metadata sync by sleeping based on the configured refresh interval."""
-        output = kafka.describe_mirror_config(kafka.nodes[0], mirror_name)
+        output = kafka.describe_mirror_config(client_node, mirror_name)
         interval_ms = 30000
         for line in output.splitlines():
             if "mirror.metadata.refresh.interval.ms=" in line:
                 interval_ms = int(line.strip().split()[0].split("=")[1])
                 break
         sleep_s = (interval_ms // 1000) * num_cycles + 2
-        self.logger.info("Waiting %ds for %d metadata sync cycle(s) (interval=%dms)",
-                         sleep_s, num_cycles, interval_ms)
+        logger.info("Waiting %ds for %d metadata sync cycle(s) (interval=%dms)",
+                    sleep_s, num_cycles, interval_ms)
         time.sleep(sleep_s)
 
-    def wait_mirror_lag_zero(self, kafka, mirror_name, topics,
-                             err_msg="Mirror did not catch up"):
+    @staticmethod
+    def wait_mirror_lag_zero(logger, kafka, client_node, mirror_name,
+                             topics, err_msg="Mirror did not catch up"):
         """Wait until all mirror partitions reach MIRRORING state with zero lag."""
         def check():
-            self.logger.debug("describe_cluster_mirror: %s",
-                              kafka.describe_cluster_mirror(kafka.nodes[0]))
-            return self.all_satisfy_in_mirror(
-                kafka, mirror_name,
+            return MirrorUtils.all_satisfy_in_mirror(logger,
+                kafka, client_node, mirror_name,
                 lambda p: p["lag"] == 0 and p["state"] == "MIRRORING", topics)
         wait_until(check, timeout_sec=300, backoff_sec=5, err_msg=err_msg)
 
-    def describe_consumer_group(self, kafka, group, client_node):
+    @staticmethod
+    def describe_consumer_group(kafka, group, client_node):
         """Describe a consumer group on a client node with security support."""
         env_prefix, cmd_suffix = kafka._cmd_security_opts(client_node)
         cmd = "%s%s --bootstrap-server %s --group %s --describe%s" % (
@@ -231,7 +237,8 @@ class MirrorUtils:
                 output += line
         return output
 
-    def wait_for_log_convergence(self, source_kafka, dest_kafka, topics):
+    @staticmethod
+    def wait_for_log_convergence(logger, source_kafka, dest_kafka, topics):
         """Poll until source leader and all dest replica log segment hashes match."""
         def log_segment_hashes(node, topic, partition):
             cmd = "md5sum %s*/%s-%d/*.log 2>/dev/null" % (
@@ -253,8 +260,8 @@ class MirrorUtils:
                         if source.keys() != dest.keys() or any(
                                 source[seg] != dest[seg] for seg in source):
                             return False
-                        self.logger.info("Hashes match for %s-%d dest %s: %d segments verified",
-                                         topic, partition, node.name, len(source))
+                        logger.info("Hashes match for %s-%d dest %s: %d segments verified",
+                                    topic, partition, node.name, len(source))
             return True
 
         wait_until(
