@@ -4973,7 +4973,8 @@ class ReplicaManagerInklessTest {
     disklessRemoteStorageConsolidationEnabled: Boolean = false,
     consolidatingDisklessTopics: Set[String] = Set.empty,
     mockReplicaFetcherManager: Option[ReplicaFetcherManager] = None,
-    inklessSharedStateEnabled: Boolean = true
+    inklessSharedStateEnabled: Boolean = true,
+    initDisklessLogManager: Option[InitDisklessLogManager] = None
   ): ReplicaManager = {
     val props = TestUtils.createBrokerConfig(1, logDirCount = 2)
     if (disklessManagedReplicasEnabled || disklessRemoteStorageConsolidationEnabled) {
@@ -5019,6 +5020,7 @@ class ReplicaManagerInklessTest {
       alterPartitionManager = alterPartitionManager,
       inklessSharedState = if (inklessSharedStateEnabled) Some(sharedState) else None,
       inklessMetadataView = Some(inklessMetadata),
+      initDisklessLogManager = initDisklessLogManager,
     ) {
       override protected def createReplicaFetcherManager(
         metrics: Metrics,
@@ -5431,12 +5433,12 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
-  def testApplyDeltaDoesNotTruncateOrFailLeaderWithLocalLogBelowCommittedSeal(): Unit = {
-    // Defensive leader-below-seal branch of maybeTruncateNewlySwitchedPartition: the switch is
-    // committed (PENDING -> seal) while this broker is the leader, but the local log ends below
-    // the seal. A leader cannot catch up from another replica, so the code must only warn --
-    // it must neither truncate (there is nothing past the seal to drop) nor mark the partition
-    // offline.
+  def testApplyDeltaFencesLeaderWithLocalLogBelowCommittedSeal(): Unit = {
+    // Corruption-detection branch of maybeTruncateNewlySwitchedPartition: the switch is committed
+    // (PENDING -> seal) while this broker is the leader, but the local log ends below the seal.
+    // This is unreachable in normal operation (unclean leader election is not supported by the
+    // diskless switch). Reaching here therefore means the leader's classic prefix has a hole in
+    // (LEO, seal), i.e. local log corruption, so the partition must be fenced offline.
     val topicName = "switched-topic"
     val topicId = Uuid.randomUuid()
     val tp = new TopicPartition(topicName, 0)
@@ -5448,12 +5450,15 @@ class ReplicaManagerInklessTest {
     val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
     when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
 
-    // disklessManagedReplicasEnabled is required so the active classic-to-diskless switch branch
-    // (which needs InitDisklessLogManager) runs for the leader instead of bailing out early.
+    // disklessManagedReplicasEnabled and a present InitDisklessLogManager are both required so the
+    // active classic-to-diskless switch branch runs for the leader (it bails out early otherwise),
+    // letting the seal-commit delta reach maybeTruncateNewlySwitchedPartition. The seal is committed
+    // (>= 0, not PENDING), so the manager is never actually invoked here and a mock suffices.
     val replicaManager = spy(createReplicaManager(
       Seq(topicName),
       disklessManagedReplicasEnabled = true,
-      mockReplicaFetcherManager = Some(mockFetcherManager)
+      mockReplicaFetcherManager = Some(mockFetcherManager),
+      initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager]))
     ))
     try {
       val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
@@ -5500,12 +5505,11 @@ class ReplicaManagerInklessTest {
 
       replicaManager.applyDelta(sealDelta, imageFromTopics(sealDelta.apply()))
 
-      // Leader stays online and is not truncated: LEO remains below the seal.
+      // The leader's local log is below the committed seal (a hole in the classic prefix), which
+      // can only be corruption, so the partition is fenced offline rather than left to serve it.
       val partition = replicaManager.getPartition(tp)
-      assertTrue(partition.isInstanceOf[HostedPartition.Online], "Leader partition must stay online")
-      assertTrue(partition.asInstanceOf[HostedPartition.Online].partition.isLeader)
-      assertEquals(localLeo, replicaManager.localLogOrException(tp).logEndOffset,
-        "Leader below the committed seal must not be truncated")
+      assertTrue(partition.isInstanceOf[HostedPartition.Offline],
+        s"Leader below the committed seal must be fenced offline, but was $partition")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }

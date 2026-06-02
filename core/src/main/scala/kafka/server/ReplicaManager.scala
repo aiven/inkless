@@ -3078,25 +3078,17 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
-   * Truncate a single partition whose classic-to-diskless start offset (the "seal") was *just
-   * committed* in this delta and whose local log still runs past it. The seal is the high
-   * watermark reported by the broker that drove the switch (it seals, waits for HW == LEO, then
-   * commits at that offset), so any local records beyond the seal are uncommitted and must be
-   * discarded -- the diskless log authoritatively continues from the seal. In practice this only
-   * fires for a replica that held un-replicated records past a seal that a *different* broker
-   * committed at a lower HW (the standard "records beyond HW" cleanup); at commit time such a
-   * replica is a follower or a deposed leader. The broker that drives the switch always seals at
-   * its own HW (== LEO) and is frozen (seal precedes makeLeader) before it can append further, so
-   * it never trips this -- the leader path is kept only as defense.
+   * Reconciles a partition whose classic-to-diskless seal was *just committed* in this delta
+   * (previous seal < 0, now >= 0); other transitions are left untouched. Records beyond the seal
+   * are uncommitted (the diskless log continues from the seal), so:
+   *  - LEO > seal: truncate down to the seal (a follower/deposed leader that held un-replicated
+   *    records past a seal a different broker committed at a lower HW);
+   *  - LEO < seal and leader: fence offline. Unreachable on the clean path (the driving leader
+   *    seals at its own HW == LEO; a cleanly-elected leader comes from the ISR with LEO >= seal),
+   *    so it implies a corrupt classic prefix -- don't serve an incomplete prefix below the seal.
    *
-   * Only the just-committed transition (a previous registration that existed with seal < 0, now
-   * sealed at seal >= 0) is reconciled. Catch-up of followers below the seal is handled by the
-   * classic ReplicaFetcher started in applyLocalFollowersDelta, and stopping it once the seal
-   * is reached is handled by the ReplicaFetcherThread's self-eviction, so this method only
-   * owns truncation.
-   *
-   * Must be called after makeLeader/makeFollower (so the local log exists) and before any
-   * catch-up or consolidation fetcher is started (so fetchers initialize from the truncated LEO).
+   * Must run after makeLeader/makeFollower (so the log exists) and before any catch-up or
+   * consolidation fetcher starts (so they initialize from the reconciled LEO).
    */
   private def maybeTruncateNewlySwitchedPartition(tp: TopicPartition,
                                                   topicId: Uuid,
@@ -3122,8 +3114,10 @@ class ReplicaManager(val config: KafkaConfig,
           // resulting log will end at seal-1.
           partition.truncateTo(seal, isFuture = false)
         } else if (log.logEndOffset < seal && partition.isLeader) {
+          // This is unreachable in normal operation
           stateChangeLogger.error(s"Leader partition $tp has LEO ${log.logEndOffset} below " +
-            s"classic-to-diskless start offset $seal; cannot catch up from another replica")
+            s"classic-to-diskless start offset $seal; cannot catch up from another replica. " +
+            s"Marking the partition offline as its local log is corrupt below the committed seal.")
           markPartitionOffline(tp)
         }
       } catch {
