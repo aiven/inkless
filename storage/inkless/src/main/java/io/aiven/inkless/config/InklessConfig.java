@@ -179,7 +179,9 @@ public class InklessConfig extends AbstractConfig {
         + "Set to 0 to disable rate limiting. "
         + "The upper bound of 10000 req/s is a safety limit to prevent misconfiguration. For high-throughput systems, "
         + "consider the relationship between this rate limit, thread pool size, and storage backend capacity. "
-        + "At the default rate of 200 req/s with ~50ms per request latency, this allows ~10 concurrent requests.";
+        + "At the default rate of 200 req/s with ~50ms per request latency, this allows ~10 concurrent requests. "
+        + "Note: hedge requests triggered by slow fetches are exempt from this limit. In the worst case, "
+        + "effective storage GET rate can reach up to 2x this value.";
     // Default 200 req/s: Conservative limit based on typical object storage GET request costs and latency.
     // At ~50ms per request, 200 req/s = ~10 concurrent requests, balancing throughput with cost control.
     // Tune based on storage backend capacity and budget constraints.
@@ -199,7 +201,13 @@ public class InklessConfig extends AbstractConfig {
         + "The first request to complete wins; the other continues in the background and its result is ignored. "
         + "Set to 0 to disable total-time-based hedging. "
         + "When both hedging thresholds are enabled, this value must be strictly greater than "
-        + FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG + ".";
+        + FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG + ". "
+        + "Capacity impact: hedges submit to the same executor as primaries (fetch.data.thread.pool.size for hot path, "
+        + "fetch.lagging.consumer.thread.pool.size for cold path). "
+        + "Normal case: only tail-latency requests (exceeding threshold) trigger hedges — typically <5% of traffic. "
+        + "Worst case: if all in-flight requests exceed the threshold, effective storage GET rate doubles "
+        + "(one primary + one hedge per request), bounded by executor thread pool + queue capacity. "
+        + "Monitor HedgeRequestRate to detect excessive hedging. If hedge rate is too high, increase this threshold.";
     private static final long FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_DEFAULT = 0;
 
     public static final String FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG = "fetch.find.batches.max.per.partition";

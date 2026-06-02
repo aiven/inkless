@@ -40,7 +40,7 @@ Under ``inkless.``
   * Importance: high
 
 ``fetch.lagging.consumer.request.rate.limit``
-  Maximum requests per second for lagging consumer data fetches. Set to 0 to disable rate limiting. The upper bound of 10000 req/s is a safety limit to prevent misconfiguration. For high-throughput systems, consider the relationship between this rate limit, thread pool size, and storage backend capacity. At the default rate of 200 req/s with ~50ms per request latency, this allows ~10 concurrent requests.
+  Maximum requests per second for lagging consumer data fetches. Set to 0 to disable rate limiting. The upper bound of 10000 req/s is a safety limit to prevent misconfiguration. For high-throughput systems, consider the relationship between this rate limit, thread pool size, and storage backend capacity. At the default rate of 200 req/s with ~50ms per request latency, this allows ~10 concurrent requests. Note: hedge requests triggered by slow fetches are exempt from this limit. In the worst case, effective storage GET rate can reach up to 2x this value.
 
   * Type: int
   * Default: 200
@@ -158,7 +158,7 @@ Under ``inkless.``
   * Importance: low
 
 ``fetch.hedge.total.time.threshold.ms``
-  Total time threshold in milliseconds to trigger a hedge request. When a storage fetch has not completed within this threshold, a competing hedge request is submitted. The first request to complete wins; the other continues in the background and its result is ignored. Set to 0 to disable total-time-based hedging. When both hedging thresholds are enabled, this value must be strictly greater than fetch.hedge.ttfb.threshold.ms.
+  Total time threshold in milliseconds to trigger a hedge request. When a storage fetch has not completed within this threshold, a competing hedge request is submitted. The first request to complete wins; the other continues in the background and its result is ignored. Set to 0 to disable total-time-based hedging. When both hedging thresholds are enabled, this value must be strictly greater than fetch.hedge.ttfb.threshold.ms. Capacity impact: hedges submit to the same executor as primaries (fetch.data.thread.pool.size for hot path, fetch.lagging.consumer.thread.pool.size for cold path). Normal case: only tail-latency requests (exceeding threshold) trigger hedges — typically <5% of traffic. Worst case: if all in-flight requests exceed the threshold, effective storage GET rate doubles (one primary + one hedge per request), bounded by executor thread pool + queue capacity. Monitor HedgeRequestRate to detect excessive hedging. If hedge rate is too high, increase this threshold.
 
   * Type: long
   * Default: 0
