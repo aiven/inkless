@@ -238,7 +238,7 @@ class DisklessLeaderEndPointTest {
 
     val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
     assertThrows(
-      classOf[UnknownTopicOrPartitionException],
+      classOf[KafkaStorageException],
       () => endPoint.fetchLatestOffset(topicPartition, 0)
     )
   }
@@ -445,6 +445,29 @@ class DisklessLeaderEndPointTest {
     val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
     val replicaManager = mock(classOf[ReplicaManager])
     when(replicaManager.localLogOrException(topicPartition)).thenThrow(new KafkaStorageException("bad log"))
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    val fetchState = new PartitionFetchState(
+      Optional.of(topicId),
+      0L,
+      Optional.empty(),
+      1,
+      Optional.empty(),
+      ReplicaState.FETCHING,
+      Optional.empty()
+    )
+    val result = endPoint.buildFetch(util.Map.of(topicPartition, fetchState))
+
+    assertTrue(result.result.isEmpty)
+    assertEquals(Set(topicPartition), result.partitionsWithError.asScala.toSet)
+  }
+
+  @Test
+  def testBuildFetchMarksPartitionWithUnknownTopicOrPartitionException(): Unit = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.localLogOrException(topicPartition)).thenThrow(new UnknownTopicOrPartitionException("deleted"))
 
     val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
     val fetchState = new PartitionFetchState(

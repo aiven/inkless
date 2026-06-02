@@ -24,6 +24,7 @@ import kafka.server.metadata.InklessMetadataView
 import kafka.utils.TestUtils
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.compress.Compression
+import org.apache.kafka.common.errors.UnknownTopicOrPartitionException
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.record.{MemoryRecords, SimpleRecord}
 import org.apache.kafka.metadata.PartitionRegistration
@@ -247,5 +248,40 @@ class ConsolidationFetcherThreadTest {
       .orNull
     assertNotNull(gauge, s"Broker-level gauge $name not found")
     gauge.value()
+  }
+
+  @Test
+  def testAddPartitionsSkipsDeletedPartition(): Unit = {
+    val deletedPartition = new TopicPartition("deleted-topic", 0)
+    val healthyPartition = new TopicPartition("healthy-topic", 0)
+
+    val replicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.brokerTopicStats).thenReturn(new BrokerTopicStats)
+    when(replicaManager.localLogOrException(healthyPartition)).thenReturn(mock(classOf[UnifiedLog]))
+    when(replicaManager.localLogOrException(deletedPartition))
+      .thenThrow(new UnknownTopicOrPartitionException("topic deleted"))
+
+    val thread = createConsolidationFetcherThread(replicaManager, None)
+
+    val healthyState = InitialFetchState(
+      topicId = None,
+      leader = new BrokerEndPoint(0, "localhost", 9092),
+      initOffset = 0L,
+      currentLeaderEpoch = 0
+    )
+    val deletedState = InitialFetchState(
+      topicId = None,
+      leader = new BrokerEndPoint(0, "localhost", 9092),
+      initOffset = -1L,
+      currentLeaderEpoch = 0
+    )
+
+    val added = thread.addPartitions(Map(
+      deletedPartition -> deletedState,
+      healthyPartition -> healthyState
+    ))
+
+    assertTrue(added.contains(healthyPartition))
+    assertFalse(added.contains(deletedPartition))
   }
 }
