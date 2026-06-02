@@ -357,9 +357,9 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
 
         // Per-key dedup: all callers sharing the same primary (via cache dedup) share one guard.
         // At most one hedge fires per primary, regardless of concurrent caller count.
+        // whenCompleteAsync ensures remove never runs inline during computeIfAbsent.
         final AtomicBoolean hedgeFired = hedgeGuards.computeIfAbsent(primary, k -> {
-            // deferred remove, otherwise violates ConcurrentHashMap's contract
-            k.whenComplete((v, e) -> hedgeGuards.remove(k));
+            k.whenCompleteAsync((v, e) -> hedgeGuards.remove(k), hedgeScheduler);
             return new AtomicBoolean(false);
         });
         final List<ScheduledFuture<?>> timers = new CopyOnWriteArrayList<>();
