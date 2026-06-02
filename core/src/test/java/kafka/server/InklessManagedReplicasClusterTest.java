@@ -35,6 +35,7 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
@@ -61,6 +62,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntFunction;
@@ -163,8 +165,8 @@ public class InklessManagedReplicasClusterTest {
             result.all().get(30, TimeUnit.SECONDS);
 
             // Verify managed replicas behavior: RF=2 from default.replication.factor
-            TopicDescription description = admin.describeTopics(Collections.singletonList(topicName))
-                .allTopicNames().get(30, TimeUnit.SECONDS).get(topicName);
+            // Wait for metadata propagation across brokers before describing
+            TopicDescription description = waitForTopicDescription(admin, topicName);
             log.info("Topic {} created with {} partitions", topicName, description.partitions().size());
             assertEquals(numPartitions, description.partitions().size());
 
@@ -279,8 +281,8 @@ public class InklessManagedReplicasClusterTest {
             result.all().get(30, TimeUnit.SECONDS);
 
             // Verify the topic was created with the explicit RF=1, not managed replicas RF=2
-            TopicDescription description = admin.describeTopics(Collections.singletonList(topicName))
-                .allTopicNames().get(30, TimeUnit.SECONDS).get(topicName);
+            // Wait for metadata propagation across brokers before describing
+            TopicDescription description = waitForTopicDescription(admin, topicName);
             log.info("Regular topic {} created", topicName);
 
             for (TopicPartitionInfo partition : description.partitions()) {
@@ -339,5 +341,23 @@ public class InklessManagedReplicasClusterTest {
             }
         }
         assertEquals(numRecords, recordsConsumed);
+    }
+
+    // In multi-broker clusters, metadata propagation from the controller to follower brokers is async.
+    // describeTopics may hit a broker that hasn't received the update yet, causing UnknownTopicOrPartitionException.
+    private TopicDescription waitForTopicDescription(Admin admin, String topicName) throws Exception {
+        long deadline = System.currentTimeMillis() + 30_000;
+        while (true) {
+            try {
+                return admin.describeTopics(Collections.singletonList(topicName))
+                    .allTopicNames().get(30, TimeUnit.SECONDS).get(topicName);
+            } catch (ExecutionException e) {
+                if (!(e.getCause() instanceof UnknownTopicOrPartitionException)
+                    || System.currentTimeMillis() >= deadline) {
+                    throw e;
+                }
+                Thread.sleep(200);
+            }
+        }
     }
 }
