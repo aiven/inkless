@@ -6524,6 +6524,15 @@ public class ReplicationControlManagerTest {
                 assertEquals(topicId, record.topicId());
                 assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
                     InitDisklessLogFields.decodeClassicToDisklessStartOffset(record.unknownTaggedFields()));
+                // Leader must be set to force epoch bump on broker
+                int partitionId = record.partitionId();
+                int expectedLeader = replicationControl.getPartition(topicId, partitionId).leader;
+                assertEquals(expectedLeader, record.leader());
+            }
+
+            int[] epochsBefore = new int[2];
+            for (int i = 0; i < 2; i++) {
+                epochsBefore[i] = replicationControl.getPartition(topicId, i).leaderEpoch;
             }
 
             ctx.replay(records);
@@ -6531,6 +6540,8 @@ public class ReplicationControlManagerTest {
                 PartitionRegistration partition = replicationControl.getPartition(topicId, i);
                 assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
                     partition.classicToDisklessStartOffset);
+                // Leader epoch must be bumped to trigger makeLeader on broker
+                assertEquals(epochsBefore[i] + 1, partition.leaderEpoch);
             }
         }
 
