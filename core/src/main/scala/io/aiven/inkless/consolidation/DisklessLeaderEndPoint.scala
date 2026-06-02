@@ -22,7 +22,7 @@ import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import kafka.server.{KafkaConfig, ReplicaManager, ReplicaQuota}
 import kafka.utils.Logging
 import org.apache.kafka.common.Uuid
-import org.apache.kafka.common.errors.KafkaStorageException
+import org.apache.kafka.common.errors.{KafkaStorageException, UnknownTopicOrPartitionException}
 import org.apache.kafka.common.message.{FetchResponseData, OffsetForLeaderEpochRequestData}
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
@@ -252,7 +252,10 @@ class DisklessLeaderEndPoint(
               )
             )
           } catch {
-            case _: KafkaStorageException =>
+            // UnknownTopicOrPartitionException from localLogOrException when partition is
+            // deleted from allPartitions before the fetcher's partitionStates is cleaned up.
+            case e @ (_: KafkaStorageException | _: UnknownTopicOrPartitionException) =>
+              logger.info("Partition {} unavailable during buildFetch: {}", topicPartition, e.getMessage)
               partitionsWithError += topicPartition
           }
         }
