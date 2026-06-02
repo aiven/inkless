@@ -1153,6 +1153,8 @@ public class ReaderTest {
                 60_000L, // laggingConsumerThresholdMs
                 0, // laggingConsumerRequestRateLimit
                 0, // laggingConsumerThreadPoolSize — feature disabled
+                0, // hedgeTtfbThresholdMs — disabled
+                0, // hedgeTotalTimeThresholdMs — disabled
                 10 // maxBatchesPerPartitionToFind
             );
             reader.close();
@@ -1174,6 +1176,8 @@ public class ReaderTest {
                 60_000L, // laggingConsumerThresholdMs
                 0, // laggingConsumerRequestRateLimit
                 4, // laggingConsumerThreadPoolSize — feature enabled
+                0, // hedgeTtfbThresholdMs — disabled
+                0, // hedgeTotalTimeThresholdMs — disabled
                 10 // maxBatchesPerPartitionToFind
             );
             reader.close();
@@ -1195,6 +1199,8 @@ public class ReaderTest {
                 60_000L, // laggingConsumerThresholdMs
                 0, // laggingConsumerRequestRateLimit
                 4, // laggingConsumerThreadPoolSize — feature enabled but no storage
+                0, // hedgeTtfbThresholdMs — disabled
+                0, // hedgeTotalTimeThresholdMs — disabled
                 10 // maxBatchesPerPartitionToFind
             )).isInstanceOf(IllegalStateException.class)
               .hasMessageContaining("no lagging fetch storage was provided");
