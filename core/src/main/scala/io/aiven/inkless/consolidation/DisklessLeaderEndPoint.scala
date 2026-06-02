@@ -22,7 +22,7 @@ import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import kafka.server.{KafkaConfig, ReplicaManager, ReplicaQuota}
 import kafka.utils.Logging
 import org.apache.kafka.common.Uuid
-import org.apache.kafka.common.errors.KafkaStorageException
+import org.apache.kafka.common.errors.{KafkaStorageException, UnknownTopicOrPartitionException}
 import org.apache.kafka.common.message.{FetchResponseData, OffsetForLeaderEpochRequestData}
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
@@ -152,8 +152,10 @@ class DisklessLeaderEndPoint(
 
   private def listDisklessOffset(topicPartition: TopicPartition, currentLeaderEpoch: Int, timestamp: Long): OffsetAndEpoch = {
     val job = fetchOffsetHandler.createJob()
+    // KafkaStorageException (not UnknownTopicOrPartitionException) so callers in
+    // AbstractFetcherThread that only catch KafkaStorageException handle this gracefully.
     if (!job.mustHandle(topicPartition.topic)) {
-      throw Errors.UNKNOWN_TOPIC_OR_PARTITION.exception()
+      throw new KafkaStorageException(s"Topic ${topicPartition.topic} is not available for diskless offset lookup")
     }
     val partitionRequest = new ListOffsetsPartition()
       .setPartitionIndex(topicPartition.partition)
@@ -251,7 +253,10 @@ class DisklessLeaderEndPoint(
               )
             )
           } catch {
-            case _: KafkaStorageException =>
+            // UnknownTopicOrPartitionException from localLogOrException when partition is
+            // deleted between removePartitions acquiring the lock and buildFetch reading state.
+            case e @ (_: KafkaStorageException | _: UnknownTopicOrPartitionException) =>
+              logger.info("Partition {} unavailable during buildFetch: {}", topicPartition, e.getMessage)
               partitionsWithError += topicPartition
           }
         }

@@ -19,8 +19,9 @@
 package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.ConcatenatedRecords
-import kafka.server.{FailedPartitions, KafkaConfig, ReplicaFetcherThread, ReplicaManager, ReplicaQuota}
+import kafka.server.{FailedPartitions, InitialFetchState, KafkaConfig, ReplicaFetcherThread, ReplicaManager, ReplicaQuota}
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.errors.{KafkaStorageException, UnknownTopicOrPartitionException}
 import org.apache.kafka.common.record.{MemoryRecords, Records}
 import org.apache.kafka.server.LeaderEndPoint
 import org.apache.kafka.storage.internals.log.LogAppendInfo
@@ -35,6 +36,33 @@ class ConsolidationFetcherThread(name: String,
                                  quota: ReplicaQuota,
                                  logPrefix: String,
                                  consolidationMetrics: Option[ConsolidationMetrics] = None) extends ReplicaFetcherThread(name, leader, brokerConfig, failedPartitions, replicaMgr, quota, logPrefix) {
+
+  // A topic can be deleted between being scheduled for consolidation and reaching addPartitions.
+  // Process each partition independently so one deleted topic doesn't block the rest of the batch.
+  // This acquires partitionMapLock per partition (N times) — acceptable for small consolidation batches.
+  override def addPartitions(initialFetchStates: scala.collection.Map[TopicPartition, InitialFetchState]): scala.collection.Set[TopicPartition] = {
+    val added = scala.collection.mutable.Set[TopicPartition]()
+    initialFetchStates.foreach { case (tp, state) =>
+      try {
+        added ++= super.addPartitions(Map(tp -> state))
+      } catch {
+        case e: KafkaStorageException =>
+          info(s"Skipping partition $tp in addPartitions: ${e.getMessage}")
+      }
+    }
+    added
+  }
+
+  // localLogOrException throws UnknownTopicOrPartitionException for deleted partitions,
+  // but AbstractFetcherThread only handles KafkaStorageException in fetchOffsetAndTruncate.
+  override protected def logEndOffset(topicPartition: TopicPartition): Long = {
+    try {
+      super.logEndOffset(topicPartition)
+    } catch {
+      case e: UnknownTopicOrPartitionException =>
+        throw new KafkaStorageException(e.getMessage, e)
+    }
+  }
 
   override def toMemoryRecords(records: Records): MemoryRecords = {
     (records: @unchecked) match {
