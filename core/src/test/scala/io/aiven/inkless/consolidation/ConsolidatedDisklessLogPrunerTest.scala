@@ -25,6 +25,7 @@ import kafka.server.ReplicaManager
 import kafka.server.metadata.InklessMetadataView
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
+import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.storage.internals.log.UnifiedLog
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
@@ -41,13 +42,19 @@ class ConsolidatedDisklessLogPrunerTest {
   private val topicId = Uuid.randomUuid()
   private val tip = new TopicIdPartition(topicId, topicPartition)
 
-  private def readyPartition(highestRemote: Long): Partition = {
+  private def readyPartition(
+    highestRemote: Long,
+    safePruneOffset: Option[Long] = None
+  ): Partition = {
     val partition = mock(classOf[Partition])
     val unifiedLog = mock(classOf[UnifiedLog])
     when(partition.topicPartition).thenReturn(topicPartition)
     when(partition.topicId).thenReturn(Some(topicId))
     when(partition.log).thenReturn(Some(unifiedLog))
     when(unifiedLog.highestOffsetInRemoteStorage()).thenReturn(highestRemote)
+    if (highestRemote >= 0) {
+      when(partition.getSafeConsolidatedDisklessPruneOffset(highestRemote)).thenReturn(safePruneOffset)
+    }
     partition
   }
 
@@ -58,7 +65,8 @@ class ConsolidatedDisklessLogPrunerTest {
     val cp = mock(classOf[ControlPlane])
 
     when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Set.of(tip))
-    val partition = readyPartition(50L)
+    when(view.getClassicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+    val partition = readyPartition(50L, Some(50L))
     when(rm.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
 
     var captured: util.List[PruneDisklessLogsRequest] = null
@@ -77,6 +85,49 @@ class ConsolidatedDisklessLogPrunerTest {
   }
 
   @Test
+  def testRunBuildsPruneRequestForBornConsolidatedPartitionWithoutSafeFloor(): Unit = {
+    val rm = mock(classOf[ReplicaManager])
+    val view = mock(classOf[InklessMetadataView])
+    val cp = mock(classOf[ControlPlane])
+
+    when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Set.of(tip))
+    when(view.getClassicToDisklessStartOffset(topicPartition))
+      .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    val partition = readyPartition(50L)
+    when(rm.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+
+    var captured: util.List[PruneDisklessLogsRequest] = null
+    when(cp.pruneDisklessLogs(any())).thenAnswer(invocation => {
+      captured = invocation.getArgument(0)
+      util.Collections.emptyList()
+    })
+
+    new ConsolidatedDisklessLogPruner(rm, view, cp).run()
+
+    assertNotNull(captured)
+    assertEquals(1, captured.size())
+    assertEquals(50L, captured.get(0).highestRemoteOffset())
+    verify(partition, never()).getSafeConsolidatedDisklessPruneOffset(anyLong())
+  }
+
+  @Test
+  def testRunOmitsSwitchedPartitionWhenSafeFloorNotReached(): Unit = {
+    val rm = mock(classOf[ReplicaManager])
+    val view = mock(classOf[InklessMetadataView])
+    val cp = mock(classOf[ControlPlane])
+
+    when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Set.of(tip))
+    when(view.getClassicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+    val partition = readyPartition(50L)
+    when(rm.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+
+    new ConsolidatedDisklessLogPruner(rm, view, cp).run()
+
+    verify(partition).getSafeConsolidatedDisklessPruneOffset(50L)
+    verify(cp, never()).pruneDisklessLogs(any())
+  }
+
+  @Test
   def testRunOmitsPruneWhenHighestOffsetInRemoteStorageNegative(): Unit = {
     val rm = mock(classOf[ReplicaManager])
     val view = mock(classOf[InklessMetadataView])
@@ -88,6 +139,22 @@ class ConsolidatedDisklessLogPrunerTest {
 
     new ConsolidatedDisklessLogPruner(rm, view, cp).run()
 
+    verify(cp, never()).pruneDisklessLogs(any())
+  }
+
+  @Test
+  def testRunOmitsPruneWhenClassicToDisklessSwitchIsPending(): Unit = {
+    val rm = mock(classOf[ReplicaManager])
+    val view = mock(classOf[InklessMetadataView])
+    val cp = mock(classOf[ControlPlane])
+
+    when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Set.of(tip))
+    when(view.getClassicToDisklessStartOffset(topicPartition))
+      .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+
+    new ConsolidatedDisklessLogPruner(rm, view, cp).run()
+
+    verify(rm, never()).getPartitionOrError(topicPartition)
     verify(cp, never()).pruneDisklessLogs(any())
   }
 
@@ -114,7 +181,7 @@ class ConsolidatedDisklessLogPrunerTest {
     val cp = mock(classOf[ControlPlane])
 
     when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Set.of(tip))
-    val partition = readyPartition(10L)
+    val partition = readyPartition(10L, Some(10L))
     when(rm.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
 
     val responseTip = new TopicIdPartition(topicId, topicPartition.partition, topicPartition.topic)
@@ -124,7 +191,7 @@ class ConsolidatedDisklessLogPrunerTest {
 
     new ConsolidatedDisklessLogPruner(rm, view, cp).run()
 
-    verify(partition, never()).maybeAdvanceLastAppliedDisklessLogStartOffset(anyLong())
+    verify(partition, never()).maybeAdvanceConsolidationPruneFloor(anyLong())
   }
 
   @Test
@@ -134,7 +201,7 @@ class ConsolidatedDisklessLogPrunerTest {
     val cp = mock(classOf[ControlPlane])
 
     when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Set.of(tip))
-    val partition = readyPartition(10L)
+    val partition = readyPartition(10L, Some(10L))
     when(rm.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
 
     val responseTip = new TopicIdPartition(topicId, topicPartition.partition, topicPartition.topic)
@@ -144,7 +211,7 @@ class ConsolidatedDisklessLogPrunerTest {
 
     new ConsolidatedDisklessLogPruner(rm, view, cp).run()
 
-    verify(partition).maybeAdvanceLastAppliedDisklessLogStartOffset(88L)
+    verify(partition).maybeAdvanceConsolidationPruneFloor(88L)
   }
 
   @Test
@@ -154,7 +221,7 @@ class ConsolidatedDisklessLogPrunerTest {
     val cp = mock(classOf[ControlPlane])
 
     when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Set.of(tip))
-    val partition = readyPartition(10L)
+    val partition = readyPartition(10L, Some(10L))
     when(rm.getPartitionOrError(topicPartition))
       .thenReturn(Right(partition))
       .thenReturn(Left(Errors.UNKNOWN_TOPIC_OR_PARTITION))
@@ -166,6 +233,6 @@ class ConsolidatedDisklessLogPrunerTest {
 
     new ConsolidatedDisklessLogPruner(rm, view, cp).run()
 
-    verify(partition, never()).maybeAdvanceLastAppliedDisklessLogStartOffset(anyLong())
+    verify(partition, never()).maybeAdvanceConsolidationPruneFloor(anyLong())
   }
 }

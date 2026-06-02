@@ -843,8 +843,10 @@ class ReplicaFetcherThreadTest {
 
     if (expectEviction) {
       verify(replicaFetcherManager, times(1)).removeFetcherForPartitions(Set(t1p0))
+      verify(replicaManager, times(1)).startConsolidationFetchersForCaughtUpClassicPartitions(Set(t1p0))
     } else {
       verify(replicaFetcherManager, times(0)).removeFetcherForPartitions(any())
+      verify(replicaManager, times(0)).startConsolidationFetchersForCaughtUpClassicPartitions(any())
     }
     assertEquals(mutable.Buffer.empty, thread.partitionsToEvictAfterDisklessSwitch)
   }
