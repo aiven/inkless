@@ -25,8 +25,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -76,6 +83,10 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
     private final ObjectFetcher laggingObjectFetcher;
     private final long laggingConsumerThresholdMs;
     private final Bucket laggingRateLimiter;
+    private final ScheduledExecutorService hedgeScheduler;
+    private final long hedgeTtfbThresholdMs;
+    private final long hedgeTotalTimeThresholdMs;
+    private final ConcurrentHashMap<CompletableFuture<?>, AtomicBoolean> hedgeGuards;
     private final Map<TopicIdPartition, FindBatchResponse> batchCoordinates;
     private final InklessFetchMetrics metrics;
 
@@ -90,6 +101,10 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         long laggingConsumerThresholdMs,
         Bucket laggingRateLimiter,
         ExecutorService laggingFetchDataExecutor,
+        ScheduledExecutorService hedgeScheduler,
+        long hedgeTtfbThresholdMs,
+        long hedgeTotalTimeThresholdMs,
+        ConcurrentHashMap<CompletableFuture<?>, AtomicBoolean> hedgeGuards,
         Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
         InklessFetchMetrics metrics
     ) {
@@ -103,6 +118,10 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         this.laggingFetchDataExecutor = laggingFetchDataExecutor;
         this.laggingConsumerThresholdMs = laggingConsumerThresholdMs;
         this.laggingRateLimiter = laggingRateLimiter;
+        this.hedgeScheduler = hedgeScheduler;
+        this.hedgeTtfbThresholdMs = hedgeTtfbThresholdMs;
+        this.hedgeTotalTimeThresholdMs = hedgeTotalTimeThresholdMs;
+        this.hedgeGuards = hedgeGuards;
         this.batchCoordinates = batchCoordinates;
         this.metrics = metrics;
     }
@@ -229,11 +248,19 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         if (!request.lagging()) {
             // Hot path: up-to-date consumers use cache + recentDataExecutor
             metrics.recordRecentDataRequest();
-            return cache.computeIfAbsent(
+            // Per-caller TTFB signal: set by the load function's TTFB callback when first byte arrives.
+            // On a cache dedup (computeIfAbsent returns an existing in-flight future), the load function
+            // doesn't run, so this flag stays false — but with per-key hedge dedup (hedgeGuards),
+            // at most one hedge fires per primary regardless of how many callers have stale TTFB flags.
+            final AtomicBoolean firstByteReceived = new AtomicBoolean(false);
+            final CompletableFuture<FileExtent> primary = cache.computeIfAbsent(
                 request.toCacheKey(),
-                k -> fetchFileExtent(objectFetcher, request),
+                k -> fetchFileExtent(objectFetcher, request, firstByteReceived),
                 fetchDataExecutor
             );
+            // Hot path: no rate limiting, timers start immediately (completedFuture runs thenRun inline).
+            return withHedge(primary, objectFetcher, request, fetchDataExecutor, firstByteReceived,
+                CompletableFuture.completedFuture(null));
         } else {
             // Cold path: lagging consumers bypass cache, use dedicated executor with rate limiting.
             // Cache bypass rationale: Objects are multi-partition blobs, caching them would evict hot data
@@ -241,15 +268,26 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
             // → RejectedExecutionException → Kafka error handler → consumer backs off (fetch purgatory).
             metrics.recordLaggingConsumerRequest();
             try {
-                return CompletableFuture.supplyAsync(() -> {
+                final AtomicBoolean firstByteReceived = new AtomicBoolean(false);
+                // Signal that defers hedge timer scheduling until the actual fetch starts (after rate limiting).
+                // This prevents hedges from firing while the primary is waiting for a rate limit token.
+                final CompletableFuture<Void> fetchStarted = new CompletableFuture<>();
+                final CompletableFuture<FileExtent> primary = CompletableFuture.supplyAsync(() -> {
                         // Apply rate limiting if configured (rate limit > 0)
                         if (laggingRateLimiter != null) {
                             applyRateLimit(); // InterruptedException here is wrapped in FetchException
                         }
-                        return fetchFileExtent(laggingObjectFetcher, request);
+                        // Signal that rate limiting is done and the fetch is starting.
+                        // Hedge timers begin counting from this point.
+                        fetchStarted.complete(null);
+                        return fetchFileExtent(laggingObjectFetcher, request, firstByteReceived);
                     },
                     laggingFetchDataExecutor
                 ).whenComplete((result, throwable) -> {
+                    // Safety net: ensure fetchStarted completes even on failure (e.g., applyRateLimit() throws).
+                    // Prevents thenRun callbacks from becoming permanent GC roots.
+                    // No-op if already completed by the happy path above.
+                    fetchStarted.complete(null);
                     // Track async rejections that occur during task execution:
                     // - RejectedExecutionException: rejection when executor is shut down or queue is full.
                     //   This may surface either as the throwable itself or as its cause (e.g., via CompletionException).
@@ -265,6 +303,9 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                         }
                     }
                 });
+                // Cold path: timers deferred until fetchStarted completes (after rate limiting).
+                return withHedge(primary, laggingObjectFetcher, request, laggingFetchDataExecutor, firstByteReceived,
+                    fetchStarted);
             } catch (final RejectedExecutionException e) {
                 // Sync rejection (executor shut down or queue full at submission) - return failed future
                 // instead of propagating exception. This allows allOfFileExtents to handle the failure
@@ -273,6 +314,143 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                 // Metrics recorded here since the task never executes (vs async rejection tracked in whenComplete).
                 metrics.recordLaggingConsumerRejection();
                 return CompletableFuture.failedFuture(e);
+            }
+        }
+    }
+
+    // Wraps a primary future with hedging: schedules timer(s) that fire a competing fetch if the
+    // primary is too slow. Two triggers: TTFB (stuck connection) and total-time (slow transfer).
+    // Timers run on the hedge scheduler; actual fetches run on the data executor.
+    //
+    // Timer deferral: timers are scheduled inside fetchStarted.thenRun(), so they only start
+    // counting once the actual fetch begins. For the hot path (no rate limiting), fetchStarted
+    // is already complete and thenRun executes inline — no behavioral change. For the cold path,
+    // timers are deferred until after rate limiting completes, preventing premature hedges during
+    // intentional backpressure.
+    //
+    // Race resolution: hedge calls primary.complete(value) — CF.complete() is a CAS, first caller wins.
+    // This makes hedging transparent to the cache (cache holds a reference to primary).
+    //
+    // Per-key dedup: hedgeFired is shared across all callers of the same primary (via hedgeGuards map).
+    // On cache dedup, N concurrent callers share the same primary and the same guard — at most one
+    // hedge fires per primary, preventing hedge storms under high fan-out. The guard is removed
+    // when the primary completes.
+    //
+    // Early exits: returns primary as-is when disabled (null scheduler) or already complete (cache hit).
+    // Fast failures propagate immediately — hedging mitigates slow responses, not errors.
+    private CompletableFuture<FileExtent> withHedge(
+        final CompletableFuture<FileExtent> primary,
+        final ObjectFetcher fetcher,
+        final ObjectFetchRequest request,
+        final ExecutorService executor,
+        final AtomicBoolean firstByteReceived,
+        final CompletableFuture<Void> fetchStarted
+    ) {
+        if (hedgeScheduler == null || primary.isDone()) {
+            return primary;
+        }
+
+        if (hedgeTtfbThresholdMs <= 0 && hedgeTotalTimeThresholdMs <= 0) {
+            // Both thresholds are 0 — no hedging
+            return primary;
+        }
+
+        // Per-key dedup: all callers sharing the same primary (via cache dedup) share one guard.
+        // At most one hedge fires per primary, regardless of concurrent caller count.
+        // whenCompleteAsync ensures remove never runs inline during computeIfAbsent.
+        final AtomicBoolean hedgeFired = hedgeGuards.computeIfAbsent(primary, k -> {
+            k.whenCompleteAsync((v, e) -> hedgeGuards.remove(k), hedgeScheduler);
+            return new AtomicBoolean(false);
+        });
+        final List<ScheduledFuture<?>> timers = new CopyOnWriteArrayList<>();
+
+        // Schedule timers only after the fetch actually starts (fetchStarted completes).
+        // For hot path: fetchStarted is already complete, thenRun executes inline on this thread.
+        // For cold path: thenRun executes on the executor thread that completed fetchStarted
+        // (after rate limiting). If fetchStarted never completes (sync rejection), no timers fire.
+        fetchStarted.thenRun(() -> {
+            // If primary already completed (e.g., fast fetch right after rate limit), skip scheduling.
+            if (primary.isDone()) {
+                return;
+            }
+            try {
+                // TTFB trigger: fire hedge if first byte hasn't arrived within threshold
+                if (hedgeTtfbThresholdMs > 0) {
+                    timers.add(hedgeScheduler.schedule(() -> {
+                        if (!primary.isDone() && !firstByteReceived.get()) {
+                            tryFireHedge(hedgeFired, primary, fetcher, request, executor,
+                                metrics::recordHedgeTtfbTriggered);
+                        }
+                    }, hedgeTtfbThresholdMs, TimeUnit.MILLISECONDS));
+                }
+
+                // Total-time trigger: fire hedge if primary hasn't completed within threshold
+                if (hedgeTotalTimeThresholdMs > 0) {
+                    timers.add(hedgeScheduler.schedule(() -> {
+                        if (!primary.isDone()) {
+                            tryFireHedge(hedgeFired, primary, fetcher, request, executor,
+                                metrics::recordHedgeTotalTimeTriggered);
+                        }
+                    }, hedgeTotalTimeThresholdMs, TimeUnit.MILLISECONDS));
+                }
+            } catch (final RejectedExecutionException e) {
+                // Scheduler shut down — cancel any timer that was already scheduled before the failure.
+                timers.forEach(timer -> timer.cancel(false));
+            }
+        });
+
+        // Cancel timers when primary completes (naturally or via hedge).
+        // If thenRun hasn't fired yet, timers list is empty and this is a no-op.
+        // Timer lambdas additionally check primary.isDone() as a safety guard.
+        primary.whenComplete((value, error) ->
+            timers.forEach(timer -> timer.cancel(false))
+        );
+
+        return primary;
+    }
+
+    // Fires a single hedge request. Runs on the hedge scheduler thread — must never block.
+    // All operations are non-blocking: CAS, meter marks, and supplyAsync (only enqueues a task;
+    // actual I/O runs on the data executor). Executor-full → RejectedExecutionException thrown
+    // immediately and caught.
+    //
+    // Rate limiting: hedges intentionally bypass the lagging consumer rate limiter. A rate-limited
+    // hedge would be equally slow as the primary — useless. Hedges are bounded by:
+    // (1) per-key dedup (hedgeGuards CAS) — at most one hedge per primary, and
+    // (2) executor capacity — submission to a full executor is rejected immediately.
+    // Timer deferral (fetchStarted signal) ensures hedges only fire when the actual fetch is slow,
+    // not when the primary is waiting on the rate limiter.
+    //
+    // The losing fetch (primary or hedge) is not cancelled — CF.cancel() doesn't interrupt S3/GCS
+    // I/O, so the request runs to completion regardless. The loser's complete() is a no-op.
+    private void tryFireHedge(
+        final AtomicBoolean hedgeFired,
+        final CompletableFuture<FileExtent> primary,
+        final ObjectFetcher fetcher,
+        final ObjectFetchRequest request,
+        final ExecutorService executor,
+        final Runnable triggerMetric
+    ) {
+        // There is a small race between the timer's !primary.isDone() check and this CAS —
+        // the primary can complete in between, causing an unnecessary hedge. This is intentionally
+        // non-blocking: eliminating the race would require synchronizing with primary completion,
+        // adding contention on the hot path. The trade-off is an occasional redundant fetch whose
+        // primary.complete() is a no-op. HedgeWonRate remains accurate; HedgeRequestRate may be
+        // slightly inflated, which is acceptable for monitoring purposes.
+        if (hedgeFired.compareAndSet(false, true)) {
+            metrics.recordHedgeRequest();
+            triggerMetric.run();
+            try {
+                final CompletableFuture<FileExtent> hedge = CompletableFuture.supplyAsync(
+                    () -> fetchFileExtent(fetcher, request), executor
+                );
+                hedge.whenComplete((value, error) -> {
+                    if (error == null && primary.complete(value)) {
+                        metrics.recordHedgeWon();
+                    }
+                });
+            } catch (final RejectedExecutionException ignored) {
+                // Executor full — fall back to primary only
             }
         }
     }
@@ -298,6 +476,37 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                     throw new FetchException("Rate limit wait interrupted for lagging consumer", e);
                 }
             }, metrics::recordRateLimitWaitTime);
+    }
+
+    /**
+     * Fetches a file extent from remote storage, signaling when the first byte is received.
+     * The {@code firstByteReceived} flag is set by the TTFB callback before the metrics callback,
+     * enabling the TTFB hedge trigger to detect stuck connections.
+     */
+    private FileExtent fetchFileExtent(
+        final ObjectFetcher fetcher,
+        final ObjectFetchRequest request,
+        final AtomicBoolean firstByteReceived
+    ) {
+        final Consumer<Long> ttfbCallback = ttfbMs -> {
+            firstByteReceived.set(true);
+            metrics.fetchFirstByteFinished(ttfbMs);
+        };
+        try {
+            final FileFetchJob job = new FileFetchJob(
+                time,
+                fetcher,
+                request.objectKey(),
+                request.byteRange(),
+                metrics::fetchFileFinished,
+                ttfbCallback
+            );
+            final FileExtent fileExtent = job.call();
+            metrics.cacheEntrySize(fileExtent.data().length);
+            return fileExtent;
+        } catch (final Exception e) {
+            throw new FileFetchException(e);
+        }
     }
 
     /**

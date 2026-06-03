@@ -59,6 +59,8 @@ public class FetchHandler implements Closeable {
                 state.config().fetchLaggingConsumerThresholdMs(),
                 state.config().fetchLaggingConsumerRequestRateLimit(),
                 state.config().fetchLaggingConsumerThreadPoolSize(),
+                state.config().fetchHedgeTtfbThresholdMs(),
+                state.config().fetchHedgeTotalTimeThresholdMs(),
                 state.config().maxBatchesPerPartitionToFind()
             )
         );
