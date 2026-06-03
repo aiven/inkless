@@ -179,7 +179,6 @@ class DisklessLeaderEndPoint(
     val job = fetchOffsetHandler.createJob()
     val futures = mutable.Map.empty[TopicPartition, CompletableFuture[FileRecordsOrError]]
 
-    // TODO: POD-2419, offsets for leader epoch needs to be implemented for proper truncation
     partitions.forEach { (tp, epochData) =>
       if (epochData.leaderEpoch != OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH && job.mustHandle(tp.topic)) {
         val partitionRequest = new ListOffsetsPartition()
