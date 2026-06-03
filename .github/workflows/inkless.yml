@@ -169,11 +169,13 @@ jobs:
             --tests "org.apache.kafka.image.TopicsImageTest" && \
           ./gradlew ${GRADLE_ARGS} :core:test \
             --tests "*Inkless*" --tests "*Diskless*" \
+            --tests "io.aiven.inkless.*" \
             --tests "kafka.log.LogConfigTest" \
             --tests "kafka.server.KafkaConfigTest" \
             --tests "kafka.server.ReplicaManagerTest" \
             --tests "kafka.server.KafkaApisTest" \
             --tests "kafka.cluster.PartitionTest" \
+            --tests "kafka.server.AbstractFetcherThreadTest" \
             --tests "kafka.server.DynamicBrokerConfigTest" \
             --tests "kafka.server.DynamicConfigChangeTest" \
             --tests "kafka.server.ReplicaFetcherThreadTest" \
