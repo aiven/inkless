@@ -2990,9 +2990,14 @@ public class ReplicationControlManager {
             for (Entry<Integer, PartitionRegistration> partEntry : topicInfo.parts.entrySet()) {
                 PartitionRegistration partition = partEntry.getValue();
                 if (partition.classicToDisklessStartOffset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+                    if (partition.leader == NO_LEADER) {
+                        log.warn("Partition {}-{} has no leader; classic-to-diskless switch will " +
+                            "remain pending until a leader is elected", topicName, partEntry.getKey());
+                    }
                     PartitionChangeRecord record = new PartitionChangeRecord()
                         .setTopicId(topicId)
-                        .setPartitionId(partEntry.getKey());
+                        .setPartitionId(partEntry.getKey())
+                        .setLeader(partition.leader); // Force leader epoch bump to trigger makeLeader on broker
                     record.unknownTaggedFields().add(
                         InitDisklessLogFields.encodeClassicToDisklessStartOffset(
                             PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING));
