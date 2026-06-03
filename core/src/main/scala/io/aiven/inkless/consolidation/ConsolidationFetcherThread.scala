@@ -43,6 +43,8 @@ class ConsolidationFetcherThread(name: String,
     }
   }
 
+  override protected def shouldEvictFullySwitchedDisklessPartitions: Boolean = false
+
   override def processPartitionData(
     topicPartition: TopicPartition,
     fetchOffset: Long,

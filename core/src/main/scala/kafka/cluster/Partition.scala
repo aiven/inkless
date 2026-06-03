@@ -37,7 +37,7 @@ import org.apache.kafka.common.record.{ControlRecordType, EndTransactionMarker, 
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.{UNDEFINED_EPOCH, UNDEFINED_EPOCH_OFFSET}
 import org.apache.kafka.common.utils.Time
-import org.apache.kafka.metadata.{LeaderAndIsr, LeaderRecoveryState, MetadataCache, PartitionRegistration}
+import org.apache.kafka.metadata.{LeaderAndIsr, LeaderRecoveryState, MetadataCache}
 import org.apache.kafka.server.common.RequestLocal
 import org.apache.kafka.server.log.remote.TopicPartitionLog
 import org.apache.kafka.server.log.remote.storage.RemoteLogManager
@@ -365,10 +365,14 @@ class Partition(val topicPartition: TopicPartition,
     }
   }
 
-  // Broker-local watermark for the latest diskless log start offset applied from pruning responses.
-  // The control plane owns the persisted log start offset; this value only catches stale or
-  // out-of-order pruner responses before they can regress local partition state.
-  @volatile private var lastAppliedDisklessLogStartOffset: Long = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
+  // Monotonic prune watermark for a consolidating diskless partition. It plays two roles:
+  //  - gate: the consolidated diskless region must not be pruned until tiered (remote) storage has
+  //    caught up to this offset, so pruning is only allowed once highestRemoteOffset >= floor;
+  //  - progress tracker: it advances to the latest applied diskless log start offset as pruning
+  //    proceeds, guarding against stale or out-of-order pruner responses regressing local state.
+  // None means the partition has no consolidation prune boundary established yet (so it must not be
+  // pruned on the switched-partition path).
+  @volatile private var safeConsolidationPruningFloor: Option[Long] = None
 
   this.logIdent = s"[Partition $topicPartition broker=$localBrokerId] "
 
@@ -410,16 +414,46 @@ class Partition(val topicPartition: TopicPartition,
    */
   def isAtMinIsr: Boolean = leaderLogIfLocal.exists { partitionState.isr.size == effectiveMinIsr(_) }
 
-  def maybeAdvanceLastAppliedDisklessLogStartOffset(newDisklessLogStartOffset: Long): Unit = {
+  /**
+   * Establishes a lower bound on the consolidation prune floor when consolidation (re)starts.
+   * Keeping an already-higher floor (e.g. the pruner advanced it while logStartOffset still points
+   * at the classic prefix) is the expected steady state, so this is silent on a no-op.
+   */
+  def ensureConsolidationPruneFloorAtLeast(floor: Long): Unit = {
     inWriteLock(leaderIsrUpdateLock) {
-      if (newDisklessLogStartOffset >= lastAppliedDisklessLogStartOffset) {
-        lastAppliedDisklessLogStartOffset = newDisklessLogStartOffset
-      } else {
-        warn(s"Ignoring stale diskless log start offset for $topicPartition. " +
-          s"The new value ($newDisklessLogStartOffset) is less than the last locally applied value " +
-          s"($lastAppliedDisklessLogStartOffset).")
+      raiseConsolidationPruneFloor(floor)
+    }
+  }
+
+  /**
+   * Advances the consolidation prune floor as pruning progresses. A value below the current floor
+   * indicates a stale or out-of-order pruner response, which is unexpected and surfaced as a warning.
+   */
+  def maybeAdvanceConsolidationPruneFloor(newFloor: Long): Unit = {
+    inWriteLock(leaderIsrUpdateLock) {
+      if (!raiseConsolidationPruneFloor(newFloor)) {
+        warn(s"Ignoring stale consolidation prune floor for $topicPartition. " +
+          s"The new value ($newFloor) is less than the current floor " +
+          s"(${safeConsolidationPruningFloor.get}).")
       }
     }
+  }
+
+  // Raises the floor to `floor` if it does not regress an existing one. Returns whether the floor
+  // was applied. Callers must hold leaderIsrUpdateLock.
+  private def raiseConsolidationPruneFloor(floor: Long): Boolean = {
+    if (safeConsolidationPruningFloor.forall(floor >= _)) {
+      safeConsolidationPruningFloor = Some(floor)
+      true
+    } else {
+      false
+    }
+  }
+
+  def getSafeConsolidatedDisklessPruneOffset(highestRemoteOffset: Long): Option[Long] = {
+    safeConsolidationPruningFloor
+      .filter(floor => highestRemoteOffset >= floor)
+      .map(_ => highestRemoteOffset)
   }
 
   def isSealed: Boolean = _sealed

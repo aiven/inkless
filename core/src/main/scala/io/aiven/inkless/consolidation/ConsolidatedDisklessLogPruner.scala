@@ -19,10 +19,12 @@
 package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.control_plane.{ControlPlane, PruneDisklessLogsError, PruneDisklessLogsRequest}
+import kafka.cluster.Partition
 import kafka.server.ReplicaManager
 import kafka.server.metadata.InklessMetadataView
 import kafka.utils.Logging
 import org.apache.kafka.common.TopicIdPartition
+import org.apache.kafka.metadata.PartitionRegistration
 
 import scala.jdk.CollectionConverters.{CollectionHasAsScala, SeqHasAsJava}
 
@@ -30,35 +32,33 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
                                     inklessMetadataView: InklessMetadataView,
                                     controlPlane: ControlPlane) extends Runnable with Logging {
 
-  /**
-   * This method is repeatedly invoked until the thread shuts down or this method throws an exception
-   */
   override def run(): Unit = {
-    val disklessTopicIdPartitions = inklessMetadataView.getConsolidatingDisklessTopicPartitions.asScala
-    val eitherErrorOrLog = disklessTopicIdPartitions
-      .map(tip => replicaManager.getPartitionOrError(tip.topicPartition))
-      .partition(either => either.isLeft)
-    eitherErrorOrLog._1
-      .flatMap {
-        case Left(error) => Some(error)
-        case _ => None
-      }
+    // Read the classic-to-diskless start offset once per partition and thread it through, so the
+    // eligibility check and the per-partition prune decision always see the same value (no TOCTOU
+    // between dropping SWITCH_PENDING and computing the safe prune offset).
+    val eligiblePartitionsWithSeal = inklessMetadataView.getConsolidatingDisklessTopicPartitions.asScala
+      .map(tip => (tip, inklessMetadataView.getClassicToDisklessStartOffset(tip.topicPartition)))
+      .filter { case (_, seal) => seal != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING }
+      .map { case (tip, seal) => (replicaManager.getPartitionOrError(tip.topicPartition), seal) }
+    eligiblePartitionsWithSeal
+      .collect { case (Left(error), _) => error }
       .foreach(error => logger.warn("Got error during pruning consolidated diskless logs: {}", error.message))
-    val requests = eitherErrorOrLog._2
-      .flatMap {
-        case Right(partition) =>
-          partition.topicId.flatMap { topicId =>
-            partition.log.flatMap { log =>
-              val highestRemoteOffset = log.highestOffsetInRemoteStorage
-              if (highestRemoteOffset < 0) {
-                None
-              } else {
+    val requests = eligiblePartitionsWithSeal
+      .collect { case (Right(partition), seal) => (partition, seal) }
+      .flatMap { case (partition, seal) =>
+        partition.topicId.flatMap { topicId =>
+          partition.log.flatMap { log =>
+            val highestRemoteOffset = log.highestOffsetInRemoteStorage
+            if (highestRemoteOffset < 0) {
+              None
+            } else {
+              safePruneOffset(partition, seal, highestRemoteOffset).map { safeHighestRemoteOffset =>
                 val topicIdPartition = new TopicIdPartition(topicId, partition.topicPartition)
-                Some(new PruneDisklessLogsRequest(topicIdPartition, highestRemoteOffset))
+                new PruneDisklessLogsRequest(topicIdPartition, safeHighestRemoteOffset)
               }
             }
           }
-        case _ => None
+        }
       }.toSeq.asJava
     if (!requests.isEmpty) {
       controlPlane.pruneDisklessLogs(requests).asScala.foreach { pruneDisklessLogsResponse =>
@@ -70,7 +70,7 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
           replicaManager.getPartitionOrError(pruneDisklessLogsResponse.topicIdPartition.topicPartition) match {
             case Right(partition) =>
               val newDisklessLogStart = pruneDisklessLogsResponse.disklessLogStartOffset
-              partition.maybeAdvanceLastAppliedDisklessLogStartOffset(newDisklessLogStart)
+              partition.maybeAdvanceConsolidationPruneFloor(newDisklessLogStart)
             case Left(error) => logger.warn("Couldn't update diskless start offset for {} due to: {}",
               pruneDisklessLogsResponse.topicIdPartition.topicPartition,
               error.message
@@ -78,6 +78,20 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
           }
         }
       }
+    }
+  }
+
+  private def safePruneOffset(partition: Partition, seal: Long, highestRemoteOffset: Long): Option[Long] = {
+    seal match {
+      case PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET =>
+        Some(highestRemoteOffset)
+      case classicToDisklessStartOffset if classicToDisklessStartOffset >= 0 =>
+        partition.getSafeConsolidatedDisklessPruneOffset(highestRemoteOffset)
+      case unexpected =>
+        logger.warn("Skipping pruning for {} due to unexpected classic-to-diskless start offset {}",
+          partition.topicPartition,
+          unexpected)
+        None
     }
   }
 }
