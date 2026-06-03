@@ -3109,9 +3109,9 @@ class ReplicaManager(val config: KafkaConfig,
         if (log.logEndOffset > seal) {
           stateChangeLogger.info(s"Truncating switched partition $tp from LEO ${log.logEndOffset} " +
             s"to classic-to-diskless start offset $seal")
-          // Seal is the classicToDisklessStartOffset, which is the first offset after switching.
-          // Since truncateTo removes all log entries <= target offset (seal in this case) the
-          // resulting log will end at seal-1.
+          // Seal is the classicToDisklessStartOffset, the first offset owned by diskless storage.
+          // truncateTo(seal) removes all entries with offset >= seal, leaving LEO = seal.
+          // The last classic record is at offset seal - 1.
           partition.truncateTo(seal, isFuture = false)
         } else if (log.logEndOffset < seal && partition.isLeader) {
           // This is unreachable in normal operation
