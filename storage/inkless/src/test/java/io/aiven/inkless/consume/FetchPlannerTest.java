@@ -1786,7 +1786,7 @@ public class FetchPlannerTest {
                 verify(metrics).recordHedgeRequest();
                 verify(metrics).recordHedgeTotalTimeTriggered();
                 verify(metrics, never()).recordHedgeTtfbTriggered();
-                verify(metrics).recordHedgeWon();
+                verify(metrics, timeout(1000)).recordHedgeWon();
             } finally {
                 releasePrimary.countDown();
                 multiExecutor.shutdownNow();
@@ -2082,7 +2082,7 @@ public class FetchPlannerTest {
                 verify(metrics).recordHedgeRequest();
                 verify(metrics).recordHedgeTotalTimeTriggered();
                 verify(metrics, never()).recordHedgeTtfbTriggered();
-                verify(metrics).recordHedgeWon();
+                verify(metrics, timeout(1000)).recordHedgeWon();
             } finally {
                 releasePrimary.countDown();
                 multiExecutor.shutdownNow();
@@ -2160,7 +2160,7 @@ public class FetchPlannerTest {
                 verify(metrics).recordHedgeRequest();
                 verify(metrics).recordHedgeTtfbTriggered();
                 verify(metrics, never()).recordHedgeTotalTimeTriggered();
-                verify(metrics).recordHedgeWon();
+                verify(metrics, timeout(1000)).recordHedgeWon();
             } finally {
                 releasePrimary.countDown();
                 multiExecutor.shutdownNow();
@@ -2282,7 +2282,7 @@ public class FetchPlannerTest {
                 verify(metrics).recordHedgeRequest();
                 verify(metrics).recordHedgeTotalTimeTriggered();
                 verify(metrics, never()).recordHedgeTtfbTriggered();
-                verify(metrics).recordHedgeWon();
+                verify(metrics, timeout(1000)).recordHedgeWon();
             } finally {
                 releasePrimary.countDown();
                 multiExecutor.shutdownNow();
@@ -2513,7 +2513,7 @@ public class FetchPlannerTest {
 
                 verify(metrics).recordHedgeRequest();
                 verify(metrics).recordHedgeTotalTimeTriggered();
-                verify(metrics).recordHedgeWon();
+                verify(metrics, timeout(1000)).recordHedgeWon();
             } finally {
                 releasePrimary.countDown();
                 multiExecutor.shutdownNow();
