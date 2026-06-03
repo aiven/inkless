@@ -496,12 +496,9 @@ class ReplicaManager(val config: KafkaConfig,
     val partitions = partitionsToStop.map(_.topicPartition)
     replicaFetcherManager.removeFetcherForPartitions(partitions)
     replicaAlterLogDirsManager.removeFetcherForPartitions(partitions)
-    val consolidatingPartitionsToStop = if (config.disklessRemoteStorageConsolidationEnabled)
-      partitions.filter(p => _inklessMetadataView.isConsolidatingDisklessTopic(p.topic))
-      else Set[TopicPartition]()
-    consolidationFetcherManager.foreach(_.removeFetcherForPartitions(consolidatingPartitionsToStop))
+    consolidationFetcherManager.foreach(_.removeFetcherForPartitions(partitions))
     consolidationMetrics.foreach { metrics =>
-      consolidatingPartitionsToStop.foreach(tp => metrics.unregisterPartition(tp))
+      partitions.foreach(tp => metrics.unregisterPartition(tp))
     }
 
     // Second remove deleted partitions from the partition map. Fetchers rely on the
