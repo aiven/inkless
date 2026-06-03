@@ -19,8 +19,8 @@ package kafka.server.mirror;
 import kafka.log.LogManager;
 import kafka.server.KafkaConfig;
 import kafka.server.NetworkUtils;
-
 import kafka.server.ReplicaManager;
+
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.admin.Admin;
@@ -93,10 +93,9 @@ import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 import org.apache.kafka.server.network.BrokerEndPoint;
 import org.apache.kafka.server.util.KafkaScheduler;
 import org.apache.kafka.server.util.RequestAndCompletionHandler;
-
 import org.apache.kafka.storage.internals.log.UnifiedLog;
+
 import org.slf4j.Logger;
-import scala.Option;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -107,7 +106,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalInt;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
@@ -122,6 +120,8 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+
+import scala.Option;
 
 import static kafka.server.mirror.ClusterMirrorUtils.LEADER_EPOCH_BUMP_INCREMENT;
 import static kafka.server.mirror.ClusterMirrorUtils.LEADER_EPOCH_BUMP_THRESHOLD;
