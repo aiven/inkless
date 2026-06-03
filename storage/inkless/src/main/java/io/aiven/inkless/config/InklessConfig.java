@@ -179,11 +179,36 @@ public class InklessConfig extends AbstractConfig {
         + "Set to 0 to disable rate limiting. "
         + "The upper bound of 10000 req/s is a safety limit to prevent misconfiguration. For high-throughput systems, "
         + "consider the relationship between this rate limit, thread pool size, and storage backend capacity. "
-        + "At the default rate of 200 req/s with ~50ms per request latency, this allows ~10 concurrent requests.";
+        + "At the default rate of 200 req/s with ~50ms per request latency, this allows ~10 concurrent requests. "
+        + "Note: hedge requests triggered by slow fetches are exempt from this limit. In the worst case, "
+        + "effective storage GET rate can reach up to 2x this value.";
     // Default 200 req/s: Conservative limit based on typical object storage GET request costs and latency.
     // At ~50ms per request, 200 req/s = ~10 concurrent requests, balancing throughput with cost control.
     // Tune based on storage backend capacity and budget constraints.
     private static final int FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DEFAULT = 200;
+
+    public static final String FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG = "fetch.hedge.ttfb.threshold.ms";
+    public static final String FETCH_HEDGE_TTFB_THRESHOLD_MS_DOC = "Time-to-first-byte threshold in milliseconds to trigger a hedge request. "
+        + "When a storage fetch has not received its first byte within this threshold, a competing hedge request is submitted. "
+        + "This catches stuck connections early, before the total-time threshold. "
+        + "Set to 0 to disable TTFB-based hedging. "
+        + "When both hedging thresholds are enabled, fetch.hedge.total.time.threshold.ms must be strictly greater than this value.";
+    private static final long FETCH_HEDGE_TTFB_THRESHOLD_MS_DEFAULT = 0;
+
+    public static final String FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_CONFIG = "fetch.hedge.total.time.threshold.ms";
+    public static final String FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_DOC = "Total time threshold in milliseconds to trigger a hedge request. "
+        + "When a storage fetch has not completed within this threshold, a competing hedge request is submitted. "
+        + "The first request to complete wins; the other continues in the background and its result is ignored. "
+        + "Set to 0 to disable total-time-based hedging. "
+        + "When both hedging thresholds are enabled, this value must be strictly greater than "
+        + FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG + ". "
+        + "Capacity impact: hedges submit to the same executor as primaries (fetch.data.thread.pool.size for hot path, "
+        + "fetch.lagging.consumer.thread.pool.size for cold path). "
+        + "Normal case: only tail-latency requests (exceeding threshold) trigger hedges — typically <5% of traffic. "
+        + "Worst case: if all in-flight requests exceed the threshold, effective storage GET rate doubles "
+        + "(one primary + one hedge per request), bounded by executor thread pool + queue capacity. "
+        + "Monitor HedgeRequestRate to detect excessive hedging. If hedge rate is too high, increase this threshold.";
+    private static final long FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_DEFAULT = 0;
 
     public static final String FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG = "fetch.find.batches.max.per.partition";
     public static final String FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DOC = "The maximum number of batches to find per partition when processing a fetch request. "
@@ -396,6 +421,22 @@ public class InklessConfig extends AbstractConfig {
             FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DOC
         );
         configDef.define(
+            FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_CONFIG,
+            ConfigDef.Type.LONG,
+            FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_DOC
+        );
+        configDef.define(
+            FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG,
+            ConfigDef.Type.LONG,
+            FETCH_HEDGE_TTFB_THRESHOLD_MS_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            FETCH_HEDGE_TTFB_THRESHOLD_MS_DOC
+        );
+        configDef.define(
             FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG,
             ConfigDef.Type.INT,
             FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DEFAULT,
@@ -494,6 +535,24 @@ public class InklessConfig extends AbstractConfig {
                 thresholdMs,
                 "Lagging consumer threshold (" + thresholdMs + "ms) must be >= cache lifespan ("
                     + lifespanMs + "ms) to avoid routing requests for cached data to the lagging path."
+            );
+        }
+
+        final long hedgeTtfbMs =
+            ((Number) parsedProps.get(FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG)).longValue();
+        final long hedgeTotalTimeMs =
+            ((Number) parsedProps.get(FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_CONFIG)).longValue();
+
+        // When both hedging triggers are enabled, total-time threshold must be > TTFB threshold.
+        // TTFB fires early to catch stuck connections; total-time is a broader safety net.
+        // If total-time <= TTFB, the total-time timer would fire first (or simultaneously),
+        // making TTFB redundant and defeating the two-tier design.
+        if (hedgeTtfbMs > 0 && hedgeTotalTimeMs > 0 && hedgeTotalTimeMs <= hedgeTtfbMs) {
+            throw new ConfigException(
+                FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_CONFIG,
+                hedgeTotalTimeMs,
+                FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_CONFIG + " (" + hedgeTotalTimeMs + "ms) must be greater than "
+                    + FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG + " (" + hedgeTtfbMs + "ms) when both are enabled."
             );
         }
 
@@ -616,6 +675,14 @@ public class InklessConfig extends AbstractConfig {
 
     public int fetchLaggingConsumerRequestRateLimit() {
         return getInt(FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_CONFIG);
+    }
+
+    public long fetchHedgeTtfbThresholdMs() {
+        return getLong(FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG);
+    }
+
+    public long fetchHedgeTotalTimeThresholdMs() {
+        return getLong(FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_CONFIG);
     }
 
     public int maxBatchesPerPartitionToFind() {

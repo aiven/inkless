@@ -86,8 +86,21 @@ public class InklessFetchMetrics {
     private static final String LAGGING_CONSUMER_REQUEST_RATE_DOC = "Rate of requests from lagging consumers (cold path, bypasses cache) per second";
     private static final String LAGGING_CONSUMER_REQUEST_REJECTED_RATE = "LaggingConsumerRequestRejectedRate";
     private static final String LAGGING_CONSUMER_REQUEST_REJECTED_RATE_DOC = "Rate of lagging consumer requests rejected due to executor unavailability per second";
+    // Tracks wait time (including zero-wait) for ALL lagging consumer requests when rate limiting is enabled.
+    // When rate limiter is disabled (config = 0), LaggingConsumerRequestRate > 0 but this metric rate = 0.
+    // Always records wait time to avoid histogram bias - zero-wait cases show when rate limiting is NOT a bottleneck.
+    // Use to monitor: rate limiting latency distribution, actual throttling pressure, and limiter effectiveness.
     private static final String LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME = "LaggingConsumerRateLimitWaitTime";
     private static final String LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME_DOC = "Wait time for rate-limited lagging consumer requests in milliseconds";
+
+    private static final String HEDGE_REQUEST_RATE = "HedgeRequestRate";
+    private static final String HEDGE_REQUEST_RATE_DOC = "Rate of hedged fetch requests issued per second";
+    private static final String HEDGE_TTFB_TRIGGERED_RATE = "HedgeTtfbTriggeredRate";
+    private static final String HEDGE_TTFB_TRIGGERED_RATE_DOC = "Rate of hedge requests triggered by TTFB timeout per second";
+    private static final String HEDGE_TOTAL_TIME_TRIGGERED_RATE = "HedgeTotalTimeTriggeredRate";
+    private static final String HEDGE_TOTAL_TIME_TRIGGERED_RATE_DOC = "Rate of hedge requests triggered by total time timeout per second";
+    private static final String HEDGE_WON_RATE = "HedgeWonRate";
+    private static final String HEDGE_WON_RATE_DOC = "Rate of hedge requests that completed before the original request per second";
 
     /**
      * This method returns a list of all the metric name templates for the InklessFetchMetrics class.
@@ -118,7 +131,11 @@ public class InklessFetchMetrics {
             new MetricNameTemplate(RECENT_DATA_REQUEST_RATE, GROUP, RECENT_DATA_REQUEST_RATE_DOC),
             new MetricNameTemplate(LAGGING_CONSUMER_REQUEST_RATE, GROUP, LAGGING_CONSUMER_REQUEST_RATE_DOC),
             new MetricNameTemplate(LAGGING_CONSUMER_REQUEST_REJECTED_RATE, GROUP, LAGGING_CONSUMER_REQUEST_REJECTED_RATE_DOC),
-            new MetricNameTemplate(LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME, GROUP, LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME_DOC)
+            new MetricNameTemplate(LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME, GROUP, LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME_DOC),
+            new MetricNameTemplate(HEDGE_REQUEST_RATE, GROUP, HEDGE_REQUEST_RATE_DOC),
+            new MetricNameTemplate(HEDGE_TTFB_TRIGGERED_RATE, GROUP, HEDGE_TTFB_TRIGGERED_RATE_DOC),
+            new MetricNameTemplate(HEDGE_TOTAL_TIME_TRIGGERED_RATE, GROUP, HEDGE_TOTAL_TIME_TRIGGERED_RATE_DOC),
+            new MetricNameTemplate(HEDGE_WON_RATE, GROUP, HEDGE_WON_RATE_DOC)
         );
     }
 
@@ -149,6 +166,10 @@ public class InklessFetchMetrics {
     private final Meter laggingConsumerRequestRate;
     private final Meter laggingConsumerRejectedRate;
     private final Histogram laggingRateLimitWaitTime;
+    private final Meter hedgeRequestRate;
+    private final Meter hedgeTtfbTriggeredRate;
+    private final Meter hedgeTotalTimeTriggeredRate;
+    private final Meter hedgeWonRate;
 
     public InklessFetchMetrics(final Time time, final ObjectCache cache) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -176,6 +197,10 @@ public class InklessFetchMetrics {
         laggingConsumerRequestRate = metricsGroup.newMeter(LAGGING_CONSUMER_REQUEST_RATE, "requests", TimeUnit.SECONDS, Map.of());
         laggingConsumerRejectedRate = metricsGroup.newMeter(LAGGING_CONSUMER_REQUEST_REJECTED_RATE, "rejections", TimeUnit.SECONDS, Map.of());
         laggingRateLimitWaitTime = metricsGroup.newHistogram(LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME, true, Map.of());
+        hedgeRequestRate = metricsGroup.newMeter(HEDGE_REQUEST_RATE, "hedges", TimeUnit.SECONDS, Map.of());
+        hedgeTtfbTriggeredRate = metricsGroup.newMeter(HEDGE_TTFB_TRIGGERED_RATE, "hedges", TimeUnit.SECONDS, Map.of());
+        hedgeTotalTimeTriggeredRate = metricsGroup.newMeter(HEDGE_TOTAL_TIME_TRIGGERED_RATE, "hedges", TimeUnit.SECONDS, Map.of());
+        hedgeWonRate = metricsGroup.newMeter(HEDGE_WON_RATE, "wins", TimeUnit.SECONDS, Map.of());
     }
 
     public void fetchCompleted(Instant startAt) {
@@ -264,6 +289,10 @@ public class InklessFetchMetrics {
         metricsGroup.removeMetric(LAGGING_CONSUMER_REQUEST_RATE);
         metricsGroup.removeMetric(LAGGING_CONSUMER_REQUEST_REJECTED_RATE);
         metricsGroup.removeMetric(LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME);
+        metricsGroup.removeMetric(HEDGE_REQUEST_RATE);
+        metricsGroup.removeMetric(HEDGE_TTFB_TRIGGERED_RATE);
+        metricsGroup.removeMetric(HEDGE_TOTAL_TIME_TRIGGERED_RATE);
+        metricsGroup.removeMetric(HEDGE_WON_RATE);
     }
 
     public void fetchStarted(int partitionSize) {
@@ -342,5 +371,21 @@ public class InklessFetchMetrics {
      */
     public void recordRateLimitWaitTime(long waitMs) {
         laggingRateLimitWaitTime.update(waitMs);
+    }
+
+    public void recordHedgeRequest() {
+        hedgeRequestRate.mark();
+    }
+
+    public void recordHedgeTtfbTriggered() {
+        hedgeTtfbTriggeredRate.mark();
+    }
+
+    public void recordHedgeTotalTimeTriggered() {
+        hedgeTotalTimeTriggeredRate.mark();
+    }
+
+    public void recordHedgeWon() {
+        hedgeWonRate.mark();
     }
 }
