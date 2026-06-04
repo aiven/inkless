@@ -3133,6 +3133,12 @@ class ReplicaManager(val config: KafkaConfig,
     consolidationReconciler.foreach(_.startConsolidationFetchersForCaughtUpClassicPartitions(topicPartitions))
   }
 
+  def classicToDisklessStartOffset(topicPartition: TopicPartition): Long =
+    _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
+
+  def disklessLeaderEpoch(topicPartition: TopicPartition): Int =
+    _inklessMetadataView.getDisklessLeaderEpoch(topicPartition)
+
   /**
    * Whether a follower of a consolidating diskless topic is ready to be handed to the consolidation
    * fetcher rather than the classic ReplicaFetcher:
