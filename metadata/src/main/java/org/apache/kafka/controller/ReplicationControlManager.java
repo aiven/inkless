@@ -3010,6 +3010,28 @@ public class ReplicationControlManager {
         return records;
     }
 
+    /**
+     * Legacy AlterConfigs provides complete config maps rather than per-key operations.
+     * Adapt that input and reuse {@link #markClassicToDisklessSwitchStarted(Map, Map)}
+     * so both legacy and incremental alter configs emit the same switch-pending records.
+     */
+    List<ApiMessageAndVersion> markClassicToDisklessSwitchStartedForLegacyAlterConfigs(
+        Map<ConfigResource, Map<String, String>> newConfigs,
+        Map<ConfigResource, ApiError> configResults
+    ) {
+        Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges = new HashMap<>();
+        for (Entry<ConfigResource, Map<String, String>> entry : newConfigs.entrySet()) {
+            String disklessEnable = entry.getValue().get(DISKLESS_ENABLE_CONFIG);
+            if (disklessEnable != null) {
+                configChanges.put(entry.getKey(), Map.of(
+                    DISKLESS_ENABLE_CONFIG,
+                    new SimpleImmutableEntry<>(SET, disklessEnable)
+                ));
+            }
+        }
+        return markClassicToDisklessSwitchStarted(configChanges, configResults);
+    }
+
     private boolean isDisklessTopic(String topicName) {
         return Boolean.parseBoolean(
             configurationControl.currentTopicConfig(topicName)
