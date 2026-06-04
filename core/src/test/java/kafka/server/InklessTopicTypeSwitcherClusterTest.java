@@ -34,6 +34,10 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.protocol.ApiKeys;
+import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.requests.AlterConfigsRequest;
+import org.apache.kafka.common.requests.AlterConfigsResponse;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
@@ -45,8 +49,9 @@ import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
@@ -93,6 +98,11 @@ public class InklessTopicTypeSwitcherClusterTest {
     private static final Duration PRODUCE_SEND_TIMEOUT = Duration.ofSeconds(5);
 
     private KafkaClusterTestKit cluster;
+
+    private enum AlterConfigsMode {
+        INCREMENTAL,
+        LEGACY
+    }
 
     @BeforeEach
     public void setup(final TestInfo testInfo) throws Exception {
@@ -147,8 +157,9 @@ public class InklessTopicTypeSwitcherClusterTest {
         cluster.close();
     }
 
-    @Test
-    public void migrateClassicTopicToDiskless() throws Exception {
+    @ParameterizedTest(name = "alterConfigsMode={0}")
+    @EnumSource(AlterConfigsMode.class)
+    public void switchClassicTopicToDiskless(final AlterConfigsMode alterConfigsMode) throws Exception {
         final String topicSuffix = UUID.randomUUID().toString().substring(0, 8);
         final String disklessTopic = "diskless-" + topicSuffix;
         final String classicTopic = "classic-" + topicSuffix;
@@ -161,7 +172,7 @@ public class InklessTopicTypeSwitcherClusterTest {
 
         final Map<String, Object> adminConfigs = baseClientConfigs();
         final Map<String, Object> producerConfigs = producerConfigs();
-        log.warn("[stage=test-start] topics: diskless={}, classic={}, migrating={}", disklessTopic, classicTopic, classicToDisklessTopic);
+        log.warn("[stage=test-start] alterConfigsMode={}, topics: diskless={}, classic={}, switching={}", alterConfigsMode, disklessTopic, classicTopic, classicToDisklessTopic);
 
         try (Admin admin = AdminClient.create(adminConfigs)) {
             final NewTopic diskless = new NewTopic(disklessTopic, NUM_PARTITIONS, (short) -1)
@@ -185,11 +196,11 @@ public class InklessTopicTypeSwitcherClusterTest {
 
             final Thread producerThread = new Thread(() -> {
                 try (Producer<byte[], byte[]> producer = new KafkaProducer<>(producerConfigs)) {
-                    log.warn("[stage=pre-migration-produce] Producing baseline records to all topics");
+                    log.warn("[stage=pre-switch-produce] Producing baseline records to all topics");
                     produceRounds(producer, topics, producedCounts, 12, true);
                     producerStarted.countDown();
 
-                    log.warn("[stage=during-migration-produce] Continuing produces during migration");
+                    log.warn("[stage=during-switch-produce] Continuing produces during switch");
                     while (keepProducing.get()) {
                         produceRounds(producer, topics, producedCounts, 1, false);
                     }
@@ -197,16 +208,16 @@ public class InklessTopicTypeSwitcherClusterTest {
                     producerFailure.set(t);
                     producerStarted.countDown();
                 }
-            }, "migration-producer-thread");
+            }, "switch-producer-thread");
 
             producerThread.start();
             assertTrue(producerStarted.await(30, TimeUnit.SECONDS), "Producer thread did not finish baseline production in time");
 
             try {
-                log.warn("[stage=migration-start] Enabling diskless for topic={}", classicToDisklessTopic);
-                alterTopicConfig(admin, classicToDisklessTopic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+                log.warn("[stage=switch-start] Enabling diskless for topic={} via {}", classicToDisklessTopic, alterConfigsMode);
+                alterTopicConfig(admin, classicToDisklessTopic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"), alterConfigsMode);
 
-                log.warn("[stage=await-migration] Waiting for diskless.enable=true on topic={}", classicToDisklessTopic);
+                log.warn("[stage=await-switch] Waiting for diskless.enable=true on topic={}", classicToDisklessTopic);
                 waitForTopicDisklessValue(admin, classicToDisklessTopic, "true");
             } finally {
                 keepProducing.set(false);
@@ -218,10 +229,15 @@ public class InklessTopicTypeSwitcherClusterTest {
                 throw new RuntimeException("Producer thread failed", producerFailure.get());
             }
 
+            try (Producer<byte[], byte[]> producer = new KafkaProducer<>(producerConfigs)) {
+                log.warn("[stage=post-switch-produce] Producing records after switch");
+                produceRounds(producer, topics, producedCounts, 1, true);
+            }
+
             assertEquals("true", getTopicConfig(admin, disklessTopic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
             assertEquals("false", getTopicConfig(admin, classicTopic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
             assertEquals("true", getTopicConfig(admin, classicToDisklessTopic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
-            log.warn("[stage=post-migration-validated] Topic configurations and placement checks passed");
+            log.warn("[stage=post-switch-validated] Topic configurations and placement checks passed");
         }
 
         log.warn("[stage=consume-verify] Produced counts before consume verification={}", producedCounts);
@@ -358,12 +374,48 @@ public class InklessTopicTypeSwitcherClusterTest {
 
     private void alterTopicConfig(final Admin admin,
                                   final String topic,
-                                  final Map<String, String> newConfigs) throws Exception {
+                                  final Map<String, String> newConfigs,
+                                  final AlterConfigsMode alterConfigsMode) throws Exception {
+        switch (alterConfigsMode) {
+            case INCREMENTAL:
+                alterTopicConfigWithIncrementalAlterConfigs(admin, topic, newConfigs);
+                break;
+            case LEGACY:
+                alterTopicConfigWithLegacyAlterConfigs(topic, newConfigs);
+                break;
+            default:
+                throw new IllegalArgumentException("Unsupported alter configs mode " + alterConfigsMode);
+        }
+    }
+
+    private void alterTopicConfigWithIncrementalAlterConfigs(final Admin admin,
+                                                            final String topic,
+                                                            final Map<String, String> newConfigs) throws Exception {
         final ConfigResource topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
         final Collection<AlterConfigOp> operations = newConfigs.entrySet().stream()
             .map(entry -> new AlterConfigOp(new ConfigEntry(entry.getKey(), entry.getValue()), AlterConfigOp.OpType.SET))
             .toList();
         admin.incrementalAlterConfigs(Map.of(topicResource, operations)).all().get(20, TimeUnit.SECONDS);
+    }
+
+    private void alterTopicConfigWithLegacyAlterConfigs(final String topic,
+                                                       final Map<String, String> newConfigs) throws Exception {
+        final ConfigResource topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
+        final Collection<AlterConfigsRequest.ConfigEntry> configEntries = newConfigs.entrySet().stream()
+            .map(entry -> new AlterConfigsRequest.ConfigEntry(entry.getKey(), entry.getValue()))
+            .toList();
+        final AlterConfigsRequest.Config config = new AlterConfigsRequest.Config(configEntries);
+        final AlterConfigsRequest request = new AlterConfigsRequest.Builder(Map.of(topicResource, config), false)
+            .build(ApiKeys.ALTER_CONFIGS.latestVersion());
+        final AlterConfigsResponse response = IntegrationTestUtils.connectAndReceive(
+            request,
+            cluster.brokers().values().iterator().next().socketServer(),
+            cluster.nodes().brokerListenerName(),
+            scala.reflect.ClassTag$.MODULE$.apply(AlterConfigsResponse.class)
+        );
+        final var apiError = response.errors().get(topicResource);
+        assertTrue(apiError != null, "Legacy AlterConfigs response did not contain topic resource " + topicResource);
+        assertEquals(Errors.NONE, apiError.error(), "Legacy AlterConfigs failed: " + apiError.message());
     }
 
     private Map<String, String> getTopicConfig(final Admin admin, final String topic) throws Exception {

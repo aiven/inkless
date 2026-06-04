@@ -2008,6 +2008,14 @@ public final class QuorumController implements Controller {
             if (validateOnly) {
                 return result.withoutRecords();
             } else {
+                List<ApiMessageAndVersion> migrationRecords =
+                    replicationControl.markClassicToDisklessSwitchStartedForLegacyAlterConfigs(newConfigs, result.response());
+                if (!migrationRecords.isEmpty()) {
+                    List<ApiMessageAndVersion> allRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+                    allRecords.addAll(result.records());
+                    allRecords.addAll(migrationRecords);
+                    return ControllerResult.atomicOf(allRecords, result.response());
+                }
                 return result;
             }
         });
