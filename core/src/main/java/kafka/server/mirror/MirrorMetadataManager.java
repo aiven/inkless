@@ -19,6 +19,7 @@ package kafka.server.mirror;
 import kafka.log.LogManager;
 import kafka.server.KafkaConfig;
 import kafka.server.NetworkUtils;
+import kafka.server.ReplicaManager;
 
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
@@ -92,6 +93,7 @@ import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 import org.apache.kafka.server.network.BrokerEndPoint;
 import org.apache.kafka.server.util.KafkaScheduler;
 import org.apache.kafka.server.util.RequestAndCompletionHandler;
+import org.apache.kafka.storage.internals.log.UnifiedLog;
 
 import org.slf4j.Logger;
 
@@ -118,6 +120,8 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+
+import scala.Option;
 
 import static kafka.server.mirror.ClusterMirrorUtils.LEADER_EPOCH_BUMP_INCREMENT;
 import static kafka.server.mirror.ClusterMirrorUtils.LEADER_EPOCH_BUMP_THRESHOLD;
@@ -158,7 +162,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private volatile ClusterMirrorStateSender mirrorStateSender;
     private volatile boolean initialized = false;
     private final NodeToControllerChannelManager channelManager;
-    private final Supplier<MirrorFetcherManager> mirrorFetcherManagerSupplier;
+    private final Supplier<ReplicaManager> replicaManagerSupplier;
     private Optional<ClusterMirrorUtils.StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Consumer<String>> mirrorDeletionHandler = Optional.empty();
     private Optional<Function<ClusterMirrorRecordKey, Integer>> coordinatorPartitionFinder = Optional.empty();
@@ -197,7 +201,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         Time time,
         MetadataCache metadataCache,
         NodeToControllerChannelManager channelManager,
-        Supplier<MirrorFetcherManager> mirrorFetcherManagerSupplier,
+        Supplier<ReplicaManager> replicaManagerSupplier,
         KafkaScheduler scheduler
     ) {
         this.name = "[" + MirrorMetadataManager.class.getSimpleName() + " id=" + brokerConfig.nodeId() + "] ";
@@ -208,7 +212,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.time = time;
         this.random = new Random();
         this.channelManager = channelManager;
-        this.mirrorFetcherManagerSupplier = mirrorFetcherManagerSupplier;
+        this.replicaManagerSupplier = replicaManagerSupplier;
         this.metadataImage = MetadataImage.EMPTY;
         this.metadataCache = metadataCache;
         this.scheduler = scheduler;
@@ -425,7 +429,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         if (admin != null) {
                             admin.close();
                         }
-                        mirrorFetcherManagerSupplier.get().removeFetchersForMirror(mirrorName);
+                        replicaManagerSupplier.get().mirrorFetcherManager().removeFetchersForMirror(mirrorName);
                         if (!mirrorDeleted) {
                             reconnectedMirrors.add(mirrorName);
                         }
@@ -1574,9 +1578,42 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     continue;
                 }
 
-                Map<TopicPartition, OffsetAndMetadata> filtered = entry.getValue().entrySet().stream()
-                        .filter(e -> mirrorTopics.contains(e.getKey().topic()))
-                        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+                Map<TopicPartition, OffsetAndMetadata> filtered = new HashMap<>();
+                entry.getValue().entrySet().stream()
+                    .filter(e -> mirrorTopics.contains(e.getKey().topic()))
+                    .forEach(ent -> {
+                        TopicPartition topicPartition = ent.getKey();
+                        Option<Long> logStartOffset = replicaManagerSupplier.get().getLog(topicPartition).map(UnifiedLog::logStartOffset);
+                        Option<Long> logEndOffset = replicaManagerSupplier.get().getLog(topicPartition).map(UnifiedLog::logEndOffset);
+                        if (logStartOffset.isEmpty() ||  logEndOffset.isEmpty()) {
+                            log.debug("Cannot get the log start offset or log end offset for partition {}, skip consumer group sync for it.", topicPartition);
+                            return;
+                        }
+                        OffsetAndMetadata sourceGroupOffsetAndMetadata = ent.getValue();
+
+                        // Committing to the range [local logStartOffset ~ local logEndOffset]
+                        long finalOffset = Math.max(logStartOffset.get(), Math.min(sourceGroupOffsetAndMetadata.offset(), logEndOffset.get()));
+
+                        if (finalOffset == sourceGroupOffsetAndMetadata.offset()) {
+                            filtered.put(topicPartition, sourceGroupOffsetAndMetadata);
+                        } else if (finalOffset == logEndOffset.get()) {
+                            int logEndEpoch = replicaManagerSupplier.get().getLog(topicPartition).map(l -> l.leaderEpochCache().epochForOffset(logEndOffset.get())).getOrElse(() -> -1);
+                            if (logEndEpoch < 0) {
+                                log.debug("Cannot get the log end epoch for partition {}, skip consumer group sync for it.", topicPartition);
+                            } else {
+                                filtered.put(topicPartition, new OffsetAndMetadata(logEndOffset.get(), Optional.of(logEndEpoch), ""));
+                            }
+                        } else {
+                            // finalOffset == logStartOffset
+                            int logStartEpoch = replicaManagerSupplier.get().getLog(topicPartition).map(l -> l.leaderEpochCache().epochForOffset(logStartOffset.get())).getOrElse(() -> -1);
+                            if (logStartEpoch < 0) {
+                                log.debug("Cannot get the log start epoch for partition {}, skip consumer group sync for it.", topicPartition);
+                            } else {
+                                filtered.put(topicPartition, new OffsetAndMetadata(logStartOffset.get(), Optional.of(logStartEpoch), ""));
+                            }
+                        }
+                    });
+
                 if (filtered.isEmpty()) {
                     continue;
                 }
@@ -1632,9 +1669,22 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     continue;
                 }
 
-                Map<TopicPartition, Long> filtered = entry.getValue().entrySet().stream()
-                        .filter(e -> mirrorTopics.contains(e.getKey().topic()))
-                        .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().offset()));
+                Map<TopicPartition, Long> filtered = new  HashMap<>();
+                entry.getValue().entrySet().stream()
+                    .filter(e -> mirrorTopics.contains(e.getKey().topic()))
+                    .forEach(ent -> {
+                        TopicPartition topicPartition = ent.getKey();
+                        Option<Long> logStartOffset = replicaManagerSupplier.get().getLog(topicPartition).map(UnifiedLog::logStartOffset);
+                        Option<Long> logEndOffset = replicaManagerSupplier.get().getLog(topicPartition).map(UnifiedLog::logEndOffset);
+                        if (logStartOffset.isEmpty() ||  logEndOffset.isEmpty()) {
+                            log.debug("Cannot get the log start offset or log end offset for partition {}, skip share group offset sync for it.", topicPartition);
+                            return;
+                        }
+                        OffsetAndMetadata sourceGroupOffsetAndMetadata = ent.getValue();
+                        // Committing to the range [local logStartOffset ~ local logEndOffset]
+                        long finalOffset = Math.max(logStartOffset.get(), Math.min(sourceGroupOffsetAndMetadata.offset(), logEndOffset.get()));
+                        filtered.put(topicPartition, finalOffset);
+                    });
                 if (filtered.isEmpty()) {
                     continue;
                 }

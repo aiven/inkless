@@ -348,7 +348,7 @@ class BrokerServer(
         time,
         metadataCache,
         clientToControllerChannelManager,
-        () => _replicaManager.mirrorFetcherManager,
+        () => replicaManager,
         mirrorScheduler
       )
 
