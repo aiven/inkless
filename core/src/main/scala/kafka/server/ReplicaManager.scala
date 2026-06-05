@@ -1952,47 +1952,54 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    val disklessFetchInfosWithoutTopicId = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
+    val disklessFetchInfos = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
     val classicFetchInfos = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
     val immediateFetchResponses = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionData)]()
-    val invalidConsolidatingPartitionFetchResponses = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionData)]()
 
-    fetchInfos.foreach { case (tp, partitionData) =>
-      val fetchInfo = tp -> partitionData
+    fetchInfos.foreach { fetchInfo =>
+      val (tp, fetchPartitionData) = fetchInfo
       val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic)
-      var partitionAlreadyHandled = false
+      var partitionLookupFailed = false
       if (!isDiskless) {
         classicFetchInfos += fetchInfo
       } else {
         val classicToDisklessStartOffset = _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition())
+        // partitions with switching in progress should always serve from local log
         var shouldReadFromUnifiedLog = classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
         val isConsolidatingPartition =
           _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic) &&
             config.disklessRemoteStorageConsolidationEnabled
         if (isConsolidatingPartition) {
           getPartitionOrError(tp.topicPartition) match {
-            case Right(partition) => shouldReadFromUnifiedLog = shouldReadFromUnifiedLog || partition.log.exists(partitionData.fetchOffset < _.logEndOffset)
+            case Right(partition) =>
+              shouldReadFromUnifiedLog = shouldReadFromUnifiedLog ||
+                partition.log.exists(fetchPartitionData.fetchOffset < _.logEndOffset)
             case Left(error) =>
-              invalidConsolidatingPartitionFetchResponses += tp -> new FetchPartitionData(
-                error,
-                UnifiedLog.UNKNOWN_OFFSET,
-                UnifiedLog.UNKNOWN_OFFSET,
-                MemoryRecords.EMPTY,
-                Optional.empty(),
-                OptionalLong.empty(),
-                Optional.empty(),
-                OptionalInt.empty(),
-                false
-              )
-              partitionAlreadyHandled = true
+              warn(s"Error while fetching partition ${tp.topicPartition()} for consolidating diskless topic: $error. " +
+                s"Returning error for the fetch request since we cannot determine if the partition has switched to diskless or not.")
+              immediateFetchResponses +=
+                tp ->
+                  new FetchPartitionData(
+                    error,
+                    UnifiedLog.UNKNOWN_OFFSET,
+                    UnifiedLog.UNKNOWN_OFFSET,
+                    MemoryRecords.EMPTY,
+                    Optional.empty(),
+                    OptionalLong.empty(),
+                    Optional.empty(),
+                    OptionalInt.empty(),
+                    false
+                  )
+              partitionLookupFailed = true
           }
         } else {
           shouldReadFromUnifiedLog = shouldReadFromUnifiedLog ||
-            (classicToDisklessStartOffset >= 0 && partitionData.fetchOffset < classicToDisklessStartOffset)
+            (classicToDisklessStartOffset >= 0 && fetchPartitionData.fetchOffset < classicToDisklessStartOffset)
         }
 
-        if (!partitionAlreadyHandled) {
-          if (params.isFromFollower && !shouldReadFromUnifiedLog && classicToDisklessStartOffset >= 0) {
+        if (!partitionLookupFailed) {
+          val disklessSwitchCompleted = !shouldReadFromUnifiedLog && classicToDisklessStartOffset >= 0
+          if (params.isFromFollower && disklessSwitchCompleted) {
             // The partition has fully switched to diskless and the follower is asking for an offset at or beyond it.
             // Followers must never replicate diskless records into their local log. Return
             // an empty response with HW clamped to the seal offset so the fetcher loop sees the
@@ -2000,23 +2007,47 @@ class ReplicaManager(val config: KafkaConfig,
             // Deliberately pass logStartOffset=0 (a no-op for the follower since
             // maybeIncrementLogStartOffset only ever advances) so the follower keeps its classic
             // local data intact and remains able to serve consumer reads from the local log.
-            immediateFetchResponses += tp -> new FetchPartitionData(
-              Errors.NONE,
-              classicToDisklessStartOffset,
-              0L,
-              MemoryRecords.EMPTY,
-              Optional.empty(),
-              OptionalLong.empty(),
-              Optional.empty(),
-              OptionalInt.empty(),
-              false
-            )
+            immediateFetchResponses += tp ->
+              new FetchPartitionData(
+                Errors.NONE,
+                classicToDisklessStartOffset,
+                0L,
+                MemoryRecords.EMPTY,
+                Optional.empty(),
+                OptionalLong.empty(),
+                Optional.empty(),
+                OptionalInt.empty(),
+                false
+              )
           } else {
             (shouldReadFromUnifiedLog, config.disklessManagedReplicasEnabled) match {
+              // Either born-diskless or completely switched to diskless
               case (false, _) =>
-                disklessFetchInfosWithoutTopicId += fetchInfo
+                maybeBackfillDisklessTopicId(tp) match {
+                  case Some(backfilledTp) =>
+                    disklessFetchInfos += (backfilledTp -> fetchPartitionData)
+                  case None =>
+                    error(s"Got null topic id from KRaft metadata for diskless topic ${tp.topic}")
+                    immediateFetchResponses += tp -> new FetchPartitionData(
+                      Errors.UNKNOWN_TOPIC_ID,
+                      UnifiedLog.UNKNOWN_OFFSET,
+                      UnifiedLog.UNKNOWN_OFFSET,
+                      MemoryRecords.EMPTY,
+                      Optional.empty(),
+                      OptionalLong.empty(),
+                      Optional.empty(),
+                      OptionalInt.empty(),
+                      false
+                    )
+                }
+              // Local log has data, managed replicas enabled — serve from local log
+              case (true, true) =>
+                classicFetchInfos += fetchInfo
               // Cannot read from UnifiedLog on a diskless topic if diskless managed replicas are not enabled.
               case (true, false) =>
+                warn(s"Fetch from replica ${params.replicaId} for diskless topic " +
+                  s"${tp.topic} partition ${tp.partition} with fetch offset ${fetchPartitionData.fetchOffset} rejected: " +
+                  s"local log has data but managed replicas are not enabled.")
                 immediateFetchResponses += tp -> new FetchPartitionData(
                   Errors.INVALID_REQUEST,
                   UnifiedLog.UNKNOWN_OFFSET,
@@ -2028,8 +2059,6 @@ class ReplicaManager(val config: KafkaConfig,
                   OptionalInt.empty(),
                   false
                 )
-              case (true, true) =>
-                classicFetchInfos += fetchInfo
             }
           }
         }
@@ -2037,23 +2066,17 @@ class ReplicaManager(val config: KafkaConfig,
     }
 
     def respond(response: Seq[(TopicIdPartition, FetchPartitionData)]): Unit =
-      responseCallback(response ++ immediateFetchResponses ++ invalidConsolidatingPartitionFetchResponses)
+      responseCallback(response ++ immediateFetchResponses)
 
-    if (classicFetchInfos.isEmpty && disklessFetchInfosWithoutTopicId.isEmpty && immediateFetchResponses.nonEmpty) {
-      respond(Seq.empty)
-      return
-    }
-
-    if (classicFetchInfos.isEmpty && disklessFetchInfosWithoutTopicId.isEmpty &&
-      immediateFetchResponses.isEmpty && invalidConsolidatingPartitionFetchResponses.nonEmpty) {
+    if (classicFetchInfos.isEmpty && disklessFetchInfos.isEmpty) {
       respond(Seq.empty)
       return
     }
 
     inklessSharedState match {
       case None =>
-        if (disklessFetchInfosWithoutTopicId.nonEmpty) {
-          error(s"Received diskless fetch request for topics ${disklessFetchInfosWithoutTopicId.map(_._1.topic()).distinct.mkString(", ")} but diskless storage system is not enabled. " +
+        if (disklessFetchInfos.nonEmpty) {
+          error(s"Received diskless fetch request for topics ${disklessFetchInfos.map(_._1.topic()).distinct.mkString(", ")} but diskless storage system is not enabled. " +
             s"Replying an empty response.")
           respond(Seq.empty)
           return
@@ -2062,23 +2085,18 @@ class ReplicaManager(val config: KafkaConfig,
     }
 
     // Older fetch versions (<13) don't have topicId in the request -- backfill it for backward compatibility
-    val disklessFetchInfos = disklessFetchInfosWithoutTopicId.map { disklessFetchInfo =>
-      val (topicIdPartition, partitionData) = disklessFetchInfo
+    def maybeBackfillDisklessTopicId(topicIdPartition: TopicIdPartition): Option[TopicIdPartition] = {
       if (topicIdPartition.topicId().equals(Uuid.ZERO_UUID)) {
         _inklessMetadataView.getTopicId(topicIdPartition.topic()) match {
-          case Uuid.ZERO_UUID =>
-            error(s"Got null topic id from KRaft metadata for diskless topic ${topicIdPartition.topic()}")
-            respond(Seq.empty)
-            return
-          case topicId =>
-            new TopicIdPartition(topicId, topicIdPartition.topicPartition()) -> partitionData
+          case Uuid.ZERO_UUID => None
+          case topicId => Some(new TopicIdPartition(topicId, topicIdPartition.topicPartition()))
         }
       } else {
-        disklessFetchInfo
+        Some(topicIdPartition)
       }
     }
 
-    if (!config.disklessManagedReplicasEnabled && params.isFromFollower && disklessFetchInfos.nonEmpty) {
+    if (params.isFromFollower && disklessFetchInfos.nonEmpty && !config.disklessManagedReplicasEnabled) {
       warn(s"Follower fetch from replica ${params.replicaId} for diskless topics " +
         s"${disklessFetchInfos.map(_._1.topic()).distinct.mkString(", ")} " +
         s"rejected: managed replicas are not enabled.")
@@ -2203,6 +2221,8 @@ class ReplicaManager(val config: KafkaConfig,
           }
         } catch {
           case e: Throwable =>
+            warn("Error while fetching diskless records for remote fetch, returning error for the remote fetch and " +
+              "data read from local log segment for other topic-partitions if there are any", e)
             disklessFetchInfos.map { case (tp, _) =>
               tp -> new LogReadResult(
                 FetchDataInfo.empty(-1L),
