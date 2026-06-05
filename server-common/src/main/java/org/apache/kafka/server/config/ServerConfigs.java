@@ -161,6 +161,51 @@ public class ServerConfigs {
         "diskless.enable=true and remote.storage.enable=true on new topics. Setting both will start consolidating Diskless WAL segments into " +
         "Kafka tiered log storage on the configured topic.";
 
+    public static final String DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_CONFIG = "diskless.consolidation.fetch.max.bytes";
+    public static final int DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_DEFAULT = 1024 * 1024; // 1MB
+    public static final String DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_DOC = "The maximum number of bytes per partition the consolidation " +
+        "fetcher will request per iteration. Each fetch is appended to the local log as a single unit, so this must not exceed " +
+        "segment.bytes or the append fails with RecordBatchTooLargeException. Defaults to 1MB to match replica.fetch.max.bytes, which " +
+        "the consolidation fetcher previously reused; a larger value may reduce PG query frequency but has not yet been validated.";
+
+    public static final String DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_CONFIG = "diskless.consolidation.fetch.response.max.bytes";
+    public static final int DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_DEFAULT = 10 * 1024 * 1024; // 10MB
+    public static final String DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_DOC = "The maximum total bytes the consolidation fetcher " +
+        "will accept across all partitions in a single fetch response. Caps aggregate network I/O per request when multiple " +
+        "partitions are fetched from the same leader.";
+
+    public static final String DISKLESS_CONSOLIDATION_NUM_FETCHERS_CONFIG = "diskless.consolidation.num.fetchers";
+    public static final int DISKLESS_CONSOLIDATION_NUM_FETCHERS_DEFAULT = 1;
+    public static final String DISKLESS_CONSOLIDATION_NUM_FETCHERS_DOC = "The number of consolidation fetcher threads. " +
+        "Controls parallelism of consolidation independently from inter-broker replication (num.replica.fetchers).";
+
+    public static final String DISKLESS_CONSOLIDATION_FIND_BATCHES_MAX_PER_PARTITION_CONFIG = "diskless.consolidation.fetch.find.batches.max.per.partition";
+    public static final int DISKLESS_CONSOLIDATION_FIND_BATCHES_MAX_PER_PARTITION_DEFAULT = 0;
+    public static final String DISKLESS_CONSOLIDATION_FIND_BATCHES_MAX_PER_PARTITION_DOC = "The maximum number of batch coordinates " +
+        "to return per partition per PG query for the consolidation fetcher. A value of 0 means unlimited (return all available). " +
+        "Larger values improve the batch coordinate buffer hit rate since more iterations can be served from memory. " +
+        "Overrides the shared fetch.find.batches.max.per.partition for consolidation only.";
+
+    public static final String DISKLESS_CONSOLIDATION_FETCH_METADATA_THREAD_POOL_SIZE_CONFIG = "diskless.consolidation.fetch.metadata.thread.pool.size";
+    public static final int DISKLESS_CONSOLIDATION_FETCH_METADATA_THREAD_POOL_SIZE_DEFAULT = 4;
+    public static final String DISKLESS_CONSOLIDATION_FETCH_METADATA_THREAD_POOL_SIZE_DOC = "Thread pool size for the consolidation fetcher " +
+        "to concurrently query batch coordinates from the control plane. Lower than the consumer fetch pool since consolidation is background work.";
+
+    public static final String DISKLESS_CONSOLIDATION_FETCH_DATA_THREAD_POOL_SIZE_CONFIG = "diskless.consolidation.fetch.data.thread.pool.size";
+    public static final int DISKLESS_CONSOLIDATION_FETCH_DATA_THREAD_POOL_SIZE_DEFAULT = 8;
+    public static final String DISKLESS_CONSOLIDATION_FETCH_DATA_THREAD_POOL_SIZE_DOC = "Thread pool size for the consolidation fetcher " +
+        "to concurrently fetch data files from remote storage. Lower than the consumer fetch pool since consolidation is background work.";
+
+    public static final String DISKLESS_CONSOLIDATION_FETCH_MIN_BYTES_CONFIG = "diskless.consolidation.fetch.min.bytes";
+    public static final int DISKLESS_CONSOLIDATION_FETCH_MIN_BYTES_DEFAULT = 1;
+    public static final String DISKLESS_CONSOLIDATION_FETCH_MIN_BYTES_DOC = "The minimum number of bytes the consolidation fetcher will wait for " +
+        "before returning. Combined with diskless.consolidation.fetch.max.wait.ms, controls how often the fetcher wakes up when there is little new data.";
+
+    public static final String DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_CONFIG = "diskless.consolidation.fetch.max.wait.ms";
+    public static final int DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_DEFAULT = 500;
+    public static final String DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_DOC = "The maximum time the consolidation fetcher will wait " +
+        "for minBytes of data before returning. Higher values reduce iteration frequency when there is little new data.";
+
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG = "classic.remote.storage.force.enable";
     public static final boolean CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT = false;
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC = "Force classic topics to be created with remote.storage.enable=true, " +
@@ -237,6 +282,22 @@ public class ServerConfigs {
             .define(DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, BOOLEAN, DISKLESS_MANAGED_REPLICAS_ENABLE_DEFAULT, MEDIUM, DISKLESS_MANAGED_REPLICAS_ENABLE_DOC)
             .define(DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, BOOLEAN, DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_DEFAULT,
                 MEDIUM, DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_DOC)
+            .define(DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_CONFIG, INT, DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_DEFAULT,
+                atLeast(1), LOW, DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_DOC)
+            .define(DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_CONFIG, INT, DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_DEFAULT,
+                atLeast(1), LOW, DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_DOC)
+            .define(DISKLESS_CONSOLIDATION_NUM_FETCHERS_CONFIG, INT, DISKLESS_CONSOLIDATION_NUM_FETCHERS_DEFAULT,
+                atLeast(1), LOW, DISKLESS_CONSOLIDATION_NUM_FETCHERS_DOC)
+            .define(DISKLESS_CONSOLIDATION_FIND_BATCHES_MAX_PER_PARTITION_CONFIG, INT, DISKLESS_CONSOLIDATION_FIND_BATCHES_MAX_PER_PARTITION_DEFAULT,
+                atLeast(0), LOW, DISKLESS_CONSOLIDATION_FIND_BATCHES_MAX_PER_PARTITION_DOC)
+            .define(DISKLESS_CONSOLIDATION_FETCH_METADATA_THREAD_POOL_SIZE_CONFIG, INT, DISKLESS_CONSOLIDATION_FETCH_METADATA_THREAD_POOL_SIZE_DEFAULT,
+                atLeast(1), LOW, DISKLESS_CONSOLIDATION_FETCH_METADATA_THREAD_POOL_SIZE_DOC)
+            .define(DISKLESS_CONSOLIDATION_FETCH_DATA_THREAD_POOL_SIZE_CONFIG, INT, DISKLESS_CONSOLIDATION_FETCH_DATA_THREAD_POOL_SIZE_DEFAULT,
+                atLeast(1), LOW, DISKLESS_CONSOLIDATION_FETCH_DATA_THREAD_POOL_SIZE_DOC)
+            .define(DISKLESS_CONSOLIDATION_FETCH_MIN_BYTES_CONFIG, INT, DISKLESS_CONSOLIDATION_FETCH_MIN_BYTES_DEFAULT,
+                atLeast(1), LOW, DISKLESS_CONSOLIDATION_FETCH_MIN_BYTES_DOC)
+            .define(DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_CONFIG, INT, DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_DEFAULT,
+                atLeast(0), LOW, DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG, BOOLEAN, CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT, LOW,
                 CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG, LIST, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DEFAULT,
