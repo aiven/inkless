@@ -20,6 +20,7 @@ package org.apache.kafka.common;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -32,6 +33,7 @@ public class TopicPartitionInfo {
     private final List<Node> isr;
     private final List<Node> elr;
     private final List<Node> lastKnownElr;
+    private final Optional<Integer> leaderEpoch;
 
     /**
      * Create an instance of this class with the provided parameters.
@@ -52,12 +54,25 @@ public class TopicPartitionInfo {
         List<Node> elr,
         List<Node> lastKnownElr
     ) {
+        this(partition, leader, replicas, isr, elr, lastKnownElr, Optional.empty());
+    }
+
+    public TopicPartitionInfo(
+        int partition,
+        Node leader,
+        List<Node> replicas,
+        List<Node> isr,
+        List<Node> elr,
+        List<Node> lastKnownElr,
+        Optional<Integer> leaderEpoch
+    ) {
         this.partition = partition;
         this.leader = leader;
         this.replicas = Collections.unmodifiableList(replicas);
         this.isr = Collections.unmodifiableList(isr);
         this.elr = Collections.unmodifiableList(elr);
         this.lastKnownElr = Collections.unmodifiableList(lastKnownElr);
+        this.leaderEpoch = leaderEpoch;
     }
 
     public TopicPartitionInfo(int partition, Node leader, List<Node> replicas, List<Node> isr) {
@@ -67,6 +82,7 @@ public class TopicPartitionInfo {
         this.isr = Collections.unmodifiableList(isr);
         this.elr = null;
         this.lastKnownElr = null;
+        this.leaderEpoch = Optional.empty();
     }
 
     /**
@@ -114,12 +130,17 @@ public class TopicPartitionInfo {
         return lastKnownElr;
     }
 
+    public Optional<Integer> leaderEpoch() {
+        return leaderEpoch;
+    }
+
     public String toString() {
         String elrString = elr != null ? elr.stream().map(Node::toString).collect(Collectors.joining(", ")) : "N/A";
         String lastKnownElrString = lastKnownElr != null ? lastKnownElr.stream().map(Node::toString).collect(Collectors.joining(", ")) : "N/A";
         return "(partition=" + partition + ", leader=" + leader + ", replicas=" +
             replicas.stream().map(Node::toString).collect(Collectors.joining(", ")) + ", isr=" + isr.stream().map(Node::toString).collect(Collectors.joining(", ")) +
-            ", elr=" + elrString + ", lastKnownElr=" + lastKnownElrString + ")";
+            ", elr=" + elrString + ", lastKnownElr=" + lastKnownElrString +
+            ", leaderEpoch=" + leaderEpoch.orElse(-1) + ")";
     }
 
     @Override
@@ -134,7 +155,8 @@ public class TopicPartitionInfo {
             Objects.equals(replicas, that.replicas) &&
             Objects.equals(isr, that.isr) &&
             Objects.equals(elr, that.elr) &&
-            Objects.equals(lastKnownElr, that.lastKnownElr);
+            Objects.equals(lastKnownElr, that.lastKnownElr) &&
+            Objects.equals(leaderEpoch, that.leaderEpoch);
     }
 
     @Override
@@ -145,6 +167,7 @@ public class TopicPartitionInfo {
         result = 31 * result + (isr != null ? isr.hashCode() : 0);
         result = 31 * result + (elr != null ? elr.hashCode() : 0);
         result = 31 * result + (lastKnownElr != null ? lastKnownElr.hashCode() : 0);
+        result = 31 * result + leaderEpoch.hashCode();
         return result;
     }
 }

@@ -32,8 +32,8 @@ import scala.collection.{Map, mutable}
 import scala.collection.concurrent.TrieMap
 
 /**
- * Manages replica fetcher threads for cluster mirroring, assigning partitions from different
- * mirrors to separate threads for authentication, configuration, and load balancing isolation.
+ * Manages {@link MirrorFetcherThread}s, assigning partitions from different mirrors
+ * to separate threads for authentication, configuration, and load balancing isolation.
  */
 class MirrorFetcherManager(brokerConfig: KafkaConfig,
                            protected val replicaManager: ReplicaManager,
@@ -53,14 +53,14 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   override def deadThreadCount: Int = lock synchronized { mirrorFetcherThreadMap.values.count(_.isThreadFailed) }
 
   override def minFetchRate: Double = {
-    // current min fetch rate across all fetchers/topics/partitions
+    // Current min fetch rate across all fetchers/topics/partitions
     val headRate = mirrorFetcherThreadMap.values.headOption.map(_.fetcherStats.requestRate.oneMinuteRate).getOrElse(0.0)
     mirrorFetcherThreadMap.values.foldLeft(headRate)((curMinAll, fetcherThread) =>
       math.min(curMinAll, fetcherThread.fetcherStats.requestRate.oneMinuteRate))
   }
 
   override def maxLag: Long = {
-    // current max lag across all fetchers/topics/partitions
+    // Current max lag across all fetchers/topics/partitions
     mirrorFetcherThreadMap.values.foldLeft(0L) { (curMaxLagAll, fetcherThread) =>
       val maxLagThread = fetcherThread.fetcherLagStats.stats.values.stream().mapToLong(v => v.lag).max().orElse(0L)
       math.max(curMaxLagAll, maxLagThread)
@@ -102,7 +102,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
       for ((remoteFetcherKey, initialFetchOffsets) <- partitionsPerFetcher) {
         val fetcherThread = mirrorFetcherThreadMap.get(remoteFetcherKey) match {
           case Some(currentFetcherThread) if currentFetcherThread.leader.brokerEndPoint() == remoteFetcherKey.sourceBroker =>
-            // reuse the fetcher thread
+            // Reuse the fetcher thread
             logger.debug("Reusing mirror fetcher for {}", remoteFetcherKey)
             currentFetcherThread
           case Some(f) =>
@@ -113,7 +113,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
             logger.debug("Creating new mirror fetcher for {}", remoteFetcherKey)
             addAndStartFetcherThread(remoteFetcherKey)
         }
-        // failed partitions are removed when added partitions to thread
+        // Failed partitions are removed when added partitions to thread
         addPartitionsToFetcherThread(fetcherThread, initialFetchOffsets)
 
         // Initialize lag information for newly added partitions
@@ -173,7 +173,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     fetchStates
   }
 
-  // collect idle fetchers under lock, shut down outside to avoid deadlock
+  // Collect idle fetchers under lock, shut down outside to avoid deadlock
   override def shutdownIdleFetcherThreads(): Unit = {
     val idleFetchers = this.synchronized {
       val keysToBeRemoved = new mutable.HashSet[FetcherKey]

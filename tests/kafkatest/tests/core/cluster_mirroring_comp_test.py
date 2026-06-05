@@ -31,7 +31,7 @@ from kafkatest.version import (
 )
 
 
-class ClusterMirroringCompPlainTest(MirrorUtils, Test):
+class ClusterMirroringCompTest(MirrorUtils, Test):
     """Tests for KIP-1279 Cluster Mirroring across different Kafka versions."""
 
     DEST_SERVER_PROPS = [
@@ -55,7 +55,7 @@ class ClusterMirroringCompPlainTest(MirrorUtils, Test):
     ]
 
     def __init__(self, test_context):
-        super(ClusterMirroringCompPlainTest, self).__init__(test_context)
+        super(ClusterMirroringCompTest, self).__init__(test_context)
 
     def teardown(self):
         if hasattr(self, "_original_metadata_quorum"):

@@ -2262,7 +2262,7 @@ public class KafkaAdminClient extends AdminClient {
                     }
                     Uuid topicId = cluster.topicId(topicName);
                     Integer authorizedOperations = response.topicAuthorizedOperations(topicName).get();
-                    TopicDescription topicDescription = getTopicDescriptionFromCluster(cluster, topicName, topicId, authorizedOperations);
+                    TopicDescription topicDescription = getTopicDescriptionFromCluster(cluster, topicName, topicId, authorizedOperations, response);
                     future.complete(topicDescription);
                 }
             }
@@ -2481,7 +2481,7 @@ public class KafkaAdminClient extends AdminClient {
                     }
 
                     Integer authorizedOperations = response.topicAuthorizedOperations(topicName).get();
-                    TopicDescription topicDescription = getTopicDescriptionFromCluster(cluster, topicName, topicId, authorizedOperations);
+                    TopicDescription topicDescription = getTopicDescriptionFromCluster(cluster, topicName, topicId, authorizedOperations, response);
                     future.complete(topicDescription);
                 }
             }
@@ -2512,14 +2512,29 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     private TopicDescription getTopicDescriptionFromCluster(Cluster cluster, String topicName, Uuid topicId,
-                                                            Integer authorizedOperations) {
+                                                            Integer authorizedOperations,
+                                                            MetadataResponse metadataResponse) {
+        Map<Integer, Optional<Integer>> partitionEpochs = new HashMap<>();
+        if (metadataResponse != null) {
+            for (MetadataResponse.TopicMetadata tm : metadataResponse.topicMetadata()) {
+                if (tm.topic().equals(topicName)) {
+                    for (MetadataResponse.PartitionMetadata pm : tm.partitionMetadata()) {
+                        partitionEpochs.put(pm.topicPartition.partition(),
+                                pm.leaderEpoch.isPresent() ? Optional.of(pm.leaderEpoch.get()) : Optional.empty());
+                    }
+                    break;
+                }
+            }
+        }
+
         boolean isInternal = cluster.internalTopics().contains(topicName);
         List<PartitionInfo> partitionInfos = cluster.partitionsForTopic(topicName);
         List<TopicPartitionInfo> partitions = new ArrayList<>(partitionInfos.size());
         for (PartitionInfo partitionInfo : partitionInfos) {
+            Optional<Integer> leaderEpoch = partitionEpochs.getOrDefault(partitionInfo.partition(), Optional.empty());
             TopicPartitionInfo topicPartitionInfo = new TopicPartitionInfo(
                 partitionInfo.partition(), leader(partitionInfo), Arrays.asList(partitionInfo.replicas()),
-                Arrays.asList(partitionInfo.inSyncReplicas()));
+                Arrays.asList(partitionInfo.inSyncReplicas()), List.of(), List.of(), leaderEpoch);
             partitions.add(topicPartitionInfo);
         }
         partitions.sort(Comparator.comparingInt(TopicPartitionInfo::partition));
