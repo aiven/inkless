@@ -191,8 +191,8 @@ class ConsolidationFetcherThreadTest {
   }
 
   /**
-   * Scenario: a partition switched classic->diskless at seal offset 100 with a frozen diskless leader
-   * epoch E_d=5. After a leader failover this follower still has a STALE classic tail past the seal:
+   * Scenario: a partition switched classic->diskless at seal offset 100 with a diskless leader epoch
+   * E_d=5 captured at the switch. After a leader failover this follower still has a STALE classic tail past the seal:
    * its local log runs to LEO 130 and its latest local epoch is a classic epoch (2 < E_d). The
    * diskless region [100, ...) on the (new) diskless leader is authoritative, so the follower must
    * truncate its divergent tail back to the seal.
@@ -219,7 +219,7 @@ class ConsolidationFetcherThreadTest {
     when(replicaManager.localLogOrException(topicPartition)).thenReturn(log)
     when(replicaManager.getPartitionOrException(topicPartition)).thenReturn(partition)
     when(replicaManager.brokerTopicStats).thenReturn(new BrokerTopicStats)
-    // Committed metadata for the switched partition: seal at 100, frozen diskless epoch E_d=5.
+    // Committed metadata for the switched partition: seal at 100, captured diskless epoch E_d=5.
     when(replicaManager.classicToDisklessStartOffset(topicPartition)).thenReturn(seal)
     when(replicaManager.disklessLeaderEpoch(topicPartition)).thenReturn(disklessLeaderEpoch)
 

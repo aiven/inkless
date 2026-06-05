@@ -582,7 +582,7 @@ public class PartitionRegistrationTest {
             setLeaderEpoch(5).setPartitionEpoch(0).
             setClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING).build();
 
-        // Simulates the initDisklessLog commit: it carries both the seal and the frozen leader epoch.
+        // Simulates the initDisklessLog commit: it carries both the seal and the captured leader epoch.
         PartitionChangeRecord changeRecord = new PartitionChangeRecord();
         changeRecord.unknownTaggedFields().add(
             InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L));

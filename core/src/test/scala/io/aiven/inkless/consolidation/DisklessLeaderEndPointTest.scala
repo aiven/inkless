@@ -448,7 +448,7 @@ class DisklessLeaderEndPointTest {
     when(fetchOffsetHandler.createJob()).thenReturn(job)
     when(job.mustHandle(topicPartition.topic())).thenReturn(true)
     when(job.add(eqTo(topicPartition), any())).thenReturn(CompletableFuture.completedFuture(holder))
-    // Born-diskless / never switched: no classic seal and no frozen diskless epoch.
+    // Born-diskless / never switched: no classic seal and no captured diskless epoch.
     when(replicaManager.classicToDisklessStartOffset(topicPartition))
       .thenReturn(org.apache.kafka.metadata.PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
     when(replicaManager.disklessLeaderEpoch(topicPartition))

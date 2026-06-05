@@ -173,7 +173,7 @@ public class PartitionRegistration {
 
     public static final long NO_CLASSIC_TO_DISKLESS_START_OFFSET = -1L;
     public static final long CLASSIC_TO_DISKLESS_SWITCH_PENDING = -2L;
-    // Sentinel for a partition that has no frozen diskless leader epoch (never switched, born-diskless,
+    // Sentinel for a partition that has no captured diskless leader epoch (never switched, born-diskless,
     // or switch still pending). A real diskless leader epoch is always >= 0.
     public static final int NO_DISKLESS_LEADER_EPOCH = -1;
 
@@ -310,7 +310,7 @@ public class PartitionRegistration {
             newClassicToDisklessStartOffset = classicToDisklessStartOffset;
             newDisklessProducerStates = disklessProducerStates;
         }
-        // The diskless leader epoch is frozen at the classic-to-diskless switch and only carried by that
+        // The diskless leader epoch is captured at the classic-to-diskless switch and only carried by that
         // single change record; every other change record omits the tag, so keep the existing value.
         int newDisklessLeaderEpoch = InitDisklessLogFields.decodeDisklessLeaderEpoch(record.unknownTaggedFields());
         if (newDisklessLeaderEpoch == NO_DISKLESS_LEADER_EPOCH) {
