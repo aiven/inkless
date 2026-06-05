@@ -1953,7 +1953,9 @@ public final class QuorumController implements Controller {
         }
         return appendWriteEvent("incrementalAlterConfigs", context.deadlineNs(), () -> {
             ControllerResult<Map<ConfigResource, ApiError>> result =
-                configurationControl.incrementalAlterConfigs(configChanges, false);
+                configurationControl.incrementalAlterConfigs(configChanges, false,
+                    resource -> replicationControl.validateClassicToDisklessSwitchPrecondition(
+                        resource, configChanges));
             if (validateOnly) {
                 return result.withoutRecords();
             } else {
@@ -2006,7 +2008,9 @@ public final class QuorumController implements Controller {
         }
         return appendWriteEvent("legacyAlterConfigs", context.deadlineNs(), () -> {
             ControllerResult<Map<ConfigResource, ApiError>> result =
-                configurationControl.legacyAlterConfigs(newConfigs, false);
+                configurationControl.legacyAlterConfigs(newConfigs, false,
+                    resource -> replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(
+                        resource, newConfigs));
             if (validateOnly) {
                 return result.withoutRecords();
             } else {
