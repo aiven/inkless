@@ -18,7 +18,7 @@ package kafka.server
 
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
-import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler, Reader}
+import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, Reader}
 import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.produce.AppendHandler
@@ -79,6 +79,7 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
 import java.io.File
 import java.lang.{Long => JLong}
+import java.nio.ByteBuffer
 import java.nio.file.{Files, Paths}
 import java.util
 import java.util.concurrent.atomic.AtomicBoolean
@@ -1981,6 +1982,9 @@ class ReplicaManager(val config: KafkaConfig,
     val disklessFetchInfos = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
     val classicFetchInfos = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
     val immediateFetchResponses = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionData)]()
+    // Consolidating partitions served from local log that may need a diskless supplement.
+    // Maps tp -> logEndOffset (the offset where the diskless supplement should start).
+    val consolidatingLocalFetchSupplements = new mutable.HashMap[TopicIdPartition, Long]()
 
     fetchInfos.foreach { fetchInfo =>
       val (tp, fetchPartitionData) = fetchInfo
@@ -1998,8 +2002,13 @@ class ReplicaManager(val config: KafkaConfig,
         if (isConsolidatingPartition) {
           getPartitionOrError(tp.topicPartition) match {
             case Right(partition) =>
-              shouldReadFromUnifiedLog = shouldReadFromUnifiedLog ||
-                partition.log.exists(fetchPartitionData.fetchOffset < _.logEndOffset)
+              val logEndOffset = partition.log.map(_.logEndOffset).getOrElse(0L)
+              if (fetchPartitionData.fetchOffset < logEndOffset) {
+                // Local log has data for this offset range — serve from local, track for diskless supplement
+                shouldReadFromUnifiedLog = true
+                consolidatingLocalFetchSupplements += (tp -> logEndOffset)
+              }
+              // else: consumer is at or beyond consolidation frontier, diskless-only
             case Left(error) =>
               warn(s"Error while fetching partition ${tp.topicPartition()} for consolidating diskless topic: $error. " +
                 s"Returning error for the fetch request since we cannot determine if the partition has switched to diskless or not.")
@@ -2198,9 +2207,83 @@ class ReplicaManager(val config: KafkaConfig,
       logReadResultMap.put(topicIdPartition, logReadResult)
     }
 
+    // For consolidating partitions where local log was read, supplement with diskless data if minBytes not satisfied.
+    // This avoids a second round-trip: local log provides what it has, diskless fills the gap beyond logEndOffset.
+    var consolidationSupplementData = Seq.empty[(TopicIdPartition, FetchPartitionData)]
+    if (consolidatingLocalFetchSupplements.nonEmpty && inklessSharedState.isDefined
+      && bytesReadable < params.minBytes && !errorReadingData) {
+      val supplementFetchInfos = consolidatingLocalFetchSupplements.flatMap { case (tp, logEndOffset) =>
+        // Build a diskless fetch request starting at logEndOffset for remaining bytes
+        val originalPartitionData = fetchInfos.find(_._1 == tp).map(_._2)
+        originalPartitionData.map { pd =>
+          val remainingBytes = Math.max(pd.maxBytes - logReadResultMap.get(tp).map(_.info.records.sizeInBytes.toInt).getOrElse(0), 0)
+          if (remainingBytes > 0) {
+            Some(tp -> new PartitionData(
+              tp.topicId(), logEndOffset, pd.logStartOffset, remainingBytes, pd.currentLeaderEpoch, pd.lastFetchedEpoch))
+          } else None
+        }.flatten
+      }.toSeq
+
+      if (supplementFetchInfos.nonEmpty) {
+        try {
+          val supplementParams = fetchParamsWithNewMaxBytes(params, supplementFetchInfos.size.toFloat / fetchInfos.size.toFloat)
+          val supplementFuture = fetchDisklessMessages(supplementParams, supplementFetchInfos)
+          val supplementResponse = supplementFuture.get(
+            Math.max(config.disklessFetchMaxWaitMs.toLong, params.maxWaitMs), TimeUnit.MILLISECONDS)
+          consolidationSupplementData = supplementResponse.map { case (tp, data) =>
+            tp -> data
+          }
+          bytesReadable += consolidationSupplementData.map(_._2.records.sizeInBytes).sum
+        } catch {
+          case e: Throwable =>
+            logger.warn("Failed to fetch diskless supplement for consolidating partitions, returning local data only", e)
+        }
+      }
+    }
+
     val fetchPartitionData = logReadResults.map { case (tp, result) =>
       val isReassignmentFetch = params.isFromFollower && isAddingReplica(tp.topicPartition, params.replicaId)
-      tp -> result.toFetchPartitionData(isReassignmentFetch)
+      val localData = result.toFetchPartitionData(isReassignmentFetch)
+      // Merge supplement data for consolidating partitions: append diskless records, use diskless HW/LSO
+      val mergedData = consolidationSupplementData.find(_._1 == tp) match {
+        case Some((_, supplementData)) if supplementData.error == Errors.NONE && supplementData.records.sizeInBytes > 0 =>
+          // Local-log reads return FileRecords (a memory-mapped segment slice), not MemoryRecords.
+          // ConcatenatedRecords backs onto MemoryRecords, so materialize the local slice into a
+          // heap buffer first. This is the standard idiom used by AbstractFetcherThread and the
+          // coordinator loaders for the same FileRecords->MemoryRecords conversion.
+          val localRecords = localData.records match {
+            case mr: MemoryRecords => mr
+            case fr: FileRecords =>
+              val buffer = ByteBuffer.allocate(fr.sizeInBytes)
+              fr.readInto(buffer, 0)
+              MemoryRecords.readableRecords(buffer)
+            case other =>
+              throw new IllegalStateException(
+                s"Unexpected Records type from local log read for ${tp}: ${other.getClass.getName}")
+          }
+          val supplementRecords = supplementData.records match {
+            case mr: MemoryRecords => java.util.List.of(localRecords, mr)
+            case cr: ConcatenatedRecords =>
+              val combined = new java.util.ArrayList[MemoryRecords]()
+              combined.add(localRecords)
+              combined.addAll(java.util.List.of(cr.toMemoryRecords()))
+              combined
+            case _ => java.util.List.of(localRecords)
+          }
+          new FetchPartitionData(
+            localData.error,
+            supplementData.highWatermark,
+            supplementData.logStartOffset,
+            new ConcatenatedRecords(supplementRecords),
+            supplementData.divergingEpoch,
+            supplementData.lastStableOffset,
+            Optional.empty(),
+            supplementData.preferredReadReplica,
+            false
+          )
+        case _ => localData
+      }
+      tp -> mergedData
     }
 
     // Respond immediately if no remote fetches are required and any of the below conditions is true

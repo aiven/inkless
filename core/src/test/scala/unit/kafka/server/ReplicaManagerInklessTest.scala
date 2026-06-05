@@ -100,6 +100,19 @@ class ReplicaManagerInklessTest {
   val RECORDS: MemoryRecords = MemoryRecords.withRecords(
     2.toByte, 0L, Compression.NONE, TimestampType.CREATE_TIME, 123L, 0.toShort, 0, 0, false, new SimpleRecord(0, "hello".getBytes())
   )
+
+  /**
+   * Materialize MemoryRecords into a FileRecords backed by a temp file. A real local-log read
+   * returns FileRecords (a memory-mapped segment slice), so tests that feed local read results
+   * into code which down-converts records must use FileRecords to avoid vacuously passing.
+   */
+  private def memoryRecordsToFileRecords(records: MemoryRecords): FileRecords = {
+    val file = TestUtils.tempFile()
+    val fileRecords = FileRecords.open(file)
+    fileRecords.append(records)
+    fileRecords.flush()
+    fileRecords
+  }
   val disklessTopicPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "diskless")
   val classicTopicPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "classic")
 
@@ -1161,6 +1174,79 @@ class ReplicaManagerInklessTest {
       assertEquals(RECORDS, responseData(disklessTopicPartition).records)
       verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
       verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  @Test
+  def testFetchConsolidatingDisklessSupplementsFromDisklessWhenLocalLogBelowMinBytes(): Unit = {
+    val supplementRecords = MemoryRecords.withRecords(
+      2.toByte, 100L, Compression.NONE, TimestampType.CREATE_TIME, 456L, 0.toShort, 0, 0, false, new SimpleRecord(0, "supplement".getBytes())
+    )
+    val disklessResponse = Map(disklessTopicPartition ->
+      new FetchPartitionData(
+        Errors.NONE,
+        500L, 0L,
+        supplementRecords,
+        Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false)
+    )
+    val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+    val cp = mock(classOf[ControlPlane])
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 100L)
+
+      // Return small local records (below minBytes threshold) AS FileRecords, matching what a
+      // real local-log read produces. Using FileRecords here (not MemoryRecords) exercises the
+      // production FileRecords->MemoryRecords conversion in the supplement merge path; a
+      // MemoryRecords stub would vacuously pass while the real path throws ClassCastException.
+      val localFileRecords = memoryRecordsToFileRecords(RECORDS)
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), localFileRecords),
+          Optional.empty(), 100L, 0L, 100L, 0L, 0L, OptionalLong.empty()
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      val fetchParams = new FetchParams(
+        -1, -1L,
+        5000L,
+        RECORDS.sizeInBytes + 1, // minBytes > local records size to trigger supplement
+        1024 * 1024,
+        FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+      }
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      waitForFetchResponse(responseData)
+      assertEquals(1, responseData.size)
+      val result = responseData(disklessTopicPartition)
+      assertEquals(Errors.NONE, result.error)
+      // HW/LSO should come from the diskless supplement response
+      assertEquals(500L, result.highWatermark)
+      // Records should be merged: local + diskless
+      assertTrue(result.records.sizeInBytes > RECORDS.sizeInBytes,
+        s"Expected merged records to be larger than local-only, got ${result.records.sizeInBytes}")
+      // Both local read and diskless fetch handler should have been called
+      verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+      verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
     } finally {
       replicaManager.shutdown(checkpointHW = false)
       fetchHandlerCtor.close()
