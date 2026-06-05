@@ -18,7 +18,7 @@ package kafka.server
 
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
-import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
+import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler, Reader}
 import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.produce.AppendHandler
@@ -300,13 +300,39 @@ class ReplicaManager(val config: KafkaConfig,
       Some(new ConsolidationMetrics())
     else
       None
+  private val consolidationFetchHandler: Option[FetchHandler] =
+    if (config.disklessRemoteStorageConsolidationEnabled) {
+      inklessSharedState.map { state =>
+        val reader = new Reader(
+          state.time(),
+          state.objectKeyCreator(),
+          state.keyAlignmentStrategy(),
+          state.cache(),
+          state.controlPlane(),
+          state.fetchStorage(),
+          state.brokerTopicStats(),
+          config.disklessConsolidationFetchMetadataThreadPoolSize,
+          config.disklessConsolidationFetchDataThreadPoolSize,
+          // no lagging fetch for consolidation
+          Optional.empty(), 0L, 0, 0,
+          // no hedged fetch for consolidation
+          0L, 0L,
+          config.disklessConsolidationFindBatchesMaxPerPartition,
+          new KafkaMetricsGroup("io.aiven.inkless.consolidation", "ConsolidationFetchMetrics"),
+          "inkless-consolidation-"
+        )
+        new FetchHandler(reader)
+      }
+    } else {
+      None
+    }
   private val consolidationFetcherManager: Option[ConsolidationFetcherManager] =
     if (config.disklessRemoteStorageConsolidationEnabled) {
-      if (inklessFetchHandler.isEmpty || inklessFetchOffsetHandler.isEmpty) {
+      if (consolidationFetchHandler.isEmpty || inklessFetchOffsetHandler.isEmpty) {
         throw new KafkaException("Remote storage consolidation is enabled, however Inkless doesn't seem to have " +
           "configured fetch handler or fetch offset handler ready.")
       }
-      inklessFetchHandler.zip(inklessFetchOffsetHandler).map { case (fetchHandler, fetchOffsetHandler) =>
+      consolidationFetchHandler.zip(inklessFetchOffsetHandler).map { case (fetchHandler, fetchOffsetHandler) =>
         new ConsolidationFetcherManager(config, this, quotaManagers.follower, fetchHandler, fetchOffsetHandler, consolidationMetrics)
       }
     } else {
@@ -3174,6 +3200,7 @@ class ReplicaManager(val config: KafkaConfig,
     if (checkpointHW)
       checkpointHighWatermarks()
     consolidationFetcherManager.foreach(_.shutdown())
+    consolidationFetchHandler.foreach(_.close())
     consolidationMetrics.foreach(_.close())
     replicaSelectorPlugin.foreach(_.close)
     removeAllTopicMetrics()

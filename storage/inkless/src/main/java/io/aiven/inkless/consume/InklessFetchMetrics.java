@@ -141,7 +141,7 @@ public class InklessFetchMetrics {
 
     private final Time time;
 
-    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(InklessFetchMetrics.class);
+    private final KafkaMetricsGroup metricsGroup;
     private final Histogram fetchTimeHistogram;
     private final Histogram findBatchesTimeHistogram;
     private final Histogram fetchPlanTimeHistogram;
@@ -172,7 +172,12 @@ public class InklessFetchMetrics {
     private final Meter hedgeWonRate;
 
     public InklessFetchMetrics(final Time time, final ObjectCache cache) {
+        this(time, cache, new KafkaMetricsGroup(InklessFetchMetrics.class.getPackageName(), InklessFetchMetrics.class.getSimpleName()));
+    }
+
+    public InklessFetchMetrics(final Time time, final ObjectCache cache, final KafkaMetricsGroup metricsGroup) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
+        this.metricsGroup = Objects.requireNonNull(metricsGroup, "metricsGroup cannot be null");
         fetchTimeHistogram = metricsGroup.newHistogram(FETCH_TOTAL_TIME, true, Map.of());
         findBatchesTimeHistogram = metricsGroup.newHistogram(FIND_BATCHES_TIME, true, Map.of());
         fetchPlanTimeHistogram = metricsGroup.newHistogram(FETCH_PLAN_TIME, true, Map.of());
