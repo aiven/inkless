@@ -17,9 +17,11 @@
 package kafka.server
 
 import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, FindBatchRequest, FindBatchResponse}
+import kafka.server.metadata.InklessMetadataView
+import kafka.utils.TestUtils
 
-import java.util.{Collections, Optional, OptionalLong}
-import scala.collection.Seq
+import java.util.{Collections, Optional, OptionalInt, OptionalLong}
+import scala.collection.{Seq, mutable}
 import kafka.cluster.Partition
 import org.apache.kafka.common.{TopicIdPartition, Uuid}
 import org.apache.kafka.common.errors.{FencedLeaderEpochException, NotLeaderOrFollowerException}
@@ -28,13 +30,13 @@ import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record.{MemoryRecords, TimestampType}
 import org.apache.kafka.common.requests.FetchRequest
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
-import org.apache.kafka.storage.internals.log.{FetchDataInfo, FetchPartitionStatus, LogOffsetMetadata, LogOffsetSnapshot, LogReadResult}
-import org.junit.jupiter.api.{Nested, Test}
+import org.apache.kafka.storage.internals.log.{FetchDataInfo, FetchPartitionStatus, LogOffsetMetadata, LogOffsetSnapshot, LogReadResult, UnifiedLog}
+import org.junit.jupiter.api.{BeforeEach, Nested, Test}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.mockito.ArgumentMatchers.{any, anyFloat, anyInt, anyLong}
-import org.mockito.Mockito.{mock, never, verify, when}
+import org.mockito.ArgumentMatchers.{any, anyFloat, anyInt, anyLong, argThat}
+import org.mockito.Mockito.{mock, never, times, verify, when}
 
 import java.util.concurrent.CompletableFuture
 
@@ -44,6 +46,14 @@ class DelayedFetchTest {
   private val maxBytes = 1024
   private val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
   private val replicaQuota: ReplicaQuota = mock(classOf[ReplicaQuota])
+  private val inklessMetadataView: InklessMetadataView = mock(classOf[InklessMetadataView])
+
+  @BeforeEach
+  def setUp(): Unit = {
+    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(any())).thenReturn(false)
+    when(replicaManager.buildConsolidationSupplementFetchInfos(any(), any(), any())).thenReturn(Seq.empty)
+  }
 
   @Test
   def testFetchWithFencedEpoch(): Unit = {
@@ -643,6 +653,244 @@ class DelayedFetchTest {
     }
 
     @Test
+    def testCompletionWithConsolidationSupplement(): Unit = {
+      // Verifies that a consolidating partition's local data is supplemented with diskless data
+      // and that a pure-diskless partition's data also arrives in the response.
+      val consolidatingTp = new TopicIdPartition(Uuid.randomUuid(), 0, "consolidating-topic")
+      val disklessTp = new TopicIdPartition(Uuid.randomUuid(), 0, "diskless-topic")
+      val fetchOffset = 100L
+      val logEndOffset = 150L
+      val logStartOffset = 0L
+      val currentLeaderEpoch = Optional.of[Integer](1)
+      val minBytes = 1024 // high enough that local data alone won't satisfy it
+
+      // Classic (consolidating) partition status
+      val classicFetchStatus = new FetchPartitionStatus(
+        new LogOffsetMetadata(fetchOffset),
+        new FetchRequest.PartitionData(consolidatingTp.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
+      )
+      val classicStatusMap = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      classicStatusMap.put(consolidatingTp, classicFetchStatus)
+
+      // Diskless partition status
+      val disklessFetchStatus = new FetchPartitionStatus(
+        new LogOffsetMetadata(fetchOffset),
+        new FetchRequest.PartitionData(disklessTp.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
+      )
+      val disklessStatusMap = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      disklessStatusMap.put(disklessTp, disklessFetchStatus)
+
+      val fetchParams = new FetchParams(
+        -1, // consumer
+        1,
+        500L,
+        minBytes,
+        maxBytes,
+        FetchIsolation.HIGH_WATERMARK,
+        Optional.empty()
+      )
+
+      @volatile var callbackResult: Option[Seq[(TopicIdPartition, FetchPartitionData)]] = None
+      def callback(responses: Seq[(TopicIdPartition, FetchPartitionData)]): Unit = {
+        callbackResult = Some(responses)
+      }
+
+      val delayedFetch = new DelayedFetch(
+        params = fetchParams,
+        classicFetchPartitionStatus = classicStatusMap,
+        disklessFetchPartitionStatus = disklessStatusMap,
+        replicaManager = replicaManager,
+        quota = replicaQuota,
+        responseCallback = callback
+      )
+
+      // Stub inklessMetadataView for the consolidating partition
+      when(inklessMetadataView.isConsolidatingDisklessTopic(consolidatingTp.topic)).thenReturn(true)
+
+      // Stub getPartitionOrError to return a partition with a log
+      val partition = mock(classOf[Partition])
+      val unifiedLog = mock(classOf[UnifiedLog])
+      when(unifiedLog.logEndOffset).thenReturn(logEndOffset)
+      when(partition.log).thenReturn(Some(unifiedLog))
+      when(replicaManager.getPartitionOrError(consolidatingTp.topicPartition))
+        .thenReturn(Right(partition))
+
+      // Stub readFromLog to return a small local read (below minBytes)
+      val localReadResult = new LogReadResult(
+        new FetchDataInfo(new LogOffsetMetadata(fetchOffset), MemoryRecords.EMPTY),
+        Optional.empty(), -1L, -1L, -1L, -1L, -1L, OptionalLong.empty(), Errors.NONE)
+      when(replicaManager.readFromLog(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], any[ReplicaQuota], any[Boolean]))
+        .thenReturn(Seq((consolidatingTp, localReadResult)))
+
+      // Stub buildConsolidationSupplementFetchInfos to return non-empty supplement info
+      val supplementFetchInfo = (consolidatingTp, new FetchRequest.PartitionData(
+        consolidatingTp.topicId(), logEndOffset, logStartOffset, maxBytes, currentLeaderEpoch))
+      when(replicaManager.buildConsolidationSupplementFetchInfos(any(), any(), any()))
+        .thenReturn(Seq(supplementFetchInfo))
+
+      // Prepare supplement and diskless FetchPartitionData
+      val supplementRecords = mock(classOf[MemoryRecords])
+      when(supplementRecords.sizeInBytes).thenReturn(512)
+      val supplementData = new FetchPartitionData(Errors.NONE, logEndOffset + 100, logEndOffset,
+        supplementRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+
+      val disklessRecords = mock(classOf[MemoryRecords])
+      when(disklessRecords.sizeInBytes).thenReturn(256)
+      val disklessData = new FetchPartitionData(Errors.NONE, 200L, 0L,
+        disklessRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+
+      // Stub fetchDisklessMessages: first call returns supplement, second call returns diskless
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+        .thenReturn(CompletableFuture.completedFuture(Seq((consolidatingTp, supplementData))))
+        .thenReturn(CompletableFuture.completedFuture(Seq((disklessTp, disklessData))))
+
+      // Stub fetchParamsWithNewMaxBytes
+      when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
+
+      // Stub mergeConsolidationSupplement to return a merged result
+      val mergedRecords = mock(classOf[MemoryRecords])
+      when(mergedRecords.sizeInBytes).thenReturn(768)
+      val mergedData = new FetchPartitionData(Errors.NONE, logEndOffset + 100, logEndOffset,
+        mergedRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      when(replicaManager.mergeConsolidationSupplement(any[TopicIdPartition], any[FetchPartitionData], any[FetchPartitionData]))
+        .thenReturn(mergedData)
+
+      when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
+
+      // Trigger onComplete
+      delayedFetch.forceComplete()
+
+      TestUtils.waitUntilTrue(() => callbackResult.isDefined, "responseCallback should have been called")
+      val results = callbackResult.get
+      assertEquals(2, results.size)
+
+      val resultMap = results.toMap
+      assertEquals(mergedData, resultMap(consolidatingTp))
+      assertEquals(disklessData, resultMap(disklessTp))
+
+      // Verify mergeConsolidationSupplement was called exactly once
+      verify(replicaManager, times(1)).mergeConsolidationSupplement(
+        any[TopicIdPartition], any[FetchPartitionData], any[FetchPartitionData])
+    }
+
+    // When the local read for a consolidating partition returns an error, the supplement fetch
+    // must not be issued — buildConsolidationSupplementFetchInfos must not receive that partition.
+    @Test
+    def testConsolidationSupplementNotIssuedWhenLocalReadHasError(): Unit = {
+      val consolidatingTp = new TopicIdPartition(Uuid.randomUuid(), 0, "consolidating")
+      val fetchOffset = 50L
+      val logStartOffset = 0L
+      val logEndOffset = 100L
+      val currentLeaderEpoch = Optional.of[Integer](1)
+
+      val classicFetchStatus = new FetchPartitionStatus(
+        new LogOffsetMetadata(fetchOffset),
+        new FetchRequest.PartitionData(consolidatingTp.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch))
+      val classicStatusMap = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      classicStatusMap.put(consolidatingTp, classicFetchStatus)
+
+      val fetchParams = new FetchParams(-1, 1, 500L, 1, maxBytes, FetchIsolation.HIGH_WATERMARK, Optional.empty())
+
+      @volatile var callbackResult: Option[Seq[(TopicIdPartition, FetchPartitionData)]] = None
+      val delayedFetch = new DelayedFetch(
+        params = fetchParams,
+        classicFetchPartitionStatus = classicStatusMap,
+        replicaManager = replicaManager,
+        quota = replicaQuota,
+        responseCallback = responses => callbackResult = Some(responses)
+      )
+
+      when(inklessMetadataView.isConsolidatingDisklessTopic(consolidatingTp.topic)).thenReturn(true)
+      val partition = mock(classOf[Partition])
+      val unifiedLog = mock(classOf[UnifiedLog])
+      when(unifiedLog.logEndOffset).thenReturn(logEndOffset)
+      when(partition.log).thenReturn(Some(unifiedLog))
+      when(replicaManager.getPartitionOrError(consolidatingTp.topicPartition)).thenReturn(Right(partition))
+
+      // Local read returns an error — supplement must not be issued for this partition
+      val errorReadResult = new LogReadResult(
+        new FetchDataInfo(new LogOffsetMetadata(fetchOffset), MemoryRecords.EMPTY),
+        Optional.empty(), -1L, -1L, -1L, -1L, -1L, OptionalLong.empty(), Errors.NOT_LEADER_OR_FOLLOWER)
+      when(replicaManager.readFromLog(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], any[ReplicaQuota], any[Boolean]))
+        .thenReturn(Seq((consolidatingTp, errorReadResult)))
+      when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
+      when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
+
+      delayedFetch.forceComplete()
+
+      TestUtils.waitUntilTrue(() => callbackResult.isDefined, "responseCallback should have been called")
+      // buildConsolidationSupplementFetchInfos must be called with an empty supplements map —
+      // the erroring partition must have been filtered out before building the supplement request
+      verify(replicaManager, times(1)).buildConsolidationSupplementFetchInfos(
+        argThat((m: mutable.HashMap[TopicIdPartition, Long]) => m.isEmpty), any(), any())
+    }
+
+    // When the local read for a consolidating partition returns an error, the supplement must not
+    // be applied — mergeConsolidationSupplement must never be called for an erroring local result.
+    @Test
+    def testConsolidationSupplementSkippedWhenLocalReadHasError(): Unit = {
+      val consolidatingTp = new TopicIdPartition(Uuid.randomUuid(), 0, "consolidating")
+      val fetchOffset = 50L
+      val logStartOffset = 0L
+      val logEndOffset = 100L
+      val currentLeaderEpoch = Optional.of[Integer](1)
+
+      val classicFetchStatus = new FetchPartitionStatus(
+        new LogOffsetMetadata(fetchOffset),
+        new FetchRequest.PartitionData(consolidatingTp.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch))
+      val classicStatusMap = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      classicStatusMap.put(consolidatingTp, classicFetchStatus)
+
+      val fetchParams = new FetchParams(-1, 1, 500L, 1, maxBytes, FetchIsolation.HIGH_WATERMARK, Optional.empty())
+
+      @volatile var callbackResult: Option[Seq[(TopicIdPartition, FetchPartitionData)]] = None
+      val delayedFetch = new DelayedFetch(
+        params = fetchParams,
+        classicFetchPartitionStatus = classicStatusMap,
+        replicaManager = replicaManager,
+        quota = replicaQuota,
+        responseCallback = responses => callbackResult = Some(responses)
+      )
+
+      when(inklessMetadataView.isConsolidatingDisklessTopic(consolidatingTp.topic)).thenReturn(true)
+      val partition = mock(classOf[Partition])
+      val unifiedLog = mock(classOf[UnifiedLog])
+      when(unifiedLog.logEndOffset).thenReturn(logEndOffset)
+      when(partition.log).thenReturn(Some(unifiedLog))
+      when(replicaManager.getPartitionOrError(consolidatingTp.topicPartition)).thenReturn(Right(partition))
+
+      // Local read returns an error
+      val errorReadResult = new LogReadResult(
+        new FetchDataInfo(new LogOffsetMetadata(fetchOffset), MemoryRecords.EMPTY),
+        Optional.empty(), -1L, -1L, -1L, -1L, -1L, OptionalLong.empty(), Errors.NOT_LEADER_OR_FOLLOWER)
+      when(replicaManager.readFromLog(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], any[ReplicaQuota], any[Boolean]))
+        .thenReturn(Seq((consolidatingTp, errorReadResult)))
+
+      val supplementFetchInfo = (consolidatingTp, new FetchRequest.PartitionData(
+        consolidatingTp.topicId(), logEndOffset, logStartOffset, maxBytes, currentLeaderEpoch))
+      when(replicaManager.buildConsolidationSupplementFetchInfos(any(), any(), any()))
+        .thenReturn(Seq(supplementFetchInfo))
+
+      val supplementRecords = mock(classOf[MemoryRecords])
+      when(supplementRecords.sizeInBytes).thenReturn(512)
+      val supplementData = new FetchPartitionData(Errors.NONE, logEndOffset + 100, logEndOffset,
+        supplementRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+        .thenReturn(CompletableFuture.completedFuture(Seq((consolidatingTp, supplementData))))
+      when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
+      when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
+
+      delayedFetch.forceComplete()
+
+      TestUtils.waitUntilTrue(() => callbackResult.isDefined, "responseCallback should have been called")
+      val results = callbackResult.get.toMap
+      assertEquals(1, results.size)
+      // Error from the local read must be preserved — supplement must not overwrite it
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, results(consolidatingTp).error)
+      verify(replicaManager, never()).mergeConsolidationSupplement(any(), any(), any())
+    }
+
+    @Test
     def testCompletionWhenErrorOccursDuringDisklessBatchFinding(): Unit = {
       // Case C: When an error occurs while trying to find diskless batches, fetch should complete immediately
       val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "diskless-topic")
@@ -728,6 +976,55 @@ class DelayedFetchTest {
       // Verify that estimatedByteSize is never called since we hit the error case
       verify(mockResponse, never()).estimatedByteSize(anyLong())
       verify(mockResponse, never()).highWatermark()
+    }
+
+    // When the diskless fetch future fails, the response must include per-partition error entries
+    // rather than silently dropping those partitions from the response.
+    @Test
+    def testDisklessFetchFailureReturnsPerPartitionErrors(): Unit = {
+      val disklessTp = new TopicIdPartition(Uuid.randomUuid(), 0, "diskless-topic")
+      val fetchOffset = 200L
+      val logStartOffset = 0L
+      val currentLeaderEpoch = Optional.of[Integer](1)
+      val minBytes = 100
+
+      val disklessFetchStatus = new FetchPartitionStatus(
+        new LogOffsetMetadata(fetchOffset),
+        new FetchRequest.PartitionData(disklessTp.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch))
+      val disklessStatusMap = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      disklessStatusMap.put(disklessTp, disklessFetchStatus)
+
+      val fetchParams = new FetchParams(-1, 1, 500L, minBytes, maxBytes, FetchIsolation.HIGH_WATERMARK, Optional.empty())
+
+      @volatile var callbackResult: Option[Seq[(TopicIdPartition, FetchPartitionData)]] = None
+      val delayedFetch = new DelayedFetch(
+        params = fetchParams,
+        classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
+        disklessFetchPartitionStatus = disklessStatusMap,
+        replicaManager = replicaManager,
+        quota = replicaQuota,
+        responseCallback = responses => callbackResult = Some(responses)
+      )
+
+      when(replicaManager.readFromLog(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], any[ReplicaQuota], any[Boolean]))
+        .thenReturn(Seq.empty)
+      when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
+      when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
+
+      // Diskless fetch fails with an exception
+      val failedFuture = new CompletableFuture[Seq[(TopicIdPartition, FetchPartitionData)]]()
+      failedFuture.completeExceptionally(new RuntimeException("Object storage unavailable"))
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+        .thenReturn(failedFuture)
+
+      delayedFetch.forceComplete()
+
+      TestUtils.waitUntilTrue(() => callbackResult.isDefined, "responseCallback should have been called")
+      val results = callbackResult.get.toMap
+      assertEquals(1, results.size, "Response must include the diskless partition even on failure")
+      val partitionData = results(disklessTp)
+      assertNotEquals(Errors.NONE, partitionData.error, "Error must be set for the failed partition")
+      assertEquals(MemoryRecords.EMPTY, partitionData.records)
     }
   }
 }
