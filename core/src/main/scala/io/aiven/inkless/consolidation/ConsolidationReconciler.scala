@@ -19,7 +19,7 @@
 package io.aiven.inkless.consolidation
 
 import kafka.cluster.Partition
-import kafka.server.{InitialFetchState, ReplicaManager}
+import kafka.server.{InitialFetchState, ReplicaManager, ReplicationQuotaManager}
 import kafka.server.metadata.InklessMetadataView
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.logger.StateChangeLogger
@@ -51,7 +51,8 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
                               consolidationMetrics: ConsolidationMetrics,
                               inklessMetadataView: InklessMetadataView,
                               initialFetchOffset: UnifiedLog => Long,
-                              consolidationFetcherManager: ConsolidationFetcherManager) {
+                              consolidationFetcherManager: ConsolidationFetcherManager,
+                              consolidationQuotaManager: ReplicationQuotaManager) {
 
   /**
    * Starts the consolidation fetchers for the given partitions in the parameter. These partitions
@@ -67,6 +68,10 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
         initConsolidatingPartitionFetching(consolidatingPartitions)
 
       consolidationFetcherManager.addFetcherForPartitions(consolidatingPartitionAndOffsets)
+      // Unlike classic replication (where throttled replicas are set via topic config during
+      // reassignment), consolidation marks all topics unconditionally — every consolidating
+      // partition's bytes must count toward the dedicated bandwidth quota.
+      consolidatingPartitionAndOffsets.keys.map(_.topic).toSet.foreach((topic: String) => consolidationQuotaManager.markThrottled(topic))
       consolidatingPartitionAndOffsets.keys.foreach(tp => consolidationMetrics.registerPartition(tp))
     }
   }

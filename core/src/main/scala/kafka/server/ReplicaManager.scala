@@ -60,7 +60,9 @@ import org.apache.kafka.metadata.{LeaderAndIsr, MetadataCache, PartitionRegistra
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
 import org.apache.kafka.server.common.{DirectoryEventHandler, RequestLocal, StopPartition, TransactionVersion}
 import org.apache.kafka.server.log.remote.TopicPartitionLog
-import org.apache.kafka.server.config.ReplicationConfigs
+import org.apache.kafka.server.config.{ReplicationConfigs, ReplicationQuotaManagerConfig}
+import org.apache.kafka.common.metrics.Quota
+import org.apache.kafka.server.quota.QuotaType
 import org.apache.kafka.server.log.remote.storage.RemoteLogManager
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 import org.apache.kafka.server.network.BrokerEndPoint
@@ -319,15 +321,38 @@ class ReplicaManager(val config: KafkaConfig,
     } else {
       None
     }
+  private val consolidationQuotaManager: Option[ReplicationQuotaManager] =
+    if (config.disklessRemoteStorageConsolidationEnabled) {
+      val quotaConfig = new ReplicationQuotaManagerConfig(
+        config.quotaConfig.numReplicationQuotaSamples,
+        config.quotaConfig.replicationQuotaWindowSizeSeconds
+      )
+      val manager = new ReplicationQuotaManager(quotaConfig, metrics, QuotaType.DISKLESS_CONSOLIDATION_FETCH, time)
+      val rateLimitBytesPerSec = config.disklessConsolidationFetchRateLimitBytesPerSecond
+      manager.updateQuota(new Quota(rateLimitBytesPerSec, true))
+      Some(manager)
+    } else {
+      None
+    }
+
   private val consolidationFetcherManager: Option[ConsolidationFetcherManager] =
     if (config.disklessRemoteStorageConsolidationEnabled) {
-      if (consolidationFetchHandler.isEmpty || inklessFetchOffsetHandler.isEmpty) {
+      if (consolidationFetchHandler.isEmpty || inklessFetchOffsetHandler.isEmpty || consolidationQuotaManager.isEmpty) {
         throw new KafkaException("Remote storage consolidation is enabled, however Inkless doesn't seem to have " +
-          "configured fetch handler or fetch offset handler ready.")
+          "configured fetch handler, fetch offset handler or quota manager ready.")
       }
-      consolidationFetchHandler.zip(inklessFetchOffsetHandler).map { case (fetchHandler, fetchOffsetHandler) =>
-        new ConsolidationFetcherManager(config, this, quotaManagers.follower, fetchHandler, fetchOffsetHandler, consolidationMetrics)
-      }
+      consolidationFetchHandler.zip(inklessFetchOffsetHandler)
+        .zip(consolidationQuotaManager)
+        .map { case ((fetchHandler, fetchOffsetHandler), quotaMgr) =>
+          new ConsolidationFetcherManager(
+            config,
+            this,
+            quotaMgr,
+            fetchHandler,
+            fetchOffsetHandler,
+            consolidationMetrics
+          )
+        }
     } else {
       None
     }
@@ -354,7 +379,7 @@ class ReplicaManager(val config: KafkaConfig,
         throw new KafkaException("Remote storage consolidation is enabled, however Inkless doesn't seem to " +
           "have configured consolidation fetch manager or metrics ready.")
       }
-      Some(new ConsolidationReconciler(this, stateChangeLogger, consolidationMetrics.get, _inklessMetadataView, initialFetchOffset, consolidationFetcherManager.get))
+      Some(new ConsolidationReconciler(this, stateChangeLogger, consolidationMetrics.get, _inklessMetadataView, initialFetchOffset, consolidationFetcherManager.get, consolidationQuotaManager.get))
     } else {
       None
     }

@@ -25,7 +25,8 @@ public enum QuotaType {
     FOLLOWER_REPLICATION("FollowerReplication"),
     ALTER_LOG_DIRS_REPLICATION("AlterLogDirsReplication"),
     RLM_COPY("RLMCopy"),
-    RLM_FETCH("RLMFetch");
+    RLM_FETCH("RLMFetch"),
+    DISKLESS_CONSOLIDATION_FETCH("DisklessConsolidationFetch");
 
     private final String name;
 
