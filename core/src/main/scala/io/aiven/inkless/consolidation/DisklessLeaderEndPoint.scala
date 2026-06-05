@@ -175,14 +175,14 @@ class DisklessLeaderEndPoint(
    *
    * A switched partition's local log is laid out as a classic prefix `[logStart, seal)` carrying the
    * original classic leader epochs, followed by the diskless region `[seal, LEO)` stamped with the
-   * frozen diskless leader epoch `E_d` (see [[ConsolidationFetcherThread]]). Two cases:
+   * diskless leader epoch `E_d` captured at the switch (see [[ConsolidationFetcherThread]]). Two cases:
    *   - queried epoch `< E_d`: the epoch belongs to the classic prefix, whose lineage on the diskless
    *     leader ends at the seal, so the end offset is the seal. A follower whose stale classic tail
    *     runs past the seal truncates back to it. Collapsing every classic epoch to the seal (rather
    *     than the start of the next epoch, as standard OffsetsForLeaderEpoch would) is correct only
    *     because the classic prefix `[logStart, seal)` is committed and identical across all replicas,
    *     so intra-prefix divergence cannot occur.
-   *   - queried epoch `>= E_d` (or a born-diskless partition with no frozen epoch): the end offset is
+   *   - queried epoch `>= E_d` (or a born-diskless partition with no captured epoch): the end offset is
    *     the current diskless LEO, fetched via a LATEST list-offsets call.
    */
   override def fetchEpochEndOffsets(

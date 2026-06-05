@@ -75,7 +75,7 @@ class ConsolidationFetcherThread(name: String,
   }
 
   /**
-   * Stamp the frozen diskless leader epoch (E_d) onto materialized batches so the local log keeps a
+   * Stamp the captured diskless leader epoch (E_d) onto materialized batches so the local log keeps a
    * monotonic epoch lineage (diskless records are produced with epoch 0, which would otherwise break
    * the LeaderEpochFileCache after a switched partition's higher classic epochs and disable divergence
    * truncation). Born-diskless / not-yet-switched partitions (E_d == NO_DISKLESS_LEADER_EPOCH) are left

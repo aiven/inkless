@@ -55,7 +55,7 @@ public final class InitDisklessLogFields {
     }
 
     // --- disklessLeaderEpoch (tag 102): a single int32 ---
-    // The frozen leader epoch assigned to the diskless region at the classic-to-diskless switch.
+    // The leader epoch captured for the diskless region at the classic-to-diskless switch.
     // Strictly greater than every classic-prefix epoch, it lets standard OffsetsForLeaderEpoch
     // truncation distinguish a stale classic tail from authoritative consolidated data.
 

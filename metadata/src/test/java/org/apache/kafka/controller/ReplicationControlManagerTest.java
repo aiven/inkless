@@ -6081,7 +6081,7 @@ public class ReplicationControlManagerTest {
             assertEquals(topicId, record.topicId());
             assertEquals(0, record.partitionId());
             assertEquals(100L, InitDisklessLogFields.decodeClassicToDisklessStartOffset(record.unknownTaggedFields()));
-            // The change record freezes the partition's current leader epoch as the diskless leader epoch.
+            // The change record captures the partition's current leader epoch as the diskless leader epoch.
             assertEquals(partition.leaderEpoch,
                 InitDisklessLogFields.decodeDisklessLeaderEpoch(record.unknownTaggedFields()));
 

@@ -1617,7 +1617,7 @@ public class ReplicationControlManager {
                             ps.batchMaxTimestamp()))
                         .toList();
 
-                // Freeze the partition's current leader epoch as the diskless leader epoch (E_d). The
+                // Capture the partition's current leader epoch as the diskless leader epoch (E_d). The
                 // classic-to-diskless switch already bumped the leader epoch (Phase A), so this value is
                 // strictly greater than every classic-prefix epoch. Capturing it here, at the commit,
                 // keeps it correct even if a leader change landed between Phase A and this point. E_d is
