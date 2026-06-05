@@ -2108,12 +2108,7 @@ class ReplicaManager(val config: KafkaConfig,
     def respond(response: Seq[(TopicIdPartition, FetchPartitionData)]): Unit =
       responseCallback(response ++ immediateFetchResponses)
 
-    if (classicFetchInfos.isEmpty && disklessFetchInfos.isEmpty && immediateFetchResponses.nonEmpty) {
-      respond(Seq.empty)
-      return
-    }
-
-    if (classicFetchInfos.isEmpty && disklessFetchInfos.isEmpty && immediateFetchResponses.isEmpty) {
+    if (classicFetchInfos.isEmpty && disklessFetchInfos.isEmpty) {
       respond(Seq.empty)
       return
     }
