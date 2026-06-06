@@ -168,7 +168,11 @@ public class ClusterMirrorCoordinator {
 
         log.info("Shutting down.");
 
-        // stop the periodic scheduler to prevent tasks running after shutdown
+        // Close source admin clients before the scheduler shutdown so that any
+        // in-flight periodicSync admin calls (describeCluster, describeTopics)
+        // fail immediately instead of blocking for up to requestTimeoutMs each.
+        metadataManager.closeSourceAdmins();
+
         try {
             scheduler.shutdown();
         } catch (InterruptedException e) {

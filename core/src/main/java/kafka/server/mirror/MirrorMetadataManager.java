@@ -97,6 +97,7 @@ import org.apache.kafka.storage.internals.log.UnifiedLog;
 
 import org.slf4j.Logger;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -398,14 +399,20 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        if (mirrorStateSender != null) {
-            mirrorStateSender.shutdown();
-        }
-        srcAdmins.values().forEach(Admin::close);
+        closeSourceAdmins();
         if (dstAdmin != null) {
             dstAdmin.close();
         }
+        if (mirrorStateSender != null) {
+            mirrorStateSender.shutdown();
+        }
         clearCache();
+    }
+
+    // Force-close source admin clients so any in-flight requests fail immediately
+    // instead of blocking until requestTimeoutMs expires.
+    void closeSourceAdmins() {
+        srcAdmins.values().forEach(admin -> admin.close(Duration.ZERO));
     }
 
     void clearCache() {
