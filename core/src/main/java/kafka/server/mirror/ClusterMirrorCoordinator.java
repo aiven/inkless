@@ -390,10 +390,6 @@ public class ClusterMirrorCoordinator {
     public void transitionTo(String mirrorName, Set<TopicPartition> topicPartitions, MirrorPartitionState newState) {
         topicPartitions.forEach(tp -> {
             MirrorPartitionState currentState = metadataManager.getPartitionState(mirrorName, tp);
-            // stale retry callbacks can fire after the partition state was cleared (mirror stopped/deleted)
-            if (currentState == null) {
-                return;
-            }
             if (MirrorPartitionState.isValidTransition(currentState, newState)) {
                 log.debug("Transitioning partition {} from {} to {}.", tp, currentState, newState);
                 updateRetryAttemptsAndPrevState(mirrorName, tp, currentState, newState);
