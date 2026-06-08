@@ -15,7 +15,6 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import os
-import time
 import uuid
 
 from ducktape.cluster.remoteaccount import RemoteCommandError
@@ -79,6 +78,7 @@ class InklessTopicMigrationTest(Test):
         self.topic = "migration-test-topic"
         self.num_partitions = 6
         self.replication_factor = 3
+        self._migrated_topics = set()
 
     # -----------------------------------------------------------------------
     # Cluster setup
@@ -107,18 +107,23 @@ class InklessTopicMigrationTest(Test):
             _IDLM_OBJ % "OldestAwaitingMetadataAgeMs",
         ),
     }
-    MIGRATION_JMX_OBJECT_NAMES = [
-        "kafka.server:type=ReplicaManager,name=SealedPartitionsCount",
-        _IDLM_OBJ % "InFlightPartitions",
-    ] + [obj for pair in MIGRATION_STATE_GAUGES.values() for obj in pair]
+    SEALED_LEADER_PARTITIONS_JMX_OBJECT = "kafka.server:type=ReplicaManager,name=SealedPartitionsCount"
+    INIT_DISKLESS_IN_FLIGHT_PARTITIONS_JMX_OBJECT = _IDLM_OBJ % "InFlightPartitions"
+    MIGRATION_COMPLETION_JMX_OBJECT_NAMES = [
+        SEALED_LEADER_PARTITIONS_JMX_OBJECT,
+        INIT_DISKLESS_IN_FLIGHT_PARTITIONS_JMX_OBJECT,
+    ]
+    MIGRATION_STATE_JMX_OBJECT_NAMES = [obj for pair in MIGRATION_STATE_GAUGES.values() for obj in pair]
+    MIGRATION_JMX_OBJECT_NAMES = MIGRATION_COMPLETION_JMX_OBJECT_NAMES + MIGRATION_STATE_JMX_OBJECT_NAMES
     MIGRATION_JMX_ATTRIBUTES = ["Value"]
 
     def _create_kafka(self, num_nodes=None, controller_num_nodes=1,
                       scrape_migration_state_jmx=False):
         if num_nodes is None:
             num_nodes = self.num_brokers
-        jmx_object_names = self.MIGRATION_JMX_OBJECT_NAMES if scrape_migration_state_jmx else None
-        jmx_attributes = self.MIGRATION_JMX_ATTRIBUTES if scrape_migration_state_jmx else None
+        self._migrated_topics = set()
+        jmx_object_names = self.MIGRATION_JMX_OBJECT_NAMES if scrape_migration_state_jmx else \
+            self.MIGRATION_COMPLETION_JMX_OBJECT_NAMES
         self.kafka = KafkaService(
             self.test_context,
             num_nodes=num_nodes,
@@ -128,7 +133,7 @@ class InklessTopicMigrationTest(Test):
                 ["diskless.managed.rf.enable", "true"],
             ],
             jmx_object_names=jmx_object_names,
-            jmx_attributes=jmx_attributes,
+            jmx_attributes=self.MIGRATION_JMX_ATTRIBUTES,
         )
         # Migration configs (diskless.allow.from.classic.enable) require
         # remote.log.storage.system.enable, which needs RSM class names.
@@ -189,6 +194,7 @@ class InklessTopicMigrationTest(Test):
         """
         self.replication_factor = 1
         self.num_partitions = 1
+        self._migrated_topics = set()
 
         storage_dir = os.path.join(KafkaService.PERSISTENT_ROOT, "kafka-tiered-storage")
 
@@ -225,11 +231,15 @@ class InklessTopicMigrationTest(Test):
             zk=None,
             controller_num_nodes_override=1,
             server_prop_overrides=broker_overrides,
+            jmx_object_names=self.MIGRATION_COMPLETION_JMX_OBJECT_NAMES,
+            jmx_attributes=self.MIGRATION_JMX_ATTRIBUTES,
         )
         _enable_tiered_storage_classpath(self.kafka)
         if hasattr(self.kafka, 'isolated_controller_quorum') and self.kafka.isolated_controller_quorum:
             ctrl = self.kafka.isolated_controller_quorum
             ctrl.server_prop_overrides = list(ctrl.server_prop_overrides) + controller_overrides
+            ctrl.jmx_object_names = None
+            ctrl.jmx_attributes = []
 
         security_protocol = 'PLAINTEXT'
         self.kafka.security_protocol = security_protocol
@@ -275,6 +285,7 @@ class InklessTopicMigrationTest(Test):
         if topic is None:
             topic = self.topic
         self.logger.info("Migrating topic %s to diskless", topic)
+        self._migrated_topics.add(topic)
         self.kafka.alter_topic_config(topic, "diskless.enable", "true")
 
     def _wait_for_migration_config(self, topic=None, timeout_sec=None):
@@ -295,16 +306,56 @@ class InklessTopicMigrationTest(Test):
                    err_msg="Topic %s did not become diskless within %ds" % (topic, timeout_sec))
 
     def _wait_for_migration_complete(self, topic=None, timeout_sec=None):
-        """Wait for the migration config to be applied.
+        """Wait until the classic-to-diskless init work has drained.
 
-        This polls the topic config to confirm diskless.enable=true.
-        After the config is applied, a brief settle period allows the
-        init state machine to complete on all partitions.
+        The topic config becomes visible before leaders finish sealing their
+        classic logs and before InitDisklessLogManager commits the diskless
+        start offsets. Poll broker-side JMX so post-migration produce/read
+        steps do not race the switch-pending state.
         """
         if topic is None:
             topic = self.topic
+        if timeout_sec is None:
+            timeout_sec = self.MIGRATION_TIMEOUT_SEC
+
         self._wait_for_migration_config(topic, timeout_sec)
-        time.sleep(10)
+        expected_sealed_leader_count = 0
+        for migrated_topic in self._migrated_topics:
+            description = self.kafka.describe_topic(migrated_topic)
+            expected_sealed_leader_count += len(self.kafka.parse_describe_topic(description)["partitions"])
+
+        def check():
+            try:
+                self.kafka.read_jmx_output_all_nodes()
+                sealed_key = "%s:Value" % self.SEALED_LEADER_PARTITIONS_JMX_OBJECT
+                in_flight_key = "%s:Value" % self.INIT_DISKLESS_IN_FLIGHT_PARTITIONS_JMX_OBJECT
+                sealed_leader_count = 0.0
+                in_flight_init_count = 0.0
+                for time_to_stats in self.kafka.jmx_stats:
+                    if time_to_stats:
+                        latest = max(time_to_stats.keys())
+                        sealed_leader_count += time_to_stats[latest].get(sealed_key, 0)
+                        in_flight_init_count += time_to_stats[latest].get(in_flight_key, 0)
+                self.logger.info(
+                    "Migration state for %s: sealed leader partitions=%s/%s, in-flight init partitions=%s",
+                    topic,
+                    int(sealed_leader_count),
+                    int(expected_sealed_leader_count),
+                    int(in_flight_init_count)
+                )
+                return sealed_leader_count >= expected_sealed_leader_count and in_flight_init_count == 0
+            except Exception as e:
+                self.logger.debug("Failed to read migration JMX state for %s: %s", topic, e)
+                return False
+
+        wait_until(
+            check,
+            timeout_sec=timeout_sec,
+            backoff_sec=5,
+            err_msg=("Topic %s did not finish classic-to-diskless migration within %ds "
+                     "(expected at least %d sealed leader partitions and zero in-flight init partitions)" %
+                     (topic, timeout_sec, expected_sealed_leader_count))
+        )
 
     # -----------------------------------------------------------------------
     # Helpers: produce / consume
@@ -328,22 +379,6 @@ class InklessTopicMigrationTest(Test):
         producer.start()
         return producer
 
-    def _start_continuous_consumer(self, topic=None, group_id=None, num_nodes=1):
-        if topic is None:
-            topic = self.topic
-        if group_id is None:
-            group_id = "continuous-%s" % str(uuid.uuid4())[:8]
-        consumer = VerifiableConsumer(
-            context=self.test_context,
-            num_nodes=num_nodes,
-            kafka=self.kafka,
-            topic=topic,
-            group_id=group_id,
-            enable_autocommit=True,
-        )
-        consumer.start()
-        return consumer
-
     def _produce_messages(self, topic=None, num_messages=10000):
         """Produce a fixed number of messages and wait for acks."""
         if topic is None:
@@ -360,7 +395,7 @@ class InklessTopicMigrationTest(Test):
         producer.free()
         return acked
 
-    def _consume_all_from_beginning(self, topic=None, expected_count=0, timeout_sec=None,
+    def _consume_all_from_beginning(self, expected_count, topic=None, timeout_sec=None,
                                     wait_for_completion=False):
         """Start a fresh consumer from the beginning and collect all messages.
 
@@ -388,29 +423,26 @@ class InklessTopicMigrationTest(Test):
         )
         consumer.start()
 
-        if expected_count > 0:
-            consumer_seen_alive = [False]
+        consumer_seen_alive = [False]
 
-            def _check_consumed():
-                is_alive = consumer.alive(consumer.nodes[0])
-                if is_alive:
-                    consumer_seen_alive[0] = True
-                if wait_for_completion:
-                    has_consumed = len(consumer.messages_consumed[1]) > 0
-                    return (consumer_seen_alive[0] or has_consumed) and not is_alive
-                if len(consumer.messages_consumed[1]) >= expected_count:
-                    return True
-                return consumer_seen_alive[0] and not is_alive
+        def _check_consumed():
+            is_alive = consumer.alive(consumer.nodes[0])
+            if is_alive:
+                consumer_seen_alive[0] = True
+            if wait_for_completion:
+                has_consumed = len(consumer.messages_consumed[1]) > 0
+                return (consumer_seen_alive[0] or has_consumed) and not is_alive
+            if len(consumer.messages_consumed[1]) >= expected_count:
+                return True
+            return consumer_seen_alive[0] and not is_alive
 
-            wait_until(
-                _check_consumed,
-                timeout_sec=timeout_sec,
-                backoff_sec=2,
-                err_msg="Fresh consumer consumed only %d out of %d expected messages in %ds" %
-                        (len(consumer.messages_consumed[1]), expected_count, timeout_sec)
-            )
-        else:
-            time.sleep(15)
+        wait_until(
+            _check_consumed,
+            timeout_sec=timeout_sec,
+            backoff_sec=2,
+            err_msg="Fresh consumer consumed only %d out of %d expected messages in %ds" %
+                    (len(consumer.messages_consumed[1]), expected_count, timeout_sec)
+        )
 
         consumer.stop()
         consumed = len(consumer.messages_consumed[1])
@@ -466,13 +498,16 @@ class InklessTopicMigrationTest(Test):
                     (topic, partition, timeout_sec)
         )
 
-    def _wait_for_steady_production(self, producer, min_acked=5000, timeout_sec=60):
+    def _wait_for_steady_production(self, producer, min_acked=5000, timeout_sec=60,
+                                    err_msg=None, worker_err_msg=None):
         wait_until(
             lambda: producer.num_acked >= min_acked or producer.worker_errors,
             timeout_sec=timeout_sec,
-            err_msg="Producer did not reach %d acks in %ds" % (min_acked, timeout_sec)
+            err_msg=err_msg or "Producer did not reach %d acks in %ds" % (min_acked, timeout_sec)
         )
-        assert not producer.worker_errors, "Unexpected producer errors: %s" % producer.worker_errors
+        if worker_err_msg is None:
+            worker_err_msg = "Unexpected producer errors: %s"
+        assert not producer.worker_errors, worker_err_msg % producer.worker_errors
 
     # -----------------------------------------------------------------------
     # Helpers: broker operations
@@ -494,42 +529,62 @@ class InklessTopicMigrationTest(Test):
     def _restart_broker(self, node, clean_shutdown=True):
         self.logger.info("Restarting broker %s (clean=%s)", node.account.hostname, clean_shutdown)
         self.kafka.restart_node(node, clean_shutdown=clean_shutdown, timeout_sec=self.BROKER_STARTUP_TIMEOUT_SEC)
+        self._restart_broker_jmx_tool(node)
 
     def _stop_broker(self, node, clean_shutdown=True):
         self.logger.info("Stopping broker %s (clean=%s)", node.account.hostname, clean_shutdown)
         self.kafka.stop_node(node, clean_shutdown=clean_shutdown, timeout_sec=self.BROKER_STARTUP_TIMEOUT_SEC)
         if not clean_shutdown:
-            time.sleep(5)
+            # Unclean shutdown recovery only needs replacement leaders before the test can continue.
+            # Waiting for ISR shrinkage here adds replica.lag.time.max.ms latency and does not test
+            # the post-crash behavior any more precisely.
+            self._wait_for_all_partitions_have_leaders()
 
     def _start_broker(self, node):
         self.logger.info("Starting broker %s", node.account.hostname)
         self.kafka.start_node(node, timeout_sec=self.BROKER_STARTUP_TIMEOUT_SEC)
+        self._restart_broker_jmx_tool(node)
+
+    def _restart_broker_jmx_tool(self, node):
+        """Refresh JmxTool after a broker JVM restart.
+
+        JmxMixin tracks whether it has ever started JmxTool on a node, but a
+        broker restart also kills the tool process. Reset only the JMX tool
+        state/log for this node so subsequent migration waits read live
+        post-restart samples. Before removing the old log, preserve any samples
+        not yet scraped into memory so the mid-migration assertions still see
+        states observed before the broker bounce.
+        """
+        if self.kafka.jmx_object_names is None:
+            return
+
+        idx = self.kafka.idx(node)
+        try:
+            self.kafka.read_jmx_output(idx, node)
+        except Exception as e:
+            self.logger.debug("Could not preserve pre-restart JMX samples from %s: %s",
+                              node.account.hostname, e)
+
+        node.account.kill_java_processes(
+            self.kafka.jmx_class_name(self.kafka.jmxtool_version(node)),
+            clean_shutdown=False,
+            allow_fail=True,
+        )
+        self.kafka.started[idx - 1] = False
+        node.account.ssh(
+            "rm -f -- %s %s" % (self.kafka.jmx_tool_log, self.kafka.jmx_tool_err_log),
+            allow_fail=False,
+        )
+        self.kafka.start_jmx_tool(idx, node)
 
     def _rolling_restart(self, clean_shutdown=True):
         self.logger.info("Performing rolling restart of all brokers")
         for node in self.kafka.nodes:
             self._restart_broker(node, clean_shutdown=clean_shutdown)
-            time.sleep(5)
-
-    def _wait_for_isr_full(self, topic=None, partition=0, timeout_sec=120):
-        if topic is None:
-            topic = self.topic
-        expected_isr_size = self.replication_factor
-
-        def partition_ready():
-            try:
-                leader = self.kafka.leader(topic, partition=partition)
-                isr_size = len(self.kafka.isr_idx_list(topic, partition=partition))
-                return leader is not None and isr_size == expected_isr_size
-            except (Exception, RemoteCommandError):
-                return False
-
-        wait_until(
-            partition_ready,
-            timeout_sec=timeout_sec, backoff_sec=2,
-            err_msg="Partition %s-%d did not get a leader and full ISR size %d" %
-                    (topic, partition, expected_isr_size)
-        )
+            self._wait_for_all_partitions_have_leaders()
+            # Pace the next bounce on evidence that this broker is fetching again, without
+            # forcing all partitions to fully heal between every restart under degraded network.
+            self._wait_for_broker_in_isr(node, num_partitions=1)
 
     def _wait_for_all_partitions_have_leaders(self, topic=None, num_partitions=None, timeout_sec=120):
         if topic is None:
@@ -539,8 +594,21 @@ class InklessTopicMigrationTest(Test):
 
         def all_partitions_have_leaders():
             try:
+                query_node = None
+                for candidate in self.kafka.nodes:
+                    if self.kafka.pids(candidate):
+                        query_node = candidate
+                        break
+                if query_node is None:
+                    return False
+                # Query once through any live broker; per-partition calls are very slow under
+                # the network-degradation faults used by these tests.
+                describe_output = self.kafka.describe_topic(topic, node=query_node)
                 for p in range(num_partitions):
-                    if self.kafka.leader(topic, partition=p) is None:
+                    line = self.kafka._describe_topic_line_for_partition(p, describe_output)
+                    if line is None:
+                        return False
+                    if int(line.split()[5]) < 0:
                         return False
                 return True
             except (Exception, RemoteCommandError):
@@ -551,6 +619,36 @@ class InklessTopicMigrationTest(Test):
             timeout_sec=timeout_sec, backoff_sec=2,
             err_msg="Not all %d partitions of %s had leaders within %ds" %
                     (num_partitions, topic, timeout_sec)
+        )
+
+    def _wait_for_broker_in_isr(self, node, topic=None, num_partitions=None, timeout_sec=120):
+        if topic is None:
+            topic = self.topic
+        if num_partitions is None:
+            num_partitions = self.num_partitions
+        broker_idx = self.kafka.idx(node)
+
+        def broker_in_isr():
+            try:
+                query_node = None
+                for candidate in self.kafka.nodes:
+                    if self.kafka.pids(candidate):
+                        query_node = candidate
+                        break
+                if query_node is None:
+                    return False
+                for p in range(num_partitions):
+                    if broker_idx not in self.kafka.isr_idx_list(topic, partition=p, node=query_node):
+                        return False
+                return True
+            except (Exception, RemoteCommandError):
+                return False
+
+        wait_until(
+            broker_in_isr,
+            timeout_sec=timeout_sec, backoff_sec=2,
+            err_msg="Broker %d did not rejoin ISR for all %d partitions of %s within %ds" %
+                    (broker_idx, num_partitions, topic, timeout_sec)
         )
 
     def _wait_for_all_partitions_isr_full(self, topic=None, num_partitions=None, timeout_sec=180):
@@ -570,10 +668,25 @@ class InklessTopicMigrationTest(Test):
 
         def all_isr_full():
             try:
+                query_node = None
+                for candidate in self.kafka.nodes:
+                    if self.kafka.pids(candidate):
+                        query_node = candidate
+                        break
+                if query_node is None:
+                    return False
+
+                # One describe call keeps this wait cheap even for 30 partitions over a slow link.
+                describe_output = self.kafka.describe_topic(topic, node=query_node)
                 for p in range(num_partitions):
-                    leader = self.kafka.leader(topic, partition=p)
-                    isr_size = len(self.kafka.isr_idx_list(topic, partition=p))
-                    if leader is None or isr_size != expected_isr_size:
+                    line = self.kafka._describe_topic_line_for_partition(p, describe_output)
+                    if line is None:
+                        return False
+                    if int(line.split()[5]) < 0:
+                        return False
+                    isr_csv = line.split()[9]
+                    isr_size = 0 if isr_csv == "Elr:" else len(isr_csv.split(","))
+                    if isr_size != expected_isr_size:
                         return False
                 return True
             except (Exception, RemoteCommandError):
@@ -695,6 +808,43 @@ class InklessTopicMigrationTest(Test):
             0, duration_ms, [node], self.kafka.java_class_name(),
         )
         return self.trogdor.create_task(task_name, spec)
+
+    def _wait_for_mid_migration_state(
+            self, state, min_partition_seconds=None, min_oldest_age_ms=None, timeout_sec=120) -> None:
+        """Poll historical JMX until the injected fault is observed overlapping ``state``.
+
+        This replaces fixed sleeps in network-partition tests with the same
+        evidence that the final assertions use: partition-seconds plus the
+        oldest-age gauge for the requested migration state.
+        """
+        if min_partition_seconds is None:
+            min_partition_seconds = self.DEFAULT_MIN_MID_MIGRATION_PARTITION_SECONDS
+        if min_oldest_age_ms is None:
+            min_oldest_age_ms = self.DEFAULT_MIN_MID_MIGRATION_OLDEST_AGE_MS
+
+        def check():
+            try:
+                self._assert_mid_migration_observed(
+                    require_states=(state,),
+                    min_partition_seconds=min_partition_seconds,
+                    min_oldest_age_ms=min_oldest_age_ms,
+                )
+                return True
+            except AssertionError as e:
+                self.logger.debug("%s migration JMX state is not ready yet: %s", state, e)
+                return False
+            except Exception as e:
+                self.logger.debug("Failed to read %s migration JMX state: %s", state, e)
+                return False
+
+        wait_until(
+            check,
+            timeout_sec=timeout_sec,
+            backoff_sec=2,
+            err_msg=("%s state did not reach partition_seconds >= %s and oldest_age_ms >= %s "
+                     "while the fault was active within %ds" %
+                     (state, min_partition_seconds, min_oldest_age_ms, timeout_sec))
+        )
 
     def _assert_mid_migration_observed(
             self,
@@ -923,22 +1073,29 @@ class InklessTopicMigrationTest(Test):
         degrade = self._degrade_network()
 
         producer = self._start_producer(max_messages=-1)
-        consumer = self._start_continuous_consumer()
+        consumer = VerifiableConsumer(
+            context=self.test_context,
+            num_nodes=1,
+            kafka=self.kafka,
+            topic=self.topic,
+            group_id="continuous-%s" % str(uuid.uuid4())[:8],
+            enable_autocommit=True,
+        )
+        consumer.start()
 
         self._wait_for_steady_production(producer, min_acked=5000)
 
         self._migrate_topic_to_diskless()
         self._wait_for_migration_complete()
 
-        # wait until the producer has successfully acknowledged at least 5000 messages, proving load is active and stable.
         post_migration_target = producer.num_acked + 5000
-        wait_until(
-            lambda: producer.num_acked >= post_migration_target or producer.worker_errors,
+        self._wait_for_steady_production(
+            producer,
+            min_acked=post_migration_target,
             timeout_sec=180,
             err_msg="Producer did not reach %d acks within 180s after migration" % post_migration_target,
+            worker_err_msg="Producer errors after migration under degraded network: %s",
         )
-        assert not producer.worker_errors, \
-            "Producer errors after migration under degraded network: %s" % producer.worker_errors
 
         producer.stop()
         total_produced = producer.num_acked
@@ -1043,27 +1200,22 @@ class InklessTopicMigrationTest(Test):
         pause_duration_ms = 30_000
         if leader_failure_mode == "sigkill":
             self._stop_broker(leader_node, clean_shutdown=False)
-            time.sleep(10)
             self._start_broker(leader_node)
         elif leader_failure_mode == "sigstop":
             pause = self._pause_broker_process(leader_node, duration_ms=pause_duration_ms)
-            time.sleep(pause_duration_ms / 1000.0 + 5)
-            pause.stop()
-            pause.wait_for_done(timeout_sec=60)
+            pause.wait_for_done(timeout_sec=pause_duration_ms // 1000 + 60)
         else:
             raise AssertionError("Unknown leader_failure_mode: %s" % leader_failure_mode)
 
         self._wait_for_migration_complete()
 
-        target_acked = producer.num_acked + 5000
-        wait_until(
-            lambda: producer.num_acked >= target_acked or producer.worker_errors,
+        self._wait_for_steady_production(
+            producer,
+            min_acked=producer.num_acked + 5000,
             timeout_sec=240,
-            err_msg="Producer did not recover after leader %s" % leader_failure_mode
+            err_msg="Producer did not recover after leader %s" % leader_failure_mode,
+            worker_err_msg="Producer errors after leader %s during migration: %%s" % leader_failure_mode,
         )
-        assert not producer.worker_errors, \
-            "Producer errors after leader %s during migration: %s" % \
-            (leader_failure_mode, producer.worker_errors)
         producer.stop()
         total_produced = producer.num_acked
         producer.free()
@@ -1104,19 +1256,17 @@ class InklessTopicMigrationTest(Test):
         target_follower = self._get_follower_nodes(partition=0)[0]
         self.logger.info("Killing follower %s mid-migration", target_follower.account.hostname)
         self._stop_broker(target_follower, clean_shutdown=False)
-        time.sleep(10)
         self._start_broker(target_follower)
 
         self._wait_for_migration_complete()
 
-        target_acked = producer.num_acked + 5000
-        wait_until(
-            lambda: producer.num_acked >= target_acked or producer.worker_errors,
+        self._wait_for_steady_production(
+            producer,
+            min_acked=producer.num_acked + 5000,
             timeout_sec=240,
-            err_msg="Producer did not recover after follower SIGKILL"
+            err_msg="Producer did not recover after follower SIGKILL",
+            worker_err_msg="Producer errors after follower SIGKILL during migration: %s",
         )
-        assert not producer.worker_errors, \
-            "Producer errors after follower SIGKILL during migration: %s" % producer.worker_errors
         producer.stop()
         total_produced = producer.num_acked
         producer.free()
@@ -1174,16 +1324,19 @@ class InklessTopicMigrationTest(Test):
 
         self._rolling_restart()
 
+        # After the final bounce, wait for cluster-wide ISR recovery before
+        # using migration-complete JMX. This avoids racing leaders that still
+        # cannot finish init work because their replicas have not caught up.
+        self._wait_for_all_partitions_isr_full(timeout_sec=240)
         self._wait_for_migration_complete()
 
-        target_acked = producer.num_acked + 5000
-        wait_until(
-            lambda: producer.num_acked >= target_acked or producer.worker_errors,
+        self._wait_for_steady_production(
+            producer,
+            min_acked=producer.num_acked + 5000,
             timeout_sec=240,
-            err_msg="Producer did not recover after rolling restart"
+            err_msg="Producer did not recover after rolling restart",
+            worker_err_msg="Producer errors after rolling restart during migration: %s",
         )
-        assert not producer.worker_errors, \
-            "Producer errors after rolling restart during migration: %s" % producer.worker_errors
         producer.stop()
         total_produced = producer.num_acked
         producer.free()
@@ -1239,22 +1392,23 @@ class InklessTopicMigrationTest(Test):
 
         self._migrate_topic_to_diskless()
 
-        time.sleep(30)
+        # The partition fault should block migration in WaitingForReplication;
+        # waiting on that JMX state is more precise than sleeping for ISR lag.
+        self._wait_for_mid_migration_state("WaitingForReplication", timeout_sec=120)
 
         fault.stop()
         fault.wait_for_done(timeout_sec=120)
 
-        self._wait_for_isr_full(partition=0)
+        self._wait_for_all_partitions_isr_full(num_partitions=1, timeout_sec=120)
         self._wait_for_migration_complete()
 
-        target_acked = producer.num_acked + 3000
-        wait_until(
-            lambda: producer.num_acked >= target_acked or producer.worker_errors,
+        self._wait_for_steady_production(
+            producer,
+            min_acked=producer.num_acked + 3000,
             timeout_sec=120,
-            err_msg="Producer did not recover after follower partition"
+            err_msg="Producer did not recover after follower partition",
+            worker_err_msg="Producer errors after follower partition during migration: %s",
         )
-        assert not producer.worker_errors, \
-            "Producer errors after follower partition during migration: %s" % producer.worker_errors
 
         producer.stop()
         total_produced = producer.num_acked
@@ -1304,22 +1458,23 @@ class InklessTopicMigrationTest(Test):
 
         self._migrate_topic_to_diskless()
 
-        time.sleep(30)
+        # The partition fault should block migration in WaitingForReplication;
+        # waiting on that JMX state is more precise than sleeping for ISR lag.
+        self._wait_for_mid_migration_state("WaitingForReplication", timeout_sec=120)
 
         fault.stop()
         fault.wait_for_done(timeout_sec=120)
 
-        self._wait_for_isr_full(partition=0, timeout_sec=180)
+        self._wait_for_all_partitions_isr_full(num_partitions=1, timeout_sec=180)
         self._wait_for_migration_complete()
 
-        target_acked = producer.num_acked + 3000
-        wait_until(
-            lambda: producer.num_acked >= target_acked or producer.worker_errors,
+        self._wait_for_steady_production(
+            producer,
+            min_acked=producer.num_acked + 3000,
             timeout_sec=120,
-            err_msg="Producer did not recover after leader partition"
+            err_msg="Producer did not recover after leader partition",
+            worker_err_msg="Producer errors after leader partition during migration: %s",
         )
-        assert not producer.worker_errors, \
-            "Producer errors after leader partition during migration: %s" % producer.worker_errors
         producer.stop()
         total_produced = producer.num_acked
         producer.free()
@@ -1445,14 +1600,13 @@ class InklessTopicMigrationTest(Test):
         self._migrate_topic_to_diskless()
         self._wait_for_migration_complete()
 
-        target_acked = pre_migration_acked + 15000
-        wait_until(
-            lambda: producer.num_acked >= target_acked or producer.worker_errors,
+        self._wait_for_steady_production(
+            producer,
+            min_acked=pre_migration_acked + 15000,
             timeout_sec=self.PRODUCE_TIMEOUT_SEC,
-            err_msg="Idempotent producer stalled after migration at %d acks" % producer.num_acked
+            err_msg="Idempotent producer stalled after migration at %d acks" % producer.num_acked,
+            worker_err_msg="Idempotent producer errors after migration (possible OutOfOrderSequence): %s",
         )
-        assert not producer.worker_errors, \
-            "Idempotent producer errors after migration (possible OutOfOrderSequence): %s" % producer.worker_errors
 
         producer.stop()
         total_produced = producer.num_acked

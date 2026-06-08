@@ -1379,7 +1379,7 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
                 continue
             if in_config_block and stripped and "=" in stripped:
                 k, rest = stripped.split("=", 1)
-                v = rest.split(" ")[0] if " " in rest else rest
+                v = rest.split(" ")[0]
                 config[k.strip()] = v.strip()
         return config
 
