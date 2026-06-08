@@ -1628,11 +1628,11 @@ public class ReplicationControlManager {
                         .toList();
 
                 // Capture the partition's current leader epoch as the diskless leader epoch (E_d). The
-                // classic-to-diskless switch already bumped the leader epoch (Phase A), so this value is
-                // strictly greater than every classic-prefix epoch. Capturing it here, at the commit,
-                // keeps it correct even if a leader change landed between Phase A and this point. E_d is
-                // stamped onto materialized diskless batches and answers OffsetsForLeaderEpoch so that a
-                // stale classic tail truncates back to the seal.
+                // classic-to-diskless switch already bumped the leader epoch, so this value is strictly
+                // greater than every classic-prefix epoch. Capturing it here, at the commit, keeps it
+                // correct even if a leader change landed in the meantime. E_d is stamped onto materialized
+                // diskless batches and answers OffsetsForLeaderEpoch so that a stale classic tail truncates
+                // back to the seal.
                 int disklessLeaderEpoch = partition.leaderEpoch;
 
                 PartitionChangeRecord record = new PartitionChangeRecord()
