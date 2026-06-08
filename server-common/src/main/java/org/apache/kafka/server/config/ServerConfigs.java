@@ -164,9 +164,7 @@ public class ServerConfigs {
     public static final String DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_CONFIG = "diskless.consolidation.fetch.max.bytes";
     public static final int DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_DEFAULT = 1024 * 1024; // 1MB
     public static final String DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_DOC = "The maximum number of bytes per partition the consolidation " +
-        "fetcher will request per iteration. Each fetch is appended to the local log as a single unit, so this must not exceed " +
-        "segment.bytes or the append fails with RecordBatchTooLargeException. Defaults to 1MB to match replica.fetch.max.bytes, which " +
-        "the consolidation fetcher previously reused; a larger value may reduce PG query frequency but has not yet been validated.";
+        "fetcher will request per iteration. Larger values fetch more batches per iteration, reducing control-plane query frequency.";
 
     public static final String DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_CONFIG = "diskless.consolidation.fetch.response.max.bytes";
     public static final int DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_DEFAULT = 10 * 1024 * 1024; // 10MB
