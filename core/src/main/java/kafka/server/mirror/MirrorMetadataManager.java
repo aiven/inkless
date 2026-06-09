@@ -170,7 +170,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Map<String, Admin> srcAdmins = new ConcurrentHashMap<>(); // source cluster metadata discovery (one per mirror)
     private volatile Admin dstAdmin; // group offset and ACLs sync
 
-    private final Map<String, Uuid> sourceClusterIds = new ConcurrentHashMap<>();
+    // Map from mirror name to cluster id. The cluster id is represented as a String because KIP-78
+    // does not mandate the use of UUIDs for it and assuming so may break compatibility with existing clusters
+    private final Map<String, String> sourceClusterIds = new ConcurrentHashMap<>();
     private final Map<String, Map<TopicPartition, ClusterMirrorUtils.LeaderInfo>> sourceLeaders = new ConcurrentHashMap<>();
     private final Map<ClusterMirrorUtils.PartitionKey, MirrorPartitionState> partitionStates = new ConcurrentHashMap<>();
     private final Map<ClusterMirrorUtils.PartitionKey, MirrorPartitionState> partitionPreviousStates = new ConcurrentHashMap<>();
@@ -569,10 +571,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         Admin srcAdmin = getOrCreateSourceAdmin(mirrorName);
         try {
             var clusterResult = srcAdmin.describeCluster();
-            String clusterId = clusterResult.clusterId().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
-            if (clusterId != null && !clusterId.isEmpty()) {
-                Uuid newClusterId = Uuid.fromString(clusterId);
-                Uuid previousClusterId = sourceClusterIds.put(mirrorName, newClusterId);
+            String newClusterId = clusterResult.clusterId().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
+            if (newClusterId != null && !newClusterId.isEmpty()) {
+                String previousClusterId = sourceClusterIds.put(mirrorName, newClusterId);
                 if (previousClusterId != null && !previousClusterId.equals(newClusterId)) {
                     throw new IllegalStateException("Source cluster ID changed for mirror " + mirrorName
                             + ": expected " + previousClusterId + ", got " + newClusterId
@@ -1898,17 +1899,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return result;
     }
 
-    Uuid getSourceClusterId(String mirrorName) {
-        Uuid cached = sourceClusterIds.get(mirrorName);
+    String getSourceClusterId(String mirrorName) {
+        String cached = sourceClusterIds.get(mirrorName);
         if (cached != null) {
             return cached;
         }
         Admin srcAdmin = getOrCreateSourceAdmin(mirrorName);
         try {
-            String clusterId = srcAdmin.describeCluster()
+            cached = srcAdmin.describeCluster()
                 .clusterId().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
-            if (clusterId != null && !clusterId.isEmpty()) {
-                cached = Uuid.fromString(clusterId);
+            if (cached != null && !cached.isEmpty()) {
                 sourceClusterIds.put(mirrorName, cached);
                 return cached;
             }

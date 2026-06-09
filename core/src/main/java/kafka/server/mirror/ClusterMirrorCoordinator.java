@@ -23,7 +23,6 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.ClusterMirrorDescription;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.internals.Topic;
@@ -819,7 +818,7 @@ public class ClusterMirrorCoordinator {
     private CompletableFuture<Map<TopicPartition, ProduceResponse.PartitionResponse>> writeMirrorPidReset(
             String mirrorName, Set<TopicPartition> topicPartitions) {
         CompletableFuture<Map<TopicPartition, ProduceResponse.PartitionResponse>> writePidResetFuture = new CompletableFuture<>();
-        Uuid sourceClusterId = metadataManager.getSourceClusterId(mirrorName);
+        String sourceClusterId = metadataManager.getSourceClusterId(mirrorName);
         if (sourceClusterId == null) {
             log.warn("Source cluster ID not available for mirror {}. Skipping PID reset barrier.", mirrorName);
             writePidResetFuture.complete(Map.of());
@@ -827,7 +826,7 @@ public class ClusterMirrorCoordinator {
         }
         MirrorPidResetRecord record = new MirrorPidResetRecord()
             .setVersion(ControlRecordUtils.MIRROR_PID_RESET_CURRENT_VERSION)
-            .setSourceClusterId(sourceClusterId.toString());
+            .setSourceClusterId(sourceClusterId);
         long timestamp = time.milliseconds();
         for (TopicPartition tp : topicPartitions) {
             try {
@@ -1009,7 +1008,7 @@ public class ClusterMirrorCoordinator {
     }
 
     /** Returns the source cluster ID for the given mirror. */
-    public Uuid getSourceClusterId(String mirrorName) {
+    public String getSourceClusterId(String mirrorName) {
         return metadataManager.getSourceClusterId(mirrorName);
     }
 
