@@ -120,6 +120,16 @@ RUN curl -s "$KAFKA_MIRROR/kafka-streams-3.9.1-test.jar" -o /opt/kafka-3.9.1/lib
 RUN curl -s "$KAFKA_MIRROR/kafka-streams-4.0.0-test.jar" -o /opt/kafka-4.0.0/libs/kafka-streams-4.0.0-test.jar
 RUN curl -s "$KAFKA_MIRROR/kafka-streams-4.1.1-test.jar" -o /opt/kafka-4.1.1/libs/kafka-streams-4.1.1-test.jar
 
+# Aiven Tiered Storage plugin (for consolidation/remote storage in system tests)
+ARG ts_plugin_version=1.1.1
+ARG ts_plugin_base_url=https://github.com/Aiven-Open/tiered-storage-for-apache-kafka/releases/download/v${ts_plugin_version}
+ADD ${ts_plugin_base_url}/core-${ts_plugin_version}.tgz /tmp/core.tgz
+ADD ${ts_plugin_base_url}/s3-${ts_plugin_version}.tgz /tmp/s3.tgz
+RUN mkdir -p /opt/tiered-storage-plugin/core /opt/tiered-storage-plugin/s3 && \
+    tar xzf /tmp/core.tgz -C /opt/tiered-storage-plugin/core --strip-components=1 && \
+    tar xzf /tmp/s3.tgz -C /opt/tiered-storage-plugin/s3 --strip-components=1 && \
+    rm /tmp/*.tgz
+
 # To ensure the Kafka cluster starts successfully under JDK 17, we need to update the Zookeeper 
 # client from version 3.4.x to 3.5.7 in Kafka versions 2.1.1, 2.2.2, and 2.3.1, as the older Zookeeper 
 # client is incompatible with JDK 17. See KAFKA-17888 for more details.

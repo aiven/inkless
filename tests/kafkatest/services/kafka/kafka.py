@@ -754,7 +754,8 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         config_template = self.render('kafka.properties', node=node, broker_id=self.idx(node),
                                       security_config=self.security_config, num_nodes=self.num_nodes,
                                       listener_security_config=self.listener_security_config,
-                                      use_share_groups=self.use_share_groups)
+                                      use_share_groups=self.use_share_groups,
+                                      consolidation=self.context.globals.get("consolidation", False))
 
         configs = dict( l.rstrip().split('=', 1) for l in config_template.split('\n')
                         if not l.startswith("#") and "=" in l )
