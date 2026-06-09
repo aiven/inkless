@@ -31,7 +31,7 @@ class ConsolidationFetcherManager(brokerConfig: KafkaConfig,
                                   consolidationMetrics: Option[ConsolidationMetrics] = None)
   extends AbstractFetcherManager[ConsolidationFetcherThread](name = "ConsolidationFetcherManager on broker " + brokerConfig.brokerId,
     clientId = "Consolidation",
-    numFetchers = brokerConfig.numReplicaFetchers) {
+    numFetchers = brokerConfig.disklessConsolidationNumFetchers) {
 
   override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): ConsolidationFetcherThread = {
     val threadName = s"ConsolidationFetcherThread-$fetcherId-${sourceBroker.id}"

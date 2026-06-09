@@ -22,6 +22,7 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
@@ -138,6 +139,35 @@ public class Reader implements AutoCloseable {
         long hedgeTotalTimeThresholdMs,
         int maxBatchesPerPartitionToFind
     ) {
+        this(time, objectKeyCreator, keyAlignmentStrategy, cache, controlPlane, objectFetcher, brokerTopicStats,
+            fetchMetadataThreadPoolSize, fetchDataThreadPoolSize, maybeLaggingFetchStorage,
+            laggingConsumerThresholdMs, laggingConsumerRequestRateLimit, laggingConsumerThreadPoolSize,
+            hedgeTtfbThresholdMs, hedgeTotalTimeThresholdMs,
+            maxBatchesPerPartitionToFind,
+            new KafkaMetricsGroup(InklessFetchMetrics.class.getPackageName(), InklessFetchMetrics.class.getSimpleName()),
+            "inkless-");
+    }
+
+    public Reader(
+        Time time,
+        ObjectKeyCreator objectKeyCreator,
+        KeyAlignmentStrategy keyAlignmentStrategy,
+        ObjectCache cache,
+        ControlPlane controlPlane,
+        ObjectFetcher objectFetcher,
+        BrokerTopicStats brokerTopicStats,
+        int fetchMetadataThreadPoolSize,
+        int fetchDataThreadPoolSize,
+        Optional<ObjectFetcher> maybeLaggingFetchStorage,
+        long laggingConsumerThresholdMs,
+        int laggingConsumerRequestRateLimit,
+        int laggingConsumerThreadPoolSize,
+        long hedgeTtfbThresholdMs,
+        long hedgeTotalTimeThresholdMs,
+        int maxBatchesPerPartitionToFind,
+        KafkaMetricsGroup metricsGroup,
+        String threadNamePrefix
+    ) {
         this(
             time,
             objectKeyCreator,
@@ -146,8 +176,8 @@ public class Reader implements AutoCloseable {
             controlPlane,
             objectFetcher,
             maxBatchesPerPartitionToFind,
-            Executors.newFixedThreadPool(fetchMetadataThreadPoolSize, new InklessThreadFactory("inkless-fetch-metadata-", false)),
-            Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory("inkless-fetch-data-", false)),
+            Executors.newFixedThreadPool(fetchMetadataThreadPoolSize, new InklessThreadFactory(threadNamePrefix + "fetch-metadata-", false)),
+            Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory(threadNamePrefix + "fetch-data-", false)),
             laggingConsumerThreadPoolSize > 0
                 ? maybeLaggingFetchStorage.orElseThrow(() -> new IllegalStateException(
                     "Lagging consumer thread pool size is " + laggingConsumerThreadPoolSize
@@ -159,23 +189,24 @@ public class Reader implements AutoCloseable {
             // A pool size of 0 is a valid configuration that explicitly disables the feature
             // by passing both a null executor and a null lagging fetch storage.
             laggingConsumerThreadPoolSize > 0
-                ? createBoundedThreadPool(laggingConsumerThreadPoolSize)
+                ? createBoundedThreadPool(threadNamePrefix, laggingConsumerThreadPoolSize)
                 : null,
             // Only create hedge scheduler when any hedging trigger is enabled (threshold > 0).
             // Single-threaded: only schedules timer tasks, actual fetches run on data executors.
             (hedgeTtfbThresholdMs > 0 || hedgeTotalTimeThresholdMs > 0)
-                ? createHedgeScheduler()
+                ? createHedgeScheduler(threadNamePrefix)
                 : null,
             hedgeTtfbThresholdMs,
             hedgeTotalTimeThresholdMs,
-            new InklessFetchMetrics(time, cache),
-            brokerTopicStats
+            new InklessFetchMetrics(time, cache, metricsGroup),
+            brokerTopicStats,
+            threadNamePrefix
         );
     }
 
-    private static ScheduledExecutorService createHedgeScheduler() {
+    private static ScheduledExecutorService createHedgeScheduler(String threadNamePrefix) {
         final var scheduler = new ScheduledThreadPoolExecutor(
-            1, new InklessThreadFactory("inkless-hedge-scheduler-", true));
+            1, new InklessThreadFactory(threadNamePrefix + "hedge-scheduler-", true));
         // Remove cancelled tasks from the queue immediately to prevent accumulation
         // under high QPS with large hedge thresholds (most timer tasks are cancelled
         // when the primary completes before the threshold).
@@ -188,7 +219,7 @@ public class Reader implements AutoCloseable {
         return scheduler;
     }
 
-    private static ExecutorService createBoundedThreadPool(int poolSize) {
+    private static ExecutorService createBoundedThreadPool(String threadNamePrefix, int poolSize) {
         // Creates a bounded thread pool for lagging consumer fetch requests.
         // Fixed pool design: all threads persist for executor lifetime (never removed when idle).
         final int queueCapacity = poolSize * LAGGING_CONSUMER_QUEUE_MULTIPLIER;
@@ -198,7 +229,7 @@ public class Reader implements AutoCloseable {
             0L,                          // keepAliveTime: unused for fixed pools (core threads don't time out)
             TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue<>(queueCapacity),  // Bounded queue prevents OOM
-            new InklessThreadFactory("inkless-fetch-lagging-consumer-", false),
+            new InklessThreadFactory(threadNamePrefix + "fetch-lagging-consumer-", false),
             // Why AbortPolicy: CallerRunsPolicy would block request handler threads causing broker-wide degradation
             new ThreadPoolExecutor.AbortPolicy()      // Reject when full, don't block callers
         );
@@ -223,7 +254,8 @@ public class Reader implements AutoCloseable {
         long hedgeTtfbThresholdMs,
         long hedgeTotalTimeThresholdMs,
         InklessFetchMetrics fetchMetrics,
-        BrokerTopicStats brokerTopicStats
+        BrokerTopicStats brokerTopicStats,
+        String monitorPrefix
     ) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
@@ -279,11 +311,11 @@ public class Reader implements AutoCloseable {
         try {
             // Initialize all monitors first, then assign to fields to ensure all-or-nothing semantics.
             // If any monitor creation fails, none are assigned, preventing inconsistent monitoring state.
-            final ThreadPoolMonitor metadataMonitor = new ThreadPoolMonitor("inkless-fetch-metadata", metadataExecutor);
-            final ThreadPoolMonitor dataMonitor = new ThreadPoolMonitor("inkless-fetch-data", fetchDataExecutor);
+            final ThreadPoolMonitor metadataMonitor = new ThreadPoolMonitor(monitorPrefix + "fetch-metadata", metadataExecutor);
+            final ThreadPoolMonitor dataMonitor = new ThreadPoolMonitor(monitorPrefix + "fetch-data", fetchDataExecutor);
             // Only create monitor if lagging consumer executor exists (feature enabled)
             final ThreadPoolMonitor laggingMonitor = laggingFetchDataExecutor != null
-                ? new ThreadPoolMonitor("inkless-fetch-lagging-consumer", laggingFetchDataExecutor)
+                ? new ThreadPoolMonitor(monitorPrefix + "fetch-lagging-consumer", laggingFetchDataExecutor)
                 : null;
             // All monitors created successfully, assign to fields
             this.metadataThreadPoolMonitor = metadataMonitor;
