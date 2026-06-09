@@ -58,27 +58,27 @@ def _enable_tiered_storage_classpath(kafka):
     kafka.start_cmd = _patched_start_cmd
 
 
-class InklessTopicMigrationTest(Test):
-    """System tests for classic-to-diskless topic migration.
+class InklessClassicToDisklessSwitchTest(Test):
+    """System tests for classic-to-diskless topic switch.
 
     Tests are organized into three categories:
-      A) Post-migration data availability 
-      B) Mid-migration fault tolerance (faults injected during migration)
-      C) Operational scenarios (concurrent migration, producer state)
+      A) Post-switch data availability 
+      B) Mid-switch fault tolerance (faults injected during switch)
+      C) Operational scenarios (concurrent switch, producer state)
     """
 
-    MIGRATION_TIMEOUT_SEC = 120
+    SWITCH_TIMEOUT_SEC = 120
     PRODUCE_TIMEOUT_SEC = 120
     CONSUME_TIMEOUT_SEC = 120
     BROKER_STARTUP_TIMEOUT_SEC = 120
 
     def __init__(self, test_context: TestContext) -> None:
-        super(InklessTopicMigrationTest, self).__init__(test_context=test_context)
+        super(InklessClassicToDisklessSwitchTest, self).__init__(test_context=test_context)
         self.num_brokers = 3
-        self.topic = "migration-test-topic"
+        self.topic = "switch-test-topic"
         self.num_partitions = 6
         self.replication_factor = 3
-        self._migrated_topics = set()
+        self._switched_topics = set()
 
     # -----------------------------------------------------------------------
     # Cluster setup
@@ -86,14 +86,14 @@ class InklessTopicMigrationTest(Test):
 
     # Per-state JMX gauges that the Category B tests poll on every
     # broker to confirm that the injected fault actually overlapped a mid-
-    # migration state (rather than landing after migration had already
+    # switch state (rather than landing after switch had already
     # completed). Each entry maps a short state name to ``(count_object_name,
     # oldest_age_ms_object_name)``: the count drives the assertion, the
     # oldest-age gauge is reported alongside as diagnostic context (so a
     # failure log shows e.g. ``max_count=2 max_age_ms=45123`` instead of just
     # ``max_count=2``).
     _IDLM_OBJ = "kafka.server:type=InitDisklessLogManager,name=%s"
-    MIGRATION_STATE_GAUGES = {
+    SWITCH_STATE_GAUGES = {
         "WaitingForReplication": (
             _IDLM_OBJ % "WaitingForReplicationPartitions",
             _IDLM_OBJ % "OldestWaitingForReplicationAgeMs",
@@ -109,21 +109,21 @@ class InklessTopicMigrationTest(Test):
     }
     SEALED_LEADER_PARTITIONS_JMX_OBJECT = "kafka.server:type=ReplicaManager,name=SealedPartitionsCount"
     INIT_DISKLESS_IN_FLIGHT_PARTITIONS_JMX_OBJECT = _IDLM_OBJ % "InFlightPartitions"
-    MIGRATION_COMPLETION_JMX_OBJECT_NAMES = [
+    SWITCH_COMPLETION_JMX_OBJECT_NAMES = [
         SEALED_LEADER_PARTITIONS_JMX_OBJECT,
         INIT_DISKLESS_IN_FLIGHT_PARTITIONS_JMX_OBJECT,
     ]
-    MIGRATION_STATE_JMX_OBJECT_NAMES = [obj for pair in MIGRATION_STATE_GAUGES.values() for obj in pair]
-    MIGRATION_JMX_OBJECT_NAMES = MIGRATION_COMPLETION_JMX_OBJECT_NAMES + MIGRATION_STATE_JMX_OBJECT_NAMES
-    MIGRATION_JMX_ATTRIBUTES = ["Value"]
+    SWITCH_STATE_JMX_OBJECT_NAMES = [obj for pair in SWITCH_STATE_GAUGES.values() for obj in pair]
+    SWITCH_JMX_OBJECT_NAMES = SWITCH_COMPLETION_JMX_OBJECT_NAMES + SWITCH_STATE_JMX_OBJECT_NAMES
+    SWITCH_JMX_ATTRIBUTES = ["Value"]
 
     def _create_kafka(self, num_nodes=None, controller_num_nodes=1,
-                      scrape_migration_state_jmx=False):
+                      scrape_switch_state_jmx=False):
         if num_nodes is None:
             num_nodes = self.num_brokers
-        self._migrated_topics = set()
-        jmx_object_names = self.MIGRATION_JMX_OBJECT_NAMES if scrape_migration_state_jmx else \
-            self.MIGRATION_COMPLETION_JMX_OBJECT_NAMES
+        self._switched_topics = set()
+        jmx_object_names = self.SWITCH_JMX_OBJECT_NAMES if scrape_switch_state_jmx else \
+            self.SWITCH_COMPLETION_JMX_OBJECT_NAMES
         self.kafka = KafkaService(
             self.test_context,
             num_nodes=num_nodes,
@@ -133,9 +133,9 @@ class InklessTopicMigrationTest(Test):
                 ["diskless.managed.rf.enable", "true"],
             ],
             jmx_object_names=jmx_object_names,
-            jmx_attributes=self.MIGRATION_JMX_ATTRIBUTES,
+            jmx_attributes=self.SWITCH_JMX_ATTRIBUTES,
         )
-        # Migration configs (diskless.allow.from.classic.enable) require
+        # Switch configs (diskless.allow.from.classic.enable) require
         # remote.log.storage.system.enable, which needs RSM class names.
         # The NoOp classes are test-only and absent from the broker runtime
         # classpath, but the controller never instantiates RemoteLogManager
@@ -185,16 +185,16 @@ class InklessTopicMigrationTest(Test):
 
     def _create_kafka_with_tiered_storage(self):
         """Single-broker cluster with real (LocalTieredStorage) tiered storage
-        on the broker, plus the diskless-from-classic migration bridge.
+        on the broker, plus the diskless-from-classic switch bridge.
 
         Single broker keeps the test self-contained: LocalTieredStorage uses
         a per-broker filesystem path, so multi-broker reads from remote would
         require shared storage or sticky leadership - neither is needed to
-        exercise the classic-tiered to diskless migration path.
+        exercise the classic-tiered to diskless switch path.
         """
         self.replication_factor = 1
         self.num_partitions = 1
-        self._migrated_topics = set()
+        self._switched_topics = set()
 
         storage_dir = os.path.join(KafkaService.PERSISTENT_ROOT, "kafka-tiered-storage")
 
@@ -231,8 +231,8 @@ class InklessTopicMigrationTest(Test):
             zk=None,
             controller_num_nodes_override=1,
             server_prop_overrides=broker_overrides,
-            jmx_object_names=self.MIGRATION_COMPLETION_JMX_OBJECT_NAMES,
-            jmx_attributes=self.MIGRATION_JMX_ATTRIBUTES,
+            jmx_object_names=self.SWITCH_COMPLETION_JMX_OBJECT_NAMES,
+            jmx_attributes=self.SWITCH_JMX_ATTRIBUTES,
         )
         _enable_tiered_storage_classpath(self.kafka)
         if hasattr(self.kafka, 'isolated_controller_quorum') and self.kafka.isolated_controller_quorum:
@@ -278,22 +278,22 @@ class InklessTopicMigrationTest(Test):
         })
 
     # -----------------------------------------------------------------------
-    # Helpers: migration
+    # Helpers: switch
     # -----------------------------------------------------------------------
 
-    def _migrate_topic_to_diskless(self, topic=None):
+    def _switch_topic_to_diskless(self, topic=None):
         if topic is None:
             topic = self.topic
-        self.logger.info("Migrating topic %s to diskless", topic)
-        self._migrated_topics.add(topic)
+        self.logger.info("Switching topic %s to diskless", topic)
+        self._switched_topics.add(topic)
         self.kafka.alter_topic_config(topic, "diskless.enable", "true")
 
-    def _wait_for_migration_config(self, topic=None, timeout_sec=None):
+    def _wait_for_switch_config(self, topic=None, timeout_sec=None):
         """Wait until kafka-configs reports diskless.enable=true for the topic."""
         if topic is None:
             topic = self.topic
         if timeout_sec is None:
-            timeout_sec = self.MIGRATION_TIMEOUT_SEC
+            timeout_sec = self.SWITCH_TIMEOUT_SEC
 
         def check():
             try:
@@ -305,23 +305,23 @@ class InklessTopicMigrationTest(Test):
         wait_until(check, timeout_sec=timeout_sec, backoff_sec=2,
                    err_msg="Topic %s did not become diskless within %ds" % (topic, timeout_sec))
 
-    def _wait_for_migration_complete(self, topic=None, timeout_sec=None):
+    def _wait_for_switch_complete(self, topic=None, timeout_sec=None):
         """Wait until the classic-to-diskless init work has drained.
 
         The topic config becomes visible before leaders finish sealing their
         classic logs and before InitDisklessLogManager commits the diskless
-        start offsets. Poll broker-side JMX so post-migration produce/read
+        start offsets. Poll broker-side JMX so post-switch produce/read
         steps do not race the switch-pending state.
         """
         if topic is None:
             topic = self.topic
         if timeout_sec is None:
-            timeout_sec = self.MIGRATION_TIMEOUT_SEC
+            timeout_sec = self.SWITCH_TIMEOUT_SEC
 
-        self._wait_for_migration_config(topic, timeout_sec)
+        self._wait_for_switch_config(topic, timeout_sec)
         expected_sealed_leader_count = 0
-        for migrated_topic in self._migrated_topics:
-            description = self.kafka.describe_topic(migrated_topic)
+        for switched_topic in self._switched_topics:
+            description = self.kafka.describe_topic(switched_topic)
             expected_sealed_leader_count += len(self.kafka.parse_describe_topic(description)["partitions"])
 
         def check():
@@ -337,7 +337,7 @@ class InklessTopicMigrationTest(Test):
                         sealed_leader_count += time_to_stats[latest].get(sealed_key, 0)
                         in_flight_init_count += time_to_stats[latest].get(in_flight_key, 0)
                 self.logger.info(
-                    "Migration state for %s: sealed leader partitions=%s/%s, in-flight init partitions=%s",
+                    "Switch state for %s: sealed leader partitions=%s/%s, in-flight init partitions=%s",
                     topic,
                     int(sealed_leader_count),
                     int(expected_sealed_leader_count),
@@ -345,14 +345,14 @@ class InklessTopicMigrationTest(Test):
                 )
                 return sealed_leader_count >= expected_sealed_leader_count and in_flight_init_count == 0
             except Exception as e:
-                self.logger.debug("Failed to read migration JMX state for %s: %s", topic, e)
+                self.logger.debug("Failed to read switch JMX state for %s: %s", topic, e)
                 return False
 
         wait_until(
             check,
             timeout_sec=timeout_sec,
             backoff_sec=5,
-            err_msg=("Topic %s did not finish classic-to-diskless migration within %ds "
+            err_msg=("Topic %s did not finish classic-to-diskless switch within %ds "
                      "(expected at least %d sealed leader partitions and zero in-flight init partitions)" %
                      (topic, timeout_sec, expected_sealed_leader_count))
         )
@@ -550,9 +550,9 @@ class InklessTopicMigrationTest(Test):
 
         JmxMixin tracks whether it has ever started JmxTool on a node, but a
         broker restart also kills the tool process. Reset only the JMX tool
-        state/log for this node so subsequent migration waits read live
+        state/log for this node so subsequent switch waits read live
         post-restart samples. Before removing the old log, preserve any samples
-        not yet scraped into memory so the mid-migration assertions still see
+        not yet scraped into memory so the mid-switch assertions still see
         states observed before the broker bounce.
         """
         if self.kafka.jmx_object_names is None:
@@ -722,20 +722,20 @@ class InklessTopicMigrationTest(Test):
         node.account.ssh(cmd, allow_fail=True)
 
     # -----------------------------------------------------------------------
-    # Helpers: Trogdor faults and mid-migration JMX assertions
+    # Helpers: Trogdor faults and mid-switch JMX assertions
     # -----------------------------------------------------------------------
 
-    # Per-state mid-migration window used by the Category B tests. The two
+    # Per-state mid-switch window used by the Category B tests. The two
     # RPC-bounded windows are the ones the injected faults (broker restart,
     # SIGKILL, SIGSTOP, rolling restart, network partition) most directly hit.
-    # Names are short state keys into ``MIGRATION_STATE_GAUGES``.
-    DEFAULT_REQUIRED_MIGRATION_STATES = (
+    # Names are short state keys into ``SWITCH_STATE_GAUGES``.
+    DEFAULT_REQUIRED_SWITCH_STATES = (
         "SendingToController",
         "AwaitingMetadata",
     )
 
     # Two orthogonal floors, asserted together, that together establish
-    # "the fault really overlapped this migration phase". Each catches a
+    # "the fault really overlapped this switch phase". Each catches a
     # different way the overlap could be illusory:
     #
     #   * ``partition_seconds`` - integral of the cluster-wide per-state
@@ -768,8 +768,8 @@ class InklessTopicMigrationTest(Test):
     # / oldest_age_ms ~30000; a 2 Mbit/s + 200 ms RTT degraded network
     # with 30 partitions yields partition_seconds in the tens /
     # oldest_age_ms in the thousands.
-    DEFAULT_MIN_MID_MIGRATION_PARTITION_SECONDS = 2
-    DEFAULT_MIN_MID_MIGRATION_OLDEST_AGE_MS = 200
+    DEFAULT_MIN_MID_SWITCH_PARTITION_SECONDS = 2
+    DEFAULT_MIN_MID_SWITCH_OLDEST_AGE_MS = 200
 
     def _start_trogdor(self) -> None:
         """Idempotently start a TrogdorService scoped to the Kafka brokers."""
@@ -789,7 +789,7 @@ class InklessTopicMigrationTest(Test):
     def _degrade_network(self, latency_ms=200, rate_kbit=2000, duration_ms=5 * 60 * 1000,
                          nodes=None, network_device="eth0", task_name="degrade-network"):
         """Apply tc-based latency + rate limit to every broker NIC. Returns the
-        Trogdor task so the caller can ``.stop()`` it once migration finishes."""
+        Trogdor task so the caller can ``.stop()`` it once switch finishes."""
         if nodes is None:
             nodes = list(self.kafka.nodes)
         spec = DegradedNetworkFaultSpec(0, duration_ms)
@@ -809,32 +809,32 @@ class InklessTopicMigrationTest(Test):
         )
         return self.trogdor.create_task(task_name, spec)
 
-    def _wait_for_mid_migration_state(
+    def _wait_for_mid_switch_state(
             self, state, min_partition_seconds=None, min_oldest_age_ms=None, timeout_sec=120) -> None:
         """Poll historical JMX until the injected fault is observed overlapping ``state``.
 
         This replaces fixed sleeps in network-partition tests with the same
         evidence that the final assertions use: partition-seconds plus the
-        oldest-age gauge for the requested migration state.
+        oldest-age gauge for the requested switch state.
         """
         if min_partition_seconds is None:
-            min_partition_seconds = self.DEFAULT_MIN_MID_MIGRATION_PARTITION_SECONDS
+            min_partition_seconds = self.DEFAULT_MIN_MID_SWITCH_PARTITION_SECONDS
         if min_oldest_age_ms is None:
-            min_oldest_age_ms = self.DEFAULT_MIN_MID_MIGRATION_OLDEST_AGE_MS
+            min_oldest_age_ms = self.DEFAULT_MIN_MID_SWITCH_OLDEST_AGE_MS
 
         def check():
             try:
-                self._assert_mid_migration_observed(
+                self._assert_mid_switch_observed(
                     require_states=(state,),
                     min_partition_seconds=min_partition_seconds,
                     min_oldest_age_ms=min_oldest_age_ms,
                 )
                 return True
             except AssertionError as e:
-                self.logger.debug("%s migration JMX state is not ready yet: %s", state, e)
+                self.logger.debug("%s switch JMX state is not ready yet: %s", state, e)
                 return False
             except Exception as e:
-                self.logger.debug("Failed to read %s migration JMX state: %s", state, e)
+                self.logger.debug("Failed to read %s switch JMX state: %s", state, e)
                 return False
 
         wait_until(
@@ -846,7 +846,7 @@ class InklessTopicMigrationTest(Test):
                      (state, min_partition_seconds, min_oldest_age_ms, timeout_sec))
         )
 
-    def _assert_mid_migration_observed(
+    def _assert_mid_switch_observed(
             self,
             require_states=None,
             min_partition_seconds=None,
@@ -856,10 +856,10 @@ class InklessTopicMigrationTest(Test):
         enough during the test that the injected fault must have
         overlapped it, computed from the per-broker JmxTool logs scraped
         when the Kafka service was started with
-        ``scrape_migration_state_jmx=True``.
+        ``scrape_switch_state_jmx=True``.
 
         Two orthogonal signals are asserted together by default (see the
-        class-level ``DEFAULT_MIN_MID_MIGRATION_*`` thresholds for the
+        class-level ``DEFAULT_MIN_MID_SWITCH_*`` thresholds for the
         rationale of each floor):
 
         - ``partition_seconds`` (mass): integral of the cluster-wide
@@ -875,11 +875,11 @@ class InklessTopicMigrationTest(Test):
         but only asserted when the caller passes ``min_duration_sec``.
         """
         if require_states is None:
-            require_states = self.DEFAULT_REQUIRED_MIGRATION_STATES
+            require_states = self.DEFAULT_REQUIRED_SWITCH_STATES
         if min_partition_seconds is None:
-            min_partition_seconds = self.DEFAULT_MIN_MID_MIGRATION_PARTITION_SECONDS
+            min_partition_seconds = self.DEFAULT_MIN_MID_SWITCH_PARTITION_SECONDS
         if min_oldest_age_ms is None:
-            min_oldest_age_ms = self.DEFAULT_MIN_MID_MIGRATION_OLDEST_AGE_MS
+            min_oldest_age_ms = self.DEFAULT_MIN_MID_SWITCH_OLDEST_AGE_MS
 
         self.kafka.read_jmx_output_all_nodes()
         per_node_stats = self.kafka.jmx_stats
@@ -934,7 +934,7 @@ class InklessTopicMigrationTest(Test):
             return int(best)
 
         summary_parts = []
-        for state, (count_obj, age_obj) in self.MIGRATION_STATE_GAUGES.items():
+        for state, (count_obj, age_obj) in self.SWITCH_STATE_GAUGES.items():
             summary_parts.append(
                 "%s: partition_seconds=%s duration_sec=%s oldest_age_ms=%s" %
                 (state,
@@ -943,11 +943,11 @@ class InklessTopicMigrationTest(Test):
                  _max_per_broker(age_obj))
             )
         summary = "; ".join(summary_parts)
-        self.logger.info("Mid-migration JMX summary: %s", summary)
+        self.logger.info("Mid-switch JMX summary: %s", summary)
 
         failures = []
         for state in require_states:
-            count_obj, age_obj = self.MIGRATION_STATE_GAUGES[state]
+            count_obj, age_obj = self.SWITCH_STATE_GAUGES[state]
             partition_seconds = _partition_seconds(count_obj)
             duration_sec = _duration_sec(count_obj)
             oldest_age_ms = _max_per_broker(age_obj)
@@ -967,21 +967,21 @@ class InklessTopicMigrationTest(Test):
                 failures.append("%s: %s" % (state, ", ".join(shortfalls)))
 
         assert not failures, (
-            "Fault did not meaningfully overlap required migration "
-            "state(s): %s. Either the migration finished before the "
+            "Fault did not meaningfully overlap required switch "
+            "state(s): %s. Either the switch finished before the "
             "fault landed, the fault did not actually degrade the state "
             "machine, or the gauges are not being published. Full JMX "
             "summary: %s." % ("; ".join(failures), summary)
         )
 
     # -----------------------------------------------------------------------
-    # Category A: Post-Migration Data Availability
+    # Category A: Post-Switch Data Availability
     # -----------------------------------------------------------------------
 
     @cluster(num_nodes=5)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_classic_data_available_after_restarts(self, metadata_quorum) -> None:
-        """After migration completes, verify classic + diskless data remains
+        """After switch completes, verify classic + diskless data remains
         readable after a single leader restart and after a full rolling restart.
 
         The classic prefix is deliberately ~3x the diskless tail so that a
@@ -994,8 +994,8 @@ class InklessTopicMigrationTest(Test):
 
         classic_count = self._produce_messages(num_messages=15000)
 
-        self._migrate_topic_to_diskless()
-        self._wait_for_migration_complete()
+        self._switch_topic_to_diskless()
+        self._wait_for_switch_complete()
 
         diskless_count = self._produce_messages(num_messages=5000)
         total = classic_count + diskless_count
@@ -1018,7 +1018,7 @@ class InklessTopicMigrationTest(Test):
     @cluster(num_nodes=5)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_classic_data_available_after_leader_failures(self, metadata_quorum) -> None:
-        """After migration, verify classic + diskless data remains readable
+        """After switch, verify classic + diskless data remains readable
         while the old leader is down and after an unclean broker restart."""
         self._create_kafka()
         self.kafka.start()
@@ -1026,8 +1026,8 @@ class InklessTopicMigrationTest(Test):
 
         classic_count = self._produce_messages(num_messages=10000)
 
-        self._migrate_topic_to_diskless()
-        self._wait_for_migration_complete()
+        self._switch_topic_to_diskless()
+        self._wait_for_switch_complete()
 
         diskless_count = self._produce_messages(num_messages=5000)
         total = classic_count + diskless_count
@@ -1056,16 +1056,16 @@ class InklessTopicMigrationTest(Test):
         assert consumed == total, "Classic data lost after unclean shutdown: expected exactly %d but got %d" % (total, consumed)
 
     # -----------------------------------------------------------------------
-    # Category B: Mid-Migration Fault Tolerance
+    # Category B: Mid-Switch Fault Tolerance
     # -----------------------------------------------------------------------
 
     @cluster(num_nodes=7)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_migration_succeeds_with_degraded_network(self, metadata_quorum) -> None:
-        """Migrate a classic topic to diskless under continuous load.
+    def test_switch_succeeds_with_degraded_network(self, metadata_quorum) -> None:
+        """Switch a classic topic to diskless under continuous load.
         Verify no data loss."""
         self.num_partitions = 30
-        self._create_kafka(scrape_migration_state_jmx=True)
+        self._create_kafka(scrape_switch_state_jmx=True)
         self.kafka.start()
         self._create_classic_topic()
 
@@ -1085,16 +1085,16 @@ class InklessTopicMigrationTest(Test):
 
         self._wait_for_steady_production(producer, min_acked=5000)
 
-        self._migrate_topic_to_diskless()
-        self._wait_for_migration_complete()
+        self._switch_topic_to_diskless()
+        self._wait_for_switch_complete()
 
-        post_migration_target = producer.num_acked + 5000
+        post_switch_target = producer.num_acked + 5000
         self._wait_for_steady_production(
             producer,
-            min_acked=post_migration_target,
+            min_acked=post_switch_target,
             timeout_sec=180,
-            err_msg="Producer did not reach %d acks within 180s after migration" % post_migration_target,
-            worker_err_msg="Producer errors after migration under degraded network: %s",
+            err_msg="Producer did not reach %d acks within 180s after switch" % post_switch_target,
+            worker_err_msg="Producer errors after switch under degraded network: %s",
         )
 
         producer.stop()
@@ -1111,7 +1111,7 @@ class InklessTopicMigrationTest(Test):
         total_consumed = consumer.total_consumed()
         consumer.free()
 
-        self._assert_mid_migration_observed()
+        self._assert_mid_switch_observed()
 
         degrade.stop()
         degrade.wait_for_done(timeout_sec=60)
@@ -1122,8 +1122,8 @@ class InklessTopicMigrationTest(Test):
 
     @cluster(num_nodes=6)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_migration_leader_restart(self, metadata_quorum) -> None:
-        """Restart the leader broker during migration. Verify migration
+    def test_switch_leader_restart(self, metadata_quorum) -> None:
+        """Restart the leader broker during switch. Verify switch
         completes and all data is readable via fresh consumer.
 
         Runs under a degraded broker network (200 ms latency, 2 Mbit/s) and
@@ -1131,7 +1131,7 @@ class InklessTopicMigrationTest(Test):
         in SendingToController or AwaitingMetadata; the JMX assertion at the
         end fails the test if that overlap never happened."""
         self.num_partitions = 30
-        self._create_kafka(scrape_migration_state_jmx=True)
+        self._create_kafka(scrape_switch_state_jmx=True)
         self.kafka.start()
         self._create_classic_topic()
 
@@ -1141,19 +1141,19 @@ class InklessTopicMigrationTest(Test):
         producer = self._start_producer(max_messages=-1)
         self._wait_for_steady_production(producer, min_acked=5000)
 
-        self._migrate_topic_to_diskless()
+        self._switch_topic_to_diskless()
 
         leader_node = self._get_leader_node(partition=0)
         self._restart_broker(leader_node)
 
-        self._wait_for_migration_complete()
+        self._wait_for_switch_complete()
         self._wait_for_steady_production(producer, min_acked=producer.num_acked + 5000, timeout_sec=180)
 
         producer.stop()
         total_produced = producer.num_acked
         producer.free()
 
-        self._assert_mid_migration_observed()
+        self._assert_mid_switch_observed()
 
         degrade.stop()
         degrade.wait_for_done(timeout_sec=60)
@@ -1163,16 +1163,16 @@ class InklessTopicMigrationTest(Test):
                                                     timeout_sec=self.CONSUME_TIMEOUT_SEC,
                                                     wait_for_completion=True)
         assert consumed == total_produced, \
-            "Unexpected message count after leader restart during migration: expected exactly %d but got %d" % (total_produced, consumed)
+            "Unexpected message count after leader restart during switch: expected exactly %d but got %d" % (total_produced, consumed)
 
     @cluster(num_nodes=6)
     @matrix(
         metadata_quorum=[quorum.isolated_kraft],
         leader_failure_mode=["sigkill", "sigstop"],
     )
-    def test_migration_leader_crash(self, metadata_quorum, leader_failure_mode) -> None:
-        """Take down the leader during migration via either SIGKILL or SIGSTOP
-        and verify migration completes plus all data is recoverable.
+    def test_switch_leader_crash(self, metadata_quorum, leader_failure_mode) -> None:
+        """Take down the leader during switch via either SIGKILL or SIGSTOP
+        and verify switch completes plus all data is recoverable.
 
         ``sigkill`` exercises hard-loss-of-in-memory-state recovery: the broker
         is killed, restarted, and must rebuild its InitDisklessLogManager state
@@ -1180,11 +1180,11 @@ class InklessTopicMigrationTest(Test):
 
         ``sigstop`` (Trogdor ProcessStopFaultSpec) freezes the broker process
         while keeping in-memory state intact: the controller and other brokers
-        observe it as unresponsive, leadership/migration progress on partitions
+        observe it as unresponsive, leadership/switch progress on partitions
         led by it must continue, and after SIGCONT the broker should rejoin and
         catch up without re-issuing duplicate InitDisklessLog requests."""
         self.num_partitions = 30
-        self._create_kafka(scrape_migration_state_jmx=True)
+        self._create_kafka(scrape_switch_state_jmx=True)
         self.kafka.start()
         self._create_classic_topic()
 
@@ -1194,7 +1194,7 @@ class InklessTopicMigrationTest(Test):
         producer = self._start_producer(max_messages=-1)
         self._wait_for_steady_production(producer, min_acked=5000)
 
-        self._migrate_topic_to_diskless()
+        self._switch_topic_to_diskless()
 
         leader_node = self._get_leader_node(partition=0)
         pause_duration_ms = 30_000
@@ -1207,20 +1207,20 @@ class InklessTopicMigrationTest(Test):
         else:
             raise AssertionError("Unknown leader_failure_mode: %s" % leader_failure_mode)
 
-        self._wait_for_migration_complete()
+        self._wait_for_switch_complete()
 
         self._wait_for_steady_production(
             producer,
             min_acked=producer.num_acked + 5000,
             timeout_sec=240,
             err_msg="Producer did not recover after leader %s" % leader_failure_mode,
-            worker_err_msg="Producer errors after leader %s during migration: %%s" % leader_failure_mode,
+            worker_err_msg="Producer errors after leader %s during switch: %%s" % leader_failure_mode,
         )
         producer.stop()
         total_produced = producer.num_acked
         producer.free()
 
-        self._assert_mid_migration_observed()
+        self._assert_mid_switch_observed()
 
         degrade.stop()
         degrade.wait_for_done(timeout_sec=60)
@@ -1230,18 +1230,18 @@ class InklessTopicMigrationTest(Test):
                                                     timeout_sec=self.CONSUME_TIMEOUT_SEC,
                                                     wait_for_completion=True)
         assert consumed == total_produced, \
-            "Unexpected message count after leader %s during migration: expected exactly %d but got %d" % \
+            "Unexpected message count after leader %s during switch: expected exactly %d but got %d" % \
             (leader_failure_mode, total_produced, consumed)
 
     @cluster(num_nodes=6)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_migration_follower_crash_with_lagged_hw(self, metadata_quorum) -> None:
-        """SIGKILL a follower mid-migration while the leader's HW still lags
+    def test_switch_follower_crash_with_lagged_hw(self, metadata_quorum) -> None:
+        """SIGKILL a follower mid-switch while the leader's HW still lags
         its LEO, then verify a fresh consumer reads every produced record
         even after leadership moves back to the restarted broker.
         """
         self.num_partitions = 30
-        self._create_kafka(scrape_migration_state_jmx=True)
+        self._create_kafka(scrape_switch_state_jmx=True)
         self.kafka.start()
         self._create_classic_topic()
 
@@ -1251,27 +1251,27 @@ class InklessTopicMigrationTest(Test):
         producer = self._start_producer(max_messages=-1)
         self._wait_for_steady_production(producer, min_acked=5000)
 
-        self._migrate_topic_to_diskless()
+        self._switch_topic_to_diskless()
 
         target_follower = self._get_follower_nodes(partition=0)[0]
-        self.logger.info("Killing follower %s mid-migration", target_follower.account.hostname)
+        self.logger.info("Killing follower %s mid-switch", target_follower.account.hostname)
         self._stop_broker(target_follower, clean_shutdown=False)
         self._start_broker(target_follower)
 
-        self._wait_for_migration_complete()
+        self._wait_for_switch_complete()
 
         self._wait_for_steady_production(
             producer,
             min_acked=producer.num_acked + 5000,
             timeout_sec=240,
             err_msg="Producer did not recover after follower SIGKILL",
-            worker_err_msg="Producer errors after follower SIGKILL during migration: %s",
+            worker_err_msg="Producer errors after follower SIGKILL during switch: %s",
         )
         producer.stop()
         total_produced = producer.num_acked
         producer.free()
 
-        self._assert_mid_migration_observed()
+        self._assert_mid_switch_observed()
 
         degrade.stop()
         degrade.wait_for_done(timeout_sec=60)
@@ -1292,21 +1292,21 @@ class InklessTopicMigrationTest(Test):
                                                     timeout_sec=self.CONSUME_TIMEOUT_SEC,
                                                     wait_for_completion=True)
         assert consumed == total_produced, \
-            "Unexpected message count after follower SIGKILL during migration: expected exactly %d but got %d" % \
+            "Unexpected message count after follower SIGKILL during switch: expected exactly %d but got %d" % \
             (total_produced, consumed)
 
     @cluster(num_nodes=6)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_migration_rolling_restart(self, metadata_quorum) -> None:
-        """Rolling restart all brokers during migration. Verify migration
+    def test_switch_rolling_restart(self, metadata_quorum) -> None:
+        """Rolling restart all brokers during switch. Verify switch
         completes and data is fully readable.
 
         With a degraded broker network and 30 partitions, every broker bounce
         in the rolling sequence lands while at least one other broker still
-        has partitions mid-migration. The JMX assertion at the end fails the
+        has partitions mid-switch. The JMX assertion at the end fails the
         test if no partition was ever observed in the RPC-bounded states."""
         self.num_partitions = 30
-        self._create_kafka(scrape_migration_state_jmx=True)
+        self._create_kafka(scrape_switch_state_jmx=True)
         self.kafka.start()
         self._create_classic_topic()
 
@@ -1320,28 +1320,28 @@ class InklessTopicMigrationTest(Test):
         producer = self._start_producer(max_messages=-1, throughput=3000)
         self._wait_for_steady_production(producer, min_acked=5000)
 
-        self._migrate_topic_to_diskless()
+        self._switch_topic_to_diskless()
 
         self._rolling_restart()
 
         # After the final bounce, wait for cluster-wide ISR recovery before
-        # using migration-complete JMX. This avoids racing leaders that still
+        # using switch-complete JMX. This avoids racing leaders that still
         # cannot finish init work because their replicas have not caught up.
         self._wait_for_all_partitions_isr_full(timeout_sec=240)
-        self._wait_for_migration_complete()
+        self._wait_for_switch_complete()
 
         self._wait_for_steady_production(
             producer,
             min_acked=producer.num_acked + 5000,
             timeout_sec=240,
             err_msg="Producer did not recover after rolling restart",
-            worker_err_msg="Producer errors after rolling restart during migration: %s",
+            worker_err_msg="Producer errors after rolling restart during switch: %s",
         )
         producer.stop()
         total_produced = producer.num_acked
         producer.free()
 
-        self._assert_mid_migration_observed()
+        self._assert_mid_switch_observed()
 
         degrade.stop()
         degrade.wait_for_done(timeout_sec=60)
@@ -1351,28 +1351,28 @@ class InklessTopicMigrationTest(Test):
                                                     timeout_sec=self.CONSUME_TIMEOUT_SEC,
                                                     wait_for_completion=True)
         assert consumed == total_produced, \
-            "Unexpected message count after rolling restart during migration: expected exactly %d but got %d" % (total_produced, consumed)
+            "Unexpected message count after rolling restart during switch: expected exactly %d but got %d" % (total_produced, consumed)
 
     @cluster(num_nodes=6)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_migration_follower_network_partition(self, metadata_quorum) -> None:
-        """Isolate a follower via Trogdor network partition during migration.
-        Verify ISR shrinks, migration completes, ISR re-expands, no data loss.
+    def test_switch_follower_network_partition(self, metadata_quorum) -> None:
+        """Isolate a follower via Trogdor network partition during switch.
+        Verify ISR shrinks, switch completes, ISR re-expands, no data loss.
 
-        Migration is triggered while the partitioned follower is still
+        Switch is triggered while the partitioned follower is still
         listed in ISR: it cannot fetch while isolated, so HW cannot advance
         to LEO. Partitions therefore park in WaitingForReplication until
         ISR shrinks (after replica.lag.time.max.ms, ~30 s) and the network
         heals. The downstream states (SendingToController, AwaitingMetadata)
         are subsecond once unblocked and frequently fall between 1 s JMX
         polls, so we only assert the WaitingForReplication overlap here -
-        same rationale as ``test_migration_leader_network_partition``.
+        same rationale as ``test_switch_leader_network_partition``.
 
-        Note: triggering migration *after* waiting for ISR to shrink would
+        Note: triggering switch *after* waiting for ISR to shrink would
         defeat the purpose of the fault - once the slow follower is out of
         ISR, HW advances freely among the remaining replicas and
         WaitingForReplication is traversed sub-millisecond."""
-        self._create_kafka(scrape_migration_state_jmx=True)
+        self._create_kafka(scrape_switch_state_jmx=True)
         self.kafka.start()
         self._create_classic_topic()
 
@@ -1390,46 +1390,46 @@ class InklessTopicMigrationTest(Test):
         )
         fault = self.trogdor.create_task("follower_partition", partition_spec)
 
-        self._migrate_topic_to_diskless()
+        self._switch_topic_to_diskless()
 
-        # The partition fault should block migration in WaitingForReplication;
+        # The partition fault should block switch in WaitingForReplication;
         # waiting on that JMX state is more precise than sleeping for ISR lag.
-        self._wait_for_mid_migration_state("WaitingForReplication", timeout_sec=120)
+        self._wait_for_mid_switch_state("WaitingForReplication", timeout_sec=120)
 
         fault.stop()
         fault.wait_for_done(timeout_sec=120)
 
         self._wait_for_all_partitions_isr_full(num_partitions=1, timeout_sec=120)
-        self._wait_for_migration_complete()
+        self._wait_for_switch_complete()
 
         self._wait_for_steady_production(
             producer,
             min_acked=producer.num_acked + 3000,
             timeout_sec=120,
             err_msg="Producer did not recover after follower partition",
-            worker_err_msg="Producer errors after follower partition during migration: %s",
+            worker_err_msg="Producer errors after follower partition during switch: %s",
         )
 
         producer.stop()
         total_produced = producer.num_acked
         producer.free()
 
-        self._assert_mid_migration_observed(require_states=("WaitingForReplication",))
+        self._assert_mid_switch_observed(require_states=("WaitingForReplication",))
         self._stop_trogdor()
 
         consumed = self._consume_all_from_beginning(expected_count=total_produced,
                                                     timeout_sec=self.CONSUME_TIMEOUT_SEC,
                                                     wait_for_completion=True)
         assert consumed == total_produced, \
-            "Unexpected message count with follower partition during migration: expected exactly %d but got %d" % (total_produced, consumed)
+            "Unexpected message count with follower partition during switch: expected exactly %d but got %d" % (total_produced, consumed)
 
     @cluster(num_nodes=6)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_migration_leader_network_partition(self, metadata_quorum) -> None:
-        """Isolate the leader via Trogdor network partition during migration.
-        Verify new leader elected, migration completes, ISR heals, no data loss.
+    def test_switch_leader_network_partition(self, metadata_quorum) -> None:
+        """Isolate the leader via Trogdor network partition during switch.
+        Verify new leader elected, switch completes, ISR heals, no data loss.
 
-        The new leader picks up migration once it is elected. It can reach
+        The new leader picks up switch once it is elected. It can reach
         the controller (only the old leader is isolated), but the old leader
         is still listed in ISR and cannot catch up while partitioned, so HW
         cannot advance to LEO. Partitions therefore park in
@@ -1438,7 +1438,7 @@ class InklessTopicMigrationTest(Test):
         states (SendingToController, AwaitingMetadata) are subsecond once
         unblocked and frequently fall between 1 s JMX polls, so we only
         assert the WaitingForReplication overlap here."""
-        self._create_kafka(scrape_migration_state_jmx=True)
+        self._create_kafka(scrape_switch_state_jmx=True)
         self.kafka.start()
         self._create_classic_topic()
 
@@ -1456,37 +1456,37 @@ class InklessTopicMigrationTest(Test):
         )
         fault = self.trogdor.create_task("leader_partition", partition_spec)
 
-        self._migrate_topic_to_diskless()
+        self._switch_topic_to_diskless()
 
-        # The partition fault should block migration in WaitingForReplication;
+        # The partition fault should block switch in WaitingForReplication;
         # waiting on that JMX state is more precise than sleeping for ISR lag.
-        self._wait_for_mid_migration_state("WaitingForReplication", timeout_sec=120)
+        self._wait_for_mid_switch_state("WaitingForReplication", timeout_sec=120)
 
         fault.stop()
         fault.wait_for_done(timeout_sec=120)
 
         self._wait_for_all_partitions_isr_full(num_partitions=1, timeout_sec=180)
-        self._wait_for_migration_complete()
+        self._wait_for_switch_complete()
 
         self._wait_for_steady_production(
             producer,
             min_acked=producer.num_acked + 3000,
             timeout_sec=120,
             err_msg="Producer did not recover after leader partition",
-            worker_err_msg="Producer errors after leader partition during migration: %s",
+            worker_err_msg="Producer errors after leader partition during switch: %s",
         )
         producer.stop()
         total_produced = producer.num_acked
         producer.free()
 
-        self._assert_mid_migration_observed(require_states=("WaitingForReplication",))
+        self._assert_mid_switch_observed(require_states=("WaitingForReplication",))
         self._stop_trogdor()
 
         consumed = self._consume_all_from_beginning(expected_count=total_produced,
                                                     timeout_sec=self.CONSUME_TIMEOUT_SEC,
                                                     wait_for_completion=True)
         assert consumed == total_produced, \
-            "Unexpected message count with leader partition during migration: expected exactly %d but got %d" % (total_produced, consumed)
+            "Unexpected message count with leader partition during switch: expected exactly %d but got %d" % (total_produced, consumed)
 
     # -----------------------------------------------------------------------
     # Category C: Operational Scenarios
@@ -1494,8 +1494,8 @@ class InklessTopicMigrationTest(Test):
 
     @cluster(num_nodes=5)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_migration_concurrent_topics(self, metadata_quorum) -> None:
-        """Migrate 3 classic topics simultaneously. Verify all migrate
+    def test_switch_concurrent_topics(self, metadata_quorum) -> None:
+        """Switch 3 classic topics simultaneously. Verify all switch
         successfully with no data loss."""
         self._create_kafka()
         self.kafka.start()
@@ -1508,10 +1508,10 @@ class InklessTopicMigrationTest(Test):
             produced_counts[topic] = self._produce_messages(topic=topic, num_messages=5000)
 
         for topic in topics:
-            self._migrate_topic_to_diskless(topic=topic)
+            self._switch_topic_to_diskless(topic=topic)
 
         for topic in topics:
-            self._wait_for_migration_complete(topic=topic)
+            self._wait_for_switch_complete(topic=topic)
 
         for topic in topics:
             post_count = self._produce_messages(topic=topic, num_messages=2000)
@@ -1530,8 +1530,8 @@ class InklessTopicMigrationTest(Test):
 
     @cluster(num_nodes=3)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_classic_tiered_to_diskless_migration(self, metadata_quorum) -> None:
-        """Migrate a classic topic with real (LocalTieredStorage) tiered
+    def test_classic_tiered_to_diskless_switch(self, metadata_quorum) -> None:
+        """Switch a classic topic with real (LocalTieredStorage) tiered
         storage to diskless, then read across all three layers.
 
         Sequence:
@@ -1554,7 +1554,7 @@ class InklessTopicMigrationTest(Test):
              crossing the remote->local boundary, the classic->diskless
              boundary, and any internal classic-segment seam.
         """
-        topic = "tiered-migration-topic"
+        topic = "tiered-switch-topic"
 
         self._create_kafka_with_tiered_storage()
         self.kafka.start()
@@ -1565,8 +1565,8 @@ class InklessTopicMigrationTest(Test):
 
         local_count = self._produce_messages(topic=topic, num_messages=2000)
 
-        self._migrate_topic_to_diskless(topic=topic)
-        self._wait_for_migration_complete(topic=topic)
+        self._switch_topic_to_diskless(topic=topic)
+        self._wait_for_switch_complete(topic=topic)
 
         diskless_count = self._produce_messages(topic=topic, num_messages=1000)
 
@@ -1584,10 +1584,10 @@ class InklessTopicMigrationTest(Test):
 
     @cluster(num_nodes=5)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_migration_idempotent_producer_state(self, metadata_quorum) -> None:
+    def test_switch_idempotent_producer_state(self, metadata_quorum) -> None:
         """Verify idempotent producer state is preserved across the
-        migration boundary. The same producer continues producing after
-        migration without OutOfOrderSequence errors or duplicates."""
+        switch boundary. The same producer continues producing after
+        switch without OutOfOrderSequence errors or duplicates."""
         self._create_kafka()
         self.kafka.start()
         self._create_classic_topic()
@@ -1595,17 +1595,17 @@ class InklessTopicMigrationTest(Test):
         producer = self._start_producer(max_messages=50000, enable_idempotence=True)
         self._wait_for_steady_production(producer, min_acked=10000)
 
-        pre_migration_acked = producer.num_acked
+        pre_switch_acked = producer.num_acked
 
-        self._migrate_topic_to_diskless()
-        self._wait_for_migration_complete()
+        self._switch_topic_to_diskless()
+        self._wait_for_switch_complete()
 
         self._wait_for_steady_production(
             producer,
-            min_acked=pre_migration_acked + 15000,
+            min_acked=pre_switch_acked + 15000,
             timeout_sec=self.PRODUCE_TIMEOUT_SEC,
-            err_msg="Idempotent producer stalled after migration at %d acks" % producer.num_acked,
-            worker_err_msg="Idempotent producer errors after migration (possible OutOfOrderSequence): %s",
+            err_msg="Idempotent producer stalled after switch at %d acks" % producer.num_acked,
+            worker_err_msg="Idempotent producer errors after switch (possible OutOfOrderSequence): %s",
         )
 
         producer.stop()
