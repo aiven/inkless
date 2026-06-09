@@ -582,6 +582,42 @@ class KafkaConfigTest {
   }
 
   @Test
+  def testMirrorAdminListenerNameDefaultsToInterBrokerListenerName(): Unit = {
+    val props = createDefaultConfig()
+    val config = KafkaConfig.fromProps(props)
+    assertEquals(config.interBrokerListenerName, config.mirrorAdminListenerName)
+  }
+
+  @Test
+  def testMirrorAdminListenerNameExplicitlySet(): Unit = {
+    val props = createDefaultConfig()
+    props.setProperty(SocketServerConfigs.LISTENERS_CONFIG, "PLAINTEXT://localhost:0,CONTROLLER://localhost:5000,MIRROR://localhost:5001")
+    props.setProperty(SocketServerConfigs.LISTENER_SECURITY_PROTOCOL_MAP_CONFIG, "MIRROR:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT")
+    props.setProperty(ReplicationConfigs.MIRROR_ADMIN_LISTENER_NAME_CONFIG, "MIRROR")
+    val config = KafkaConfig.fromProps(props)
+    assertNotEquals(ListenerName.normalised("MIRROR"), config.interBrokerListenerName())
+    assertEquals(ListenerName.normalised("MIRROR"), config.mirrorAdminListenerName)
+  }
+
+  @Test
+  def testSaslMechanismMirrorAdminProtocolDefaultsToInterBrokerProtocol(): Unit = {
+    val props = createDefaultConfig()
+    props.setProperty(BrokerSecurityConfigs.SASL_MECHANISM_INTER_BROKER_PROTOCOL_CONFIG, "PLAIN")
+    val config = KafkaConfig.fromProps(props)
+    assertEquals(config.saslMechanismInterBrokerProtocol, config.saslMechanismMirrorAdminProtocol)
+  }
+
+  @Test
+  def testSaslMechanismMirrorAdminProtocolExplicitlySet(): Unit = {
+    val props = createDefaultConfig()
+    props.setProperty(BrokerSecurityConfigs.SASL_MECHANISM_INTER_BROKER_PROTOCOL_CONFIG, "PLAIN")
+    props.setProperty(BrokerSecurityConfigs.SASL_MECHANISM_MIRROR_ADMIN_PROTOCOL_CONFIG, "SCRAM-SHA-256")
+    val config = KafkaConfig.fromProps(props)
+    assertEquals("SCRAM-SHA-256", config.saslMechanismMirrorAdminProtocol)
+    assertEquals("PLAIN", config.saslMechanismInterBrokerProtocol)
+  }
+
+  @Test
   def testCaseInsensitiveListenerProtocol(): Unit = {
     val props = new Properties()
     props.setProperty(KRaftConfigs.PROCESS_ROLES_CONFIG, "broker")
@@ -935,6 +971,7 @@ class KafkaConfigTest {
         //Sasl Configs
         case KRaftConfigs.SASL_MECHANISM_CONTROLLER_PROTOCOL_CONFIG => // ignore
         case BrokerSecurityConfigs.SASL_MECHANISM_INTER_BROKER_PROTOCOL_CONFIG => // ignore
+        case BrokerSecurityConfigs.SASL_MECHANISM_MIRROR_ADMIN_PROTOCOL_CONFIG => // ignore
         case SaslConfigs.SASL_MECHANISM => // ignore string
         case BrokerSecurityConfigs.SASL_ENABLED_MECHANISMS_CONFIG =>
         case SaslConfigs.SASL_CLIENT_CALLBACK_HANDLER_CLASS =>

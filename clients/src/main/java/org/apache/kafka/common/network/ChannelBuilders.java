@@ -193,7 +193,7 @@ public class ChannelBuilders {
      * @return a mutable RecordingMap. The elements got from RecordingMap are marked as "used".
      */
     @SuppressWarnings("unchecked")
-    static Map<String, Object> channelBuilderConfigs(final AbstractConfig config, final ListenerName listenerName) {
+    public static Map<String, Object> channelBuilderConfigs(final AbstractConfig config, final ListenerName listenerName) {
         Map<String, Object> parsedConfigs;
         if (listenerName == null)
             parsedConfigs = (Map<String, Object>) config.values();

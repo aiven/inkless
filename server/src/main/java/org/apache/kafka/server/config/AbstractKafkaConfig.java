@@ -119,6 +119,22 @@ public abstract class AbstractKafkaConfig extends AbstractConfig {
         return interBrokerListenerNameAndSecurityProtocol().getValue();
     }
 
+    public ListenerName mirrorAdminListenerName() {
+        String mirrorAdminListenerName = getString(ReplicationConfigs.MIRROR_ADMIN_LISTENER_NAME_CONFIG);
+        if (mirrorAdminListenerName == null) {
+            return interBrokerListenerName();
+        }
+
+        ListenerName listenerName = ListenerName.normalised(mirrorAdminListenerName);
+        SecurityProtocol securityProtocol = effectiveListenerSecurityProtocolMap().get(listenerName);
+        if (securityProtocol == null) {
+            throw new ConfigException("Listener with name " + listenerName.value() + " defined in " +
+                    ReplicationConfigs.MIRROR_ADMIN_LISTENER_NAME_CONFIG + " not found in " +
+                    SocketServerConfigs.LISTENER_SECURITY_PROTOCOL_MAP_CONFIG + ".");
+        }
+        return listenerName;
+    }
+
     public Map<ListenerName, SecurityProtocol> effectiveListenerSecurityProtocolMap() {
         Map<ListenerName, SecurityProtocol> mapValue =
                 getMap(SocketServerConfigs.LISTENER_SECURITY_PROTOCOL_MAP_CONFIG,

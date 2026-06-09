@@ -1018,7 +1018,10 @@ public class ClusterMirrorCoordinator {
         return metadataManager.getMirrorStates(mirrorName);
     }
 
-    /** Maps a mirror record key to a __mirror_state partition index. */
+    /**
+     * Maps a mirror record key to a __mirror_state partition index.
+     * Used by MirrorMetadataManager to route WriteMirrorStates and ReadMirrorStates RPCs to the correct coordinator broker.
+     */
     public int getCoordinatorPartitionByKey(ClusterMirrorRecordKey key) {
         if (!isRunning.get()) {
             throw Errors.COORDINATOR_NOT_AVAILABLE.exception();
@@ -1026,6 +1029,11 @@ public class ClusterMirrorCoordinator {
         return Utils.abs(key.asCoordinatorKey().hashCode()) % brokerConfig.mirrorConfig().stateTopicNumPartitions();
     }
 
+    /**
+     * Maps a mirror name to a __mirror_state partition index.
+     * Used by MirrorMetadataManager to check whether the local broker is the coordinator for a given mirror
+     * and needs to periodicaly refresh its metadata from the source cluster.
+     */
     private int getCoordinatorPartitionByName(String mirrorName) {
         if (!isRunning.get()) {
             throw Errors.COORDINATOR_NOT_AVAILABLE.exception();
