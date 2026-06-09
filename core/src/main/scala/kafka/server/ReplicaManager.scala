@@ -337,9 +337,11 @@ class ReplicaManager(val config: KafkaConfig,
 
   private val consolidationFetcherManager: Option[ConsolidationFetcherManager] =
     if (config.disklessRemoteStorageConsolidationEnabled) {
-      if (consolidationFetchHandler.isEmpty || inklessFetchOffsetHandler.isEmpty || consolidationQuotaManager.isEmpty) {
+      // consolidationQuotaManager is unconditionally Some(...) under this same flag (unlike the
+      // handlers, which depend on inklessSharedState), so it needs no emptiness check here.
+      if (consolidationFetchHandler.isEmpty || inklessFetchOffsetHandler.isEmpty) {
         throw new KafkaException("Remote storage consolidation is enabled, however Inkless doesn't seem to have " +
-          "configured fetch handler, fetch offset handler or quota manager ready.")
+          "configured fetch handler or fetch offset handler ready.")
       }
       consolidationFetchHandler.zip(inklessFetchOffsetHandler)
         .zip(consolidationQuotaManager)

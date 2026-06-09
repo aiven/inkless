@@ -73,6 +73,11 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
       // bypass the quota. Unlike classic replication (where throttled replicas are set via topic
       // config during reassignment), consolidation marks all topics unconditionally — every
       // consolidating partition's bytes must count toward the dedicated bandwidth quota.
+      //
+      // We never removeThrottle on stop: this follows the classic ReplicaFetcher pattern, where
+      // the topic-keyed throttle map is only cleared via config changes (ConfigHandler), not on
+      // per-partition fetcher removal. Entries are tiny (topic -> List(-1)) and bounded by the
+      // set of topics that have ever consolidated on this broker, so the residue is benign.
       consolidatingPartitionAndOffsets.keys.map(_.topic).toSet.foreach((topic: String) => consolidationQuotaManager.markThrottled(topic))
       consolidationFetcherManager.addFetcherForPartitions(consolidatingPartitionAndOffsets)
       consolidatingPartitionAndOffsets.keys.foreach(tp => consolidationMetrics.registerPartition(tp))
