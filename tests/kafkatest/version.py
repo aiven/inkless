@@ -101,12 +101,18 @@ class KafkaVersion(LooseVersion):
         return self >= V_3_8_0
 
     def supports_command_config(self):
+        # VerifiableProducer/Consumer and the console/perf tools switched to the
+        # unified --command-config flag (from --producer.config/--consumer.config).
         return self >= V_4_2_0
 
     def supports_formatter_property(self):
+        # The console consumer/share consumer switched to the --formatter-property
+        # flag (deprecating --property) as part of the tools options overhaul.
         return self >= V_4_2_0
 
     def supports_command_property(self):
+        # The console consumer/share consumer switched to the --command-property
+        # flag (deprecating --consumer-property) as part of the tools options overhaul.
         return self >= V_4_2_0
 
 def get_version(node=None):
