@@ -67,11 +67,14 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
       val consolidatingPartitionAndOffsets: mutable.HashMap[TopicPartition, InitialFetchState] =
         initConsolidatingPartitionFetching(consolidatingPartitions)
 
-      consolidationFetcherManager.addFetcherForPartitions(consolidatingPartitionAndOffsets)
-      // Unlike classic replication (where throttled replicas are set via topic config during
-      // reassignment), consolidation marks all topics unconditionally — every consolidating
-      // partition's bytes must count toward the dedicated bandwidth quota.
+      // Mark topics throttled BEFORE starting fetchers: addFetcherForPartitions starts the
+      // fetcher threads immediately, and ReplicaFetcherThread only records bytes to the quota
+      // when the partition is already throttled. Marking after would let the first fetch/append
+      // bypass the quota. Unlike classic replication (where throttled replicas are set via topic
+      // config during reassignment), consolidation marks all topics unconditionally — every
+      // consolidating partition's bytes must count toward the dedicated bandwidth quota.
       consolidatingPartitionAndOffsets.keys.map(_.topic).toSet.foreach((topic: String) => consolidationQuotaManager.markThrottled(topic))
+      consolidationFetcherManager.addFetcherForPartitions(consolidatingPartitionAndOffsets)
       consolidatingPartitionAndOffsets.keys.foreach(tp => consolidationMetrics.registerPartition(tp))
     }
   }
