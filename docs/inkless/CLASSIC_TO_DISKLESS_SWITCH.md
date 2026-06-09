@@ -1,0 +1,126 @@
+# Classic to Diskless Switch Protocol
+
+This document describes the implementation flow for switching a classic Kafka topic to diskless storage. The switch is driven by metadata records: the controller first marks each partition as switch-pending, the leader seals the local classic log and asks the controller to commit the final start offset, then the broker initializes the diskless log on the control plane from the committed metadata.
+
+## Requirements and Guarantees
+
+The switch protocol is designed with the following guarantees and constraints:
+* **Online Switch:** The switch is performed online. Producers are blocked only while a partition is sealed but not yet initialized for diskless writes.
+* **Zero Data Loss:** The leader waits until the High Watermark (HW) reaches the Log End Offset (LEO) before committing the diskless start offset.
+* **Configuration Constraint:** Switching is only supported for topics where unclean leader election is **not enabled**.
+
+The Kafka controller participates in the switch to fence stale leaders. The broker proposes the final start offset, but the controller persists it only if the request comes from the current leader epoch and the current partition leader.
+
+## `classicToDisklessStartOffset` States
+
+The partition metadata field `classicToDisklessStartOffset` drives the flow:
+
+* `-1` (`NO_CLASSIC_TO_DISKLESS_START_OFFSET`): no classic-to-diskless switch offset has been committed.
+* `-2` (`CLASSIC_TO_DISKLESS_SWITCH_PENDING`): the switch has started, the classic log must be sealed, but the final diskless start offset has not been committed yet.
+* `>= 0`: the committed seal offset. This is the first offset owned by diskless storage; the classic log owns offsets below it.
+
+## Protocol Steps
+
+```mermaid
+sequenceDiagram
+    participant Operator
+    participant Controller
+    participant MetadataLog as KRaft metadata log
+    participant Leader as Leader broker
+    participant InitManager as InitDisklessLogManager
+    participant ControlPlane as Diskless control plane
+
+    Operator->>Controller: Set diskless.enable=true
+    Controller->>MetadataLog: ConfigRecord + PartitionChangeRecord<br/>classicToDisklessStartOffset = -2
+    MetadataLog-->>Leader: Metadata delta with switch pending
+
+    Leader->>Leader: seal() local classic log
+    Leader->>Leader: makeLeader() with bumped epoch
+    Leader->>InitManager: registerPartition()
+
+    InitManager->>Leader: Wait until HW == LEO
+    Leader-->>InitManager: Classic prefix fully replicated
+    InitManager->>Controller: InitDisklessLog(HW, leaderEpoch, producerStates)
+
+    Controller->>Controller: Validate current leader and epoch
+    Controller->>MetadataLog: PartitionChangeRecord<br/>classicToDisklessStartOffset = HW<br/>producerStates
+    MetadataLog-->>Leader: Metadata delta with committed seal offset
+
+    Leader->>Leader: Reconcile local classic log at seal
+    Leader->>InitManager: initOnControlPlane(from metadata)
+    InitManager->>ControlPlane: InitDisklessLog(topic, partition,<br/>classic log start, seal offset, producerStates)
+    ControlPlane-->>InitManager: Success or already initialized
+    InitManager-->>Leader: Mark done and allow diskless appends
+```
+
+### Step 1: Mark the Switch as Pending
+
+When `diskless.enable` changes from `false` to `true`, the controller emits the topic config update and one `PartitionChangeRecord` per partition in the same atomic write. Each partition change sets:
+
+* `classicToDisklessStartOffset = -2`
+* `leader = current leader`
+
+Setting the leader to the current leader bumps the leader epoch, which forces the leader broker to process a `makeLeader` transition even when leadership did not otherwise change. Brokers rely on receiving the config change and the pending marker in the same metadata delta.
+
+### Step 2: Seal the Classic Log
+
+When a leader broker applies the metadata delta for a diskless topic with `classicToDisklessStartOffset = -2`, it seals the existing local `Partition` before calling `makeLeader`.
+
+Sealing happens under the `leaderIsrUpdateLock` write lock. If there are undecided transactions, the broker aborts them first; then it marks the partition sealed. Once sealed, `appendRecordsToLeader` rejects classic produce requests with `ReplicaNotAvailableException`, so the local LEO cannot increase.
+
+If the metadata delta also elects a new leader for the partition, the new leader seals before it is placed in the leader role. This prevents the new leader from accepting classic writes during the switch.
+
+### Step 3: Propose the Final Start Offset
+
+After sealing, the leader registers the partition with `InitDisklessLogManager`. The manager waits in `WaitingForReplication` until:
+
+* the partition is still sealed
+* the local log exists
+* `HW == LEO`
+
+Once HW catches up to LEO, the partition moves to `SendingToController`. The broker batches ready partitions and sends `InitDisklessLog` to the controller with:
+
+* `disklessStartOffset = HW`
+* `leaderEpoch = current partition leader epoch`
+* `producerStates = active producer state extracted from the local log`
+
+At this point `HW == LEO`, so the proposed start offset is the sealed LEO and is safely replicated to the ISR.
+
+### Step 4: Persist the Final Start Offset
+
+The controller handles `InitDisklessLog` as a serialized write operation. For each partition, it validates that:
+
+* the request leader epoch is not stale
+* the requesting broker is the current leader
+* the proposed `disklessStartOffset` is non-negative
+* the partition has not already committed a final `classicToDisklessStartOffset`
+
+If validation succeeds, the controller writes a `PartitionChangeRecord` containing the final `classicToDisklessStartOffset` and the producer states. These values are encoded as tagged fields on the partition change record.
+
+If the broker is stale, the controller rejects the request. A lower leader epoch is a permanent failure for that broker's attempt; retriable controller or transport failures are retried by the broker.
+
+### Step 5: Initialize the Diskless Log
+
+After the final offset is committed to the metadata log, brokers receive a new metadata delta with `classicToDisklessStartOffset >= 0`. The local leader then initializes the diskless log on the control plane using the authoritative data from metadata, not the earlier controller response.
+
+The leader calls the control-plane `InitDisklessLog` API with:
+
+* topic ID, topic name, and partition
+* local classic log start offset
+* committed `classicToDisklessStartOffset`
+* committed producer states
+
+Control-plane initialization is batched and retried on transient failures. An `INVALID_REQUEST` response from the control plane is treated as success because it means the diskless log is already initialized.
+
+Once control-plane initialization succeeds, `InitDisklessLogManager` marks the partition done and removes it from tracking. Produce requests can then use the diskless append path from the committed start offset onward.
+
+## Additional Behavior
+
+Followers also seal during the switch. While the switch is pending (`-2`), they keep using the classic fetcher to replicate the frozen classic prefix. After the final start offset is committed, followers continue until their local LEO reaches the committed seal offset, then hand off from the classic prefix.
+
+When a broker applies a newly committed seal offset, it reconciles the local classic log:
+
+* if local LEO is above the seal, it truncates to the seal because offsets at and above the seal belong to diskless storage
+* if a leader's local LEO is below the seal, it marks the partition offline because the classic prefix is incomplete
+
+If leadership changes while the switch is pending, the new leader seals and re-drives the `InitDisklessLog` controller request. If leadership changes after the final offset is committed, the new leader skips the controller step and initializes the control plane directly from metadata.
