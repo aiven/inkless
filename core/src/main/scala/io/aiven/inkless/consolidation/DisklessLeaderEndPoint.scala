@@ -64,10 +64,10 @@ class DisklessLeaderEndPoint(
 ) extends LeaderEndPoint with Logging {
 
   private val replicaId = brokerConfig.brokerId
-  private val maxWait = brokerConfig.replicaFetchWaitMaxMs
-  private val minBytes = brokerConfig.replicaFetchMinBytes
-  private val maxBytes = brokerConfig.replicaFetchResponseMaxBytes
-  private val fetchSize = brokerConfig.replicaFetchMaxBytes
+  private val maxWait = brokerConfig.disklessConsolidationFetchMaxWaitMs
+  private val minBytes = brokerConfig.disklessConsolidationFetchMinBytes
+  private val maxBytes = brokerConfig.disklessConsolidationFetchResponseMaxBytes
+  private val fetchSize = brokerConfig.disklessConsolidationFetchMaxBytes
 
   override def isTruncationOnFetchSupported: Boolean = false
 

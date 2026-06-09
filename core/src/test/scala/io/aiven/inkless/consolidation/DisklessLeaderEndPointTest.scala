@@ -23,6 +23,7 @@ import kafka.cluster.Partition
 import kafka.server.{KafkaConfig, QuotaFactory, ReplicaManager, ReplicaQuota}
 import kafka.utils.TestUtils
 import org.apache.kafka.common.errors.{KafkaStorageException, NotLeaderOrFollowerException, UnknownTopicOrPartitionException}
+import org.apache.kafka.server.config.ServerConfigs
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.OffsetForLeaderPartition
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
@@ -667,5 +668,68 @@ class DisklessLeaderEndPointTest {
     val pd = endPoint.fetch(fetchBuilder).get(topicPartition)
     assertEquals(Errors.NONE.code, pd.errorCode)
     assertEquals(UnifiedLog.UNKNOWN_OFFSET, pd.logStartOffset)
+  }
+
+  @Test
+  def testConsolidationFetchConfigsAreUsed(): Unit = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val log = mock(classOf[UnifiedLog])
+    when(log.logStartOffset).thenReturn(0L)
+    when(replicaManager.localLogOrException(topicPartition)).thenReturn(log)
+
+    val props = TestUtils.createBrokerConfig(brokerEndPoint.id, port = brokerEndPoint.port)
+    props.setProperty(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_CONFIG, "20971520") // 20MB per-partition
+    props.setProperty(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_CONFIG, "41943040") // 40MB response-level
+    props.setProperty(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_MIN_BYTES_CONFIG, "4096")
+    props.setProperty(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_CONFIG, "1000")
+    val config = KafkaConfig.fromProps(props)
+
+    val endPoint = new DisklessLeaderEndPoint(
+      brokerEndPoint,
+      fetchHandler,
+      fetchOffsetHandler,
+      replicaManager,
+      config,
+      QuotaFactory.UNBOUNDED_QUOTA,
+      () => MetadataVersion.LATEST_PRODUCTION,
+      () => 7L
+    )
+
+    val fetchState = new PartitionFetchState(
+      Optional.of(topicId),
+      0L,
+      Optional.empty(),
+      1,
+      Optional.empty(),
+      ReplicaState.FETCHING,
+      Optional.empty()
+    )
+    val result = endPoint.buildFetch(util.Map.of(topicPartition, fetchState))
+    assertTrue(result.result.isPresent)
+
+    val fetchRequest = result.result.get.fetchRequest.build()
+    assertEquals(41943040, fetchRequest.maxBytes)
+    assertEquals(1000, fetchRequest.maxWait)
+    assertEquals(4096, fetchRequest.minBytes)
+    val partitionData = fetchRequest.fetchData(util.Map.of(topicId, topicPartition.topic))
+    assertFalse(partitionData.isEmpty, "fetchData should contain the partition")
+    assertEquals(20971520, partitionData.values().iterator().next().maxBytes)
+  }
+
+  @Test
+  def testConsolidationFetchConfigDefaults(): Unit = {
+    val props = TestUtils.createBrokerConfig(brokerEndPoint.id, port = brokerEndPoint.port)
+    val config = KafkaConfig.fromProps(props)
+
+    assertEquals(1 * 1024 * 1024, config.disklessConsolidationFetchMaxBytes)
+    assertEquals(10 * 1024 * 1024, config.disklessConsolidationFetchResponseMaxBytes)
+    assertEquals(1, config.disklessConsolidationFetchMinBytes)
+    assertEquals(500, config.disklessConsolidationFetchMaxWaitMs)
+    assertEquals(1, config.disklessConsolidationNumFetchers)
+    assertEquals(0, config.disklessConsolidationFindBatchesMaxPerPartition)
+    assertEquals(4, config.disklessConsolidationFetchMetadataThreadPoolSize)
+    assertEquals(8, config.disklessConsolidationFetchDataThreadPoolSize)
   }
 }

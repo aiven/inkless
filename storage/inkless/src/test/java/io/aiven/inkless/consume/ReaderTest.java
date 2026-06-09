@@ -699,7 +699,8 @@ public class ReaderTest {
             0, // TTFB hedging disabled
             0, // total-time hedging disabled
             fetchMetrics,
-            new BrokerTopicStats());
+            new BrokerTopicStats(),
+            "inkless-");
     }
 
     @Nested
@@ -791,7 +792,8 @@ public class ReaderTest {
                 0, // TTFB hedging disabled
                 0, // total-time hedging disabled
                 fetchMetrics,
-                new BrokerTopicStats())) {
+                new BrokerTopicStats(),
+                "inkless-")) {
 
                 // Submit multiple requests to trigger rate limiting
                 final int numRequests = RATE_LIMIT_REQ_PER_SEC * 2; // 2 seconds worth of requests
@@ -873,7 +875,8 @@ public class ReaderTest {
                 0, // TTFB hedging disabled
                 0, // total-time hedging disabled
                 fetchMetrics,
-                new BrokerTopicStats())) {
+                new BrokerTopicStats(),
+                "inkless-")) {
 
                 // Submit multiple requests
                 final int numRequests = RATE_LIMIT_REQ_PER_SEC * 2;
@@ -1011,7 +1014,8 @@ public class ReaderTest {
                 0, // TTFB hedging disabled
                 0, // total-time hedging disabled
                 fetchMetrics,
-                new BrokerTopicStats())) {
+                new BrokerTopicStats(),
+                "inkless-")) {
 
                 // Create a fetch request with BOTH partitions
                 final Map<TopicIdPartition, FetchRequest.PartitionData> mixedFetchInfos = Map.of(
@@ -1109,7 +1113,8 @@ public class ReaderTest {
                 0, // TTFB hedging disabled
                 0, // total-time hedging disabled
                 fetchMetrics,
-                new BrokerTopicStats())) {
+                new BrokerTopicStats(),
+                "inkless-")) {
 
                 // Submit multiple requests
                 final int numRequests = RATE_LIMIT_REQ_PER_SEC * 2;
