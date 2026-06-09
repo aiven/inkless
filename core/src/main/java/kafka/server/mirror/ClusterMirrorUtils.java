@@ -105,7 +105,7 @@ public final class ClusterMirrorUtils {
     public record LeaderInfo(Node node, int leaderEpoch) { }
 
     interface StateTransitioner {
-        void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorPartitionState state);
+        void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state);
     }
 
     interface StateTransitionCallback {

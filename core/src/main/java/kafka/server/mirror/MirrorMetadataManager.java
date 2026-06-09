@@ -22,7 +22,6 @@ import kafka.server.NetworkUtils;
 import kafka.server.ReplicaManager;
 
 import org.apache.kafka.clients.ClientResponse;
-import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ClusterMirrorDescription;
@@ -90,7 +89,6 @@ import org.apache.kafka.server.common.ControllerRequestCompletionHandler;
 import org.apache.kafka.server.common.NodeToControllerChannelManager;
 import org.apache.kafka.server.config.ClusterMirrorConfig;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
-import org.apache.kafka.server.network.BrokerEndPoint;
 import org.apache.kafka.server.util.KafkaScheduler;
 import org.apache.kafka.server.util.RequestAndCompletionHandler;
 import org.apache.kafka.storage.internals.log.UnifiedLog;
@@ -99,7 +97,6 @@ import org.slf4j.Logger;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -108,7 +105,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
-import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -136,8 +132,8 @@ import static org.apache.kafka.controller.ConfigurationControlManager.STOPPED_TO
  * Bridges the local destination cluster and remote source clusters for Cluster Mirroring.
  *
  * Implements {@link MetadataPublisher} to detect leadership and config changes, triggering
- * partition state transitions. Manages remote cluster connections using {@link MirrorSourceSender}
- * and periodically syncs topic metadata, configs, group offsets, and ACLs from source clusters.
+ * partition state transitions.
+ * Periodically syncs topic metadata, configs, group offsets, and ACLs from source clusters using {@link Admin}.
  * Maintains in-memory caches of partition states and last mirror epochs. Routes state reads/writes
  * to the appropriate coordinator broker.
  *
@@ -161,7 +157,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Metrics metrics;
     private final Time time;
 
-    private final Random random = new Random();
     private volatile MetadataImage metadataImage = MetadataImage.EMPTY;
 
     private volatile MirrorStateSender mirrorStateSender;
@@ -169,7 +164,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private volatile Admin dstAdmin;
 
     private final Map<String, Uuid> sourceClusterIds = new ConcurrentHashMap<>();
-    private final Map<String, List<MirrorSourceSender>> sourceSenders = new ConcurrentHashMap<>();
     private final Map<String, Map<TopicPartition, ClusterMirrorUtils.LeaderInfo>> sourceLeaders = new ConcurrentHashMap<>();
     private final Map<ClusterMirrorUtils.PartitionKey, MirrorPartitionState> partitionStates = new ConcurrentHashMap<>();
     private final Map<ClusterMirrorUtils.PartitionKey, MirrorPartitionState> partitionPreviousStates = new ConcurrentHashMap<>();
@@ -399,6 +393,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     @Override
     public void close() throws Exception {
+        if (mirrorStateSender != null) {
+            mirrorStateSender.shutdown();
+        }
         closeSourceAdmins();
         if (dstAdmin != null) {
             dstAdmin.close();
@@ -422,12 +419,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         partitionStateCounts.clear();
         lastMirrorEpochs.clear();
         sourceClusterIds.clear();
-
-        // snapshot and clear first, then close to avoid use-after-close races
-        Map<String, List<MirrorSourceSender>> snapshot = new HashMap<>(sourceSenders);
-        sourceSenders.clear();
-        snapshot.values().forEach(senders -> senders.forEach(MirrorSourceSender::close));
-
         sourceLeaders.clear();
         pendingLeaderEpochBumps.clear();
         pendingPartitionStates.clear();
@@ -449,7 +440,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /** Transitions a mirror partition to the given state via the configured state transitioner. */
-    public void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorPartitionState state) {
+    public void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state) {
         stateTransitioner.ifPresent(st -> st.transitionTo(mirrorName, topicPartition, state));
     }
 
@@ -477,12 +468,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
                         if (connectionConfigChanged || mirrorDeleted) {
                             sourceLeaders.remove(mirrorName);
-                            List<MirrorSourceSender> senders = sourceSenders.remove(mirrorName);
-                            if (senders != null) {
-                                log.info("Mirror config changed for '{}'. Closing existing connections "
-                                        + "to trigger reconnection with updated configuration.", mirrorName);
-                                senders.forEach(MirrorSourceSender::close);
-                            }
                             Admin admin = srcAdmins.remove(mirrorName);
                             if (admin != null) {
                                 admin.close();
@@ -519,23 +504,23 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         stateTransitioner.ifPresent(t -> {
             if (stopRequested) {
                 if (curState != MirrorPartitionState.STOPPED) {
-                    t.transitionTo(mirrorName, tp, MirrorPartitionState.STOPPING);
+                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPING);
                 } else {
-                    t.transitionTo(mirrorName, tp, MirrorPartitionState.STOPPED);
+                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPED);
                 }
             } else if (pauseRequested) {
                 if (curState != MirrorPartitionState.PAUSED) {
-                    t.transitionTo(mirrorName, tp, MirrorPartitionState.PAUSING);
+                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSING);
                 } else {
-                    t.transitionTo(mirrorName, tp, MirrorPartitionState.PAUSED);
+                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED);
                 }
             } else if (curState == MirrorPartitionState.PAUSED) {
-                t.transitionTo(mirrorName, tp, MirrorPartitionState.MIRRORING);
+                t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.MIRRORING);
             } else if (curState == MirrorPartitionState.UNKNOWN
                     || curState == MirrorPartitionState.STOPPED) {
-                t.transitionTo(mirrorName, tp, MirrorPartitionState.LOG_TRUNCATION);
+                t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION);
             } else {
-                t.transitionTo(mirrorName, tp, fetchedState != null ? fetchedState : curState);
+                t.transitionTo(mirrorName, Set.of(tp), fetchedState != null ? fetchedState : curState);
             }
         });
     }
@@ -549,12 +534,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
 
         log.info("Syncing metadata for mirrors: {}", mirrors);
-        mirrors.forEach(this::ensureConnection);
 
-        // Snapshot keyset to avoid ConcurrentModificationException
-        for (String mirrorName : Set.copyOf(sourceSenders.keySet())) {
+        for (String mirrorName : mirrors) {
             try {
-                discoverSourceBrokers(mirrorName);
+                validateSourceClusterId(mirrorName);
                 var topicsState = syncSourceTopicsState(mirrorName);
                 syncCoordinatorMetadata(mirrorName, topicsState);
             } catch (Exception e) {
@@ -569,89 +552,28 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     /** Schedules a source cluster metadata update. */
     public void scheduleSourceClusterMetadataUpdate(String mirrorName) {
         scheduler.scheduleOnce("SourceClusterMetadataUpdate", () -> {
-            discoverSourceBrokers(mirrorName);
             syncSourceTopicsState(mirrorName);
         });
     }
 
-    /**
-     * Discovers source cluster brokers via metadata and adds senders for any newly found brokers.
-     * Sender cleanup only happens via {@link #onMetadataUpdate} or {@link #clearCache}.
-     */
-    private void discoverSourceBrokers(String mirrorName) {
-        Collection<Node> discoveredBrokers = describeSourceClusterNodes(mirrorName);
-        if (discoveredBrokers.isEmpty()) {
-            return;
-        }
-        List<MirrorSourceSender> currentSenders = sourceSenders.get(mirrorName);
-        if (currentSenders == null) {
-            return;
-        }
-
-        Set<String> currentEndpoints = currentSenders.stream()
-                .map(s -> s.brokerEndPoint().host() + ":" + s.brokerEndPoint().port())
-                .collect(Collectors.toSet());
-
-        List<Node> newBrokers = discoveredBrokers.stream()
-                .filter(n -> !currentEndpoints.contains(n.host() + ":" + n.port()))
-                .toList();
-
-        if (newBrokers.isEmpty()) {
-            return;
-        }
-
-        Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_MIRROR, mirrorName));
-        ClusterMirrorConfig mirrorConfig = ClusterMirrorConfig.fromProperties(props);
-
-        List<MirrorSourceSender> addedSenders = new ArrayList<>();
-        for (Node broker : newBrokers) {
-            try {
-                BrokerEndPoint endpoint = new BrokerEndPoint(broker.id(), broker.host(), broker.port());
-                String clientId = "nodeId-" + nodeId + "-" + mirrorName + "-" + broker.host() + "-" + broker.port();
-                LogContext logContext = new LogContext("[" + MirrorMetadataManager.class.getSimpleName() + "Sender id=" + nodeId + " clientId=" + clientId + "] ");
-                addedSenders.add(ClusterMirrorUtils.createSender(endpoint, mirrorConfig, brokerConfig, metrics, time, clientId, logContext));
-            } catch (Exception e) {
-                log.warn("Failed to create sender for broker {} in mirror {}", broker, mirrorName, e);
-            }
-        }
-
-        if (addedSenders.isEmpty()) {
-            return;
-        }
-
-        List<MirrorSourceSender> merged = new ArrayList<>(currentSenders);
-        merged.addAll(addedSenders);
-        log.info("Adding {} discovered broker(s) to source senders for mirror {}: {}",
-                addedSenders.size(), mirrorName,
-                addedSenders.stream().map(s -> s.brokerEndPoint().toString()).collect(Collectors.joining(", ")));
-        sourceSenders.put(mirrorName, merged);
-    }
-
-    private Collection<Node> describeSourceClusterNodes(String mirrorName) {
+    private void validateSourceClusterId(String mirrorName) {
         Admin srcAdmin = getOrCreateSourceAdmin(mirrorName);
         try {
             var clusterResult = srcAdmin.describeCluster();
             String clusterId = clusterResult.clusterId().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
-            Collection<Node> nodes = clusterResult.nodes().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
-            validateSourceClusterId(mirrorName, clusterId);
-            return nodes;
+            if (clusterId != null && !clusterId.isEmpty()) {
+                Uuid newClusterId = Uuid.fromString(clusterId);
+                Uuid previousClusterId = sourceClusterIds.put(mirrorName, newClusterId);
+                if (previousClusterId != null && !previousClusterId.equals(newClusterId)) {
+                    throw new IllegalStateException("Source cluster ID changed for mirror " + mirrorName
+                            + ": expected " + previousClusterId + ", got " + newClusterId
+                            + ". This may indicate a misconfiguration or that the source cluster has been replaced.");
+                }
+            }
         } catch (IllegalStateException e) {
             throw e;
         } catch (Exception e) {
             log.warn("Failed to describe source cluster for mirror {}", mirrorName, e);
-            return List.of();
-        }
-    }
-
-    private void validateSourceClusterId(String mirrorName, String clusterId) {
-        if (clusterId != null && !clusterId.isEmpty()) {
-            Uuid newClusterId = Uuid.fromString(clusterId);
-            Uuid previousClusterId = sourceClusterIds.put(mirrorName, newClusterId);
-            if (previousClusterId != null && !previousClusterId.equals(newClusterId)) {
-                throw new IllegalStateException("Source cluster ID changed for mirror " + mirrorName
-                        + ": expected " + previousClusterId + ", got " + newClusterId
-                        + ". This may indicate a misconfiguration or that the source cluster has been replaced.");
-            }
         }
     }
 
@@ -833,7 +755,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 Set.copyOf(partitionStates.keySet()).stream()
                         .filter(key -> key.mirrorName().equals(mirrorName) && key.topic().equals(name))
                         .forEach(key -> stateTransitioner.ifPresent(t ->
-                                t.transitionTo(mirrorName, new TopicPartition(key.topic(), key.partition()), MirrorPartitionState.STOPPING)));
+                                t.transitionTo(mirrorName, Set.of(new TopicPartition(key.topic(), key.partition())), MirrorPartitionState.STOPPING)));
             }
         });
     }
@@ -872,7 +794,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             var partition = topicImage.partitions().get(tp.partition());
             if (partition != null && partition.leader == nodeId) {
                 log.info("Source leader for {} discovered after initial onMetadataUpdate, transitioning to LOG_TRUNCATION", tp);
-                stateTransitioner.ifPresent(t -> t.transitionTo(mirrorName, tp, MirrorPartitionState.LOG_TRUNCATION));
+                stateTransitioner.ifPresent(t -> t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION));
             }
         });
     }
@@ -887,7 +809,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
 
         log.info("Syncing coordinator metadata for mirror {}", mirrorName);
-        ensureConnection(mirrorName);
 
         try {
             ClusterMirrorConfig mirrorConfig = ClusterMirrorConfig.fromProperties(
@@ -1663,38 +1584,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         responseCallback.accept(new ReadMirrorStatesResponse(data));
     }
 
-    /** Creates initial source senders from bootstrap addresses if not already connected. */
-    private void ensureConnection(String mirrorName) {
-        if (sourceSenders.containsKey(mirrorName)) {
-            return;
-        }
-        Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_MIRROR, mirrorName));
-        String bootstrapServers = Optional.ofNullable(props.get(BOOTSTRAP_SERVERS_CONFIG))
-                .map(Object::toString)
-                .orElseThrow(() -> new IllegalArgumentException("Remote bootstrap server not found in Cluster Mirror config: " + mirrorName));
-
-        log.info("Mirror config for '{}': {}", mirrorName, props);
-
-        var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
-        ClusterMirrorConfig mirrorConfig = ClusterMirrorConfig.fromProperties(props);
-        List<MirrorSourceSender> senders = new ArrayList<>();
-        for (var address : addresses) {
-            var brokerEndpoint = new BrokerEndPoint(random.nextInt(), address.getHostString(), address.getPort());
-            var logContext = new LogContext("[" + MirrorMetadataManager.class.getName() + " replicaId=" + nodeId + ", mirrorName=" + mirrorName + "] ");
-            senders.add(new MirrorSourceSender(
-                    brokerEndpoint,
-                    mirrorConfig,
-                    brokerConfig,
-                    metrics,
-                    time,
-                    brokerEndpoint.id(),
-                    "broker-" + nodeId + "-mirror-metadata-manager-" + mirrorName,
-                    logContext
-            ));
-        }
-        sourceSenders.put(mirrorName, senders);
-    }
-
     /** Updates cached source leader for a specific partition. */
     public void updateSourceLeader(String mirrorName, TopicPartition tp, ClusterMirrorUtils.LeaderInfo leader) {
         sourceLeaders.computeIfAbsent(mirrorName, k -> new ConcurrentHashMap<>()).put(tp, leader);
@@ -1709,21 +1598,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 return leader;
             }
         }
-
-        // No cached metadata. Fall back to the bootstrap server instead of blocking on a
-        // synchronous metadata refresh, which can stall the metadata event queue thread when
-        // the source broker is down. The periodic metadata refresh will populate the cache,
-        // and the fetcher thread will handle leader rediscovery via maybeCreateMirrorFetchers.
-        ensureConnection(mirrorName);
-        List<MirrorSourceSender> senders = sourceSenders.get(mirrorName);
-        if (senders != null && !senders.isEmpty()) {
-            log.info("No cached leader for mirror {} partition {}. Using one of the bootstrap server as initial target.", mirrorName, tp);
-            BrokerEndPoint ep = senders.get(random.nextInt(senders.size())).brokerEndPoint();
-            // set leaderEpoch to 0 if unknown to trigger source epoch discovery through fencing
-            return new ClusterMirrorUtils.LeaderInfo(new Node(ep.id(), ep.host(), ep.port()), 0);
-        }
-
-        throw new IllegalStateException("No source senders available for mirror " + mirrorName);
+        // No cached metadata. We throw exception and enter FAILED state and do the source cluster metadata refresh
+        throw new IllegalStateException("No source cluster metadata available for mirror " + mirrorName + " partition:" + tp);
     }
 
     // Atomic per-key update to keep partition state counts consistent
@@ -1766,8 +1642,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public CompletableFuture<Void> scheduleBumpLeaderEpochs(String mirrorName, Set<TopicPartition> topicPartitions) {
         CompletableFuture<Void> future = new CompletableFuture<>();
         scheduler.scheduleOnce("bump-leader-epoch", () -> {
-            ensureConnection(mirrorName);
-            discoverSourceBrokers(mirrorName);
             Optional<List<SourceTopicState>> topics = syncSourceTopicsState(mirrorName);
             maybeBumpLeaderEpochs(mirrorName, topics, topicPartitions)
                     .whenComplete((v, ex) -> {

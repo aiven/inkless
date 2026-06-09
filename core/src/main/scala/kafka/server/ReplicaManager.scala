@@ -2640,6 +2640,7 @@ class ReplicaManager(val config: KafkaConfig,
 
     stateChangeLogger.info(s"Starting mirror fetchers for ${mirrorLeaders.size} read-only leader partition(s).")
     val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
+    val errorPartitionAndOffsets = new mutable.HashSet[TopicPartition]
 
     mirrorLeaders.stream().forEach { tp =>
       getPartition(tp) match {
@@ -2676,7 +2677,9 @@ class ReplicaManager(val config: KafkaConfig,
             }
           } catch {
             case e: Exception =>
-              stateChangeLogger.error(s"Error setting up mirror fetcher for partition $tp: ${e.getMessage}")
+              errorPartitionAndOffsets.add(tp)
+              stateChangeLogger.error(s"Error setting up mirror fetcher for partition $tp, " +
+                s"refresh source cluster metadata and try again: ${e.getMessage}")
           }
         case _ =>
           stateChangeLogger.warn(s"Skipping mirror fetcher setup for offline partition $tp")
@@ -2691,6 +2694,11 @@ class ReplicaManager(val config: KafkaConfig,
         case e: Exception =>
           stateChangeLogger.error(s"Error adding mirror fetcher for partitions ${partitionAndOffsets.keySet}", e)
       }
+    }
+
+    if (errorPartitionAndOffsets.nonEmpty) {
+      mirrorMetadataManager.foreach(_.scheduleSourceClusterMetadataUpdate(mirrorName))
+      mirrorMetadataManager.foreach(_.transitionTo(mirrorName, errorPartitionAndOffsets.asJava, MirrorPartitionState.FAILED))
     }
   }
 

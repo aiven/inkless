@@ -145,7 +145,7 @@ public class ClusterMirrorCoordinator {
         log.info("Starting up.");
 
         metadataManager.initialize(
-                (mirrorName, tp, state) -> transitionTo(mirrorName, Set.of(tp), state),
+                (mirrorName, tp, state) -> transitionTo(mirrorName, tp, state),
                 this::tombstoneMirrorRecords,
                 this::getCoordinatorPartitionByKey,
                 this::getCoordinatorPartitionByName);
@@ -172,7 +172,6 @@ public class ClusterMirrorCoordinator {
         // in-flight periodicSync admin calls (describeCluster, describeTopics)
         // fail immediately instead of blocking for up to requestTimeoutMs each.
         metadataManager.closeSourceAdmins();
-
         try {
             scheduler.shutdown();
         } catch (InterruptedException e) {

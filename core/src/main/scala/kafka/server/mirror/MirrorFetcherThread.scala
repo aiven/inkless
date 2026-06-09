@@ -30,6 +30,7 @@ import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogStartOffsetIncr
 
 import java.util.Optional
 import scala.collection.{Map, Set}
+import scala.jdk.CollectionConverters.SetHasAsJava
 
 /**
  * Fetcher thread for cross-cluster mirroring.
@@ -72,22 +73,20 @@ class MirrorFetcherThread(name: String,
   // Transition to FAILED so the coordinator can schedule exponential backoff retries
   override protected def refreshSourceClusterMetadata(mirrorPartitions: Set[TopicPartition]): Unit = {
     replicaMgr.mirrorMetadataManager.foreach(_.scheduleSourceClusterMetadataUpdate(mirrorName))
-    mirrorPartitions.foreach { tp =>
-      replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, tp, MirrorPartitionState.FAILED))
-    }
+    replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, mirrorPartitions.asJava, MirrorPartitionState.FAILED))
   }
 
   // Bridges fetcher failures (e.g. KafkaStorageException) to the mirror state machine,
   // so the coordinator can schedule exponential backoff retries
   override protected def handlePartitionFailed(topicPartition: TopicPartition): Unit = {
-    replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, topicPartition, MirrorPartitionState.FAILED))
+    replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, java.util.Set.of(topicPartition), MirrorPartitionState.FAILED))
   }
 
   // Source leader epoch exceeds local epoch: transition to EPOCH_FENCING to bump the
   // local epoch before allowing further appends. If the bump fails, the coordinator
   // transitions to FAILED and the exponential backoff retry takes over.
   override protected def handleMirrorLeaderEpochExceeded(mirrorName: String, topicPartition: TopicPartition): Unit = {
-    replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, topicPartition, MirrorPartitionState.EPOCH_FENCING))
+    replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, java.util.Set.of(topicPartition), MirrorPartitionState.EPOCH_FENCING))
   }
 
   // Validates batch epoch against local epoch (destination) and partition epoch (source metadata)
