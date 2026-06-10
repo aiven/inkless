@@ -1167,6 +1167,178 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // When local log has data but below minBytes and diskless data is available, the fetch must
+  // respond immediately (merged local+diskless) without parking in the delayed-fetch purgatory.
+  @Test
+  def testFetchConsolidatingSupplementRespondsWithoutDelayWhenDisklessDataAvailable(): Unit = {
+    val supplementRecords = MemoryRecords.withRecords(
+      2.toByte, 100L, Compression.NONE, TimestampType.CREATE_TIME, 456L, 0.toShort, 0, 0, false, new SimpleRecord(0, "supplement".getBytes())
+    )
+    val disklessResponse = Map(disklessTopicPartition ->
+      new FetchPartitionData(
+        Errors.NONE,
+        500L, 0L,
+        supplementRecords,
+        Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false)
+    )
+    val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+    val cp = mock(classOf[ControlPlane])
+    val timer = new MockTimer(time)
+    val fetchPurgatory = new DelayedOperationPurgatory[DelayedFetch]("Fetch", timer, 0, false)
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      delayedFetchPurgatory = Some(fetchPurgatory),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      // Stub fetchOffsetSnapshot so DelayedFetch.tryComplete doesn't NPE if the request parks
+      // on a build without the supplement.
+      val mockPartition = mock(classOf[Partition])
+      val mockLog = mock(classOf[UnifiedLog])
+      when(mockLog.logEndOffset).thenReturn(100L)
+      when(mockPartition.log).thenReturn(Some(mockLog))
+      val endOffsetMetadata = new LogOffsetMetadata(100L, 0L, 0)
+      when(mockPartition.fetchOffsetSnapshot(any(), any()))
+        .thenReturn(new LogOffsetSnapshot(0L, endOffsetMetadata, endOffsetMetadata, endOffsetMetadata))
+      doReturn(Right(mockPartition)).when(replicaManager)
+        .getPartitionOrError(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+      doReturn(mockPartition).when(replicaManager)
+        .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+
+      val localFileRecords = memoryRecordsToFileRecords(RECORDS)
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), localFileRecords),
+          Optional.empty(), 100L, 0L, 100L, 0L, 0L, OptionalLong.empty()
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      // Large minBytes + large maxWaitMs: WITHOUT the supplement this request would park in the
+      // purgatory and wait the full 30s. WITH the supplement it must respond immediately.
+      val maxWaitMs = 30000L
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+        maxWaitMs,
+        RECORDS.sizeInBytes + 1, // minBytes > local-only size
+        1024 * 1024,
+        FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+      }
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      // The response is produced synchronously: callback already fired, the clock was NOT advanced,
+      // and the delayed-fetch purgatory never held this operation.
+      waitForFetchResponse(responseData)
+      assertEquals(0, fetchPurgatory.watched(),
+        "Supplemented consolidating fetch must NOT be parked in the delayed-fetch purgatory")
+      assertEquals(1, responseData.size)
+      val result = responseData(disklessTopicPartition)
+      assertEquals(Errors.NONE, result.error)
+      assertEquals(500L, result.highWatermark)
+      assertTrue(result.records.sizeInBytes > RECORDS.sizeInBytes,
+        s"Expected merged local+diskless records, got ${result.records.sizeInBytes}")
+      verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  // When local log has data below minBytes but no diskless data is available past logEndOffset,
+  // the fetch must park in the purgatory and only complete after maxWaitMs elapses.
+  @Test
+  def testFetchConsolidatingParksUntilMaxWaitWhenNoDisklessSupplementData(): Unit = {
+    // Diskless supplement returns an empty response: no data available past the local boundary yet.
+    val disklessResponse = Map(disklessTopicPartition ->
+      new FetchPartitionData(
+        Errors.NONE,
+        100L, 0L,
+        MemoryRecords.EMPTY,
+        Optional.empty(), OptionalLong.of(100L), Optional.empty(), OptionalInt.empty(), false)
+    )
+    val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+    val cp = mock(classOf[ControlPlane])
+    val timer = new MockTimer(time)
+    val fetchPurgatory = new DelayedOperationPurgatory[DelayedFetch]("Fetch", timer, 0, false)
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      delayedFetchPurgatory = Some(fetchPurgatory),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      // Stub a partition whose local log ends at 100 and exposes a matching offset snapshot, so the
+      // parked DelayedFetch.tryComplete can evaluate the partition's high watermark without NPE.
+      val mockPartition = mock(classOf[Partition])
+      val mockLog = mock(classOf[UnifiedLog])
+      when(mockLog.logEndOffset).thenReturn(100L)
+      when(mockPartition.log).thenReturn(Some(mockLog))
+      val endOffsetMetadata = new LogOffsetMetadata(100L, 0L, 0)
+      when(mockPartition.fetchOffsetSnapshot(any(), any()))
+        .thenReturn(new LogOffsetSnapshot(0L, endOffsetMetadata, endOffsetMetadata, endOffsetMetadata))
+      doReturn(Right(mockPartition)).when(replicaManager)
+        .getPartitionOrError(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+      doReturn(mockPartition).when(replicaManager)
+        .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+
+      val localFileRecords = memoryRecordsToFileRecords(RECORDS)
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), localFileRecords),
+          Optional.empty(), 100L, 0L, 100L, 0L, 0L, OptionalLong.empty()
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      val maxWaitMs = 30000L
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+        maxWaitMs,
+        RECORDS.sizeInBytes + 1, // minBytes > local-only size; supplement returns nothing
+        1024 * 1024,
+        FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+      }
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      // No diskless data to supplement -> minBytes unmet -> parked in the purgatory, not yet responded.
+      assertEquals(1, fetchPurgatory.watched(),
+        "Fetch must be parked in the delayed-fetch purgatory when the supplement yields no data")
+      assertNull(responseData, "Response must not be produced until maxWaitMs elapses")
+
+      // Purgatory purges lazily — don't assert watched()==0 after completion.
+      timer.advanceClock(maxWaitMs + 1)
+      waitForFetchResponse(responseData)
+      assertEquals(1, responseData.size)
+      assertEquals(Errors.NONE, responseData(disklessTopicPartition).error)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
   @Test
   def testFetchConsolidatingDisklessPartitionOfflineReturnsKafkaStorageError(): Unit = {
     val disklessResponse = Map(disklessTopicPartition ->
