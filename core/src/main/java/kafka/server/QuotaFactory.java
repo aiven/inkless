@@ -19,6 +19,7 @@ package kafka.server;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.internals.Plugin;
 import org.apache.kafka.common.metrics.Metrics;
+import org.apache.kafka.common.metrics.Quota;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.config.ClientQuotaManagerConfig;
@@ -59,11 +60,13 @@ public class QuotaFactory {
         private final ReplicationQuotaManager leader;
         private final ReplicationQuotaManager follower;
         private final ReplicationQuotaManager alterLogDirs;
+        private final ReplicationQuotaManager disklessConsolidationFetch;
         private final Optional<Plugin<ClientQuotaCallback>> clientQuotaCallbackPlugin;
 
         public QuotaManagers(ClientQuotaManager fetch, ClientQuotaManager produce, ClientRequestQuotaManager request,
                              ControllerMutationQuotaManager controllerMutation, ReplicationQuotaManager leader,
                              ReplicationQuotaManager follower, ReplicationQuotaManager alterLogDirs,
+                             ReplicationQuotaManager disklessConsolidationFetch,
                              Optional<Plugin<ClientQuotaCallback>> clientQuotaCallbackPlugin) {
             this.fetch = fetch;
             this.produce = produce;
@@ -72,6 +75,7 @@ public class QuotaFactory {
             this.leader = leader;
             this.follower = follower;
             this.alterLogDirs = alterLogDirs;
+            this.disklessConsolidationFetch = disklessConsolidationFetch;
             this.clientQuotaCallbackPlugin = clientQuotaCallbackPlugin;
         }
 
@@ -103,6 +107,10 @@ public class QuotaFactory {
             return alterLogDirs;
         }
 
+        public ReplicationQuotaManager disklessConsolidationFetch() {
+            return disklessConsolidationFetch;
+        }
+
         public Optional<Plugin<ClientQuotaCallback>> clientQuotaCallbackPlugin() {
             return clientQuotaCallbackPlugin;
         }
@@ -113,6 +121,7 @@ public class QuotaFactory {
             request.shutdown();
             controllerMutation.shutdown();
             clientQuotaCallbackPlugin.ifPresent(plugin -> Utils.closeQuietly(plugin, "client quota callback plugin"));
+            // ReplicationQuotaManagers are not closed — they hold no threads or closeable resources.
         }
     }
 
@@ -126,6 +135,11 @@ public class QuotaFactory {
         Optional<Plugin<ClientQuotaCallback>> clientQuotaCallbackPlugin = createClientQuotaCallback(cfg, metrics, role);
         Option<Plugin<ClientQuotaCallback>> clientQuotaCallbackPluginOption = OptionConverters.toScala(clientQuotaCallbackPlugin);
 
+        ReplicationQuotaManager disklessConsolidationFetch =
+            new ReplicationQuotaManager(replicationConfig(cfg), metrics, QuotaType.DISKLESS_CONSOLIDATION_FETCH, time);
+        disklessConsolidationFetch.updateQuota(
+            new Quota(cfg.disklessConsolidationFetchRateLimitBytesPerSecond(), true));
+
         return new QuotaManagers(
             new ClientQuotaManager(clientConfig(cfg), metrics, QuotaType.FETCH, time, threadNamePrefix, clientQuotaCallbackPluginOption),
             new ClientQuotaManager(clientConfig(cfg), metrics, QuotaType.PRODUCE, time, threadNamePrefix, clientQuotaCallbackPluginOption),
@@ -134,6 +148,7 @@ public class QuotaFactory {
             new ReplicationQuotaManager(replicationConfig(cfg), metrics, QuotaType.LEADER_REPLICATION, time),
             new ReplicationQuotaManager(replicationConfig(cfg), metrics, QuotaType.FOLLOWER_REPLICATION, time),
             new ReplicationQuotaManager(alterLogDirsReplicationConfig(cfg), metrics, QuotaType.ALTER_LOG_DIRS_REPLICATION, time),
+            disklessConsolidationFetch,
             clientQuotaCallbackPlugin
         );
     }

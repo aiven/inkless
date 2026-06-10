@@ -116,7 +116,7 @@ public class KRaftMetadataRequestBenchmark {
     private final ReplicationQuotaManager replicaQuotaManager = Mockito.mock(ReplicationQuotaManager.class);
     private final QuotaFactory.QuotaManagers quotaManagers = new QuotaFactory.QuotaManagers(clientQuotaManager,
             clientQuotaManager, clientRequestQuotaManager, controllerMutationQuotaManager, replicaQuotaManager,
-            replicaQuotaManager, replicaQuotaManager, Optional.empty());
+            replicaQuotaManager, replicaQuotaManager, replicaQuotaManager, Optional.empty());
     private final FetchManager fetchManager = Mockito.mock(FetchManager.class);
     private final SharePartitionManager sharePartitionManager = Mockito.mock(SharePartitionManager.class);
     private final ClientMetricsManager clientMetricsManager = Mockito.mock(ClientMetricsManager.class);

@@ -33,7 +33,7 @@ import org.apache.kafka.common.security.auth.KafkaPrincipal
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.coordinator.group.GroupConfig
 import org.apache.kafka.metadata.MetadataCache
-import org.apache.kafka.server.config.{QuotaConfig, ServerLogConfigs}
+import org.apache.kafka.server.config.{QuotaConfig, ServerConfigs, ServerLogConfigs}
 import org.apache.kafka.server.log.remote.TopicPartitionLog
 import org.apache.kafka.server.log.remote.storage.RemoteLogManager
 import org.apache.kafka.storage.internals.log.{LogConfig, UnifiedLog}
@@ -644,5 +644,68 @@ class DynamicConfigChangeUnitTest {
     configHandler.processConfigChanges(topic, topicConfig)
 
     verify(inklessMetadataView, never()).updateTopicConfig(any(), any())
+  }
+
+  /**
+   * Builds a BrokerConfigHandler whose QuotaManagers carry a real consolidation quota manager
+   * (so we can assert on upperBound) and mocked replication quota managers (irrelevant here).
+   */
+  private def brokerConfigHandlerWithConsolidationQuota(
+    kafkaConfig: KafkaConfig
+  ): (BrokerConfigHandler, ReplicationQuotaManager) = {
+    // processConfigChanges routes through DynamicBrokerConfig.updateBrokerConfig which calls
+    // processReconfiguration; that reads currentConfig, which is null until initialize() is called.
+    kafkaConfig.dynamicConfig.initialize(None)
+    val metrics = new org.apache.kafka.common.metrics.Metrics()
+    val quotaConfig = new org.apache.kafka.server.config.ReplicationQuotaManagerConfig(
+      kafkaConfig.quotaConfig.numReplicationQuotaSamples,
+      kafkaConfig.quotaConfig.replicationQuotaWindowSizeSeconds)
+    val consolidationQuota = new ReplicationQuotaManager(
+      quotaConfig, metrics, org.apache.kafka.server.quota.QuotaType.DISKLESS_CONSOLIDATION_FETCH,
+      org.apache.kafka.common.utils.Time.SYSTEM)
+    // Seed from the static config value, mirroring QuotaFactory.instantiate.
+    consolidationQuota.updateQuota(new Quota(kafkaConfig.disklessConsolidationFetchRateLimitBytesPerSecond.toDouble, true))
+
+    val replicaQuota = mock(classOf[ReplicationQuotaManager])
+    val quotas = mock(classOf[QuotaFactory.QuotaManagers])
+    when(quotas.leader).thenReturn(replicaQuota)
+    when(quotas.follower).thenReturn(replicaQuota)
+    when(quotas.alterLogDirs).thenReturn(replicaQuota)
+    when(quotas.disklessConsolidationFetch).thenReturn(consolidationQuota)
+
+    (new BrokerConfigHandler(kafkaConfig, quotas), consolidationQuota)
+  }
+
+  @Test
+  def testConsolidationFetchRateLimitDynamicUpdate(): Unit = {
+    val kafkaConfig = KafkaConfig.fromProps(TestUtils.createBrokerConfig(0, port = 9092))
+    val (handler, consolidationQuota) = brokerConfigHandlerWithConsolidationQuota(kafkaConfig)
+    // Default static value: rate limiting disabled.
+    assertEquals(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_DEFAULT,
+      consolidationQuota.upperBound)
+
+    val props = new Properties()
+    props.put(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_CONFIG, "1048576")
+    handler.processConfigChanges(kafkaConfig.brokerId.toString, props)
+
+    assertEquals(1048576L, consolidationQuota.upperBound)
+  }
+
+  @Test
+  def testConsolidationFetchRateLimitStaticValuePreservedOnUnrelatedDynamicChange(): Unit = {
+    // Static config sets a non-default limit; mirrors operator setting it in server.properties.
+    val cfg = TestUtils.createBrokerConfig(0, port = 9092)
+    cfg.put(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_CONFIG, "2097152")
+    val kafkaConfig = KafkaConfig.fromProps(cfg)
+    val (handler, consolidationQuota) = brokerConfigHandlerWithConsolidationQuota(kafkaConfig)
+    assertEquals(2097152L, consolidationQuota.upperBound)
+
+    // An unrelated dynamic config change must NOT clobber the statically-configured limit.
+    // (Reading via getOrDefault->MAX_VALUE, as the replication throttles do, would break this.)
+    val props = new Properties()
+    props.put(QuotaConfig.LEADER_REPLICATION_THROTTLED_RATE_CONFIG, "500000")
+    handler.processConfigChanges(kafkaConfig.brokerId.toString, props)
+
+    assertEquals(2097152L, consolidationQuota.upperBound)
   }
 }

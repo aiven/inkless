@@ -138,6 +138,7 @@ class ControllerApisTest {
     replicaQuotaManager,
     replicaQuotaManager,
     replicaQuotaManager,
+    replicaQuotaManager,
     Optional.empty())
 
   private val quotasAlwaysThrottleControllerMutations = new QuotaManagers(
@@ -145,6 +146,7 @@ class ControllerApisTest {
     clientQuotaManager,
     clientRequestQuotaManager,
     alwaysThrottlingClientControllerQuotaManager,
+    replicaQuotaManager,
     replicaQuotaManager,
     replicaQuotaManager,
     replicaQuotaManager,

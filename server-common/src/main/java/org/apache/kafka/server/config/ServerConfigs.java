@@ -207,7 +207,8 @@ public class ServerConfigs {
     public static final long DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_DEFAULT = Long.MAX_VALUE;
     public static final String DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_DOC = "The maximum rate in bytes per second " +
         "at which consolidation fetches data from object storage. Limits aggregate bandwidth across all consolidation fetcher threads " +
-        "on the broker. Set to " + Long.MAX_VALUE + " (default) to disable rate limiting.";
+        "on the broker. Set to 0 to pause all consolidation fetches. " +
+        "Set to " + Long.MAX_VALUE + " (default) to disable rate limiting. This config can be updated dynamically.";
 
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG = "classic.remote.storage.force.enable";
     public static final boolean CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT = false;
@@ -300,8 +301,10 @@ public class ServerConfigs {
                 atLeast(1), LOW, DISKLESS_CONSOLIDATION_FETCH_MIN_BYTES_DOC)
             .define(DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_CONFIG, INT, DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_DEFAULT,
                 atLeast(0), LOW, DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_DOC)
+            // atLeast(0): 0 is a valid value (pauses all consolidation fetches), consistent with
+            // leader/follower replication throttle semantics (QuotaConfig.brokerQuotaConfigs).
             .define(DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_CONFIG, LONG, DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_DEFAULT,
-                atLeast(1), LOW, DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_DOC)
+                atLeast(0), LOW, DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG, BOOLEAN, CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT, LOW,
                 CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG, LIST, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DEFAULT,
