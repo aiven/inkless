@@ -169,6 +169,8 @@ class BrokerConfigHandler(private val brokerConfig: KafkaConfig,
     quotaManagers.leader.updateQuota(upperBound(getOrDefault(QuotaConfig.LEADER_REPLICATION_THROTTLED_RATE_CONFIG).toDouble))
     quotaManagers.follower.updateQuota(upperBound(getOrDefault(QuotaConfig.FOLLOWER_REPLICATION_THROTTLED_RATE_CONFIG).toDouble))
     quotaManagers.alterLogDirs.updateQuota(upperBound(getOrDefault(QuotaConfig.REPLICA_ALTER_LOG_DIRS_IO_MAX_BYTES_PER_SECOND_CONFIG).toDouble))
+    quotaManagers.disklessConsolidationFetch.updateQuota(
+      upperBound(brokerConfig.dynamicConfig.currentKafkaConfig.disklessConsolidationFetchRateLimitBytesPerSecond.toDouble))
   }
 }
 
