@@ -19,7 +19,7 @@
 package io.aiven.inkless.consolidation
 
 import kafka.cluster.Partition
-import kafka.server.{InitialFetchState, ReplicaManager}
+import kafka.server.{InitialFetchState, ReplicaManager, ReplicationQuotaManager}
 import kafka.server.metadata.InklessMetadataView
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.logger.StateChangeLogger
@@ -51,7 +51,8 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
                               consolidationMetrics: ConsolidationMetrics,
                               inklessMetadataView: InklessMetadataView,
                               initialFetchOffset: UnifiedLog => Long,
-                              consolidationFetcherManager: ConsolidationFetcherManager) {
+                              consolidationFetcherManager: ConsolidationFetcherManager,
+                              consolidationQuotaManager: ReplicationQuotaManager) {
 
   /**
    * Starts the consolidation fetchers for the given partitions in the parameter. These partitions
@@ -66,6 +67,18 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
       val consolidatingPartitionAndOffsets: mutable.HashMap[TopicPartition, InitialFetchState] =
         initConsolidatingPartitionFetching(consolidatingPartitions)
 
+      // Mark topics throttled BEFORE starting fetchers: addFetcherForPartitions starts the
+      // fetcher threads immediately, and ReplicaFetcherThread only records bytes to the quota
+      // when the partition is already throttled. Marking after would let the first fetch/append
+      // bypass the quota. Unlike classic replication (where throttled replicas are set via topic
+      // config during reassignment), consolidation marks all topics unconditionally — every
+      // consolidating partition's bytes must count toward the dedicated bandwidth quota.
+      //
+      // We never removeThrottle on stop: this follows the classic ReplicaFetcher pattern, where
+      // the topic-keyed throttle map is only cleared via config changes (ConfigHandler), not on
+      // per-partition fetcher removal. Entries are tiny (topic -> List(-1)) and bounded by the
+      // set of topics that have ever consolidated on this broker, so the residue is benign.
+      consolidatingPartitionAndOffsets.keys.map(_.topic).toSet.foreach((topic: String) => consolidationQuotaManager.markThrottled(topic))
       consolidationFetcherManager.addFetcherForPartitions(consolidatingPartitionAndOffsets)
       consolidatingPartitionAndOffsets.keys.foreach(tp => consolidationMetrics.registerPartition(tp))
     }
