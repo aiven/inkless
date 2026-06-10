@@ -1112,8 +1112,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     GroupState.PREPARING_REBALANCE,
                     GroupState.COMPLETING_REBALANCE,
                     GroupState.ASSIGNING,
-                    GroupState.RECONCILING,
-                    GroupState.EMPTY));
+                    GroupState.RECONCILING));
             return Optional.of(getOrCreateDestAdmin().listGroups(options).all()
                     .get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS).stream()
                     .map(GroupListing::groupId)
