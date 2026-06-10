@@ -20,14 +20,15 @@ package io.aiven.inkless.consolidation
 
 import kafka.cluster.Partition
 import kafka.server.metadata.InklessMetadataView
-import kafka.server.{InitialFetchState, ReplicaManager}
+import kafka.server.{InitialFetchState, ReplicaManager, ReplicationQuotaManager}
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.logger.StateChangeLogger
 import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.storage.internals.log.UnifiedLog
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
-import org.mockito.ArgumentMatchers.{anyBoolean, anyLong}
+import org.mockito.ArgumentMatchers.{any, anyBoolean, anyLong}
+import org.mockito.Mockito
 import org.mockito.Mockito._
 
 import java.util.Optional
@@ -41,7 +42,8 @@ class ConsolidationReconcilerTest {
   private def newReconciler(
     metadataView: InklessMetadataView,
     fetcherManager: ConsolidationFetcherManager = mock(classOf[ConsolidationFetcherManager]),
-    initialFetchOffset: UnifiedLog => Long = _.highWatermark
+    initialFetchOffset: UnifiedLog => Long = _.highWatermark,
+    quotaManager: ReplicationQuotaManager = mock(classOf[ReplicationQuotaManager])
   ): ConsolidationReconciler = {
     new ConsolidationReconciler(
       mock(classOf[ReplicaManager]),
@@ -49,7 +51,8 @@ class ConsolidationReconcilerTest {
       mock(classOf[ConsolidationMetrics]),
       metadataView,
       initialFetchOffset,
-      fetcherManager
+      fetcherManager,
+      quotaManager
     )
   }
 
@@ -208,6 +211,24 @@ class ConsolidationReconcilerTest {
     assertTrue(fetchStates.isEmpty)
     verify(partition, never()).truncateTo(anyLong(), anyBoolean())
     verify(fetcherManager, never()).addFailedPartition(topicPartition)
+  }
+
+  @Test
+  def testStartConsolidationFetchersMarksThrottledBeforeStartingFetchers(): Unit = {
+    // The fetcher only records bytes to the quota when the partition is already throttled, and
+    // addFetcherForPartitions starts the threads immediately. Marking must therefore happen first,
+    // otherwise the first fetch/append bypasses the dedicated bandwidth quota.
+    val view = mockMetadataView(classicToDisklessStartOffset = 100L)
+    val fetcherManager = mock(classOf[ConsolidationFetcherManager])
+    val quotaManager = mock(classOf[ReplicationQuotaManager])
+    val (partition, _) = mockPartition(logStartOffset = 0L, logEndOffset = 100L)
+    val reconciler = newReconciler(view, fetcherManager, quotaManager = quotaManager)
+
+    reconciler.startConsolidationFetchers(mutable.HashMap(topicPartition -> partition))
+
+    val inOrder = Mockito.inOrder(quotaManager, fetcherManager)
+    inOrder.verify(quotaManager).markThrottled(topicPartition.topic)
+    inOrder.verify(fetcherManager).addFetcherForPartitions(any())
   }
 
 }
