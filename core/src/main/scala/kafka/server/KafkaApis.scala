@@ -398,7 +398,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setMirrorName(mirrorName)
           .setSourceBootstrap(if (clusterMirrorCoordinator.getSourceBootstrap(mirrorName) != null)
             clusterMirrorCoordinator.getSourceBootstrap(mirrorName) else "")
-          .setSourceClusterId(if (sourceClusterId != null) sourceClusterId.toString else "")
+          .setSourceClusterId(if (sourceClusterId != null) sourceClusterId else "")
           .setTopicCount(clusterMirrorCoordinator.getActiveTopicCount(mirrorName)))
       })
       responseData.setMirrors(mirrors)
