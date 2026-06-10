@@ -930,7 +930,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private void syncGroupOffsets(String mirrorName, ClusterMirrorConfig mirrorConfig) {
         Admin srcAdmin = getOrCreateSourceAdmin(mirrorName);
 
-        Set<String> mirrorTopics = getConfiguredTopics(mirrorName, false);
+        Set<String> mirrorTopics = getConfiguredTopics(mirrorName, false, false);
         if (mirrorTopics.isEmpty()) {
             return;
         }
