@@ -19,6 +19,7 @@ package kafka.server;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.internals.Plugin;
 import org.apache.kafka.common.metrics.Metrics;
+import org.apache.kafka.common.metrics.Quota;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.config.ClientQuotaManagerConfig;
@@ -58,6 +59,7 @@ public class QuotaFactory {
                                 ReplicationQuotaManager leader,
                                 ReplicationQuotaManager follower,
                                 ReplicationQuotaManager alterLogDirs,
+                                ReplicationQuotaManager disklessConsolidationFetch,
                                 Optional<Plugin<ClientQuotaCallback>> clientQuotaCallbackPlugin) {
 
         public void shutdown() {
@@ -66,6 +68,7 @@ public class QuotaFactory {
             request.shutdown();
             controllerMutation.shutdown();
             clientQuotaCallbackPlugin.ifPresent(plugin -> Utils.closeQuietly(plugin, "client quota callback plugin"));
+            // ReplicationQuotaManagers are not closed — they hold no threads or closeable resources.
         }
     }
 
@@ -78,6 +81,11 @@ public class QuotaFactory {
     ) {
         Optional<Plugin<ClientQuotaCallback>> clientQuotaCallbackPlugin = createClientQuotaCallback(cfg, metrics, role);
 
+        ReplicationQuotaManager disklessConsolidationFetch =
+            new ReplicationQuotaManager(replicationConfig(cfg), metrics, QuotaType.DISKLESS_CONSOLIDATION_FETCH, time);
+        disklessConsolidationFetch.updateQuota(
+            new Quota(cfg.disklessConsolidationFetchRateLimitBytesPerSecond(), true));
+
         return new QuotaManagers(
             new ClientQuotaManager(clientConfig(cfg), metrics, QuotaType.FETCH, time, threadNamePrefix, clientQuotaCallbackPlugin),
             new ClientQuotaManager(clientConfig(cfg), metrics, QuotaType.PRODUCE, time, threadNamePrefix, clientQuotaCallbackPlugin),
@@ -86,6 +94,7 @@ public class QuotaFactory {
             new ReplicationQuotaManager(replicationConfig(cfg), metrics, QuotaType.LEADER_REPLICATION, time),
             new ReplicationQuotaManager(replicationConfig(cfg), metrics, QuotaType.FOLLOWER_REPLICATION, time),
             new ReplicationQuotaManager(alterLogDirsReplicationConfig(cfg), metrics, QuotaType.ALTER_LOG_DIRS_REPLICATION, time),
+            disklessConsolidationFetch,
             clientQuotaCallbackPlugin
         );
     }
