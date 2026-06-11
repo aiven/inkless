@@ -2034,6 +2034,12 @@ public class ReplicationControlManager {
             || (electionType == ElectionType.UNCLEAN && partition.hasLeader())) {
             return new ApiError(Errors.ELECTION_NOT_NEEDED);
         }
+        if (electionType == ElectionType.UNCLEAN && hasClassicToDisklessSwitchPending(partition)) {
+            warnSkippingUncleanElectionForPendingSwitch(topic, partitionId);
+            return new ApiError(INVALID_REQUEST,
+                "Cannot perform unclean leader election for partition " + topic + "-" + partitionId +
+                " because it has a pending classic-to-diskless switch.");
+        }
 
         PartitionChangeBuilder.Election election = PartitionChangeBuilder.Election.PREFERRED;
         if (electionType == ElectionType.UNCLEAN) {

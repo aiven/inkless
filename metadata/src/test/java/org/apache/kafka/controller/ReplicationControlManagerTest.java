@@ -6899,6 +6899,59 @@ public class ReplicationControlManagerTest {
                 "Expected no unclean election for partition with pending switch");
         }
 
+        @Test
+        public void testElectLeadersRejectsUncleanElectionForPendingSwitchPartition() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+
+            // Shrink ISR to just [0] by fencing brokers 1 and 2, then unfence them
+            ctx.fenceBrokers(1, 2);
+            ctx.unfenceBrokers(1, 2);
+            PartitionRegistration partitionBefore = ctx.replicationControl.getPartition(fooId, 0);
+            assertEquals(0, partitionBefore.leader);
+            assertEquals(1, partitionBefore.isr.length);
+
+            // Mark the partition as switch pending
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> disklessChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            List<ApiMessageAndVersion> switchRecords =
+                ctx.replicationControl.markClassicToDisklessSwitchStarted(
+                    disklessChanges, Map.of(resource, ApiError.NONE));
+            ctx.replay(switchRecords);
+
+            // Fence the leader to make partition leaderless
+            ctx.fenceBrokers(0);
+            PartitionRegistration partitionAfterFence = ctx.replicationControl.getPartition(fooId, 0);
+            assertFalse(partitionAfterFence.hasLeader());
+
+            // Attempt explicit unclean election via electLeaders API — should be rejected
+            ElectLeadersRequestData request = new ElectLeadersRequestData()
+                .setElectionType(ElectionType.UNCLEAN.value);
+            request.topicPartitions().add(new TopicPartitions()
+                .setTopic("foo")
+                .setPartitions(List.of(0)));
+
+            ControllerResult<ElectLeadersResponseData> result =
+                ctx.replicationControl.electLeaders(request);
+
+            assertEquals(0, result.records().size(),
+                "Expected no election records for partition with pending switch");
+
+            ReplicaElectionResult topicResult = result.response().replicaElectionResults().get(0);
+            assertEquals("foo", topicResult.topic());
+            PartitionResult partitionResult = topicResult.partitionResult().get(0);
+            assertEquals(0, partitionResult.partitionId());
+            assertEquals(Errors.INVALID_REQUEST.code(), partitionResult.errorCode());
+            assertTrue(partitionResult.errorMessage().contains("pending classic-to-diskless switch"),
+                "Expected pending switch message in: " + partitionResult.errorMessage());
+        }
+
     }
 
 }
