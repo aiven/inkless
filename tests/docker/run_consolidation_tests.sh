@@ -55,14 +55,15 @@ die() { echo "$@"; exit 1; }
 ensure_deps
 
 TESTS=(
+# Tier-1 consolidation-specific pipeline test (born-consolidated topic + WAL prune).
+  tests/kafkatest/tests/inkless/consolidation_pipeline_test.py
 #  tests/kafkatest/tests/core/replication_test.py
 #  tests/kafkatest/tests/core/round_trip_fault_test.py
 #  tests/kafkatest/tests/core/produce_bench_test.py::ProduceBenchTest.test_produce_bench
 #  tests/kafkatest/tests/core/consume_bench_test.py
 #  tests/kafkatest/tests/core/get_offset_shell_test.py
-  tests/kafkatest/tests/client/consumer_test.py
+#  tests/kafkatest/tests/client/consumer_test.py
 #  tests/kafkatest/tests/client/compression_test.py
-#  tests/kafkatest/tests/tools/log_compaction_test.py
 #  tests/kafkatest/tests/streams/streams_smoke_test.py
 #  tests/kafkatest/tests/streams/streams_eos_test.py
 #  tests/kafkatest/tests/streams/streams_broker_down_resilience_test.py
