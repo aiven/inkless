@@ -2016,11 +2016,20 @@ class ReplicaManager(val config: KafkaConfig,
     val fetchInfoByTp = fetchInfos.toMap
     supplements.flatMap { case (tp, logEndOffset) =>
       fetchInfoByTp.get(tp).flatMap { pd =>
-        val alreadyRead = Option(logReadResultMap.get(tp)).map(_.info.records.sizeInBytes).getOrElse(0)
+        val readResult = Option(logReadResultMap.get(tp))
+        val alreadyRead = readResult.map(_.info.records.sizeInBytes).getOrElse(0)
         val remainingBytes = Math.max(pd.maxBytes - alreadyRead, 0)
-        if (remainingBytes > 0)
-          Some(tp -> new PartitionData(tp.topicId(), logEndOffset, pd.logStartOffset, remainingBytes, pd.currentLeaderEpoch, pd.lastFetchedEpoch))
-        else
+        if (remainingBytes > 0) {
+          // Start the supplement where the local read left off, not at logEndOffset.
+          // Diskless has the full range so it can serve from any offset. This avoids a gap
+          // when the local read stopped at a segment boundary before reaching logEndOffset.
+          val supplementStartOffset = readResult
+            .map(_.info.records.lastBatch())
+            .filter(_.isPresent)
+            .map(_.get().nextOffset())
+            .getOrElse(logEndOffset)
+          Some(tp -> new PartitionData(tp.topicId(), supplementStartOffset, pd.logStartOffset, remainingBytes, pd.currentLeaderEpoch, pd.lastFetchedEpoch))
+        } else
           None
       }
     }.toSeq

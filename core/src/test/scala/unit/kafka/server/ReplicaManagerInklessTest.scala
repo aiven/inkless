@@ -1809,6 +1809,83 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // When the local read stops at a segment boundary (returning records that end before logEndOffset),
+  // the supplement must start at the next offset after the last local batch, not at logEndOffset.
+  // This ensures contiguous records without a gap.
+  @Test
+  def testBuildConsolidationSupplementFetchInfosStartsAtLastBatchNextOffset(): Unit = {
+    val tp = disklessTopicPartition
+    val logEndOffset = 5000L
+    val supplements = mutable.HashMap(tp -> logEndOffset)
+    // Local records end at offset 1999 (batch with baseOffset=1995, 5 records → lastOffset=1999, nextOffset=2000)
+    val localRecords = MemoryRecords.withRecords(
+      2.toByte, 1995L, Compression.NONE, TimestampType.CREATE_TIME, 123L, 0.toShort, 0, 0, false,
+      new SimpleRecord(0, "a".getBytes()), new SimpleRecord(0, "b".getBytes()),
+      new SimpleRecord(0, "c".getBytes()), new SimpleRecord(0, "d".getBytes()),
+      new SimpleRecord(0, "e".getBytes())
+    )
+    val fetchInfos = Seq(tp -> new PartitionData(tp.topicId(), 1995L, 0L, 1024, Optional.empty()))
+    val logReadResultMap = new util.HashMap[TopicIdPartition, LogReadResult]()
+    logReadResultMap.put(tp, new LogReadResult(
+      new FetchDataInfo(new LogOffsetMetadata(1995L, 0L, 0), localRecords),
+      Optional.empty(), 0L, 0L, logEndOffset, 0L, 0L, OptionalLong.empty(), Errors.NONE
+    ))
+
+    val replicaManager = createReplicaManager(List(tp.topic()))
+    try {
+      val result = replicaManager.buildConsolidationSupplementFetchInfos(supplements, fetchInfos, logReadResultMap)
+      assertEquals(1, result.size)
+      val (_, partitionData) = result.head
+      // Supplement must start at 2000 (nextOffset after last batch), NOT at logEndOffset (5000)
+      assertEquals(2000L, partitionData.fetchOffset,
+        "Supplement must start where local read left off, not at logEndOffset")
+      assertEquals(1024 - localRecords.sizeInBytes, partitionData.maxBytes)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // Simulates a multi-segment local log: the read returns FileRecords from an older segment
+  // (offsets 1995-1999), while logEndOffset is at 5000 (active segment is far ahead).
+  // The supplement must start at 2000 (contiguous with local read), not at 5000 (which would skip segments).
+  @Test
+  def testBuildConsolidationSupplementFetchInfosWithFileRecordsFromOlderSegment(): Unit = {
+    val tp = disklessTopicPartition
+    val logEndOffset = 5000L
+    val supplements = mutable.HashMap(tp -> logEndOffset)
+    // Simulate a read from segment 0 that ends at offset 1999 — as FileRecords, matching production
+    val localMemRecords = MemoryRecords.withRecords(
+      2.toByte, 1995L, Compression.NONE, TimestampType.CREATE_TIME, 123L, 0.toShort, 0, 0, false,
+      new SimpleRecord(0, "seg0-a".getBytes()), new SimpleRecord(0, "seg0-b".getBytes()),
+      new SimpleRecord(0, "seg0-c".getBytes()), new SimpleRecord(0, "seg0-d".getBytes()),
+      new SimpleRecord(0, "seg0-e".getBytes())
+    )
+    var localFileRecords: FileRecords = null
+    val fetchInfos = Seq(tp -> new PartitionData(tp.topicId(), 1995L, 0L, 1024 * 1024, Optional.empty()))
+    val logReadResultMap = new util.HashMap[TopicIdPartition, LogReadResult]()
+
+    val replicaManager = createReplicaManager(List(tp.topic()))
+    try {
+      localFileRecords = memoryRecordsToFileRecords(localMemRecords)
+      logReadResultMap.put(tp, new LogReadResult(
+        new FetchDataInfo(new LogOffsetMetadata(1995L, 0L, 0), localFileRecords),
+        Optional.empty(), 0L, 0L, logEndOffset, 0L, 0L, OptionalLong.empty(), Errors.NONE
+      ))
+
+      val result = replicaManager.buildConsolidationSupplementFetchInfos(supplements, fetchInfos, logReadResultMap)
+      assertEquals(1, result.size)
+      val (_, partitionData) = result.head
+      // Must start at 2000 (next offset after the last batch in the FileRecords), not 5000
+      assertEquals(2000L, partitionData.fetchOffset,
+        "Supplement must start where the FileRecords segment read left off")
+      // Budget: maxBytes (1MB) minus the FileRecords size
+      assertEquals(1024 * 1024 - localFileRecords.sizeInBytes, partitionData.maxBytes)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      if (localFileRecords != null) localFileRecords.close()
+    }
+  }
+
   // --- mergeConsolidationSupplement unit tests ---
 
   @Test
