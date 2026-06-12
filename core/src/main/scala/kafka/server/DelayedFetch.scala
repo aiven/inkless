@@ -247,7 +247,14 @@ class DelayedFetch(
       val classicParams = replicaManager.fetchParamsWithNewMaxBytes(params, classicPercentage)
       val results = replicaManager.readFromLog(classicParams, classicFetchInfos, quota, readFromPurgatory = true)
       val resultMap = new util.HashMap[TopicIdPartition, LogReadResult]()
-      results.foreach { case (tp, r) => resultMap.put(tp, r) }
+      var consolidationLocalBytes = 0L
+      results.foreach { case (tp, r) =>
+        resultMap.put(tp, r)
+        if (consolidatingSupplements.contains(tp)) {
+          consolidationLocalBytes += r.info.records.sizeInBytes
+        }
+      }
+      if (consolidationLocalBytes > 0) replicaManager.recordConsolidationLocalBytes(consolidationLocalBytes)
       (results, resultMap)
     } else (Seq.empty, new util.HashMap[TopicIdPartition, LogReadResult]())
 
@@ -262,10 +269,15 @@ class DelayedFetch(
     val emptySupplementMap: Map[TopicIdPartition, FetchPartitionData] = Map.empty
     val supplementFuture: CompletableFuture[Map[TopicIdPartition, FetchPartitionData]] =
       if (supplementFetchInfos.nonEmpty) {
+        replicaManager.recordConsolidationSupplementIssued()
         val supplementParams = replicaManager.fetchParamsWithNewMaxBytes(
           params, supplementFetchInfos.size.toFloat / totalRequestsSize)
         replicaManager.fetchDisklessMessages(supplementParams, supplementFetchInfos)
-          .thenApply[Map[TopicIdPartition, FetchPartitionData]](_.toMap)
+          .thenApply[Map[TopicIdPartition, FetchPartitionData]] { data =>
+            val dataMap = data.toMap
+            replicaManager.recordConsolidationSupplementBytes(replicaManager.successfulSupplementBytes(dataMap))
+            dataMap
+          }
           .exceptionally((e: Throwable) => {
             logger.warn("Failed to fetch diskless supplement for consolidating partitions in delayed fetch, returning local data only", e)
             emptySupplementMap

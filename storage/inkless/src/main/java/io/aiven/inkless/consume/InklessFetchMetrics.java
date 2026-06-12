@@ -115,6 +115,15 @@ public class InklessFetchMetrics {
     private static final String HEDGE_WON_RATE = "HedgeWonRate";
     private static final String HEDGE_WON_RATE_DOC = "Rate of hedge requests that completed before the original request per second";
 
+    private static final String DISKLESS_BYTES_OUT_PER_SEC = "DisklessBytesOutPerSec";
+    private static final String DISKLESS_BYTES_OUT_PER_SEC_DOC = "Total bytes served to consumers via the diskless fetch path per second";
+    private static final String CACHE_HIT_BYTES_PER_SEC = "CacheHitBytesPerSec";
+    private static final String CACHE_HIT_BYTES_PER_SEC_DOC = "Bytes served from object cache without hitting remote storage per second";
+    private static final String STORAGE_BYTES_IN_PER_SEC = "StorageBytesInPerSec";
+    private static final String STORAGE_BYTES_IN_PER_SEC_DOC = "Bytes downloaded from remote storage on the hot path (cache misses) per second. Counts the primary (cache-populating) download only; a hedged retry's second download is not counted here.";
+    private static final String STORAGE_LAGGING_BYTES_IN_PER_SEC = "StorageLaggingBytesInPerSec";
+    private static final String STORAGE_LAGGING_BYTES_IN_PER_SEC_DOC = "Bytes downloaded from remote storage on the cold path (lagging consumers) per second";
+
     /**
      * This method returns a list of all the metric name templates for the InklessFetchMetrics class.
      * This is used for documentation purposes only.
@@ -153,7 +162,11 @@ public class InklessFetchMetrics {
             new MetricNameTemplate(HEDGE_REQUEST_RATE, GROUP, HEDGE_REQUEST_RATE_DOC),
             new MetricNameTemplate(HEDGE_TTFB_TRIGGERED_RATE, GROUP, HEDGE_TTFB_TRIGGERED_RATE_DOC),
             new MetricNameTemplate(HEDGE_TOTAL_TIME_TRIGGERED_RATE, GROUP, HEDGE_TOTAL_TIME_TRIGGERED_RATE_DOC),
-            new MetricNameTemplate(HEDGE_WON_RATE, GROUP, HEDGE_WON_RATE_DOC)
+            new MetricNameTemplate(HEDGE_WON_RATE, GROUP, HEDGE_WON_RATE_DOC),
+            new MetricNameTemplate(DISKLESS_BYTES_OUT_PER_SEC, GROUP, DISKLESS_BYTES_OUT_PER_SEC_DOC),
+            new MetricNameTemplate(CACHE_HIT_BYTES_PER_SEC, GROUP, CACHE_HIT_BYTES_PER_SEC_DOC),
+            new MetricNameTemplate(STORAGE_BYTES_IN_PER_SEC, GROUP, STORAGE_BYTES_IN_PER_SEC_DOC),
+            new MetricNameTemplate(STORAGE_LAGGING_BYTES_IN_PER_SEC, GROUP, STORAGE_LAGGING_BYTES_IN_PER_SEC_DOC)
         );
     }
 
@@ -193,6 +206,10 @@ public class InklessFetchMetrics {
     private final Meter hedgeTtfbTriggeredRate;
     private final Meter hedgeTotalTimeTriggeredRate;
     private final Meter hedgeWonRate;
+    private final Meter disklessBytesOutPerSec;
+    private final Meter cacheHitBytesPerSec;
+    private final Meter storageBytesInPerSec;
+    private final Meter storageLaggingBytesInPerSec;
 
     public InklessFetchMetrics(final Time time, final ObjectCache cache) {
         this(time, cache, new KafkaMetricsGroup(InklessFetchMetrics.class.getPackageName(), InklessFetchMetrics.class.getSimpleName()));
@@ -234,6 +251,10 @@ public class InklessFetchMetrics {
         hedgeTtfbTriggeredRate = metricsGroup.newMeter(HEDGE_TTFB_TRIGGERED_RATE, "hedges", TimeUnit.SECONDS, Map.of());
         hedgeTotalTimeTriggeredRate = metricsGroup.newMeter(HEDGE_TOTAL_TIME_TRIGGERED_RATE, "hedges", TimeUnit.SECONDS, Map.of());
         hedgeWonRate = metricsGroup.newMeter(HEDGE_WON_RATE, "wins", TimeUnit.SECONDS, Map.of());
+        disklessBytesOutPerSec = metricsGroup.newMeter(DISKLESS_BYTES_OUT_PER_SEC, "bytes", TimeUnit.SECONDS, Map.of());
+        cacheHitBytesPerSec = metricsGroup.newMeter(CACHE_HIT_BYTES_PER_SEC, "bytes", TimeUnit.SECONDS, Map.of());
+        storageBytesInPerSec = metricsGroup.newMeter(STORAGE_BYTES_IN_PER_SEC, "bytes", TimeUnit.SECONDS, Map.of());
+        storageLaggingBytesInPerSec = metricsGroup.newMeter(STORAGE_LAGGING_BYTES_IN_PER_SEC, "bytes", TimeUnit.SECONDS, Map.of());
     }
 
     public void fetchCompleted(Instant startAt) {
@@ -331,6 +352,10 @@ public class InklessFetchMetrics {
         metricsGroup.removeMetric(HEDGE_TTFB_TRIGGERED_RATE);
         metricsGroup.removeMetric(HEDGE_TOTAL_TIME_TRIGGERED_RATE);
         metricsGroup.removeMetric(HEDGE_WON_RATE);
+        metricsGroup.removeMetric(DISKLESS_BYTES_OUT_PER_SEC);
+        metricsGroup.removeMetric(CACHE_HIT_BYTES_PER_SEC);
+        metricsGroup.removeMetric(STORAGE_BYTES_IN_PER_SEC);
+        metricsGroup.removeMetric(STORAGE_LAGGING_BYTES_IN_PER_SEC);
     }
 
     public void fetchStarted(int partitionSize) {
@@ -470,5 +495,21 @@ public class InklessFetchMetrics {
 
     public void recordHedgeWon() {
         hedgeWonRate.mark();
+    }
+
+    public void recordDisklessBytesOut(long bytes) {
+        disklessBytesOutPerSec.mark(bytes);
+    }
+
+    public void recordCacheHitBytes(long bytes) {
+        cacheHitBytesPerSec.mark(bytes);
+    }
+
+    public void recordStorageBytesIn(long bytes) {
+        storageBytesInPerSec.mark(bytes);
+    }
+
+    public void recordStorageLaggingBytesIn(long bytes) {
+        storageLaggingBytesInPerSec.mark(bytes);
     }
 }

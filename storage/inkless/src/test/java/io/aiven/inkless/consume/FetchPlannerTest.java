@@ -506,6 +506,12 @@ public class FetchPlannerTest {
 
                 // Verify remote fetch was NOT called (cache hit)
                 verify(fetcher, never()).fetch(any(ObjectKey.class), any(ByteRange.class));
+
+                // Verify throughput metrics: cache hit records bytes out + cache hit, no storage bytes in
+                verify(metrics).recordDisklessBytesOut(expectedData.length);
+                verify(metrics).recordCacheHitBytes(expectedData.length);
+                verify(metrics, never()).recordStorageBytesIn(any(Long.class));
+                verify(metrics, never()).recordStorageLaggingBytesIn(any(Long.class));
             }
         }
 
@@ -819,6 +825,12 @@ public class FetchPlannerTest {
                     verify(metrics).recordRecentDataRequest();
                     verify(metrics, never()).recordLaggingConsumerRequest();
                     verify(metrics, never()).recordRateLimitWaitTime(any(Long.class));
+
+                    // Verify throughput metrics: cache miss records storage bytes in + bytes out, no cache hit
+                    verify(metrics).recordStorageBytesIn(expectedData.length);
+                    verify(metrics).recordDisklessBytesOut(expectedData.length);
+                    verify(metrics, never()).recordCacheHitBytes(any(Long.class));
+                    verify(metrics, never()).recordStorageLaggingBytesIn(any(Long.class));
                 }
             }
 
@@ -902,6 +914,12 @@ public class FetchPlannerTest {
                     verify(metrics).recordLaggingConsumerRequest();
                     // Rate limit wait time should be recorded (including zero-wait cases for accurate histogram)
                     verify(metrics).recordRateLimitWaitTime(any(Long.class));
+
+                    // Verify throughput metrics: cold path records lagging storage bytes + bytes out, no hot path
+                    verify(metrics).recordStorageLaggingBytesIn(expectedData.length);
+                    verify(metrics).recordDisklessBytesOut(expectedData.length);
+                    verify(metrics, never()).recordStorageBytesIn(any(Long.class));
+                    verify(metrics, never()).recordCacheHitBytes(any(Long.class));
                 }
             }
 

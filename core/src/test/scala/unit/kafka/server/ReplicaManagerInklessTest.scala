@@ -62,6 +62,7 @@ import org.apache.kafka.server.purgatory.{DelayedDeleteRecords, DelayedOperation
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
 import org.apache.kafka.server.util.{MockScheduler, MockTime}
 import org.apache.kafka.server.util.timer.MockTimer
+import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.apache.kafka.storage.internals.checkpoint.LazyOffsetCheckpoints
 import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadResult, OffsetResultHolder, UnifiedLog}
@@ -1766,6 +1767,12 @@ class ReplicaManagerInklessTest {
     TestUtils.waitUntilTrue(() => responseData != null, "Expected fetch response", 10_000)
   }
 
+  private def yammerMeterCount(name: String): Long = {
+    KafkaYammerMetrics.defaultRegistry.allMetrics.asScala
+      .collectFirst { case (n, m: com.yammer.metrics.core.Meter) if n.getMBeanName.endsWith(name) => m.count() }
+      .getOrElse(0L)
+  }
+
   @Test
   def testFetchConsolidatingDisklessBelowLocalLeoReadsFromUnifiedLogWhenManagedReplicasEnabled(): Unit = {
     val fetchHandlerCtor = mockFetchHandler(Map.empty)
@@ -2236,18 +2243,30 @@ class ReplicaManagerInklessTest {
       val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
         responseData = response.toMap
       }
+      // Baselines: Yammer meters live in a shared registry, so assert on deltas, not absolute counts.
+      val localBytesBefore = yammerMeterCount("ConsolidationLocalBytesPerSec")
+      val supplementRateBefore = yammerMeterCount("ConsolidationSupplementRate")
       replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
 
       // No diskless data to supplement -> minBytes unmet -> parked in the purgatory, not yet responded.
       assertEquals(1, fetchPurgatory.watched(),
         "Fetch must be parked in the delayed-fetch purgatory when the supplement yields no data")
       assertNull(responseData, "Response must not be produced until maxWaitMs elapses")
+      // The synchronous read that then parks must not record any consolidation metrics: the
+      // DelayedFetch re-read/re-supplement records them, so a sync mark here would double-count.
+      assertEquals(localBytesBefore, yammerMeterCount("ConsolidationLocalBytesPerSec"),
+        "Sync read must not record local bytes when parking")
+      assertEquals(supplementRateBefore, yammerMeterCount("ConsolidationSupplementRate"),
+        "Sync read must not record a supplement issue when parking")
 
       // Purgatory purges lazily — don't assert watched()==0 after completion.
       timer.advanceClock(maxWaitMs + 1)
       waitForFetchResponse(responseData)
       assertEquals(1, responseData.size)
       assertEquals(Errors.NONE, responseData(disklessTopicPartition).error)
+      // DelayedFetch issued exactly one supplement on completion (not a second on top of a sync mark).
+      assertEquals(supplementRateBefore + 1L, yammerMeterCount("ConsolidationSupplementRate"),
+        "Supplement must be recorded exactly once (by DelayedFetch), not double-counted with the sync path")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
       fetchHandlerCtor.close()
@@ -2403,6 +2422,135 @@ class ReplicaManagerInklessTest {
     } finally {
       replicaManager.shutdown(checkpointHW = false)
       fetchHandlerCtor.close()
+    }
+  }
+
+  // ConsolidationLocalBytesPerSec must NOT be marked by the synchronous read when the request parks:
+  // DelayedFetch re-reads the local log and records the local bytes there, so marking in the
+  // synchronous path as well would double-count. When the request parks, the sync count must be 0.
+  @Test
+  def testFetchConsolidatingLocalBytesNotRecordedWhenRequestParks(): Unit = {
+    // Supplement returns an error so its bytes do not satisfy minBytes -> the request parks.
+    val supplementRecords = MemoryRecords.withRecords(
+      2.toByte, 100L, Compression.NONE, TimestampType.CREATE_TIME, 456L, 0.toShort, 0, 0, false, new SimpleRecord(0, "error-data".getBytes())
+    )
+    val disklessResponse = Map(disklessTopicPartition ->
+      new FetchPartitionData(Errors.KAFKA_STORAGE_ERROR, 500L, 0L, supplementRecords,
+        Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false)
+    )
+    val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+    val cp = mock(classOf[ControlPlane])
+    val timer = new MockTimer(time)
+    val fetchPurgatory = new DelayedOperationPurgatory[DelayedFetch]("Fetch", timer, 0, false)
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      delayedFetchPurgatory = Some(fetchPurgatory),
+    ))
+    var localFileRecords: FileRecords = null
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      val mockPartition = mock(classOf[Partition])
+      val mockLog = mock(classOf[UnifiedLog])
+      when(mockLog.logEndOffset).thenReturn(100L)
+      when(mockPartition.log).thenReturn(Some(mockLog))
+      val endOffsetMetadata = new LogOffsetMetadata(100L, 0L, 0)
+      when(mockPartition.fetchOffsetSnapshot(any(), any()))
+        .thenReturn(new LogOffsetSnapshot(0L, endOffsetMetadata, endOffsetMetadata, endOffsetMetadata))
+      doReturn(Right(mockPartition)).when(replicaManager)
+        .getPartitionOrError(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+      doReturn(mockPartition).when(replicaManager)
+        .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+
+      // Non-empty local read (below minBytes) for the consolidating partition: the buggy sync path
+      // would mark these bytes before parking.
+      localFileRecords = memoryRecordsToFileRecords(RECORDS_AT_SEAL)
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(99L, 0L, 0), localFileRecords),
+          Optional.empty(), 100L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+        5000L,
+        RECORDS.sizeInBytes + 1, // minBytes > local records size to trigger supplement
+        1024 * 1024,
+        FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      val localBytesBefore = yammerMeterCount("ConsolidationLocalBytesPerSec")
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA,
+        (_: Seq[(TopicIdPartition, FetchPartitionData)]) => {})
+
+      assertEquals(1, fetchPurgatory.watched(), "Fetch must park (supplement error, minBytes unmet)")
+      assertEquals(localBytesBefore, yammerMeterCount("ConsolidationLocalBytesPerSec"),
+        "Sync read must not record local bytes when parking; DelayedFetch records them on completion")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+      if (localFileRecords != null) localFileRecords.close()
+    }
+  }
+
+  // When a consolidating fetch is served synchronously (enough local bytes, no supplement needed),
+  // ConsolidationLocalBytesPerSec is marked exactly once with the local-log bytes read.
+  @Test
+  def testFetchConsolidatingLocalBytesRecordedOnceOnImmediateResponse(): Unit = {
+    val cp = mock(classOf[ControlPlane])
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    ))
+    var localFileRecords: FileRecords = null
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 100L)
+
+      localFileRecords = memoryRecordsToFileRecords(RECORDS_AT_SEAL)
+      val localBytes = localFileRecords.sizeInBytes.toLong
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(99L, 0L, 0), localFileRecords),
+          Optional.empty(), 100L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      // minBytes satisfied by the local read alone -> respond immediately, no supplement, no parking.
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+        5000L,
+        1, // minBytes met by local read
+        1024 * 1024,
+        FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val localBytesBefore = yammerMeterCount("ConsolidationLocalBytesPerSec")
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA,
+        (response: Seq[(TopicIdPartition, FetchPartitionData)]) => responseData = response.toMap)
+
+      waitForFetchResponse(responseData)
+      assertEquals(localBytesBefore + localBytes, yammerMeterCount("ConsolidationLocalBytesPerSec"),
+        "Immediate response must record the local-log bytes exactly once")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      if (localFileRecords != null) localFileRecords.close()
     }
   }
 

@@ -261,9 +261,24 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
             final AtomicBoolean firstByteReceived = new AtomicBoolean(false);
             final CompletableFuture<FileExtent> primary = cache.computeIfAbsent(
                 request.toCacheKey(),
-                k -> fetchFileExtent(objectFetcher, request, firstByteReceived),
+                k -> {
+                    final FileExtent fileExtent = fetchFileExtent(objectFetcher, request, firstByteReceived);
+                    metrics.recordStorageBytesIn(fileExtent.data().length);
+                    return fileExtent;
+                },
                 fetchDataExecutor
             );
+            // A true cache hit returns an already-completed future; the loader runs asynchronously on
+            // fetchDataExecutor, so a cache miss (whether this caller ran the loader or coalesced onto an
+            // in-flight load) is never done at this point. Deciding the hit from isDone() here avoids
+            // counting a coalesced in-flight miss as cache-hit bytes.
+            final boolean alreadyCached = primary.isDone();
+            primary.thenAccept(fileExtent -> {
+                metrics.recordDisklessBytesOut(fileExtent.data().length);
+                if (alreadyCached) {
+                    metrics.recordCacheHitBytes(fileExtent.data().length);
+                }
+            });
             // Hot path: no rate limiting, timers start immediately (completedFuture runs thenRun inline).
             return withHedge(primary, objectFetcher, request, fetchDataExecutor, firstByteReceived,
                 CompletableFuture.completedFuture(null));
@@ -315,7 +330,10 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                         // Signal that rate limiting is done and the fetch is starting.
                         // Hedge timers begin counting from this point.
                         fetchStarted.complete(null);
-                        return fetchFileExtent(laggingObjectFetcher, request, firstByteReceived);
+                        final FileExtent fileExtent = fetchFileExtent(laggingObjectFetcher, request, firstByteReceived);
+                        metrics.recordStorageLaggingBytesIn(fileExtent.data().length);
+                        metrics.recordDisklessBytesOut(fileExtent.data().length);
+                        return fileExtent;
                     },
                     laggingFetchDataExecutor
                 ).whenComplete((result, throwable) -> {
