@@ -1580,6 +1580,76 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // When the consumer's fetch offset is below localLogStartOffset (data moved to tiered storage),
+  // the supplement must NOT be triggered — the read will route to RemoteLogManager and the
+  // supplement data would be discarded by processRemoteFetches anyway.
+  @Test
+  def testFetchConsolidatingSkipsSupplementWhenOffsetInTieredStorageRange(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val cp = mock(classOf[ControlPlane])
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      // Local log: logEndOffset=500, localLogStartOffset=200 (offsets 0-199 are in tiered storage)
+      val mockPartition = mock(classOf[Partition])
+      val mockLog = mock(classOf[UnifiedLog])
+      when(mockLog.logEndOffset).thenReturn(500L)
+      when(mockLog.localLogStartOffset).thenReturn(200L)
+      when(mockPartition.log).thenReturn(Some(mockLog))
+      val endOffsetMetadata = new LogOffsetMetadata(500L, 0L, 0)
+      when(mockPartition.fetchOffsetSnapshot(any(), any()))
+        .thenReturn(new LogOffsetSnapshot(0L, endOffsetMetadata, endOffsetMetadata, endOffsetMetadata))
+      doReturn(Right(mockPartition)).when(replicaManager)
+        .getPartitionOrError(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+      doReturn(mockPartition).when(replicaManager)
+        .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+
+      // readFromLog returns empty records (simulating the OffsetOutOfRange -> tiered path)
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), MemoryRecords.EMPTY),
+          Optional.empty(), 500L, 0L, 500L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      // Fetch at offset 50, which is below localLogStartOffset (200)
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+        100L, // short maxWaitMs so the purgatory expires quickly
+        1024, // minBytes > 0 to trigger supplement logic
+        1024 * 1024,
+        FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+      }
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      waitForFetchResponse(responseData)
+      assertEquals(1, responseData.size)
+      // The diskless fetch handler must NOT have been called — supplement was skipped
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+      // readFromLog is called at least once (inline), possibly again from DelayedFetch.onComplete
+      verify(replicaManager, atLeastOnce()).readFromLog(any(), any(), any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
   // Mixed fetch: consolidating (local below minBytes) + pure-diskless + classic in one request.
   // The consolidating partition gets a synchronous supplement; the pure-diskless partition goes
   // through the normal delayed path; the classic partition is served from the local log.

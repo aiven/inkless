@@ -2129,7 +2129,11 @@ class ReplicaManager(val config: KafkaConfig,
               if (fetchPartitionData.fetchOffset < logEndOffset) {
                 // Local log has data for this offset range — serve from local, track for diskless supplement
                 shouldReadFromUnifiedLog = true
-                if (inklessSharedState.isDefined)
+                // Skip supplement tracking when the fetch offset falls in the tiered-storage range
+                // (below localLogStartOffset). The read will route to RemoteLogManager and the
+                // supplement data would be discarded by processRemoteFetches anyway.
+                val localLogStartOffset = partition.log.map(_.localLogStartOffset).getOrElse(0L)
+                if (inklessSharedState.isDefined && fetchPartitionData.fetchOffset >= localLogStartOffset)
                   consolidatingLocalFetchSupplements += (tp -> logEndOffset)
               }
               // else: consumer is at or beyond consolidation frontier, diskless-only
