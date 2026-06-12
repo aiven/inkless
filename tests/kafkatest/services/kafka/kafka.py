@@ -207,7 +207,8 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
                  dynamicRaftQuorum=False,
                  use_transactions_v2=False,
                  use_share_groups=None,
-                 use_streams_groups=False
+                 use_streams_groups=False,
+                 consolidation=None
                  ):
         """
         :param context: test context
@@ -299,6 +300,14 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         self.use_transactions_v2 = use_transactions_v2
         self.use_share_groups = use_share_groups
         self.use_streams_groups = use_streams_groups
+        # Enable inkless consolidation (diskless + remote tiering) for this
+        # service. When None, fall back to the run-wide `--globals consolidation`
+        # flag so existing global-driven runs keep working. Setting it
+        # explicitly per-test lets consolidating and non-consolidating clusters
+        # coexist in a single ducktape session (e.g. the classic->diskless
+        # switch tests, which require the classic default, alongside the
+        # consolidation tests).
+        self.consolidation = consolidation
 
         # Set consumer_group_migration_policy based on context and arguments.
         if consumer_group_migration_policy is None:
@@ -358,7 +367,8 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
                     extra_kafka_opts=extra_kafka_opts, tls_version=tls_version,
                     isolated_kafka=self, allow_zk_with_kraft=self.allow_zk_with_kraft,
                     server_prop_overrides=server_prop_overrides, dynamicRaftQuorum=self.dynamicRaftQuorum,
-                    use_streams_groups=self.use_streams_groups
+                    use_streams_groups=self.use_streams_groups,
+                    consolidation=consolidation
                 )
                 self.controller_quorum = self.isolated_controller_quorum
 
@@ -754,7 +764,9 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         config_template = self.render('kafka.properties', node=node, broker_id=self.idx(node),
                                       security_config=self.security_config, num_nodes=self.num_nodes,
                                       listener_security_config=self.listener_security_config,
-                                      use_share_groups=self.use_share_groups)
+                                      use_share_groups=self.use_share_groups,
+                                      consolidation=(self.consolidation if self.consolidation is not None
+                                                     else self.context.globals.get("consolidation", False)))
 
         configs = dict( l.rstrip().split('=', 1) for l in config_template.split('\n')
                         if not l.startswith("#") and "=" in l )
