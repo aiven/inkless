@@ -65,3 +65,5 @@ __pycache__
 _data/
 
 .inkless-sync/
+
+core/data/
