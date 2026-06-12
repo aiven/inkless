@@ -47,6 +47,7 @@ class DelayedFetch(
   params: FetchParams,
   classicFetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus],
   disklessFetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus] = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
+  consolidatingSupplements: Map[TopicIdPartition, Long] = Map.empty,
   replicaManager: ReplicaManager,
   quota: ReplicaQuota,
   maxWaitMs: Option[Long] = None,
@@ -250,33 +251,13 @@ class DelayedFetch(
       (results, resultMap)
     } else (Seq.empty, new util.HashMap[TopicIdPartition, LogReadResult]())
 
-    // Identify consolidating partitions that still have budget left after the local read and
-    // fire their supplement fetch concurrently with the pure-diskless fetch. Both futures are
-    // independent so running them in parallel keeps latency equal to the slower of the two.
-    // Guards like maxWaitMs>0 and !hasPreferredReadReplica are unnecessary here: by the time
-    // onComplete fires, those conditions were already true (maxWaitMs was positive to park,
-    // preferredReadReplica triggers immediate response and never parks).
-    val consolidatingSupplements = {
-      val supplements = new mutable.HashMap[TopicIdPartition, Long]()
-      if (!params.isFromFollower) {
-        classicFetchPartitionStatus.asScala.foreach { case (tp, status) =>
-          if (replicaManager.inklessMetadataView().isConsolidatingDisklessTopic(tp.topic)) {
-            val readResult = logReadResultMap.get(tp)
-            if (readResult != null && readResult.error == Errors.NONE) {
-              replicaManager.getPartitionOrError(tp.topicPartition).foreach { partition =>
-                partition.log.foreach { log =>
-                  if (status.startOffsetMetadata.messageOffset < log.logEndOffset)
-                    supplements.put(tp, log.logEndOffset)
-                }
-              }
-            }
-          }
-        }
-      }
-      supplements
-    }
-    val supplementFetchInfos = replicaManager.buildConsolidationSupplementFetchInfos(
-      consolidatingSupplements, classicFetchInfos.toSeq, logReadResultMap)
+    // Supplement consolidating partitions whose local read has remaining byte budget.
+    // consolidatingSupplements is passed from fetchMessages (identified at routing time),
+    // so no per-partition metadata lookups are needed here.
+    val supplementFetchInfos =
+      if (consolidatingSupplements.nonEmpty)
+        replicaManager.buildConsolidationSupplementFetchInfos(consolidatingSupplements, classicFetchInfos.toSeq, logReadResultMap)
+      else Seq.empty
 
     val emptySupplementMap: Map[TopicIdPartition, FetchPartitionData] = Map.empty
     val supplementFuture: CompletableFuture[Map[TopicIdPartition, FetchPartitionData]] =

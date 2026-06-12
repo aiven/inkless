@@ -17,11 +17,10 @@
 package kafka.server
 
 import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, FindBatchRequest, FindBatchResponse}
-import kafka.server.metadata.InklessMetadataView
 import kafka.utils.TestUtils
 
 import java.util.{Collections, Optional, OptionalInt, OptionalLong}
-import scala.collection.{Seq, mutable}
+import scala.collection.Seq
 import kafka.cluster.Partition
 import org.apache.kafka.common.{TopicIdPartition, Uuid}
 import org.apache.kafka.common.errors.{FencedLeaderEpochException, NotLeaderOrFollowerException}
@@ -30,12 +29,12 @@ import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record.{MemoryRecords, TimestampType}
 import org.apache.kafka.common.requests.FetchRequest
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
-import org.apache.kafka.storage.internals.log.{FetchDataInfo, FetchPartitionStatus, LogOffsetMetadata, LogOffsetSnapshot, LogReadResult, UnifiedLog}
+import org.apache.kafka.storage.internals.log.{FetchDataInfo, FetchPartitionStatus, LogOffsetMetadata, LogOffsetSnapshot, LogReadResult}
 import org.junit.jupiter.api.{BeforeEach, Nested, Test}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.mockito.ArgumentMatchers.{any, anyFloat, anyInt, anyLong, argThat}
+import org.mockito.ArgumentMatchers.{any, anyFloat, anyInt, anyLong}
 import org.mockito.Mockito.{mock, never, times, verify, when}
 
 import java.util.concurrent.CompletableFuture
@@ -46,12 +45,9 @@ class DelayedFetchTest {
   private val maxBytes = 1024
   private val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
   private val replicaQuota: ReplicaQuota = mock(classOf[ReplicaQuota])
-  private val inklessMetadataView: InklessMetadataView = mock(classOf[InklessMetadataView])
 
   @BeforeEach
   def setUp(): Unit = {
-    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
-    when(inklessMetadataView.isConsolidatingDisklessTopic(any())).thenReturn(false)
     when(replicaManager.buildConsolidationSupplementFetchInfos(any(), any(), any())).thenReturn(Seq.empty)
   }
 
@@ -701,19 +697,9 @@ class DelayedFetchTest {
         disklessFetchPartitionStatus = disklessStatusMap,
         replicaManager = replicaManager,
         quota = replicaQuota,
+        consolidatingSupplements = Map(consolidatingTp -> logEndOffset),
         responseCallback = callback
       )
-
-      // Stub inklessMetadataView for the consolidating partition
-      when(inklessMetadataView.isConsolidatingDisklessTopic(consolidatingTp.topic)).thenReturn(true)
-
-      // Stub getPartitionOrError to return a partition with a log
-      val partition = mock(classOf[Partition])
-      val unifiedLog = mock(classOf[UnifiedLog])
-      when(unifiedLog.logEndOffset).thenReturn(logEndOffset)
-      when(partition.log).thenReturn(Some(unifiedLog))
-      when(replicaManager.getPartitionOrError(consolidatingTp.topicPartition))
-        .thenReturn(Right(partition))
 
       // Stub readFromLog to return a small local read (below minBytes)
       val localReadResult = new LogReadResult(
@@ -797,15 +783,9 @@ class DelayedFetchTest {
         classicFetchPartitionStatus = classicStatusMap,
         replicaManager = replicaManager,
         quota = replicaQuota,
+        consolidatingSupplements = Map(consolidatingTp -> logEndOffset),
         responseCallback = responses => callbackResult = Some(responses)
       )
-
-      when(inklessMetadataView.isConsolidatingDisklessTopic(consolidatingTp.topic)).thenReturn(true)
-      val partition = mock(classOf[Partition])
-      val unifiedLog = mock(classOf[UnifiedLog])
-      when(unifiedLog.logEndOffset).thenReturn(logEndOffset)
-      when(partition.log).thenReturn(Some(unifiedLog))
-      when(replicaManager.getPartitionOrError(consolidatingTp.topicPartition)).thenReturn(Right(partition))
 
       // Local read returns an error — supplement must not be issued for this partition
       val errorReadResult = new LogReadResult(
@@ -819,10 +799,8 @@ class DelayedFetchTest {
       delayedFetch.forceComplete()
 
       TestUtils.waitUntilTrue(() => callbackResult.isDefined, "responseCallback should have been called")
-      // buildConsolidationSupplementFetchInfos must be called with an empty supplements map —
-      // the erroring partition must have been filtered out before building the supplement request
-      verify(replicaManager, times(1)).buildConsolidationSupplementFetchInfos(
-        argThat((m: mutable.HashMap[TopicIdPartition, Long]) => m.isEmpty), any(), any())
+      // The erroring partition must be filtered out — supplement fetch and merge must not fire.
+      verify(replicaManager, never()).mergeConsolidationSupplement(any(), any(), any())
     }
 
     // When the local read for a consolidating partition returns an error, the supplement must not
@@ -849,15 +827,9 @@ class DelayedFetchTest {
         classicFetchPartitionStatus = classicStatusMap,
         replicaManager = replicaManager,
         quota = replicaQuota,
+        consolidatingSupplements = Map(consolidatingTp -> logEndOffset),
         responseCallback = responses => callbackResult = Some(responses)
       )
-
-      when(inklessMetadataView.isConsolidatingDisklessTopic(consolidatingTp.topic)).thenReturn(true)
-      val partition = mock(classOf[Partition])
-      val unifiedLog = mock(classOf[UnifiedLog])
-      when(unifiedLog.logEndOffset).thenReturn(logEndOffset)
-      when(partition.log).thenReturn(Some(unifiedLog))
-      when(replicaManager.getPartitionOrError(consolidatingTp.topicPartition)).thenReturn(Right(partition))
 
       // Local read returns an error
       val errorReadResult = new LogReadResult(

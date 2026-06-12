@@ -2017,9 +2017,10 @@ class ReplicaManager(val config: KafkaConfig,
     supplements.flatMap { case (tp, logEndOffset) =>
       fetchInfoByTp.get(tp).flatMap { pd =>
         val readResult = Option(logReadResultMap.get(tp))
+        val hasError = readResult.exists(_.error != Errors.NONE)
         val alreadyRead = readResult.map(_.info.records.sizeInBytes).getOrElse(0)
         val remainingBytes = Math.max(pd.maxBytes - alreadyRead, 0)
-        if (remainingBytes > 0) {
+        if (!hasError && remainingBytes > 0) {
           // Start the supplement where the local read left off, not at logEndOffset.
           // Diskless has the full range so it can serve from any offset. This avoids a gap
           // when the local read stopped at a segment boundary before reaching logEndOffset.
@@ -2286,6 +2287,7 @@ class ReplicaManager(val config: KafkaConfig,
         quota = quota,
         maxWaitMs = Some(maxWaitMs),
         minBytes = Some(minBytes),
+        consolidatingSupplements = if (params.isFromFollower) Map.empty else consolidatingLocalFetchSupplements.toMap,
         responseCallback = respond,
       )
 
