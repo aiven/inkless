@@ -1290,7 +1290,7 @@ public class RequestResponseTest {
                                 .setTopicName("topic")
                                 .setPartitions(List.of(new DescribeClusterMirrorsResponseData.PartitionDetail()
                                         .setPartitionIndex(0)
-                                        .setState("MIRRORING")
+                                        .setStateValue("MIRRORING")
                                         .setLag(100L)
                                         .setLastMirrorEpoch(0)
                                         .setDestinationOffset(0)

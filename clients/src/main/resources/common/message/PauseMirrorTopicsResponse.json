@@ -29,11 +29,11 @@
       "about": "The top-level error message, or null if there was no error." },
     { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName",
       "about": "The cluster mirror name." },
-    { "name": "Topics", "type": "[]TopicResult", "versions": "0",
+    { "name": "Topics", "type": "[]TopicResult", "versions": "0+",
       "about": "The results for the topics.", "fields": [
-      { "name": "Name", "type": "string", "versions": "0", "entityType": "topicName",
+      { "name": "Name", "type": "string", "versions": "0+", "entityType": "topicName",
         "about": "The topic name." },
-      { "name": "ErrorCode", "type": "int16", "versions": "0",
+      { "name": "ErrorCode", "type": "int16", "versions": "0+",
         "about": "The error code, or 0 if there was no error." }
     ]}
   ]

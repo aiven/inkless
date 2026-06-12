@@ -27,8 +27,8 @@
         {"name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
         { "name": "Partitions", "type": "[]LeaderEpochState", "versions": "0+", "about": "The partition leader epochs.",
           "fields": [
-            {"name": "partitionIndex", "type": "int32", "versions": "0+", "about": "The partition index."},
-            {"name": "minLeaderEpoch", "type": "int32", "versions": "0+", "default": -1, "about": "The minimum leader epoch that the destination cluster should bump to."}
+            {"name": "PartitionIndex", "type": "int32", "versions": "0+", "about": "The partition index."},
+            {"name": "MinLeaderEpoch", "type": "int32", "versions": "0+", "default": -1, "about": "The minimum leader epoch that the destination cluster should bump to."}
           ]}
       ]}
   ]

@@ -20,9 +20,9 @@
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "Version", "type": "int16", "versions": "0",
+    { "name": "Version", "type": "int16", "versions": "0+",
       "about": "The version of the mirror PID reset record."},
-    { "name": "SourceClusterId", "type": "string", "versions": "0",
+    { "name": "SourceClusterId", "type": "string", "versions": "0+",
       "about": "The source cluster UUID for verification."}
   ]
 }
