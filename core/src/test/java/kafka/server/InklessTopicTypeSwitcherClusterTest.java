@@ -34,6 +34,7 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.errors.InvalidConfigurationException;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.AlterConfigsRequest;
@@ -50,6 +51,7 @@ import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -83,6 +85,8 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
@@ -399,6 +403,39 @@ public class InklessTopicTypeSwitcherClusterTest {
         admin.incrementalAlterConfigs(Map.of(topicResource, operations)).all().get(20, TimeUnit.SECONDS);
     }
 
+    @Test
+    public void testSwitchRejectedWhenPartitionIsOfflineOrUnderReplicated() throws Exception {
+        final String topic = "switch-unhealthy-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            // Create a classic topic with RF=3
+            admin.createTopics(List.of(
+                new NewTopic(topic, 1, (short) 3)
+                    .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(30, TimeUnit.SECONDS);
+
+            // Shut down a broker to make the partition under-replicated
+            final int brokerToShutdown = 2;
+            cluster.brokers().get(brokerToShutdown).shutdown();
+            waitForIsrShrink(admin, topic, 0, 3);
+
+            // Attempt to switch to diskless (should fail with INVALID_CONFIG due to under-replication)
+            final ExecutionException ex = assertThrows(ExecutionException.class, () ->
+                alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")));
+            assertInstanceOf(InvalidConfigurationException.class, ex.getCause());
+            assertTrue(ex.getCause().getMessage().contains("under-replicated"),
+                "Expected 'under-replicated' in: " + ex.getCause().getMessage());
+
+            // Restart the broker and wait for ISR to recover
+            cluster.brokers().get(brokerToShutdown).startup();
+            waitForIsrRecovery(admin, topic, 0, 3);
+
+            // Now the switch should succeed
+            alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            assertEquals("true", getTopicConfig(admin, topic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+        }
+    }
+
     private void alterTopicConfigWithLegacyAlterConfigs(final String topic,
                                                        final Map<String, String> newConfigs) throws Exception {
         final ConfigResource topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
@@ -417,6 +454,38 @@ public class InklessTopicTypeSwitcherClusterTest {
     private int firstBrokerPort() {
         final String firstBootstrapServer = cluster.bootstrapServers().split(",")[0];
         return Integer.parseInt(firstBootstrapServer.substring(firstBootstrapServer.lastIndexOf(':') + 1));
+    }
+
+    private void waitForIsrShrink(final Admin admin, final String topic,
+                                   final int partition, final int maxIsrSize) throws Exception {
+        final long deadline = System.currentTimeMillis() + Duration.ofSeconds(30).toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            final var description = admin.describeTopics(List.of(topic)).allTopicNames()
+                .get(10, TimeUnit.SECONDS).get(topic);
+            final int isrSize = description.partitions().get(partition).isr().size();
+            if (isrSize < maxIsrSize) {
+                return;
+            }
+            Thread.sleep(200);
+        }
+        throw new AssertionError("ISR for " + topic + "-" + partition +
+            " did not shrink below " + maxIsrSize + " within timeout");
+    }
+
+    private void waitForIsrRecovery(final Admin admin, final String topic,
+                                    final int partition, final int expectedIsrSize) throws Exception {
+        final long deadline = System.currentTimeMillis() + Duration.ofSeconds(60).toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            final var description = admin.describeTopics(List.of(topic)).allTopicNames()
+                .get(10, TimeUnit.SECONDS).get(topic);
+            final int isrSize = description.partitions().get(partition).isr().size();
+            if (isrSize >= expectedIsrSize) {
+                return;
+            }
+            Thread.sleep(200);
+        }
+        throw new AssertionError("ISR for " + topic + "-" + partition +
+            " did not recover to " + expectedIsrSize + " within timeout");
     }
 
     private Map<String, String> getTopicConfig(final Admin admin, final String topic) throws Exception {
