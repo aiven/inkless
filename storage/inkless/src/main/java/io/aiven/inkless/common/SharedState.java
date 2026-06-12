@@ -148,10 +148,14 @@ public final class SharedState implements Closeable {
                 new KafkaMetricsContext(STORAGE_METRIC_CONTEXT)
             );
             fetchStorage = config.storage(storageMetrics);
-            // If thread pool size is 0, lagging consumer support is disabled — don't create a separate client.
-            // Enabling lagging consumer support requires a broker restart so that a new storage client can be created.
+            // Dedicated storage client for the lagging-consumer cold path (rationale on the maybeLaggingFetchStorage field).
+            // Created only when the feature is enabled; pool size 0 disables it and skips the client.
             laggingFetchStorage = config.fetchLaggingConsumerThreadPoolSize() > 0 ? config.storage(storageMetrics) : null;
             produceStorage = config.storage(storageMetrics);
+            // backgroundStorage has two users: FileCleaner (delete after retention) and the
+            // consolidation Reader cold path (bypass object cache for old-data fetches).
+            // Consolidation reads through this client, not laggingFetchStorage — the two cold
+            // paths use separate clients.
             backgroundStorage = config.storage(storageMetrics);
             final var objectKeyCreator = ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked());
             final var keyAlignmentStrategy = new FixedBlockAlignment(config.fetchCacheBlockBytes());
