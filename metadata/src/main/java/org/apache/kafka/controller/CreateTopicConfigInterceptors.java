@@ -31,8 +31,9 @@ import java.util.Map.Entry;
  * Container for CREATE_TOPICS config interceptors. Interceptors are chained and executed in order;
  * only the first interceptor that matches a topic is applied (first-match-wins).
  *
- * <p>The chain order is: diskless force interceptor first, then remote storage force interceptor.
- * This ensures that topics matching the diskless allow list are not also forced to remote storage.
+ * <p>The chain order is: diskless-disabled fallback first (converts explicit diskless.enable=false
+ * to tiered when the system is disabled), then diskless force interceptor, then remote storage
+ * force interceptor. This ensures system-level constraints are enforced before topic-level forcing.
  */
 final class CreateTopicConfigInterceptors {
     private static final Logger LOG = LoggerFactory.getLogger(CreateTopicConfigInterceptors.class);
@@ -47,8 +48,8 @@ final class CreateTopicConfigInterceptors {
 
     /**
      * Creates the interceptors chain based on the provided configuration.
-     * The diskless force interceptor is placed first in the chain so that matching topics
-     * are handled by it before the remote storage force interceptor is considered.
+     * The chain order is: diskless-disabled fallback (when system is disabled), then diskless
+     * force interceptor, then remote storage force interceptor. First-match-wins.
      *
      * @param classicRemoteStorageForceEnabled whether the remote storage force interceptor is enabled
      * @param classicRemoteStorageForceExcludeTopicRegexes topic regexes to exclude from remote storage forcing
@@ -67,7 +68,12 @@ final class CreateTopicConfigInterceptors {
         final List<String> disklessForceIncludeTopicRegexes
     ) {
         final List<CreateTopicConfigInterceptor> chain = new ArrayList<>();
-        // Diskless interceptor is first in the chain (higher priority)
+        // Fallback interceptor is first: when diskless system is disabled, convert explicit
+        // diskless.enable=false to tiered (remote.storage.enable=true) instead of failing.
+        if (!disklessStorageSystemEnabled) {
+            chain.add(new DisklessDisabledFallbackCreateTopicInterceptor());
+        }
+        // Diskless force interceptor is next in the chain
         if (disklessForceEnabled) {
             if (disklessStorageSystemEnabled) {
                 chain.add(new DisklessForceCreateTopicInterceptor(disklessForceIncludeTopicRegexes));
