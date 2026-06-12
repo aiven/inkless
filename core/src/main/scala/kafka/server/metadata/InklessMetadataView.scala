@@ -102,6 +102,18 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
       .getOrElse(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
   }
 
+  /**
+   * The diskless leader epoch (E_d) captured at the classic-to-diskless switch, or
+   * [[PartitionRegistration.NO_DISKLESS_LEADER_EPOCH]] when the partition never switched (born-diskless
+   * or switch still pending). It is strictly greater than every classic-prefix leader epoch.
+   */
+  def getDisklessLeaderEpoch(topicPartition: TopicPartition): Int = {
+    Option(metadataCache.currentImage().topics().getTopic(topicPartition.topic()))
+      .flatMap(topicImage => Option(topicImage.partitions().get(topicPartition.partition())))
+      .map(_.disklessLeaderEpoch)
+      .getOrElse(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
+  }
+
   override def getTopicConfig(topicName: String): LogConfig = topicConfigs.computeIfAbsent(topicName, t => {
     val props = metadataCache.topicConfig(t)
     if (props.isEmpty) new LogConfig(getDefaultConfig)
