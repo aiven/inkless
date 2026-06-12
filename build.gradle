@@ -2467,6 +2467,10 @@ project(':storage') {
   checkstyle {
     configProperties = checkstyleConfigProperties("import-control-storage.xml")
   }
+
+  systemTestLibs {
+    dependsOn testJar
+  }
 }
 
 project(':storage:inkless') {

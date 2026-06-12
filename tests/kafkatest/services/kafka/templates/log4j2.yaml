@@ -295,3 +295,18 @@ Configuration:
         AppenderRef:
           - ref: KafkaInfoAppender
           - ref: KafkaDebugAppender
+
+      - name: software.amazon.awssdk
+        level: WARN
+        additivity: false
+        AppenderRef:
+          - ref: KafkaInfoAppender
+          - ref: KafkaDebugAppender
+
+      - name: io.netty
+        level: WARN
+        additivity: false
+        AppenderRef:
+          - ref: KafkaInfoAppender
+          - ref: KafkaDebugAppender
+
