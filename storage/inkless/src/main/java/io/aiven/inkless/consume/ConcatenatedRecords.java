@@ -27,6 +27,7 @@ import org.apache.kafka.common.utils.FlattenedIterator;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -42,6 +43,23 @@ public class ConcatenatedRecords extends AbstractRecords {
             totalSize += backingRecord.sizeInBytes();
         }
         this.sizeInBytes = totalSize;
+    }
+
+    public static ConcatenatedRecords concat(MemoryRecords prefix, Records tail) {
+        Objects.requireNonNull(prefix, "prefix must not be null");
+        Objects.requireNonNull(tail, "tail must not be null");
+        final List<MemoryRecords> components;
+        if (tail instanceof ConcatenatedRecords cr) {
+            components = new ArrayList<>(1 + cr.backingRecords.size());
+            components.add(prefix);
+            components.addAll(cr.backingRecords);
+        } else if (tail instanceof MemoryRecords mr) {
+            components = List.of(prefix, mr);
+        } else {
+            throw new IllegalArgumentException(
+                "Unsupported Records type for concatenation: " + tail.getClass().getName());
+        }
+        return new ConcatenatedRecords(components);
     }
 
     @Override
