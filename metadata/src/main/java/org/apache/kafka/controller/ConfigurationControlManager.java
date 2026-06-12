@@ -54,6 +54,7 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.APPEND;
 import static org.apache.kafka.common.config.ConfigResource.Type.BROKER;
@@ -201,6 +202,14 @@ public class ConfigurationControlManager {
         Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
         boolean newlyCreatedResource
     ) {
+        return incrementalAlterConfigs(configChanges, newlyCreatedResource, null);
+    }
+
+    ControllerResult<Map<ConfigResource, ApiError>> incrementalAlterConfigs(
+        Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
+        boolean newlyCreatedResource,
+        Function<ConfigResource, ApiError> postConfigValidation
+    ) {
         List<ApiMessageAndVersion> outputRecords =
                 BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         Map<ConfigResource, ApiError> outputResults = new HashMap<>();
@@ -209,7 +218,8 @@ public class ConfigurationControlManager {
             ApiError apiError = incrementalAlterConfigResource(resourceEntry.getKey(),
                 resourceEntry.getValue(),
                 newlyCreatedResource,
-                outputRecords);
+                outputRecords,
+                postConfigValidation);
             outputResults.put(resourceEntry.getKey(), apiError);
         }
         outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));
@@ -248,7 +258,8 @@ public class ConfigurationControlManager {
         ApiError apiError = incrementalAlterConfigResource(configResource,
             keyToOps,
             newlyCreatedResource,
-            outputRecords);
+            outputRecords,
+            null);
 
         outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));
         return ControllerResult.atomicOf(outputRecords, apiError);
@@ -258,7 +269,8 @@ public class ConfigurationControlManager {
         ConfigResource configResource,
         Map<String, Entry<OpType, String>> keysToOps,
         boolean newlyCreatedResource,
-        List<ApiMessageAndVersion> outputRecords
+        List<ApiMessageAndVersion> outputRecords,
+        Function<ConfigResource, ApiError> postConfigValidation
     ) {
         List<ApiMessageAndVersion> newRecords = new ArrayList<>();
         for (Entry<String, Entry<OpType, String>> keysToOpsEntry : keysToOps.entrySet()) {
@@ -328,6 +340,12 @@ public class ConfigurationControlManager {
         ApiError error = validateAlterConfig(configResource, newRecords, List.of(), newlyCreatedResource);
         if (error.isFailure()) {
             return error;
+        }
+        if (postConfigValidation != null) {
+            error = postConfigValidation.apply(configResource);
+            if (error.isFailure()) {
+                return error;
+            }
         }
         outputRecords.addAll(newRecords);
         return ApiError.NONE;
@@ -450,6 +468,14 @@ public class ConfigurationControlManager {
         Map<ConfigResource, Map<String, String>> newConfigs,
         boolean newlyCreatedResource
     ) {
+        return legacyAlterConfigs(newConfigs, newlyCreatedResource, null);
+    }
+
+    ControllerResult<Map<ConfigResource, ApiError>> legacyAlterConfigs(
+        Map<ConfigResource, Map<String, String>> newConfigs,
+        boolean newlyCreatedResource,
+        Function<ConfigResource, ApiError> postConfigValidation
+    ) {
         List<ApiMessageAndVersion> outputRecords =
                 BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         Map<ConfigResource, ApiError> outputResults = new HashMap<>();
@@ -459,7 +485,8 @@ public class ConfigurationControlManager {
                 resourceEntry.getValue(),
                 newlyCreatedResource,
                 outputRecords,
-                outputResults);
+                outputResults,
+                postConfigValidation);
         }
         outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));
         return ControllerResult.atomicOf(outputRecords, outputResults);
@@ -469,7 +496,8 @@ public class ConfigurationControlManager {
                                            Map<String, String> newConfigs,
                                            boolean newlyCreatedResource,
                                            List<ApiMessageAndVersion> outputRecords,
-                                           Map<ConfigResource, ApiError> outputResults) {
+                                           Map<ConfigResource, ApiError> outputResults,
+                                           Function<ConfigResource, ApiError> postConfigValidation) {
         List<ApiMessageAndVersion> recordsExplicitlyAltered = new ArrayList<>();
         Map<String, String> currentConfigs = configData.get(configResource);
         if (currentConfigs == null) {
@@ -502,6 +530,13 @@ public class ConfigurationControlManager {
         if (error.isFailure()) {
             outputResults.put(configResource, error);
             return;
+        }
+        if (postConfigValidation != null) {
+            error = postConfigValidation.apply(configResource);
+            if (error.isFailure()) {
+                outputResults.put(configResource, error);
+                return;
+            }
         }
         outputRecords.addAll(recordsExplicitlyAltered);
         outputRecords.addAll(recordsImplicitlyDeleted);
