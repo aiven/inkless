@@ -1350,6 +1350,45 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         self.logger.info("Running alter message format command...\n%s" % cmd)
         node.account.ssh(cmd)
 
+    def alter_topic_config(self, topic, config_name, config_value, node=None):
+        if node is None:
+            node = self.nodes[0]
+        self.logger.info("Altering topic %s config %s=%s", topic, config_name, config_value)
+
+        force_use_zk_connection = not self.all_nodes_configs_command_uses_bootstrap_server()
+
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --entity-name %s --entity-type topics --alter --add-config %s=%s" % \
+              (self.kafka_configs_cmd_with_optional_security_settings(node, force_use_zk_connection),
+               topic, config_name, config_value)
+        self.logger.info("Running alter topic config command...\n%s" % cmd)
+        node.account.ssh(cmd)
+
+    def describe_topic_config(self, topic, node=None):
+        if node is None:
+            node = self.nodes[0]
+        self.logger.info("Describing config for topic %s", topic)
+
+        force_use_zk_connection = not self.all_nodes_configs_command_uses_bootstrap_server()
+
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --entity-name %s --entity-type topics --describe" % \
+              (self.kafka_configs_cmd_with_optional_security_settings(node, force_use_zk_connection), topic)
+        self.logger.info("Running describe topic config command...\n%s" % cmd)
+        config = {}
+        in_config_block = False
+        for line in node.account.ssh_capture(cmd):
+            line = line.decode("utf-8") if isinstance(line, bytes) else line
+            stripped = line.strip()
+            if "configs for" in stripped.lower() and "are:" in stripped.lower():
+                in_config_block = True
+                continue
+            if in_config_block and stripped and "=" in stripped:
+                k, rest = stripped.split("=", 1)
+                v = rest.split(" ")[0]
+                config[k.strip()] = v.strip()
+        return config
+
     def kafka_acls_cmd_with_optional_security_settings(self, node, force_use_zk_connection, kafka_security_protocol = None, override_command_config = None):
         if self.quorum_info.using_kraft and not self.quorum_info.has_brokers:
             raise Exception("Must invoke kafka-acls against a broker, not a KRaft controller")

@@ -27,7 +27,7 @@ This creates:
 - `ducker02` through `ducker11` -- worker nodes where Kafka brokers, producers, and consumers run
 
 **How many nodes?** The number must be at least 1 + the `@cluster(num_nodes=N)` declared in the test.
-The inkless topic migration tests declare up to `@cluster(num_nodes=10)`, so 11 total nodes is the minimum.
+The inkless topic switch tests declare up to `@cluster(num_nodes=10)`, so 11 total nodes is the minimum.
 The upstream default of 14 covers the entire Kafka test suite; for inkless tests alone, 11 is sufficient.
 
 ### 2. Start Postgres on the ducker network
@@ -69,31 +69,31 @@ docker run --rm --network ducknet --entrypoint /bin/sh quay.io/minio/mc -c '
 Run a specific test file:
 
 ```shell
-bash tests/docker/ducker-ak test tests/kafkatest/tests/inkless/inkless_topic_migration_test.py
+bash tests/docker/ducker-ak test tests/kafkatest/tests/inkless/inkless_topic_switch_test.py
 ```
 
 Run a specific test class:
 
 ```shell
-bash tests/docker/ducker-ak test tests/kafkatest/tests/inkless/inkless_topic_migration_test.py::InklessTopicMigrationTest
+bash tests/docker/ducker-ak test tests/kafkatest/tests/inkless/inkless_topic_switch_test.py::InklessClassicToDisklessSwitchTest
 ```
 
 Run a specific test method:
 
 ```shell
-bash tests/docker/ducker-ak test tests/kafkatest/tests/inkless/inkless_topic_migration_test.py::InklessTopicMigrationTest.test_migration_happy_path
+bash tests/docker/ducker-ak test tests/kafkatest/tests/inkless/inkless_topic_switch_test.py::InklessClassicToDisklessSwitchTest.test_classic_data_available_after_restarts
 ```
 
 Pass additional ducktape arguments after `--`:
 
 ```shell
-bash tests/docker/ducker-ak test tests/kafkatest/tests/inkless/inkless_topic_migration_test.py -- --test-runner-timeout 1800000
+bash tests/docker/ducker-ak test tests/kafkatest/tests/inkless/inkless_topic_switch_test.py -- --test-runner-timeout 1800000
 ```
 
 Run with debug logging:
 
 ```shell
-bash tests/docker/ducker-ak test tests/kafkatest/tests/inkless/inkless_topic_migration_test.py -- --debug
+bash tests/docker/ducker-ak test tests/kafkatest/tests/inkless/inkless_topic_switch_test.py -- --debug
 ```
 
 ### 6. Teardown
