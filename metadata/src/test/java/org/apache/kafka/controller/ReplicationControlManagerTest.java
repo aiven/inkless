@@ -6707,12 +6707,13 @@ public class ReplicationControlManagerTest {
             ctx.fenceBrokers(0, 1, 2);
 
             ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
 
-            Map<ConfigResource, ApiError> errors =
-                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(Set.of(resource));
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
 
-            assertEquals(1, errors.size());
-            ApiError error = errors.get(resource);
             assertEquals(Errors.INVALID_CONFIG, error.error());
             assertTrue(error.message().contains("offline"), "Expected 'offline' in: " + error.message());
         }
@@ -6736,12 +6737,13 @@ public class ReplicationControlManagerTest {
             ctx.replay(alterResult.records());
 
             ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
 
-            Map<ConfigResource, ApiError> errors =
-                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(Set.of(resource));
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
 
-            assertEquals(1, errors.size());
-            ApiError error = errors.get(resource);
             assertEquals(Errors.INVALID_CONFIG, error.error());
             assertTrue(error.message().contains("reassignment"), "Expected 'reassignment' in: " + error.message());
         }
@@ -6763,12 +6765,13 @@ public class ReplicationControlManagerTest {
             assertTrue(partition.isr.length < partition.replicas.length);
 
             ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
 
-            Map<ConfigResource, ApiError> errors =
-                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(Set.of(resource));
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
 
-            assertEquals(1, errors.size());
-            ApiError error = errors.get(resource);
             assertEquals(Errors.INVALID_CONFIG, error.error());
             assertTrue(error.message().contains("under-replicated"), "Expected 'under-replicated' in: " + error.message());
         }
@@ -6792,12 +6795,13 @@ public class ReplicationControlManagerTest {
                 Arrays.toString(partition.elr));
 
             ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
 
-            Map<ConfigResource, ApiError> errors =
-                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(Set.of(resource));
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
 
-            assertEquals(1, errors.size());
-            ApiError error = errors.get(resource);
             assertEquals(Errors.INVALID_CONFIG, error.error());
             assertTrue(error.message().contains("non-empty ELR"),
                 "Expected 'non-empty ELR' in: " + error.message());
@@ -6822,12 +6826,13 @@ public class ReplicationControlManagerTest {
                 Arrays.toString(partition.elr) + " lastKnownElr=" + Arrays.toString(partition.lastKnownElr));
 
             ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
 
-            Map<ConfigResource, ApiError> errors =
-                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(Set.of(resource));
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
 
-            assertEquals(1, errors.size());
-            ApiError error = errors.get(resource);
             assertEquals(Errors.INVALID_CONFIG, error.error());
             assertTrue(error.message().contains("ELR") || error.message().contains("last-known ELR"),
                 "Expected 'ELR' or 'last-known ELR' in: " + error.message());
@@ -6861,12 +6866,13 @@ public class ReplicationControlManagerTest {
                 false).records());
 
             ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
 
-            Map<ConfigResource, ApiError> errors =
-                ctx.replicationControl.validateClassicToDisklessSwitchPreconditions(Set.of(resource));
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
 
-            assertEquals(1, errors.size());
-            ApiError error = errors.get(resource);
             assertEquals(Errors.INVALID_CONFIG, error.error());
             assertTrue(error.message().contains("recovering"),
                 "Expected 'recovering' in: " + error.message());

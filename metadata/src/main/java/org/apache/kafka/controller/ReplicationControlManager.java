@@ -3038,21 +3038,6 @@ public class ReplicationControlManager {
         return validatePartitionsForSwitch(topicInfo).orElse(ApiError.NONE);
     }
 
-    Map<ConfigResource, ApiError> validateClassicToDisklessSwitchPreconditions(Set<ConfigResource> topicResources) {
-        Map<ConfigResource, ApiError> errors = new HashMap<>();
-        for (ConfigResource resource : topicResources) {
-            String topicName = resource.name();
-            if (isDisklessTopic(topicName)) continue;
-            Uuid topicId = topicsByName.get(topicName);
-            if (topicId == null) continue;
-            TopicControlInfo topicInfo = topics.get(topicId);
-            if (topicInfo == null) continue;
-            validatePartitionsForSwitch(topicInfo)
-                .ifPresent(error -> errors.put(resource, error));
-        }
-        return errors;
-    }
-
     private Optional<ApiError> validatePartitionsForSwitch(TopicControlInfo topicInfo) {
         String topicName = topicInfo.name;
         for (Entry<Integer, PartitionRegistration> partEntry : topicInfo.parts.entrySet()) {
