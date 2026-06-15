@@ -436,6 +436,61 @@ public class InklessTopicTypeSwitcherClusterTest {
         }
     }
 
+    @Test
+    public void testSwitchRejectedWhenUncleanLeaderElectionEnabledAtClusterLevel() throws Exception {
+        final String topic = "switch-cluster-unclean-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            // Enable unclean leader election at cluster level first
+            final ConfigResource clusterResource = new ConfigResource(ConfigResource.Type.BROKER, "");
+            admin.incrementalAlterConfigs(Map.of(clusterResource, List.of(
+                    new AlterConfigOp(new ConfigEntry(
+                            TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true"),
+                            AlterConfigOp.OpType.SET)
+            ))).all().get(20, TimeUnit.SECONDS);
+
+            // Create a classic topic
+            admin.createTopics(List.of(
+                    new NewTopic(topic, 1, (short) 3)
+                            .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(30, TimeUnit.SECONDS);
+
+            // Attempt to switch to diskless — should fail because unclean leader election
+            // is enabled (via cluster-level config)
+            final ExecutionException ex = assertThrows(ExecutionException.class, () ->
+                    alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(
+                            TopicConfig.DISKLESS_ENABLE_CONFIG, "true")));
+            assertInstanceOf(InvalidConfigurationException.class, ex.getCause());
+            assertTrue(ex.getCause().getMessage().contains("unclean leader election"),
+                    "Expected 'unclean leader election' in error, got: " + ex.getCause().getMessage());
+        }
+    }
+
+    @Test
+    public void testUncleanLeaderElectionRejectedWhileSwitchPending() throws Exception {
+        final String topic = "switch-unclean-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            // Create a classic topic and switch it to diskless
+            admin.createTopics(List.of(
+                    new NewTopic(topic, 1, (short) 3)
+                            .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(30, TimeUnit.SECONDS);
+
+            // Enable diskless to mark partition as switch pending
+            alterTopicConfigWithIncrementalAlterConfigs(
+                    admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+
+            // Should fail trying to enable unclean leader election
+            final ExecutionException ex = assertThrows(ExecutionException.class, () ->
+                    alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(
+                            TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")));
+            assertInstanceOf(InvalidConfigurationException.class, ex.getCause());
+            assertTrue(ex.getCause().getMessage().contains("pending classic-to-diskless switch"),
+                    "Expected 'pending classic-to-diskless switch' in: " + ex.getCause().getMessage());
+        }
+    }
+
     private void alterTopicConfigWithLegacyAlterConfigs(final String topic,
                                                        final Map<String, String> newConfigs) throws Exception {
         final ConfigResource topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);

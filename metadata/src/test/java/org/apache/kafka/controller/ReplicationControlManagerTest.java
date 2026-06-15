@@ -7090,6 +7090,535 @@ public class ReplicationControlManagerTest {
                 "Expected pending switch message in: " + partitionResult.errorMessage());
         }
 
+        @Test
+        public void testSwitchRejectedWhenUncleanLeaderElectionAlreadyEnabled() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setStaticConfig(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot switch topic foo to diskless: " +
+                "unclean leader election must be disabled.", error.message());
+        }
+
+        @Test
+        public void testSwitchRejectedWhenUncleanLeaderElectionBeingEnabled() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(
+                    DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true"),
+                    TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot switch topic foo to diskless: " +
+                "unclean leader election must be disabled.", error.message());
+        }
+
+        @Test
+        public void testSwitchRejectedWhenUncleanLeaderElectionOverrideDeleted() {
+            // Topic has unclean=false override, but cluster default is true.
+            // Deleting the override would revert to the cluster default — must reject.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setStaticConfig(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "false"), (short) 0);
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(
+                    DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true"),
+                    TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.DELETE, null)));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot switch topic foo to diskless: " +
+                "unclean leader election must be disabled.", error.message());
+        }
+
+        @Test
+        public void testSwitchAllowedWhenUncleanLeaderElectionDisabled() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
+
+            assertEquals(ApiError.NONE, error);
+        }
+
+        @Test
+        public void testUncleanLeaderElectionDeleteRejectedWhenPendingSwitch() {
+            // Topic has unclean=false override, cluster default is true.
+            // The topic already has a pending classic-to-diskless switch.
+            // An incremental DELETE of the override would revert to true.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setStaticConfig(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "false"), (short) 0);
+
+            // Put the topic in pending-switch state
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> disklessChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            List<ApiMessageAndVersion> switchRecords =
+                ctx.replicationControl.markClassicToDisklessSwitchStarted(
+                    disklessChanges, Map.of(resource, ApiError.NONE));
+            ctx.replay(switchRecords);
+
+            // Now attempt an incremental DELETE of the unclean override
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.DELETE, "")));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot enable unclean leader election for topic foo" +
+                ": topic has a pending classic-to-diskless switch.", error.message());
+        }
+
+        @Test
+        public void testUncleanLeaderElectionSetRejectedWhenPendingSwitch() {
+            // Topic has a pending classic-to-diskless switch.
+            // An incremental SET of unclean=true should be rejected.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            // Put the topic in pending-switch state
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> disklessChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            List<ApiMessageAndVersion> switchRecords =
+                ctx.replicationControl.markClassicToDisklessSwitchStarted(
+                    disklessChanges, Map.of(resource, ApiError.NONE));
+            ctx.replay(switchRecords);
+
+            // Now attempt to SET unclean=true
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot enable unclean leader election for topic foo" +
+                ": topic has a pending classic-to-diskless switch.", error.message());
+        }
+
+        @Test
+        public void testUncleanLeaderElectionDeleteRejectedWhenAlreadyDisklessButPendingSwitch() {
+            // Topic is already diskless (config says diskless.enable=true) but the switch
+            // is still pending (classicToDisklessStartOffset == PENDING).
+            // Deleting the unclean=false override should still be rejected.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setStaticConfig(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "false"), (short) 0).topicId();
+
+            // Mark the topic as diskless and simulate pending switch
+            ctx.alterTopicConfig("foo", DISKLESS_ENABLE_CONFIG, "true");
+            PartitionChangeRecord switchPendingRecord = new PartitionChangeRecord()
+                .setTopicId(fooId)
+                .setPartitionId(0);
+            switchPendingRecord.unknownTaggedFields().add(
+                InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+                    PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING));
+            ctx.replay(List.of(new ApiMessageAndVersion(switchPendingRecord, (short) 0)));
+
+            // Now attempt an incremental DELETE of the unclean override
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.DELETE, "")));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot enable unclean leader election for topic foo" +
+                ": topic has a pending classic-to-diskless switch.", error.message());
+        }
+
+        @Test
+        public void testIncrementalDeleteDisklessEnableRejectedWhenUnderReplicated() {
+            // Simulates removal of a diskless.enable=false override when the broker
+            // default is true. Note: ConfigurationControlManager rejects DELETE for
+            // diskless.enable before this validator runs, so this exercises the
+            // validator in isolation for defense-in-depth.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDefaultDisklessEnable(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0).topicId();
+
+            // Make the partition under-replicated
+            ctx.fenceBrokers(2);
+            PartitionRegistration partition = ctx.replicationControl.getPartition(fooId, 0);
+            assertTrue(partition.isr.length < partition.replicas.length);
+
+            // Removing diskless.enable override reverts to broker default (true),
+            // triggering a switch — rejected because partition is under-replicated
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.DELETE, "")));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertTrue(error.message().contains("under-replicated"),
+                "Expected 'under-replicated' in: " + error.message());
+        }
+
+        @Test
+        public void testLegacySwitchRejectedWhenUncleanLeaderElectionExplicitlyEnabled() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDefaultDisklessEnable(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0);
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, String>> newConfigs = Map.of(resource, Map.of(
+                DISKLESS_ENABLE_CONFIG, "true",
+                TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true"));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(resource, newConfigs);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot switch topic foo to diskless: " +
+                "unclean leader election must be disabled.", error.message());
+        }
+
+        @Test
+        public void testLegacySwitchRejectedWhenUncleanLeaderElectionEnabledFromDefaults() {
+            // Topic has unclean=false override, cluster default is true.
+            // Legacy alter omits the key — override is removed, effective value reverts to true.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setStaticConfig(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")
+                .setDisklessStorageSystemEnabled(true)
+                .setDefaultDisklessEnable(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "false",
+                    TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "false"), (short) 0);
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            // Legacy alter with only diskless.enable=true — unclean override is removed.
+            // Since the broker default enables unclean leader election, it should be rejected.
+            Map<ConfigResource, Map<String, String>> newConfigs = Map.of(resource, Map.of(
+                DISKLESS_ENABLE_CONFIG, "true"));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(resource, newConfigs);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot switch topic foo to diskless: " +
+                "unclean leader election must be disabled.", error.message());
+        }
+
+        @Test
+        public void testLegacySwitchRejectedWhenAlreadyDisklessButPendingSwitch() {
+            // Topic is already diskless but the switch is still pending.
+            // Legacy alter with unclean=true should be rejected.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setStaticConfig(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "false"), (short) 0).topicId();
+
+            // Mark the topic as diskless and simulate pending switch
+            ctx.alterTopicConfig("foo", DISKLESS_ENABLE_CONFIG, "true");
+            PartitionChangeRecord switchPendingRecord = new PartitionChangeRecord()
+                .setTopicId(fooId)
+                .setPartitionId(0);
+            switchPendingRecord.unknownTaggedFields().add(
+                InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+                    PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING));
+            ctx.replay(List.of(new ApiMessageAndVersion(switchPendingRecord, (short) 0)));
+
+            // Legacy alter that sets diskless.enable=true and omits the unclean override
+            // — effective unclean reverts to cluster default (true).
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, String>> newConfigs = Map.of(resource, Map.of(
+                DISKLESS_ENABLE_CONFIG, "true"));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(resource, newConfigs);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot enable unclean leader election for topic foo" +
+                ": topic has a pending classic-to-diskless switch.", error.message());
+        }
+
+        @Test
+        public void testLegacyUncleanOnlyRejectedWhenPendingSwitch() {
+            // Topic is already diskless with a pending switch.
+            // Legacy alter sends only unclean=true (omits diskless.enable).
+            // Since legacy is a full replacement, omitting diskless.enable
+            // means it will be deleted — but the pending-switch guard should
+            // still reject enabling unclean.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDefaultDisklessEnable(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0).topicId();
+
+            // Switch the topic to diskless and mark as pending
+            ctx.alterTopicConfig("foo", DISKLESS_ENABLE_CONFIG, "true");
+            PartitionChangeRecord switchPendingRecord = new PartitionChangeRecord()
+                .setTopicId(fooId)
+                .setPartitionId(0);
+            switchPendingRecord.unknownTaggedFields().add(
+                InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+                    PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING));
+            ctx.replay(List.of(new ApiMessageAndVersion(switchPendingRecord, (short) 0)));
+
+            // Legacy alter that only sets unclean=true, omitting diskless.enable entirely.
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, String>> newConfigs = Map.of(resource, Map.of(
+                TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true"));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(resource, newConfigs);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot enable unclean leader election for topic foo" +
+                ": topic has a pending classic-to-diskless switch.", error.message());
+        }
+
+        @Test
+        public void testLegacyUncleanSetRejectedWhenPendingSwitch() {
+            // Topic has a pending classic-to-diskless switch.
+            // Legacy alter with diskless.enable=true and unclean=true should be rejected.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            // Put the topic in pending-switch state
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> disklessChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            List<ApiMessageAndVersion> switchRecords =
+                ctx.replicationControl.markClassicToDisklessSwitchStarted(
+                    disklessChanges, Map.of(resource, ApiError.NONE));
+            ctx.replay(switchRecords);
+            ctx.alterTopicConfig("foo", DISKLESS_ENABLE_CONFIG, "true");
+
+            // Legacy alter with both diskless=true and unclean=true
+            Map<ConfigResource, Map<String, String>> newConfigs = Map.of(resource, Map.of(
+                DISKLESS_ENABLE_CONFIG, "true",
+                TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true"));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(resource, newConfigs);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot enable unclean leader election for topic foo" +
+                ": topic has a pending classic-to-diskless switch.", error.message());
+        }
+
+        @Test
+        public void testLegacyNullValueTreatedAsDeletion() {
+            // Legacy AlterConfigs can send null values meaning "delete this override".
+            // A null unclean.leader.election.enable with a cluster default of true
+            // should be treated as deletion — effective unclean reverts to true.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setStaticConfig(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")
+                .setDisklessStorageSystemEnabled(true)
+                .setDefaultDisklessEnable(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0);
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            // null value for unclean means "delete override" → reverts to cluster default (true)
+            HashMap<String, String> configs = new HashMap<>();
+            configs.put(DISKLESS_ENABLE_CONFIG, "true");
+            configs.put(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, null);
+            Map<ConfigResource, Map<String, String>> newConfigs = Map.of(resource, configs);
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(resource, newConfigs);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot switch topic foo to diskless: " +
+                "unclean leader election must be disabled.", error.message());
+        }
+
+        @Test
+        public void testUncleanAllowedOnFullyDisklessTopic() {
+            // Topic is fully diskless (switch completed, no pending partitions).
+            // Enabling unclean should be allowed. An out-of-sync replica can
+            // discover state from there.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            // Make the topic fully diskless (no pending switch)
+            ctx.alterTopicConfig("foo", DISKLESS_ENABLE_CONFIG, "true");
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
+
+            assertEquals(ApiError.NONE, error);
+        }
+
+        @Test
+        public void testLegacyOmittingBothConfigsRejectedWhenPendingSwitchAndUncleanDefault() {
+            // Topic has overrides: diskless.enable=true, unclean=false.
+            // Cluster default for unclean is true.
+            // The topic has a pending switch.
+            // Legacy alter omits both configs — this deletes both overrides,
+            // reverting unclean to the true default. Should be rejected.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setStaticConfig(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")
+                .setDisklessStorageSystemEnabled(true)
+                .setDefaultDisklessEnable(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "false",
+                    TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "false"), (short) 0).topicId();
+
+            // Switch the topic to diskless and mark as pending
+            ctx.alterTopicConfig("foo", DISKLESS_ENABLE_CONFIG, "true");
+            PartitionChangeRecord switchPendingRecord = new PartitionChangeRecord()
+                .setTopicId(fooId)
+                .setPartitionId(0);
+            switchPendingRecord.unknownTaggedFields().add(
+                InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+                    PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING));
+            ctx.replay(List.of(new ApiMessageAndVersion(switchPendingRecord, (short) 0)));
+
+            // Legacy alter with empty config map — deletes all topic overrides
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, String>> newConfigs = Map.of(resource, Map.of());
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(resource, newConfigs);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot enable unclean leader election for topic foo" +
+                ": topic has a pending classic-to-diskless switch.", error.message());
+        }
+
+        @Test
+        public void testLegacySwitchAllowedWhenUncleanLeaderElectionDisabled() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDefaultDisklessEnable(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0);
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, String>> newConfigs = Map.of(resource, Map.of(
+                DISKLESS_ENABLE_CONFIG, "true"));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(resource, newConfigs);
+
+            assertEquals(ApiError.NONE, error);
+        }
+
     }
 
 }
