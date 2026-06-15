@@ -30,11 +30,13 @@ type: docs
 
 ### Upgrading Servers to 4.2.0 from any version 3.3.x through 4.1.x
 
+  * If you wish to use share groups in a cluster with fewer than 3 brokers, you must set the broker configurations `share.coordinator.state.topic.replication.factor` and `share.coordinator.state.topic.min.isr` to 1 before you start using share groups. This is because share groups make use of a new internal topic called `__share_group_state` which is automatically created when you first use share groups. In common with the other internal topics, the default configuration uses 3 replicas and requires at least 3 brokers.
+
 ### Notable changes in 4.2.0
 
   * The `--max-partition-memory-bytes` option in `kafka-console-producer` is deprecated and will be removed in Kafka 5.0. Please use `--batch-size` instead. 
   * Queues for Kafka ([KIP-932](https://cwiki.apache.org/confluence/x/4hA0Dw)) is production-ready in Apache Kafka 4.2. This feature introduces a new kind of group called share groups, as an alternative to consumer groups. Consumers in a share group cooperatively consume records from topics, without assigning each partition to just one consumer. Share groups also introduce per-record acknowledgement and counting of delivery attempts. Use share groups in cases where records are processed one at a time, rather than as part of an ordered stream. 
-  * The Streams Rebalance Protocol ([KIP-1071](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1071%3A+Streams+Rebalance+Protocol)) is now production-ready for its core feature set. This broker-driven rebalancing system designed specifically for Kafka Streams applications provides faster, more stable rebalances and better observability. For more information about the supported feature set, usage, and migration, please refer to the [Streams developer guide](/{version}/documentation/streams/developer-guide/streams-rebalance-protocol.html).
+  * The Streams Rebalance Protocol ([KIP-1071](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1071%3A+Streams+Rebalance+Protocol)) is now production-ready for its core feature set. This broker-driven rebalancing system designed specifically for Kafka Streams applications provides faster, more stable rebalances and better observability. For more information about the supported feature set, usage, and migration, please refer to the [Streams developer guide](/{version}/streams/developer-guide/streams-rebalance-protocol). Due to a critical broker-side bug in the offline migration code ([KAFKA-20254](https://issues.apache.org/jira/browse/KAFKA-20254)), we recommend against doing migrations from classic to streams groups in 4.2.0. Newly created streams groups are not impacted. The fix will be targeted for a future release.
   * The `org.apache.kafka.common.header.internals.RecordHeader` class has been updated to be read thread-safe. See [KIP-1205](https://cwiki.apache.org/confluence/x/nYmhFg) for details. In other words, each individual `Header` object within a `ConsumerRecord`'s `headers` can now be safely read from multiple threads concurrently. 
   * The `org.apache.kafka.disallowed.login.modules` config was deprecated. Please use the `org.apache.kafka.allowed.login.modules` instead. 
   * The `remote.log.manager.thread.pool.size` config was deprecated. Please use the `remote.log.manager.follower.thread.pool.size` instead. 
@@ -88,11 +90,31 @@ For further details, please refer to [KIP-1120](https://cwiki.apache.org/conflue
   * Added an optional `--node-id` flag to the `FeatureCommand` command. It specifies the node to describe. If not provided, an arbitrary node is used.
 
 
+
+## Upgrading to 4.1.2
+
+### Notable changes in 4.1.2
+
+* Includes a fix for the rare Kafka producer bug ([KAFKA-19012](https://issues.apache.org/jira/browse/KAFKA-19012)), in which a record could end up on the incorrect topic.
+
+
+
+## Upgrading to 4.1.1
+
+### Notable changes in 4.1.1
+
+* Includes a fix for the critical Kafka Streams bug ([KAFKA-19748](https://issues.apache.org/jira/browse/KAFKA-19748)), solving the memory leak issues that affected users of range scans and certain DSL operators (session windows, sliding windows, stream-stream joins, foreign-key joins).
+* Includes a fix for the critical Kafka Streams bug ([KAFKA-19479](https://issues.apache.org/jira/browse/KAFKA-19479)), related to potential data loss.
+
+
+
 ## Upgrading to 4.1.0
 
 **Note:** Kafka Streams 4.1.0 contains a critical memory leak bug ([KAFKA-19748](https://issues.apache.org/jira/browse/KAFKA-19748)) that affects users of range scans and certain DSL operators (session windows, sliding windows, stream-stream joins, foreign-key joins). Users running Kafka Streams should consider upgrading directly to 4.1.1, which includes the fix for it.
 
 ### Upgrading Servers to 4.1.0 from any version 3.3.x through 4.0.x
+
+The rolling upgrade procedure for 4.1.x is identical to the 4.0 upgrade. Please refer to the [Upgrading Servers to 4.0.x](#upgrading-servers-to-401-from-any-version-33x-through-39x) section for detailed step-by-step instructions.
 
 ### Notable changes in 4.1.0
 
