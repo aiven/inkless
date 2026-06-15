@@ -194,6 +194,8 @@ public class ReplicationControlManagerTest {
             private boolean disklessRemoteStorageConsolidationEnabled = false;
             private boolean classicRemoteStorageForceEnabled = false;
             private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
+            private boolean disklessForceEnabled = false;
+            private List<String> disklessForceIncludeTopicRegexes = List.of();
 
             Builder setCreateTopicPolicy(CreateTopicPolicy createTopicPolicy) {
                 this.createTopicPolicy = Optional.of(createTopicPolicy);
@@ -250,6 +252,16 @@ public class ReplicationControlManagerTest {
                 return this;
             }
 
+            Builder setDisklessForceEnabled(boolean disklessForceEnabled) {
+                this.disklessForceEnabled = disklessForceEnabled;
+                return this;
+            }
+
+            Builder setDisklessForceIncludeTopicRegexes(List<String> disklessForceIncludeTopicRegexes) {
+                this.disklessForceIncludeTopicRegexes = disklessForceIncludeTopicRegexes;
+                return this;
+            }
+
             ReplicationControlTestContext build() {
                 return new ReplicationControlTestContext(metadataVersion,
                     createTopicPolicy,
@@ -261,7 +273,9 @@ public class ReplicationControlManagerTest {
                     disklessManagedReplicasEnable,
                     disklessRemoteStorageConsolidationEnabled,
                     classicRemoteStorageForceEnabled,
-                    classicRemoteStorageForceExcludeTopicRegexes);
+                    classicRemoteStorageForceExcludeTopicRegexes,
+                    disklessForceEnabled,
+                    disklessForceIncludeTopicRegexes);
             }
         }
 
@@ -292,7 +306,9 @@ public class ReplicationControlManagerTest {
             boolean disklessManagedReplicasEnable,
             boolean disklessRemoteStorageConsolidationEnabled,
             final boolean classicRemoteStorageForceEnabled,
-            final List<String> classicRemoteStorageForceExcludeTopicRegexes
+            final List<String> classicRemoteStorageForceExcludeTopicRegexes,
+            final boolean disklessForceEnabled,
+            final List<String> disklessForceIncludeTopicRegexes
         ) {
             this.time = time;
             this.featureControl = new FeatureControlManager.Builder().
@@ -342,6 +358,8 @@ public class ReplicationControlManagerTest {
                 setDisklessRemoteStorageConsolidationEnabled(disklessRemoteStorageConsolidationEnabled).
                 setClassicRemoteStorageForceEnabled(classicRemoteStorageForceEnabled).
                 setClassicRemoteStorageForceExcludeTopicRegexes(classicRemoteStorageForceExcludeTopicRegexes).
+                setDisklessForceEnabled(disklessForceEnabled).
+                setDisklessForceIncludeTopicRegexes(disklessForceIncludeTopicRegexes).
                 build();
             clusterControl.activate();
         }
@@ -3719,6 +3737,42 @@ public class ReplicationControlManagerTest {
             .filter(m -> m.message() instanceof ConfigRecord)
             .map(m -> (ConfigRecord) m.message())
             .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")));
+    }
+
+    @Test
+    void testDisklessForceInterceptorRejectsOnlyOffendingTopic() {
+        final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setDisklessForceEnabled(true)
+            .setDisklessForceIncludeTopicRegexes(List.of("forced-.*"))
+            .setDisklessStorageSystemEnabled(true)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        final CreateTopicsRequestData request = new CreateTopicsRequestData();
+
+        // Topic that matches the regex and explicitly sets diskless.enable=false — should be rejected
+        final CreateTopicsRequestData.CreatableTopicConfigCollection badConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        badConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(DISKLESS_ENABLE_CONFIG)
+            .setValue("false"));
+        request.topics().add(new CreatableTopic()
+            .setName("forced-bad")
+            .setNumPartitions(1)
+            .setReplicationFactor((short) 1)
+            .setConfigs(badConfigs));
+
+        // Topic that does not match the regex — should succeed
+        request.topics().add(new CreatableTopic()
+            .setName("normal-topic")
+            .setNumPartitions(1)
+            .setReplicationFactor((short) 1));
+
+        final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("forced-bad", "normal-topic"));
+
+        assertEquals(INVALID_REQUEST.code(), result.response().topics().find("forced-bad").errorCode());
+        assertEquals(NONE.code(), result.response().topics().find("normal-topic").errorCode());
     }
 
     @Nested
