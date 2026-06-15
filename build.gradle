@@ -202,7 +202,9 @@ allprojects {
           // ensure we have a single version in the classpath despite transitive dependencies
           libs.scalaLibrary,
           libs.scalaReflect,
-          libs.jacksonAnnotations
+          libs.jacksonAnnotations,
+          // override strict jackson version from wiremock's BOM
+          libs.jacksonDataformatYaml
         )
       }
     }
