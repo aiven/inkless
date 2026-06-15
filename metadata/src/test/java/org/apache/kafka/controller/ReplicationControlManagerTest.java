@@ -4334,6 +4334,61 @@ public class ReplicationControlManagerTest {
         }
 
         @Test
+        public void testCreateTopicWithDisklessExplicitlyDisabledWhenSystemDisabledCreatesTieredTopic() {
+            // Given diskless storage system is globally disabled
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(false)
+                .setDefaultDisklessEnable(false)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+
+            // Given a topic creation request with diskless.enable=false explicitly
+            CreateTopicsRequestData request = new CreateTopicsRequestData();
+            CreateTopicsRequestData.CreatableTopicConfigCollection topicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            topicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue("false"));
+            request.topics().add(new CreatableTopic().setName("foo")
+                .setNumPartitions(-1).setReplicationFactor((short) -1)
+                .setConfigs(topicConfigs));
+
+            // Given all brokers unfenced
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // When creating the topic
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+            ControllerResult<CreateTopicsResponseData> result =
+                replicationControl.createTopics(requestContext, request, Collections.singleton("foo"));
+
+            // Then the topic creation should succeed by enabling tiered storage instead of diskless
+            CreatableTopicResult topicResult = result.response().topics().find("foo");
+            assertNotNull(topicResult);
+            assertEquals(NONE.code(), topicResult.errorCode(),
+                "Topic creation should succeed as a tiered topic when diskless is explicitly disabled and system is disabled");
+
+            // And it should be created as a tiered topic (remote.storage.enable=true)
+            List<ConfigRecord> remoteStorageConfigRecords = result.records().stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .filter(c -> c.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG))
+                .toList();
+            assertFalse(remoteStorageConfigRecords.isEmpty(),
+                "Expected remote.storage.enable config record for tiered topic");
+            assertTrue(remoteStorageConfigRecords.stream().allMatch(c -> c.value().equals("true")),
+                "Expected remote.storage.enable=true for tiered topic");
+
+            // And diskless.enable should not be persisted (it was stripped)
+            List<ConfigRecord> disklessConfigRecords = result.records().stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .filter(c -> c.name().equals(DISKLESS_ENABLE_CONFIG))
+                .toList();
+            assertTrue(disklessConfigRecords.isEmpty(),
+                    "Expected no diskless.enable config record when diskless system is disabled");
+        }
+
+        @Test
         public void testReassignDisklessPartitions() {
             MetadataVersion metadataVersion = MetadataVersion.latestTesting();
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
