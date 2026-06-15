@@ -10,7 +10,7 @@ Copy and paste this prompt to start a release sync session:
 
 **PROMPT:**
 
-```
+````
 I need to sync the inkless release branch with an upstream Apache Kafka release.
 
 ## Context
@@ -69,7 +69,7 @@ I need to sync the inkless release branch with an upstream Apache Kafka release.
 10. **Push**: When verified, push the sync branch for PR review
 
 Please help me execute this release sync process.
-```
+````
 
 ---
 
