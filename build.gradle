@@ -310,6 +310,7 @@ if (repo != null) {
         'docs/inkless/**',
         'dump-schema-compose.yml',
         'inkless-benchmarks/**',
+        'tests/kafkatest/services/inkless/**',
         'tests/kafkatest/tests/inkless/**',
         'inkless-sync/**',
         'core/src/main/scala/io/aiven/inkless/**',
