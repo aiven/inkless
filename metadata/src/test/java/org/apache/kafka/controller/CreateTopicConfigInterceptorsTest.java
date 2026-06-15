@@ -152,4 +152,69 @@ public class CreateTopicConfigInterceptorsTest {
 
         assertNull(targetConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
     }
+
+    @Test
+    public void disklessDisabledFallbackConvertsTieredWhenExplicitlyFalse() {
+        // disklessStorageSystemEnabled=false, no other interceptors
+        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, false, false, List.of());
+        final Map<String, String> targetConfigs = new HashMap<>();
+        targetConfigs.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "false");
+
+        interceptors.intercept("my-topic", targetConfigs);
+
+        assertNull(targetConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+        assertEquals("true", targetConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+    }
+
+    @Test
+    public void disklessDisabledFallbackConvertsTieredViaConfigOps() {
+        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, false, false, List.of());
+        final Map<String, String> requestConfigs = new HashMap<>();
+        requestConfigs.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "false");
+        final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
+        targetConfigOps.put(TopicConfig.DISKLESS_ENABLE_CONFIG, Map.entry(SET, "false"));
+
+        interceptors.intercept("my-topic", requestConfigs, targetConfigOps);
+
+        assertFalse(targetConfigOps.containsKey(TopicConfig.DISKLESS_ENABLE_CONFIG));
+        assertEquals(Map.entry(SET, "true"), targetConfigOps.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+    }
+
+    @Test
+    public void disklessDisabledFallbackDoesNotApplyWithoutExplicitConfig() {
+        // No diskless.enable in configs — fallback should not match
+        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, false, false, List.of());
+        final Map<String, String> targetConfigs = new HashMap<>();
+
+        interceptors.intercept("my-topic", targetConfigs);
+
+        assertNull(targetConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+    }
+
+    @Test
+    public void disklessDisabledFallbackDoesNotApplyForSystemTopics() {
+        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, false, false, List.of());
+        final Map<String, String> targetConfigs = new HashMap<>();
+        targetConfigs.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "false");
+
+        interceptors.intercept("__consumer_offsets", targetConfigs);
+
+        // System topic should not be converted — diskless.enable stays
+        assertEquals("false", targetConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+        assertNull(targetConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+    }
+
+    @Test
+    public void disklessDisabledFallbackNotActiveWhenSystemEnabled() {
+        // disklessStorageSystemEnabled=true — fallback should NOT be in the chain
+        final var interceptors = CreateTopicConfigInterceptors.create(false, List.of(), false, true, false, List.of());
+        final Map<String, String> targetConfigs = new HashMap<>();
+        targetConfigs.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "false");
+
+        interceptors.intercept("my-topic", targetConfigs);
+
+        // diskless.enable=false should remain untouched (no conversion to tiered)
+        assertEquals("false", targetConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+        assertNull(targetConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+    }
 }
