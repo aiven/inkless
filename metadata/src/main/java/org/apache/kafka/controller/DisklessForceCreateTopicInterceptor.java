@@ -19,6 +19,7 @@ package org.apache.kafka.controller;
 
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.errors.InvalidRequestException;
 
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.List;
@@ -59,6 +60,7 @@ final class DisklessForceCreateTopicInterceptor implements CreateTopicConfigInte
         final Map<String, Entry<OpType, String>> targetConfigOps
     ) {
         if (shouldForceDisklessEnable(topicName, requestConfigs)) {
+            rejectIfExplicitlyDisabled(topicName, requestConfigs);
             targetConfigOps.put(TopicConfig.DISKLESS_ENABLE_CONFIG, new SimpleImmutableEntry<>(SET, "true"));
             return true;
         }
@@ -71,10 +73,19 @@ final class DisklessForceCreateTopicInterceptor implements CreateTopicConfigInte
         final Map<String, String> targetConfigs
     ) {
         if (shouldForceDisklessEnable(topicName, targetConfigs)) {
+            rejectIfExplicitlyDisabled(topicName, targetConfigs);
             targetConfigs.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
             return true;
         }
         return false;
+    }
+
+    private void rejectIfExplicitlyDisabled(final String topicName, final Map<String, String> configs) {
+        String disklessEnableConfigValue = configs.getOrDefault(TopicConfig.DISKLESS_ENABLE_CONFIG, "").trim();
+        if (!disklessEnableConfigValue.isEmpty() && !Boolean.parseBoolean(disklessEnableConfigValue)) {
+            throw new InvalidRequestException(
+                "Topic '" + topicName + "' matches the diskless force include regexes and cannot set diskless.enable=false.");
+        }
     }
 
     private boolean shouldForceDisklessEnable(

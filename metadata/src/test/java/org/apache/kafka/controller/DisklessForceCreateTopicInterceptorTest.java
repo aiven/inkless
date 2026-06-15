@@ -19,6 +19,7 @@ package org.apache.kafka.controller;
 
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.internals.Topic;
 
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,7 @@ import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class DisklessForceCreateTopicInterceptorTest {
 
@@ -50,17 +52,21 @@ public class DisklessForceCreateTopicInterceptorTest {
     }
 
     @Test
-    public void forcesDisklessEvenWhenRequestHadDisklessFalse() {
+    public void throwsWhenRequestHasDisklessFalseAndTopicMatchesRegex() {
         final var interceptor = new DisklessForceCreateTopicInterceptor(List.of("my-topic-.*"));
-        final Map<String, String> requestConfigs = new HashMap<>(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
-        final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
-        final Map<String, String> targetConfigs = new HashMap<>(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
 
-        interceptor.intercept("my-topic-1", requestConfigs, targetConfigOps);
-        interceptor.intercept("my-topic-1", targetConfigs);
+        for (String falseValue : List.of("FALSE", "False", "false ", " false", " FALSE ")) {
+            final Map<String, String> requestConfigs = new HashMap<>(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, falseValue));
+            final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
+            final Map<String, String> targetConfigs = new HashMap<>(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, falseValue));
 
-        assertEquals(Map.entry(SET, "true"), targetConfigOps.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
-        assertEquals("true", targetConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+            assertThrows(InvalidRequestException.class,
+                () -> interceptor.intercept("my-topic-1", requestConfigs, targetConfigOps),
+                "Should reject value: '" + falseValue + "'");
+            assertThrows(InvalidRequestException.class,
+                () -> interceptor.intercept("my-topic-1", targetConfigs),
+                "Should reject value: '" + falseValue + "'");
+        }
     }
 
     @Test

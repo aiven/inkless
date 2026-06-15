@@ -780,11 +780,16 @@ public class ReplicationControlManager {
             } else {
                 keyToOps = new HashMap<>(keyToOps);
             }
-            createTopicConfigInterceptors.intercept(
-                topic.name(),
-                requestConfigs,
-                keyToOps
-            );
+            try {
+                createTopicConfigInterceptors.intercept(
+                    topic.name(),
+                    requestConfigs,
+                    keyToOps
+                );
+            } catch (ApiException e) {
+                topicErrors.put(topic.name(), ApiError.fromThrowable(e));
+                continue;
+            }
             if (keyToOps.isEmpty()) {
                 keyToOps = null;
             }
