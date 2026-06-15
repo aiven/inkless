@@ -49,6 +49,7 @@ import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerConfig;
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
+import org.apache.kafka.test.NoRetryException;
 import org.apache.kafka.test.TestUtils;
 
 import org.junit.jupiter.api.AfterEach;
@@ -431,11 +432,19 @@ public class InklessConsolidatedDisklessTopicsTest {
         TestUtils.waitForCondition(() -> {
             try {
                 return expectedValue.equals(getTopicConfigValue(admin, key));
-            } catch (ExecutionException | TimeoutException e) {
+            } catch (ExecutionException e) {
+                // Right after create/alter the topic metadata may not have propagated to the broker serving
+                // the describeConfigs request yet; that is the only case worth retrying.
+                if (e.getCause() instanceof UnknownTopicOrPartitionException) {
+                    return false;
+                }
+                throw new NoRetryException(e.getCause() != null ? e.getCause() : e);
+            } catch (TimeoutException e) {
+                // A describeConfigs request timing out is transient under load; keep polling.
                 return false;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new RuntimeException(e);
+                throw new NoRetryException(e);
             }
         }, 60_000, () -> "Topic config " + key + " should become " + expectedValue);
     }
