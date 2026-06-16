@@ -5595,4 +5595,138 @@ class ReplicaManagerInklessTest {
       consolidationCtor.close()
     }
   }
+
+  @Test
+  def testConsolidatingSwitchSealsRegistersThenStartsConsolidationOnSealCommit(): Unit = {
+    // Drives the consolidating classic-to-diskless switch on the *leader* across the two metadata
+    // deltas it actually produces:
+    //
+    //   (delta 2) Pending switch, epoch bumped: the partition is already online and the topic is
+    //     already consolidating (diskless.enable + remote.storage.enable were flipped together).
+    //     It must take the seal+register branch -- seal the classic log and register with the
+    //     InitDisklessLogManager -- NOT the consolidating become-leader branch (which would skip
+    //     the seal and strand the switch in CLASSIC_TO_DISKLESS_SWITCH_PENDING). No consolidation
+    //     fetcher may start yet: the reconciler Retries while the seal is pending.
+    //
+    //   (delta 3) Seal commit, PENDING -> committed seal: this PartitionChangeRecord carries no
+    //     leader field, so the leader epoch is unchanged, but it still bumps the *partition* epoch.
+    //     A led partition with a bumped partition epoch re-enters applyLocalLeadersDelta via
+    //     localChanges.leaders, and -- now that the seal is committed (not pending) -- takes the
+    //     consolidating become-leader branch, which starts the consolidation fetcher from the
+    //     local LEO (== seal).
+    //
+    // Delta 1 only exists to bring the partition online (as a still-pending leader) so that delta 2
+    // sees an existing online partition, mirroring a real classic leader that was already serving.
+    val topicName = disklessTopicPartition.topic()
+    val topicId = disklessTopicPartition.topicId
+    val tp = disklessTopicPartition.topicPartition()
+    val brokerId = 1
+    val otherReplica = 2
+    val sealOffset = 10L
+
+    val mockIdlm = mock(classOf[InitDisklessLogManager])
+    val mockReplicaFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockReplicaFetcherManager.removeFetcherForPartitions(any()))
+      .thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mock, _) =>
+        when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = spy(createReplicaManager(
+        List(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockReplicaFetcherManager),
+        initDisklessLogManager = Some(mockIdlm)
+      ))
+      try {
+        val mockCfm = consolidationCtor.constructed().get(0)
+
+        // The classic prefix is already fully on local disk: LEO == HW == seal.
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+
+        // --- delta 1: bring the partition online as a (still pending) leader on this broker ---
+        val onlineDelta = new TopicsDelta(TopicsImage.EMPTY)
+        onlineDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+        val onlineRecord = new PartitionRecord()
+          .setPartitionId(0)
+          .setTopicId(topicId)
+          .setReplicas(util.Arrays.asList(brokerId, otherReplica))
+          .setIsr(util.Arrays.asList(brokerId, otherReplica))
+          .setLeader(brokerId)
+          .setLeaderEpoch(0)
+          .setPartitionEpoch(0)
+        onlineRecord.unknownTaggedFields().add(
+          InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+            PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING))
+        onlineDelta.replay(onlineRecord)
+        val onlineImage = imageFromTopics(onlineDelta.apply())
+        replicaManager.applyDelta(onlineDelta, onlineImage)
+        assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online],
+          "Partition should be online after the first delta")
+
+        // --- delta 2: pending switch with a leader-epoch bump -> seal + register ---
+        clearInvocations(mockCfm)
+        val pendingDelta = new TopicsDelta(onlineImage.topics())
+        val pendingRecord = new PartitionChangeRecord()
+          .setTopicId(topicId)
+          .setPartitionId(0)
+          .setLeader(brokerId) // forces a leader-epoch bump so it lands in localChanges.leaders
+        pendingRecord.unknownTaggedFields().add(
+          InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+            PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING))
+        pendingDelta.replay(pendingRecord)
+        val pendingImage = imageFromTopics(pendingDelta.apply())
+        assertTrue(pendingDelta.localChanges(brokerId).leaders.containsKey(tp),
+          "Epoch bump should put the pending switch in localChanges.leaders")
+        replicaManager.applyDelta(pendingDelta, pendingImage)
+
+        // Seal+register ran (not the consolidating become-leader branch), and no consolidation
+        // fetcher was started for the partition while the seal is still pending.
+        verify(mockIdlm).registerPartition(any(classOf[Partition]), ArgumentMatchers.eq(topicId))
+        val leaderEpochAfterSeal = replicaManager.getPartition(tp)
+          .asInstanceOf[HostedPartition.Online].partition.getLeaderEpoch
+        verify(mockCfm, never()).addFetcherForPartitions(any())
+
+        // --- delta 3: seal commit (PENDING -> committed seal), no leader-epoch bump ---
+        clearInvocations(mockCfm)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        val sealDelta = new TopicsDelta(pendingImage.topics())
+        val sealRecord = new PartitionChangeRecord()
+          .setTopicId(topicId)
+          .setPartitionId(0)
+        sealRecord.unknownTaggedFields().add(
+          InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+        sealDelta.replay(sealRecord)
+        // The seal commit leaves the leader epoch unchanged but bumps the partition epoch, so the
+        // led partition still re-enters applyLocalLeadersDelta through localChanges.leaders.
+        assertTrue(sealDelta.localChanges(brokerId).leaders.containsKey(tp),
+          "Seal commit should re-enter applyLocalLeadersDelta via the partition-epoch bump")
+        replicaManager.applyDelta(sealDelta, imageFromTopics(sealDelta.apply()))
+
+        // Consolidation now starts from the local LEO (== seal) via the consolidating become-leader
+        // branch, because the partition is no longer pending.
+        verify(mockCfm).addFetcherForPartitions(
+          Map(tp -> InitialFetchState(
+            topicId = Some(topicId),
+            leader = new BrokerEndPoint(-1, "diskless", -1),
+            currentLeaderEpoch = leaderEpochAfterSeal,
+            initOffset = sealOffset
+          ))
+        )
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+        verify(consolidationCtor.constructed().get(0)).shutdown()
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
 }

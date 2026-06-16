@@ -3299,7 +3299,19 @@ class ReplicaManager(val config: KafkaConfig,
         config.disklessRemoteStorageConsolidationEnabled &&
           _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
       val existingPartition = onlinePartition(tp)
-      if (!isDiskless || isConsolidatingDisklessTopic) {
+      // A classic-to-diskless switch with the seal still pending must always take the
+      // seal+register branch below, even for a consolidating topic. The controller flips
+      // diskless.enable=true and remote.storage.enable=true together for a consolidating
+      // switch, so isConsolidatingDisklessTopic is already true at the pending delta; without
+      // this guard the consolidating branch would claim the partition and skip the seal, and
+      // the switch would never leave CLASSIC_TO_DISKLESS_SWITCH_PENDING. Consolidation for such
+      // a partition is started later, once the seal commits: the commit record bumps the
+      // partition epoch, so the (no-longer-pending) partition re-enters this method via
+      // localChanges.leaders and the consolidating branch above starts the fetcher then.
+      val isSwitchPending =
+        info.partition.classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
+      val isPendingSwitchOfExistingPartition = existingPartition.isDefined && isSwitchPending
+      if ((!isDiskless || isConsolidatingDisklessTopic) && !isPendingSwitchOfExistingPartition) {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
@@ -3321,12 +3333,14 @@ class ReplicaManager(val config: KafkaConfig,
               markPartitionOffline(tp)
           }
         }
-      } else if (existingPartition.isDefined && !isConsolidatingDisklessTopic) {
+      } else if (existingPartition.isDefined && (isSwitchPending || !isConsolidatingDisklessTopic)) {
         // Classic-to-diskless switch. The controller writes the diskless.enable=true
         // ConfigRecord and the per-partition PartitionChangeRecord (with
         // classicToDisklessStartOffset = CLASSIC_TO_DISKLESS_SWITCH_PENDING) in the
         // same atomic op so the partition shows up here in localChanges.leaders whenever
-        // this broker is (or just became) the leader.
+        // this broker is (or just became) the leader. A consolidating switch (diskless.enable
+        // and remote.storage.enable flipped together) also lands here while the seal is pending
+        // (isSwitchPending), so the seal+register runs before consolidation can start.
         if (initDisklessLogManager.isEmpty) {
           error(s"Cannot proceed with classic to diskless switch for partition $tp: InitDisklessLogManager is not enabled.")
           return
