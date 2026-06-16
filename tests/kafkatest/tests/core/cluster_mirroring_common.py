@@ -139,6 +139,7 @@ class MirrorUtils:
             cmd += " --isolation-level %s" % isolation_level
         if group is not None:
             cmd += " --group %s" % group
+        cmd += " --consumer-property group.protocol=consumer"
         if cmd_suffix:
             cmd += cmd_suffix.replace("--command-config", "--consumer.config")
         cmd += " 2>/dev/null"

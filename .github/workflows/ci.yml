@@ -58,3 +58,6 @@ jobs:
 
       - name: Unit Tests
         run: ./gradlew unitTest
+
+      - name: Cluster Mirroring Integration Tests
+        run: ./gradlew core:test --tests AsyncClusterMirrorIntegrationTest

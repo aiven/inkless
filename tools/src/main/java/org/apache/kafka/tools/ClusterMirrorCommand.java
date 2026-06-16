@@ -285,7 +285,11 @@ public abstract class ClusterMirrorCommand {
             Map<String, ClusterMirrorDescription> descriptions = result.allDescriptions().get();
 
             if (descriptions.isEmpty()) {
-                System.out.println("No mirror partitions found");
+                if (opts.hasJsonOption()) {
+                    System.out.print("[]");
+                } else {
+                    System.out.println("No mirror partitions found");
+                }
                 return;
             }
 
