@@ -71,6 +71,7 @@ public class QuotaConfig {
             "all replicas for this topic.";
     public static final List<String> FOLLOWER_REPLICATION_THROTTLED_REPLICAS_DEFAULT = List.of();
 
+    // Cluster Mirroring
     public static final String MIRROR_REPLICATION_THROTTLED_REPLICAS_CONFIG = "mirror.replication.throttled.replicas";
     public static final String MIRROR_REPLICATION_THROTTLED_REPLICAS_DOC = "A list of replicas for which log replication should be throttled on " +
             "the mirror follower node. The list should describe a set of " + "replicas in the form " +
@@ -89,6 +90,7 @@ public class QuotaConfig {
             String.format("property %s (for each topic). This property can be only set dynamically. It is suggested that the ", FOLLOWER_REPLICATION_THROTTLED_REPLICAS_CONFIG) +
             "limit be kept above 1MB/s for accurate behaviour.";
 
+    // Cluster Mirroring
     public static final String MIRROR_REPLICATION_THROTTLED_RATE_CONFIG = "mirror.replication.throttled.rate";
     public static final String MIRROR_REPLICATION_THROTTLED_RATE_DOC = "A long representing the upper bound (bytes/sec) on replication traffic for mirrored follower node enumerated in the " +
             String.format("property %s (for each topic). This property can be only set dynamically. It is suggested that the ", MIRROR_REPLICATION_THROTTLED_REPLICAS_CONFIG) +

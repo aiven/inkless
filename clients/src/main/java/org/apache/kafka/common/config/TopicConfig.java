@@ -219,6 +219,7 @@ public class TopicConfig {
         "configuration. If message.timestamp.type=CreateTime, the message will be rejected if the difference in " +
         "timestamps exceeds this specified threshold. This configuration is ignored if message.timestamp.type=LogAppendTime.";
 
+    // Cluster Mirroring
     public static final String MIRROR_NAME_CONFIG = "mirror.name";
     public static final String MIRROR_NAME_DOC = "Identifies the mirror that manages this topic. " +
             "Topics with this configuration set are read-only and can only be modified through mirror management APIs. " +

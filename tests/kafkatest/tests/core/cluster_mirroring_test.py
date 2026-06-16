@@ -503,7 +503,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
 
         self.logger.info("Delete topic on source and wait for metadata sync")
         self.source_kafka.delete_topic(topic)
-        MirrorUtils.wait_for_metadata_sync(self.logger, self.dest_kafka, self.client_node, mirror_name)
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.client_node, mirror_name)
 
         self.logger.info("Verify mirror partitions transitioned to STOPPED")
         MirrorUtils.wait_mirror_state(self.logger, self.dest_kafka, self.client_node, mirror_name, "STOPPED", [topic])
@@ -569,14 +569,14 @@ class ClusterMirroringTest(MirrorUtils, Test):
 
         self.logger.info("Send 3 more records to orders-eu on source (should not be mirrored)")
         MirrorUtils.produce_records(self.logger, self.source_kafka, "orders-eu", 3, self.client_node)
-        MirrorUtils.wait_for_metadata_sync(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
 
         count_eu = MirrorUtils.consume_records(self.logger, self.dest_kafka, "orders-eu", self.client_node, timeout_ms=5000)
         assert count_eu == 3, \
             "Expected 3 records for orders-eu after stop (not 6), got %d" % count_eu
 
         self.logger.info("Verify orders-eu is not re-discovered after two more metadata refresh cycles")
-        MirrorUtils.wait_for_metadata_sync(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
 
         self.logger.info("describe_cluster_mirror: %s",
                          self.dest_kafka.describe_cluster_mirror(self.client_node))
@@ -642,7 +642,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
             topic, "retention.ms=100002,retention.bytes=10000000002,min.insync.replicas=2",
             node=self.client_node)
 
-        MirrorUtils.wait_for_metadata_sync(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
 
         self.logger.info("Verifying excluded properties were not synced to destination")
         dest_configs = ClusterMirroringTest.parse_topic_configs(self.dest_kafka.describe_topic(topic, node=self.client_node))
@@ -689,7 +689,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
             err_msg="Failed to start mirror topics",
         )
         MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest_kafka, self.client_node, mirror_name, [topic])
-        MirrorUtils.wait_for_metadata_sync(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
 
         self.logger.info("Verify only app-group1 is synced on destination")
         groups_output = self.dest_kafka.list_consumer_groups(self.client_node)
@@ -1034,7 +1034,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
             err_msg="Failed to start mirror topics",
         )
         MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest_kafka, self.client_node, mirror_name, ["my-topic"])
-        MirrorUtils.wait_for_metadata_sync(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
 
         self.logger.info("Verify my-group on dest has my-topic offset but not other-topic")
         group_desc = MirrorUtils.describe_consumer_group(self.dest_kafka, "my-group", self.client_node)
@@ -1046,7 +1046,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
         self.logger.info("Produce 2 more records to my-topic and verify synced offset is exactly 3")
         MirrorUtils.produce_records(self.logger, self.source_kafka, "my-topic", 2, self.client_node)
         MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest_kafka, self.client_node, mirror_name, ["my-topic"])
-        MirrorUtils.wait_for_metadata_sync(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
 
         dest_desc = MirrorUtils.describe_consumer_group(self.dest_kafka, "my-group", self.client_node)
         dest_offset = ClusterMirroringTest.parse_group_offset(dest_desc, "my-topic")
@@ -1063,7 +1063,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
 
         self.logger.info("Reset source offset to 2 to prove sync skips active consumer")
         self.source_kafka.reset_consumer_group_offsets(self.client_node, "my-group", "my-topic", 2)
-        MirrorUtils.wait_for_metadata_sync(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
 
         self.logger.info("Verify source offset is 2 but dest offset is still 5 (sync skipped)")
         src_desc = MirrorUtils.describe_consumer_group(self.source_kafka, "my-group", self.client_node)
@@ -1129,7 +1129,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
             err_msg="Failed to start mirror topics",
         )
         MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest_kafka, self.client_node, mirror_name, ["my-topic"])
-        MirrorUtils.wait_for_metadata_sync(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
 
         self.logger.info("Verify my-share-group on dest has my-topic but not other-topic")
         src_desc = self.source_kafka.describe_share_group(share_group, self.client_node)
@@ -1142,7 +1142,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
         self.logger.info("Produce 2 more and consume delta using synced offsets")
         MirrorUtils.produce_records(self.logger, self.source_kafka, "my-topic", 2, self.client_node)
         MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest_kafka, self.client_node, mirror_name, ["my-topic"])
-        MirrorUtils.wait_for_metadata_sync(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
 
         ClusterMirroringTest.consume_share_records(
             self.logger, self.dest_kafka, self.client_node, "my-topic", share_group,
@@ -1158,7 +1158,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
 
         self.logger.info("Reset source offset to earliest to prove sync skips active consumer")
         self.source_kafka.reset_share_group_offsets(self.client_node, share_group, "my-topic")
-        MirrorUtils.wait_for_metadata_sync(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.client_node, mirror_name, num_cycles=2)
 
         self.logger.info("Verify source offset reset but dest offset unchanged (sync skipped)")
         src_desc = self.source_kafka.describe_share_group(share_group, self.client_node)

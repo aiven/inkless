@@ -268,7 +268,8 @@ public class ReplicaFetcherThreadBenchmark {
                             replicaQuota,
                             () -> MetadataVersion.MINIMUM_VERSION,
                             () -> -1L,
-                            false
+                            false,
+                            scala.Option.empty()
                     ) {
                         @Override
                         public OffsetAndEpoch fetchEarliestOffset(TopicPartition topicPartition, int currentLeaderEpoch) {

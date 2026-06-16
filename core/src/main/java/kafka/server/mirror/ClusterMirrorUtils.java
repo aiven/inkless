@@ -16,8 +16,6 @@
  */
 package kafka.server.mirror;
 
-import kafka.server.KafkaConfig;
-
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.metrics.Metrics;
@@ -52,12 +50,11 @@ public final class ClusterMirrorUtils {
 
     public static MirrorSourceSender createSender(BrokerEndPoint brokerEndpoint,
                                                   ClusterMirrorConfig mirrorConfig,
-                                                  KafkaConfig brokerConfig,
                                                   Metrics metrics,
                                                   Time time,
                                                   String clientId,
                                                   LogContext logContext) {
-        return new MirrorSourceSender(brokerEndpoint, mirrorConfig, brokerConfig,
+        return new MirrorSourceSender(brokerEndpoint, mirrorConfig,
                 metrics, time, brokerEndpoint.id(), clientId, logContext);
     }
 

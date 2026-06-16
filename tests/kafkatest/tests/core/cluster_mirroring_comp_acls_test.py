@@ -232,7 +232,7 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
         return ClusterMirroringCompAclsTest.run_acl_cmd(kafka, "--list", client_node)
 
     def wait_for_acl_condition(self, kafka, mirror_name, condition, err_msg, client_node):
-        MirrorUtils.wait_for_metadata_sync(self.logger, kafka, client_node, mirror_name)
+        MirrorUtils.wait_for_metadata_refresh(self.logger, kafka, client_node, mirror_name)
         def check():
             dest_acls = ClusterMirroringCompAclsTest.list_acls(kafka, client_node)
             self.logger.debug("Destination ACLs:\n%s" % dest_acls)

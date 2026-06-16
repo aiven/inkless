@@ -25,6 +25,7 @@ import org.apache.kafka.clients.admin.CreateClusterMirrorOptions;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.StartMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.StopMirrorTopicsOptions;
+import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -70,7 +71,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @Timeout(value = 180, unit = TimeUnit.SECONDS)
 public class AsyncClusterMirrorIntegrationTest {
-
     private static final String TOPIC = "test-async-topic";
     private static final String MIRROR_NAME = "test-mirror";
 
@@ -106,7 +106,7 @@ public class AsyncClusterMirrorIntegrationTest {
                         .build())
                 .setConfigProp(ServerConfigs.UNSTABLE_API_VERSIONS_ENABLE_CONFIG, "true")
                 .setConfigProp(ServerConfigs.UNSTABLE_FEATURE_VERSIONS_ENABLE_CONFIG, "true")
-                .setConfigProp(ClusterMirrorConfig.METADATA_REFRESH_INTERVAL_MS_CONFIG, "5000")
+                .setConfigProp(ClusterMirrorConfig.MIRROR_METADATA_REFRESH_INTERVAL_MS_CONFIG, "5000")
                 .setConfigProp(ServerLogConfigs.AUTO_CREATE_TOPICS_ENABLE_CONFIG, "false")
                 .setConfigProp(ClusterMirrorConfig.MIRROR_STATE_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
                 .build();
@@ -204,10 +204,8 @@ public class AsyncClusterMirrorIntegrationTest {
                 Thread.sleep(2000);
             }
         }
-        assertTrue(mirrorFound,
-                "mirrorFound " + MIRROR_NAME + " was not created on destination cluster within timeout. Expected mirror =" +
-                        expectedMirror + " not found in " + mirrorListings);
-
+        assertTrue(mirrorFound, "Mirror " + MIRROR_NAME + " was not created on destination cluster within timeout. "
+                + "Expected mirror =" + expectedMirror + " not found in " + mirrorListings);
     }
 
     private static void closeQuietly(AutoCloseable closeable) {
@@ -220,7 +218,7 @@ public class AsyncClusterMirrorIntegrationTest {
         }
     }
 
-    private Map<String, org.apache.kafka.clients.admin.TopicDescription> describeTopicsWithRetry(
+    private Map<String, TopicDescription> describeTopicsWithRetry(
             Admin admin, List<String> topics) throws Exception {
         long deadline = System.currentTimeMillis() + 30_000;
         while (true) {

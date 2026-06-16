@@ -136,19 +136,19 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     val threadName = s"MirrorFetcherThread-$fetcherId-${srcEndpoint.id}-$mirrorName"
     val logContext = new LogContext(s"[MirrorFetcher id=${brokerConfig.brokerId}, fetcherId=$fetcherId, leaderId=${srcEndpoint.id}, mirrorName=$mirrorName] ")
 
-    val sender = if (mirrorName.nonEmpty) {
-      val mirrorProperties = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_MIRROR, mirrorName))
-      info(s"Using mirror properties for $mirrorName: ${mirrorProperties.keySet()}")
-      val mirrorConfig = ClusterMirrorConfig.fromProperties(mirrorProperties)
-      val clientId = s"fetcherId-$fetcherId-mirrorName-$mirrorName"
-      ClusterMirrorUtils.createSender(srcEndpoint, mirrorConfig, brokerConfig, metrics, time, clientId, logContext)
-    } else {
+    if (mirrorName.isEmpty) {
       throw new IllegalArgumentException("Mirror name must be provided for remote fetchers")
     }
+    val mirrorProperties = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_MIRROR, mirrorName))
+    info(s"Using mirror properties for $mirrorName: ${mirrorProperties.keySet()}")
+    val mirrorConfig = ClusterMirrorConfig.fromProperties(mirrorProperties)
+    val clientId = s"fetcherId-$fetcherId-mirrorName-$mirrorName"
+    val sender = ClusterMirrorUtils.createSender(srcEndpoint, mirrorConfig, metrics, time, clientId, logContext)
     val fetchSessionHandler = new FetchSessionHandler(logContext, srcEndpoint.id)
     val endpoint: LeaderEndPoint = new RemoteLeaderEndPoint(logContext.logPrefix, sender, fetchSessionHandler, brokerConfig,
-      replicaManager, quotaManager, metadataVersionSupplier, brokerEpochSupplier, isClusterMirror = true)
-    val mirrorFetchBackoffMs = brokerConfig.mirrorConfig.fetchBackoffMs.toInt
+      replicaManager, quotaManager, metadataVersionSupplier, brokerEpochSupplier, isClusterMirror = true,
+      mirrorConfig = Some(mirrorConfig))
+    val mirrorFetchBackoffMs = mirrorConfig.fetchBackoffMs().toInt
     new MirrorFetcherThread(threadName, endpoint, brokerConfig, failedPartitions, replicaManager,
       quotaManager, logContext.logPrefix, mirrorName, mirrorFetchBackoffMs)
   }

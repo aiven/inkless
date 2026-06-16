@@ -35,6 +35,8 @@ import org.apache.kafka.server.{PartitionFetchState, ReplicaFetch, ResultWithPar
 
 import java.util
 import scala.jdk.CollectionConverters._
+import org.apache.kafka.server.config.ClusterMirrorConfig
+
 import scala.collection.mutable
 
 /**
@@ -71,14 +73,15 @@ class RemoteLeaderEndPoint(logPrefix: String,
                            quota: ReplicaQuota,
                            metadataVersionSupplier: () => MetadataVersion,
                            brokerEpochSupplier: () => Long,
-                           isClusterMirror: Boolean = false) extends LeaderEndPoint with Logging {
+                           isClusterMirror: Boolean = false,
+                           mirrorConfig: Option[ClusterMirrorConfig] = None) extends LeaderEndPoint with Logging {
 
   this.logIdent = logPrefix
 
-  private val maxWait = brokerConfig.replicaFetchWaitMaxMs
-  private val minBytes = brokerConfig.replicaFetchMinBytes
-  private val maxBytes = brokerConfig.replicaFetchResponseMaxBytes
-  private val fetchSize = brokerConfig.replicaFetchMaxBytes
+  private val maxWait: Int = mirrorConfig.map(_.fetchWaitMaxMs()).getOrElse(brokerConfig.replicaFetchWaitMaxMs)
+  private val minBytes: Int = mirrorConfig.map(_.fetchMinBytes()).getOrElse(brokerConfig.replicaFetchMinBytes)
+  private val maxBytes: Int = mirrorConfig.map(_.fetchResponseMaxBytes()).getOrElse(brokerConfig.replicaFetchResponseMaxBytes)
+  private val fetchSize: Int = mirrorConfig.map(_.fetchMaxBytes()).getOrElse(brokerConfig.replicaFetchMaxBytes)
   private val lastSeenEndpointList = new util.HashMap[Integer, Node]()
 
   override def isTruncationOnFetchSupported: Boolean = true

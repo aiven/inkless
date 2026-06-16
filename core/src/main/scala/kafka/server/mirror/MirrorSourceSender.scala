@@ -30,8 +30,6 @@ import org.apache.kafka.common.requests.AbstractRequest.Builder
 import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.server.config.ClusterMirrorConfig
 import org.apache.kafka.server.network.BrokerEndPoint
-import kafka.server.KafkaConfig
-
 import scala.jdk.CollectionConverters._
 
 /**
@@ -40,14 +38,13 @@ import scala.jdk.CollectionConverters._
  */
 class MirrorSourceSender(sourceBroker: BrokerEndPoint,
                          mirrorConfig: ClusterMirrorConfig,
-                         brokerConfig: KafkaConfig,
                          metrics: Metrics,
                          time: Time,
                          fetcherId: Int,
                          clientId: String,
                          logContext: LogContext) extends BlockingSend {
   private val sourceNode = new Node(sourceBroker.id, sourceBroker.host, sourceBroker.port)
-  private val socketTimeout: Int = brokerConfig.replicaSocketTimeoutMs
+  private val socketTimeout: Int = mirrorConfig.socketTimeoutMs()
 
   private val networkClient = {
     val channelBuilder = ChannelBuilders.clientChannelBuilder(
@@ -61,7 +58,7 @@ class MirrorSourceSender(sourceBroker: BrokerEndPoint,
     )
     val selector = new Selector(
       NetworkReceive.UNLIMITED,
-      brokerConfig.connectionsMaxIdleMs,
+      mirrorConfig.connectionsMaxIdleMs(),
       metrics,
       time,
       "mirror-" + clientId,
@@ -77,10 +74,10 @@ class MirrorSourceSender(sourceBroker: BrokerEndPoint,
       0,
       0,
       Selectable.USE_DEFAULT_BUFFER_SIZE,
-      brokerConfig.replicaSocketReceiveBufferBytes,
-      brokerConfig.requestTimeoutMs,
-      brokerConfig.connectionSetupTimeoutMs,
-      brokerConfig.connectionSetupTimeoutMaxMs,
+      mirrorConfig.socketReceiveBufferBytes(),
+      mirrorConfig.requestTimeoutMs(),
+      mirrorConfig.connectionSetupTimeoutMs(),
+      mirrorConfig.connectionSetupTimeoutMaxMs(),
       time,
       true,
       new ApiVersions,

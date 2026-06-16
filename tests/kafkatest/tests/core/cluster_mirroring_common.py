@@ -203,7 +203,7 @@ class MirrorUtils:
         wait_until(check, timeout_sec=300, backoff_sec=2, err_msg=err_msg)
 
     @staticmethod
-    def wait_for_metadata_sync(logger, kafka, client_node, mirror_name, num_cycles=1):
+    def wait_for_metadata_refresh(logger, kafka, client_node, mirror_name, num_cycles=1):
         """Wait for metadata sync by sleeping based on the configured refresh interval."""
         output = kafka.describe_mirror_config(client_node, mirror_name)
         interval_ms = 30000
@@ -211,7 +211,7 @@ class MirrorUtils:
             if "mirror.metadata.refresh.interval.ms=" in line:
                 interval_ms = int(line.strip().split()[0].split("=")[1])
                 break
-        sleep_s = (interval_ms // 1000) * num_cycles + 2
+        sleep_s = (interval_ms // 1000) * num_cycles
         logger.info("Waiting %ds for %d metadata sync cycle(s) (interval=%dms)",
                     sleep_s, num_cycles, interval_ms)
         time.sleep(sleep_s)

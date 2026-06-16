@@ -27,6 +27,7 @@ import org.apache.kafka.common.config.SecurityConfig;
 import org.apache.kafka.common.config.SslConfigs;
 import org.apache.kafka.common.resource.ResourceType;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
+import org.apache.kafka.network.SocketServerConfigs;
 
 import java.util.Arrays;
 import java.util.List;
@@ -51,210 +52,264 @@ import static org.apache.kafka.common.config.ConfigDef.Type.STRING;
  * configurations supported by the Cluster Mirroring feature.
  */
 public final class ClusterMirrorConfig {
-    // Internal topic configuration
+    // ---------------------------------------------------------------
+    // Broker level configs: stored in server.properties or dynamic broker config.
+    // ---------------------------------------------------------------
+
     public static final String MIRROR_STATE_TOPIC_NUM_PARTITIONS_CONFIG = "mirror.state.topic.num.partitions";
     public static final int MIRROR_STATE_TOPIC_NUM_PARTITIONS_DEFAULT = 50;
-    public static final String MIRROR_STATE_TOPIC_NUM_PARTITIONS_DOC = "The number of partitions for the Cluster Mirror internal topic (should not change after deployment).";
+    public static final String MIRROR_STATE_TOPIC_NUM_PARTITIONS_DOC = "The number of partitions for the internal topic (should not change after deployment).";
 
     public static final String MIRROR_STATE_TOPIC_REPLICATION_FACTOR_CONFIG = "mirror.state.topic.replication.factor";
     public static final short MIRROR_STATE_TOPIC_REPLICATION_FACTOR_DEFAULT = 3;
-    public static final String MIRROR_STATE_TOPIC_REPLICATION_FACTOR_DOC = "The replication factor for the Cluster Mirror internal topic. " +
+    public static final String MIRROR_STATE_TOPIC_REPLICATION_FACTOR_DOC = "The replication factor for the internal topic. " +
             "Topic creation will fail until the cluster size meets this replication factor requirement.";
 
-    // Topic properties exclude filter (regex patterns)
-    public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG = "mirror.topic.properties.exclude";
-    public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT =
-            "follower.replication.throttled.replicas,"
-            + "leader.replication.throttled.replicas,"
-            + "message.timestamp.difference.max.ms,"
-            + "log.message.timestamp.before.max.ms,"
-            + "log.message.timestamp.after.max.ms,"
-            + "message.timestamp.type,"
-            + "unclean.leader.election.enable,"
-            + "min.insync.replicas,"
-            + "mirror.name";
-    public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_DOC = "A comma-separated list of topic config property names to exclude from synchronization. "
-            + "Properties in this list will not be replicated from the source cluster. "
-            + "The mirror.name property is always excluded regardless of this setting.";
-
-    // Topic include filter (regex patterns)
-    public static final String MIRROR_TOPICS_INCLUDE_CONFIG = "mirror.topics.include";
-    public static final String MIRROR_TOPICS_INCLUDE_DEFAULT = "";
-    public static final String MIRROR_TOPICS_INCLUDE_DOC = "A comma-separated list of regex patterns for topic names to include in mirroring. "
-            + "Topics on the source cluster whose names match at least one of the patterns will be automatically discovered and mirrored. "
-            + "When empty (default), only explicitly added topics are mirrored.";
-
-    // Topic exclude filter (regex patterns)
-    public static final String MIRROR_TOPICS_EXCLUDE_CONFIG = "mirror.topics.exclude";
-    public static final String MIRROR_TOPICS_EXCLUDE_DEFAULT = "__.*";
-    public static final String MIRROR_TOPICS_EXCLUDE_DOC = "A comma-separated list of regex patterns for topic names to exclude from mirroring. "
-            + "Topics matching the exclude pattern are not mirrored even if they match mirror.topics.include. "
-            + "By default, internal topics (starting with '__') are excluded.";
-
-    // Consumer group include filter (regex patterns)
-    public static final String MIRROR_GROUPS_INCLUDE_CONFIG = "mirror.groups.include";
-    public static final String MIRROR_GROUPS_INCLUDE_DEFAULT = ".*";
-    public static final String MIRROR_GROUPS_INCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to include in offset synchronization. "
-            + "Only consumer groups whose IDs match at least one of the patterns will have their offsets replicated from the source cluster.";
-
-    // Consumer group exclude filter (regex patterns)
-    public static final String MIRROR_GROUPS_EXCLUDE_CONFIG = "mirror.groups.exclude";
-    public static final String MIRROR_GROUPS_EXCLUDE_DEFAULT = "";
-    public static final String MIRROR_GROUPS_EXCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to exclude from offset synchronization. "
-            + "Groups matching the exclude pattern are not replicated even if they match mirror.groups.include.";
-
-    // ACL include filter (semicolon-separated rules)
-    public static final String MIRROR_ACL_INCLUDE_CONFIG = "mirror.acl.include";
-    public static final String MIRROR_ACL_INCLUDE_DEFAULT = "*";
-    public static final String MIRROR_ACL_INCLUDE_DOC = "A comma-separated list of ACL include rules. Each rule uses semicolon-separated fields: "
-            + "resourceType;resourceName;operation;permissionType;principal. Use '*' as wildcard for any field. The resourceName field supports "
-            + "regex patterns. Trailing wildcard fields can be omitted. See AclRule javadoc for examples.";
-
-    // Fetcher configuration
-    public static final String NUM_REPLICA_FETCHERS_CONFIG = "mirror.num.replica.fetchers";
-    public static final int NUM_REPLICA_FETCHERS_DEFAULT = 1;
-    public static final String NUM_REPLICA_FETCHERS_DOC = "Number of fetcher threads used to replicate records from each source broker in a cluster mirror. " +
+    public static final String MIRROR_NUM_REPLICA_FETCHERS_CONFIG = "mirror.num.replica.fetchers";
+    public static final int MIRROR_NUM_REPLICA_FETCHERS_DEFAULT = 1;
+    public static final String MIRROR_NUM_REPLICA_FETCHERS_DOC = "Number of fetcher threads used to replicate records from each source broker in a cluster mirror. " +
             "The total number of mirror fetcher threads on a broker equals this value multiplied by the number of distinct source brokers and the number of cluster mirrors. " +
             "A higher value increases I/O parallelism for cross cluster replication at the cost of higher CPU and memory utilization.";
 
-    public static final String FETCH_BACKOFF_MS_CONFIG = "mirror.fetch.backoff.ms";
-    public static final long FETCH_BACKOFF_MS_DEFAULT = 1000;
-    public static final String FETCH_BACKOFF_MS_DOC = "The amount of time to wait before retrying mirror fetch requests after a failure. " +
-            "This controls the backoff for mirror fetcher threads on connection errors or other exceptions from the source cluster.";
+    public static final String MIRROR_METADATA_REFRESH_INTERVAL_MS_CONFIG = "mirror.metadata.refresh.interval.ms";
+    public static final long MIRROR_METADATA_REFRESH_INTERVAL_MS_DEFAULT = 30000L;
+    public static final String MIRROR_METADATA_REFRESH_INTERVAL_MS_DOC = "The interval in milliseconds at which the coordinator refreshes metadata from source clusters. " +
+            "This controls how frequently the coordinator polls source clusters to detect new topics and metadata changes.";
 
-    public static final String FAILED_RETRY_INITIAL_BACKOFF_MS_CONFIG = "mirror.failed.retry.initial.backoff.ms";
-    public static final long FAILED_RETRY_INITIAL_BACKOFF_MS_DEFAULT = 1000L;
-    public static final String FAILED_RETRY_INITIAL_BACKOFF_MS_DOC = "The initial backoff time in milliseconds before retrying a mirror partition " +
+    public static final String MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_CONFIG = "mirror.failed.retry.initial.backoff.ms";
+    public static final long MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_DEFAULT = 1000L;
+    public static final String MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_DOC = "The initial backoff time in milliseconds before retrying a mirror partition " +
             "in FAILED state. The actual delay uses full jitter: a uniform random value in [0, backoff].";
 
-    public static final String FAILED_RETRY_MAX_BACKOFF_MS_CONFIG = "mirror.failed.retry.max.backoff.ms";
-    public static final long FAILED_RETRY_MAX_BACKOFF_MS_DEFAULT = 300000L;
-    public static final String FAILED_RETRY_MAX_BACKOFF_MS_DOC = "The maximum backoff time in milliseconds for retrying a mirror partition in FAILED state.";
+    public static final String MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_CONFIG = "mirror.failed.retry.max.backoff.ms";
+    public static final long MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_DEFAULT = 300000L;
+    public static final String MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_DOC = "The maximum backoff time in milliseconds for retrying a mirror partition in FAILED state.";
 
-    public static final String FAILED_RETRY_MAX_ATTEMPTS_CONFIG = "mirror.failed.retry.max.attempts";
-    public static final int FAILED_RETRY_MAX_ATTEMPTS_DEFAULT = 10;
-    public static final String FAILED_RETRY_MAX_ATTEMPTS_DOC = "The maximum number of automatic retry attempts for a mirror partition in FAILED state. " +
+    public static final String MIRROR_FAILED_RETRY_MAX_ATTEMPTS_CONFIG = "mirror.failed.retry.max.attempts";
+    public static final int MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DEFAULT = 10;
+    public static final String MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DOC = "The maximum number of automatic retry attempts for a mirror partition in FAILED state. " +
             "After this limit is reached, manual intervention is required via the start-mirror-topics command. " +
             "Set to 0 for unlimited retries.";
 
-    // Metadata refresh interval
-    public static final String METADATA_REFRESH_INTERVAL_MS_CONFIG = "mirror.metadata.refresh.interval.ms";
-    public static final long METADATA_REFRESH_INTERVAL_MS_DEFAULT = 30000L; // 30 seconds
-    public static final String METADATA_REFRESH_INTERVAL_MS_DOC = "The interval in milliseconds at which the coordinator refreshes metadata from source clusters. " +
-            "This controls how frequently the coordinator polls source clusters to detect new topics and metadata changes.";
+    // ---------------------------------------------------------------
+    // Mirror level configs: Set when creating/altering a specific mirror. Stored in cluster metadata.
+    // ---------------------------------------------------------------
 
     // Connection configuration
     public static final String BOOTSTRAP_SERVERS_CONFIG = CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
     public static final String BOOTSTRAP_SERVERS_DOC = "A list of host/port pairs to use for establishing the initial connection to the source cluster. " +
             "This is a required configuration when creating a cluster mirror.";
 
+    public static final String REQUEST_TIMEOUT_MS_CONFIG = CommonClientConfigs.REQUEST_TIMEOUT_MS_CONFIG;
+    public static final int REQUEST_TIMEOUT_MS_DEFAULT = 30 * 1000;
+    public static final String REQUEST_TIMEOUT_MS_DOC = CommonClientConfigs.REQUEST_TIMEOUT_MS_DOC;
+
+    public static final String CONNECTION_SETUP_TIMEOUT_MS_CONFIG = CommonClientConfigs.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG;
+    public static final long CONNECTION_SETUP_TIMEOUT_MS_DEFAULT = CommonClientConfigs.DEFAULT_SOCKET_CONNECTION_SETUP_TIMEOUT_MS;
+    public static final String CONNECTION_SETUP_TIMEOUT_MS_DOC = CommonClientConfigs.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_DOC;
+
+    public static final String CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG = CommonClientConfigs.SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG;
+    public static final long CONNECTION_SETUP_TIMEOUT_MAX_MS_DEFAULT = CommonClientConfigs.DEFAULT_SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS;
+    public static final String CONNECTION_SETUP_TIMEOUT_MAX_MS_DOC = CommonClientConfigs.SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_DOC;
+
+    public static final String CONNECTIONS_MAX_IDLE_MS_CONFIG = SocketServerConfigs.CONNECTIONS_MAX_IDLE_MS_CONFIG;
+    public static final long CONNECTIONS_MAX_IDLE_MS_DEFAULT = SocketServerConfigs.CONNECTIONS_MAX_IDLE_MS_DEFAULT;
+    public static final String CONNECTIONS_MAX_IDLE_MS_DOC = SocketServerConfigs.CONNECTIONS_MAX_IDLE_MS_DOC;
+
+    // Fetch and network configuration.
+    // The replica.* equivalents use a mirror.* prefix to avoid ambiguity with broker-level configs.
+    // The others reuse the existing key names since they have no replica.* prefix.
+    public static final String MIRROR_FETCH_WAIT_MAX_MS_CONFIG = "mirror.fetch.wait.max.ms";
+    public static final int MIRROR_FETCH_WAIT_MAX_MS_DEFAULT = 1000;
+    public static final String MIRROR_FETCH_WAIT_MAX_MS_DOC = "The maximum wait time for each fetcher request issued by mirror replicas.";
+
+    public static final String MIRROR_FETCH_BACKOFF_MS_CONFIG = "mirror.fetch.backoff.ms";
+    public static final long MIRROR_FETCH_BACKOFF_MS_DEFAULT = 1000;
+    public static final String MIRROR_FETCH_BACKOFF_MS_DOC = "The amount of time to wait before retrying mirror fetch requests after a failure. " +
+            "This controls the backoff for mirror fetcher threads on connection errors or other exceptions from the source cluster.";
+
+    public static final String MIRROR_FETCH_MIN_BYTES_CONFIG = "mirror.fetch.min.bytes";
+    public static final int MIRROR_FETCH_MIN_BYTES_DEFAULT = 1;
+    public static final String MIRROR_FETCH_MIN_BYTES_DOC = "Minimum bytes expected for each fetch response.";
+
+    public static final String MIRROR_FETCH_RESPONSE_MAX_BYTES_CONFIG = "mirror.fetch.response.max.bytes";
+    public static final int MIRROR_FETCH_RESPONSE_MAX_BYTES_DEFAULT = 10 * 1024 * 1024;
+    public static final String MIRROR_FETCH_RESPONSE_MAX_BYTES_DOC = "Maximum bytes expected for the entire fetch response. Records are fetched in batches, " +
+            "and if the first record batch in the first non-empty partition is larger than this value, the record batch will still be returned.";
+
+    public static final String MIRROR_FETCH_MAX_BYTES_CONFIG = "mirror.fetch.max.bytes";
+    public static final int MIRROR_FETCH_MAX_BYTES_DEFAULT = 1024 * 1024;
+    public static final String MIRROR_FETCH_MAX_BYTES_DOC = "The number of bytes of messages to attempt to fetch for each partition.";
+
+    public static final String MIRROR_SOCKET_TIMEOUT_MS_CONFIG = "mirror.socket.timeout.ms";
+    public static final int MIRROR_SOCKET_TIMEOUT_MS_DEFAULT = 30 * 1000;
+    public static final String MIRROR_SOCKET_TIMEOUT_MS_DOC = "The socket timeout for network requests.";
+
+    public static final String MIRROR_SOCKET_RECEIVE_BUFFER_BYTES_CONFIG = "mirror.socket.receive.buffer.bytes";
+    public static final int MIRROR_SOCKET_RECEIVE_BUFFER_BYTES_DEFAULT = 64 * 1024;
+    public static final String MIRROR_SOCKET_RECEIVE_BUFFER_BYTES_DOC = "The socket receive buffer for network requests to the leader for replicating data.";
+
+    // Filter configuration
+    public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG = "mirror.topic.properties.exclude";
+    public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT =
+            "follower.replication.throttled.replicas,"
+                    + "leader.replication.throttled.replicas,"
+                    + "message.timestamp.difference.max.ms,"
+                    + "log.message.timestamp.before.max.ms,"
+                    + "log.message.timestamp.after.max.ms,"
+                    + "message.timestamp.type,"
+                    + "unclean.leader.election.enable,"
+                    + "min.insync.replicas,"
+                    + "mirror.name";
+    public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_DOC = "A comma-separated list of topic config property names to exclude from synchronization. "
+            + "Properties in this list will not be replicated from the source cluster. "
+            + "The mirror.name property is always excluded regardless of this setting.";
+
+    public static final String MIRROR_TOPICS_INCLUDE_CONFIG = "mirror.topics.include";
+    public static final String MIRROR_TOPICS_INCLUDE_DEFAULT = "";
+    public static final String MIRROR_TOPICS_INCLUDE_DOC = "A comma-separated list of regex patterns for topic names to include in mirroring. "
+            + "Topics on the source cluster whose names match at least one of the patterns will be automatically discovered and mirrored. "
+            + "When empty (default), only explicitly added topics are mirrored.";
+
+    public static final String MIRROR_TOPICS_EXCLUDE_CONFIG = "mirror.topics.exclude";
+    public static final String MIRROR_TOPICS_EXCLUDE_DEFAULT = "__.*";
+    public static final String MIRROR_TOPICS_EXCLUDE_DOC = "A comma-separated list of regex patterns for topic names to exclude from mirroring. "
+            + "Topics matching the exclude pattern are not mirrored even if they match mirror.topics.include. "
+            + "By default, internal topics (starting with '__') are excluded.";
+
+    public static final String MIRROR_GROUPS_INCLUDE_CONFIG = "mirror.groups.include";
+    public static final String MIRROR_GROUPS_INCLUDE_DEFAULT = ".*";
+    public static final String MIRROR_GROUPS_INCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to include in offset synchronization. "
+            + "Only consumer groups whose IDs match at least one of the patterns will have their offsets replicated from the source cluster.";
+
+    public static final String MIRROR_GROUPS_EXCLUDE_CONFIG = "mirror.groups.exclude";
+    public static final String MIRROR_GROUPS_EXCLUDE_DEFAULT = "";
+    public static final String MIRROR_GROUPS_EXCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to exclude from offset synchronization. "
+            + "Groups matching the exclude pattern are not replicated even if they match mirror.groups.include.";
+
+    public static final String MIRROR_ACL_INCLUDE_CONFIG = "mirror.acl.include";
+    public static final String MIRROR_ACL_INCLUDE_DEFAULT = "*";
+    public static final String MIRROR_ACL_INCLUDE_DOC = "A comma-separated list of ACL include rules. Each rule uses semicolon-separated fields: "
+            + "resourceType;resourceName;operation;permissionType;principal. Use '*' as wildcard for any field. The resourceName field supports "
+            + "regex patterns. Trailing wildcard fields can be omitted. See AclRule javadoc for examples.";
+
     // Security configuration
     public static final String SECURITY_PROTOCOL_CONFIG = CommonClientConfigs.SECURITY_PROTOCOL_CONFIG;
     public static final String SECURITY_PROTOCOL_DEFAULT = SecurityProtocol.PLAINTEXT.name;
-    public static final String SECURITY_PROTOCOL_DOC = "Protocol used to communicate with remote brokers for Cluster Mirror. " +
-            "Valid values are: PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL.";
+    public static final String SECURITY_PROTOCOL_DOC = CommonClientConfigs.SECURITY_PROTOCOL_DOC;
 
-    // SASL configuration
     public static final String SASL_MECHANISM_CONFIG = SaslConfigs.SASL_MECHANISM;
     public static final String SASL_MECHANISM_DEFAULT = "PLAIN";
-    public static final String SASL_MECHANISM_DOC = "SASL mechanism used for Cluster Mirror authentication.";
+    public static final String SASL_MECHANISM_DOC = SaslConfigs.SASL_MECHANISM_DOC;
 
     public static final String SASL_JAAS_CONFIG = SaslConfigs.SASL_JAAS_CONFIG;
-    public static final String SASL_JAAS_CONFIG_DOC = "JAAS login context parameters for SASL connections in the format used by JAAS configuration files.";
+    public static final String SASL_JAAS_CONFIG_DOC = SaslConfigs.SASL_JAAS_CONFIG_DOC;
 
     public static final String SASL_CLIENT_CALLBACK_HANDLER_CLASS = SaslConfigs.SASL_CLIENT_CALLBACK_HANDLER_CLASS;
-    public static final String SASL_CLIENT_CALLBACK_HANDLER_CLASS_DOC = "The fully qualified name of a SASL client callback handler class that implements the AuthenticateCallbackHandler interface.";
+    public static final String SASL_CLIENT_CALLBACK_HANDLER_CLASS_DOC = SaslConfigs.SASL_CLIENT_CALLBACK_HANDLER_CLASS_DOC;
 
     public static final String SASL_LOGIN_CALLBACK_HANDLER_CLASS = SaslConfigs.SASL_LOGIN_CALLBACK_HANDLER_CLASS;
-    public static final String SASL_LOGIN_CALLBACK_HANDLER_CLASS_DOC = "The fully qualified name of a SASL login callback handler class that implements the AuthenticateCallbackHandler interface.";
+    public static final String SASL_LOGIN_CALLBACK_HANDLER_CLASS_DOC = SaslConfigs.SASL_LOGIN_CALLBACK_HANDLER_CLASS_DOC;
 
     public static final String SASL_LOGIN_CLASS = SaslConfigs.SASL_LOGIN_CLASS;
-    public static final String SASL_LOGIN_CLASS_DOC = "The fully qualified name of a class that implements the Login interface.";
+    public static final String SASL_LOGIN_CLASS_DOC = SaslConfigs.SASL_LOGIN_CLASS_DOC;
 
     public static final String SASL_KERBEROS_SERVICE_NAME = SaslConfigs.SASL_KERBEROS_SERVICE_NAME;
-    public static final String SASL_KERBEROS_SERVICE_NAME_DOC = "The Kerberos principal name that Kafka runs as.";
+    public static final String SASL_KERBEROS_SERVICE_NAME_DOC = SaslConfigs.SASL_KERBEROS_SERVICE_NAME_DOC;
 
-    // SSL configuration
     public static final String SSL_PROTOCOL_CONFIG = SslConfigs.SSL_PROTOCOL_CONFIG;
     public static final String SSL_PROTOCOL_DEFAULT = SslConfigs.DEFAULT_SSL_PROTOCOL;
-    public static final String SSL_PROTOCOL_DOC = "The SSL protocol used.";
+    public static final String SSL_PROTOCOL_DOC = SslConfigs.SSL_PROTOCOL_DOC;
 
     public static final String SSL_PROVIDER_CONFIG = SslConfigs.SSL_PROVIDER_CONFIG;
-    public static final String SSL_PROVIDER_DOC = "The name of the security provider used for SSL connections for Cluster Mirror.";
+    public static final String SSL_PROVIDER_DOC = SslConfigs.SSL_PROVIDER_DOC;
 
     public static final String SSL_CIPHER_SUITES_CONFIG = SslConfigs.SSL_CIPHER_SUITES_CONFIG;
-    public static final String SSL_CIPHER_SUITES_DOC = "A list of cipher suites for Cluster Mirror SSL connections.";
+    public static final String SSL_CIPHER_SUITES_DOC = SslConfigs.SSL_CIPHER_SUITES_DOC;
 
     public static final String SSL_ENABLED_PROTOCOLS_CONFIG = SslConfigs.SSL_ENABLED_PROTOCOLS_CONFIG;
-    public static final String SSL_ENABLED_PROTOCOLS_DOC = "The list of protocols enabled for SSL connections for Cluster Mirror.";
+    public static final String SSL_ENABLED_PROTOCOLS_DOC = SslConfigs.SSL_ENABLED_PROTOCOLS_DOC;
 
     public static final String SSL_KEYSTORE_TYPE_CONFIG = SslConfigs.SSL_KEYSTORE_TYPE_CONFIG;
     public static final String SSL_KEYSTORE_TYPE_DEFAULT = SslConfigs.DEFAULT_SSL_KEYSTORE_TYPE;
-    public static final String SSL_KEYSTORE_TYPE_DOC = "The file format of the key store file for Cluster Mirror SSL connections.";
+    public static final String SSL_KEYSTORE_TYPE_DOC = SslConfigs.SSL_KEYSTORE_TYPE_DOC;
 
     public static final String SSL_KEYSTORE_LOCATION_CONFIG = SslConfigs.SSL_KEYSTORE_LOCATION_CONFIG;
-    public static final String SSL_KEYSTORE_LOCATION_DOC = "The location of the key store file for Cluster Mirror SSL connections.";
+    public static final String SSL_KEYSTORE_LOCATION_DOC = SslConfigs.SSL_KEYSTORE_LOCATION_DOC;
 
     public static final String SSL_KEYSTORE_PASSWORD_CONFIG = SslConfigs.SSL_KEYSTORE_PASSWORD_CONFIG;
-    public static final String SSL_KEYSTORE_PASSWORD_DOC = "The store password for the key store file for Cluster Mirror SSL connections.";
+    public static final String SSL_KEYSTORE_PASSWORD_DOC = SslConfigs.SSL_KEYSTORE_PASSWORD_DOC;
 
     public static final String SSL_KEY_PASSWORD_CONFIG = SslConfigs.SSL_KEY_PASSWORD_CONFIG;
-    public static final String SSL_KEY_PASSWORD_DOC = "The password of the private key in the key store file for Cluster Mirror SSL connections.";
+    public static final String SSL_KEY_PASSWORD_DOC = SslConfigs.SSL_KEY_PASSWORD_DOC;
 
     public static final String SSL_KEYSTORE_KEY_CONFIG = SslConfigs.SSL_KEYSTORE_KEY_CONFIG;
-    public static final String SSL_KEYSTORE_KEY_DOC = "Private key in the format specified by 'ssl.keystore.type' for Cluster Mirror SSL connections.";
+    public static final String SSL_KEYSTORE_KEY_DOC = SslConfigs.SSL_KEYSTORE_KEY_DOC;
 
     public static final String SSL_KEYSTORE_CERTIFICATE_CHAIN_CONFIG = SslConfigs.SSL_KEYSTORE_CERTIFICATE_CHAIN_CONFIG;
-    public static final String SSL_KEYSTORE_CERTIFICATE_CHAIN_DOC = "Certificate chain in the format specified by 'ssl.keystore.type' for Cluster Mirror SSL connections.";
+    public static final String SSL_KEYSTORE_CERTIFICATE_CHAIN_DOC = SslConfigs.SSL_KEYSTORE_CERTIFICATE_CHAIN_DOC;
 
     public static final String SSL_TRUSTSTORE_TYPE_CONFIG = SslConfigs.SSL_TRUSTSTORE_TYPE_CONFIG;
     public static final String SSL_TRUSTSTORE_TYPE_DEFAULT = SslConfigs.DEFAULT_SSL_TRUSTSTORE_TYPE;
-    public static final String SSL_TRUSTSTORE_TYPE_DOC = "The file format of the trust store file for Cluster Mirror SSL connections.";
+    public static final String SSL_TRUSTSTORE_TYPE_DOC = SslConfigs.SSL_TRUSTSTORE_TYPE_DOC;
 
     public static final String SSL_TRUSTSTORE_LOCATION_CONFIG = SslConfigs.SSL_TRUSTSTORE_LOCATION_CONFIG;
-    public static final String SSL_TRUSTSTORE_LOCATION_DOC = "The location of the trust store file for Cluster Mirror SSL connections.";
+    public static final String SSL_TRUSTSTORE_LOCATION_DOC = SslConfigs.SSL_TRUSTSTORE_LOCATION_DOC;
 
     public static final String SSL_TRUSTSTORE_PASSWORD_CONFIG = SslConfigs.SSL_TRUSTSTORE_PASSWORD_CONFIG;
-    public static final String SSL_TRUSTSTORE_PASSWORD_DOC = "The password for the trust store file for Cluster Mirror SSL connections.";
+    public static final String SSL_TRUSTSTORE_PASSWORD_DOC = SslConfigs.SSL_TRUSTSTORE_PASSWORD_DOC;
 
     public static final String SSL_TRUSTSTORE_CERTIFICATES_CONFIG = SslConfigs.SSL_TRUSTSTORE_CERTIFICATES_CONFIG;
-    public static final String SSL_TRUSTSTORE_CERTIFICATES_DOC = "Trusted certificates in the format specified by 'ssl.truststore.type' for Cluster Mirror SSL connections.";
+    public static final String SSL_TRUSTSTORE_CERTIFICATES_DOC = SslConfigs.SSL_TRUSTSTORE_CERTIFICATES_DOC;
 
     public static final String SSL_KEYMANAGER_ALGORITHM_CONFIG = SslConfigs.SSL_KEYMANAGER_ALGORITHM_CONFIG;
     public static final String SSL_KEYMANAGER_ALGORITHM_DEFAULT = SslConfigs.DEFAULT_SSL_KEYMANGER_ALGORITHM;
-    public static final String SSL_KEYMANAGER_ALGORITHM_DOC = "The algorithm used by key manager factory for SSL connections for Cluster Mirror.";
+    public static final String SSL_KEYMANAGER_ALGORITHM_DOC = SslConfigs.SSL_KEYMANAGER_ALGORITHM_DOC;
 
     public static final String SSL_TRUSTMANAGER_ALGORITHM_CONFIG = SslConfigs.SSL_TRUSTMANAGER_ALGORITHM_CONFIG;
     public static final String SSL_TRUSTMANAGER_ALGORITHM_DEFAULT = SslConfigs.DEFAULT_SSL_TRUSTMANAGER_ALGORITHM;
-    public static final String SSL_TRUSTMANAGER_ALGORITHM_DOC = "The algorithm used by trust manager factory for SSL connections for Cluster Mirrors";
+    public static final String SSL_TRUSTMANAGER_ALGORITHM_DOC = SslConfigs.SSL_TRUSTMANAGER_ALGORITHM_DOC;
 
     public static final String SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG = SslConfigs.SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG;
     public static final String SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_DEFAULT = SslConfigs.DEFAULT_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM;
-    public static final String SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_DOC = "The endpoint identification algorithm to validate server hostname using server certificate for Cluster Mirror SSL connections.";
+    public static final String SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_DOC = SslConfigs.SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_DOC;
 
     public static final String SSL_SECURE_RANDOM_IMPLEMENTATION_CONFIG = SslConfigs.SSL_SECURE_RANDOM_IMPLEMENTATION_CONFIG;
-    public static final String SSL_SECURE_RANDOM_IMPLEMENTATION_DOC = "The SecureRandom PRNG implementation to use for SSL cryptography operations for Cluster Mirror.";
+    public static final String SSL_SECURE_RANDOM_IMPLEMENTATION_DOC = SslConfigs.SSL_SECURE_RANDOM_IMPLEMENTATION_DOC;
 
     public static final String SSL_ENGINE_FACTORY_CLASS_CONFIG = SslConfigs.SSL_ENGINE_FACTORY_CLASS_CONFIG;
-    public static final String SSL_ENGINE_FACTORY_CLASS_DOC = "The class of type org.apache.kafka.common.security.auth.SslEngineFactory to provide SSLEngine objects for Cluster Mirror SSL connections.";
+    public static final String SSL_ENGINE_FACTORY_CLASS_DOC = SslConfigs.SSL_ENGINE_FACTORY_CLASS_DOC;
 
     public static final String SECURITY_PROVIDERS_CONFIG = SecurityConfig.SECURITY_PROVIDERS_CONFIG;
-    public static final String SECURITY_PROVIDERS_DOC =  "A list of configurable creator classes each returning a provider" +
-            " implementing security algorithms for Cluster Mirror SSL Connections. These classes should implement the" +
-            " <code>org.apache.kafka.common.security.auth.SecurityProviderCreator</code> interface.";
+    public static final String SECURITY_PROVIDERS_DOC = SecurityConfig.SECURITY_PROVIDERS_DOC;
 
     /**
-     * Configuration definition for Cluster Mirror feature.
+     * Configuration definition for Cluster Mirroring feature.
      * This includes all supported configurations with proper validation, defaults, and documentation.
      */
     public static final ConfigDef CONFIG_DEF = new ConfigDef()
+            // Connection
+            .define(BOOTSTRAP_SERVERS_CONFIG, LIST, null, HIGH, BOOTSTRAP_SERVERS_DOC)
+            .define(REQUEST_TIMEOUT_MS_CONFIG, INT, REQUEST_TIMEOUT_MS_DEFAULT, atLeast(0), MEDIUM, REQUEST_TIMEOUT_MS_DOC)
+            .define(CONNECTION_SETUP_TIMEOUT_MS_CONFIG, LONG, CONNECTION_SETUP_TIMEOUT_MS_DEFAULT, atLeast(0L), MEDIUM, CONNECTION_SETUP_TIMEOUT_MS_DOC)
+            .define(CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG, LONG, CONNECTION_SETUP_TIMEOUT_MAX_MS_DEFAULT, atLeast(0L), MEDIUM, CONNECTION_SETUP_TIMEOUT_MAX_MS_DOC)
+            .define(CONNECTIONS_MAX_IDLE_MS_CONFIG, LONG, CONNECTIONS_MAX_IDLE_MS_DEFAULT, MEDIUM, CONNECTIONS_MAX_IDLE_MS_DOC)
+            // Fetch and network
+            .define(MIRROR_FETCH_WAIT_MAX_MS_CONFIG, INT, MIRROR_FETCH_WAIT_MAX_MS_DEFAULT, atLeast(0), MEDIUM, MIRROR_FETCH_WAIT_MAX_MS_DOC)
+            .define(MIRROR_FETCH_BACKOFF_MS_CONFIG, LONG, MIRROR_FETCH_BACKOFF_MS_DEFAULT, atLeast(0L), MEDIUM, MIRROR_FETCH_BACKOFF_MS_DOC)
+            .define(MIRROR_FETCH_MIN_BYTES_CONFIG, INT, MIRROR_FETCH_MIN_BYTES_DEFAULT, atLeast(0), MEDIUM, MIRROR_FETCH_MIN_BYTES_DOC)
+            .define(MIRROR_FETCH_RESPONSE_MAX_BYTES_CONFIG, INT, MIRROR_FETCH_RESPONSE_MAX_BYTES_DEFAULT, atLeast(0), MEDIUM, MIRROR_FETCH_RESPONSE_MAX_BYTES_DOC)
+            .define(MIRROR_FETCH_MAX_BYTES_CONFIG, INT, MIRROR_FETCH_MAX_BYTES_DEFAULT, atLeast(0), MEDIUM, MIRROR_FETCH_MAX_BYTES_DOC)
+            .define(MIRROR_SOCKET_TIMEOUT_MS_CONFIG, INT, MIRROR_SOCKET_TIMEOUT_MS_DEFAULT, atLeast(0), MEDIUM, MIRROR_SOCKET_TIMEOUT_MS_DOC)
+            .define(MIRROR_SOCKET_RECEIVE_BUFFER_BYTES_CONFIG, INT, MIRROR_SOCKET_RECEIVE_BUFFER_BYTES_DEFAULT, atLeast(0), MEDIUM, MIRROR_SOCKET_RECEIVE_BUFFER_BYTES_DOC)
+            // Filter
             .define(MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG, LIST, MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT, LOW, MIRROR_TOPIC_PROPERTIES_EXCLUDE_DOC)
             .define(MIRROR_TOPICS_INCLUDE_CONFIG, LIST, MIRROR_TOPICS_INCLUDE_DEFAULT, LOW, MIRROR_TOPICS_INCLUDE_DOC)
             .define(MIRROR_TOPICS_EXCLUDE_CONFIG, LIST, MIRROR_TOPICS_EXCLUDE_DEFAULT, LOW, MIRROR_TOPICS_EXCLUDE_DOC)
             .define(MIRROR_GROUPS_INCLUDE_CONFIG, LIST, MIRROR_GROUPS_INCLUDE_DEFAULT, LOW, MIRROR_GROUPS_INCLUDE_DOC)
             .define(MIRROR_GROUPS_EXCLUDE_CONFIG, LIST, MIRROR_GROUPS_EXCLUDE_DEFAULT, LOW, MIRROR_GROUPS_EXCLUDE_DOC)
             .define(MIRROR_ACL_INCLUDE_CONFIG, LIST, MIRROR_ACL_INCLUDE_DEFAULT, LOW, MIRROR_ACL_INCLUDE_DOC)
-            .define(BOOTSTRAP_SERVERS_CONFIG, LIST, null, HIGH, BOOTSTRAP_SERVERS_DOC)
+            // Security
             .define(SECURITY_PROTOCOL_CONFIG, STRING, SECURITY_PROTOCOL_DEFAULT, ConfigDef.ValidString.in(SecurityProtocol.PLAINTEXT.name, SecurityProtocol.SSL.name,
                     SecurityProtocol.SASL_PLAINTEXT.name, SecurityProtocol.SASL_SSL.name), MEDIUM, SECURITY_PROTOCOL_DOC)
             .define(SASL_MECHANISM_CONFIG, STRING, SASL_MECHANISM_DEFAULT, MEDIUM, SASL_MECHANISM_DOC)
@@ -295,22 +350,6 @@ public final class ClusterMirrorConfig {
     private final String saslMechanism;
 
     /**
-     * Creates a ClusterMirrorConfig from broker-level config.
-     * Filter configs are not available at broker level, so defaults are used.
-     */
-    public ClusterMirrorConfig(AbstractConfig config) {
-        this.config = config;
-        this.securityProtocol = null;
-        this.saslMechanism = null;
-        this.topicPropertiesExcludePattern = compilePatternList(Arrays.asList(MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT.split(",")));
-        this.topicsIncludePattern = null;
-        this.topicsExcludePattern = compilePatternList(List.of(MIRROR_TOPICS_EXCLUDE_DEFAULT));
-        this.groupsIncludePattern = compilePatternList(List.of(MIRROR_GROUPS_INCLUDE_DEFAULT));
-        this.groupsExcludePattern = null;
-        this.aclIncludeRules = parseAclRules(List.of(MIRROR_ACL_INCLUDE_DEFAULT));
-    }
-
-    /**
      * Creates a ClusterMirrorConfig from mirror metadata properties stored in the cluster metadata topic.
      * Filter configs are loaded from the metadata, with defaults applied for any missing values.
      *
@@ -344,6 +383,22 @@ public final class ClusterMirrorConfig {
         this.groupsIncludePattern = compilePatternList(groupsInclude);
         this.groupsExcludePattern = compilePatternList(groupsExclude);
         this.aclIncludeRules = parseAclRules(aclInclude);
+    }
+
+    /**
+     * Creates a ClusterMirrorConfig from broker-level config.
+     * Filter configs are not available at broker level, so defaults are used.
+     */
+    public ClusterMirrorConfig(AbstractConfig config) {
+        this.config = config;
+        this.securityProtocol = null;
+        this.saslMechanism = null;
+        this.topicPropertiesExcludePattern = compilePatternList(Arrays.asList(MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT.split(",")));
+        this.topicsIncludePattern = null;
+        this.topicsExcludePattern = compilePatternList(List.of(MIRROR_TOPICS_EXCLUDE_DEFAULT));
+        this.groupsIncludePattern = compilePatternList(List.of(MIRROR_GROUPS_INCLUDE_DEFAULT));
+        this.groupsExcludePattern = null;
+        this.aclIncludeRules = parseAclRules(List.of(MIRROR_ACL_INCLUDE_DEFAULT));
     }
 
     public Pattern topicPropertiesExcludePattern() {
@@ -387,27 +442,67 @@ public final class ClusterMirrorConfig {
     }
 
     public int numReplicaFetchers() {
-        return config.getInt(NUM_REPLICA_FETCHERS_CONFIG);
+        return config.getInt(MIRROR_NUM_REPLICA_FETCHERS_CONFIG);
     }
 
     public long metadataRefreshIntervalMs() {
-        return config.getLong(METADATA_REFRESH_INTERVAL_MS_CONFIG);
+        return config.getLong(MIRROR_METADATA_REFRESH_INTERVAL_MS_CONFIG);
     }
 
     public long fetchBackoffMs() {
-        return config.getLong(FETCH_BACKOFF_MS_CONFIG);
+        return config.getLong(MIRROR_FETCH_BACKOFF_MS_CONFIG);
     }
 
     public long failedRetryInitialBackoffMs() {
-        return config.getLong(FAILED_RETRY_INITIAL_BACKOFF_MS_CONFIG);
+        return config.getLong(MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_CONFIG);
     }
 
     public long failedRetryMaxBackoffMs() {
-        return config.getLong(FAILED_RETRY_MAX_BACKOFF_MS_CONFIG);
+        return config.getLong(MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_CONFIG);
     }
 
     public int failedRetryMaxAttempts() {
-        return config.getInt(FAILED_RETRY_MAX_ATTEMPTS_CONFIG);
+        return config.getInt(MIRROR_FAILED_RETRY_MAX_ATTEMPTS_CONFIG);
+    }
+
+    public int fetchWaitMaxMs() {
+        return config.getInt(MIRROR_FETCH_WAIT_MAX_MS_CONFIG);
+    }
+
+    public int fetchMinBytes() {
+        return config.getInt(MIRROR_FETCH_MIN_BYTES_CONFIG);
+    }
+
+    public int fetchResponseMaxBytes() {
+        return config.getInt(MIRROR_FETCH_RESPONSE_MAX_BYTES_CONFIG);
+    }
+
+    public int fetchMaxBytes() {
+        return config.getInt(MIRROR_FETCH_MAX_BYTES_CONFIG);
+    }
+
+    public int socketTimeoutMs() {
+        return config.getInt(MIRROR_SOCKET_TIMEOUT_MS_CONFIG);
+    }
+
+    public int socketReceiveBufferBytes() {
+        return config.getInt(MIRROR_SOCKET_RECEIVE_BUFFER_BYTES_CONFIG);
+    }
+
+    public int requestTimeoutMs() {
+        return config.getInt(REQUEST_TIMEOUT_MS_CONFIG);
+    }
+
+    public long connectionSetupTimeoutMs() {
+        return config.getLong(CONNECTION_SETUP_TIMEOUT_MS_CONFIG);
+    }
+
+    public long connectionSetupTimeoutMaxMs() {
+        return config.getLong(CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG);
+    }
+
+    public long connectionsMaxIdleMs() {
+        return config.getLong(CONNECTIONS_MAX_IDLE_MS_CONFIG);
     }
 
     /**
@@ -418,6 +513,28 @@ public final class ClusterMirrorConfig {
      */
     public AbstractConfig getConfig() {
         return config;
+    }
+
+    /**
+     * Creates a ConfigDef for broker-level mirror configurations.
+     * This is merged into AbstractKafkaConfig for broker config validation.
+     */
+    public static ConfigDef brokerConfigDef() {
+        return new ConfigDef()
+                .define(MIRROR_STATE_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_STATE_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_STATE_TOPIC_NUM_PARTITIONS_DOC)
+                .define(MIRROR_STATE_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_STATE_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_STATE_TOPIC_REPLICATION_FACTOR_DOC)
+                .define(MIRROR_NUM_REPLICA_FETCHERS_CONFIG, INT, MIRROR_NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, MIRROR_NUM_REPLICA_FETCHERS_DOC)
+                .define(MIRROR_METADATA_REFRESH_INTERVAL_MS_CONFIG, LONG, MIRROR_METADATA_REFRESH_INTERVAL_MS_DEFAULT, atLeast(0L), MEDIUM, MIRROR_METADATA_REFRESH_INTERVAL_MS_DOC)
+                .define(MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_CONFIG, LONG, MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_DEFAULT, atLeast(1L), MEDIUM, MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_DOC)
+                .define(MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_CONFIG, LONG, MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_DEFAULT, atLeast(1L), MEDIUM, MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_DOC)
+                .define(MIRROR_FAILED_RETRY_MAX_ATTEMPTS_CONFIG, INT, MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DEFAULT, atLeast(0), MEDIUM, MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DOC)
+                .define(MIRROR_FETCH_BACKOFF_MS_CONFIG, LONG, MIRROR_FETCH_BACKOFF_MS_DEFAULT, atLeast(0L), MEDIUM, MIRROR_FETCH_BACKOFF_MS_DOC)
+                .define(MIRROR_FETCH_WAIT_MAX_MS_CONFIG, INT, MIRROR_FETCH_WAIT_MAX_MS_DEFAULT, atLeast(0), MEDIUM, MIRROR_FETCH_WAIT_MAX_MS_DOC)
+                .define(MIRROR_FETCH_MIN_BYTES_CONFIG, INT, MIRROR_FETCH_MIN_BYTES_DEFAULT, atLeast(0), MEDIUM, MIRROR_FETCH_MIN_BYTES_DOC)
+                .define(MIRROR_FETCH_RESPONSE_MAX_BYTES_CONFIG, INT, MIRROR_FETCH_RESPONSE_MAX_BYTES_DEFAULT, atLeast(0), MEDIUM, MIRROR_FETCH_RESPONSE_MAX_BYTES_DOC)
+                .define(MIRROR_FETCH_MAX_BYTES_CONFIG, INT, MIRROR_FETCH_MAX_BYTES_DEFAULT, atLeast(0), MEDIUM, MIRROR_FETCH_MAX_BYTES_DOC)
+                .define(MIRROR_SOCKET_TIMEOUT_MS_CONFIG, INT, MIRROR_SOCKET_TIMEOUT_MS_DEFAULT, atLeast(0), MEDIUM, MIRROR_SOCKET_TIMEOUT_MS_DOC)
+                .define(MIRROR_SOCKET_RECEIVE_BUFFER_BYTES_CONFIG, INT, MIRROR_SOCKET_RECEIVE_BUFFER_BYTES_DEFAULT, atLeast(0), MEDIUM, MIRROR_SOCKET_RECEIVE_BUFFER_BYTES_DOC);
     }
 
     /**
@@ -446,22 +563,6 @@ public final class ClusterMirrorConfig {
                 .filter(s -> !s.isEmpty())
                 .map(AclRule::parse)
                 .toList();
-    }
-
-    /**
-     * Creates a ConfigDef for broker-level mirror configurations.
-     * This is merged into AbstractKafkaConfig for broker config validation.
-     */
-    public static ConfigDef brokerConfigDef() {
-        return new ConfigDef()
-            .define(MIRROR_STATE_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_STATE_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_STATE_TOPIC_NUM_PARTITIONS_DOC)
-            .define(MIRROR_STATE_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_STATE_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_STATE_TOPIC_REPLICATION_FACTOR_DOC)
-            .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC)
-            .define(METADATA_REFRESH_INTERVAL_MS_CONFIG, LONG, METADATA_REFRESH_INTERVAL_MS_DEFAULT, atLeast(0L), MEDIUM, METADATA_REFRESH_INTERVAL_MS_DOC)
-            .define(FETCH_BACKOFF_MS_CONFIG, LONG, FETCH_BACKOFF_MS_DEFAULT, atLeast(0L), MEDIUM, FETCH_BACKOFF_MS_DOC)
-            .define(FAILED_RETRY_INITIAL_BACKOFF_MS_CONFIG, LONG, FAILED_RETRY_INITIAL_BACKOFF_MS_DEFAULT, atLeast(1L), MEDIUM, FAILED_RETRY_INITIAL_BACKOFF_MS_DOC)
-            .define(FAILED_RETRY_MAX_BACKOFF_MS_CONFIG, LONG, FAILED_RETRY_MAX_BACKOFF_MS_DEFAULT, atLeast(1L), MEDIUM, FAILED_RETRY_MAX_BACKOFF_MS_DOC)
-            .define(FAILED_RETRY_MAX_ATTEMPTS_CONFIG, INT, FAILED_RETRY_MAX_ATTEMPTS_DEFAULT, atLeast(0), MEDIUM, FAILED_RETRY_MAX_ATTEMPTS_DOC);
     }
 
     /**
