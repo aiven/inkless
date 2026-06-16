@@ -87,8 +87,22 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
   def startConsolidationFetchersForCaughtUpClassicPartitions(topicPartitions: Set[TopicPartition]): Unit = {
     val consolidatingDisklessPartitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     topicPartitions.foreach { tp =>
-      if (inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)) {
-        replicaManager.onlinePartition(tp).foreach(partition => consolidatingDisklessPartitionsToStartFetching.put(tp, partition))
+      replicaManager.onlinePartition(tp).foreach { partition =>
+        // This hook is the only trigger for a classic/untiered-diskless -> consolidated config flip:
+        // remote.storage.enable=true arrives as a config-only metadata change that the leader-delta
+        // path never re-enters, so if we skip the partition here it never starts consolidating.
+        // The broker metadata cache backing isConsolidatingDisklessTopic can lag the config record
+        // that has *already* updated this partition's local log -- the cache image and the dynamic
+        // config publisher are applied by separate publishers within the same metadata delta -- so
+        // gating solely on the cache can spuriously drop a partition that has, in fact, just become
+        // consolidating. The partition's own log config was updated synchronously before this hook
+        // ran, so trust it too: a diskless topic whose local log now has remote storage enabled is
+        // consolidating.
+        val isConsolidating = inklessMetadataView.isConsolidatingDisklessTopic(tp.topic) ||
+          (inklessMetadataView.isDisklessTopic(tp.topic) && partition.log.exists(_.remoteLogEnabled()))
+        if (isConsolidating) {
+          consolidatingDisklessPartitionsToStartFetching.put(tp, partition)
+        }
       }
     }
     startConsolidationFetchers(consolidatingDisklessPartitionsToStartFetching)
@@ -129,12 +143,31 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
       case seal if seal >= 0 =>
         val log = partition.localLogOrException
         if (log.logEndOffset < seal) {
-          // The classic prefix hasn't been fully replicated locally yet; a classic catch-up
-          // fetcher must finish bringing the local log up to the seal before consolidation
-          // can take over.
-          ConsolidationStartState.Retry(
-            s"Skipping consolidation for $tp because local LEO ${log.logEndOffset} is below " +
-              s"classic-to-diskless start offset $seal")
+          if (partition.isLeader && log.remoteLogEnabled()) {
+            // Leader with a below-seal local log. A healthy leader is never below the seal: the
+            // seal is taken from the leader's own LEO when the classic log finishes draining, and
+            // consolidation only ever appends above it. The only way to observe this is local-log
+            // loss on the elected leader -- a full local-storage wipe / disaster-recovery restart
+            // where the controller (whose metadata survived) elects a replica that came back with
+            // an empty log. Unlike a follower (which can still replicate the classic prefix from a
+            // live leader, hence the Retry below), a leader has no peer source: the classic prefix
+            // [0, seal) lives only in the remote tier. Start consolidation anyway, armed at the
+            // current (post-loss) LEO, so the fetcher's first request lands below the diskless WAL
+            // start and DisklessLeaderEndPoint answers OFFSET_MOVED_TO_TIERED_STORAGE. That drives
+            // the stock tier-state machine to rebuild the leader-epoch cache + producer snapshot
+            // and the whole-log start from remote before resuming the WAL fetch; without this the
+            // partition would wait forever for a classic catch-up that can never happen.
+            val pruneFloor = math.max(seal, log.logStartOffset)
+            partition.ensureConsolidationPruneFloorAtLeast(pruneFloor)
+            ConsolidationStartState.Ready(log.logEndOffset)
+          } else {
+            // Follower (or remote storage not yet enabled) whose classic prefix hasn't been fully
+            // replicated locally yet; a classic catch-up fetcher must finish bringing the local log
+            // up to the seal before consolidation can take over.
+            ConsolidationStartState.Retry(
+              s"Skipping consolidation for $tp because local LEO ${log.logEndOffset} is below " +
+                s"classic-to-diskless start offset $seal")
+          }
         } else {
           // LEO >= seal. This covers both the initial switch (LEO == seal, nothing consolidated
           // yet) and resuming an already-progressed partition after a restart, leadership
