@@ -83,6 +83,23 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
         rlm.onLeadershipChange((leaderPartitions.toSet: Set[TopicPartitionLog]).asJava, (followerPartitions.toSet: Set[TopicPartitionLog]).asJava, topicIds))
     }
 
+    // Start consolidation on a classic -> consolidated switch. The controller applies such a
+    // switch's config records in separate metadata deltas: diskless.enable=true (which drives the
+    // classic-log seal) commits well before remote.storage.enable=true. At the seal-commit delta the
+    // topic is therefore not yet a consolidating diskless topic, so ReplicaManager.applyLocalLeadersDelta
+    // cannot start the consolidation fetcher; remote.storage.enable=true then arrives as a config-only
+    // delta with no partition/leader change, so the leader-delta path is never re-entered. Without this
+    // hook consolidation would only start incidentally on the next partition-epoch bump (e.g. an ISR
+    // change) -- or never. When remote storage flips on for a diskless topic it has just become
+    // consolidating, so kick off consolidation here for the topic's online partitions; the reconciler
+    // skips any that are not ready yet (still below the committed seal -- those resume via the classic
+    // fetcher's seal hand-off) and is a no-op for non-consolidating topics.
+    if (isRemoteLogEnabled && !wasRemoteLogEnabled &&
+        replicaManager.inklessMetadataView().isDisklessTopic(topic)) {
+      val consolidatingPartitions = (leaderPartitions ++ followerPartitions).map(_.topicPartition).toSet
+      replicaManager.startConsolidationFetchersForCaughtUpClassicPartitions(consolidatingPartitions)
+    }
+
     // When copy disabled, we should stop leaderCopyRLMTask, but keep expirationTask
     if (isRemoteLogEnabled && !wasCopyDisabled && isCopyDisabled) {
       replicaManager.remoteLogManager.foreach(rlm => {
