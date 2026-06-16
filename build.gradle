@@ -4279,9 +4279,9 @@ task aggregatedJavadoc(type: Javadoc, dependsOn: compileJava) {
 // Helper to get version targets and expected patterns
 ext.getVersionTargets = { rawVersion ->
     // Python Package Version (PEP 440): 4.3.0.dev0
-    def pythonVersion = rawVersion.contains("SNAPSHOT") ?
-            rawVersion.replace("-SNAPSHOT", ".dev0") :
-            rawVersion
+    def pythonVersion = rawVersion.replace("-SNAPSHOT", ".dev0").replace("-inkless", ".inkless")
+
+    def upstreamVersion = rawVersion.replaceAll(/-inkless|-SNAPSHOT/, "")
 
     def baseVersion = rawVersion.replace("-SNAPSHOT", "")
 
@@ -4297,7 +4297,7 @@ ext.getVersionTargets = { rawVersion ->
       [
         path: "tests/kafkatest/version.py",
         pattern: /DEV_VERSION\s*=\s*KafkaVersion\(".*"\)/,
-        replace: "DEV_VERSION = KafkaVersion(\"${rawVersion}\")"
+        replace: "DEV_VERSION = KafkaVersion(\"${baseVersion}\")"
       ],
       // 3. __init__.py
       [
@@ -4305,21 +4305,21 @@ ext.getVersionTargets = { rawVersion ->
         pattern: /__version__\s*=\s*'.*'/,
         replace: "__version__ = '${pythonVersion}'"
       ],
-      // 4. Maven POMs
+      // 4. Maven POMs use the upstream Apache Kafka version (no -inkless suffix)
       [
         path: "streams/quickstart/pom.xml",
         pattern: /(?s)(<artifactId>streams-quickstart<\/artifactId>.*?<version>)([^<]+)(<\/version>)/,
-        replace: { "\$1${rawVersion}\$3" }
+        replace: { "\$1${upstreamVersion}\$3" }
       ],
       [
         path: "streams/quickstart/java/pom.xml",
         pattern: /(?s)(<artifactId>streams-quickstart<\/artifactId>.*?<version>)([^<]+)(<\/version>)/,
-        replace: { "\$1${rawVersion}\$3" }
+        replace: { "\$1${upstreamVersion}\$3" }
       ],
       [
         path: "streams/quickstart/java/src/main/resources/archetype-resources/pom.xml",
         pattern: /(<kafka\.version>)([^<]+)(<\/kafka\.version>)/,
-        replace: { "\$1${rawVersion}\$3" }
+        replace: { "\$1${upstreamVersion}\$3" }
       ]
     ]
 }
@@ -4332,8 +4332,8 @@ def updateVersionTask = tasks.register('updateVersion') {
     def rawVersion
     if (project.hasProperty('newVersion')) {
       rawVersion = newVersion
-      if (!rawVersion.matches(/^[0-9]+\.[0-9]+\.[0-9]+(-SNAPSHOT)?$/)) {
-        throw new GradleException("Invalid version format: '${rawVersion}'. Expected format: X.Y.Z or X.Y.Z-SNAPSHOT")
+      if (!rawVersion.matches(/^[0-9]+\.[0-9]+\.[0-9]+-inkless(-SNAPSHOT)?$/)) {
+        throw new GradleException("Invalid version format: '${rawVersion}'. Expected format: X.Y.Z-inkless, or X.Y.Z-inkless-SNAPSHOT")
       }
       // Update gradle.properties
       def gradlePropsFile = file("${project.rootDir}/gradle.properties")
