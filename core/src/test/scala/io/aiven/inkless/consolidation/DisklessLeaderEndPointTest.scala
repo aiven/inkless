@@ -363,6 +363,112 @@ class DisklessLeaderEndPointTest {
   }
 
   @Test
+  def testFetchEpochEndOffsetsBelowDisklessEpochReturnsSeal(): Unit = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val job = mock(classOf[FetchOffsetHandler.Job])
+
+    when(fetchOffsetHandler.createJob()).thenReturn(job)
+    when(job.mustHandle(topicPartition.topic())).thenReturn(true)
+    doNothing().when(job).start()
+    // Switched partition: classic prefix ends at the seal (100), diskless region carries epoch 5.
+    when(replicaManager.classicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+    when(replicaManager.disklessLeaderEpoch(topicPartition)).thenReturn(5)
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    // A classic-prefix epoch (3 < 5) must resolve to the seal, without a diskless list-offsets call.
+    val queriedEpoch = 3
+    val result = endPoint.fetchEpochEndOffsets(
+      util.Map.of(
+        topicPartition,
+        new OffsetForLeaderPartition()
+          .setPartition(topicPartition.partition)
+          .setLeaderEpoch(queriedEpoch)
+      )
+    ).asScala
+
+    val expected = new EpochEndOffset()
+      .setPartition(topicPartition.partition)
+      .setErrorCode(Errors.NONE.code)
+      .setLeaderEpoch(queriedEpoch)
+      .setEndOffset(100L)
+    assertEquals(Map(topicPartition -> expected), result)
+    verify(job, org.mockito.Mockito.never()).add(eqTo(topicPartition), any())
+  }
+
+  @Test
+  def testFetchEpochEndOffsetsAtOrAboveDisklessEpochReturnsDisklessLeo(): Unit = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val job = mock(classOf[FetchOffsetHandler.Job])
+
+    val holder = new FileRecordsOrError(
+      Optional.empty(),
+      Optional.of(new TimestampAndOffset(0L, 250L, Optional.of(5)))
+    )
+    when(fetchOffsetHandler.createJob()).thenReturn(job)
+    when(job.mustHandle(topicPartition.topic())).thenReturn(true)
+    when(job.add(eqTo(topicPartition), any())).thenReturn(CompletableFuture.completedFuture(holder))
+    when(replicaManager.classicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+    when(replicaManager.disklessLeaderEpoch(topicPartition)).thenReturn(5)
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    // The diskless epoch itself (5 >= 5) resolves to the current diskless LEO.
+    val queriedEpoch = 5
+    val result = endPoint.fetchEpochEndOffsets(
+      util.Map.of(
+        topicPartition,
+        new OffsetForLeaderPartition()
+          .setPartition(topicPartition.partition)
+          .setLeaderEpoch(queriedEpoch)
+      )
+    ).asScala
+
+    val expected = new EpochEndOffset()
+      .setPartition(topicPartition.partition)
+      .setErrorCode(Errors.NONE.code)
+      .setLeaderEpoch(queriedEpoch)
+      .setEndOffset(250L)
+    assertEquals(Map(topicPartition -> expected), result)
+  }
+
+  @Test
+  def testFetchEpochEndOffsetsBornDisklessReturnsDisklessLeo(): Unit = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val job = mock(classOf[FetchOffsetHandler.Job])
+
+    val holder = new FileRecordsOrError(
+      Optional.empty(),
+      Optional.of(new TimestampAndOffset(0L, 42L, Optional.of(0)))
+    )
+    when(fetchOffsetHandler.createJob()).thenReturn(job)
+    when(job.mustHandle(topicPartition.topic())).thenReturn(true)
+    when(job.add(eqTo(topicPartition), any())).thenReturn(CompletableFuture.completedFuture(holder))
+    // Born-diskless / never switched: no classic seal and no captured diskless epoch.
+    when(replicaManager.classicToDisklessStartOffset(topicPartition))
+      .thenReturn(org.apache.kafka.metadata.PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(replicaManager.disklessLeaderEpoch(topicPartition))
+      .thenReturn(org.apache.kafka.metadata.PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    val result = endPoint.fetchEpochEndOffsets(
+      util.Map.of(
+        topicPartition,
+        new OffsetForLeaderPartition()
+          .setPartition(topicPartition.partition)
+          .setLeaderEpoch(0)
+      )
+    ).asScala
+
+    assertEquals(42L, result(topicPartition).endOffset)
+    assertEquals(Errors.NONE.code, result(topicPartition).errorCode)
+  }
+
+  @Test
   def testFetchEpochEndOffsetsHolderException(): Unit = {
     val fetchHandler = mock(classOf[FetchHandler])
     val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])

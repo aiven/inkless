@@ -33,6 +33,7 @@ public final class InitDisklessLogFields {
 
     public static final int CLASSIC_TO_DISKLESS_START_OFFSET_TAG = 100;
     public static final int PRODUCER_STATES_TAG = 101;
+    public static final int DISKLESS_LEADER_EPOCH_TAG = 102;
 
     private InitDisklessLogFields() {}
 
@@ -51,6 +52,26 @@ public final class InitDisklessLogFields {
             }
         }
         return PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET;
+    }
+
+    // --- disklessLeaderEpoch (tag 102): a single int32 ---
+    // The leader epoch captured for the diskless region at the classic-to-diskless switch.
+    // Strictly greater than every classic-prefix epoch, it lets standard OffsetsForLeaderEpoch
+    // truncation distinguish a stale classic tail from authoritative consolidated data.
+
+    public static RawTaggedField encodeDisklessLeaderEpoch(int disklessLeaderEpoch) {
+        byte[] data = new byte[4];
+        ByteBuffer.wrap(data).putInt(disklessLeaderEpoch);
+        return new RawTaggedField(DISKLESS_LEADER_EPOCH_TAG, data);
+    }
+
+    public static int decodeDisklessLeaderEpoch(List<RawTaggedField> taggedFields) {
+        for (RawTaggedField field : taggedFields) {
+            if (field.tag() == DISKLESS_LEADER_EPOCH_TAG) {
+                return ByteBuffer.wrap(field.data()).getInt();
+            }
+        }
+        return PartitionRegistration.NO_DISKLESS_LEADER_EPOCH;
     }
 
     // --- producerStates (tag 101): count + fixed-size entries ---
