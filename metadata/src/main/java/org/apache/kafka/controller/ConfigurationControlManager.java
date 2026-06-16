@@ -388,11 +388,24 @@ public class ConfigurationControlManager {
                 return DISALLOWED_BROKER_MIN_ISR_TRANSITION_ERROR;
             } else if (isDisallowedClusterMinIsrTransition(configRecord)) {
                 return DISALLOWED_CLUSTER_MIN_ISR_REMOVAL_ERROR;
+            } else if (Objects.equals(configRecord.name(), TopicConfig.DISKLESS_ENABLE_CONFIG)) {
+                return ApiError.fromThrowable(
+                    new InvalidConfigurationException("It is not allowed to delete the diskless.enable config"));
             } else {
                 allConfigs.remove(configRecord.name());
             }
             // As per KAFKA-14195, do not include implicit deletions caused by using the legacy AlterConfigs API
             // in the list passed to the policy in order to maintain backwards compatibility
+        }
+        if (!newlyCreatedResource &&
+            configResource.type().equals(Type.TOPIC) &&
+            Boolean.parseBoolean(allConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG)) &&
+            !Boolean.parseBoolean(existingConfigsMap.get(TopicConfig.DISKLESS_ENABLE_CONFIG)) &&
+            !Boolean.parseBoolean(String.valueOf(staticConfig.getOrDefault(
+                ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG,
+                ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DEFAULT)))) {
+            return ApiError.fromThrowable(
+                new InvalidConfigurationException("It is invalid to enable diskless on an already existing topic."));
         }
         if (!newlyCreatedResource &&
             configResource.type().equals(Type.TOPIC) &&

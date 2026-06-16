@@ -3013,9 +3013,8 @@ public class ReplicationControlManager {
 
     /**
      * Per-resource precondition check for legacy AlterConfigs enabling diskless.
-     * Covers both explicit {@code diskless.enable=true} in the request and implicit
-     * enabling via deletion of a {@code diskless.enable=false} override when the broker
-     * default is {@code true}.
+     * Legacy AlterConfigs omitting {@code diskless.enable} is rejected by
+     * {@link ConfigurationControlManager}, since omissions delete existing overrides.
      */
     ApiError validateClassicToDisklessSwitchPreconditionForLegacy(
         ConfigResource resource,
@@ -3023,13 +3022,7 @@ public class ReplicationControlManager {
     ) {
         if (resource.type() != TOPIC) return ApiError.NONE;
         Map<String, String> configs = newConfigs.get(resource);
-        if (configs == null) return ApiError.NONE;
-        boolean explicitlyEnabling = Boolean.parseBoolean(configs.get(DISKLESS_ENABLE_CONFIG));
-        boolean implicitlyEnabling = !configs.containsKey(DISKLESS_ENABLE_CONFIG)
-            && defaultDisklessEnable
-            && !isDisklessTopic(resource.name())
-            && "false".equals(configurationControl.currentTopicConfig(resource.name()).get(DISKLESS_ENABLE_CONFIG));
-        if (!explicitlyEnabling && !implicitlyEnabling) return ApiError.NONE;
+        if (configs == null || !Boolean.parseBoolean(configs.get(DISKLESS_ENABLE_CONFIG))) return ApiError.NONE;
         if (isDisklessTopic(resource.name())) return ApiError.NONE;
         Uuid topicId = topicsByName.get(resource.name());
         if (topicId == null) return ApiError.NONE;
@@ -3169,14 +3162,6 @@ public class ReplicationControlManager {
                 configChanges.put(resource, Map.of(
                     DISKLESS_ENABLE_CONFIG,
                     new SimpleImmutableEntry<>(SET, disklessEnable)
-                ));
-            } else if (defaultDisklessEnable
-                && resource.type() == TOPIC
-                && !isDisklessTopic(resource.name())
-                && "false".equals(configurationControl.currentTopicConfig(resource.name()).get(DISKLESS_ENABLE_CONFIG))) {
-                configChanges.put(resource, Map.of(
-                    DISKLESS_ENABLE_CONFIG,
-                    new SimpleImmutableEntry<>(SET, "true")
                 ));
             }
         }

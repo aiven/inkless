@@ -7009,49 +7009,11 @@ public class ReplicationControlManagerTest {
         }
 
         @Test
-        public void testLegacyAlterConfigsRejectsImplicitSwitchWhenUnderReplicated() {
+        public void testLegacyAlterConfigsRejectsImplicitDisklessEnableDeletion() {
             // Legacy AlterConfigs replaces the entire config map. If a topic has
             // diskless.enable=false and the request omits it, the override would be deleted,
-            // switching to diskless via broker default. The precondition check must
-            // detect this implicit switch and reject it when partitions are unhealthy.
-            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
-                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
-                .setDisklessStorageSystemEnabled(true)
-                .setDefaultDisklessEnable(true)
-                .build();
-            ctx.registerBrokers(0, 1, 2);
-            ctx.unfenceBrokers(0, 1, 2);
-            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
-                Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0).topicId();
-
-            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
-            assertEquals("false", ctx.configurationControl.currentTopicConfig("foo").get(DISKLESS_ENABLE_CONFIG));
-
-            // Make the partition under-replicated
-            ctx.fenceBrokers(2);
-            PartitionRegistration partition = ctx.replicationControl.getPartition(fooId, 0);
-            assertTrue(partition.isr.length < partition.replicas.length);
-
-            // Legacy AlterConfigs with only retention.ms (omits diskless.enable).
-            // Since this would implicitly switch via broker default and the partition
-            // is under-replicated, it must be rejected.
-            ControllerResult<Map<ConfigResource, ApiError>> legacyResult =
-                ctx.configurationControl.legacyAlterConfigs(
-                    Map.of(resource, Map.of("retention.ms", "86400000")),
-                    false,
-                    r -> ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(
-                        r, Map.of(resource, Map.of("retention.ms", "86400000"))));
-
-            assertEquals(Errors.INVALID_CONFIG, legacyResult.response().get(resource).error(),
-                "Legacy AlterConfigs should reject implicit diskless switch when under-replicated");
-            assertTrue(legacyResult.response().get(resource).message().contains("under-replicated"),
-                "Expected 'under-replicated' in: " + legacyResult.response().get(resource).message());
-        }
-
-        @Test
-        public void testLegacyAlterConfigsEmitsSwitchRecordsForImplicitSwitch() {
-            // When partitions are healthy and legacy AlterConfigs implicitly enables diskless
-            // via override deletion, switch-pending records must be emitted.
+            // switching to diskless via broker default. This must be rejected like an
+            // incremental DELETE of diskless.enable.
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
                 .setDisklessStorageSystemEnabled(true)
@@ -7063,27 +7025,29 @@ public class ReplicationControlManagerTest {
                 Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0);
 
             ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            assertEquals("false", ctx.configurationControl.currentTopicConfig("foo").get(DISKLESS_ENABLE_CONFIG));
 
             // Legacy AlterConfigs with only retention.ms (omits diskless.enable).
-            // Partitions are healthy, so the implicit switch should succeed and produce
-            // switch-pending records.
+            // Since this would delete diskless.enable=false, it must be rejected.
             Map<ConfigResource, Map<String, String>> newConfigs =
                 Map.of(resource, Map.of("retention.ms", "86400000"));
             ControllerResult<Map<ConfigResource, ApiError>> legacyResult =
                 ctx.configurationControl.legacyAlterConfigs(newConfigs, false,
                     r -> ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(
                         r, newConfigs));
-            assertEquals(ApiError.NONE, legacyResult.response().get(resource));
 
-            // Call before replay (same order as QuorumController) — the override still
-            // exists in configData at this point.
+            assertEquals(Errors.INVALID_CONFIG, legacyResult.response().get(resource).error(),
+                "Legacy AlterConfigs should reject implicit diskless.enable deletion");
+            assertTrue(legacyResult.response().get(resource).message().contains("not allowed to delete"),
+                "Expected delete rejection in: " + legacyResult.response().get(resource).message());
+            assertTrue(legacyResult.records().isEmpty(),
+                "Rejected legacy AlterConfigs must not emit config records");
+
             List<ApiMessageAndVersion> switchRecords =
                 ctx.replicationControl.markClassicToDisklessSwitchStartedForLegacyAlterConfigs(
                     newConfigs, legacyResult.response());
-            assertFalse(switchRecords.isEmpty(), "Expected switch-pending records for implicit diskless switch");
-
-            ctx.replay(legacyResult.records());
-            ctx.replay(switchRecords);
+            assertTrue(switchRecords.isEmpty(),
+                "Rejected implicit diskless deletion must not emit switch-pending records");
         }
 
         @Test
