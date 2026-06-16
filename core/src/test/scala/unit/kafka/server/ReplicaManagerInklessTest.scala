@@ -139,6 +139,33 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testDisklessLeaderEpochDelegatesToMetadataView(): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    try {
+      when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(disklessTopicPartition.topicPartition()))
+        .thenReturn(7)
+
+      assertEquals(7, replicaManager.disklessLeaderEpoch(disklessTopicPartition.topicPartition()))
+      verify(replicaManager.inklessMetadataView()).getDisklessLeaderEpoch(disklessTopicPartition.topicPartition())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testClassicToDisklessStartOffsetDelegatesToMetadataView(): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(42L)
+
+      assertEquals(42L, replicaManager.classicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testAppendValidDisklessAndInvalidClassic(): Unit = {
     val entriesPerPartition = Map(
       disklessTopicPartition -> RECORDS,

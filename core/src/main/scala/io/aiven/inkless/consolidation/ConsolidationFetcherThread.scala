@@ -22,6 +22,8 @@ import io.aiven.inkless.consume.ConcatenatedRecords
 import kafka.server.{FailedPartitions, KafkaConfig, ReplicaFetcherThread, ReplicaManager, ReplicaQuota}
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.record.{MemoryRecords, Records}
+import org.apache.kafka.common.requests.FetchResponse
+import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.server.LeaderEndPoint
 import org.apache.kafka.storage.internals.log.LogAppendInfo
 
@@ -51,6 +53,7 @@ class ConsolidationFetcherThread(name: String,
     partitionLeaderEpoch: Int,
     partitionData: FetchData
   ): Option[LogAppendInfo] = {
+    maybeStampDisklessLeaderEpoch(topicPartition, partitionData)
     val result = super.processPartitionData(topicPartition, fetchOffset, partitionLeaderEpoch, partitionData)
 
     consolidationMetrics.foreach { metrics =>
@@ -69,5 +72,27 @@ class ConsolidationFetcherThread(name: String,
     }
 
     result
+  }
+
+  /**
+   * Stamp the captured diskless leader epoch (E_d) onto materialized batches so the local log keeps a
+   * monotonic epoch lineage (diskless records are produced with epoch 0, which would otherwise break
+   * the LeaderEpochFileCache after a switched partition's higher classic epochs and disable divergence
+   * truncation). Born-diskless / not-yet-switched partitions (E_d == NO_DISKLESS_LEADER_EPOCH) are left
+   * at epoch 0. Done in place to reuse the append path's single flatten; partitionLeaderEpoch is outside
+   * the batch CRC, so no checksum recompute is needed.
+   */
+  private def maybeStampDisklessLeaderEpoch(topicPartition: TopicPartition, partitionData: FetchData): Unit = {
+    val disklessLeaderEpoch = replicaMgr.disklessLeaderEpoch(topicPartition)
+    if (disklessLeaderEpoch == PartitionRegistration.NO_DISKLESS_LEADER_EPOCH) {
+      return
+    }
+    FetchResponse.recordsOrFail(partitionData) match {
+      case records: ConcatenatedRecords =>
+        records.batches().forEach(batch => batch.setPartitionLeaderEpoch(disklessLeaderEpoch))
+      case records: MemoryRecords =>
+        records.batches().forEach(batch => batch.setPartitionLeaderEpoch(disklessLeaderEpoch))
+      case _ =>
+    }
   }
 }

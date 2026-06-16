@@ -55,6 +55,7 @@ public class PartitionRegistration {
         private Integer partitionEpoch;
         private long classicToDisklessStartOffset = -1L;
         private List<InitDisklessLogFields.ProducerStateEntry> disklessProducerStates = List.of();
+        private int disklessLeaderEpoch = NO_DISKLESS_LEADER_EPOCH;
 
         public Builder setReplicas(int[] replicas) {
             this.replicas = replicas;
@@ -121,6 +122,11 @@ public class PartitionRegistration {
             return this;
         }
 
+        public Builder setDisklessLeaderEpoch(int disklessLeaderEpoch) {
+            this.disklessLeaderEpoch = disklessLeaderEpoch;
+            return this;
+        }
+
         public PartitionRegistration build() {
             if (replicas == null) {
                 throw new IllegalStateException("You must set replicas.");
@@ -161,13 +167,17 @@ public class PartitionRegistration {
                 elr,
                 lastKnownElr,
                 classicToDisklessStartOffset,
-                disklessProducerStates
+                disklessProducerStates,
+                disklessLeaderEpoch
             );
         }
     }
 
     public static final long NO_CLASSIC_TO_DISKLESS_START_OFFSET = -1L;
     public static final long CLASSIC_TO_DISKLESS_SWITCH_PENDING = -2L;
+    // Sentinel for a partition that has no captured diskless leader epoch (never switched, born-diskless,
+    // or switch still pending). A real diskless leader epoch is always >= 0.
+    public static final int NO_DISKLESS_LEADER_EPOCH = -1;
 
     public final int[] replicas;
     public final Uuid[] directories;
@@ -182,6 +192,7 @@ public class PartitionRegistration {
     public final int partitionEpoch;
     public final long classicToDisklessStartOffset;
     public final List<InitDisklessLogFields.ProducerStateEntry> disklessProducerStates;
+    public final int disklessLeaderEpoch;
 
     public static boolean electionWasUnclean(byte leaderRecoveryState) {
         return leaderRecoveryState == LeaderRecoveryState.RECOVERING.value();
@@ -233,14 +244,17 @@ public class PartitionRegistration {
             Replicas.toArray(record.eligibleLeaderReplicas()),
             Replicas.toArray(record.lastKnownElr()),
             InitDisklessLogFields.decodeClassicToDisklessStartOffset(record.unknownTaggedFields()),
-            InitDisklessLogFields.decodeProducerStates(record.unknownTaggedFields()));
+            InitDisklessLogFields.decodeProducerStates(record.unknownTaggedFields()),
+            InitDisklessLogFields.decodeDisklessLeaderEpoch(record.unknownTaggedFields()));
     }
 
+    @SuppressWarnings("checkstyle:ParameterNumber")
     private PartitionRegistration(int[] replicas, Uuid[] directories, int[] isr, int[] removingReplicas,
                                   int[] addingReplicas, int leader, LeaderRecoveryState leaderRecoveryState,
                                   int leaderEpoch, int partitionEpoch, int[] elr, int[] lastKnownElr,
                                   long classicToDisklessStartOffset,
-                                  List<InitDisklessLogFields.ProducerStateEntry> disklessProducerStates) {
+                                  List<InitDisklessLogFields.ProducerStateEntry> disklessProducerStates,
+                                  int disklessLeaderEpoch) {
         Objects.requireNonNull(directories);
         if (directories.length > 0 && directories.length != replicas.length) {
             throw new IllegalArgumentException("The lengths for replicas and directories do not match.");
@@ -256,6 +270,7 @@ public class PartitionRegistration {
         this.partitionEpoch = partitionEpoch;
         this.classicToDisklessStartOffset = classicToDisklessStartOffset;
         this.disklessProducerStates = disklessProducerStates != null ? disklessProducerStates : List.of();
+        this.disklessLeaderEpoch = disklessLeaderEpoch;
 
         // We could parse a lower version record without elr/lastKnownElr.
         this.elr = elr == null ? new int[0] : elr;
@@ -297,6 +312,12 @@ public class PartitionRegistration {
             newClassicToDisklessStartOffset = classicToDisklessStartOffset;
             newDisklessProducerStates = disklessProducerStates;
         }
+        // The diskless leader epoch is captured at the classic-to-diskless switch and only carried by that
+        // single change record; every other change record omits the tag, so keep the existing value.
+        int newDisklessLeaderEpoch = InitDisklessLogFields.decodeDisklessLeaderEpoch(record.unknownTaggedFields());
+        if (newDisklessLeaderEpoch == NO_DISKLESS_LEADER_EPOCH) {
+            newDisklessLeaderEpoch = disklessLeaderEpoch;
+        }
         return new PartitionRegistration(newReplicas,
             newDirectories,
             newIsr,
@@ -309,13 +330,14 @@ public class PartitionRegistration {
             newElr,
             newLastKnownElr,
             newClassicToDisklessStartOffset,
-            newDisklessProducerStates);
+            newDisklessProducerStates,
+            newDisklessLeaderEpoch);
     }
 
     public PartitionRegistration withClassicToDisklessStartOffset(long classicToDisklessStartOffset) {
         return new PartitionRegistration(replicas, directories, isr, removingReplicas,
             addingReplicas, leader, leaderRecoveryState, leaderEpoch, partitionEpoch,
-            elr, lastKnownElr, classicToDisklessStartOffset, disklessProducerStates);
+            elr, lastKnownElr, classicToDisklessStartOffset, disklessProducerStates, disklessLeaderEpoch);
     }
 
     public String diff(PartitionRegistration prev) {
@@ -392,6 +414,11 @@ public class PartitionRegistration {
             builder.append(prefix).append("disklessProducerStates: ").
                 append(prev.disklessProducerStates.size()).append(" entries -> ").
                 append(disklessProducerStates.size()).append(" entries");
+            prefix = ", ";
+        }
+        if (disklessLeaderEpoch != prev.disklessLeaderEpoch) {
+            builder.append(prefix).append("disklessLeaderEpoch: ").
+                append(prev.disklessLeaderEpoch).append(" -> ").append(disklessLeaderEpoch);
         }
         return builder.toString();
     }
@@ -451,6 +478,10 @@ public class PartitionRegistration {
                     InitDisklessLogFields.encodeProducerStates(disklessProducerStates));
             }
         }
+        if (disklessLeaderEpoch != NO_DISKLESS_LEADER_EPOCH) {
+            record.unknownTaggedFields().add(
+                InitDisklessLogFields.encodeDisklessLeaderEpoch(disklessLeaderEpoch));
+        }
 
         if (options.metadataVersion() == null) {
             options.handleLoss("the metadata version");
@@ -491,7 +522,7 @@ public class PartitionRegistration {
         return Objects.hash(Arrays.hashCode(replicas), Arrays.hashCode(isr), Arrays.hashCode(removingReplicas),
             Arrays.hashCode(directories), Arrays.hashCode(elr), Arrays.hashCode(lastKnownElr),
             Arrays.hashCode(addingReplicas), leader, leaderRecoveryState, leaderEpoch, partitionEpoch,
-            classicToDisklessStartOffset, disklessProducerStates);
+            classicToDisklessStartOffset, disklessProducerStates, disklessLeaderEpoch);
     }
 
     @Override
@@ -509,7 +540,8 @@ public class PartitionRegistration {
             leaderEpoch == other.leaderEpoch &&
             partitionEpoch == other.partitionEpoch &&
             classicToDisklessStartOffset == other.classicToDisklessStartOffset &&
-            Objects.equals(disklessProducerStates, other.disklessProducerStates);
+            Objects.equals(disklessProducerStates, other.disklessProducerStates) &&
+            disklessLeaderEpoch == other.disklessLeaderEpoch;
     }
 
     @Override
@@ -527,6 +559,7 @@ public class PartitionRegistration {
                 ", partitionEpoch=" + partitionEpoch +
                 ", classicToDisklessStartOffset=" + classicToDisklessStartOffset +
                 ", disklessProducerStates=" + disklessProducerStates +
+                ", disklessLeaderEpoch=" + disklessLeaderEpoch +
                 ")";
     }
 }

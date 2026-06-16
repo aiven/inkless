@@ -30,7 +30,7 @@ import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
 import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, ListOffsetsRequest, OffsetsForLeaderEpochResponse}
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.metadata.LeaderAndIsr
+import org.apache.kafka.metadata.{LeaderAndIsr, PartitionRegistration}
 import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams}
@@ -169,6 +169,22 @@ class DisklessLeaderEndPoint(
     new OffsetAndEpoch(tao.offset, tao.leaderEpoch.orElse(0))
   }
 
+  /**
+   * Answers OffsetsForLeaderEpoch for diskless consolidating partitions so followers can perform
+   * standard divergence truncation against the diskless leader.
+   *
+   * A switched partition's local log is laid out as a classic prefix `[logStart, seal)` carrying the
+   * original classic leader epochs, followed by the diskless region `[seal, LEO)` stamped with the
+   * diskless leader epoch `E_d` captured at the switch (see [[ConsolidationFetcherThread]]). Two cases:
+   *   - queried epoch `< E_d`: the epoch belongs to the classic prefix, whose lineage on the diskless
+   *     leader ends at the seal, so the end offset is the seal. A follower whose stale classic tail
+   *     runs past the seal truncates back to it. Collapsing every classic epoch to the seal (rather
+   *     than the start of the next epoch, as standard OffsetsForLeaderEpoch would) is correct only
+   *     because the classic prefix `[logStart, seal)` is committed and identical across all replicas,
+   *     so intra-prefix divergence cannot occur.
+   *   - queried epoch `>= E_d` (or a born-diskless partition with no captured epoch): the end offset is
+   *     the current diskless LEO, fetched via a LATEST list-offsets call.
+   */
   override def fetchEpochEndOffsets(
     partitions: util.Map[TopicPartition, OffsetForLeaderEpochRequestData.OffsetForLeaderPartition]
   ): util.Map[TopicPartition, EpochEndOffset] = {
@@ -178,14 +194,27 @@ class DisklessLeaderEndPoint(
 
     val job = fetchOffsetHandler.createJob()
     val futures = mutable.Map.empty[TopicPartition, CompletableFuture[FileRecordsOrError]]
+    // Partitions whose queried epoch resolves to the seal without needing a diskless list-offsets call.
+    val sealEndOffsets = mutable.Map.empty[TopicPartition, Long]
 
     partitions.forEach { (tp, epochData) =>
       if (epochData.leaderEpoch != OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH && job.mustHandle(tp.topic)) {
-        val partitionRequest = new ListOffsetsPartition()
-          .setPartitionIndex(tp.partition)
-          .setCurrentLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH)
-          .setTimestamp(ListOffsetsRequest.LATEST_TIMESTAMP)
-        futures.put(tp, job.add(tp, partitionRequest))
+        val seal = replicaManager.classicToDisklessStartOffset(tp)
+        val disklessLeaderEpoch = replicaManager.disklessLeaderEpoch(tp)
+        // Upgrade caveat: partitions switched before this change carry a seal but no E_d (no tag 102),
+        // so they fall through to the LATEST-LEO branch and keep the old (no divergence truncation)
+        // behavior until they are re-switched. This is a safe fallback, not a correctness regression.
+        if (seal >= 0 &&
+            disklessLeaderEpoch != PartitionRegistration.NO_DISKLESS_LEADER_EPOCH &&
+            epochData.leaderEpoch < disklessLeaderEpoch) {
+          sealEndOffsets.put(tp, seal)
+        } else {
+          val partitionRequest = new ListOffsetsPartition()
+            .setPartitionIndex(tp.partition)
+            .setCurrentLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH)
+            .setTimestamp(ListOffsetsRequest.LATEST_TIMESTAMP)
+          futures.put(tp, job.add(tp, partitionRequest))
+        }
       }
     }
 
@@ -196,6 +225,12 @@ class DisklessLeaderEndPoint(
         tp -> new EpochEndOffset()
           .setPartition(tp.partition)
           .setErrorCode(Errors.NONE.code)
+      } else if (sealEndOffsets.contains(tp)) {
+        tp -> new EpochEndOffset()
+          .setPartition(tp.partition)
+          .setErrorCode(Errors.NONE.code)
+          .setLeaderEpoch(epochData.leaderEpoch)
+          .setEndOffset(sealEndOffsets(tp))
       } else if (!futures.contains(tp)) {
         tp -> new EpochEndOffset()
           .setPartition(tp.partition)
