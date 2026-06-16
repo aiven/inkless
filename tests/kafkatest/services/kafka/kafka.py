@@ -1370,6 +1370,30 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         self.logger.info("Running alter topic config command...\n%s" % cmd)
         node.account.ssh(cmd)
 
+    def alter_topic_configs(self, topic, configs, node=None):
+        """Atomically set multiple topic configs in a single ``--add-config`` alter.
+
+        ``configs`` is a dict of config name -> value. Combining configs into one
+        request matters for transitions that are only valid when applied together,
+        e.g. setting ``diskless.enable=true`` and ``remote.storage.enable=true`` at
+        once for a classic-to-consolidated switch (applying them in separate alters
+        either trips the mutual-exclusion validator or never starts consolidation).
+        Values must not contain commas (the kafka-configs add-config separator).
+        """
+        if node is None:
+            node = self.nodes[0]
+        self.logger.info("Altering topic %s configs %s", topic, configs)
+
+        force_use_zk_connection = not self.all_nodes_configs_command_uses_bootstrap_server()
+        add_config = ",".join("%s=%s" % (name, value) for name, value in configs.items())
+
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --entity-name %s --entity-type topics --alter --add-config %s" % \
+              (self.kafka_configs_cmd_with_optional_security_settings(node, force_use_zk_connection),
+               topic, add_config)
+        self.logger.info("Running alter topic configs command...\n%s" % cmd)
+        node.account.ssh(cmd)
+
     def describe_topic_config(self, topic, node=None):
         if node is None:
             node = self.nodes[0]
