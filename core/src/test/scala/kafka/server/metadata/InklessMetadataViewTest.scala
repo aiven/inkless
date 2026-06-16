@@ -19,7 +19,9 @@
 package kafka.server.metadata
 
 import org.apache.kafka.common.config.TopicConfig
-import org.apache.kafka.common.{TopicIdPartition, Uuid}
+import org.apache.kafka.common.{DirectoryId, TopicIdPartition, TopicPartition, Uuid}
+import org.apache.kafka.image.{MetadataImage, TopicImage, TopicsImage}
+import org.apache.kafka.metadata.{LeaderRecoveryState, PartitionRegistration}
 import org.junit.jupiter.api.{BeforeEach, Nested, Test}
 import org.junit.jupiter.api.Assertions._
 import org.mockito.ArgumentMatchers.anyString
@@ -214,6 +216,84 @@ class InklessMetadataViewTest {
     diskless.foreach(v => props.put(TopicConfig.DISKLESS_ENABLE_CONFIG, v))
     remoteStorageEnable.foreach(v => props.put(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, v))
     props
+  }
+
+  private def partitionRegistration(disklessLeaderEpoch: Option[Int] = None, seal: Option[Long] = None): PartitionRegistration = {
+    val builder = new PartitionRegistration.Builder()
+      .setReplicas(Array(1))
+      .setDirectories(DirectoryId.unassignedArray(1))
+      .setIsr(Array(1))
+      .setLeader(1)
+      .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
+      .setLeaderEpoch(3)
+      .setPartitionEpoch(0)
+    disklessLeaderEpoch.foreach(builder.setDisklessLeaderEpoch)
+    seal.foreach(builder.setClassicToDisklessStartOffset)
+    builder.build()
+  }
+
+  // Wires metadataCache.currentImage().topics().getTopic(topic) -> topicImage holding the given partitions.
+  private def stubImageTopic(topic: String, partitions: util.Map[Integer, PartitionRegistration]): Unit = {
+    val image = mock(classOf[MetadataImage])
+    val topicsImage = mock(classOf[TopicsImage])
+    val topicImage = mock(classOf[TopicImage])
+    when(metadataCache.currentImage()).thenReturn(image)
+    when(image.topics()).thenReturn(topicsImage)
+    when(topicsImage.getTopic(topic)).thenReturn(topicImage)
+    when(topicImage.partitions()).thenReturn(partitions)
+  }
+
+  // Wires metadataCache.currentImage().topics().getTopic(topic) -> null (topic absent from the image).
+  private def stubImageWithoutTopic(topic: String): Unit = {
+    val image = mock(classOf[MetadataImage])
+    val topicsImage = mock(classOf[TopicsImage])
+    when(metadataCache.currentImage()).thenReturn(image)
+    when(image.topics()).thenReturn(topicsImage)
+    when(topicsImage.getTopic(topic)).thenReturn(null.asInstanceOf[TopicImage])
+  }
+
+  @Test
+  def testGetDisklessLeaderEpochReturnsValueFromImage(): Unit = {
+    val tp = new TopicPartition("switched", 0)
+    stubImageTopic(tp.topic(), util.Map.of(Integer.valueOf(0), partitionRegistration(disklessLeaderEpoch = Some(7))))
+    assertEquals(7, metadataView.getDisklessLeaderEpoch(tp))
+  }
+
+  @Test
+  def testGetDisklessLeaderEpochReturnsSentinelWhenUnset(): Unit = {
+    // Born-diskless / never-switched partition carries no diskless epoch.
+    val tp = new TopicPartition("born-diskless", 0)
+    stubImageTopic(tp.topic(), util.Map.of(Integer.valueOf(0), partitionRegistration()))
+    assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, metadataView.getDisklessLeaderEpoch(tp))
+  }
+
+  @Test
+  def testGetDisklessLeaderEpochReturnsSentinelWhenTopicMissing(): Unit = {
+    val tp = new TopicPartition("missing", 0)
+    stubImageWithoutTopic(tp.topic())
+    assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, metadataView.getDisklessLeaderEpoch(tp))
+  }
+
+  @Test
+  def testGetDisklessLeaderEpochReturnsSentinelWhenPartitionMissing(): Unit = {
+    val tp = new TopicPartition("switched", 1)
+    // Topic present, but only partition 0 exists in the image.
+    stubImageTopic(tp.topic(), util.Map.of(Integer.valueOf(0), partitionRegistration(disklessLeaderEpoch = Some(7))))
+    assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, metadataView.getDisklessLeaderEpoch(tp))
+  }
+
+  @Test
+  def testGetClassicToDisklessStartOffsetReturnsValueFromImage(): Unit = {
+    val tp = new TopicPartition("switched", 0)
+    stubImageTopic(tp.topic(), util.Map.of(Integer.valueOf(0), partitionRegistration(seal = Some(42L))))
+    assertEquals(42L, metadataView.getClassicToDisklessStartOffset(tp))
+  }
+
+  @Test
+  def testGetClassicToDisklessStartOffsetReturnsSentinelWhenTopicMissing(): Unit = {
+    val tp = new TopicPartition("missing", 0)
+    stubImageWithoutTopic(tp.topic())
+    assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, metadataView.getClassicToDisklessStartOffset(tp))
   }
 
   @Nested

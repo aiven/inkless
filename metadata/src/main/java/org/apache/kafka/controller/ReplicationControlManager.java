@@ -1627,6 +1627,14 @@ public class ReplicationControlManager {
                             ps.batchMaxTimestamp()))
                         .toList();
 
+                // Capture the partition's current leader epoch as the diskless leader epoch (E_d). The
+                // classic-to-diskless switch already bumped the leader epoch, so this value is strictly
+                // greater than every classic-prefix epoch. Capturing it here, at the commit, keeps it
+                // correct even if a leader change landed in the meantime. E_d is stamped onto materialized
+                // diskless batches and answers OffsetsForLeaderEpoch so that a stale classic tail truncates
+                // back to the seal.
+                int disklessLeaderEpoch = partition.leaderEpoch;
+
                 PartitionChangeRecord record = new PartitionChangeRecord()
                     .setTopicId(topicId)
                     .setPartitionId(partitionId);
@@ -1636,11 +1644,13 @@ public class ReplicationControlManager {
                     record.unknownTaggedFields().add(
                         InitDisklessLogFields.encodeProducerStates(producerStates));
                 }
+                record.unknownTaggedFields().add(
+                    InitDisklessLogFields.encodeDisklessLeaderEpoch(disklessLeaderEpoch));
 
                 records.add(new ApiMessageAndVersion(record, (short) 0));
 
-                log.info("InitDisklessLog for {}-{}: classicToDisklessStartOffset={}, producerStates.size={}",
-                    topic.name, partitionId, partitionData.disklessStartOffset(),
+                log.info("InitDisklessLog for {}-{}: classicToDisklessStartOffset={}, disklessLeaderEpoch={}, producerStates.size={}",
+                    topic.name, partitionId, partitionData.disklessStartOffset(), disklessLeaderEpoch,
                     producerStates.size());
 
                 partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
