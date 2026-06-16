@@ -19,6 +19,9 @@ package kafka.server;
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AlterConfigOp;
+import org.apache.kafka.clients.admin.Config;
+import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -34,6 +37,7 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -45,6 +49,7 @@ import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerConfig;
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
+import org.apache.kafka.test.NoRetryException;
 import org.apache.kafka.test.TestUtils;
 
 import org.junit.jupiter.api.AfterEach;
@@ -74,6 +79,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntFunction;
 import java.util.stream.Collectors;
 
@@ -96,6 +102,7 @@ import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.SEGMENT_BYTES_CONFIG;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 @Testcontainers
 public class InklessConsolidatedDisklessTopicsTest {
@@ -138,6 +145,8 @@ public class InklessConsolidatedDisklessTopicsTest {
             // Enable managed replicas with RF=2 (one replica per AZ)
             .setConfigProp(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, "true")
             .setConfigProp(ReplicationConfigs.DEFAULT_REPLICATION_FACTOR_CONFIG, "2")
+            // Allow enabling diskless on an already existing (classic) topic, i.e. classic -> diskless migration
+            .setConfigProp(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, "true")
             // Enable diskless topic consolidation (diskless.enable + remote.storage.enable on new topics)
             .setConfigProp(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, "true")
             // Run consolidated diskless WAL pruning frequently enough for the test wait windows
@@ -262,6 +271,181 @@ public class InklessConsolidatedDisklessTopicsTest {
         waitUntilTieredDisklessDataPrunedFromControlPlane(topicUuid, beforeConsumeSnapshot);
 
         consumeAndVerify(commonConfigs, recordsToSendAndReceive);
+    }
+
+    @Test
+    public void testClassicToDisklessToConsolidatedTopics() throws Exception {
+        Map<String, Object> commonConfigs = new HashMap<>();
+        commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        // Records produced into the topic as a classic topic, before any migration.
+        final int preMigrationRecords = 10;
+        // Records produced concurrently while the topic is being consolidated.
+        final int duringConsolidationRecords = 50;
+        final int totalRecords = preMigrationRecords + duringConsolidationRecords;
+        // Large values to force segment rolls so the consolidated WAL is actually tiered to remote storage.
+        final IntFunction<ProducerRecord<String, String>> recordFactory = i ->
+            new ProducerRecord<>(topicName, i % numPartitions, null, TestUtils.randomString(104_857));
+
+        final Uuid topicUuid;
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            // Phase 1: create a CLASSIC topic (diskless.enable=false, remote.storage.enable=false).
+            topicUuid = createClassicTopic(admin);
+            assertEquals("false", getTopicConfigValue(admin, DISKLESS_ENABLE_CONFIG),
+                "Topic should start as a classic (non-diskless) topic");
+            assertEquals("false", getTopicConfigValue(admin, REMOTE_LOG_STORAGE_ENABLE_CONFIG),
+                "Classic topic should not have remote storage enabled");
+
+            // Produce a baseline of records into the classic topic. These offsets form the classic
+            // prefix that must remain readable after the topic is migrated and consolidated.
+            produceRecords(commonConfigs, preMigrationRecords, recordFactory);
+
+            // Phase 2: migrate the classic topic to diskless. With the consolidation flag enabled at the
+            // broker level the alter path does NOT auto-enable remote storage, so the topic becomes a
+            // plain (non-consolidated) diskless topic at this point.
+            log.info("Migrating classic topic {} to diskless", topicName);
+            incrementalAlterTopicConfigs(admin, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
+            waitForTopicConfigValue(admin, DISKLESS_ENABLE_CONFIG, "true");
+            assertEquals("false", getTopicConfigValue(admin, REMOTE_LOG_STORAGE_ENABLE_CONFIG),
+                "Diskless topic should not be consolidated yet (remote storage still disabled)");
+
+            // Phase 3: consolidate the diskless topic (remote.storage.enable=true) while a producer keeps
+            // sending records to it. The producer runs on a background thread so its sends overlap both the
+            // config change and the background consolidation (WAL -> tiered storage) that follows.
+            final AtomicReference<Throwable> producerFailure = new AtomicReference<>(null);
+            final Thread producerThread = new Thread(() -> {
+                try {
+                    produceRecords(commonConfigs, duringConsolidationRecords, recordFactory);
+                } catch (Throwable t) {
+                    producerFailure.set(t);
+                }
+            }, "consolidation-producer");
+            producerThread.setDaemon(true);
+
+            producerThread.start();
+            try {
+                log.info("Consolidating diskless topic {} (enabling remote storage)", topicName);
+                incrementalAlterTopicConfigs(admin, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"));
+                waitForTopicConfigValue(admin, REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+            } finally {
+                producerThread.join(TimeUnit.SECONDS.toMillis(120));
+                // If the producer is still running (e.g. a send blocked), interrupt it so it unwinds
+                // instead of lingering. produceRecords propagates the interrupt and closes the producer.
+                if (producerThread.isAlive()) {
+                    producerThread.interrupt();
+                    producerThread.join(TimeUnit.SECONDS.toMillis(10));
+                }
+            }
+            assertFalse(producerThread.isAlive(), "Producer thread did not finish in time");
+            if (producerFailure.get() != null) {
+                throw new RuntimeException("Producer failed while the topic was being consolidated", producerFailure.get());
+            }
+
+            assertEquals("true", getTopicConfigValue(admin, DISKLESS_ENABLE_CONFIG),
+                "Topic should remain diskless after consolidation");
+            assertEquals("true", getTopicConfigValue(admin, REMOTE_LOG_STORAGE_ENABLE_CONFIG),
+                "Topic should be consolidated (remote storage enabled) after the alter");
+        }
+
+        // Consolidation copies the diskless WAL data into Kafka tiered storage; wait until at least one
+        // object lands in the bucket as evidence that consolidation made progress.
+        try (S3Client s3 = s3Container.getS3Client()) {
+            final String bucket = s3Container.getBucketName();
+            TestUtils.waitForCondition(() -> countObjectsWithPrefix(s3, bucket, RSM_OBJECT_KEY_PREFIX) > 0,
+                120_000,
+                () -> "Expected at least one tiered object in the Minio bucket after consolidation");
+        }
+
+        ControlPlaneDisklessSnapshot beforeConsumeSnapshot = readControlPlaneDisklessSnapshot(topicUuid);
+        log.info("Control plane snapshot before first consume: {}", beforeConsumeSnapshot);
+
+        // Everything (classic prefix + consolidated diskless records) must be readable from the beginning.
+        assertBrokerEarliestOffsetsEqual(commonConfigs, 0L,
+            "after consolidation (expect full 0..N-1 readable with auto.offset.reset=earliest)");
+
+        consumeAndVerify(commonConfigs, totalRecords);
+
+        // Once the consolidated WAL has been tiered and pruned, the same data must still be fully readable.
+        waitUntilTieredDisklessDataPrunedFromControlPlane(topicUuid, beforeConsumeSnapshot);
+
+        consumeAndVerify(commonConfigs, totalRecords);
+    }
+
+    private Uuid createClassicTopic(Admin admin) throws Exception {
+        // Create the topic as a classic topic by relying on the broker defaults (diskless.enable=false,
+        // remote.storage.enable=false). Setting both keys explicitly at creation time — even to false —
+        // trips the diskless/remote-storage mutual-exclusion validation, so we deliberately omit them.
+        final Map<String, String> classicConfigs = Map.of(
+            CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_DELETE,
+            SEGMENT_BYTES_CONFIG, "1048576"
+        );
+        final NewTopic topic = new NewTopic(topicName, numPartitions, (short) -1).configs(classicConfigs);
+        admin.createTopics(Collections.singletonList(topic)).all().get(30, TimeUnit.SECONDS);
+
+        final TopicDescription[] descriptionHolder = new TopicDescription[1];
+        TestUtils.waitForCondition(() -> {
+            try {
+                descriptionHolder[0] = admin.describeTopics(Collections.singletonList(topicName))
+                    .allTopicNames().get(30, TimeUnit.SECONDS).get(topicName);
+                return descriptionHolder[0].partitions().size() == numPartitions;
+            } catch (ExecutionException e) {
+                if (e.getCause() instanceof UnknownTopicOrPartitionException) {
+                    return false;
+                }
+                throw new RuntimeException(e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
+        }, 60_000, () -> "Classic topic should become visible with " + numPartitions + " partitions");
+        return descriptionHolder[0].topicId();
+    }
+
+    private void incrementalAlterTopicConfigs(Admin admin, Map<String, String> configs)
+        throws ExecutionException, InterruptedException, TimeoutException {
+        final ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
+        final List<AlterConfigOp> ops = configs.entrySet().stream()
+            .map(e -> new AlterConfigOp(new ConfigEntry(e.getKey(), e.getValue()), AlterConfigOp.OpType.SET))
+            .collect(Collectors.toList());
+        admin.incrementalAlterConfigs(Map.of(resource, ops)).all().get(30, TimeUnit.SECONDS);
+    }
+
+    private String getTopicConfigValue(Admin admin, String key)
+        throws ExecutionException, InterruptedException, TimeoutException {
+        final ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
+        // Shorter timeout because this is invoked from polling loops (waitForTopicConfigValue).
+        final Config config = admin.describeConfigs(Collections.singletonList(resource))
+            .all().get(10, TimeUnit.SECONDS)
+            .get(resource);
+        if (config == null) {
+            throw new IllegalStateException("describeConfigs returned no config for topic " + topicName);
+        }
+        final ConfigEntry entry = config.get(key);
+        if (entry == null) {
+            throw new IllegalStateException("Config '" + key + "' is missing for topic " + topicName);
+        }
+        return entry.value();
+    }
+
+    private void waitForTopicConfigValue(Admin admin, String key, String expectedValue) throws InterruptedException {
+        TestUtils.waitForCondition(() -> {
+            try {
+                return expectedValue.equals(getTopicConfigValue(admin, key));
+            } catch (ExecutionException e) {
+                // Right after create/alter the topic metadata may not have propagated to the broker serving
+                // the describeConfigs request yet; that is the only case worth retrying.
+                if (e.getCause() instanceof UnknownTopicOrPartitionException) {
+                    return false;
+                }
+                throw new NoRetryException(e.getCause() != null ? e.getCause() : e);
+            } catch (TimeoutException e) {
+                // A describeConfigs request timing out is transient under load; keep polling.
+                return false;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new NoRetryException(e);
+            }
+        }, 60_000, () -> "Topic config " + key + " should become " + expectedValue);
     }
 
     /**
