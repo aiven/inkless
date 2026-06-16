@@ -61,7 +61,6 @@ class MirrorConfig:
     ):
         self.properties = {
             "bootstrap.servers": bootstrap_servers,
-            "mirror.metadata.refresh.interval.ms": "10000",
         }
         if mirror_topic_properties_exclude is not None:
             self.properties["mirror.topic.properties.exclude"] = (
@@ -102,9 +101,9 @@ class MirrorUtils:
         return "%s:9092" % node.account.hostname
 
     @staticmethod
-    def produce_records(logger, kafka, topic, num_records, client_node,
-                        bootstrap_servers=None):
-        """Produce records on a client node using kafka-producer-perf-test."""
+    def produce_messages(logger, kafka, client_node, topic, num_messages,
+                         bootstrap_servers=None):
+        """Produce messages on a client node using kafka-producer-perf-test."""
         if bootstrap_servers is None:
             bootstrap_servers = kafka.bootstrap_servers(kafka.security_protocol)
         env_prefix, cmd_suffix = kafka._cmd_security_opts(client_node)
@@ -112,7 +111,7 @@ class MirrorUtils:
               " --producer-props bootstrap.servers=%s%s" % (
                   env_prefix,
                   kafka.path.script("kafka-producer-perf-test.sh", client_node),
-                  topic, num_records, bootstrap_servers,
+                  topic, num_messages, bootstrap_servers,
                   cmd_suffix.replace("--command-config", "--producer.config")
                   if cmd_suffix else "")
         output = ""
@@ -121,10 +120,11 @@ class MirrorUtils:
         logger.debug("Producer output for %s:\n%s", topic, output.strip())
 
     @staticmethod
-    def consume_records(logger, kafka, topic, client_node, max_messages=None,
-                        timeout_ms=30000, isolation_level=None, group=None,
-                        from_beginning=True, expected_count=None,
-                        wait_timeout_sec=240):
+    def consume_messages(logger, kafka, client_node, topic, group=None,
+                         max_messages=None, expected_count=None,
+                         timeout_ms=30000, wait_timeout_sec=240,
+                         isolation_level=None,
+                         from_beginning=True):
         env_prefix, cmd_suffix = kafka._cmd_security_opts(client_node)
         cmd = "%s%s --bootstrap-server %s --topic %s --timeout-ms %d" % (
             env_prefix,
@@ -139,7 +139,6 @@ class MirrorUtils:
             cmd += " --isolation-level %s" % isolation_level
         if group is not None:
             cmd += " --group %s" % group
-        cmd += " --consumer-property group.protocol=consumer"
         if cmd_suffix:
             cmd += cmd_suffix.replace("--command-config", "--consumer.config")
         cmd += " 2>/dev/null"
@@ -149,7 +148,7 @@ class MirrorUtils:
             for line in client_node.account.ssh_capture(cmd, allow_fail=True):
                 if line.strip():
                     count[0] += 1
-            logger.info("Consumed %d records from %s so far (expected %s)",
+            logger.info("Consumed %d messages from %s so far (expected %s)",
                         count[0], topic, expected_count)
             return expected_count is None or count[0] >= expected_count
 
@@ -201,20 +200,19 @@ class MirrorUtils:
                 lambda p: p["state"] == state, topics)
         if err_msg is None:
             err_msg = "Mirror did not reach %s state" % state
-        wait_until(check, timeout_sec=300, backoff_sec=2, err_msg=err_msg)
+        wait_until(check, timeout_sec=120, backoff_sec=2, err_msg=err_msg)
 
     @staticmethod
-    def wait_for_metadata_refresh(logger, kafka, client_node, mirror_name, num_cycles=1):
+    def wait_for_metadata_refresh(logger, kafka, client_node, mirror_name):
         """Wait for metadata sync by sleeping based on the configured refresh interval."""
         output = kafka.describe_mirror_config(client_node, mirror_name)
         interval_ms = 30000
-        for line in output.splitlines():
-            if "mirror.metadata.refresh.interval.ms=" in line:
-                interval_ms = int(line.strip().split()[0].split("=")[1])
+        for prop in kafka.server_prop_overrides:
+            if prop[0] == "mirror.metadata.refresh.interval.ms":
+                interval_ms = int(prop[1])
                 break
-        sleep_s = (interval_ms // 1000) * num_cycles
-        logger.info("Waiting %ds for %d metadata sync cycle(s) (interval=%dms)",
-                    sleep_s, num_cycles, interval_ms)
+        sleep_s = interval_ms // 1000
+        logger.info("Waiting %ds for metadata sync (interval=%dms)", sleep_s, interval_ms)
         time.sleep(sleep_s)
 
     @staticmethod
@@ -225,7 +223,7 @@ class MirrorUtils:
             return MirrorUtils.all_satisfy_in_mirror(logger,
                 kafka, client_node, mirror_name,
                 lambda p: p["lag"] == 0 and p["state"] == "MIRRORING", topics)
-        wait_until(check, timeout_sec=300, backoff_sec=5, err_msg=err_msg)
+        wait_until(check, timeout_sec=120, backoff_sec=2, err_msg=err_msg)
 
     @staticmethod
     def describe_consumer_group(kafka, group, client_node):
@@ -272,7 +270,7 @@ class MirrorUtils:
 
         wait_until(
             check,
-            timeout_sec=300,
+            timeout_sec=120,
             backoff_sec=5,
             err_msg="Log segments did not converge between source and destination",
         )

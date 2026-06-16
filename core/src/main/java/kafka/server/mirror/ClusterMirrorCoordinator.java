@@ -75,6 +75,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -103,6 +104,7 @@ public class ClusterMirrorCoordinator {
     private final MirrorMetadataManager metadataManager;
     private final MetadataCache metadataCache;
     private final ClusterMirrorRecordSerde serde = new ClusterMirrorRecordSerde();
+    private volatile ScheduledFuture<?> metadataRefreshFuture;
     private final Scheduler scheduler;
     private final Metrics metrics;
     private final Time time;
@@ -152,10 +154,20 @@ public class ClusterMirrorCoordinator {
         scheduler.startup();
 
         // periodically query source cluster to get the metadata
-        scheduler.schedule("MirrorMetadataRefresh", metadataManager::periodicSync, 0,
-                brokerConfig.mirrorConfig().metadataRefreshIntervalMs());
+        metadataRefreshFuture = scheduler.schedule("MirrorMetadataRefresh",
+                metadataManager::runMetadataRefresh, 0, brokerConfig.mirrorConfig().metadataRefreshIntervalMs());
 
         log.info("Startup complete.");
+    }
+
+    public void rescheduleMetadataRefresh(long newIntervalMs) {
+        ScheduledFuture<?> oldFuture = metadataRefreshFuture;
+        if (oldFuture != null) {
+            oldFuture.cancel(false);
+        }
+        metadataRefreshFuture = scheduler.schedule("MirrorMetadataRefresh",
+                metadataManager::runMetadataRefresh, newIntervalMs, newIntervalMs);
+        log.info("Rescheduled metadata refresh with interval {} ms", newIntervalMs);
     }
 
     /** Shuts down the coordinator scheduler and mirror state sender. */

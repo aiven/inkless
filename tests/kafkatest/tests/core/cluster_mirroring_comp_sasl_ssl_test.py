@@ -37,7 +37,7 @@ ZK_ACL_AUTHORIZER_OLD = "kafka.security.auth.SimpleAclAuthorizer"
 ZK_ACL_AUTHORIZER_NEW = "kafka.security.authorizer.AclAuthorizer"
 
 
-class ClusterMirroringCompAclsTest(MirrorUtils, Test):
+class ClusterMirroringCompSaslSslTest(MirrorUtils, Test):
     """Tests for KIP-1279 Cluster Mirroring ACLs sync across different Kafka versions."""
 
     DEST_SERVER_PROPS = [
@@ -50,6 +50,8 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
         ["share.coordinator.state.topic.replication.factor", "2"],
         ["share.coordinator.state.topic.min.isr", "1"],
         ["mirror.state.topic.replication.factor", "2"],
+        ["mirror.metadata.refresh.interval.ms", "10000"],
+        ["mirror.num.replica.fetchers", "2"],
         ["super.users", "User:kafka"],
     ]
 
@@ -63,7 +65,7 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
     ]
 
     def __init__(self, test_context):
-        super(ClusterMirroringCompAclsTest, self).__init__(test_context)
+        super(ClusterMirroringCompSaslSslTest, self).__init__(test_context)
 
     def teardown(self):
         if hasattr(self, "_original_metadata_quorum"):
@@ -170,7 +172,7 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
         return kafka.run_cli_tool(client_node, cmd)
 
     @staticmethod
-    def produce_as_client(logger, kafka, topic, num_records, client_node):
+    def produce_as_client(logger, kafka, client_node, topic, num_messages):
         client_env = "KAFKA_OPTS='-D%s -D%s' " % (
             KafkaService.JAAS_CONF_PROPERTY, KafkaService.KRB5_CONF)
         client_props = str(kafka.security_config.client_config(
@@ -180,7 +182,7 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
               " --producer.config <(echo '%s')" % (
                   client_env,
                   kafka.path.script("kafka-producer-perf-test.sh", client_node),
-                  topic, num_records,
+                  topic, num_messages,
                   kafka.bootstrap_servers(kafka.security_protocol),
                   client_props)
         output = ""
@@ -189,9 +191,9 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
         logger.debug("Producer output for %s:\n%s", topic, output.strip())
 
     @staticmethod
-    def consume_as_client(logger, kafka, topic, client_node, max_messages,
-                          group=None, timeout_ms=30000, expected_count=None,
-                          wait_timeout_sec=240):
+    def consume_as_client(logger, kafka, client_node, topic, group=None,
+                          max_messages=None, expected_count=None,
+                          timeout_ms=30000, wait_timeout_sec=240):
         client_env = "KAFKA_OPTS='-D%s -D%s' " % (
             KafkaService.JAAS_CONF_PROPERTY, KafkaService.KRB5_CONF)
         client_props = str(kafka.security_config.client_config(
@@ -211,7 +213,7 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
             for line in client_node.account.ssh_capture(cmd, allow_fail=True):
                 if line.strip():
                     count[0] += 1
-            logger.debug("Consumed %d records from %s so far (expected %s)",
+            logger.debug("Consumed %d messages from %s so far (expected %s)",
                          count[0], topic, expected_count)
             return expected_count is None or count[0] >= expected_count
 
@@ -229,15 +231,15 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
 
     @staticmethod
     def list_acls(kafka, client_node):
-        return ClusterMirroringCompAclsTest.run_acl_cmd(kafka, "--list", client_node)
+        return ClusterMirroringCompSaslSslTest.run_acl_cmd(kafka, "--list", client_node)
 
     def wait_for_acl_condition(self, kafka, mirror_name, condition, err_msg, client_node):
         MirrorUtils.wait_for_metadata_refresh(self.logger, kafka, client_node, mirror_name)
         def check():
-            dest_acls = ClusterMirroringCompAclsTest.list_acls(kafka, client_node)
+            dest_acls = ClusterMirroringCompSaslSslTest.list_acls(kafka, client_node)
             self.logger.debug("Destination ACLs:\n%s" % dest_acls)
             return condition(dest_acls)
-        wait_until(check, timeout_sec=300, backoff_sec=5, err_msg=err_msg)
+        wait_until(check, timeout_sec=120, backoff_sec=2, err_msg=err_msg)
 
 
     @cluster(num_nodes=8)
@@ -260,76 +262,74 @@ class ClusterMirroringCompAclsTest(MirrorUtils, Test):
             self.source_kafka.create_topic({"topic": t, **cfg})
 
         self.logger.info("Granting ACLs on source cluster")
-        ClusterMirroringCompAclsTest.run_acl_cmd(self.source_kafka,
+        ClusterMirroringCompSaslSslTest.run_acl_cmd(self.source_kafka,
                          "--add --allow-principal User:client --operation READ --topic my-topic-a",
                          self.source_client_node)
-        ClusterMirroringCompAclsTest.run_acl_cmd(self.source_kafka,
+        ClusterMirroringCompSaslSslTest.run_acl_cmd(self.source_kafka,
                          "--add --allow-principal User:client --operation WRITE --topic my-topic-a",
                          self.source_client_node)
-        ClusterMirroringCompAclsTest.run_acl_cmd(self.source_kafka,
+        ClusterMirroringCompSaslSslTest.run_acl_cmd(self.source_kafka,
                          "--add --allow-principal User:client --operation READ --group my-group",
                          self.source_client_node)
-        ClusterMirroringCompAclsTest.run_acl_cmd(self.source_kafka,
+        ClusterMirroringCompSaslSslTest.run_acl_cmd(self.source_kafka,
                          "--add --allow-principal User:other-client --operation READ --topic new-topic",
                          self.source_client_node)
 
-        self.logger.info("Producing 10 records to my-topic-a as client user")
-        ClusterMirroringCompAclsTest.produce_as_client(self.logger, self.source_kafka, "my-topic-a",
-                                                       10, self.source_client_node)
+        self.logger.info("Producing 10 messages to my-topic-a as client user")
+        ClusterMirroringCompSaslSslTest.produce_as_client(self.logger, self.source_kafka,
+                                                       self.source_client_node, "my-topic-a", 10)
 
         self.logger.info("Creating and starting cluster mirror with ACL include filter")
-        mirror_name = "my-mirror"
-        mirror_cfg = ClusterMirroringCompAclsTest.create_mirror_config(self.source_kafka)
+        mirror_cfg = ClusterMirroringCompSaslSslTest.create_mirror_config(self.source_kafka)
         mirror_cfg.properties["mirror.acl.include"] = "TOPIC;my-topic-.*,GROUP;my-group"
 
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
-                self.dest_client_node, mirror_name, mirror_cfg),
-            timeout_sec=300, backoff_sec=2,
+                self.dest_client_node, "my-mirror", mirror_cfg),
+            timeout_sec=120, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         for regex in ["my-topic.*", "new-topic"]:
             wait_until(
                 lambda r=regex: "Started" in self.dest_kafka.start_cluster_mirror_topics(
-                    self.dest_client_node, mirror_name, r),
-                timeout_sec=300, backoff_sec=2,
+                    self.dest_client_node, "my-mirror", r),
+                timeout_sec=120, backoff_sec=2,
                 err_msg="Failed to start mirror topics for %s" % regex,
             )
         self.logger.info("Waiting for all partitions to reach MIRRORING with zero lag")
         MirrorUtils.wait_mirror_lag_zero(self.logger,
-            self.dest_kafka, self.dest_client_node, mirror_name, topics=list(topics.keys()))
+            self.dest_kafka, self.dest_client_node, "my-mirror", topics=list(topics.keys()))
 
-        # Retry consuming because the HW may lag behind mirror lag reaching zero.
-        self.logger.info("Consuming 10 records from my-topic-a on destination as client user")
-        count = ClusterMirroringCompAclsTest.consume_as_client(self.logger, self.dest_kafka, "my-topic-a",
-                                                               self.dest_client_node, max_messages=10,
-                                                               group="my-group", expected_count=10)
-        assert count >= 10, "Expected 10 records on my-topic-a, got %d" % count
+        self.logger.info("Consuming 10 messages from my-topic-a on destination as client user")
+        count = ClusterMirroringCompSaslSslTest.consume_as_client(self.logger, self.dest_kafka,
+                                                               self.dest_client_node, "my-topic-a", "my-group",
+                                                               max_messages=10, expected_count=10)
+        assert count >= 10, "Expected 10 messages on my-topic-a, got %d" % count
 
         self.logger.info("Verifying ACL filtering: my-topic-a ACL synced, new-topic ACL filtered out")
         self.wait_for_acl_condition(
-            self.dest_kafka, mirror_name,
+            self.dest_kafka, "my-mirror",
             lambda acls: "User:client" in acls and "my-topic-a" in acls,
             "Client READ ACL on my-topic-a should be synced (matches include rule)",
             self.dest_client_node)
 
-        dest_acls = ClusterMirroringCompAclsTest.list_acls(self.dest_kafka, self.dest_client_node)
+        dest_acls = ClusterMirroringCompSaslSslTest.list_acls(self.dest_kafka, self.dest_client_node)
         assert "User:other-client" not in dest_acls and "new-topic" not in dest_acls, \
             "Other-client READ ACL on new-topic should not be synced (filtered out)"
 
         self.logger.info("Removing my-topic-a ACLs from source cluster")
-        ClusterMirroringCompAclsTest.run_acl_cmd(self.source_kafka,
+        ClusterMirroringCompSaslSslTest.run_acl_cmd(self.source_kafka,
                          "--remove --allow-principal User:client --operation READ "
                          "--topic my-topic-a --force",
                          self.source_client_node)
-        ClusterMirroringCompAclsTest.run_acl_cmd(self.source_kafka,
+        ClusterMirroringCompSaslSslTest.run_acl_cmd(self.source_kafka,
                          "--remove --allow-principal User:client --operation WRITE "
                          "--topic my-topic-a --force",
                          self.source_client_node)
 
         self.logger.info("Verifying ACL removal propagated to destination")
         self.wait_for_acl_condition(
-            self.dest_kafka, mirror_name,
+            self.dest_kafka, "my-mirror",
             lambda acls: "my-topic-a" not in acls,
             "Client READ ACL on my-topic-a should have been removed from destination",
             self.dest_client_node)

@@ -100,6 +100,12 @@ abstract class AbstractFetcherManager[T <: AbstractFetcherThread](val name: Stri
     }
   }
 
+  private[server] def updateNumFetchers(newSize: Int): Int = lock synchronized {
+    val oldSize = numFetchersPerBroker
+    numFetchersPerBroker = newSize
+    oldSize
+  }
+
   // Visible for testing
   private[server] def getFetcher(topicPartition: TopicPartition): Option[T] = {
     lock synchronized {

@@ -69,7 +69,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @Timeout(value = 180, unit = TimeUnit.SECONDS)
 public class AsyncClusterMirrorIntegrationTest {
-    private static final String TOPIC = "my-topic-async";
+    private static final String TOPIC_NAME = "my-topic-async";
     private static final long METADATA_REFRESH_INTERVAL_MS = 5_000L;
     private static final String MIRROR_NAME = "my-mirror";
 
@@ -140,25 +140,25 @@ public class AsyncClusterMirrorIntegrationTest {
     void testAsyncMirrorReplication() throws Exception {
         // Create topic and produce data
         srcAdmin.createTopics(List.of(
-                new NewTopic(TOPIC, 1, (short) 1)
+                new NewTopic(TOPIC_NAME, 1, (short) 1)
         )).all().get(30, TimeUnit.SECONDS);
 
-        produceRecords(srcCluster, TOPIC, 0, 50);
+        produceRecords(srcCluster, TOPIC_NAME, 0, 50);
 
         // Create mirror and add topic
         dstAdmin.createClusterMirror(MIRROR_NAME, Map.of(
                 "bootstrap.servers", singleSourceBootstrapServer
         ), new CreateClusterMirrorOptions()).all().get(30, TimeUnit.SECONDS);
-        dstAdmin.startMirrorTopics(MIRROR_NAME, Set.of(TOPIC), new StartMirrorTopicsOptions())
+        dstAdmin.startMirrorTopics(MIRROR_NAME, Set.of(TOPIC_NAME), new StartMirrorTopicsOptions())
                 .all().get(30, TimeUnit.SECONDS);
-        waitForMirrorLagZero(TOPIC);
+        waitForMirrorLagZero(TOPIC_NAME);
 
         // Produce more data while in ASYNC mode
-        produceRecords(srcCluster, TOPIC, 50, 50);
+        produceRecords(srcCluster, TOPIC_NAME, 50, 50);
 
         // Verify all 100 records arrive at destination
         List<ConsumerRecord<String, String>> records = consumeRecords(
-                dstCluster, TOPIC, 100, null);
+                dstCluster, TOPIC_NAME, 100, null);
         assertEquals(100, records.size(),
                 "Destination should have all 100 records");
     }
@@ -207,31 +207,31 @@ public class AsyncClusterMirrorIntegrationTest {
     void testMirrorWithPreCreatedTopic() throws Exception {
         // Create topic on source
         srcAdmin.createTopics(List.of(
-                new NewTopic(TOPIC, 1, (short) 1)
+                new NewTopic(TOPIC_NAME, 1, (short) 1)
         )).all().get(30, TimeUnit.SECONDS);
 
         // Get source topic description (TopicId)
-        var topicDesc = describeTopics(srcAdmin, List.of(TOPIC));
-        String sourceTopicId = topicDesc.get(TOPIC).topicId().toString();
+        var topicDesc = describeTopics(srcAdmin, List.of(TOPIC_NAME));
+        String sourceTopicId = topicDesc.get(TOPIC_NAME).topicId().toString();
 
         // Produce data to source
-        produceRecords(srcCluster, TOPIC, 0, 50);
+        produceRecords(srcCluster, TOPIC_NAME, 0, 50);
 
         // Pre-create topic on destination with source's TopicId (like ClusterMirrorCommand does)
         dstAdmin.createTopics(List.of(
-                new NewTopic(TOPIC, Optional.of(1), Optional.empty(), Optional.of(sourceTopicId))
+                new NewTopic(TOPIC_NAME, Optional.of(1), Optional.empty(), Optional.of(sourceTopicId))
         )).all().get(30, TimeUnit.SECONDS);
 
         // Create mirror
         dstAdmin.createClusterMirror(MIRROR_NAME, Map.of(
                 "bootstrap.servers", singleSourceBootstrapServer
         ), new CreateClusterMirrorOptions()).all().get(30, TimeUnit.SECONDS);
-        dstAdmin.startMirrorTopics(MIRROR_NAME, Set.of(TOPIC), new StartMirrorTopicsOptions())
+        dstAdmin.startMirrorTopics(MIRROR_NAME, Set.of(TOPIC_NAME), new StartMirrorTopicsOptions())
                 .all().get(30, TimeUnit.SECONDS);
-        waitForMirrorLagZero(TOPIC);
+        waitForMirrorLagZero(TOPIC_NAME);
 
         // Wait for async replication
-        consumeRecords(dstCluster, TOPIC, 50);
+        consumeRecords(dstCluster, TOPIC_NAME, 50);
     }
 
     /**
