@@ -97,6 +97,13 @@ object IntegrationTestUtils {
     finally socket.close()
   }
 
+  def connectAndReceive[T <: AbstractResponse](request: AbstractRequest,
+                                               destination: SocketServer,
+                                               listenerName: ListenerName,
+                                               responseClass: Class[T]): T = {
+    connectAndReceive[T](request, destination, listenerName)(ClassTag(responseClass))
+  }
+
   private var correlationId = 0
 
   def connect(socketServer: SocketServer,

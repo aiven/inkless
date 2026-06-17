@@ -85,6 +85,7 @@ import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -435,6 +436,75 @@ public class InklessTopicTypeSwitcherClusterTest {
         }
     }
 
+    @Test
+    public void testSwitchRejectedWhenUncleanLeaderElectionEnabledAtClusterLevel() throws Exception {
+        final String topic = "switch-cluster-unclean-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            // Enable unclean leader election at cluster level first
+            final ConfigResource clusterResource = new ConfigResource(ConfigResource.Type.BROKER, "");
+            admin.incrementalAlterConfigs(Map.of(clusterResource, List.of(
+                    new AlterConfigOp(new ConfigEntry(
+                            TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true"),
+                            AlterConfigOp.OpType.SET)
+            ))).all().get(20, TimeUnit.SECONDS);
+
+            // Create a classic topic
+            admin.createTopics(List.of(
+                    new NewTopic(topic, 1, (short) 3)
+                            .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(30, TimeUnit.SECONDS);
+
+            // Attempt to switch to diskless — should fail because unclean leader election
+            // is enabled (via cluster-level config)
+            final ExecutionException ex = assertThrows(ExecutionException.class, () ->
+                    alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(
+                            TopicConfig.DISKLESS_ENABLE_CONFIG, "true")));
+            assertInstanceOf(InvalidConfigurationException.class, ex.getCause());
+            assertTrue(ex.getCause().getMessage().contains("unclean leader election"),
+                    "Expected 'unclean leader election' in error, got: " + ex.getCause().getMessage());
+
+            // Same check via the legacy AlterConfigs path
+            final Errors legacyError = alterTopicConfigWithLegacyAlterConfigsExpectingError(
+                    topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            assertEquals(Errors.INVALID_CONFIG, legacyError,
+                    "Legacy path should reject switch when unclean leader election is enabled");
+        }
+    }
+
+    @Test
+    public void testUncleanLeaderElectionRejectedWhileSwitchPending() throws Exception {
+        final String topic = "switch-unclean-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            // Create a classic topic and switch it to diskless
+            admin.createTopics(List.of(
+                    new NewTopic(topic, 1, (short) 3)
+                            .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(30, TimeUnit.SECONDS);
+
+            // Enable diskless to mark partition as switch pending
+            alterTopicConfigWithIncrementalAlterConfigs(
+                    admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+
+            // Should fail trying to enable unclean leader election
+            final ExecutionException ex = assertThrows(ExecutionException.class, () ->
+                    alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(
+                            TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")));
+            assertInstanceOf(InvalidConfigurationException.class, ex.getCause());
+            assertTrue(ex.getCause().getMessage().contains("pending classic-to-diskless switch"),
+                    "Expected 'pending classic-to-diskless switch' in: " + ex.getCause().getMessage());
+
+            // Same check via the legacy AlterConfigs path
+            final Errors legacyError = alterTopicConfigWithLegacyAlterConfigsExpectingError(
+                    topic, Map.of(
+                            TopicConfig.DISKLESS_ENABLE_CONFIG, "true",
+                            TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true"));
+            assertEquals(Errors.INVALID_CONFIG, legacyError,
+                    "Legacy path should reject enabling unclean leader election during pending switch");
+        }
+    }
+
     private void alterTopicConfigWithLegacyAlterConfigs(final String topic,
                                                        final Map<String, String> newConfigs) throws Exception {
         final ConfigResource topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
@@ -444,15 +514,34 @@ public class InklessTopicTypeSwitcherClusterTest {
         final AlterConfigsRequest.Config config = new AlterConfigsRequest.Config(configEntries);
         final AlterConfigsRequest request = new AlterConfigsRequest.Builder(Map.of(topicResource, config), false)
             .build(ApiKeys.ALTER_CONFIGS.latestVersion());
-        final AlterConfigsResponse response = IntegrationTestUtils.connectAndReceive(
+        final AlterConfigsResponse response = sendLegacyAlterConfigsRequest(request);
+        final var apiError = response.errors().get(topicResource);
+        assertNotNull(apiError, "Legacy AlterConfigs response did not contain topic resource " + topicResource);
+        assertEquals(Errors.NONE, apiError.error(), "Legacy AlterConfigs failed: " + apiError.message());
+    }
+
+    private Errors alterTopicConfigWithLegacyAlterConfigsExpectingError(final String topic,
+                                                                        final Map<String, String> newConfigs) throws Exception {
+        final ConfigResource topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
+        final Collection<AlterConfigsRequest.ConfigEntry> configEntries = newConfigs.entrySet().stream()
+            .map(entry -> new AlterConfigsRequest.ConfigEntry(entry.getKey(), entry.getValue()))
+            .toList();
+        final AlterConfigsRequest.Config config = new AlterConfigsRequest.Config(configEntries);
+        final AlterConfigsRequest request = new AlterConfigsRequest.Builder(Map.of(topicResource, config), false)
+            .build(ApiKeys.ALTER_CONFIGS.latestVersion());
+        final AlterConfigsResponse response = sendLegacyAlterConfigsRequest(request);
+        final var apiError = response.errors().get(topicResource);
+        assertTrue(apiError != null, "Legacy AlterConfigs response did not contain topic resource " + topicResource);
+        return apiError.error();
+    }
+
+    private AlterConfigsResponse sendLegacyAlterConfigsRequest(final AlterConfigsRequest request) throws Exception {
+        return IntegrationTestUtils.connectAndReceive(
             request,
             cluster.brokers().values().iterator().next().socketServer(),
             cluster.nodes().brokerListenerName(),
-            scala.reflect.ClassTag$.MODULE$.apply(AlterConfigsResponse.class)
+            AlterConfigsResponse.class
         );
-        final var apiError = response.errors().get(topicResource);
-        assertTrue(apiError != null, "Legacy AlterConfigs response did not contain topic resource " + topicResource);
-        assertEquals(Errors.NONE, apiError.error(), "Legacy AlterConfigs failed: " + apiError.message());
     }
 
     private void waitForIsrShrink(final Admin admin, final String topic,

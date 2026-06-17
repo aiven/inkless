@@ -133,6 +133,7 @@ import static org.apache.kafka.common.config.ConfigResource.Type.TOPIC;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG;
 import static org.apache.kafka.common.internals.Topic.CLUSTER_METADATA_TOPIC_NAME;
 import static org.apache.kafka.common.protocol.Errors.FENCED_LEADER_EPOCH;
 import static org.apache.kafka.common.protocol.Errors.INELIGIBLE_REPLICA;
@@ -2299,6 +2300,11 @@ public class ReplicationControlManager {
         return partition.classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING;
     }
 
+    private static boolean hasAnyPartitionWithPendingSwitch(TopicControlInfo topicInfo) {
+        return topicInfo.parts.values().stream().anyMatch(
+            ReplicationControlManager::hasClassicToDisklessSwitchPending);
+    }
+
     private void warnSkippingUncleanElectionForPendingSwitch(String topicName, int partitionId) {
         log.warn("Skipping unclean leader election for partition {}-{} " +
                 "because it has a pending classic-to-diskless switch.",
@@ -2997,9 +3003,8 @@ public class ReplicationControlManager {
     }
 
     /**
-     * Per-resource precondition check for incremental AlterConfigs enabling diskless.
-     * Returns {@link ApiError#NONE} if the resource is not a topic enabling diskless or
-     * if all partition preconditions are met.
+     * Per-resource precondition check for incremental AlterConfigs.
+     * Validates that the resulting config does not violate diskless switch invariants.
      */
     ApiError validateClassicToDisklessSwitchPrecondition(
         ConfigResource resource,
@@ -3007,20 +3012,14 @@ public class ReplicationControlManager {
     ) {
         if (resource.type() != TOPIC) return ApiError.NONE;
         Map<String, Entry<OpType, String>> changes = configChanges.get(resource);
-        if (changes == null || !isSettingConfigToTrue(changes, DISKLESS_ENABLE_CONFIG)) return ApiError.NONE;
-        if (isDisklessTopic(resource.name())) return ApiError.NONE;
-        Uuid topicId = topicsByName.get(resource.name());
-        if (topicId == null) return ApiError.NONE;
-        TopicControlInfo topicInfo = topics.get(topicId);
-        if (topicInfo == null) return ApiError.NONE;
-        return validatePartitionsForSwitch(topicInfo).orElse(ApiError.NONE);
+        if (changes == null) return ApiError.NONE;
+        Map<String, String> topicOverrides = projectIncrementalOverrides(resource.name(), changes);
+        return validateDisklessSwitchInvariants(resource.name(), topicOverrides);
     }
 
     /**
-     * Per-resource precondition check for legacy AlterConfigs enabling diskless.
-     * Covers both explicit {@code diskless.enable=true} in the request and implicit
-     * enabling via deletion of a {@code diskless.enable=false} override when the broker
-     * default is {@code true}.
+     * Per-resource precondition check for legacy AlterConfigs.
+     * Validates that the resulting config does not violate diskless switch invariants.
      */
     ApiError validateClassicToDisklessSwitchPreconditionForLegacy(
         ConfigResource resource,
@@ -3029,79 +3028,115 @@ public class ReplicationControlManager {
         if (resource.type() != TOPIC) return ApiError.NONE;
         Map<String, String> configs = newConfigs.get(resource);
         if (configs == null) return ApiError.NONE;
-        boolean explicitlyEnabling = Boolean.parseBoolean(configs.get(DISKLESS_ENABLE_CONFIG));
-        boolean implicitlyEnabling = !configs.containsKey(DISKLESS_ENABLE_CONFIG)
-            && defaultDisklessEnable
-            && !isDisklessTopic(resource.name())
-            && "false".equals(configurationControl.currentTopicConfig(resource.name()).get(DISKLESS_ENABLE_CONFIG));
-        if (!explicitlyEnabling && !implicitlyEnabling) return ApiError.NONE;
-        if (isDisklessTopic(resource.name())) return ApiError.NONE;
-        Uuid topicId = topicsByName.get(resource.name());
+        Map<String, String> topicOverrides = new HashMap<>(configs);
+        // Remove values that would be deleted, so that the validation uses the broker/cluster defaults.
+        topicOverrides.values().removeIf(Objects::isNull);
+        return validateDisklessSwitchInvariants(resource.name(), topicOverrides);
+    }
+
+    private Map<String, String> projectIncrementalOverrides(
+        String topicName,
+        Map<String, Entry<OpType, String>> changes
+    ) {
+        Map<String, String> projected = new HashMap<>(
+            configurationControl.currentTopicConfig(topicName));
+        for (Entry<String, Entry<OpType, String>> entry : changes.entrySet()) {
+            Entry<OpType, String> change = entry.getValue();
+            OpType op = change.getKey();
+            if (op == OpType.SET) {
+                projected.put(entry.getKey(), change.getValue());
+            } else if (op == OpType.DELETE) {
+                projected.remove(entry.getKey());
+            }
+        }
+        return projected;
+    }
+
+    private ApiError validateDisklessSwitchInvariants(
+        String topicName,
+        Map<String, String> topicOverrides
+    ) {
+        Uuid topicId = topicsByName.get(topicName);
         if (topicId == null) return ApiError.NONE;
         TopicControlInfo topicInfo = topics.get(topicId);
         if (topicInfo == null) return ApiError.NONE;
-        return validatePartitionsForSwitch(topicInfo).orElse(ApiError.NONE);
-    }
 
-    Map<ConfigResource, ApiError> validateClassicToDisklessSwitchPreconditions(Set<ConfigResource> topicResources) {
-        Map<ConfigResource, ApiError> errors = new HashMap<>();
-        for (ConfigResource resource : topicResources) {
-            String topicName = resource.name();
-            if (isDisklessTopic(topicName)) continue;
-            Uuid topicId = topicsByName.get(topicName);
-            if (topicId == null) continue;
-            TopicControlInfo topicInfo = topics.get(topicId);
-            if (topicInfo == null) continue;
-            validatePartitionsForSwitch(topicInfo)
-                .ifPresent(error -> errors.put(resource, error));
+        Map<String, ConfigEntry> effectiveTopicConfigs =
+            configurationControl.computeEffectiveTopicConfigs(topicOverrides);
+        boolean uncleanEnabled = Boolean.parseBoolean(
+            effectiveTopicConfigs.get(UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG).value());
+        boolean disklessEnabled = topicOverrides.containsKey(DISKLESS_ENABLE_CONFIG)
+            ? Boolean.parseBoolean(topicOverrides.get(DISKLESS_ENABLE_CONFIG))
+            : defaultDisklessEnable;
+        boolean hasPendingSwitch = hasAnyPartitionWithPendingSwitch(topicInfo);
+        boolean initiatingSwitch = disklessEnabled && !isDisklessTopic(topicName);
+
+        // Unclean leader election is incompatible with diskless
+        if (uncleanEnabled) {
+            if (hasPendingSwitch) {
+                return new ApiError(INVALID_CONFIG,
+                    "Cannot enable unclean leader election for topic " + topicName +
+                    ": topic has a pending classic-to-diskless switch.");
+            }
+            if (initiatingSwitch) {
+                return new ApiError(INVALID_CONFIG,
+                    "Cannot switch topic " + topicName + " to diskless: " +
+                    "unclean leader election must be disabled.");
+            }
         }
-        return errors;
+
+        // All partitions must be healthy to initiate a switch
+        if (initiatingSwitch) {
+            return validatePartitionsForSwitch(topicInfo);
+        }
+
+        return ApiError.NONE;
     }
 
-    private Optional<ApiError> validatePartitionsForSwitch(TopicControlInfo topicInfo) {
+    private ApiError validatePartitionsForSwitch(TopicControlInfo topicInfo) {
         String topicName = topicInfo.name;
         for (Entry<Integer, PartitionRegistration> partEntry : topicInfo.parts.entrySet()) {
             int partitionId = partEntry.getKey();
             PartitionRegistration partition = partEntry.getValue();
 
             if (!partition.hasLeader()) {
-                return Optional.of(new ApiError(INVALID_CONFIG,
+                return new ApiError(INVALID_CONFIG,
                     "Cannot switch topic " + topicName + " to diskless: " +
-                    "partition " + partitionId + " is offline (has no leader)."));
+                    "partition " + partitionId + " is offline (has no leader).");
             }
 
             if (partition.leaderRecoveryState == LeaderRecoveryState.RECOVERING) {
-                return Optional.of(new ApiError(INVALID_CONFIG,
+                return new ApiError(INVALID_CONFIG,
                     "Cannot switch topic " + topicName + " to diskless: " +
-                    "partition " + partitionId + " is recovering from an unclean leader election."));
+                    "partition " + partitionId + " is recovering from an unclean leader election.");
             }
 
             if (isReassignmentInProgress(partition)) {
-                return Optional.of(new ApiError(INVALID_CONFIG,
+                return new ApiError(INVALID_CONFIG,
                     "Cannot switch topic " + topicName + " to diskless: " +
-                    "partition " + partitionId + " has a reassignment in progress."));
+                    "partition " + partitionId + " has a reassignment in progress.");
             }
 
             if (partition.elr.length > 0) {
-                return Optional.of(new ApiError(INVALID_CONFIG,
+                return new ApiError(INVALID_CONFIG,
                     "Cannot switch topic " + topicName + " to diskless: " +
-                    "partition " + partitionId + " has a non-empty ELR."));
+                    "partition " + partitionId + " has a non-empty ELR.");
             }
 
             if (partition.lastKnownElr.length > 0) {
-                return Optional.of(new ApiError(INVALID_CONFIG,
+                return new ApiError(INVALID_CONFIG,
                     "Cannot switch topic " + topicName + " to diskless: " +
-                    "partition " + partitionId + " has a non-empty last-known ELR."));
+                    "partition " + partitionId + " has a non-empty last-known ELR.");
             }
 
             if (partition.isr.length < partition.replicas.length) {
-                return Optional.of(new ApiError(INVALID_CONFIG,
+                return new ApiError(INVALID_CONFIG,
                     "Cannot switch topic " + topicName + " to diskless: " +
                     "partition " + partitionId + " is under-replicated " +
-                    "(ISR size " + partition.isr.length + " < replicas " + partition.replicas.length + ")."));
+                    "(ISR size " + partition.isr.length + " < replicas " + partition.replicas.length + ").");
             }
         }
-        return Optional.empty();
+        return ApiError.NONE;
     }
 
     /**
