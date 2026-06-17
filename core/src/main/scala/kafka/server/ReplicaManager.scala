@@ -2006,7 +2006,9 @@ class ReplicaManager(val config: KafkaConfig,
    * Build the diskless supplement fetch requests for consolidating partitions whose local log
    * read did not satisfy minBytes. For each tracked partition, computes the remaining byte budget
    * (original maxBytes minus what the local read already returned) and emits a PartitionData
-   * starting at logEndOffset. Partitions whose remaining budget is zero are dropped.
+   * starting where the local read left off. Partitions whose remaining budget is zero, or whose
+   * local read has not yet reached the local log end offset (the classic->diskless seal), are
+   * dropped — see the exhaustion guard below.
    */
   private[server] def buildConsolidationSupplementFetchInfos(
       supplements: Map[TopicIdPartition, Long],
@@ -2020,17 +2022,24 @@ class ReplicaManager(val config: KafkaConfig,
         val hasError = readResult.exists(_.error != Errors.NONE)
         val alreadyRead = readResult.map(_.info.records.sizeInBytes).getOrElse(0)
         val remainingBytes = Math.max(pd.maxBytes - alreadyRead, 0)
-        if (!hasError && remainingBytes > 0) {
-          // Start the supplement where the local read left off, not at logEndOffset.
-          // Diskless has the full range so it can serve from any offset. This avoids a gap
-          // when the local read stopped at a segment boundary before reaching logEndOffset.
-          val supplementStartOffset = readResult
-            .map(_.info.records.lastBatch())
-            .filter(_.isPresent)
-            .map(_.get().nextOffset())
-            .getOrElse(logEndOffset)
+        // Start the supplement where the local read left off, not at logEndOffset.
+        // Diskless has the full range so it can serve from any offset. This avoids a gap
+        // when the local read stopped at a segment boundary before reaching logEndOffset.
+        val supplementStartOffset = readResult
+          .map(_.info.records.lastBatch())
+          .filter(_.isPresent)
+          .map(_.get().nextOffset())
+          .getOrElse(logEndOffset)
+        // Only supplement once the local log is exhausted: the local read must have reached the
+        // local log end offset, which for a frozen consolidating log equals the classic->diskless
+        // seal. If it stopped at an earlier segment boundary (supplementStartOffset < logEndOffset),
+        // skip the supplement — the consumer re-fetches and walks the remaining local segments, as
+        // it would for any classic multi-segment lag. Supplementing from below the seal would stitch
+        // the local prefix directly onto the diskless range (which starts at the seal) and silently
+        // drop the committed range [supplementStartOffset, seal).
+        if (!hasError && remainingBytes > 0 && supplementStartOffset >= logEndOffset)
           Some(tp -> new PartitionData(tp.topicId(), supplementStartOffset, pd.logStartOffset, remainingBytes, pd.currentLeaderEpoch, pd.lastFetchedEpoch))
-        } else
+        else
           None
       }
     }.toSeq

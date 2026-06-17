@@ -101,6 +101,15 @@ class ReplicaManagerInklessTest {
     2.toByte, 0L, Compression.NONE, TimestampType.CREATE_TIME, 123L, 0.toShort, 0, 0, false, new SimpleRecord(0, "hello".getBytes())
   )
 
+  // A single-record local batch whose nextOffset == 100, i.e. it ends exactly at the seal
+  // (classicToDisklessStartOffset = 100) used by the consolidating-fetch tests. The supplement is
+  // only emitted once the local read reaches the seal, so end-to-end tests that exercise the
+  // supplement merge must model a local read that ends there (not below it). Same byte size as
+  // RECORDS, so RECORDS.sizeInBytes can still be used for minBytes thresholds.
+  val RECORDS_AT_SEAL: MemoryRecords = MemoryRecords.withRecords(
+    2.toByte, 99L, Compression.NONE, TimestampType.CREATE_TIME, 123L, 0.toShort, 0, 0, false, new SimpleRecord(0, "hello".getBytes())
+  )
+
   // Real local-log reads return FileRecords, not MemoryRecords. Use this to match production types.
   private def memoryRecordsToFileRecords(records: MemoryRecords): FileRecords = {
     val file = TestUtils.tempFile()
@@ -1228,10 +1237,11 @@ class ReplicaManagerInklessTest {
       doReturn(mockPartition).when(replicaManager)
         .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
 
-      localFileRecords = memoryRecordsToFileRecords(RECORDS)
+      // Local read reaches the seal (batch ends at offset 100 == seal), so the supplement fires.
+      localFileRecords = memoryRecordsToFileRecords(RECORDS_AT_SEAL)
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
-          new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), localFileRecords),
+          new FetchDataInfo(new LogOffsetMetadata(99L, 0L, 0), localFileRecords),
           Optional.empty(), 100L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
@@ -1317,10 +1327,12 @@ class ReplicaManagerInklessTest {
       doReturn(mockPartition).when(replicaManager)
         .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
 
-      localFileRecords = memoryRecordsToFileRecords(RECORDS)
+      // Local read reaches the seal (batch ends at offset 100 == seal), so the supplement fires —
+      // but the supplement returns no data, so minBytes stays unmet and the fetch parks.
+      localFileRecords = memoryRecordsToFileRecords(RECORDS_AT_SEAL)
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
-          new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), localFileRecords),
+          new FetchDataInfo(new LogOffsetMetadata(99L, 0L, 0), localFileRecords),
           Optional.empty(), 100L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
@@ -1391,10 +1403,12 @@ class ReplicaManagerInklessTest {
       // real local-log read produces. Using FileRecords here (not MemoryRecords) exercises the
       // production FileRecords->MemoryRecords conversion in the supplement merge path; a
       // MemoryRecords stub would vacuously pass while the real path throws ClassCastException.
-      localFileRecords = memoryRecordsToFileRecords(RECORDS)
+      // The local batch ends at offset 100 == seal, so the local read reaches the LEO and the
+      // supplement fires (see the exhaustion guard in buildConsolidationSupplementFetchInfos).
+      localFileRecords = memoryRecordsToFileRecords(RECORDS_AT_SEAL)
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
-          new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), localFileRecords),
+          new FetchDataInfo(new LogOffsetMetadata(99L, 0L, 0), localFileRecords),
           Optional.empty(), 100L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
@@ -1547,9 +1561,11 @@ class ReplicaManagerInklessTest {
       doReturn(mockPartition).when(replicaManager)
         .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
 
+      // Local read reaches the seal (batch ends at offset 100 == seal), so the supplement fires
+      // and the interrupt is raised inside the supplement fetch.
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
-          new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), RECORDS),
+          new FetchDataInfo(new LogOffsetMetadata(99L, 0L, 0), RECORDS_AT_SEAL),
           Optional.empty(), 100L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
@@ -1650,6 +1666,135 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // Guards against the "sub-seal gap" silent-data-loss bug.
+  //
+  // Setup of a consolidating partition:
+  //   - classic-to-diskless seal  = 1000  (offsets [1000, ...) live in object storage / diskless)
+  //   - local classic prefix      = [0, 1000) and spans multiple local log segments
+  //   - local logEndOffset (LEO)  = 1000
+  //   - localLogStartOffset       = 0     (nothing tiered, so the tiered-range guard is a no-op)
+  //
+  // A consumer fetches at offset 480, which lands in an *earlier* local segment. LocalLog.read
+  // serves from a single segment, so the local read returns only [480, 500) (a segment boundary
+  // well below the seal). Because that is smaller than minBytes, the consolidating path would
+  // previously trigger a diskless supplement starting at lastBatch().nextOffset() == 500.
+  //
+  // But 500 is BELOW the seal (1000): the diskless control plane holds no batches for offsets
+  // below the seal, so a FindBatch at 500 returns the first available batch — at the seal, 1000.
+  // (The FetchHandler stub returns records starting at 1000 regardless of the requested offset,
+  // faithfully modelling that "first batch at-or-after" control-plane behavior.)
+  //
+  // Without the exhaustion guard the merge would stitch local [480, 500) directly onto diskless
+  // [1000, ...), silently dropping the committed range [500, 1000). With the guard the supplement
+  // is skipped (local read is below the seal), so the consumer gets the contiguous local prefix
+  // and re-fetches to walk the remaining local segments.
+  @Test
+  def testFetchConsolidatingSupplementBelowSealSilentlySkipsClassicPrefix(): Unit = {
+    val seal = 1000L
+    val localLeo = 1000L
+
+    // Local single-segment read: offsets [480, 500). 20 records in one batch -> nextOffset == 500.
+    val localRecordList = (0 until 20).map(i => new SimpleRecord(i.toLong, s"local-$i".getBytes())).toArray
+    val localMemRecords = MemoryRecords.withRecords(
+      2.toByte, 480L, Compression.NONE, TimestampType.CREATE_TIME, 123L, 0.toShort, 0, 0, false, localRecordList: _*
+    )
+    var localFileRecords: FileRecords = null
+
+    // Diskless serves from the seal: offsets [1000, 1005). Models the control plane returning the
+    // first batch at-or-after the requested (sub-seal) offset of 500.
+    val supplementRecordList = (0 until 5).map(i => new SimpleRecord(i.toLong, s"diskless-$i".getBytes())).toArray
+    val supplementRecords = MemoryRecords.withRecords(
+      2.toByte, seal, Compression.NONE, TimestampType.CREATE_TIME, 456L, 0.toShort, 0, 0, false, supplementRecordList: _*
+    )
+    val disklessResponse = Map(disklessTopicPartition ->
+      new FetchPartitionData(
+        Errors.NONE,
+        localLeo, 0L,
+        supplementRecords,
+        Optional.empty(), OptionalLong.of(localLeo), Optional.empty(), OptionalInt.empty(), false)
+    )
+
+    val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+    val cp = mock(classOf[ControlPlane])
+    val timer = new MockTimer(time)
+    val fetchPurgatory = new DelayedOperationPurgatory[DelayedFetch]("Fetch", timer, 0, false)
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      delayedFetchPurgatory = Some(fetchPurgatory),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(seal)
+      // The fetch offset (480) is on an older segment than the local LEO, so the local read returns
+      // a single sub-seal segment and the supplement is skipped. minBytes stays unmet, so the fetch
+      // parks; on tryComplete, DelayedFetch Case F (older segment) force-completes with the local
+      // data. Stub the partition + offset snapshot so the parked tryComplete can evaluate it.
+      val mockPartition = mock(classOf[Partition])
+      val mockLog = mock(classOf[UnifiedLog])
+      when(mockLog.logEndOffset).thenReturn(localLeo)
+      when(mockPartition.log).thenReturn(Some(mockLog))
+      // endOffset on a NEWER segment than the fetch offset (480, baseOffset 0) so Case F fires.
+      val endOffsetMetadata = new LogOffsetMetadata(localLeo, 500L, 0)
+      when(mockPartition.fetchOffsetSnapshot(any(), any()))
+        .thenReturn(new LogOffsetSnapshot(0L, endOffsetMetadata, endOffsetMetadata, endOffsetMetadata))
+      doReturn(Right(mockPartition)).when(replicaManager)
+        .getPartitionOrError(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+      doReturn(mockPartition).when(replicaManager)
+        .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+
+      localFileRecords = memoryRecordsToFileRecords(localMemRecords)
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(480L, 0L, 0), localFileRecords),
+          Optional.empty(), localLeo, 0L, localLeo, 0L, 0L, OptionalLong.empty(), Errors.NONE
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+        1000L,
+        localMemRecords.sizeInBytes + 1, // minBytes > local-only size to trigger the supplement
+        1024 * 1024,
+        FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 480L, 0L, 1024 * 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+      }
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      waitForFetchResponse(responseData)
+      val result = responseData(disklessTopicPartition)
+      assertEquals(Errors.NONE, result.error)
+
+      // The supplement must NOT have been issued: a sub-seal supplement is the bug.
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+
+      // The consumer sees only the contiguous local prefix [480, 500); no diskless records spliced
+      // in from the seal, so no gap. The consumer re-fetches from 500 to walk the rest of the log.
+      val offsets = result.records.records().asScala.map(_.offset()).toList
+      val gaps = offsets.sliding(2).collect { case Seq(a, b) if b != a + 1 => (a, b) }.toList
+      assertTrue(gaps.isEmpty,
+        s"Consumer-visible records must be contiguous, but found offset gap(s): $gaps. " +
+          s"A supplement started below the seal $seal would make diskless serve from the seal, " +
+          s"silently skipping the committed range. Offsets=$offsets")
+      assertTrue(offsets.nonEmpty && offsets.last < seal,
+        s"Expected only sub-seal local records, got offsets=$offsets")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+      if (localFileRecords != null) localFileRecords.close()
+    }
+  }
+
   // Mixed fetch: consolidating (local below minBytes) + pure-diskless + classic in one request.
   // The consolidating partition gets a synchronous supplement; the pure-diskless partition goes
   // through the normal delayed path; the classic partition is served from the local log.
@@ -1717,10 +1862,12 @@ class ReplicaManagerInklessTest {
       doReturn(consolidatingPartition).when(replicaManager)
         .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
 
-      localFileRecords = memoryRecordsToFileRecords(RECORDS)
+      // Consolidating local read reaches the seal (batch ends at offset 100 == seal), so the
+      // supplement fires.
+      localFileRecords = memoryRecordsToFileRecords(RECORDS_AT_SEAL)
       doReturn(Seq(
         disklessTopicPartition -> new LogReadResult(
-          new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), localFileRecords),
+          new FetchDataInfo(new LogOffsetMetadata(99L, 0L, 0), localFileRecords),
           Optional.empty(), 100L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
         ),
         classicTopicPartition -> new LogReadResult(
@@ -1815,7 +1962,9 @@ class ReplicaManagerInklessTest {
   @Test
   def testBuildConsolidationSupplementFetchInfosDeductsLocalBytesFromBudget(): Unit = {
     val tp = disklessTopicPartition
-    val supplements = mutable.HashMap(tp -> 100L)
+    // Single record at offset 50 → nextOffset 51. Seal at 51 so the local read reaches the LEO
+    // and the supplement is emitted (see the exhaustion guard).
+    val supplements = mutable.HashMap(tp -> 51L)
     val fetchInfos = Seq(tp -> new PartitionData(tp.topicId(), 50L, 0L, 1024, Optional.empty()))
     val localRecords = MemoryRecords.withRecords(
       2.toByte, 50L, Compression.NONE, TimestampType.CREATE_TIME, 123L, 0.toShort, 0, 0, false, new SimpleRecord(0, "local".getBytes())
@@ -1879,15 +2028,18 @@ class ReplicaManagerInklessTest {
     }
   }
 
-  // When the local read stops at a segment boundary (returning records that end before logEndOffset),
-  // the supplement must start at the next offset after the last local batch, not at logEndOffset.
-  // This ensures contiguous records without a gap.
+  // When the local read stops at a segment boundary BELOW the local log end offset (the seal),
+  // no supplement must be emitted. The diskless range starts at the seal, so supplementing from
+  // an offset below it would stitch the local prefix directly onto the diskless range and silently
+  // drop the committed range [supplementStartOffset, seal). The consumer instead re-fetches and
+  // walks the remaining local segments, as it would for any classic multi-segment lag.
   @Test
-  def testBuildConsolidationSupplementFetchInfosStartsAtLastBatchNextOffset(): Unit = {
+  def testBuildConsolidationSupplementFetchInfosSkipsWhenLocalReadBelowSeal(): Unit = {
     val tp = disklessTopicPartition
     val logEndOffset = 5000L
     val supplements = mutable.HashMap(tp -> logEndOffset)
-    // Local records end at offset 1999 (batch with baseOffset=1995, 5 records → lastOffset=1999, nextOffset=2000)
+    // Local records end at offset 1999 (batch with baseOffset=1995, 5 records → lastOffset=1999,
+    // nextOffset=2000), well below the seal at 5000.
     val localRecords = MemoryRecords.withRecords(
       2.toByte, 1995L, Compression.NONE, TimestampType.CREATE_TIME, 123L, 0.toShort, 0, 0, false,
       new SimpleRecord(0, "a".getBytes()), new SimpleRecord(0, "b".getBytes()),
@@ -1904,22 +2056,17 @@ class ReplicaManagerInklessTest {
     val replicaManager = createReplicaManager(List(tp.topic()))
     try {
       val result = replicaManager.buildConsolidationSupplementFetchInfos(supplements, fetchInfos, logReadResultMap)
-      assertEquals(1, result.size)
-      val (_, partitionData) = result.head
-      // Supplement must start at 2000 (nextOffset after last batch), NOT at logEndOffset (5000)
-      assertEquals(2000L, partitionData.fetchOffset,
-        "Supplement must start where local read left off, not at logEndOffset")
-      assertEquals(1024 - localRecords.sizeInBytes, partitionData.maxBytes)
+      assertTrue(result.isEmpty,
+        s"Expected no supplement when the local read (nextOffset 2000) is below the seal ($logEndOffset), got $result")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
   }
 
-  // Simulates a multi-segment local log: the read returns FileRecords from an older segment
-  // (offsets 1995-1999), while logEndOffset is at 5000 (active segment is far ahead).
-  // The supplement must start at 2000 (contiguous with local read), not at 5000 (which would skip segments).
+  // Same sub-seal scenario but with FileRecords from an older segment (matching production reads).
+  // No supplement must be emitted while the local read is below the seal.
   @Test
-  def testBuildConsolidationSupplementFetchInfosWithFileRecordsFromOlderSegment(): Unit = {
+  def testBuildConsolidationSupplementFetchInfosSkipsWhenFileRecordsBelowSeal(): Unit = {
     val tp = disklessTopicPartition
     val logEndOffset = 5000L
     val supplements = mutable.HashMap(tp -> logEndOffset)
@@ -1943,16 +2090,46 @@ class ReplicaManagerInklessTest {
       ))
 
       val result = replicaManager.buildConsolidationSupplementFetchInfos(supplements, fetchInfos, logReadResultMap)
-      assertEquals(1, result.size)
-      val (_, partitionData) = result.head
-      // Must start at 2000 (next offset after the last batch in the FileRecords), not 5000
-      assertEquals(2000L, partitionData.fetchOffset,
-        "Supplement must start where the FileRecords segment read left off")
-      // Budget: maxBytes (1MB) minus the FileRecords size
-      assertEquals(1024 * 1024 - localFileRecords.sizeInBytes, partitionData.maxBytes)
+      assertTrue(result.isEmpty,
+        s"Expected no supplement when the FileRecords read (nextOffset 2000) is below the seal ($logEndOffset), got $result")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
       if (localFileRecords != null) localFileRecords.close()
+    }
+  }
+
+  // When the local read reaches the local log end offset (the seal), the supplement is emitted
+  // starting at the seal — the boundary-spanning case the supplement exists for.
+  @Test
+  def testBuildConsolidationSupplementFetchInfosEmittedWhenLocalReadReachesSeal(): Unit = {
+    val tp = disklessTopicPartition
+    val seal = 2000L
+    val supplements = mutable.HashMap(tp -> seal)
+    // Local records end exactly at the seal (baseOffset=1995, 5 records → nextOffset=2000).
+    val localRecords = MemoryRecords.withRecords(
+      2.toByte, 1995L, Compression.NONE, TimestampType.CREATE_TIME, 123L, 0.toShort, 0, 0, false,
+      new SimpleRecord(0, "a".getBytes()), new SimpleRecord(0, "b".getBytes()),
+      new SimpleRecord(0, "c".getBytes()), new SimpleRecord(0, "d".getBytes()),
+      new SimpleRecord(0, "e".getBytes())
+    )
+    val fetchInfos = Seq(tp -> new PartitionData(tp.topicId(), 1995L, 0L, 1024, Optional.empty()))
+    val logReadResultMap = new util.HashMap[TopicIdPartition, LogReadResult]()
+    logReadResultMap.put(tp, new LogReadResult(
+      new FetchDataInfo(new LogOffsetMetadata(1995L, 0L, 0), localRecords),
+      Optional.empty(), 0L, 0L, seal, 0L, 0L, OptionalLong.empty(), Errors.NONE
+    ))
+
+    val replicaManager = createReplicaManager(List(tp.topic()))
+    try {
+      val result = replicaManager.buildConsolidationSupplementFetchInfos(supplements, fetchInfos, logReadResultMap)
+      assertEquals(1, result.size)
+      val (_, partitionData) = result.head
+      // Supplement starts at the seal (== local nextOffset), contiguous with the local read.
+      assertEquals(seal, partitionData.fetchOffset,
+        "Supplement must start at the seal once the local read reaches the local log end offset")
+      assertEquals(1024 - localRecords.sizeInBytes, partitionData.maxBytes)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
     }
   }
 
