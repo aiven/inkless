@@ -850,14 +850,66 @@ class InklessClassicToDisklessSwitchTest(Test):
             )
         return self.trogdor.create_task(task_name, spec)
 
+    # Trogdor's ProcessStopFaultWorker selects the target JVM by a *literal*
+    # substring match against each `jcmd -l` line (String.contains), so it must
+    # be given the plain main-class name as it appears there. Note this differs
+    # from KafkaService.java_class_name(), which returns the regex form
+    # "kafka\.Kafka" (escaped dot) intended for pgrep/jps regex matching and
+    # would not match literally here.
+    BROKER_JCMD_PROCESS_NAME = "kafka.Kafka"
+
     def _pause_broker_process(self, node, duration_ms, task_name="pause-broker"):
         """SIGSTOP the broker JVM on ``node`` for ``duration_ms`` via Trogdor.
         Returns the Trogdor task; Trogdor will SIGCONT automatically when
         the task duration elapses or ``.stop()`` is called."""
         spec = ProcessStopFaultSpec(
-            0, duration_ms, [node], self.kafka.java_class_name(),
+            0, duration_ms, [node], self.BROKER_JCMD_PROCESS_NAME,
         )
         return self.trogdor.create_task(task_name, spec)
+
+    def _broker_pid(self, node):
+        """Return the broker JVM pid on ``node`` (the process Trogdor signals)."""
+        pids = self.kafka.pids(node)
+        assert pids, "No running broker JVM found on %s" % node.account.hostname
+        return pids[0]
+
+    def _broker_process_state(self, node, pid):
+        """Return the primary ``ps`` state character for ``pid`` on ``node``.
+        ``T`` means stopped by a job-control signal (i.e. SIGSTOP took effect);
+        ``""`` means the process is no longer present."""
+        for line in node.account.ssh_capture("ps -o stat= -p %s || true" % pid,
+                                              allow_fail=True):
+            line = line.decode("utf-8") if isinstance(line, bytes) else line
+            stat = line.strip()
+            if stat:
+                return stat[0]
+        return ""
+
+    def _wait_for_broker_stopped(self, node, pid, timeout_sec=60):
+        """Assert the broker JVM actually froze (``ps`` state ``T``). Fails
+        loudly if the SIGSTOP fault is a no-op rather than silently exercising
+        nothing."""
+        wait_until(
+            lambda: self._broker_process_state(node, pid) == "T",
+            timeout_sec=timeout_sec,
+            backoff_sec=1,
+            err_msg=lambda: "SIGSTOP fault was a no-op: broker pid %s on %s never "
+                            "reached stopped (T) state (last state=%r)" %
+                            (pid, node.account.hostname,
+                             self._broker_process_state(node, pid)),
+        )
+
+    def _wait_for_broker_running(self, node, pid, timeout_sec=60):
+        """Assert the broker JVM resumed after SIGCONT (still alive, not ``T``)."""
+        wait_until(
+            lambda: self._broker_process_state(node, pid) not in ("", "T"),
+            timeout_sec=timeout_sec,
+            backoff_sec=1,
+            err_msg=lambda: "Broker pid %s on %s did not resume after SIGCONT "
+                            "(last state=%r)" %
+                            (pid, node.account.hostname,
+                             self._broker_process_state(node, pid)),
+        )
 
     def _wait_for_mid_switch_state(
             self, state, min_partition_seconds=None, min_oldest_age_ms=None, timeout_sec=120) -> None:
@@ -1252,8 +1304,13 @@ class InklessClassicToDisklessSwitchTest(Test):
             self._stop_broker(leader_node, clean_shutdown=False)
             self._start_broker(leader_node)
         elif leader_failure_mode == "sigstop":
+            leader_pid = self._broker_pid(leader_node)
             pause = self._pause_broker_process(leader_node, duration_ms=pause_duration_ms)
+            # Confirm the fault actually took effect: a silent no-op here would
+            # let the whole scenario pass without ever freezing the leader.
+            self._wait_for_broker_stopped(leader_node, leader_pid)
             pause.wait_for_done(timeout_sec=pause_duration_ms // 1000 + 60)
+            self._wait_for_broker_running(leader_node, leader_pid)
         else:
             raise AssertionError("Unknown leader_failure_mode: %s" % leader_failure_mode)
 
