@@ -86,6 +86,7 @@ import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -463,6 +464,12 @@ public class InklessTopicTypeSwitcherClusterTest {
             assertInstanceOf(InvalidConfigurationException.class, ex.getCause());
             assertTrue(ex.getCause().getMessage().contains("unclean leader election"),
                     "Expected 'unclean leader election' in error, got: " + ex.getCause().getMessage());
+
+            // Same check via the legacy AlterConfigs path
+            final Errors legacyError = alterTopicConfigWithLegacyAlterConfigsExpectingError(
+                    topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            assertEquals(Errors.INVALID_CONFIG, legacyError,
+                    "Legacy path should reject switch when unclean leader election is enabled");
         }
     }
 
@@ -488,6 +495,14 @@ public class InklessTopicTypeSwitcherClusterTest {
             assertInstanceOf(InvalidConfigurationException.class, ex.getCause());
             assertTrue(ex.getCause().getMessage().contains("pending classic-to-diskless switch"),
                     "Expected 'pending classic-to-diskless switch' in: " + ex.getCause().getMessage());
+
+            // Same check via the legacy AlterConfigs path
+            final Errors legacyError = alterTopicConfigWithLegacyAlterConfigsExpectingError(
+                    topic, Map.of(
+                            TopicConfig.DISKLESS_ENABLE_CONFIG, "true",
+                            TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true"));
+            assertEquals(Errors.INVALID_CONFIG, legacyError,
+                    "Legacy path should reject enabling unclean leader election during pending switch");
         }
     }
 
@@ -502,8 +517,23 @@ public class InklessTopicTypeSwitcherClusterTest {
             .build(ApiKeys.ALTER_CONFIGS.latestVersion());
         final AlterConfigsResponse response = IntegrationTestUtils.connectAndReceive(request, firstBrokerPort());
         final var apiError = response.errors().get(topicResource);
-        assertTrue(apiError != null, "Legacy AlterConfigs response did not contain topic resource " + topicResource);
+        assertNotNull(apiError, "Legacy AlterConfigs response did not contain topic resource " + topicResource);
         assertEquals(Errors.NONE, apiError.error(), "Legacy AlterConfigs failed: " + apiError.message());
+    }
+
+    private Errors alterTopicConfigWithLegacyAlterConfigsExpectingError(final String topic,
+                                                                        final Map<String, String> newConfigs) throws Exception {
+        final ConfigResource topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
+        final Collection<AlterConfigsRequest.ConfigEntry> configEntries = newConfigs.entrySet().stream()
+            .map(entry -> new AlterConfigsRequest.ConfigEntry(entry.getKey(), entry.getValue()))
+            .toList();
+        final AlterConfigsRequest.Config config = new AlterConfigsRequest.Config(configEntries);
+        final AlterConfigsRequest request = new AlterConfigsRequest.Builder(Map.of(topicResource, config), false)
+            .build(ApiKeys.ALTER_CONFIGS.latestVersion());
+        final AlterConfigsResponse response = IntegrationTestUtils.connectAndReceive(request, firstBrokerPort());
+        final var apiError = response.errors().get(topicResource);
+        assertTrue(apiError != null, "Legacy AlterConfigs response did not contain topic resource " + topicResource);
+        return apiError.error();
     }
 
     private int firstBrokerPort() {
