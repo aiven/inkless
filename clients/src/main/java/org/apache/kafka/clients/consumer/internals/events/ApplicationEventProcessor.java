@@ -28,6 +28,7 @@ import org.apache.kafka.clients.consumer.internals.ConsumerUtils;
 import org.apache.kafka.clients.consumer.internals.OffsetAndTimestampInternal;
 import org.apache.kafka.clients.consumer.internals.RequestManagers;
 import org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManager;
+import org.apache.kafka.clients.consumer.internals.ShareMembershipManager;
 import org.apache.kafka.clients.consumer.internals.StreamsMembershipManager;
 import org.apache.kafka.clients.consumer.internals.SubscriptionState;
 import org.apache.kafka.common.Cluster;
@@ -228,12 +229,16 @@ public class ApplicationEventProcessor implements EventProcessor<ApplicationEven
     }
 
     private void process(final SharePollEvent event) {
-        requestManagers.consumerMembershipManager.ifPresent(consumerMembershipManager ->
-            consumerMembershipManager.maybeReconcile(true));
+        requestManagers.shareMembershipManager.ifPresent(shareMembershipManager ->
+            shareMembershipManager.maybeReconcile(true));
+
         requestManagers.shareHeartbeatRequestManager.ifPresent(hrm -> {
-            hrm.membershipManager().onConsumerPoll();
+            ShareMembershipManager membershipManager = hrm.membershipManager();
+            membershipManager.onConsumerPoll();
             hrm.resetPollTimer(event.pollTimeMs());
         });
+
+        event.completeSuccessfully();
     }
 
     private void process(final CreateFetchRequestsEvent event) {
@@ -284,8 +289,15 @@ public class ApplicationEventProcessor implements EventProcessor<ApplicationEven
             return;
         }
         CommitRequestManager manager = requestManagers.commitRequestManager.get();
-        CompletableFuture<Map<TopicPartition, OffsetAndMetadata>> future = manager.fetchOffsets(event.partitions(), event.deadlineMs());
-        future.whenComplete(complete(event.future()));
+        CompletableFuture<CommitRequestManager.OffsetFetchResult> future = manager.fetchOffsets(event.partitions(), event.deadlineMs());
+        future.whenComplete((result, error) -> {
+            if (error != null) {
+                event.future().completeExceptionally(error);
+            } else {
+                Map<TopicPartition, OffsetAndMetadata> offsetMap = result.toOffsetMapWithNulls();
+                event.future().complete(offsetMap);
+            }
+        });
     }
 
     /**
@@ -716,6 +728,10 @@ public class ApplicationEventProcessor implements EventProcessor<ApplicationEven
         // as we're processing before any new fetching starts
         requestManagers.consumerMembershipManager.ifPresent(consumerMembershipManager ->
             consumerMembershipManager.maybeReconcile(true));
+
+        // We completed checking pending reconciliations (commits triggered, revoked partitions marked to prevent fetching)
+        // so the application thread poll loop can safely continue progress now (fetching)
+        event.markReconciliationCheckComplete();
 
         if (requestManagers.commitRequestManager.isPresent()) {
             CommitRequestManager commitRequestManager = requestManagers.commitRequestManager.get();

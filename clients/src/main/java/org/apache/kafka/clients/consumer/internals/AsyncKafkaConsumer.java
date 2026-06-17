@@ -1870,9 +1870,6 @@ public class AsyncKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
     }
 
     private Fetch<K, V> pollForFetches(Timer timer) {
-        long pollTimeout = isCommittedOffsetsManagementEnabled()
-                ? Math.min(applicationEventHandler.maximumTimeToWait(), timer.remainingMs())
-                : timer.remainingMs();
 
         // if data is available already, return it immediately
         final Fetch<K, V> fetch = collectFetch();
@@ -1880,6 +1877,9 @@ public class AsyncKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
             return fetch;
         }
 
+        long pollTimeout = isCommittedOffsetsManagementEnabled()
+                ? Math.min(applicationEventHandler.maximumTimeToWait(), timer.remainingMs())
+                : timer.remainingMs();
         // With the non-blocking poll design, it's possible that at this point the background thread is
         // concurrently working to update positions. Therefore, a _copy_ of the current assignment is retrieved
         // and iterated looking for any partitions with invalid positions. This is done to avoid being stuck
@@ -1931,6 +1931,31 @@ public class AsyncKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
      * for returning.
      */
     private Fetch<K, V> collectFetch() {
+        // Do not return buffered records if the background hasn't checked for pending reconciliations
+        // for the inflight poll event.
+        // This is key because partitions may need revocation, so we need to wait for the reconciliation check
+        // that triggers commits and marks partitions as pending revocation, before we can
+        // safely collect records from the buffer.
+        if (inflightPoll != null && !inflightPoll.isReconciliationCheckComplete()) {
+            // If the background hasn't had the time to check for pending reconciliation,
+            // we need to wait for that check before moving on (instead of returning empty right away,
+            // which will lead to blocking on buffer data)
+            long timeoutMs = inflightPoll.deadlineMs() - time.milliseconds();
+            if (timeoutMs > 0) {
+                try {
+                    wakeupTrigger.setActiveTask(inflightPoll.reconciliationCheckFuture());
+                    ConsumerUtils.getResult(inflightPoll.reconciliationCheckFuture(), timeoutMs);
+                } catch (TimeoutException e) {
+                    return Fetch.empty();
+                } finally {
+                    wakeupTrigger.clearTask();
+                }
+            } else {
+                // No time to wait and reconciliation check not complete
+                return Fetch.empty();
+            }
+        }
+
         // With the non-blocking async poll, it's critical that the application thread wait until the background
         // thread has completed the stage of validating positions. This prevents a race condition where both
         // threads may attempt to update the SubscriptionState.position() for a given partition. So if the background

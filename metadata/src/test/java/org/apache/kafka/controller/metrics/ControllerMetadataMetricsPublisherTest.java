@@ -176,7 +176,9 @@ public class ControllerMetadataMetricsPublisherTest {
     @Test
     public void testLoadSnapshot() {
         try (TestEnv env = new TestEnv()) {
-            MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
+            MetadataDelta delta = new MetadataDelta.Builder()
+                .setImage(MetadataImage.EMPTY)
+                .build();
             ImageReWriter writer = new ImageReWriter(delta);
             IMAGE1.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
             env.publisher.onMetadataUpdate(delta, IMAGE1, fakeManifest(true));
@@ -196,7 +198,7 @@ public class ControllerMetadataMetricsPublisherTest {
     @Test
     public void testLoadSnapshotWithDisklessTopics() {
         try (TestEnv env = new TestEnv()) {
-            MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
+            MetadataDelta delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
             ImageReWriter writer = new ImageReWriter(delta);
             IMAGE1_DISKLESS.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
             env.publisher.onMetadataUpdate(delta, IMAGE1_DISKLESS, fakeManifest(true));
@@ -236,7 +238,7 @@ public class ControllerMetadataMetricsPublisherTest {
                 configs.put(resource, new ConfigurationImage(resource, configMap));
             }
             MetadataImage image = fakeImageFromTopicsImage(TOPICS_IMAGE1, new ConfigurationsImage(configs));
-            MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
+            MetadataDelta delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
             ImageReWriter writer = new ImageReWriter(delta);
             image.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
             env.publisher.onMetadataUpdate(delta, image, fakeManifest(true));
@@ -255,7 +257,7 @@ public class ControllerMetadataMetricsPublisherTest {
             Uuid topicId = Uuid.fromString("JKNp6fQaT-icHxh654ok-w");
             String topicName = "diskless-topic";
 
-            MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
+            MetadataDelta delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
             delta.replay(new TopicRecord().setTopicId(topicId).setName(topicName));
             delta.replay(new PartitionRecord()
                 .setTopicId(topicId)
@@ -298,7 +300,7 @@ public class ControllerMetadataMetricsPublisherTest {
             MetadataImage baseImage = fakeImageFromTopicsImage(topicsImage, configsImage);
 
             // Load snapshot to set baseline
-            MetadataDelta snapshotDelta = new MetadataDelta(MetadataImage.EMPTY);
+            MetadataDelta snapshotDelta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
             ImageReWriter writer = new ImageReWriter(snapshotDelta);
             baseImage.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
             env.publisher.onMetadataUpdate(snapshotDelta, baseImage, fakeManifest(true));
@@ -306,7 +308,7 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(1, env.metrics.disklessTopicCount());
 
             // Now delete via delta
-            MetadataDelta deleteDelta = new MetadataDelta(baseImage);
+            MetadataDelta deleteDelta = new MetadataDelta.Builder().setImage(baseImage).build();
             deleteDelta.replay(new org.apache.kafka.common.metadata.RemoveTopicRecord().setTopicId(topicId));
             MetadataImage afterDelete = deleteDelta.apply(MetadataProvenance.EMPTY);
 
@@ -332,7 +334,7 @@ public class ControllerMetadataMetricsPublisherTest {
                 fakeTopicImage(topicName, topicId, fakePartitionRegistration(NORMAL)));
             MetadataImage baseImage = fakeImageFromTopicsImage(topicsImage);
 
-            MetadataDelta snapshotDelta = new MetadataDelta(MetadataImage.EMPTY);
+            MetadataDelta snapshotDelta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
             ImageReWriter writer = new ImageReWriter(snapshotDelta);
             baseImage.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
             env.publisher.onMetadataUpdate(snapshotDelta, baseImage, fakeManifest(true));
@@ -342,7 +344,7 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(0, env.metrics.disklessPartitionCount());
 
             // Now add a partition AND enable diskless in the same batch
-            MetadataDelta delta = new MetadataDelta(baseImage);
+            MetadataDelta delta = new MetadataDelta.Builder().setImage(baseImage).build();
             delta.replay(new PartitionRecord()
                 .setTopicId(topicId)
                 .setPartitionId(1)
