@@ -21,15 +21,17 @@ import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinat
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UNBOUNDED_QUOTA}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
+import kafka.server.metadata.KRaftMetadataCache
 import kafka.server.mirror.ClusterMirrorUtils.PartitionStateInfo
-import kafka.server.mirror.{ClusterMirrorCoordinator, MirrorPartitionState, ClusterMirrorUtils}
+import kafka.server.mirror.{ClusterMirrorCoordinator, ClusterMirrorUtils}
+import org.apache.kafka.server.common.MirrorPartitionState
 import kafka.server.share.{ShareFetchUtils, SharePartitionManager}
 import kafka.utils.Logging
 import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.admin.EndpointType
 import org.apache.kafka.common.acl.AclOperation
 import org.apache.kafka.common.acl.AclOperation._
-import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
+import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.Topic.{GROUP_METADATA_TOPIC_NAME, MIRROR_STATE_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
 import org.apache.kafka.common.internals.{FatalExitError, Plugin, Topic}
@@ -186,7 +188,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.LIST_GROUPS => handleListGroupsRequest(request).exceptionally(handleError)
         case ApiKeys.SASL_HANDSHAKE => handleSaslHandshakeRequest(request)
         case ApiKeys.API_VERSIONS => handleApiVersionsRequest(request)
-        case ApiKeys.CREATE_TOPICS => handleCreateTopics(request)
+        case ApiKeys.CREATE_TOPICS => forwardToController(request)
         case ApiKeys.DELETE_TOPICS => forwardToController(request)
         case ApiKeys.DELETE_RECORDS => handleDeleteRecordsRequest(request)
         case ApiKeys.INIT_PRODUCER_ID => handleInitProducerIdRequest(request, requestLocal)
@@ -256,7 +258,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.STOP_MIRROR_TOPICS => handleStopMirrorTopics(request)
         case ApiKeys.PAUSE_MIRROR_TOPICS => handlePauseMirrorTopics(request)
         case ApiKeys.RESUME_MIRROR_TOPICS => handleResumeMirrorTopics(request)
-        case ApiKeys.DELETE_CLUSTER_MIRROR => handleDeleteMirror(request)
+        case ApiKeys.DELETE_CLUSTER_MIRROR => handleDeleteClusterMirror(request)
         case ApiKeys.LIST_CLUSTER_MIRRORS => handleListClusterMirrorsRequest(request)
         case ApiKeys.DESCRIBE_CLUSTER_MIRRORS => handleDescribeClusterMirrorsRequest(request)
         case ApiKeys.WRITE_MIRROR_STATES => handleWriteMirrorStates(request)
@@ -277,19 +279,6 @@ class KafkaApis(val requestChannel: RequestChannel,
       if (request.apiLocalCompleteTimeNanos < 0)
         request.apiLocalCompleteTimeNanos = time.nanoseconds
     }
-  }
-
-  def handleCreateTopics(request: RequestChannel.Request): Unit = {
-    val createTopicsRequest = request.body[CreateTopicsRequest]
-
-    // mirror.name check
-    createTopicsRequest.data().topics().stream().forEach(creatableTopic => {
-      if (creatableTopic.configs().stream().anyMatch(creatableTopicConfig =>
-        TopicConfig.MIRROR_NAME_CONFIG.equals(creatableTopicConfig.name())))
-        throw new InvalidRequestException("The 'mirror.name' configuration can only be modified through dedicated mirror management APIs.")
-    })
-
-    forwardToController(request)
   }
 
   def handleWriteMirrorStates(request: RequestChannel.Request): Unit = {
@@ -376,13 +365,20 @@ class KafkaApis(val requestChannel: RequestChannel,
     forwardToController(request)
   }
 
-  def handleDeleteMirror(request: RequestChannel.Request): Unit = {
+  def handleDeleteClusterMirror(request: RequestChannel.Request): Unit = {
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring delete mirror request")
       requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
-    forwardToController(request)
+    val mirrorName = request.body[DeleteClusterMirrorRequest].data().mirrorName()
+    clusterMirrorCoordinator.deleteClusterMirror(mirrorName, errOpt => {
+      if (errOpt.isPresent) {
+        requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
+      } else {
+        requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData()))
+      }
+    })
   }
 
   def handleListClusterMirrorsRequest(request: RequestChannel.Request): Unit = {
@@ -1065,7 +1061,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         FetchIsolation.of(fetchRequest),
         clientMetadata
       )
-
 
       // call the replica manager to fetch messages from the local replica
       replicaManager.fetchMessages(
@@ -3324,6 +3319,18 @@ class KafkaApis(val requestChannel: RequestChannel,
         metadataCache.getAllTopics.forEach(name =>
           result.add(new ListConfigResourcesResponseData.ConfigResource().setResourceName(name).setResourceType(ConfigResource.Type.TOPIC.id))
         )
+      }
+      if (resourceTypes.contains(ConfigResource.Type.CLUSTER_MIRROR.id)) {
+        metadataCache match {
+          case kraftMetadataCache: KRaftMetadataCache if (kraftMetadataCache.currentImage().configs() != null) =>
+            kraftMetadataCache.currentImage().configs().resourceData.keySet().stream()
+              .filter(resource => resource.`type`() == ConfigResource.Type.CLUSTER_MIRROR)
+              .forEach(configResource =>
+                result.add(new ListConfigResourcesResponseData.ConfigResource()
+                  .setResourceName(configResource.name())
+                  .setResourceType(ConfigResource.Type.CLUSTER_MIRROR.id)))
+          case _ =>
+        }
       }
       data.setConfigResources(result)
       requestHelper.sendMaybeThrottle(request, new ListConfigResourcesResponse(data))

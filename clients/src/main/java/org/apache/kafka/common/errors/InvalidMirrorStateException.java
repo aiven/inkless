@@ -16,15 +16,15 @@
  */
 package org.apache.kafka.common.errors;
 
-public class InvalidClusterMirrorNameException extends ApiException {
+public class InvalidMirrorStateException extends ApiException {
 
     private static final long serialVersionUID = 1L;
 
-    public InvalidClusterMirrorNameException(String message) {
+    public InvalidMirrorStateException(String message) {
         super(message);
     }
 
-    public InvalidClusterMirrorNameException(String message, Throwable cause) {
+    public InvalidMirrorStateException(String message, Throwable cause) {
         super(message, cause);
     }
 }

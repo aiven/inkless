@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package kafka.server.mirror;
+package org.apache.kafka.server.common;
 
 /**
  * Represents the lifecycle states of a mirror partition.
@@ -42,7 +42,7 @@ public enum MirrorPartitionState {
     MIRRORING((byte) 2),
 
     /**
-     * Triggered by PauseMirrorTopics API (appends .paused suffix to mirror.name config).
+     * Triggered by PauseMirrorTopics API.
      * The system removes fetchers for the affected partitions.
      * Valid from: MIRRORING only.
      */
@@ -80,7 +80,7 @@ public enum MirrorPartitionState {
      * No cached state (broker just became leader, state not loaded yet).
      * Not an explicit API-driven state, just the absence of state.
      */
-    UNKNOWN((byte) 16);
+    UNKNOWN((byte) -1);
 
     private final byte value;
 
@@ -110,7 +110,7 @@ public enum MirrorPartitionState {
                 return STOPPED;
             case 7:
                 return FAILED;
-            case 16:
+            case -1:
                 return UNKNOWN;
         }
         throw new IllegalArgumentException("Illegal mirror state: " + value);

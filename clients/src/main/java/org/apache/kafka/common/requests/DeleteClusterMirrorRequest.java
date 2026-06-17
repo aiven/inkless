@@ -34,9 +34,15 @@ public class DeleteClusterMirrorRequest extends AbstractRequest {
         }
 
         public Builder(String mirrorName) {
+            this(mirrorName, -1);
+        }
+
+        public Builder(String mirrorName, long brokerMetadataOffset) {
             super(ApiKeys.DELETE_CLUSTER_MIRROR, ApiKeys.DELETE_CLUSTER_MIRROR.oldestVersion(),
                   ApiKeys.DELETE_CLUSTER_MIRROR.latestVersion());
-            this.data = new DeleteClusterMirrorRequestData().setMirrorName(mirrorName);
+            this.data = new DeleteClusterMirrorRequestData()
+                    .setMirrorName(mirrorName)
+                    .setStateValidationOffset(brokerMetadataOffset);
         }
 
         @Override

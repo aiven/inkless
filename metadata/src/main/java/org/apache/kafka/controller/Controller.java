@@ -206,7 +206,8 @@ public interface Controller extends AclMutator, AutoCloseable {
 
     CompletableFuture<DeleteClusterMirrorResponseData> deleteClusterMirror(
             ControllerRequestContext context,
-            String mirrorName
+            String mirrorName,
+            long brokerMetadataOffset
     );
 
     /**

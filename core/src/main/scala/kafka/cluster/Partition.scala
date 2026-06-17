@@ -19,10 +19,10 @@ package kafka.cluster
 import kafka.controller.StateChangeLogger
 import kafka.log.{LogManager => KafkaLogManager}
 import kafka.server._
+import kafka.server.metadata.KRaftMetadataCache
 import kafka.server.share.DelayedShareFetch
 import kafka.utils.CoreUtils.{inReadLock, inWriteLock}
 import kafka.utils._
-import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.message.AlterPartitionRequestData.BrokerState
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
@@ -34,7 +34,7 @@ import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.{UNDEFINED
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.utils.Time
 import org.apache.kafka.common.{DirectoryId, IsolationLevel, TopicIdPartition, TopicPartition, Uuid, PartitionState => JPartitionState}
-import org.apache.kafka.controller.ConfigurationControlManager
+import org.apache.kafka.server.common.MirrorPartitionState
 import org.apache.kafka.metadata.{LeaderAndIsr, LeaderRecoveryState, MetadataCache}
 import org.apache.kafka.server.common.RequestLocal
 import org.apache.kafka.server.log.remote.TopicPartitionLog
@@ -344,6 +344,7 @@ class Partition(val topicPartition: TopicPartition,
   @volatile var assignmentState: AssignmentState = SimpleAssignmentState(Seq.empty)
   @volatile var onComplete: Optional[Consumer[TopicPartition]] = Optional.empty()
   @volatile var onCaughtup: Optional[Consumer[TopicPartition]] = Optional.empty()
+  @volatile var truncationWaitForAllReplicas: Boolean = false
 
   // Logs belonging to this partition. Majority of time it will be only one log, but if log directory
   // is getting changed (as a result of ReplicaAlterLogDirs command), we may have two logs until copy
@@ -798,7 +799,7 @@ class Partition(val topicPartition: TopicPartition,
 
         // don't update the leader epoch if the partition is a mirrored leader, we'll update it when receiving batches
         // from source cluster leader
-        if (getMirrorName().isEmpty || getMirrorName().get().endsWith(ConfigurationControlManager.STOPPED_TOPIC_SUFFIX)) {
+        if (getMirrorName().isEmpty || getDesiredMirrorState() == MirrorPartitionState.STOPPED.value()) {
           leaderLog.assignEpochStartOffset(partitionState.leaderEpoch, leaderEpochStartOffset)
         }
 
@@ -1253,7 +1254,11 @@ class Partition(val topicPartition: TopicPartition,
       onCaughtup = onCaughtupCallback
     }
 
-    if (waitForAllReplicas && assignmentState.replicationFactor > partitionState.isr.size) {
+    if (waitForAllReplicas) {
+      truncationWaitForAllReplicas = true
+    }
+
+    if (truncationWaitForAllReplicas && assignmentState.replicationFactor > partitionState.isr.size) {
         info(s"Not completing truncation because 'mirror.support.unclean.leader.election' is enabled and" +
           s" partition ISR doesn't contain all replicas (ISR=${partitionState.isr}, replicationFactor=${assignmentState.replicationFactor})")
         return false
@@ -1300,6 +1305,7 @@ class Partition(val topicPartition: TopicPartition,
       onComplete.ifPresent(callback => {
         callback.accept(topicPartition)
         onComplete = Optional.empty()
+        truncationWaitForAllReplicas = false
       })
       true
     }
@@ -1420,9 +1426,25 @@ class Partition(val topicPartition: TopicPartition,
   }
 
   def getMirrorName(): Optional[String] = {
-    Option(metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topic)))
-      .flatMap(config => Option(config.get(TopicConfig.MIRROR_NAME_CONFIG).asInstanceOf[String]))
-      .toJava
+    metadataCache match {
+      case kraftMetadataCache: KRaftMetadataCache if (kraftMetadataCache.currentImage() != null && kraftMetadataCache.currentImage().topics() != null) =>
+        val topicImage = kraftMetadataCache.currentImage().topics().getTopic(topic)
+        if (topicImage != null && topicImage.mirrorName() != null && !topicImage.mirrorName().isBlank) {
+          Optional.of(topicImage.mirrorName())
+        } else {
+          Optional.empty()
+        }
+      case _ => Optional.empty()
+    }
+  }
+
+  def getDesiredMirrorState(): Byte = {
+    metadataCache match {
+      case kraftMetadataCache: KRaftMetadataCache if (kraftMetadataCache.currentImage() != null && kraftMetadataCache.currentImage().topics() != null) =>
+        val topicImage = kraftMetadataCache.currentImage().topics().getTopic(topic)
+        if (topicImage != null) topicImage.desiredMirrorState().toByte else MirrorPartitionState.UNKNOWN.value()
+      case _ => MirrorPartitionState.UNKNOWN.value()
+    }
   }
 
   private def doAppendRecordsToFollowerOrFutureReplica(

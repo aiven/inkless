@@ -166,7 +166,8 @@ public class MockController implements Controller {
     @Override
     public CompletableFuture<DeleteClusterMirrorResponseData> deleteClusterMirror(
             ControllerRequestContext context,
-            String mirrorName) {
+            String mirrorName,
+            long brokerMetadataOffset) {
         throw new UnsupportedOperationException();
     }
 

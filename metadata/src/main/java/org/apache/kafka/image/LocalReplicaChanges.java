@@ -38,6 +38,8 @@ public final class LocalReplicaChanges {
     private final Map<String, Uuid> topicIds;
     // partitions for which directory id changes or newly added to the broker
     private final Map<TopicIdPartition, Uuid> directoryIds;
+    // topic name -> mirror topic state map in leaders
+    private final Map<Uuid, MirrorTopicState> mirrorTopicStates;
 
     LocalReplicaChanges(
         Set<TopicPartition> deletes,
@@ -47,12 +49,25 @@ public final class LocalReplicaChanges {
         Map<String, Uuid> topicIds,
         Map<TopicIdPartition, Uuid> directoryIds
     ) {
+        this(deletes, electedLeaders, leaders, followers, topicIds, directoryIds, Map.of());
+    }
+
+    LocalReplicaChanges(
+            Set<TopicPartition> deletes,
+            Map<TopicPartition, PartitionInfo> electedLeaders,
+            Map<TopicPartition, PartitionInfo> leaders,
+            Map<TopicPartition, PartitionInfo> followers,
+            Map<String, Uuid> topicIds,
+            Map<TopicIdPartition, Uuid> directoryIds,
+            Map<Uuid, MirrorTopicState> mirrorTopicStates
+    ) {
         this.deletes = deletes;
         this.electedLeaders = electedLeaders;
         this.leaders = leaders;
         this.followers = followers;
         this.topicIds = topicIds;
         this.directoryIds = directoryIds;
+        this.mirrorTopicStates = mirrorTopicStates;
     }
 
     public Set<TopicPartition> deletes() {
@@ -79,16 +94,21 @@ public final class LocalReplicaChanges {
         return directoryIds;
     }
 
+    public Map<Uuid, MirrorTopicState> mirrorTopicStates() {
+        return mirrorTopicStates;
+    }
+
     @Override
     public String toString() {
         return String.format(
-            "LocalReplicaChanges(deletes = %s, newly elected leaders = %s, leaders = %s, followers = %s, topicIds = %s, directoryIds = %s, mirrorLeaders = %s)",
+            "LocalReplicaChanges(deletes = %s, newly elected leaders = %s, leaders = %s, followers = %s, topicIds = %s, directoryIds = %s, mirrorTopicStates = %s)",
             deletes,
             electedLeaders,
             leaders,
             followers,
             topicIds,
-            directoryIds
+            directoryIds,
+            mirrorTopicStates
         );
     }
 
@@ -114,4 +134,6 @@ public final class LocalReplicaChanges {
             return String.format("PartitionInfo(topicId = %s, partition = %s)", topicId, partition);
         }
     }
+
+    public record MirrorTopicState(String mirrorName, int desiredMirrorState) { }
 }

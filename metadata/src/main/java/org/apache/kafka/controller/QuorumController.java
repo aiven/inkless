@@ -78,6 +78,7 @@ import org.apache.kafka.common.metadata.EndTransactionRecord;
 import org.apache.kafka.common.metadata.FeatureLevelRecord;
 import org.apache.kafka.common.metadata.FenceBrokerRecord;
 import org.apache.kafka.common.metadata.MetadataRecordType;
+import org.apache.kafka.common.metadata.MirrorTopicStateChangeRecord;
 import org.apache.kafka.common.metadata.NoOpRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
@@ -1280,6 +1281,9 @@ public final class QuorumController implements Controller {
             case CLEAR_ELR_RECORD:
                 replicationControl.replay((ClearElrRecord) message);
                 break;
+            case MIRROR_TOPIC_STATE_CHANGE_RECORD:
+                replicationControl.replay((MirrorTopicStateChangeRecord) message, offset);
+                break;
             default:
                 throw new RuntimeException("Unhandled record type " + type);
         }
@@ -1815,7 +1819,7 @@ public final class QuorumController implements Controller {
             List<String> patterns
     ) {
         return appendWriteEvent("stopMirrorTopics", context.deadlineNs(),
-                () -> configurationControl.stopMirrorTopics(mirrorName, topics, patterns));
+                () -> configurationControl.stopMirrorTopics(mirrorName, topics, patterns, replicationControl));
     }
 
     @Override
@@ -1825,7 +1829,7 @@ public final class QuorumController implements Controller {
             Set<String> topics
     ) {
         return appendWriteEvent("pauseMirrorTopics", context.deadlineNs(),
-                () -> configurationControl.pauseMirrorTopics(mirrorName, topics));
+                () -> configurationControl.pauseMirrorTopics(mirrorName, topics, replicationControl));
     }
 
     @Override
@@ -1835,16 +1839,17 @@ public final class QuorumController implements Controller {
             Set<String> topics
     ) {
         return appendWriteEvent("resumeMirrorTopics", context.deadlineNs(),
-                () -> configurationControl.resumeMirrorTopics(mirrorName, topics));
+                () -> configurationControl.resumeMirrorTopics(mirrorName, topics, replicationControl));
     }
 
     @Override
     public CompletableFuture<DeleteClusterMirrorResponseData> deleteClusterMirror(
             ControllerRequestContext context,
-            String mirrorName
+            String mirrorName,
+            long brokerMetadataOffset
     ) {
         return appendWriteEvent("deleteClusterMirror", context.deadlineNs(),
-                () -> configurationControl.deleteClusterMirror(mirrorName));
+                () -> configurationControl.deleteClusterMirror(mirrorName, brokerMetadataOffset, replicationControl));
     }
 
     @Override

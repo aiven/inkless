@@ -17,24 +17,19 @@
 package org.apache.kafka.server.config;
 
 import org.apache.kafka.clients.CommonClientConfigs;
-import org.apache.kafka.common.acl.AclBinding;
-import org.apache.kafka.common.acl.AclOperation;
-import org.apache.kafka.common.acl.AclPermissionType;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.SaslConfigs;
 import org.apache.kafka.common.config.SecurityConfig;
 import org.apache.kafka.common.config.SslConfigs;
-import org.apache.kafka.common.resource.ResourceType;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.network.SocketServerConfigs;
+import org.apache.kafka.server.util.MirrorFilterUtils;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.Locale;
 import java.util.Properties;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import static org.apache.kafka.common.config.ConfigDef.Importance.HIGH;
 import static org.apache.kafka.common.config.ConfigDef.Importance.LOW;
@@ -345,7 +340,7 @@ public final class ClusterMirrorConfig {
     private final Pattern topicsExcludePattern;
     private final Pattern groupsIncludePattern;
     private final Pattern groupsExcludePattern;
-    private final List<AclRule> aclIncludeRules;
+    private final List<MirrorFilterUtils.AclRule> aclIncludeRules;
     private final String securityProtocol;
     private final String saslMechanism;
 
@@ -377,12 +372,12 @@ public final class ClusterMirrorConfig {
         this.config = config;
         this.securityProtocol = config.getString(SECURITY_PROTOCOL_CONFIG);
         this.saslMechanism = config.getString(SASL_MECHANISM_CONFIG);
-        this.topicPropertiesExcludePattern = compilePatternList(topicPropertiesExclude);
-        this.topicsIncludePattern = compilePatternList(topicsInclude);
-        this.topicsExcludePattern = compilePatternList(topicsExclude);
-        this.groupsIncludePattern = compilePatternList(groupsInclude);
-        this.groupsExcludePattern = compilePatternList(groupsExclude);
-        this.aclIncludeRules = parseAclRules(aclInclude);
+        this.topicPropertiesExcludePattern = MirrorFilterUtils.compilePatternList(topicPropertiesExclude);
+        this.topicsIncludePattern = MirrorFilterUtils.compilePatternList(topicsInclude);
+        this.topicsExcludePattern = MirrorFilterUtils.compilePatternList(topicsExclude);
+        this.groupsIncludePattern = MirrorFilterUtils.compilePatternList(groupsInclude);
+        this.groupsExcludePattern = MirrorFilterUtils.compilePatternList(groupsExclude);
+        this.aclIncludeRules = MirrorFilterUtils.parseAclRules(aclInclude);
     }
 
     /**
@@ -393,12 +388,12 @@ public final class ClusterMirrorConfig {
         this.config = config;
         this.securityProtocol = null;
         this.saslMechanism = null;
-        this.topicPropertiesExcludePattern = compilePatternList(Arrays.asList(MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT.split(",")));
+        this.topicPropertiesExcludePattern = MirrorFilterUtils.compilePatternList(Arrays.asList(MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT.split(",")));
         this.topicsIncludePattern = null;
-        this.topicsExcludePattern = compilePatternList(List.of(MIRROR_TOPICS_EXCLUDE_DEFAULT));
-        this.groupsIncludePattern = compilePatternList(List.of(MIRROR_GROUPS_INCLUDE_DEFAULT));
+        this.topicsExcludePattern = MirrorFilterUtils.compilePatternList(List.of(MIRROR_TOPICS_EXCLUDE_DEFAULT));
+        this.groupsIncludePattern = MirrorFilterUtils.compilePatternList(List.of(MIRROR_GROUPS_INCLUDE_DEFAULT));
         this.groupsExcludePattern = null;
-        this.aclIncludeRules = parseAclRules(List.of(MIRROR_ACL_INCLUDE_DEFAULT));
+        this.aclIncludeRules = MirrorFilterUtils.parseAclRules(List.of(MIRROR_ACL_INCLUDE_DEFAULT));
     }
 
     public Pattern topicPropertiesExcludePattern() {
@@ -421,7 +416,7 @@ public final class ClusterMirrorConfig {
         return groupsExcludePattern;
     }
 
-    public List<AclRule> aclIncludeRules() {
+    public List<MirrorFilterUtils.AclRule> aclIncludeRules() {
         return aclIncludeRules;
     }
 
@@ -535,134 +530,5 @@ public final class ClusterMirrorConfig {
                 .define(MIRROR_FETCH_MAX_BYTES_CONFIG, INT, MIRROR_FETCH_MAX_BYTES_DEFAULT, atLeast(0), MEDIUM, MIRROR_FETCH_MAX_BYTES_DOC)
                 .define(MIRROR_SOCKET_TIMEOUT_MS_CONFIG, INT, MIRROR_SOCKET_TIMEOUT_MS_DEFAULT, atLeast(0), MEDIUM, MIRROR_SOCKET_TIMEOUT_MS_DOC)
                 .define(MIRROR_SOCKET_RECEIVE_BUFFER_BYTES_CONFIG, INT, MIRROR_SOCKET_RECEIVE_BUFFER_BYTES_DEFAULT, atLeast(0), MEDIUM, MIRROR_SOCKET_RECEIVE_BUFFER_BYTES_DOC);
-    }
-
-    /**
-     * Compiles a list of regex pattern strings into a single {@link Pattern} by joining them with {@code |}.
-     *
-     * @param patterns the list of regex pattern strings
-     * @return a compiled Pattern that matches any of the given patterns
-     */
-    public static Pattern compilePatternList(List<String> patterns) {
-        String combined = patterns.stream()
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .collect(Collectors.joining("|"));
-        return combined.isEmpty() ? null : Pattern.compile("^(" + combined + ")$");
-    }
-
-    /**
-     * Parses a list of ACL rule strings into a list of {@link AclRule} instances.
-     *
-     * @param rules the list of rule strings in semicolon-separated format
-     * @return parsed list of AclRule instances
-     */
-    private static List<AclRule> parseAclRules(List<String> rules) {
-        return rules.stream()
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .map(AclRule::parse)
-                .toList();
-    }
-
-    /**
-     * Represents an ACL include rule parsed from the semicolon-separated format:
-     * resourceType;resourceName;operation;permissionType;principal
-     *
-     * Each field uses * as a wildcard (match all). The resourceName and principal
-     * fields support regex patterns. Trailing wildcard fields can be omitted.
-     *
-     * Valid resourceType values: TOPIC, GROUP, CLUSTER, TRANSACTIONAL_ID, DELEGATION_TOKEN, USER.
-     * Valid operation values: READ, WRITE, CREATE, DELETE, ALTER, DESCRIBE, CLUSTER_ACTION,
-     * DESCRIBE_CONFIGS, ALTER_CONFIGS, IDEMPOTENT_WRITE, ALL, etc.
-     * Valid permissionType values: ALLOW, DENY.
-     *
-     * Examples:
-     * <pre>
-     * *                                       - match all ACLs (default)
-     * TOPIC;orders.*                          - all ACLs for topics matching orders.*
-     * *;*;*;*;User:alice                      - all ACLs for principal User:alice
-     * *;*;*;*;User:app-.*                     - all ACLs for principals matching User:app-.*
-     * TOPIC;*;READ;ALLOW                      - all topic READ/ALLOW ACLs
-     * GROUP;consumer-.*;READ;ALLOW;User:bob   - READ/ALLOW ACLs on groups matching consumer-.* for User:bob
-     * </pre>
-     *
-     * Config usage example:
-     * <pre>
-     * mirror.acl.include=TOPIC;orders.*, *;*;*;*;User:alice
-     * </pre>
-     *
-     * @param resourceType the resource type to match, or null for wildcard
-     * @param resourceNamePattern regex pattern for the resource name, or null for wildcard
-     * @param operation the ACL operation to match, or null for wildcard
-     * @param permissionType the ACL permission type to match, or null for wildcard
-     * @param principalPattern regex pattern for the principal, or null for wildcard
-     */
-    public record AclRule(
-            ResourceType resourceType,
-            Pattern resourceNamePattern,
-            AclOperation operation,
-            AclPermissionType permissionType,
-            Pattern principalPattern
-    ) {
-        /**
-         * Parses a semicolon-separated rule string into an AclRule.
-         *
-         * @param rule the rule string (e.g., "TOPIC;orders.*;READ;ALLOW;User:alice")
-         * @return the parsed AclRule
-         */
-        public static AclRule parse(String rule) {
-            String[] parts = rule.trim().split(";", -1);
-
-            ResourceType resourceType = null;
-            Pattern resourceNamePattern = null;
-            AclOperation operation = null;
-            AclPermissionType permissionType = null;
-            Pattern principalPattern = null;
-
-            if (parts.length >= 1 && !"*".equals(parts[0].trim())) {
-                resourceType = ResourceType.valueOf(parts[0].trim().toUpperCase(Locale.ROOT));
-            }
-            if (parts.length >= 2 && !"*".equals(parts[1].trim())) {
-                resourceNamePattern = Pattern.compile(parts[1].trim());
-            }
-            if (parts.length >= 3 && !"*".equals(parts[2].trim())) {
-                operation = AclOperation.valueOf(parts[2].trim().toUpperCase(Locale.ROOT));
-            }
-            if (parts.length >= 4 && !"*".equals(parts[3].trim())) {
-                permissionType = AclPermissionType.valueOf(parts[3].trim().toUpperCase(Locale.ROOT));
-            }
-            if (parts.length >= 5 && !"*".equals(parts[4].trim())) {
-                principalPattern = Pattern.compile(parts[4].trim());
-            }
-
-            return new AclRule(resourceType, resourceNamePattern, operation, permissionType, principalPattern);
-        }
-
-        /**
-         * Tests whether the given AclBinding matches this rule.
-         * A null field acts as a wildcard and matches any value.
-         *
-         * @param binding the ACL binding to test
-         * @return true if the binding matches all non-wildcard fields of this rule
-         */
-        public boolean matches(AclBinding binding) {
-            if (resourceType != null && binding.pattern().resourceType() != resourceType) {
-                return false;
-            }
-            if (resourceNamePattern != null && !resourceNamePattern.matcher(binding.pattern().name()).matches()) {
-                return false;
-            }
-            if (operation != null && binding.entry().operation() != operation) {
-                return false;
-            }
-            if (permissionType != null && binding.entry().permissionType() != permissionType) {
-                return false;
-            }
-            if (principalPattern != null && !principalPattern.matcher(binding.entry().principal()).matches()) {
-                return false;
-            }
-            return true;
-        }
     }
 }

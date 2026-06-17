@@ -59,8 +59,6 @@ import static org.apache.kafka.common.config.ConfigDef.Type.LIST;
 import static org.apache.kafka.common.config.ConfigDef.Type.LONG;
 import static org.apache.kafka.common.config.ConfigDef.Type.STRING;
 import static org.apache.kafka.common.config.ConfigDef.ValidString.in;
-import static org.apache.kafka.common.config.TopicConfig.MIRROR_NAME_CONFIG;
-import static org.apache.kafka.common.config.TopicConfig.MIRROR_NAME_DOC;
 
 public class LogConfig extends AbstractConfig {
 
@@ -252,8 +250,6 @@ public class LogConfig extends AbstractConfig {
                 .define(TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_COPY_DISABLE_DOC)
                 .define(TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_DOC)
                 .define(TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_DOC)
-                // suffix validation (.stopped, .paused) is handled by ConfigurationControlManager
-                .defineInternal(MIRROR_NAME_CONFIG, STRING, "", null, MEDIUM, MIRROR_NAME_DOC)
                 .defineInternal(INTERNAL_SEGMENT_BYTES_CONFIG, INT, null, null, MEDIUM, INTERNAL_SEGMENT_BYTES_DOC);
     }
 

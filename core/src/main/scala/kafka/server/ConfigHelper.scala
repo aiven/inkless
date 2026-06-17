@@ -22,7 +22,7 @@ import kafka.network.RequestChannel
 import java.util.{Collections, Properties}
 import kafka.utils.Logging
 import org.apache.kafka.common.acl.AclOperation.DESCRIBE_CONFIGS
-import org.apache.kafka.common.config.{ConfigDef, ConfigResource, TopicConfig}
+import org.apache.kafka.common.config.{ConfigDef, ConfigResource}
 import org.apache.kafka.common.errors.{ApiException, InvalidRequestException}
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.DescribeConfigsRequestData.DescribeConfigsResource
@@ -94,7 +94,6 @@ class ConfigHelper(metadataCache: MetadataCache, config: KafkaConfig, configRepo
             Topic.validate(topic)
             if (metadataCache.contains(topic)) {
               val topicProps = configRepository.topicConfig(topic)
-              topicProps.remove(TopicConfig.MIRROR_NAME_CONFIG)
               val logConfig = LogConfig.fromProps(config.extractLogConfigMap, topicProps)
               createResponseConfig(resource, logConfig, createTopicConfigEntry(logConfig, topicProps, includeSynonyms, includeDocumentation)(_, _))
             } else {

@@ -24,7 +24,7 @@ import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.record.Records
 import org.apache.kafka.common.requests.FetchResponse
 import org.apache.kafka.common.{Node, TopicPartition}
-import org.apache.kafka.server.common.OffsetAndEpoch
+import org.apache.kafka.server.common.{MirrorPartitionState, OffsetAndEpoch}
 import org.apache.kafka.server.{LeaderEndPoint, PartitionFetchState}
 import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogStartOffsetIncrementReason}
 

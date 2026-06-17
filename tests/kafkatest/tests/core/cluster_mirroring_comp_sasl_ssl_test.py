@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
-
 from ducktape.mark import parametrize
 from ducktape.mark.resource import cluster
 from ducktape.tests.test import Test
@@ -217,14 +215,9 @@ class ClusterMirroringCompSaslSslTest(MirrorUtils, Test):
                          count[0], topic, expected_count)
             return expected_count is None or count[0] >= expected_count
 
-        # When expected_count is set, retry consumption because the high watermark on
-        # destination replicas may not have advanced yet when mirror lag reaches zero.
         if expected_count is not None:
-            deadline = time.time() + wait_timeout_sec
-            try_consume()
-            while count[0] < expected_count and time.time() < deadline:
-                time.sleep(5)
-                try_consume()
+            wait_until(try_consume, timeout_sec=wait_timeout_sec, backoff_sec=5,
+                       err_msg="Expected %d messages on %s, got %d" % (expected_count, topic, count[0]))
         else:
             try_consume()
         return count[0]
@@ -282,7 +275,6 @@ class ClusterMirroringCompSaslSslTest(MirrorUtils, Test):
         self.logger.info("Creating and starting cluster mirror with ACL include filter")
         mirror_cfg = ClusterMirroringCompSaslSslTest.create_mirror_config(self.source_kafka)
         mirror_cfg.properties["mirror.acl.include"] = "TOPIC;my-topic-.*,GROUP;my-group"
-
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.dest_client_node, "my-mirror", mirror_cfg),

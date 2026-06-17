@@ -22,6 +22,7 @@ import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.common.ClusterMirrorVersion;
+import org.apache.kafka.server.common.MirrorPartitionState;
 import org.apache.kafka.server.config.ClusterMirrorConfig;
 import org.apache.kafka.server.network.BrokerEndPoint;
 
@@ -31,8 +32,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
-import static org.apache.kafka.controller.ConfigurationControlManager.PAUSED_TOPIC_SUFFIX;
-import static org.apache.kafka.controller.ConfigurationControlManager.STOPPED_TOPIC_SUFFIX;
 
 /**
  * Shared data types and utility methods for cluster mirroring components.
@@ -71,23 +70,6 @@ public final class ClusterMirrorUtils {
             });
         });
         return topicToPartitions;
-    }
-
-    /**
-     * Removes the STOPPED_TOPIC_SUFFIX from a mirror name if present.
-     * This suffix is appended to mirror names when topics are being stopped from mirroring.
-     */
-    public static String originalMirrorName(String mirrorName) {
-        if (mirrorName == null) {
-            return "";
-        }
-        if (mirrorName.endsWith(STOPPED_TOPIC_SUFFIX)) {
-            return mirrorName.substring(0, mirrorName.length() - STOPPED_TOPIC_SUFFIX.length());
-        }
-        if (mirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) {
-            return mirrorName.substring(0, mirrorName.length() - PAUSED_TOPIC_SUFFIX.length());
-        }
-        return mirrorName;
     }
 
     public record PartitionStateInfo(int partition, MirrorPartitionState state, Integer leaderEpoch) { }

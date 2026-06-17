@@ -191,8 +191,8 @@ class MirrorUtils:
         return True
 
     @staticmethod
-    def wait_mirror_state(logger, kafka, client_node, mirror_name, state,
-                          topics, err_msg=None):
+    def wait_mirror_state(logger, kafka, client_node, mirror_name, topics,
+                          state, err_msg=None):
         """Wait until all mirror partitions reach the given state."""
         def check():
             return MirrorUtils.all_satisfy_in_mirror(logger,
@@ -205,7 +205,7 @@ class MirrorUtils:
     @staticmethod
     def wait_for_metadata_refresh(logger, kafka, client_node, mirror_name):
         """Wait for metadata sync by sleeping based on the configured refresh interval."""
-        output = kafka.describe_mirror_config(client_node, mirror_name)
+        kafka.describe_mirror_config(client_node, mirror_name)
         interval_ms = 30000
         for prop in kafka.server_prop_overrides:
             if prop[0] == "mirror.metadata.refresh.interval.ms":

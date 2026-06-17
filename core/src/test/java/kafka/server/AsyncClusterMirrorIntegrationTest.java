@@ -16,13 +16,17 @@
  */
 package kafka.server;
 
+import kafka.utils.TestUtils;
+
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ClusterMirrorDescription;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateClusterMirrorOptions;
+import org.apache.kafka.clients.admin.DeleteClusterMirrorOptions;
 import org.apache.kafka.clients.admin.DescribeClusterMirrorsOptions;
+import org.apache.kafka.clients.admin.ListConfigResourcesOptions;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.StartMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.StopMirrorTopicsOptions;
@@ -36,12 +40,18 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
+import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
+import org.apache.kafka.coordinator.mirror.ClusterMirrorRecordKey;
+import org.apache.kafka.coordinator.mirror.ClusterMirrorRecordSerde;
+import org.apache.kafka.coordinator.mirror.generated.LastMirrorEpochsKey;
+import org.apache.kafka.coordinator.mirror.generated.MirrorPartitionStateKey;
 import org.apache.kafka.server.config.ClusterMirrorConfig;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.config.ServerLogConfigs;
@@ -61,6 +71,8 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 
+import static org.apache.kafka.common.internals.Topic.MIRROR_STATE_TOPIC_NAME;
+import static org.apache.kafka.test.TestUtils.DEFAULT_MAX_WAIT_MS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -309,7 +321,7 @@ public class AsyncClusterMirrorIntegrationTest {
      * from being mirrored even when mirror.topics.include=.* matches everything.
      */
     @Test
-    void testMirrorTopicsExcludeDefaultInternalTopics() throws Exception {
+    void testMirrorTopicsExcludeInternalTopics() throws Exception {
         String userTopic = "user-events";
         String internalTopic = "__test-internal";
 
@@ -363,7 +375,7 @@ public class AsyncClusterMirrorIntegrationTest {
      * Tests that a mix of literal and regex patterns in mirror.topics.include works.
      */
     @Test
-    void testMirrorTopicsIncludeMixedLiteralAndRegex() throws Exception {
+    void testMirrorTopicsIncludeLiteralAndRegex() throws Exception {
         String literalTopic = "payments";
         String regexMatchedTopic = "orders-eu";
         String unmatchedTopic = "logs-app";
@@ -395,7 +407,7 @@ public class AsyncClusterMirrorIntegrationTest {
 
     /**
      * Tests that a stopped topic is not re-discovered by discoverTopicsByPattern,
-     * because mirror.name with STOPPED_TOPIC_SUFFIX keeps it in getConfiguredTopics.
+     * because the STOPPED desired state keeps it in getConfiguredTopics.
      */
     @Test
     void testStopMirrorTopicPreventsRediscovery() throws Exception {
@@ -440,7 +452,7 @@ public class AsyncClusterMirrorIntegrationTest {
      * persists patterns to mirror.topics.include via KafkaAdminClient.
      */
     @Test
-    void testStartMirrorTopicsWithIncludePatterns() throws Exception {
+    void testStartMirrorTopicsWithInclude() throws Exception {
         String topic = "orders-us";
 
         srcAdmin.createTopics(List.of(
@@ -456,7 +468,7 @@ public class AsyncClusterMirrorIntegrationTest {
 
         // Start mirroring with includePatterns — should persist "orders-.*" to config
         dstAdmin.startMirrorTopics(MIRROR_NAME, Set.of(topic),
-                        new StartMirrorTopicsOptions().includePatterns(List.of("orders-.*")))
+                new StartMirrorTopicsOptions().includePatterns(List.of("orders-.*")))
                 .all().get(30, TimeUnit.SECONDS);
         waitForMirrorLagZero(topic);
 
@@ -469,6 +481,71 @@ public class AsyncClusterMirrorIntegrationTest {
         ConfigEntry includeEntry = mirrorConfigEntries.get(ClusterMirrorConfig.MIRROR_TOPICS_INCLUDE_CONFIG);
         assertTrue(includeEntry != null && includeEntry.value().contains("orders-.*"),
                 "mirror.topics.include should contain 'orders-.*' after startMirrorTopics with includePatterns");
+    }
+
+    /**
+     * Tests that a mirror can be deleted after all its topics are stopped, and that
+     * the mirror no longer appears in listClusterMirrors after deletion.
+     * And the internal topic __mirror_state contains the tombstone records in the last batch.
+     */
+    @Test
+    void testDeleteClusterMirror() throws Exception {
+        String topic = "delete-mirror-topic";
+
+        var result = srcAdmin.createTopics(List.of(new NewTopic(topic, 1, (short) 1)));
+        result.all().get(30, TimeUnit.SECONDS);
+
+        Uuid topicId = result.topicId(topic).get();
+
+        dstAdmin.createClusterMirror(MIRROR_NAME, Map.of(
+                "bootstrap.servers", singleSourceBootstrapServer
+        ), new CreateClusterMirrorOptions()).all().get(30, TimeUnit.SECONDS);
+        dstAdmin.startMirrorTopics(MIRROR_NAME, Set.of(topic), new StartMirrorTopicsOptions())
+                .all().get(30, TimeUnit.SECONDS);
+        waitForMirrorLagZero(topic);
+
+        var listConfigResult = dstAdmin.listConfigResources(Set.of(ConfigResource.Type.CLUSTER_MIRROR),
+                new ListConfigResourcesOptions()).all().get(30, TimeUnit.SECONDS);
+        assertEquals(1, listConfigResult.size());
+
+        // Verify mirror is listed before deletion
+        var listingsBefore = dstAdmin.listClusterMirrors().all().get(30, TimeUnit.SECONDS);
+        assertTrue(listingsBefore.stream().anyMatch(l -> MIRROR_NAME.equals(l.mirrorName())),
+                "Mirror should be listed before deletion");
+
+        // Stop all topics (required precondition for deletion)
+        dstAdmin.stopMirrorTopics(MIRROR_NAME, Set.of(topic), new StopMirrorTopicsOptions())
+                .all().get(30, TimeUnit.SECONDS);
+        waitForMirrorState(topic, "STOPPED");
+
+        dstAdmin.deleteClusterMirror(MIRROR_NAME, new DeleteClusterMirrorOptions())
+                .all().get(30, TimeUnit.SECONDS);
+        waitForListMirrorEmpty();
+
+        // Verify the mirror is no longer listed after deletion
+        listConfigResult = dstAdmin.listConfigResources(Set.of(ConfigResource.Type.CLUSTER_MIRROR),
+                new ListConfigResourcesOptions()).all().get(30, TimeUnit.SECONDS);
+        assertTrue(listConfigResult.isEmpty());
+
+        // Verify that the __mirror_state topic contains the tombstone records
+        // for both `MirrorPartitionStateKey` and `LastMirrorEpochsKey` types
+        // 1. Get the partition index hosting the metadata for the mirrored topic partition
+        int partId = dstCluster.brokers().get(0).clusterMirrorCoordinator()
+                .getCoordinatorPartitionByKey(new ClusterMirrorRecordKey(MIRROR_NAME, topicId, 0));
+        // 2. Get the partition leader
+        int leaderMirrorStatePartition = dstCluster.brokers().get(0).metadataCache()
+                .getLeaderAndIsr(MIRROR_STATE_TOPIC_NAME, partId).get().leader();
+        // 3. Get the last batch of the partition
+        var lastBatch = dstCluster.brokers().get(leaderMirrorStatePartition).replicaManager()
+                .getLog(new TopicPartition(MIRROR_STATE_TOPIC_NAME, partId)).get().activeSegment().log().lastBatch().get();
+        // 4. Deserialize the records in the last batch
+        List<CoordinatorRecord> records = new ArrayList<>();
+        ClusterMirrorRecordSerde serde = new ClusterMirrorRecordSerde();
+        lastBatch.forEach(record -> records.add(serde.deserialize(record.key(), record.value())));
+        // 5. Make sure the last batch contains the 2 tombstone records
+        assertEquals(2, records.size());
+        assertTrue(records.get(0).key().apiKey() == new MirrorPartitionStateKey().apiKey() && records.get(0).value() == null);
+        assertTrue(records.get(1).key().apiKey() == new LastMirrorEpochsKey().apiKey() && records.get(1).value() == null);
     }
 
     private void produceRecords(KafkaClusterTestKit cluster, String topic,
@@ -570,6 +647,17 @@ public class AsyncClusterMirrorIntegrationTest {
             TimeUnit.MILLISECONDS.sleep(1_000);
         }
         throw new AssertionError("Mirror partitions for " + topicPattern + " did not reach state " + state + " within timeout");
+    }
+
+    private void waitForListMirrorEmpty() {
+        TestUtils.waitUntilTrue(() -> {
+            try {
+                var listMirror = dstAdmin.listClusterMirrors().all().get(30, TimeUnit.SECONDS);
+                return listMirror.isEmpty();
+            } catch (Exception e) {
+                return false;
+            }
+        }, () -> "Cluster Mirror is not deleted successfully", DEFAULT_MAX_WAIT_MS, 100);
     }
 
     private void waitForMirrorLagZero(String... topicPatterns) throws Exception {

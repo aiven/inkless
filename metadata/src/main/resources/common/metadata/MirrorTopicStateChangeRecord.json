@@ -14,17 +14,17 @@
 // limitations under the License.
 
 {
-  "apiKey": 104,
-  "type": "request",
-  "listeners": ["broker", "controller"],
-  "name": "DeleteClusterMirrorRequest",
-  // Version 0 is the initial version.
+  "apiKey": 29,
+  "type": "metadata",
+  "name": "MirrorTopicStateChangeRecord",
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
+    { "name": "TopicId", "type": "uuid", "versions": "0+",
+      "about": "The unique topic ID." },
     { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName",
-      "about": "The cluster mirror name to delete."},
-    { "name": "StateValidationOffset", "type": "int64", "versions": "0+", "default": "-1",
-      "about": "Metadata log offset at which partition states were confirmed STOPPED. -1 to skip fencing."}
+      "about": "The cluster mirror name." },
+    { "name": "DesiredState", "type": "int8", "versions": "0+",
+      "about": "The desired state for each mirror partition." }
   ]
 }

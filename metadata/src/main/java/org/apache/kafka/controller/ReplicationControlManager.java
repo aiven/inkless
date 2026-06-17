@@ -71,6 +71,7 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.On
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.OngoingTopicReassignment;
 import org.apache.kafka.common.metadata.BrokerRegistrationChangeRecord;
 import org.apache.kafka.common.metadata.ClearElrRecord;
+import org.apache.kafka.common.metadata.MirrorTopicStateChangeRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
@@ -95,6 +96,7 @@ import org.apache.kafka.metadata.placement.PlacementSpec;
 import org.apache.kafka.metadata.placement.TopicAssignment;
 import org.apache.kafka.metadata.placement.UsableBroker;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
+import org.apache.kafka.server.common.MirrorPartitionState;
 import org.apache.kafka.server.common.TopicIdPartition;
 import org.apache.kafka.server.mutable.BoundedList;
 import org.apache.kafka.server.policy.CreateTopicPolicy;
@@ -122,6 +124,7 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.IntPredicate;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
 import static org.apache.kafka.common.config.ConfigResource.Type.TOPIC;
@@ -253,11 +256,29 @@ public class ReplicationControlManager {
         private final String name;
         private final Uuid id;
         private final TimelineHashMap<Integer, PartitionRegistration> parts;
+        private final String mirrorName;
+        private final int mirrorState;
+        private final long lastMirrorStateChangeOffset;
+        private final SnapshotRegistry snapshotRegistry;
 
         TopicControlInfo(String name, SnapshotRegistry snapshotRegistry, Uuid id) {
             this.name = name;
             this.id = id;
+            this.snapshotRegistry = snapshotRegistry;
             this.parts = new TimelineHashMap<>(snapshotRegistry, 0);
+            this.mirrorName = null;
+            this.mirrorState = MirrorPartitionState.UNKNOWN.value();
+            this.lastMirrorStateChangeOffset = -1;
+        }
+
+        TopicControlInfo(TopicControlInfo copyTopicInfo, String mirrorName, int mirrorState, long lastMirrorStateChangeOffset) {
+            this.name = copyTopicInfo.name;
+            this.id = copyTopicInfo.id;
+            this.snapshotRegistry = copyTopicInfo.snapshotRegistry;
+            this.parts = copyTopicInfo.parts;
+            this.mirrorName = mirrorName;
+            this.mirrorState = mirrorState;
+            this.lastMirrorStateChangeOffset = lastMirrorStateChangeOffset;
         }
 
         public String name() {
@@ -270,6 +291,22 @@ public class ReplicationControlManager {
 
         public int numPartitions(long epoch) {
             return parts.size(epoch);
+        }
+
+        public String mirrorName() {
+            return mirrorName;
+        }
+
+        public int mirrorState() {
+            return mirrorState;
+        }
+
+        public long lastMirrorStateChangeOffset() {
+            return lastMirrorStateChangeOffset;
+        }
+
+        public SnapshotRegistry snapshotRegistry() {
+            return snapshotRegistry;
         }
     }
 
@@ -568,6 +605,17 @@ public class ReplicationControlManager {
         brokersToIsrs.removeTopicEntryForBroker(topic.id, NO_LEADER);
 
         log.info("Replayed RemoveTopicRecord for topic {} with ID {}.", topic.name, record.topicId());
+    }
+
+    public void replay(MirrorTopicStateChangeRecord record, long offset) {
+        TopicControlInfo topicInfo = topics.get(record.topicId());
+        if (topicInfo == null) {
+            throw new UnknownTopicIdException("Can't find topic with ID " + record.topicId() +
+                    " to update cluster mirror state.");
+        } else {
+            topics.put(record.topicId(), new TopicControlInfo(topicInfo, record.mirrorName(), record.desiredState(), offset));
+            log.info("Replayed MirrorTopicStateChangeRecord for topic {} with ID {}, mirror name {}, state {} in offset {}.", topicInfo.name, record.topicId(), record.mirrorName(), record.desiredState(), offset);
+        }
     }
 
     public void replay(ClearElrRecord record) {
@@ -1170,6 +1218,12 @@ public class ReplicationControlManager {
     // VisibleForTesting
     TopicControlInfo getTopic(Uuid topicId) {
         return topics.get(topicId);
+    }
+
+    Set<TopicControlInfo> getMirrorTopics() {
+        return topics.values().stream()
+            .filter(topicControlInfo ->
+                topicControlInfo.mirrorName != null && !topicControlInfo.mirrorName.isBlank()).collect(Collectors.toSet());
     }
 
     Uuid getTopicId(String name) {

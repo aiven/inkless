@@ -310,6 +310,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Properties;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
@@ -4943,17 +4944,29 @@ public class KafkaAdminClient extends AdminClient {
         validateRegexPatterns(options.includePatterns());
         validateRegexPatterns(options.excludePatterns());
 
+        // Fetch source metadata so the controller can create topics synchronously
+        Map<String, StartMirrorTopicsRequestData.TopicData> topicMetadata;
+        if (!topics.isEmpty()) {
+            try {
+                topicMetadata = fetchSourceTopicMetadata(mirrorName, topics);
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+                return new StartMirrorTopicsResult(future);
+            }
+        } else {
+            topicMetadata = Map.of();
+        }
+
         final long now = time.milliseconds();
         final Call call = new Call("startMirrorTopics", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
 
             @Override
             StartMirrorTopicsRequest.Builder createRequest(int timeoutMs) {
-                Map<String, StartMirrorTopicsRequestData.TopicData> metadata = options.topicMetadata();
                 StartMirrorTopicsRequestData data = new StartMirrorTopicsRequestData();
                 data.setMirrorName(mirrorName);
                 topics.forEach(t -> {
-                    StartMirrorTopicsRequestData.TopicData existing = metadata.get(t);
+                    StartMirrorTopicsRequestData.TopicData existing = topicMetadata.get(t);
                     data.topics().add(existing != null ? existing
                             : new StartMirrorTopicsRequestData.TopicData().setTopicName(t));
                 });
@@ -4987,6 +5000,32 @@ public class KafkaAdminClient extends AdminClient {
         };
         runnable.call(call, now);
         return new StartMirrorTopicsResult(future);
+    }
+
+    private Map<String, StartMirrorTopicsRequestData.TopicData> fetchSourceTopicMetadata(
+            String mirrorName, Set<String> topics) throws Exception {
+        ConfigResource mirrorResource = new ConfigResource(ConfigResource.Type.CLUSTER_MIRROR, mirrorName);
+        var configResult = describeConfigs(List.of(mirrorResource)).all().get();
+        var mirrorConfig = configResult.get(mirrorResource);
+        if (mirrorConfig == null || mirrorConfig.entries().isEmpty()) {
+            throw new IllegalStateException("Mirror '" + mirrorName + "' not found or has no configuration");
+        }
+
+        Properties sourceProps = new Properties();
+        for (var entry : mirrorConfig.entries()) {
+            sourceProps.put(entry.name(), entry.value());
+        }
+
+        try (Admin sourceAdmin = Admin.create(sourceProps)) {
+            var descriptions = sourceAdmin.describeTopics(topics).allTopicNames().get();
+            Map<String, StartMirrorTopicsRequestData.TopicData> metadata = new HashMap<>();
+            descriptions.forEach((name, desc) ->
+                    metadata.put(name, new StartMirrorTopicsRequestData.TopicData()
+                            .setTopicName(name)
+                            .setTopicId(desc.topicId())
+                            .setNumPartitions(desc.partitions().size())));
+            return metadata;
+        }
     }
 
     @Override

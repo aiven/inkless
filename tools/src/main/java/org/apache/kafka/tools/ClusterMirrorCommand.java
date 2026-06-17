@@ -34,12 +34,11 @@ import org.apache.kafka.clients.admin.ResumeMirrorTopicsResult;
 import org.apache.kafka.clients.admin.StartMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.StopMirrorTopicsOptions;
 import org.apache.kafka.common.config.ConfigResource;
-import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
 import org.apache.kafka.common.utils.Exit;
 import org.apache.kafka.common.utils.Utils;
-import org.apache.kafka.server.config.ClusterMirrorConfig;
 import org.apache.kafka.server.util.CommandDefaultOptions;
 import org.apache.kafka.server.util.CommandLineUtils;
+import org.apache.kafka.server.util.MirrorFilterUtils;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -141,36 +140,21 @@ public abstract class ClusterMirrorCommand {
             var mirrorConfigEntries = describeMirrorConfig(mirrorName);
             Properties sourceConfig = toProperties(mirrorConfigEntries);
 
-            // Resolve currently matching topics from source with metadata
-            Map<String, StartMirrorTopicsRequestData.TopicData> topicMetadata;
             Set<String> matchingTopicNames;
             try (Admin sourceAdmin = Admin.create(sourceConfig)) {
                 Set<String> allSourceTopics = sourceAdmin.listTopics().names().get();
-                Pattern includePattern = ClusterMirrorConfig.compilePatternList(topicPatterns);
-                Pattern excludePattern = ClusterMirrorConfig.compilePatternList(excludePatterns);
+                Pattern includePattern = MirrorFilterUtils.compilePatternList(topicPatterns);
+                Pattern excludePattern = MirrorFilterUtils.compilePatternList(excludePatterns);
                 matchingTopicNames = allSourceTopics.stream()
                         .filter(t -> includePattern != null && includePattern.matcher(t).matches())
                         .filter(t -> excludePattern == null || !excludePattern.matcher(t).matches())
                         .collect(Collectors.toSet());
-
-                if (matchingTopicNames.isEmpty()) {
-                    topicMetadata = Map.of();
-                } else {
-                    var descriptions = sourceAdmin.describeTopics(matchingTopicNames).allTopicNames().get();
-                    topicMetadata = new HashMap<>();
-                    descriptions.forEach((name, desc) ->
-                            topicMetadata.put(name, new StartMirrorTopicsRequestData.TopicData()
-                                    .setTopicName(name)
-                                    .setTopicId(desc.topicId())
-                                    .setNumPartitions(desc.partitions().size())));
-                }
             }
 
             adminClient.startMirrorTopics(mirrorName, matchingTopicNames,
                     new StartMirrorTopicsOptions()
                             .includePatterns(topicPatterns)
-                            .excludePatterns(excludePatterns)
-                            .topicMetadata(topicMetadata))
+                            .excludePatterns(excludePatterns))
                     .all().get();
             if (!matchingTopicNames.isEmpty()) {
                 System.out.printf("Started %d mirror topic(s) in mirror %s: %s%n",
@@ -232,7 +216,7 @@ public abstract class ClusterMirrorCommand {
 
         private Set<String> resolveTopicsOnDestination(List<String> patterns) throws Exception {
             Set<String> allTopics = adminClient.listTopics().names().get();
-            Pattern compiled = ClusterMirrorConfig.compilePatternList(patterns);
+            Pattern compiled = MirrorFilterUtils.compilePatternList(patterns);
             if (compiled == null) return Set.of();
             return allTopics.stream()
                     .filter(t -> compiled.matcher(t).matches())

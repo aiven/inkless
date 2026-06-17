@@ -26,7 +26,7 @@ import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.common.config.ConfigDef.ConfigKey
 import org.apache.kafka.server.config.ClusterMirrorConfig
 import org.apache.kafka.common.config.ConfigResource.Type.{BROKER, BROKER_LOGGER, CLIENT_METRICS, GROUP, CLUSTER_MIRROR, TOPIC}
-import org.apache.kafka.common.config.{ConfigDef, ConfigResource, TopicConfig}
+import org.apache.kafka.common.config.{ConfigDef, ConfigResource}
 import org.apache.kafka.common.errors.{ApiException, InvalidConfigurationException, InvalidRequestException}
 import org.apache.kafka.common.message.{AlterConfigsRequestData, AlterConfigsResponseData, IncrementalAlterConfigsRequestData, IncrementalAlterConfigsResponseData}
 import org.apache.kafka.common.message.AlterConfigsRequestData.{AlterConfigsResource => LAlterConfigsResource}
@@ -144,12 +144,7 @@ class ConfigAdminManager(nodeId: Int,
                 validateResourceNameIsCurrentNodeId(resource.resourceName())
               }
               validateBrokerConfigChange(resource, configResource)
-            case TOPIC =>
-                // mirror internal config check
-                if (resource.configs().stream().anyMatch(config => TopicConfig.MIRROR_NAME_CONFIG.equals(config.name()))) {
-                  throw new InvalidRequestException("The 'mirror.name' configuration can only be modified through dedicated mirror management APIs.")
-                }
-            case CLIENT_METRICS | GROUP =>
+            case CLIENT_METRICS | GROUP | TOPIC=>
             // Nothing to do.
             case CLUSTER_MIRROR =>
               val validKeys = ClusterMirrorConfig.CONFIG_DEF.names()
@@ -258,11 +253,7 @@ class ConfigAdminManager(nodeId: Int,
                 validateResourceNameIsCurrentNodeId(resource.resourceName())
               }
               validateBrokerConfigChange(resource, configResource)
-            case TOPIC =>
-                if (resource.configs().asScala.exists(config => TopicConfig.MIRROR_NAME_CONFIG.equals(config.name()))) {
-                  throw new InvalidRequestException("The 'mirror.name' configuration can only be modified through dedicated mirror management APIs.")
-                }
-            case CLIENT_METRICS | GROUP =>
+            case CLIENT_METRICS | GROUP | TOPIC =>
             // Nothing to do.
             case _ =>
               // Since legacy AlterConfigs does not support BROKER_LOGGER, any attempt to use it

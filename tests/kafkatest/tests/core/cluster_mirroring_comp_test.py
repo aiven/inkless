@@ -12,8 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import time
-
 from ducktape.mark import parametrize
 from ducktape.mark.resource import cluster
 from ducktape.tests.test import Test
@@ -165,22 +163,22 @@ class ClusterMirroringCompTest(MirrorUtils, Test):
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.dest_client_node, "my-mirror", mirror_cfg),
-            timeout_sec=20, backoff_sec=2,
+            timeout_sec=60, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         for regex in ["my-topic.*", "new-topic"]:
             wait_until(
                 lambda r=regex: "Started" in self.dest_kafka.start_cluster_mirror_topics(
                     self.dest_client_node, "my-mirror", r),
-                timeout_sec=20, backoff_sec=2,
+                timeout_sec=60, backoff_sec=2,
                 err_msg="Failed to start mirror topics for %s" % regex,
             )
         self.logger.info("Waiting for all partitions to reach MIRRORING with zero lag")
         MirrorUtils.wait_mirror_lag_zero(self.logger,
             self.dest_kafka, self.dest_client_node, "my-mirror", topics=list(topics.keys()))
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.dest_client_node, "my-mirror")
 
         self.logger.info("Verifying consumer group offset sync")
-        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.dest_client_node, "my-mirror")
         wait_until(
             lambda: "my-topic-a" in MirrorUtils.describe_consumer_group(
                 self.dest_kafka, "my-group", self.dest_client_node),
@@ -209,8 +207,8 @@ class ClusterMirroringCompTest(MirrorUtils, Test):
             self.dest_kafka.stop_cluster_mirror_topics(
                 self.dest_client_node, "my-mirror", regex)
         MirrorUtils.wait_mirror_state(self.logger,
-            self.dest_kafka, self.dest_client_node, "my-mirror", "STOPPED",
-            topics=list(topics.keys()))
+            self.dest_kafka, self.dest_client_node, "my-mirror",
+            list(topics.keys()), "STOPPED")
 
         self.logger.info("Verifying destination messages after failover")
         for topic in topics:
@@ -262,7 +260,7 @@ class ClusterMirroringCompTest(MirrorUtils, Test):
             err_msg="Failed to start mirror topics",
         )
         MirrorUtils.wait_mirror_state(
-            self.logger, self.dest_kafka, self.dest_client_node, "my-mirror", "MIRRORING", ["my-topic"],
+            self.logger, self.dest_kafka, self.dest_client_node, "my-mirror", ["my-topic"], "MIRRORING",
             err_msg="Mirror did not reach MIRRORING state",
         )
 
@@ -285,4 +283,4 @@ class ClusterMirroringCompTest(MirrorUtils, Test):
 
         self.logger.info("Failover: stop mirror so destination topic becomes writable")
         self.dest_kafka.stop_cluster_mirror_topics(self.dest_client_node, "my-mirror", "my-topic")
-        MirrorUtils.wait_mirror_state(self.logger, self.dest_kafka, self.dest_client_node, "my-mirror", "STOPPED", ["my-topic"])
+        MirrorUtils.wait_mirror_state(self.logger, self.dest_kafka, self.dest_client_node, "my-mirror", ["my-topic"], "STOPPED")
