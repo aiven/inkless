@@ -13,11 +13,25 @@ The Kafka controller participates in the switch to fence stale leaders. The brok
 
 ## `classicToDisklessStartOffset` States
 
-The partition metadata field `classicToDisklessStartOffset` drives the flow:
+`classicToDisklessStartOffset` is a per-partition `long` field on the controller/broker in-memory metadata image (`PartitionRegistration`). It serves two purposes at once:
 
-* `-1` (`NO_CLASSIC_TO_DISKLESS_START_OFFSET`): no classic-to-diskless switch offset has been committed.
-* `-2` (`CLASSIC_TO_DISKLESS_SWITCH_PENDING`): the switch has started, the classic log must be sealed, but the final diskless start offset has not been committed yet.
-* `>= 0`: the committed seal offset. This is the first offset owned by diskless storage; the classic log owns offsets below it.
+* As a **boundary**, it marks the first offset owned by diskless storage. The classic log owns every offset below it; diskless storage owns everything at or above it.
+* As a **state machine**, it drives the switch flow. Two negative values are used as sentinels, and any non-negative value is the committed boundary:
+
+| Value | Constant | Meaning |
+| --- | --- | --- |
+| `-1` | `NO_CLASSIC_TO_DISKLESS_START_OFFSET` | No classic-to-diskless switch offset has been committed (the default for classic and born-diskless partitions). |
+| `-2` | `CLASSIC_TO_DISKLESS_SWITCH_PENDING` | The switch has started and the classic log must be sealed, but the final diskless start offset has not been committed yet. |
+| `>= 0` | — | The committed seal offset. This is the first offset owned by diskless storage; the classic log owns offsets below it. |
+
+### How it is stored
+
+The switch state lives in the KRaft metadata log, but `classicToDisklessStartOffset` is **not** part of the upstream Apache Kafka record schemas (`PartitionRecord`, `PartitionChangeRecord`). To avoid forking those schemas, it is carried as an **unknown tagged field** (`RawTaggedField`) attached to the standard records:
+
+* **High tag numbers (100+).** `classicToDisklessStartOffset` uses tag `100` (`CLASSIC_TO_DISKLESS_START_OFFSET_TAG`). The 100+ range is reserved to avoid colliding with upstream tagged fields. Because the tag is unknown to vanilla Kafka, it is **silently skipped** when read by an upstream broker, which keeps the on-disk metadata format compatible in both directions. Two sibling fields ride along on the same record using the same mechanism: producer states (tag `101`) and the diskless leader epoch (tag `102`).
+* **Custom serde in `InitDisklessLogFields`.** The value is encoded by hand into the tagged field's raw byte payload: a single big-endian `int64` (8 bytes) written via `ByteBuffer.putLong`, and read back via `ByteBuffer.getLong`. There is no generated message class for it.
+* **Sentinel is never serialized.** When `classicToDisklessStartOffset == -1`, the tag is omitted entirely to save space; on read, an absent tag decodes back to `-1` (`NO_CLASSIC_TO_DISKLESS_START_OFFSET`). Only `-2` and committed `>= 0` values are actually written.
+* **Replay and merge.** On load, `PartitionRegistration` decodes the tag from `PartitionRecord.unknownTaggedFields()`; `merge(PartitionChangeRecord)` applies updates from change records and carries the existing value forward when a change record omits the tag; `toRecord()` re-encodes it. This is how the value survives metadata-log replay and propagates to brokers via metadata deltas.
 
 ## Protocol Steps
 
