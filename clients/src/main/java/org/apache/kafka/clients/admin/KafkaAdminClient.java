@@ -4945,7 +4945,7 @@ public class KafkaAdminClient extends AdminClient {
         validateRegexPatterns(options.excludePatterns());
 
         // Fetch source metadata so the controller can create topics synchronously
-        Map<String, StartMirrorTopicsRequestData.TopicData> topicMetadata;
+        Map<String, StartMirrorTopicsRequestData.TopicMetadata> topicMetadata;
         if (!topics.isEmpty()) {
             try {
                 topicMetadata = fetchSourceTopicMetadata(mirrorName, topics);
@@ -4966,9 +4966,9 @@ public class KafkaAdminClient extends AdminClient {
                 StartMirrorTopicsRequestData data = new StartMirrorTopicsRequestData();
                 data.setMirrorName(mirrorName);
                 topics.forEach(t -> {
-                    StartMirrorTopicsRequestData.TopicData existing = topicMetadata.get(t);
+                    StartMirrorTopicsRequestData.TopicMetadata existing = topicMetadata.get(t);
                     data.topics().add(existing != null ? existing
-                            : new StartMirrorTopicsRequestData.TopicData().setTopicName(t));
+                            : new StartMirrorTopicsRequestData.TopicMetadata().setTopicName(t));
                 });
                 data.setIncludePatterns(options.includePatterns());
                 data.setExcludePatterns(options.excludePatterns());
@@ -5002,7 +5002,7 @@ public class KafkaAdminClient extends AdminClient {
         return new StartMirrorTopicsResult(future);
     }
 
-    private Map<String, StartMirrorTopicsRequestData.TopicData> fetchSourceTopicMetadata(
+    private Map<String, StartMirrorTopicsRequestData.TopicMetadata> fetchSourceTopicMetadata(
             String mirrorName, Set<String> topics) throws Exception {
         ConfigResource mirrorResource = new ConfigResource(ConfigResource.Type.CLUSTER_MIRROR, mirrorName);
         var configResult = describeConfigs(List.of(mirrorResource)).all().get();
@@ -5018,9 +5018,9 @@ public class KafkaAdminClient extends AdminClient {
 
         try (Admin sourceAdmin = Admin.create(sourceProps)) {
             var descriptions = sourceAdmin.describeTopics(topics).allTopicNames().get();
-            Map<String, StartMirrorTopicsRequestData.TopicData> metadata = new HashMap<>();
+            Map<String, StartMirrorTopicsRequestData.TopicMetadata> metadata = new HashMap<>();
             descriptions.forEach((name, desc) ->
-                    metadata.put(name, new StartMirrorTopicsRequestData.TopicData()
+                    metadata.put(name, new StartMirrorTopicsRequestData.TopicMetadata()
                             .setTopicName(name)
                             .setTopicId(desc.topicId())
                             .setNumPartitions(desc.partitions().size())));
@@ -5042,7 +5042,7 @@ public class KafkaAdminClient extends AdminClient {
             StopMirrorTopicsRequest.Builder createRequest(int timeoutMs) {
                 StopMirrorTopicsRequestData data = new StopMirrorTopicsRequestData();
                 data.setMirrorName(mirrorName);
-                topics.forEach(t -> data.topics().add(new StopMirrorTopicsRequestData.TopicData().setTopicName(t)));
+                topics.forEach(t -> data.topics().add(new StopMirrorTopicsRequestData.TopicMetadata().setTopicName(t)));
                 data.setPatterns(options.patterns());
                 return new StopMirrorTopicsRequest.Builder(data);
             }

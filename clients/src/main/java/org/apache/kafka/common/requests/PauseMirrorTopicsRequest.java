@@ -40,7 +40,7 @@ public class PauseMirrorTopicsRequest extends AbstractRequest {
                     ApiKeys.PAUSE_MIRROR_TOPICS.latestVersion());
             PauseMirrorTopicsRequestData data = new PauseMirrorTopicsRequestData();
             data.setMirrorName(mirrorName);
-            topics.forEach(topic -> data.topics().add(new PauseMirrorTopicsRequestData.TopicData().setTopicName(topic)));
+            topics.forEach(topic -> data.topics().add(new PauseMirrorTopicsRequestData.TopicMetadata().setTopicName(topic)));
             this.data = data;
         }
 

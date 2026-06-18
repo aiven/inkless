@@ -40,7 +40,7 @@ public class ResumeMirrorTopicsRequest extends AbstractRequest {
                     ApiKeys.RESUME_MIRROR_TOPICS.latestVersion());
             ResumeMirrorTopicsRequestData data = new ResumeMirrorTopicsRequestData();
             data.setMirrorName(mirrorName);
-            topics.forEach(topic -> data.topics().add(new ResumeMirrorTopicsRequestData.TopicData().setTopicName(topic)));
+            topics.forEach(topic -> data.topics().add(new ResumeMirrorTopicsRequestData.TopicMetadata().setTopicName(topic)));
             this.data = data;
         }
 

@@ -1250,7 +1250,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         Set<String> configuredTopics = getConfiguredTopics(mirrorName, true);
         final Pattern topicsExcludePattern = mirrorConfig.topicsExcludePattern();
 
-        List<StartMirrorTopicsRequestData.TopicData> newTopics;
+        List<StartMirrorTopicsRequestData.TopicMetadata> newTopics;
         try {
             Set<String> allSourceTopics = srcAdmin.listTopics()
                     .names().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
@@ -1271,7 +1271,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             cacheSourceLeaders(mirrorName, descriptions.values());
 
             newTopics = descriptions.values().stream()
-                    .map(td -> new StartMirrorTopicsRequestData.TopicData()
+                    .map(td -> new StartMirrorTopicsRequestData.TopicMetadata()
                             .setTopicName(td.name())
                             .setTopicId(td.topicId())
                             .setNumPartitions(td.partitions().size()))
@@ -1286,7 +1286,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
 
         log.info("Discovered {} new topic(s) matching mirror.topics.include pattern for mirror {}: {}",
-                newTopics.size(), mirrorName, newTopics.stream().map(StartMirrorTopicsRequestData.TopicData::topicName).toList());
+                newTopics.size(), mirrorName, newTopics.stream().map(StartMirrorTopicsRequestData.TopicMetadata::topicName).toList());
 
         StartMirrorTopicsRequestData data = new StartMirrorTopicsRequestData();
         data.setMirrorName(mirrorName);
@@ -1459,10 +1459,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // Send one batched request per coordinator node
         nodeToTopicPartitions.forEach((node, topicPartitionsMap) -> {
             WriteMirrorStatesRequestData data = new WriteMirrorStatesRequestData().setMirrorName(mirrorName);
-            List<WriteMirrorStatesRequestData.TopicData> topicDataList = new ArrayList<>();
+            List<WriteMirrorStatesRequestData.TopicMetadata> topicDataList = new ArrayList<>();
 
             topicPartitionsMap.forEach((topic, partitionDataList) ->
-                topicDataList.add(new WriteMirrorStatesRequestData.TopicData()
+                topicDataList.add(new WriteMirrorStatesRequestData.TopicMetadata()
                     .setName(topic)
                     .setPartitions(partitionDataList)));
 
@@ -1517,10 +1517,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // Send one batched request per coordinator node
         nodeToTopicPartitions.forEach((node, topicPartitionsMap) -> {
             ReadMirrorStatesRequestData data = new ReadMirrorStatesRequestData().setMirrorName(mirrorName);
-            List<ReadMirrorStatesRequestData.TopicData> topicDataList = new ArrayList<>();
+            List<ReadMirrorStatesRequestData.TopicMetadata> topicDataList = new ArrayList<>();
 
             topicPartitionsMap.forEach((topic, partitionDataList) ->
-                topicDataList.add(new ReadMirrorStatesRequestData.TopicData()
+                topicDataList.add(new ReadMirrorStatesRequestData.TopicMetadata()
                     .setName(topic)
                     .setPartitions(partitionDataList)));
 

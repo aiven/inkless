@@ -58,7 +58,6 @@ import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
-import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
 import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
 import org.apache.kafka.common.message.StopMirrorTopicsResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
@@ -134,7 +133,7 @@ public class MockController implements Controller {
     public CompletableFuture<StartMirrorTopicsResponseData> startMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
-            List<StartMirrorTopicsRequestData.TopicData> topics,
+            List<Controller.MirrorTopicMetadata> topics,
             List<String> includePatterns,
             List<String> excludePatterns
     ) {

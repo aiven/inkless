@@ -52,7 +52,6 @@ import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
-import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
 import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
 import org.apache.kafka.common.message.StopMirrorTopicsResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
@@ -152,12 +151,6 @@ public interface Controller extends AclMutator, AutoCloseable {
         Set<String> describable
     );
 
-    CompletableFuture<CreateClusterMirrorResponseData> createClusterMirror(
-            ControllerRequestContext context,
-            String mirrorName,
-            Map<String, Map.Entry<AlterConfigOp.OpType, String>> configChanges
-    );
-
     /**
      * Unregister a broker.
      *
@@ -172,10 +165,16 @@ public interface Controller extends AclMutator, AutoCloseable {
         int brokerId
     );
 
+    CompletableFuture<CreateClusterMirrorResponseData> createClusterMirror(
+            ControllerRequestContext context,
+            String mirrorName,
+            Map<String, Map.Entry<AlterConfigOp.OpType, String>> configChanges
+    );
+
     CompletableFuture<StartMirrorTopicsResponseData> startMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
-            List<StartMirrorTopicsRequestData.TopicData> topics,
+            List<MirrorTopicMetadata> topics,
             List<String> includePatterns,
             List<String> excludePatterns
     );
@@ -199,15 +198,15 @@ public interface Controller extends AclMutator, AutoCloseable {
             Set<String> topics
     );
 
-    CompletableFuture<BumpLeaderEpochsResponseData> bumpLeaderEpoch(
-            ControllerRequestContext context,
-            Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs
-    );
-
     CompletableFuture<DeleteClusterMirrorResponseData> deleteClusterMirror(
             ControllerRequestContext context,
             String mirrorName,
             long brokerMetadataOffset
+    );
+
+    CompletableFuture<BumpLeaderEpochsResponseData> bumpLeaderEpoch(
+            ControllerRequestContext context,
+            Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs
     );
 
     /**
@@ -493,4 +492,6 @@ public interface Controller extends AclMutator, AutoCloseable {
      * Blocks until we have shut down and freed all resources.
      */
     void close() throws InterruptedException;
+
+    record MirrorTopicMetadata(String name, Uuid id, int numPartitions) { }
 }

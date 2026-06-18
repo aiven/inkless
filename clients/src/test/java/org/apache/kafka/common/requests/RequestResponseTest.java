@@ -1223,8 +1223,8 @@ public class RequestResponseTest {
     }
 
     private StartMirrorTopicsRequest createStartMirrorTopicsRequest(short version) {
-        StartMirrorTopicsRequestData.TopicDataCollection topics = new StartMirrorTopicsRequestData.TopicDataCollection();
-        topics.add(new StartMirrorTopicsRequestData.TopicData()
+        StartMirrorTopicsRequestData.TopicMetadataCollection topics = new StartMirrorTopicsRequestData.TopicMetadataCollection();
+        topics.add(new StartMirrorTopicsRequestData.TopicMetadata()
                 .setTopicId(Uuid.randomUuid())
                 .setTopicName("topic")
         );
@@ -1242,8 +1242,8 @@ public class RequestResponseTest {
     }
 
     private StopMirrorTopicsRequest createStopMirrorTopicsRequest(short version) {
-        StopMirrorTopicsRequestData.TopicDataCollection topics = new StopMirrorTopicsRequestData.TopicDataCollection();
-        topics.add(new StopMirrorTopicsRequestData.TopicData()
+        StopMirrorTopicsRequestData.TopicMetadataCollection topics = new StopMirrorTopicsRequestData.TopicMetadataCollection();
+        topics.add(new StopMirrorTopicsRequestData.TopicMetadata()
                 .setTopicId(Uuid.randomUuid())
                 .setTopicName("topic")
         );
@@ -1303,7 +1303,7 @@ public class RequestResponseTest {
     public ReadMirrorStatesRequest createReadMirrorStatesRequest(short version) {
         ReadMirrorStatesRequestData data = new ReadMirrorStatesRequestData()
                 .setMirrorName("mirror")
-                .setTopics(List.of(new ReadMirrorStatesRequestData.TopicData()
+                .setTopics(List.of(new ReadMirrorStatesRequestData.TopicMetadata()
                         .setName("topic")
                         .setPartitions(List.of(new ReadMirrorStatesRequestData.PartitionData().setPartitionIndex(0)))
                 ));
@@ -1325,7 +1325,7 @@ public class RequestResponseTest {
     public WriteMirrorStatesRequest createWriteMirrorStatesRequest(short version) {
         WriteMirrorStatesRequestData data = new WriteMirrorStatesRequestData()
                 .setMirrorName("mirror")
-                .setTopics(List.of(new WriteMirrorStatesRequestData.TopicData()
+                .setTopics(List.of(new WriteMirrorStatesRequestData.TopicMetadata()
                         .setName("topic")
                         .setPartitions(List.of(new WriteMirrorStatesRequestData.PartitionData()
                                 .setPartitionIndex(0)
@@ -1346,8 +1346,8 @@ public class RequestResponseTest {
     }
 
     public PauseMirrorTopicsRequest createPauseMirrorTopicsRequest(short version) {
-        PauseMirrorTopicsRequestData.TopicDataCollection topics = new PauseMirrorTopicsRequestData.TopicDataCollection();
-        topics.add(new PauseMirrorTopicsRequestData.TopicData()
+        PauseMirrorTopicsRequestData.TopicMetadataCollection topics = new PauseMirrorTopicsRequestData.TopicMetadataCollection();
+        topics.add(new PauseMirrorTopicsRequestData.TopicMetadata()
                 .setTopicId(Uuid.randomUuid())
                 .setTopicName("topic")
         );
@@ -1366,8 +1366,8 @@ public class RequestResponseTest {
     }
 
     public ResumeMirrorTopicsRequest createResumeMirrorTopicsRequest(short version) {
-        ResumeMirrorTopicsRequestData.TopicDataCollection topics = new ResumeMirrorTopicsRequestData.TopicDataCollection();
-        topics.add(new ResumeMirrorTopicsRequestData.TopicData()
+        ResumeMirrorTopicsRequestData.TopicMetadataCollection topics = new ResumeMirrorTopicsRequestData.TopicMetadataCollection();
+        topics.add(new ResumeMirrorTopicsRequestData.TopicMetadata()
                 .setTopicId(Uuid.randomUuid())
                 .setTopicName("topic")
         );

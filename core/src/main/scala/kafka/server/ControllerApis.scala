@@ -285,16 +285,18 @@ class ControllerApis(
       throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
-    val topics = startMirrorTopicsRequest.data().topics()
-    val unauthorizedTopics = topics.asScala.map(_.topicName()).filterNot(topic =>
+    val wireTopics = startMirrorTopicsRequest.data().topics()
+    val unauthorizedTopics = wireTopics.asScala.map(_.topicName()).filterNot(topic =>
       authHelper.authorize(request.context, ALTER_CONFIGS, TOPIC, topic, logIfDenied = false)).toSet
     if (unauthorizedTopics.nonEmpty)
       throw new TopicAuthorizationException(unauthorizedTopics.asJava)
+    val topics = wireTopics.asScala.map(t =>
+      new Controller.MirrorTopicMetadata(t.topicName(), t.topicId(), t.numPartitions())).toList.asJava
     val includePatterns = startMirrorTopicsRequest.data().includePatterns()
     val excludePatterns = startMirrorTopicsRequest.data().excludePatterns()
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    controller.startMirrorTopics(context, mirrorName, new java.util.ArrayList(topics),
+    controller.startMirrorTopics(context, mirrorName, topics,
         includePatterns, excludePatterns)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {

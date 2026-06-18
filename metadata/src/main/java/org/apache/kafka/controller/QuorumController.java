@@ -61,7 +61,6 @@ import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
-import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
 import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
 import org.apache.kafka.common.message.StopMirrorTopicsResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
@@ -1790,19 +1789,10 @@ public final class QuorumController implements Controller {
     }
 
     @Override
-    public CompletableFuture<BumpLeaderEpochsResponseData> bumpLeaderEpoch(
-            ControllerRequestContext context,
-            Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs
-    ) {
-        return appendWriteEvent("bumpLeaderEpochs", context.deadlineNs(),
-                () -> replicationControl.bumpLeaderEpochs(partitionLeaderEpochs));
-    }
-
-    @Override
     public CompletableFuture<StartMirrorTopicsResponseData> startMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
-            List<StartMirrorTopicsRequestData.TopicData> topics,
+            List<Controller.MirrorTopicMetadata> topics,
             List<String> includePatterns,
             List<String> excludePatterns
     ) {
@@ -1850,6 +1840,15 @@ public final class QuorumController implements Controller {
     ) {
         return appendWriteEvent("deleteClusterMirror", context.deadlineNs(),
                 () -> configurationControl.deleteClusterMirror(mirrorName, brokerMetadataOffset, replicationControl));
+    }
+
+    @Override
+    public CompletableFuture<BumpLeaderEpochsResponseData> bumpLeaderEpoch(
+            ControllerRequestContext context,
+            Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs
+    ) {
+        return appendWriteEvent("bumpLeaderEpochs", context.deadlineNs(),
+                () -> replicationControl.bumpLeaderEpochs(partitionLeaderEpochs));
     }
 
     @Override

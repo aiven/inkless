@@ -31,7 +31,6 @@ import org.apache.kafka.common.message.CreateClusterMirrorResponseData;
 import org.apache.kafka.common.message.DeleteClusterMirrorResponseData;
 import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
-import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
 import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
 import org.apache.kafka.common.message.StopMirrorTopicsResponseData;
 import org.apache.kafka.common.metadata.ClearElrRecord;
@@ -329,9 +328,10 @@ public class ConfigurationControlManager {
                 continue;
             }
 
-            // Don't allow to pause a topic when stopping/stopped
             if (currMirrorStateChange == MirrorPartitionState.STOPPED.value()) {
-                topicRes.setErrorCode(Errors.MIRROR_TOPIC_BEING_STOPPED.code()).setName(topic);
+                topicRes.setErrorCode(Errors.MIRROR_TOPIC_BEING_STOPPED.code()).setName(topic)
+                        .setErrorMessage("Topic '" + topic + "' is in "
+                                + MirrorPartitionState.fromValue((byte) currMirrorStateChange) + " state");
                 topicResList.add(topicRes);
                 continue;
             }
@@ -380,7 +380,9 @@ public class ConfigurationControlManager {
             }
 
             if (currMirrorStateChange != MirrorPartitionState.PAUSED.value()) {
-                topicRes.setErrorCode(Errors.MIRROR_TOPIC_NOT_PAUSED.code()).setName(topic);
+                topicRes.setErrorCode(Errors.MIRROR_TOPIC_NOT_PAUSED.code()).setName(topic)
+                        .setErrorMessage("Topic '" + topic + "' is in "
+                                + MirrorPartitionState.fromValue((byte) currMirrorStateChange) + " state");
                 topicResList.add(topicRes);
                 continue;
             }
@@ -399,7 +401,7 @@ public class ConfigurationControlManager {
 
     ControllerResult<StartMirrorTopicsResponseData> startMirrorTopics(
             String mirrorName,
-            List<StartMirrorTopicsRequestData.TopicData> topics,
+            List<Controller.MirrorTopicMetadata> topics,
             List<String> includePatterns,
             List<String> excludePatterns,
             ReplicationControlManager replicationControl) {
@@ -407,7 +409,7 @@ public class ConfigurationControlManager {
         StartMirrorTopicsResponseData data = new StartMirrorTopicsResponseData();
         data.setMirrorName(mirrorName);
 
-        Set<String> topicNames = topics.stream().map(StartMirrorTopicsRequestData.TopicData::topicName).collect(Collectors.toSet());
+        Set<String> topicNames = topics.stream().map(Controller.MirrorTopicMetadata::name).collect(Collectors.toSet());
         ApiError patternError = updatePatternsAndStopExcluded(mirrorName, records, topicNames, replicationControl, (includeSet, excludeSet) -> {
             // auto-include explicitly started topics so validation works fine
             for (String topicName : topicNames) {
@@ -429,15 +431,15 @@ public class ConfigurationControlManager {
         }
 
         List<StartMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
-        for (StartMirrorTopicsRequestData.TopicData topic : topics) {
+        for (Controller.MirrorTopicMetadata topic : topics) {
             StartMirrorTopicsResponseData.TopicResult topicRes = new StartMirrorTopicsResponseData.TopicResult();
-            String topicName = topic.topicName();
+            String topicName = topic.name();
 
             // When topic ID and partition count are missing, the caller only provided the topic
             // name without metatata (see StartMirrorTopicsOptions). The topic was already added
             // to mirror.topics.include above, so discoverTopicsByPattern will fetch the metadata
             // from the source and create it at the next metadata refresh.
-            if (topic.topicId().equals(Uuid.ZERO_UUID) && topic.numPartitions() <= 0) {
+            if (topic.id().equals(Uuid.ZERO_UUID) && topic.numPartitions() <= 0) {
                 log.warn("Topic {} for mirror {} has no topic ID or partition info and will be" +
                         " created at the next metadata refresh", topicName, mirrorName);
                 topicRes.setName(topicName);
@@ -446,7 +448,7 @@ public class ConfigurationControlManager {
             }
 
             // For pre-2.8 sources (ZERO_UUID) with partition info, assign a random UUID
-            Uuid topicId = topic.topicId().equals(Uuid.ZERO_UUID) ? Uuid.randomUuid() : topic.topicId();
+            Uuid topicId = topic.id().equals(Uuid.ZERO_UUID) ? Uuid.randomUuid() : topic.id();
 
             if (topic.numPartitions() > 0) {
                 ApiError createError = replicationControl.createMirrorTopic(
@@ -464,7 +466,9 @@ public class ConfigurationControlManager {
                 String currMirrorNameValue = topicInfo.mirrorName();
                 int currMirrorStateChange = topicInfo.mirrorState();
                 if (currMirrorNameValue != null && !currMirrorNameValue.isBlank() && currMirrorStateChange != MirrorPartitionState.STOPPED.value()) {
-                    topicRes.setErrorCode(Errors.TOPIC_ALREADY_IN_CLUSTER_MIRROR.code()).setName(topicName);
+                    topicRes.setErrorCode(Errors.TOPIC_ALREADY_IN_CLUSTER_MIRROR.code()).setName(topicName)
+                            .setErrorMessage("Topic '" + topicName + "' is already in mirror '" + currMirrorNameValue
+                                    + "' in " + MirrorPartitionState.fromValue((byte) currMirrorStateChange) + " state");
                     topicResList.add(topicRes);
                     continue;
                 }

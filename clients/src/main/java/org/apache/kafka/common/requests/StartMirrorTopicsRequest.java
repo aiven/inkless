@@ -40,7 +40,7 @@ public class StartMirrorTopicsRequest extends AbstractRequest {
                     ApiKeys.START_MIRROR_TOPICS.latestVersion());
             StartMirrorTopicsRequestData data = new StartMirrorTopicsRequestData();
             data.setMirrorName(mirrorName);
-            topics.forEach(topic -> data.topics().add(new StartMirrorTopicsRequestData.TopicData().setTopicName(topic)));
+            topics.forEach(topic -> data.topics().add(new StartMirrorTopicsRequestData.TopicMetadata().setTopicName(topic)));
             this.data = data;
         }
 
