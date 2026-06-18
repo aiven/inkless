@@ -233,6 +233,117 @@ public class ConfigurationControlManager {
         return ControllerResult.atomicOf(outputRecords, outputResults);
     }
 
+    ControllerResult<CreateClusterMirrorResponseData> addMirrorConfig(
+        String mirrorName,
+        Map<String, Map.Entry<AlterConfigOp.OpType, String>> configChanges
+    ) {
+        List<ApiMessageAndVersion> outputRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        CreateClusterMirrorResponseData data = new CreateClusterMirrorResponseData();
+
+        ConfigResource configResource = new ConfigResource(Type.CLUSTER_MIRROR, mirrorName);
+        final Map<String, String> existingConfig = getConfigs(configResource);
+        if (!existingConfig.isEmpty()) {
+            data.setErrorCode(CLUSTER_MIRROR_ALREADY_EXISTS.code())
+                .setErrorMessage("Mirror '" + mirrorName + "' already exists");
+            return ControllerResult.of(List.of(), data);
+        }
+
+        ApiError apiError = incrementalAlterConfigResource(configResource,
+            configChanges,
+            false,
+            outputRecords);
+        // TODO: Should handle the error here
+        log.info("!!! addMirrorConfig apiError: {} for {} {}", apiError, configResource, configChanges);
+        outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));
+
+        data.setErrorCode((short) 0);
+
+        return ControllerResult.atomicOf(outputRecords, data);
+    }
+
+    ControllerResult<StartMirrorTopicsResponseData> startMirrorTopics(
+            String mirrorName,
+            List<Controller.MirrorTopicMetadata> topics,
+            List<String> includePatterns,
+            List<String> excludePatterns,
+            ReplicationControlManager replicationControl) {
+        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        StartMirrorTopicsResponseData data = new StartMirrorTopicsResponseData();
+        data.setMirrorName(mirrorName);
+
+        Set<String> topicNames = topics.stream().map(Controller.MirrorTopicMetadata::name).collect(Collectors.toSet());
+        ApiError patternError = updatePatternsAndStopExcluded(mirrorName, records, topicNames, replicationControl, (includeSet, excludeSet) -> {
+            for (String topicName : topicNames) {
+                includeSet.add(topicName);
+                excludeSet.remove(topicName);
+            }
+            for (String pattern : includePatterns) {
+                includeSet.add(pattern);
+                excludeSet.remove(pattern);
+            }
+            for (String pattern : excludePatterns) {
+                excludeSet.add(pattern);
+                includeSet.remove(pattern);
+            }
+        });
+        if (patternError.isFailure()) {
+            data.setErrorCode(patternError.error().code());
+            return ControllerResult.of(records, data);
+        }
+
+        List<StartMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
+        for (Controller.MirrorTopicMetadata topic : topics) {
+            StartMirrorTopicsResponseData.TopicResult topicRes = new StartMirrorTopicsResponseData.TopicResult();
+            String topicName = topic.name();
+
+            if (topic.id().equals(Uuid.ZERO_UUID) && topic.numPartitions() <= 0) {
+                log.warn("Topic {} for mirror {} has no topic ID or partition info and will be" +
+                        " created at the next metadata refresh", topicName, mirrorName);
+                topicRes.setName(topicName);
+                topicResList.add(topicRes);
+                continue;
+            }
+
+            Uuid topicId = topic.id().equals(Uuid.ZERO_UUID) ? Uuid.randomUuid() : topic.id();
+
+            if (topic.numPartitions() > 0) {
+                ApiError createError = replicationControl.createMirrorTopic(
+                        topicName, topicId, topic.numPartitions(), records);
+                if (createError.isFailure() && createError.error() != Errors.TOPIC_ALREADY_EXISTS) {
+                    topicRes.setErrorCode(createError.error().code()).setName(topicName);
+                    topicResList.add(topicRes);
+                    continue;
+                }
+            }
+
+            ReplicationControlManager.TopicControlInfo topicInfo = replicationControl.getTopic(topicId);
+            if (topicInfo != null) {
+                String currMirrorNameValue = topicInfo.mirrorName();
+                int currMirrorStateChange = topicInfo.mirrorState();
+                if (currMirrorNameValue != null && !currMirrorNameValue.isBlank() && currMirrorStateChange != MirrorPartitionState.STOPPED.value()) {
+                    topicRes.setErrorCode(Errors.TOPIC_ALREADY_IN_CLUSTER_MIRROR.code()).setName(topicName)
+                            .setErrorMessage("Topic '" + topicName + "' is already in mirror '" + currMirrorNameValue
+                                    + "' in " + MirrorPartitionState.fromValue((byte) currMirrorStateChange) + " state");
+                    topicResList.add(topicRes);
+                    continue;
+                }
+            }
+
+            records.add(new ApiMessageAndVersion(
+                    new MirrorTopicStateChangeRecord()
+                            .setTopicId(topicId)
+                            .setMirrorName(mirrorName)
+                            .setDesiredState(MirrorPartitionState.MIRRORING.value()),
+                    (short) 0));
+
+            topicRes.setName(topicName);
+            topicResList.add(topicRes);
+        }
+        data.setTopics(topicResList);
+
+        return ControllerResult.of(records, data);
+    }
+
     ControllerResult<StopMirrorTopicsResponseData> stopMirrorTopics(String mirrorName, Set<String> topics, List<String> patterns, ReplicationControlManager replicationControl) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         StopMirrorTopicsResponseData data = new StopMirrorTopicsResponseData();
@@ -277,7 +388,6 @@ public class ConfigurationControlManager {
                 continue;
             }
 
-            // no-op if the topic is still in STOPPING change state
             if (currMirrorStateChange == MirrorPartitionState.STOPPED.value()) {
                 topicRes.setName(topic);
                 topicResList.add(topicRes);
@@ -355,8 +465,6 @@ public class ConfigurationControlManager {
         List<ResumeMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
         for (String topic : topics) {
             ResumeMirrorTopicsResponseData.TopicResult topicRes = new ResumeMirrorTopicsResponseData.TopicResult();
-
-
             Uuid topicId = replicationControl.getTopicId(topic);
             ReplicationControlManager.TopicControlInfo topicInfo = replicationControl.getTopic(topicId);
             if (topicInfo == null) {
@@ -397,223 +505,6 @@ public class ConfigurationControlManager {
         data.setTopics(topicResList);
 
         return ControllerResult.of(records, data);
-    }
-
-    ControllerResult<StartMirrorTopicsResponseData> startMirrorTopics(
-            String mirrorName,
-            List<Controller.MirrorTopicMetadata> topics,
-            List<String> includePatterns,
-            List<String> excludePatterns,
-            ReplicationControlManager replicationControl) {
-        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
-        StartMirrorTopicsResponseData data = new StartMirrorTopicsResponseData();
-        data.setMirrorName(mirrorName);
-
-        Set<String> topicNames = topics.stream().map(Controller.MirrorTopicMetadata::name).collect(Collectors.toSet());
-        ApiError patternError = updatePatternsAndStopExcluded(mirrorName, records, topicNames, replicationControl, (includeSet, excludeSet) -> {
-            // auto-include explicitly started topics so validation works fine
-            for (String topicName : topicNames) {
-                includeSet.add(topicName);
-                excludeSet.remove(topicName);
-            }
-            for (String pattern : includePatterns) {
-                includeSet.add(pattern);
-                excludeSet.remove(pattern);
-            }
-            for (String pattern : excludePatterns) {
-                excludeSet.add(pattern);
-                includeSet.remove(pattern);
-            }
-        });
-        if (patternError.isFailure()) {
-            data.setErrorCode(patternError.error().code());
-            return ControllerResult.of(records, data);
-        }
-
-        List<StartMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
-        for (Controller.MirrorTopicMetadata topic : topics) {
-            StartMirrorTopicsResponseData.TopicResult topicRes = new StartMirrorTopicsResponseData.TopicResult();
-            String topicName = topic.name();
-
-            // When topic ID and partition count are missing, the caller only provided the topic
-            // name without metatata (see StartMirrorTopicsOptions). The topic was already added
-            // to mirror.topics.include above, so discoverTopicsByPattern will fetch the metadata
-            // from the source and create it at the next metadata refresh.
-            if (topic.id().equals(Uuid.ZERO_UUID) && topic.numPartitions() <= 0) {
-                log.warn("Topic {} for mirror {} has no topic ID or partition info and will be" +
-                        " created at the next metadata refresh", topicName, mirrorName);
-                topicRes.setName(topicName);
-                topicResList.add(topicRes);
-                continue;
-            }
-
-            // For pre-2.8 sources (ZERO_UUID) with partition info, assign a random UUID
-            Uuid topicId = topic.id().equals(Uuid.ZERO_UUID) ? Uuid.randomUuid() : topic.id();
-
-            if (topic.numPartitions() > 0) {
-                ApiError createError = replicationControl.createMirrorTopic(
-                        topicName, topicId, topic.numPartitions(), records);
-                if (createError.isFailure() && createError.error() != Errors.TOPIC_ALREADY_EXISTS) {
-                    // TODO: emit metric for mirror topic creation failure with error type (e.g. INVALID_REPLICATION_FACTOR)
-                    topicRes.setErrorCode(createError.error().code()).setName(topicName);
-                    topicResList.add(topicRes);
-                    continue;
-                }
-            }
-
-            ReplicationControlManager.TopicControlInfo topicInfo = replicationControl.getTopic(topicId);
-            if (topicInfo != null) {
-                String currMirrorNameValue = topicInfo.mirrorName();
-                int currMirrorStateChange = topicInfo.mirrorState();
-                if (currMirrorNameValue != null && !currMirrorNameValue.isBlank() && currMirrorStateChange != MirrorPartitionState.STOPPED.value()) {
-                    topicRes.setErrorCode(Errors.TOPIC_ALREADY_IN_CLUSTER_MIRROR.code()).setName(topicName)
-                            .setErrorMessage("Topic '" + topicName + "' is already in mirror '" + currMirrorNameValue
-                                    + "' in " + MirrorPartitionState.fromValue((byte) currMirrorStateChange) + " state");
-                    topicResList.add(topicRes);
-                    continue;
-                }
-            }
-
-            records.add(new ApiMessageAndVersion(
-                    new MirrorTopicStateChangeRecord()
-                            .setTopicId(topicId)
-                            .setMirrorName(mirrorName)
-                            .setDesiredState(MirrorPartitionState.MIRRORING.value()),
-                    (short) 0));
-
-            topicRes.setName(topicName);
-            topicResList.add(topicRes);
-        }
-        data.setTopics(topicResList);
-
-        return ControllerResult.of(records, data);
-    }
-
-    private static Set<String> parseCsvToSet(String csv) {
-        Set<String> result = new LinkedHashSet<>();
-        if (csv != null && !csv.isEmpty()) {
-            for (String s : csv.split(",")) {
-                String trimmed = s.trim();
-                if (!trimmed.isEmpty()) {
-                    result.add(trimmed);
-                }
-            }
-        }
-        return result;
-    }
-
-    /**
-     * Updates mirror.topics.include/exclude on the MIRROR config resource,
-     * then stops any active topics that now match the updated exclude pattern.
-     */
-    private ApiError updatePatternsAndStopExcluded(String mirrorName,
-                                                   List<ApiMessageAndVersion> records,
-                                                   Set<String> topics,
-                                                   ReplicationControlManager replicationControl,
-                                                   BiConsumer<Set<String>,
-                                                   Set<String>> mutator) {
-        ConfigResource mirrorResource = new ConfigResource(Type.CLUSTER_MIRROR, mirrorName);
-        TimelineHashMap<String, String> mirrorConfigs = configData.get(mirrorResource);
-
-        String currentInclude = mirrorConfigs != null ? mirrorConfigs.getOrDefault("mirror.topics.include", "") : "";
-        String currentExclude = mirrorConfigs != null ? mirrorConfigs.getOrDefault("mirror.topics.exclude", "") : "";
-
-        Set<String> includeSet = parseCsvToSet(currentInclude);
-        Set<String> excludeSet = parseCsvToSet(currentExclude);
-        mutator.accept(includeSet, excludeSet);
-
-        ApiError topicsInPatternsError = validateTopicsInPatterns(topics, includeSet, excludeSet);
-        if (topicsInPatternsError.isFailure()) {
-            return topicsInPatternsError;
-        }
-
-        Map<String, Entry<OpType, String>> ops = Map.of(
-                "mirror.topics.include", new AbstractMap.SimpleImmutableEntry<>(SET, String.join(",", includeSet)),
-                "mirror.topics.exclude", new AbstractMap.SimpleImmutableEntry<>(SET, String.join(",", excludeSet)));
-        ControllerResult<ApiError> result = incrementalAlterConfig(mirrorResource, ops, false);
-        if (result.response().isFailure()) {
-            return result.response();
-        }
-        records.addAll(result.records());
-        stopExcludedTopics(mirrorName, excludeSet, records, replicationControl);
-        return ApiError.NONE;
-    }
-
-    // validate the topics is not excluded by the excludeSet pattern, and is included in includeSet pattern
-    private ApiError validateTopicsInPatterns(Set<String> topics, Set<String> includeSet, Set<String> excludeSet) {
-        if (topics.isEmpty()) {
-            return ApiError.NONE;
-        }
-        Pattern includePatterns = MirrorFilterUtils.compilePatternList(includeSet.stream().toList());
-        Pattern excludePatterns = MirrorFilterUtils.compilePatternList(excludeSet.stream().toList());
-
-        if (excludePatterns != null) {
-            boolean topicExcluded = topics.stream().anyMatch(topic -> excludePatterns.matcher(topic).matches());
-            if (topicExcluded) {
-                return new ApiError(Errors.INVALID_REQUEST, "Unable to start the topics to mirror because some topics are excluded by exclude patterns: " + excludeSet);
-            }
-        }
-        if (includePatterns != null) {
-            boolean topicNotIncluded = topics.stream().anyMatch(topic -> !includePatterns.matcher(topic).matches());
-            if (topicNotIncluded) {
-                return new ApiError(Errors.INVALID_REQUEST, "Unable to start the topics to mirror because some topics are not included in include patterns: " + includeSet);
-            }
-        }
-
-        return ApiError.NONE;
-    }
-
-    /**
-     * Scans active topics for the given mirror and stops any that match the current exclude pattern.
-     * Called after pattern updates to enforce exclusion on already-mirroring topics.
-     */
-    private void stopExcludedTopics(String mirrorName, Set<String> excludePatterns, List<ApiMessageAndVersion> records, ReplicationControlManager replicationControl) {
-        if (excludePatterns.isEmpty()) return;
-
-        String combined = String.join("|", excludePatterns);
-        Pattern excludePattern = Pattern.compile("^(" + combined + ")$");
-
-        replicationControl.getMirrorTopics().forEach(topicInfo -> {
-            String topicName = topicInfo.name();
-            String curMirrorName = topicInfo.mirrorName();
-            if (topicName == null || !curMirrorName.equals(mirrorName))
-                return;
-
-            if (excludePattern.matcher(topicName).matches()) {
-                records.add(new ApiMessageAndVersion(new MirrorTopicStateChangeRecord()
-                    .setTopicId(topicInfo.topicId())
-                    .setMirrorName(mirrorName)
-                    .setDesiredState(MirrorPartitionState.STOPPED.value()), (short) 0));
-            }
-        });
-    }
-
-    ControllerResult<CreateClusterMirrorResponseData> addMirrorConfig(
-        String mirrorName,
-        Map<String, Map.Entry<AlterConfigOp.OpType, String>> configChanges
-    ) {
-        List<ApiMessageAndVersion> outputRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
-        CreateClusterMirrorResponseData data = new CreateClusterMirrorResponseData();
-
-        ConfigResource configResource = new ConfigResource(Type.CLUSTER_MIRROR, mirrorName);
-        final Map<String, String> existingConfig = getConfigs(configResource);
-        if (!existingConfig.isEmpty()) {
-            data.setErrorCode(CLUSTER_MIRROR_ALREADY_EXISTS.code())
-                .setErrorMessage("Mirror '" + mirrorName + "' already exists");
-            return ControllerResult.of(List.of(), data);
-        }
-
-        ApiError apiError = incrementalAlterConfigResource(configResource,
-            configChanges,
-            false,
-            outputRecords);
-        // TODO: Should handle the error here
-        log.info("!!! addMirrorConfig apiError: {} for {} {}", apiError, configResource, configChanges);
-        outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));
-
-        data.setErrorCode((short) 0);
-
-        return ControllerResult.atomicOf(outputRecords, data);
     }
 
     ControllerResult<DeleteClusterMirrorResponseData> deleteClusterMirror(String mirrorName, long stateValidationOffset, ReplicationControlManager replicationControl) {
@@ -694,6 +585,96 @@ public class ConfigurationControlManager {
         // Topic disassociations and mirror config tombstones are applied as a single atomic batch
         data.setErrorCode((short) 0);
         return ControllerResult.atomicOf(records, data);
+    }
+
+    private static Set<String> parseCsvToSet(String csv) {
+        Set<String> result = new LinkedHashSet<>();
+        if (csv != null && !csv.isEmpty()) {
+            for (String s : csv.split(",")) {
+                String trimmed = s.trim();
+                if (!trimmed.isEmpty()) {
+                    result.add(trimmed);
+                }
+            }
+        }
+        return result;
+    }
+
+    private ApiError updatePatternsAndStopExcluded(String mirrorName,
+                                                   List<ApiMessageAndVersion> records,
+                                                   Set<String> topics,
+                                                   ReplicationControlManager replicationControl,
+                                                   BiConsumer<Set<String>,
+                                                   Set<String>> mutator) {
+        ConfigResource mirrorResource = new ConfigResource(Type.CLUSTER_MIRROR, mirrorName);
+        TimelineHashMap<String, String> mirrorConfigs = configData.get(mirrorResource);
+
+        String currentInclude = mirrorConfigs != null ? mirrorConfigs.getOrDefault("mirror.topics.include", "") : "";
+        String currentExclude = mirrorConfigs != null ? mirrorConfigs.getOrDefault("mirror.topics.exclude", "") : "";
+
+        Set<String> includeSet = parseCsvToSet(currentInclude);
+        Set<String> excludeSet = parseCsvToSet(currentExclude);
+        mutator.accept(includeSet, excludeSet);
+
+        ApiError topicsInPatternsError = validateTopicsInPatterns(topics, includeSet, excludeSet);
+        if (topicsInPatternsError.isFailure()) {
+            return topicsInPatternsError;
+        }
+
+        Map<String, Entry<OpType, String>> ops = Map.of(
+                "mirror.topics.include", new AbstractMap.SimpleImmutableEntry<>(SET, String.join(",", includeSet)),
+                "mirror.topics.exclude", new AbstractMap.SimpleImmutableEntry<>(SET, String.join(",", excludeSet)));
+        ControllerResult<ApiError> result = incrementalAlterConfig(mirrorResource, ops, false);
+        if (result.response().isFailure()) {
+            return result.response();
+        }
+        records.addAll(result.records());
+        stopExcludedTopics(mirrorName, excludeSet, records, replicationControl);
+        return ApiError.NONE;
+    }
+
+    private ApiError validateTopicsInPatterns(Set<String> topics, Set<String> includeSet, Set<String> excludeSet) {
+        if (topics.isEmpty()) {
+            return ApiError.NONE;
+        }
+        Pattern includePatterns = MirrorFilterUtils.compilePatternList(includeSet.stream().toList());
+        Pattern excludePatterns = MirrorFilterUtils.compilePatternList(excludeSet.stream().toList());
+
+        if (excludePatterns != null) {
+            boolean topicExcluded = topics.stream().anyMatch(topic -> excludePatterns.matcher(topic).matches());
+            if (topicExcluded) {
+                return new ApiError(Errors.INVALID_REQUEST, "Unable to start the topics to mirror because some topics are excluded by exclude patterns: " + excludeSet);
+            }
+        }
+        if (includePatterns != null) {
+            boolean topicNotIncluded = topics.stream().anyMatch(topic -> !includePatterns.matcher(topic).matches());
+            if (topicNotIncluded) {
+                return new ApiError(Errors.INVALID_REQUEST, "Unable to start the topics to mirror because some topics are not included in include patterns: " + includeSet);
+            }
+        }
+
+        return ApiError.NONE;
+    }
+
+    private void stopExcludedTopics(String mirrorName, Set<String> excludePatterns, List<ApiMessageAndVersion> records, ReplicationControlManager replicationControl) {
+        if (excludePatterns.isEmpty()) return;
+
+        String combined = String.join("|", excludePatterns);
+        Pattern excludePattern = Pattern.compile("^(" + combined + ")$");
+
+        replicationControl.getMirrorTopics().forEach(topicInfo -> {
+            String topicName = topicInfo.name();
+            String curMirrorName = topicInfo.mirrorName();
+            if (topicName == null || !curMirrorName.equals(mirrorName))
+                return;
+
+            if (excludePattern.matcher(topicName).matches()) {
+                records.add(new ApiMessageAndVersion(new MirrorTopicStateChangeRecord()
+                    .setTopicId(topicInfo.topicId())
+                    .setMirrorName(mirrorName)
+                    .setDesiredState(MirrorPartitionState.STOPPED.value()), (short) 0));
+            }
+        });
     }
 
     List<ApiMessageAndVersion> createClearElrRecordsAsNeeded(List<ApiMessageAndVersion> input) {
