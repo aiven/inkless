@@ -181,20 +181,27 @@ class InklessClassicToDisklessSwitchTest(Test):
         self.kafka.logs["kafka_data_2"]["collect_default"] = True
         self.kafka.logs["kafka_operational_logs_debug"]["collect_default"] = True
 
-    def _create_classic_topic(self, topic=None, num_partitions=None):
+    def _create_classic_topic(self, topic=None, num_partitions=None,
+                              replica_assignment=None, configs=None):
         if topic is None:
             topic = self.topic
         if num_partitions is None:
             num_partitions = self.num_partitions
-        self.kafka.create_topic({
+        topic_cfg = {
             "topic": topic,
-            "partitions": num_partitions,
-            "replication-factor": self.replication_factor,
             "configs": {
                 "min.insync.replicas": 2,
                 "diskless.enable": "false",
             }
-        })
+        }
+        if replica_assignment is None:
+            topic_cfg["partitions"] = num_partitions
+            topic_cfg["replication-factor"] = self.replication_factor
+        else:
+            topic_cfg["replica-assignment"] = replica_assignment
+        if configs:
+            topic_cfg["configs"].update(configs)
+        self.kafka.create_topic(topic_cfg)
 
     def _create_kafka_with_tiered_storage(self):
         """Single-broker cluster with real (LocalTieredStorage) tiered storage
@@ -576,6 +583,100 @@ class InklessClassicToDisklessSwitchTest(Test):
         replicas = self.kafka.replicas(topic, partition)
         return [r for r in replicas if r != leader]
 
+    def _wait_for_partition_leader(self, expected_node, topic=None, partition=0, timeout_sec=120):
+        if topic is None:
+            topic = self.topic
+        expected_broker_id = self.kafka.idx(expected_node)
+
+        def leader_is_expected():
+            try:
+                return self.kafka.idx(self._get_leader_node(topic, partition)) == expected_broker_id
+            except (Exception, RemoteCommandError):
+                return False
+
+        wait_until(
+            leader_is_expected,
+            timeout_sec=timeout_sec,
+            backoff_sec=2,
+            err_msg="Partition %s-%d did not move to expected leader broker %d within %ds" %
+                    (topic, partition, expected_broker_id, timeout_sec)
+        )
+
+    def _partition_log_dir(self, node, topic=None, partition=0):
+        if topic is None:
+            topic = self.topic
+        partition_dir = "%s-%d" % (topic, partition)
+        cmd = "for d in %s-*; do if [ -d \"$d/%s\" ]; then echo \"$d\"; fi; done" % (
+            KafkaService.DATA_LOG_DIR_PREFIX,
+            partition_dir,
+        )
+        log_dirs = []
+        for line in node.account.ssh_capture(cmd, allow_fail=True):
+            line = line.decode("utf-8") if isinstance(line, bytes) else line
+            stripped = line.strip()
+            if stripped:
+                log_dirs.append(stripped)
+        assert len(log_dirs) == 1, \
+            "Expected exactly one log dir for %s on %s, found %s" % \
+            (partition_dir, node.account.hostname, log_dirs)
+        return log_dirs[0]
+
+    def _set_replication_checkpoint_offset(self, node, topic=None, partition=0, offset=0):
+        """Rewrite the replica HW checkpoint for one topic-partition on a stopped broker.
+
+        This is only for fault injection: it creates a replica that has the full
+        local log on disk but reloads with a stale cached high-watermark.
+        """
+        if topic is None:
+            topic = self.topic
+        checkpoint = os.path.join(
+            self._partition_log_dir(node, topic, partition),
+            "replication-offset-checkpoint",
+        )
+
+        raw_checkpoint = ""
+        for line in node.account.ssh_capture("cat %s" % checkpoint):
+            line = line.decode("utf-8") if isinstance(line, bytes) else line
+            raw_checkpoint += line
+
+        lines = [line.strip() for line in raw_checkpoint.splitlines() if line.strip()]
+        assert len(lines) >= 2, "Malformed checkpoint %s on %s: %r" % \
+            (checkpoint, node.account.hostname, raw_checkpoint)
+
+        version = lines[0]
+        expected_entries = int(lines[1])
+        entry_lines = lines[2:]
+        assert expected_entries == len(entry_lines), \
+            "Malformed checkpoint %s on %s: expected %d entries but found %d" % \
+            (checkpoint, node.account.hostname, expected_entries, len(entry_lines))
+
+        entries = []
+        updated = False
+        for entry_line in entry_lines:
+            parts = entry_line.split()
+            assert len(parts) == 3, "Malformed checkpoint entry in %s: %r" % \
+                (checkpoint, entry_line)
+            entry_topic, entry_partition, entry_offset = parts
+            entry_partition = int(entry_partition)
+            if entry_topic == topic and entry_partition == partition:
+                entry_offset = offset
+                updated = True
+            else:
+                entry_offset = int(entry_offset)
+            entries.append((entry_topic, entry_partition, entry_offset))
+
+        if not updated:
+            entries.append((topic, partition, offset))
+
+        rewritten_checkpoint = "%s\n%d\n%s\n" % (
+            version,
+            len(entries),
+            "\n".join("%s %d %d" % entry for entry in entries),
+        )
+        self.logger.info("Setting %s-%d replication checkpoint on %s to %d",
+                         topic, partition, node.account.hostname, offset)
+        node.account.create_file(checkpoint, rewritten_checkpoint)
+
     def _restart_broker(self, node, clean_shutdown=True):
         self.logger.info("Restarting broker %s (clean=%s)", node.account.hostname, clean_shutdown)
         self.kafka.restart_node(node, clean_shutdown=clean_shutdown, timeout_sec=self.BROKER_STARTUP_TIMEOUT_SEC)
@@ -769,6 +870,19 @@ class InklessClassicToDisklessSwitchTest(Test):
         # The tool exits non-zero if there is no election to run for some
         # partition (e.g. already on the preferred leader); only the
         # successful redistribution matters here.
+        node.account.ssh(cmd, allow_fail=True)
+
+    def _run_unclean_leader_election(self, topic=None, partition=0):
+        if topic is None:
+            topic = self.topic
+        node = self.kafka.nodes[0]
+        cmd = "%s --bootstrap-server %s --election-type unclean --topic %s --partition %d" % (
+            self.kafka.path.script("kafka-leader-election.sh", node),
+            self.kafka.bootstrap_servers(),
+            topic,
+            partition,
+        )
+        self.logger.info("Running unclean leader election: %s", cmd)
         node.account.ssh(cmd, allow_fail=True)
 
     # -----------------------------------------------------------------------
@@ -1156,6 +1270,128 @@ class InklessClassicToDisklessSwitchTest(Test):
                                                     wait_for_completion=True)
 
         assert consumed == total, "Classic data lost after unclean shutdown: expected exactly %d but got %d" % (total, consumed)
+
+    @cluster(num_nodes=5)
+    @matrix(metadata_quorum=[quorum.isolated_kraft])
+    def test_switched_leader_promotion_restores_stale_hw(self, metadata_quorum) -> None:
+        """Promote an already-switched replica whose local HW is stale.
+
+        The CI failure this guards against is not missing log data: the promoted
+        replica has the whole classic prefix up to the committed seal, but its
+        cached high-watermark is below the seal. Without the leader-promotion
+        reconcile, consumers are clamped at that stale HW and never reach the
+        diskless tail. This test injects that state directly by rewriting the
+        preferred replica's HW checkpoint while it is stopped, then promoting it
+        after it has come back as an existing follower partition.
+        """
+        self.num_partitions = 1
+        self._create_kafka()
+        self.kafka.start()
+
+        stale_preferred = self.kafka.nodes[0]
+        switch_leader = self.kafka.nodes[1]
+        other_replica = self.kafka.nodes[2]
+        replica_assignment = "%d:%d:%d" % (
+            self.kafka.idx(stale_preferred),
+            self.kafka.idx(switch_leader),
+            self.kafka.idx(other_replica),
+        )
+        self._create_classic_topic(
+            num_partitions=1,
+            replica_assignment=replica_assignment,
+        )
+
+        # The preferred replica starts as leader. Move leadership away before
+        # producing/switching so it is a follower with a complete classic prefix.
+        self._wait_for_partition_leader(stale_preferred, partition=0)
+        self._stop_broker(stale_preferred, clean_shutdown=True)
+        self._wait_for_partition_leader(switch_leader, partition=0)
+        self._start_broker(stale_preferred)
+        self._wait_for_all_partitions_isr_full(num_partitions=1)
+        self._wait_for_partition_leader(switch_leader, partition=0)
+
+        classic_count = self._produce_messages(num_messages=5000)
+
+        self._switch_topic_to_diskless()
+        self._wait_for_switch_complete()
+
+        diskless_count = self._produce_messages(num_messages=1000)
+        total = classic_count + diskless_count
+
+        stale_hw = classic_count // 2
+        assert stale_hw > 0 and stale_hw < classic_count
+
+        # Enable unclean election only after the switch has committed. The
+        # switch precondition rejects topics with unclean election enabled, but
+        # the forced promotion below needs it to elect the isolated replica.
+        self.kafka.alter_topic_config(
+            self.topic,
+            "unclean.leader.election.enable",
+            "true",
+        )
+
+        # Restart the preferred follower with a stale HW checkpoint. Keep it
+        # partitioned from the current ISR so its follower fetcher cannot heal
+        # the HW before we promote it.
+        self._stop_broker(stale_preferred, clean_shutdown=True)
+        self._set_replication_checkpoint_offset(
+            stale_preferred,
+            partition=0,
+            offset=stale_hw,
+        )
+
+        self._start_trogdor()
+        partition_fault = None
+        try:
+            partition_spec = NetworkPartitionFaultSpec(
+                0,
+                5 * 60 * 1000,
+                [[stale_preferred], [switch_leader, other_replica]],
+            )
+            partition_fault = self.trogdor.create_task(
+                "isolate-stale-hw-preferred",
+                partition_spec,
+            )
+            wait_until(
+                lambda: partition_fault.running(),
+                timeout_sec=30,
+                backoff_sec=1,
+                err_msg="Network partition fault did not start before stale broker restart",
+            )
+
+            self._start_broker(stale_preferred)
+
+            # Take down the in-sync replicas so the isolated preferred replica
+            # is the only live replica and the unclean election picks it. This
+            # is deliberately a harness shortcut; the data-loss concern is
+            # avoided because the edited replica's LEO is the committed seal.
+            self.logger.info("Stopping ISR brokers %s and %s to force stale-HW leader promotion",
+                             switch_leader.account.hostname, other_replica.account.hostname)
+            self.kafka.stop_node(switch_leader, clean_shutdown=False,
+                                 timeout_sec=self.BROKER_STARTUP_TIMEOUT_SEC)
+            self.kafka.stop_node(other_replica, clean_shutdown=False,
+                                 timeout_sec=self.BROKER_STARTUP_TIMEOUT_SEC)
+            self._run_unclean_leader_election(partition=0)
+            self._wait_for_partition_leader(stale_preferred, partition=0)
+
+            partition_fault.stop()
+            partition_fault.wait_for_done(timeout_sec=60)
+            partition_fault = None
+        finally:
+            if partition_fault is not None:
+                partition_fault.stop()
+                partition_fault.wait_for_done(timeout_sec=60)
+            self._stop_trogdor()
+
+        consumed = self._consume_all_from_beginning(
+            expected_count=total,
+            timeout_sec=self.CONSUME_TIMEOUT_SEC,
+            wait_for_completion=True,
+        )
+        assert consumed == total, \
+            ("Stale-HW switched leader served only %d of %d records "
+             "(classic=%d, diskless=%d, injected stale HW=%d)") % \
+            (consumed, total, classic_count, diskless_count, stale_hw)
 
     # -----------------------------------------------------------------------
     # Category B: Mid-Switch Fault Tolerance

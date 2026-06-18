@@ -29,6 +29,7 @@ import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.record.{MemoryRecords, SimpleRecord}
 import org.apache.kafka.common.utils.Time
 import org.apache.kafka.image._
+import org.apache.kafka.metadata.{InitDisklessLogFields, PartitionRegistration}
 import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion}
 import org.apache.kafka.server.config.ServerConfigs
 import org.apache.kafka.server.PartitionFetchState
@@ -84,18 +85,21 @@ class DisklessSwitchInvariantsTest {
 
   // --- Invariant: Sealed leader HW >= seal offset ---
 
-  @ParameterizedTest(name = "leader checkpoint hw={0}, seal={1}")
+  @ParameterizedTest(name = "leader checkpoint hw={0}, seal={1}, leo={2}")
   @MethodSource(Array("sealedLeaderScenarios"))
-  def testSealedLeaderHwInvariant(checkpointHw: Long, sealOffset: Long, expectedHw: Long): Unit = {
+  def testSealedLeaderHwInvariant(
+      checkpointHw: Long,
+      sealOffset: Long,
+      localLeo: Long,
+      expectedHw: Long,
+      expectedLeo: Long): Unit = {
     val topicName = "switched-topic"
     val topicId = Uuid.randomUuid()
     val tp = new TopicPartition(topicName, 0)
-    // For committed seals, LEO == seal (fully replicated). For pending/none, use a fixed LEO.
-    val leo = if (sealOffset >= 0) sealOffset else 10L
 
     replicaManager = createReplicaManager(List(topicName))
     val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
-    populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo, checkpointHw)
+    populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, localLeo, checkpointHw)
 
     when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
       .thenReturn(sealOffset)
@@ -110,6 +114,8 @@ class DisklessSwitchInvariantsTest {
     assertEquals(expectedHw, partition.localLogOrException.highWatermark,
       s"Sealed leader invariant: HW must be >= sealOffset ($sealOffset) " +
       s"regardless of checkpoint state ($checkpointHw)")
+    assertEquals(expectedLeo, partition.localLogOrException.logEndOffset,
+      s"Sealed leader invariant: LEO must be reconciled to expected offset $expectedLeo")
   }
 
   // --- Invariant: Sealed follower with HW < seal triggers catch-up fetcher ---
@@ -156,7 +162,7 @@ class DisklessSwitchInvariantsTest {
   private def leaderDelta(topicName: String, topicId: Uuid): TopicsDelta = {
     val delta = new TopicsDelta(TopicsImage.EMPTY)
     delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
-    delta.replay(new PartitionRecord()
+    val partitionRecord = new PartitionRecord()
       .setPartitionId(0)
       .setTopicId(topicId)
       .setReplicas(util.Arrays.asList(brokerId, brokerId + 1))
@@ -164,14 +170,15 @@ class DisklessSwitchInvariantsTest {
       .setLeader(brokerId)
       .setLeaderEpoch(0)
       .setPartitionEpoch(0)
-    )
+    addClassicToDisklessStartOffsetIfPresent(topicName, partitionRecord)
+    delta.replay(partitionRecord)
     delta
   }
 
   private def followerDelta(topicName: String, topicId: Uuid, leaderId: Int): TopicsDelta = {
     val delta = new TopicsDelta(TopicsImage.EMPTY)
     delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
-    delta.replay(new PartitionRecord()
+    val partitionRecord = new PartitionRecord()
       .setPartitionId(0)
       .setTopicId(topicId)
       .setReplicas(util.Arrays.asList(brokerId, leaderId))
@@ -179,8 +186,18 @@ class DisklessSwitchInvariantsTest {
       .setLeader(leaderId)
       .setLeaderEpoch(0)
       .setPartitionEpoch(0)
-    )
+    addClassicToDisklessStartOffsetIfPresent(topicName, partitionRecord)
+    delta.replay(partitionRecord)
     delta
+  }
+
+  private def addClassicToDisklessStartOffsetIfPresent(topicName: String, partitionRecord: PartitionRecord): Unit = {
+    val sealOffset = replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(
+      new TopicPartition(topicName, partitionRecord.partitionId()))
+    if (sealOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+      partitionRecord.unknownTaggedFields().add(
+        InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+    }
   }
 
   private def populateLocalLogAtLeoAndCheckpointedHwm(
@@ -263,28 +280,30 @@ object DisklessSwitchInvariantsTest {
   import org.apache.kafka.metadata.PartitionRegistration._
 
   def sealedLeaderScenarios(): java.util.stream.Stream[Arguments] = {
-    // (checkpointHw, sealOffset, expectedHwAfterApplyDelta)
+    // (checkpointHw, sealOffset, localLeo, expectedHwAfterApplyDelta, expectedLeoAfterApplyDelta)
     // Committed seal (>= 0): HW is always advanced to sealOffset regardless of checkpoint.
     // The post-restart path (getOrCreatePartition + makeLeader) creates a new Partition object
     // that re-initializes HW from the checkpoint via LazyOffsetCheckpoints. However, since the
     // log already exists, LogManager returns it without re-reading the checkpoint. The seal
     // offset advancement in applyLocalLeadersDelta (sealOffset >= 0 && HW < sealOffset guard)
-    // compensates by forcing HW = sealOffset.
+    // compensates by forcing HW = sealOffset, even when an uncommitted tail must first be
+    // truncated from LEO > seal to LEO == seal.
     java.util.stream.Stream.of(
-      Arguments.of(0L: java.lang.Long,  10L: java.lang.Long, 10L: java.lang.Long),  // unclean shutdown
-      Arguments.of(5L: java.lang.Long,  10L: java.lang.Long, 10L: java.lang.Long),  // partial flush
-      Arguments.of(10L: java.lang.Long, 10L: java.lang.Long, 10L: java.lang.Long),  // clean shutdown
+      Arguments.of(0L: java.lang.Long,  10L: java.lang.Long, 10L: java.lang.Long, 10L: java.lang.Long, 10L: java.lang.Long),  // unclean shutdown
+      Arguments.of(5L: java.lang.Long,  10L: java.lang.Long, 10L: java.lang.Long, 10L: java.lang.Long, 10L: java.lang.Long),  // partial flush
+      Arguments.of(5L: java.lang.Long,  10L: java.lang.Long, 13L: java.lang.Long, 10L: java.lang.Long, 10L: java.lang.Long),  // stale HW with uncommitted tail
+      Arguments.of(10L: java.lang.Long, 10L: java.lang.Long, 10L: java.lang.Long, 10L: java.lang.Long, 10L: java.lang.Long),  // clean shutdown
       // Pending seal (-2): partition is sealed. The HW is NOT advanced because the seal
       // offset is not yet committed. The post-restart path does not restore HW from
       // checkpoint for pending seals — the pending fetcher (follower side) will eventually
       // propagate the correct HW when the seal commits.
-      Arguments.of(0L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, 0L: java.lang.Long),
-      Arguments.of(5L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, 0L: java.lang.Long),
+      Arguments.of(0L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, 10L: java.lang.Long, 0L: java.lang.Long, 10L: java.lang.Long),
+      Arguments.of(5L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, 10L: java.lang.Long, 0L: java.lang.Long, 10L: java.lang.Long),
       // No switch (-1): not realistic today but documents defensive behavior of the
       // post-restart path which seals unconditionally. Relevant if diskless topics
       // eventually use local logs as a read cache.
-      Arguments.of(0L: java.lang.Long,  NO_CLASSIC_TO_DISKLESS_START_OFFSET: java.lang.Long, 0L: java.lang.Long),
-      Arguments.of(5L: java.lang.Long,  NO_CLASSIC_TO_DISKLESS_START_OFFSET: java.lang.Long, 0L: java.lang.Long),
+      Arguments.of(0L: java.lang.Long,  NO_CLASSIC_TO_DISKLESS_START_OFFSET: java.lang.Long, 10L: java.lang.Long, 0L: java.lang.Long, 10L: java.lang.Long),
+      Arguments.of(5L: java.lang.Long,  NO_CLASSIC_TO_DISKLESS_START_OFFSET: java.lang.Long, 10L: java.lang.Long, 0L: java.lang.Long, 10L: java.lang.Long),
     )
   }
 
