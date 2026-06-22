@@ -8,7 +8,7 @@ on:
       test-target:
         description: "Ducktape test target"
         required: true
-        default: "tests/kafkatest/tests/inkless/inkless_topic_switch_test.py"
+        default: "tests/kafkatest/tests/inkless/"
         type: string
 
 concurrency:
@@ -19,8 +19,8 @@ permissions:
   contents: read
 
 jobs:
-  classic-to-diskless-switch:
-    name: Classic to diskless switch system tests
+  inkless-system-tests:
+    name: Inkless system tests
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -69,10 +69,10 @@ jobs:
             /usr/bin/mc mb -p local/inkless
           '
 
-      - name: Run diskless switch system tests
+      - name: Run inkless system tests
         id: system-tests
         env:
-          DEFAULT_TEST_TARGET: tests/kafkatest/tests/inkless/inkless_topic_switch_test.py
+          DEFAULT_TEST_TARGET: tests/kafkatest/tests/inkless/
           REQUESTED_TEST_TARGET: ${{ github.event.inputs['test-target'] }}
         run: |
           set +e
@@ -85,7 +85,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: inkless-switch-to-diskless-results
+          name: inkless-system-tests-results
           path: |
             results/**
             tests/results/**
