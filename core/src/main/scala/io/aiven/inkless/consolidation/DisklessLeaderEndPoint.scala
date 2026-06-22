@@ -30,6 +30,7 @@ import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
 import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, ListOffsetsRequest, OffsetsForLeaderEpochResponse}
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.record.MemoryRecords
 import org.apache.kafka.metadata.{LeaderAndIsr, PartitionRegistration}
 import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.network.BrokerEndPoint
@@ -117,7 +118,8 @@ class DisklessLeaderEndPoint(
           }
           fetchResponseData.setLogStartOffset(UnifiedLog.UNKNOWN_OFFSET)
         case Right(partition) =>
-          val logStartOffset = Try(partition.localLogOrException).toOption match {
+          val localLogOpt = Try(partition.localLogOrException).toOption
+          val logStartOffset = localLogOpt match {
             case Some(localLog) => localLog.logStartOffset
             case None =>
                     logger.warn("Local log unavailable for topic-partition {}, returning unknown log start offset", tp.topicPartition)
@@ -132,6 +134,23 @@ class DisklessLeaderEndPoint(
               fetchResponseData.setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code)
             } else {
               fetchResponseData.setLogStartOffset(logStartOffset)
+              // `data.logStartOffset` is the diskless WAL start (advanced to highestRemoteOffset + 1
+              // as the WAL is pruned), not the whole-log start. Offsets in
+              // `[logStartOffset, disklessStart)` were consolidated to remote and only live there, so
+              // a fetch for them (e.g. after local-log loss) must come from the remote tier. Signal
+              // OFFSET_MOVED_TO_TIERED_STORAGE so the tier-state machine rebuilds from remote.
+              val disklessStart = data.logStartOffset
+              val requestedOffset = Option(fetchInfos.get(tp)).map(_.fetchOffset).getOrElse(-1L)
+              if (localLogOpt.exists(_.remoteLogEnabled())
+                  && logStartOffset != UnifiedLog.UNKNOWN_OFFSET
+                  && requestedOffset >= logStartOffset
+                  && requestedOffset < disklessStart) {
+                logger.debug("Offset {} for {} is below the diskless WAL start {} but at/above the whole-log start {}; " +
+                  "signalling OFFSET_MOVED_TO_TIERED_STORAGE to rebuild the consolidated remote prefix.",
+                  requestedOffset, tp.topicPartition, disklessStart, logStartOffset)
+                fetchResponseData.setErrorCode(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code)
+                fetchResponseData.setRecords(MemoryRecords.EMPTY)
+              }
             }
           } else {
             fetchResponseData.setLogStartOffset(UnifiedLog.UNKNOWN_OFFSET)
@@ -166,7 +185,30 @@ class DisklessLeaderEndPoint(
       throw Errors.forException(holder.exception().get()).exception()
     }
     val tao: TimestampAndOffset = holder.timestampAndOffset().get()
-    new OffsetAndEpoch(tao.offset, tao.leaderEpoch.orElse(0))
+    new OffsetAndEpoch(tao.offset, resolveLeaderEpoch(topicPartition, tao))
+  }
+
+  /**
+   * Resolve the leader epoch for a diskless list-offsets result.
+   *
+   * [[FetchOffsetHandler]] always stamps a placeholder `INITIAL_LEADER_EPOCH` (0), so
+   * [[TimestampAndOffset.leaderEpoch]] cannot be trusted. When the partition has a seal and a captured
+   * diskless leader epoch `E_d` and the offset is at/above the seal, it falls in the diskless region
+   * `[seal, LEO)` that was tiered to remote under `E_d`, so return `E_d`. Otherwise (offsets below the
+   * seal, or born-diskless / pre-switch partitions with no seal / no `E_d`) fall back to the placeholder.
+   * This matters because returning 0 for a diskless-region offset makes the tier-state rebuild miss the
+   * `E_d` segment and fail forever.
+   */
+  private def resolveLeaderEpoch(topicPartition: TopicPartition, tao: TimestampAndOffset): Int = {
+    val seal = replicaManager.classicToDisklessStartOffset(topicPartition)
+    val disklessLeaderEpoch = replicaManager.disklessLeaderEpoch(topicPartition)
+    if (seal >= 0 &&
+        disklessLeaderEpoch != PartitionRegistration.NO_DISKLESS_LEADER_EPOCH &&
+        tao.offset >= seal) {
+      disklessLeaderEpoch
+    } else {
+      tao.leaderEpoch.orElse(0)
+    }
   }
 
   /**
