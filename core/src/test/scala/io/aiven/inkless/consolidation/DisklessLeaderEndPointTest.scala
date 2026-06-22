@@ -32,6 +32,7 @@ import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
 import org.apache.kafka.common.record.MemoryRecords
 import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, ListOffsetsRequest, OffsetsForLeaderEpochResponse}
 import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
+import org.apache.kafka.metadata.LeaderAndIsr
 import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.storage.log.FetchPartitionData
@@ -82,6 +83,58 @@ class DisklessLeaderEndPointTest {
       () => metadataVersion,
       () => brokerEpoch
     )
+
+  /**
+   * Builds a replica fetch request that asks for `requestedOffset` on [[topicPartition]], carrying
+   * the real [[topicId]] so that [[DisklessLeaderEndPoint.fetch]] resolves the request's
+   * `fetchOffset` for that partition (it keys requested offsets by `TopicIdPartition`).
+   */
+  private def fetchBuilderForOffset(requestedOffset: Long, leaderEpoch: Int = 0): FetchRequest.Builder = {
+    val partitionData = new util.LinkedHashMap[TopicPartition, FetchRequest.PartitionData]()
+    partitionData.put(
+      topicPartition,
+      new FetchRequest.PartitionData(topicId, requestedOffset, 0L, 1024 * 1024, Optional.of(Int.box(leaderEpoch)))
+    )
+    FetchRequest.Builder.forReplica(12, 1, 1L, 100, 1, partitionData).setMaxBytes(100_000)
+  }
+
+  /**
+   * Wires an endpoint where the diskless fetch handler reports a WAL that starts at `disklessStart`
+   * (the control-plane `log_start_offset`, advanced as the WAL is pruned), while the local
+   * [[UnifiedLog]] reports the whole-log start `localLogStartOffset` and remote storage state
+   * `remoteLogEnabled`. This models a consolidating partition whose prefix `[localLogStartOffset,
+   * disklessStart)` was tiered to remote and pruned from the WAL.
+   */
+  private def consolidatedPrefixEndPoint(
+    localLogStartOffset: Long,
+    disklessStart: Long,
+    highWatermark: Long,
+    remoteLogEnabled: Boolean
+  ): DisklessLeaderEndPoint = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val partition = mock(classOf[Partition])
+    val localLog = mock(classOf[UnifiedLog])
+    when(partition.localLogOrException).thenReturn(localLog)
+    when(localLog.logStartOffset).thenReturn(localLogStartOffset)
+    when(localLog.remoteLogEnabled()).thenReturn(remoteLogEnabled)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+
+    val fetchData = new FetchPartitionData(
+      Errors.NONE,
+      highWatermark,
+      disklessStart,
+      MemoryRecords.EMPTY,
+      Optional.empty(),
+      OptionalLong.empty(),
+      Optional.empty(),
+      OptionalInt.empty(),
+      false
+    )
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
+    newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+  }
 
   @Test
   def testBuildFetchProducesReplicaFetch(): Unit = {
@@ -214,6 +267,11 @@ class DisklessLeaderEndPointTest {
     when(job.mustHandle(topicPartition.topic())).thenReturn(true)
     when(job.add(eqTo(topicPartition), any())).thenReturn(CompletableFuture.completedFuture(holder))
     doNothing().when(job).start()
+    // Not a switched topic: no seal / captured diskless epoch, so the holder's epoch is propagated as-is.
+    when(replicaManager.classicToDisklessStartOffset(topicPartition))
+      .thenReturn(org.apache.kafka.metadata.PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(replicaManager.disklessLeaderEpoch(topicPartition))
+      .thenReturn(org.apache.kafka.metadata.PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
 
     val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
     val result = invoke(endPoint)
@@ -225,6 +283,63 @@ class DisklessLeaderEndPointTest {
     assertEquals(expectedTimestamp, captor.getValue.timestamp)
     assertEquals(topicPartition.partition, captor.getValue.partitionIndex)
     assertEquals(3, captor.getValue.currentLeaderEpoch)
+  }
+
+  /**
+   * Wires an endpoint whose diskless list-offsets returns `offset` carrying the placeholder epoch
+   * [[LeaderAndIsr.INITIAL_LEADER_EPOCH]] (0) that [[FetchOffsetHandler]] always stamps -- the diskless
+   * path does not know real per-offset epochs -- against a partition with the given seal and diskless
+   * leader epoch `E_d`.
+   */
+  private def listOffsetEndPointWithPlaceholderEpoch(offset: Long, seal: Long, disklessLeaderEpoch: Int): DisklessLeaderEndPoint = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val job = mock(classOf[FetchOffsetHandler.Job])
+
+    val holder = new FileRecordsOrError(
+      Optional.empty(),
+      Optional.of(new TimestampAndOffset(0L, offset, Optional.of(Int.box(LeaderAndIsr.INITIAL_LEADER_EPOCH))))
+    )
+    when(fetchOffsetHandler.createJob()).thenReturn(job)
+    when(job.mustHandle(topicPartition.topic())).thenReturn(true)
+    when(job.add(eqTo(topicPartition), any())).thenReturn(CompletableFuture.completedFuture(holder))
+    doNothing().when(job).start()
+    when(replicaManager.classicToDisklessStartOffset(topicPartition)).thenReturn(seal)
+    when(replicaManager.disklessLeaderEpoch(topicPartition)).thenReturn(disklessLeaderEpoch)
+
+    newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+  }
+
+  @Test
+  def testFetchEarliestLocalOffsetResolvesDisklessRegionToDisklessEpoch(): Unit = {
+    // Switched topic recovery: the diskless WAL start (231261) sits in the diskless region [seal, LEO),
+    // whose segments were tiered under E_d=5. FetchOffsetHandler returns only the placeholder epoch 0,
+    // so the endpoint must override it with E_d -- otherwise the tier-state rebuild looks up the remote
+    // segment at epoch 0 and loops forever ("previous remote log segment metadata was not found").
+    val endPoint = listOffsetEndPointWithPlaceholderEpoch(offset = 231261L, seal = 150000L, disklessLeaderEpoch = 5)
+    assertEquals(new OffsetAndEpoch(231261L, 5), endPoint.fetchEarliestLocalOffset(topicPartition, 3))
+  }
+
+  @Test
+  def testFetchEarliestOffsetInClassicPrefixKeepsPlaceholderEpoch(): Unit = {
+    // An offset below the seal belongs to the classic prefix; its epochs are restored from the remote
+    // leader-epoch checkpoint during the rebuild, so the endpoint keeps the placeholder epoch (0) here.
+    val endPoint = listOffsetEndPointWithPlaceholderEpoch(offset = 0L, seal = 150000L, disklessLeaderEpoch = 5)
+    assertEquals(new OffsetAndEpoch(0L, 0), endPoint.fetchEarliestOffset(topicPartition, 3))
+  }
+
+  @Test
+  def testFetchEarliestLocalOffsetWithoutDisklessEpochKeepsPlaceholderEpoch(): Unit = {
+    // Born-diskless / pre-E_d-switch partition: no seal and no captured diskless leader epoch, so the
+    // placeholder epoch (0) is kept (born-diskless segments are tiered under epoch 0; pre-E_d keeps
+    // legacy behavior).
+    val endPoint = listOffsetEndPointWithPlaceholderEpoch(
+      offset = 231261L,
+      seal = org.apache.kafka.metadata.PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+      disklessLeaderEpoch = org.apache.kafka.metadata.PartitionRegistration.NO_DISKLESS_LEADER_EPOCH
+    )
+    assertEquals(new OffsetAndEpoch(231261L, 0), endPoint.fetchEarliestLocalOffset(topicPartition, 3))
   }
 
   @Test
@@ -774,6 +889,177 @@ class DisklessLeaderEndPointTest {
     val pd = endPoint.fetch(fetchBuilder).get(topicPartition)
     assertEquals(Errors.NONE.code, pd.errorCode)
     assertEquals(UnifiedLog.UNKNOWN_OFFSET, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchSignalsOffsetMovedToTieredStorageForConsolidatedRemotePrefix(): Unit = {
+    // Whole log starts at 0; diskless WAL was pruned up to 100; remote tier holds [0, 100).
+    // A fetch for offset 0 (e.g. a rehydrating fetcher armed at highWatermark=0) must be told the
+    // data moved to tiered storage so the stock tier-state machine rebuilds the remote prefix.
+    val endPoint = consolidatedPrefixEndPoint(localLogStartOffset = 0L, disklessStart = 100L, highWatermark = 200L, remoteLogEnabled = true)
+
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 0L)).get(topicPartition)
+
+    assertEquals(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code, pd.errorCode)
+    // The whole-log start (0) is preserved so the rebuild keeps logStartOffset at 0, not the WAL start.
+    assertEquals(0L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchSignalsOffsetMovedToTieredStorageForOffsetJustBelowDisklessStart(): Unit = {
+    // Boundary: the last offset of the consolidated prefix (disklessStart - 1) must still be redirected.
+    val endPoint = consolidatedPrefixEndPoint(localLogStartOffset = 0L, disklessStart = 100L, highWatermark = 200L, remoteLogEnabled = true)
+
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 99L)).get(topicPartition)
+
+    assertEquals(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code, pd.errorCode)
+    assertEquals(0L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchDoesNotSignalWhenRequestedOffsetAtDisklessStart(): Unit = {
+    // Steady state: the fetcher requests at/after the WAL start, which is served straight from the WAL.
+    val endPoint = consolidatedPrefixEndPoint(localLogStartOffset = 0L, disklessStart = 100L, highWatermark = 200L, remoteLogEnabled = true)
+
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 100L)).get(topicPartition)
+
+    assertEquals(Errors.NONE.code, pd.errorCode)
+    assertEquals(0L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchDoesNotSignalWhenRequestedOffsetAboveDisklessStart(): Unit = {
+    val endPoint = consolidatedPrefixEndPoint(localLogStartOffset = 0L, disklessStart = 100L, highWatermark = 200L, remoteLogEnabled = true)
+
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 150L)).get(topicPartition)
+
+    assertEquals(Errors.NONE.code, pd.errorCode)
+    assertEquals(0L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchDoesNotSignalWhenRemoteLogDisabled(): Unit = {
+    // Without tiered storage there is nothing to rebuild from; do not hijack the response.
+    val endPoint = consolidatedPrefixEndPoint(localLogStartOffset = 0L, disklessStart = 100L, highWatermark = 200L, remoteLogEnabled = false)
+
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 0L)).get(topicPartition)
+
+    assertEquals(Errors.NONE.code, pd.errorCode)
+    assertEquals(0L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchDoesNotSignalWhenRequestedOffsetBelowWholeLogStart(): Unit = {
+    // Below the whole-log start is a genuine out-of-range; leave it to the normal fetch path.
+    val endPoint = consolidatedPrefixEndPoint(localLogStartOffset = 50L, disklessStart = 100L, highWatermark = 200L, remoteLogEnabled = true)
+
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 10L)).get(topicPartition)
+
+    assertEquals(Errors.NONE.code, pd.errorCode)
+    assertEquals(50L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchDoesNotSignalWhenNoConsolidatedPrefixExists(): Unit = {
+    // WAL start == whole-log start: there is no consolidated remote prefix, so the range is empty.
+    val endPoint = consolidatedPrefixEndPoint(localLogStartOffset = 100L, disklessStart = 100L, highWatermark = 200L, remoteLogEnabled = true)
+
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 100L)).get(topicPartition)
+
+    assertEquals(Errors.NONE.code, pd.errorCode)
+    assertEquals(100L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchSignalsOffsetMovedToTieredStorageForSwitchedTopicWithNonZeroEpoch(): Unit = {
+    // Switched (classic -> diskless) topic: the diskless interval rides at a non-zero leader epoch
+    // (diskless_epoch = last_classic_epoch + 1), so the fetcher's request carries a non-zero current
+    // leader epoch. The redirect must remain epoch-agnostic: an offset in the consolidated prefix
+    // still has to be served from the remote tier regardless of the request's leader epoch.
+    val endPoint = consolidatedPrefixEndPoint(localLogStartOffset = 0L, disklessStart = 100L, highWatermark = 200L, remoteLogEnabled = true)
+
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 0L, leaderEpoch = 5)).get(topicPartition)
+
+    assertEquals(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code, pd.errorCode)
+    assertEquals(0L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchSignalsOffsetMovedToTieredStorageForSwitchedTopicClassicRegionOffset(): Unit = {
+    // Switched topic with a classic prefix tiered to remote: offsets [0, seal) are classic and
+    // [seal, disklessStart) are consolidated diskless. A fetch landing in the classic region (below
+    // the diskless WAL start) must also redirect to the remote tier, not skip to the WAL start.
+    val seal = 40L
+    val endPoint = consolidatedPrefixEndPoint(localLogStartOffset = 0L, disklessStart = 100L, highWatermark = 200L, remoteLogEnabled = true)
+
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = seal - 1, leaderEpoch = 5)).get(topicPartition)
+
+    assertEquals(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code, pd.errorCode)
+    assertEquals(0L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchDoesNotSignalWhenRequestOmitsOffset(): Unit = {
+    // A request that does not include this partition leaves requestedOffset unresolved (-1): no signal.
+    val endPoint = consolidatedPrefixEndPoint(localLogStartOffset = 0L, disklessStart = 100L, highWatermark = 200L, remoteLogEnabled = true)
+
+    val emptyRequest = new util.HashMap[TopicPartition, FetchRequest.PartitionData]()
+    val fetchBuilder = FetchRequest.Builder.forReplica(12, 1, 1L, 100, 1, emptyRequest).setMaxBytes(100_000)
+    val pd = endPoint.fetch(fetchBuilder).get(topicPartition)
+
+    assertEquals(Errors.NONE.code, pd.errorCode)
+    assertEquals(0L, pd.logStartOffset)
+  }
+
+  @Test
+  def testConsolidationFetchLoopRedirectsRemotePrefixThroughRealFetchRequest(): Unit = {
+    // Integration of the two leader-side methods the consolidation fetcher uses: the request that
+    // buildFetch produces from a PartitionFetchState (armed at offset 0 after a local-log loss) is
+    // fed straight into fetch, exercising the real FetchRequest version/topic-id plumbing. The diskless
+    // WAL starts at 100 and remote storage holds the [0, 100) prefix, so the round trip must surface
+    // OFFSET_MOVED_TO_TIERED_STORAGE for offset 0.
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val partition = mock(classOf[Partition])
+    val localLog = mock(classOf[UnifiedLog])
+    when(localLog.logStartOffset).thenReturn(0L)
+    when(localLog.remoteLogEnabled()).thenReturn(true)
+    when(partition.localLogOrException).thenReturn(localLog)
+    // buildFetch resolves the request log start offset via localLogOrException(tp)...
+    when(replicaManager.localLogOrException(topicPartition)).thenReturn(localLog)
+    // ...while fetch resolves the partition via getPartitionOrError(tp).
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+
+    val fetchData = new FetchPartitionData(
+      Errors.NONE,
+      200L,
+      100L,
+      MemoryRecords.EMPTY,
+      Optional.empty(),
+      OptionalLong.empty(),
+      Optional.empty(),
+      OptionalInt.empty(),
+      false
+    )
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    val fetchState = new PartitionFetchState(
+      Optional.of(topicId),
+      0L,
+      Optional.empty(),
+      4,
+      ReplicaState.FETCHING,
+      Optional.empty()
+    )
+
+    val replicaFetch = endPoint.buildFetch(util.Map.of(topicPartition, fetchState))
+    assertTrue(replicaFetch.result.isPresent, "buildFetch should produce a fetch request")
+
+    val pd = endPoint.fetch(replicaFetch.result.get.fetchRequest).get(topicPartition)
+    assertEquals(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code, pd.errorCode)
+    assertEquals(0L, pd.logStartOffset)
   }
 
   @Test
