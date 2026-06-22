@@ -79,6 +79,11 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
+    public DescribeTopicPartitionsResult describeTopicPartitions(Collection<String> topics, DescribeTopicsOptions options) {
+        return delegate.describeTopicPartitions(topics, options);
+    }
+
+    @Override
     public DescribeClusterResult describeCluster(DescribeClusterOptions options) {
         return delegate.describeCluster(options);
     }
