@@ -1290,6 +1290,20 @@ class Partition(val topicPartition: TopicPartition,
       }
     }
 
+    // Directly complete the truncation if there is no follower replicas
+    if (remoteReplicasMap.isEmpty) {
+      onCaughtup.ifPresent(callback => {
+        callback.accept(topicPartition)
+        onCaughtup = Optional.empty()
+      })
+      onComplete.ifPresent(callback => {
+        callback.accept(topicPartition)
+        onComplete = Optional.empty()
+        truncationWaitForAllReplicas = false
+      })
+      return true
+    }
+
     // two phase truncation:
     // 1. check if all replicas are caught up to the leader's LEO. If so, then the leader starts to truncate the log using onCaughtup callback
     // 2. check if all replicas have truncated to the expected offset. If so, then the partition is ready to move to next state
