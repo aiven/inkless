@@ -29,7 +29,7 @@ import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.MetadataResponse
 import org.apache.kafka.image.MetadataImage
-import org.apache.kafka.metadata.{BrokerRegistration, LeaderAndIsr, MetadataCache, PartitionRegistration, Replicas}
+import org.apache.kafka.metadata.{BrokerRegistration, InitDisklessLogFields, LeaderAndIsr, MetadataCache, PartitionRegistration, Replicas}
 import org.apache.kafka.server.common.{FinalizedFeatures, KRaftVersion, MetadataVersion}
 
 import java.util
@@ -174,9 +174,9 @@ class KRaftMetadataCache(
               val filteredIsr = maybeFilterAliveReplicas(image, partition.isr, listenerName, filterUnavailableEndpoints = false)
               val offlineReplicas = getOfflineReplicas(image, partition, listenerName)
               val maybeLeader = getAliveEndpoint(image, partition.leader, listenerName)
-              maybeLeader match {
+              val responsePartition = maybeLeader match {
                 case None =>
-                  result.append(new DescribeTopicPartitionsResponsePartition()
+                  new DescribeTopicPartitionsResponsePartition()
                     .setPartitionIndex(partitionId)
                     .setLeaderId(MetadataResponse.NO_LEADER_ID)
                     .setLeaderEpoch(partition.leaderEpoch)
@@ -184,9 +184,9 @@ class KRaftMetadataCache(
                     .setIsrNodes(filteredIsr)
                     .setOfflineReplicas(offlineReplicas)
                     .setEligibleLeaderReplicas(Replicas.toList(partition.elr))
-                    .setLastKnownElr(Replicas.toList(partition.lastKnownElr)))
+                    .setLastKnownElr(Replicas.toList(partition.lastKnownElr))
                 case Some(leader) =>
-                  result.append(new DescribeTopicPartitionsResponsePartition()
+                  new DescribeTopicPartitionsResponsePartition()
                     .setPartitionIndex(partitionId)
                     .setLeaderId(leader.id())
                     .setLeaderEpoch(partition.leaderEpoch)
@@ -194,8 +194,21 @@ class KRaftMetadataCache(
                     .setIsrNodes(filteredIsr)
                     .setOfflineReplicas(offlineReplicas)
                     .setEligibleLeaderReplicas(Replicas.toList(partition.elr))
-                    .setLastKnownElr(Replicas.toList(partition.lastKnownElr)))
+                    .setLastKnownElr(Replicas.toList(partition.lastKnownElr))
               }
+              if (partition.classicToDisklessStartOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+                responsePartition.unknownTaggedFields().add(
+                  InitDisklessLogFields.encodeClassicToDisklessStartOffset(partition.classicToDisklessStartOffset))
+                if (!partition.disklessProducerStates.isEmpty) {
+                  responsePartition.unknownTaggedFields().add(
+                    InitDisklessLogFields.encodeProducerStates(partition.disklessProducerStates))
+                }
+              }
+              if (partition.disklessLeaderEpoch != PartitionRegistration.NO_DISKLESS_LEADER_EPOCH) {
+                responsePartition.unknownTaggedFields().add(
+                  InitDisklessLogFields.encodeDisklessLeaderEpoch(partition.disklessLeaderEpoch))
+              }
+              result.append(responsePartition)
             }
             case _ => warn(s"The partition $partitionId does not exist for $topicName")
           }
