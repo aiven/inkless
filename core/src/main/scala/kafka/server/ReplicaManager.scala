@@ -1699,8 +1699,8 @@ class ReplicaManager(val config: KafkaConfig,
           .get(TopicConfig.MIRROR_SUPPORT_UNCLEAN_LEADER_ELECTION_CONFIG).asInstanceOf[String]
         val waitForAllReplicas = mirrorUncleanLeaderElection != null && mirrorUncleanLeaderElection.toBoolean
 
-        partition.maybeCompleteTruncation(log, waitForAllReplicas = waitForAllReplicas, onCompleteCallback = Optional.of(callback),
-          onCaughtupCallback = onCaughtupCallback)
+        partition.maybeCompleteTruncation(log, waitForAllReplicas = waitForAllReplicas,
+          onCaughtupCallback = onCaughtupCallback, onCompleteCallback = Optional.of(callback))
       })
     })
   }
