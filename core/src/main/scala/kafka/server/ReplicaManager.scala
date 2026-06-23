@@ -18,7 +18,7 @@ package kafka.server
 
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
-import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler, Reader}
+import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, Reader}
 import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.produce.AppendHandler
@@ -79,6 +79,7 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
 import java.io.File
 import java.lang.{Long => JLong}
+import java.nio.ByteBuffer
 import java.nio.file.{Files, Paths}
 import java.util
 import java.util.concurrent.atomic.AtomicBoolean
@@ -2020,6 +2021,101 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Build the diskless supplement fetch requests for consolidating partitions whose local log
+   * read did not satisfy minBytes. For each tracked partition, computes the remaining byte budget
+   * (original maxBytes minus what the local read already returned) and emits a PartitionData
+   * starting where the local read left off. Partitions whose remaining budget is zero, or whose
+   * local read has not yet reached the local log end offset (the classic->diskless seal), are
+   * dropped — see the exhaustion guard below.
+   */
+  private[server] def buildConsolidationSupplementFetchInfos(
+      supplements: Map[TopicIdPartition, Long],
+      fetchInfos: Seq[(TopicIdPartition, PartitionData)],
+      logReadResultMap: util.Map[TopicIdPartition, LogReadResult]
+  ): Seq[(TopicIdPartition, PartitionData)] = {
+    val fetchInfoByTp = fetchInfos.toMap
+    supplements.flatMap { case (tp, logEndOffset) =>
+      fetchInfoByTp.get(tp).flatMap { pd =>
+        val readResult = Option(logReadResultMap.get(tp))
+        val hasError = readResult.exists(_.error != Errors.NONE)
+        val alreadyRead = readResult.map(_.info.records.sizeInBytes).getOrElse(0)
+        val remainingBytes = Math.max(pd.maxBytes - alreadyRead, 0)
+        // Start the supplement where the local read left off, not at logEndOffset.
+        // Diskless has the full range so it can serve from any offset. This avoids a gap
+        // when the local read stopped at a segment boundary before reaching logEndOffset.
+        val supplementStartOffset = readResult
+          .map(_.info.records.lastBatch())
+          .filter(_.isPresent)
+          .map(_.get().nextOffset())
+          .getOrElse(logEndOffset)
+        // Only supplement once the local log is exhausted: the local read must have reached the
+        // local log end offset, which for a frozen consolidating log equals the classic->diskless
+        // seal. If it stopped at an earlier segment boundary (supplementStartOffset < logEndOffset),
+        // skip the supplement — the consumer re-fetches and walks the remaining local segments, as
+        // it would for any classic multi-segment lag. Supplementing from below the seal would stitch
+        // the local prefix directly onto the diskless range (which starts at the seal) and silently
+        // drop the committed range [supplementStartOffset, seal).
+        if (!hasError && remainingBytes > 0 && supplementStartOffset >= logEndOffset)
+          Some(tp -> new PartitionData(tp.topicId(), supplementStartOffset, pd.logStartOffset, remainingBytes, pd.currentLeaderEpoch, pd.lastFetchedEpoch))
+        else
+          None
+      }
+    }.toSeq
+  }
+
+  /**
+   * Merges a diskless supplement into the local-log fetch result for a consolidating partition.
+   * The supplement provides records beyond the local logEndOffset, and its HW/LSO supersede
+   * the local values. Local records are materialized from FileRecords to MemoryRecords if needed
+   * before being passed to ConcatenatedRecords.
+   */
+  private[server] def mergeConsolidationSupplement(
+      tp: TopicIdPartition,
+      localData: FetchPartitionData,
+      supplementData: FetchPartitionData
+  ): FetchPartitionData = {
+    // Local-log reads return FileRecords (a memory-mapped segment slice), not MemoryRecords.
+    // ConcatenatedRecords backs onto MemoryRecords, so materialize the local slice into a
+    // heap buffer first. This is the standard idiom used by AbstractFetcherThread and the
+    // coordinator loaders for the same FileRecords->MemoryRecords conversion.
+    val localRecords = localData.records match {
+      case mr: MemoryRecords => mr
+      case fr: FileRecords =>
+        val buffer = ByteBuffer.allocate(fr.sizeInBytes)
+        fr.readInto(buffer, 0)
+        MemoryRecords.readableRecords(buffer)
+      case other =>
+        error(s"Unexpected Records type from local log read for $tp: ${other.getClass.getName}. Returning local data only.")
+        return localData
+    }
+    val mergedRecords = try {
+      ConcatenatedRecords.concat(localRecords, supplementData.records)
+    } catch {
+      case e: IllegalArgumentException =>
+        error(s"${e.getMessage} for $tp. Returning local data only.")
+        return localData
+    }
+    // Pass through local abortedTransactions so READ_COMMITTED consumers keep abort markers for
+    // the local portion. Warn if present: transactions spanning the consolidation boundary into
+    // the diskless portion are not supported and those offsets will have no abort markers.
+    if (localData.abortedTransactions.isPresent && !localData.abortedTransactions.get.isEmpty)
+      warn(s"Consolidating diskless partition $tp has aborted transactions in the local log but diskless " +
+        s"storage does not support transactions — abort markers beyond logEndOffset will be missing")
+    // isReassignmentFetch is false: the supplement only fires for consumer fetches, never for follower/reassignment paths.
+    new FetchPartitionData(
+      localData.error,
+      supplementData.highWatermark,
+      Math.min(localData.logStartOffset, supplementData.logStartOffset),
+      mergedRecords,
+      supplementData.divergingEpoch,
+      supplementData.lastStableOffset,
+      localData.abortedTransactions,
+      localData.preferredReadReplica,
+      false
+    )
+  }
+
+  /**
    * Fetch messages from a replica, and wait until enough data can be fetched and return;
    * the callback function will be triggered either when timeout or required fetch info is satisfied.
    * Consumers may fetch from any replica, but followers can only fetch from the leader.
@@ -2036,6 +2132,9 @@ class ReplicaManager(val config: KafkaConfig,
     val disklessFetchInfos = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
     val classicFetchInfos = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
     val immediateFetchResponses = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionData)]()
+    // Consolidating partitions served from local log that may need a diskless supplement.
+    // Maps tp -> logEndOffset (the offset where the diskless supplement should start).
+    val consolidatingLocalFetchSupplements = new mutable.HashMap[TopicIdPartition, Long]()
 
     fetchInfos.foreach { fetchInfo =>
       val (tp, fetchPartitionData) = fetchInfo
@@ -2053,8 +2152,18 @@ class ReplicaManager(val config: KafkaConfig,
         if (isConsolidatingPartition) {
           getPartitionOrError(tp.topicPartition) match {
             case Right(partition) =>
-              shouldReadFromUnifiedLog = shouldReadFromUnifiedLog ||
-                partition.log.exists(fetchPartitionData.fetchOffset < _.logEndOffset)
+              val logEndOffset = partition.log.map(_.logEndOffset).getOrElse(0L)
+              if (fetchPartitionData.fetchOffset < logEndOffset) {
+                // Local log has data for this offset range — serve from local, track for diskless supplement
+                shouldReadFromUnifiedLog = true
+                // Skip supplement tracking when the fetch offset falls in the tiered-storage range
+                // (below localLogStartOffset). The read will route to RemoteLogManager and the
+                // supplement data would be discarded by processRemoteFetches anyway.
+                val localLogStartOffset = partition.log.map(_.localLogStartOffset).getOrElse(0L)
+                if (inklessSharedState.isDefined && fetchPartitionData.fetchOffset >= localLogStartOffset)
+                  consolidatingLocalFetchSupplements += (tp -> logEndOffset)
+              }
+              // else: consumer is at or beyond consolidation frontier, diskless-only
             case Left(error) =>
               warn(s"Error while fetching partition ${tp.topicPartition()} for consolidating diskless topic: $error. " +
                 s"Returning error for the fetch request since we cannot determine if the partition has switched to diskless or not.")
@@ -2156,8 +2265,11 @@ class ReplicaManager(val config: KafkaConfig,
 
     inklessSharedState match {
       case None =>
-        if (disklessFetchInfos.nonEmpty) {
-          error(s"Received diskless fetch request for topics ${disklessFetchInfos.map(_._1.topic()).distinct.mkString(", ")} but diskless storage system is not enabled. " +
+        if (disklessFetchInfos.nonEmpty || consolidatingLocalFetchSupplements.nonEmpty) {
+          val disklessTopics = disklessFetchInfos.map(_._1.topic()).distinct
+          val consolidatingTopics = consolidatingLocalFetchSupplements.keys.map(_.topic()).toSeq.distinct
+          val allTopics = (disklessTopics ++ consolidatingTopics).distinct
+          error(s"Received diskless fetch request for topics ${allTopics.mkString(", ")} but diskless storage system is not enabled. " +
             s"Replying an empty response.")
           respond(Seq.empty)
           return
@@ -2206,6 +2318,7 @@ class ReplicaManager(val config: KafkaConfig,
         quota = quota,
         maxWaitMs = Some(maxWaitMs),
         minBytes = Some(minBytes),
+        consolidatingSupplements = if (params.isFromFollower) Map.empty else consolidatingLocalFetchSupplements.toMap,
         responseCallback = respond,
       )
 
@@ -2257,9 +2370,55 @@ class ReplicaManager(val config: KafkaConfig,
       logReadResultMap.put(topicIdPartition, logReadResult)
     }
 
+    // For consolidating partitions where local log was read, supplement with diskless data if minBytes not satisfied.
+    // Only runs when there are no pure-diskless partitions in the request: if disklessFetchInfos is non-empty the
+    // request will park in DelayedFetch regardless, where the supplement runs concurrently with the diskless fetch.
+    // Running it here as well would block for disklessFetchMaxWaitMs and then discard the result.
+    var consolidationSupplementData = Map.empty[TopicIdPartition, FetchPartitionData]
+    if (consolidatingLocalFetchSupplements.nonEmpty &&
+      disklessFetchInfos.isEmpty &&
+      !params.isFromFollower && // safeguard: followers must not receive diskless records merged into local-log data
+      params.maxWaitMs > 0 && // safeguard: non-blocking polls must not be held by a diskless round-trip
+      !hasPreferredReadReplica &&
+      bytesReadable < params.minBytes &&
+      !errorReadingData) {
+      val supplementFetchInfos = buildConsolidationSupplementFetchInfos(consolidatingLocalFetchSupplements, fetchInfos, logReadResultMap)
+
+      if (supplementFetchInfos.nonEmpty) {
+        try {
+          val supplementParams = fetchParamsWithNewMaxBytes(params, supplementFetchInfos.size.toFloat / fetchInfos.size.toFloat)
+          // Future not cancelled on failure — diskless reads are idempotent and hold no resources.
+          consolidationSupplementData = fetchDisklessMessages(supplementParams, supplementFetchInfos)
+            .get(Math.max(config.disklessFetchMaxWaitMs.toLong, params.maxWaitMs), TimeUnit.MILLISECONDS)
+            .toMap
+          bytesReadable += consolidationSupplementData.values
+            .filter(_.error == Errors.NONE).map(_.records.sizeInBytes).sum
+        } catch {
+          case e: InterruptedException =>
+            Thread.currentThread().interrupt()
+            logger.warn("Interrupted while fetching diskless supplement for consolidating partitions, returning local data only", e)
+          case e: java.util.concurrent.TimeoutException =>
+            logger.warn("Timed out fetching diskless supplement for consolidating partitions, returning local data only", e)
+          case e: Throwable =>
+            logger.warn("Failed to fetch diskless supplement for consolidating partitions, returning local data only", e)
+        }
+      }
+    }
+
     val fetchPartitionData = logReadResults.map { case (tp, result) =>
       val isReassignmentFetch = params.isFromFollower && isAddingReplica(tp.topicPartition, params.replicaId)
-      tp -> result.toFetchPartitionData(isReassignmentFetch)
+      val localData = result.toFetchPartitionData(isReassignmentFetch)
+      val mergedData = consolidationSupplementData.get(tp) match {
+        case Some(supplementData) if supplementData.error == Errors.NONE && supplementData.records.sizeInBytes > 0 =>
+          try mergeConsolidationSupplement(tp, localData, supplementData)
+          catch {
+            case e: Exception =>
+              logger.warn(s"Failed to merge diskless supplement for consolidating partition $tp, returning local data only", e)
+              localData
+          }
+        case _ => localData
+      }
+      tp -> mergedData
     }
 
     // Respond immediately if no remote fetches are required and any of the below conditions is true
