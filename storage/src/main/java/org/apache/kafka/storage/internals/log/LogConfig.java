@@ -595,8 +595,8 @@ public class LogConfig extends AbstractConfig {
             if (wasRemoteStorageExplicitlySet() && wasRemoteStorageEnabled()) {
                 return true;
             }
-            // CLASSIC→DISKLESS (single request): Remote-Storage is being newly enabled, requires consolidation gate
-            return isRemoteStorageConsolidationEnabled && isRemoteStorageBecomesEnabled();
+            // CLASSIC→DISKLESS (single request): Remote-Storage is being newly enabled in the same request
+            return isRemoteStorageBecomesEnabled();
         }
 
         /** Both overrides were already present and remain off; used to skip mutual exclusion without consolidation. */

@@ -3090,8 +3090,16 @@ public class ReplicationControlManager {
             }
         }
 
-        // All partitions must be healthy to initiate a switch
         if (initiatingSwitch) {
+            ConfigEntry remoteStorageEntry = effectiveTopicConfigs.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG);
+            boolean remoteStorageEnabled = remoteStorageEntry != null
+                && Boolean.parseBoolean(remoteStorageEntry.value());
+            if (!remoteStorageEnabled && !isDisklessRemoteStorageConsolidationEnabled) {
+                return new ApiError(INVALID_CONFIG,
+                    "Cannot switch topic " + topicName + " to diskless: " +
+                    "remote storage must be enabled.");
+            }
+            // All partitions must be healthy to initiate a switch
             return validatePartitionsForSwitch(topicInfo);
         }
 
