@@ -72,6 +72,19 @@ class InklessClassicToDisklessSwitchTest(Test):
     CONSUME_TIMEOUT_SEC = 120
     BROKER_STARTUP_TIMEOUT_SEC = 120
 
+    # Minimum idle window after which kafka-console-consumer self-terminates when
+    # no new record arrives. For exact-count reads this doubles as the "end of
+    # stream" signal, so it must be comfortably longer than the worst-case
+    # latency for a freshly-committed diskless batch to become readable from the
+    # leader.
+    # Otherwise a transiently-slow diskless tail (a record that is already acked
+    # and committed but not yet served) looks like end-of-stream and the read
+    # stops short, producing a false data-loss failure. The wait loop returns as
+    # soon as the expected count is reached, so a generous value here costs
+    # nothing on the happy path. Exact-count reads raise this to at least the
+    # enclosing wait timeout so the wait loop owns the overall deadline.
+    CONSUME_COMPLETION_IDLE_SEC = 60
+
     def __init__(self, test_context: TestContext) -> None:
         super(InklessClassicToDisklessSwitchTest, self).__init__(test_context=test_context)
         self.num_brokers = 3
@@ -403,11 +416,35 @@ class InklessClassicToDisklessSwitchTest(Test):
         validation that catches post-restart classic data availability bugs.
         Set wait_for_completion when the caller needs an exact count rather
         than stopping as soon as the expected minimum is observed.
+
+        Completion is decided by record count, not by the console consumer's
+        idle timeout. Minimum-count callers return as soon as ``expected_count``
+        records have been delivered. Exact-count callers wait one additional
+        poll after first seeing exactly ``expected_count`` records, so any
+        immediately-readable duplicate or extra record is observed; if the count
+        ever exceeds ``expected_count``, the wait returns immediately and the
+        caller's exact-count assertion reports the over-count. Only if the
+        consumer drains and exits on its own *before* reaching the expected
+        count do we stop early and report the shortfall, which is the genuine
+        data-loss signal. The console consumer's idle timeout is set generously
+        (with ``CONSUME_COMPLETION_IDLE_SEC`` as a floor) so that a
+        transiently-slow diskless tail does not look like end-of-stream and
+        truncate the read before the wait deadline.
         """
         if topic is None:
             topic = self.topic
         if timeout_sec is None:
             timeout_sec = self.CONSUME_TIMEOUT_SEC
+
+        wait_backoff_sec = 2
+        # For an exact-count read, keep the consumer alive across a slow diskless
+        # tail until the outer wait_until controls the deadline. A short idle
+        # timeout is fine when the caller only wants a minimum.
+        if wait_for_completion:
+            consumer_idle_sec = max(self.CONSUME_COMPLETION_IDLE_SEC, timeout_sec) + wait_backoff_sec
+        else:
+            consumer_idle_sec = 30
+        consumer_idle_ms = int(consumer_idle_sec * 1000)
 
         group_id = "fresh-%s" % str(uuid.uuid4())[:8]
         consumer = ConsoleConsumer(
@@ -417,30 +454,43 @@ class InklessClassicToDisklessSwitchTest(Test):
             topic=topic,
             group_id=group_id,
             from_beginning=True,
-            consumer_timeout_ms=30000,
+            consumer_timeout_ms=consumer_idle_ms,
             isolation_level="read_committed",
             print_key=True,
         )
         consumer.start()
 
         consumer_seen_alive = [False]
+        expected_count_seen = [False]
 
         def _check_consumed():
             is_alive = consumer.alive(consumer.nodes[0])
             if is_alive:
                 consumer_seen_alive[0] = True
+            consumed = len(consumer.messages_consumed[1])
             if wait_for_completion:
-                has_consumed = len(consumer.messages_consumed[1]) > 0
-                return (consumer_seen_alive[0] or has_consumed) and not is_alive
-            if len(consumer.messages_consumed[1]) >= expected_count:
+                # Surface duplicates promptly, but confirm the exact count once
+                # more so stopping the consumer does not hide already-readable
+                # extra records.
+                if consumed > expected_count:
+                    return True
+                if consumed == expected_count:
+                    if expected_count_seen[0]:
+                        return True
+                    expected_count_seen[0] = True
+                    return False
+            elif consumed >= expected_count:
                 return True
+            # The consumer drained and exited on its own short of the expected
+            # count: stop waiting so the caller sees the shortfall (genuine data
+            # loss) instead of blocking until timeout_sec.
             return consumer_seen_alive[0] and not is_alive
 
         wait_until(
             _check_consumed,
             timeout_sec=timeout_sec,
-            backoff_sec=2,
-            err_msg="Fresh consumer consumed only %d out of %d expected messages in %ds" %
+            backoff_sec=wait_backoff_sec,
+            err_msg=lambda: "Fresh consumer consumed only %d out of %d expected messages in %ds" %
                     (len(consumer.messages_consumed[1]), expected_count, timeout_sec)
         )
 
@@ -800,14 +850,66 @@ class InklessClassicToDisklessSwitchTest(Test):
             )
         return self.trogdor.create_task(task_name, spec)
 
+    # Trogdor's ProcessStopFaultWorker selects the target JVM by a *literal*
+    # substring match against each `jcmd -l` line (String.contains), so it must
+    # be given the plain main-class name as it appears there. Note this differs
+    # from KafkaService.java_class_name(), which returns the regex form
+    # "kafka\.Kafka" (escaped dot) intended for pgrep/jps regex matching and
+    # would not match literally here.
+    BROKER_JCMD_PROCESS_NAME = "kafka.Kafka"
+
     def _pause_broker_process(self, node, duration_ms, task_name="pause-broker"):
         """SIGSTOP the broker JVM on ``node`` for ``duration_ms`` via Trogdor.
         Returns the Trogdor task; Trogdor will SIGCONT automatically when
         the task duration elapses or ``.stop()`` is called."""
         spec = ProcessStopFaultSpec(
-            0, duration_ms, [node], self.kafka.java_class_name(),
+            0, duration_ms, [node], self.BROKER_JCMD_PROCESS_NAME,
         )
         return self.trogdor.create_task(task_name, spec)
+
+    def _broker_pid(self, node):
+        """Return the broker JVM pid on ``node`` (the process Trogdor signals)."""
+        pids = self.kafka.pids(node)
+        assert pids, "No running broker JVM found on %s" % node.account.hostname
+        return pids[0]
+
+    def _broker_process_state(self, node, pid):
+        """Return the primary ``ps`` state character for ``pid`` on ``node``.
+        ``T`` means stopped by a job-control signal (i.e. SIGSTOP took effect);
+        ``""`` means the process is no longer present."""
+        for line in node.account.ssh_capture("ps -o stat= -p %s || true" % pid,
+                                              allow_fail=True):
+            line = line.decode("utf-8") if isinstance(line, bytes) else line
+            stat = line.strip()
+            if stat:
+                return stat[0]
+        return ""
+
+    def _wait_for_broker_stopped(self, node, pid, timeout_sec=60):
+        """Assert the broker JVM actually froze (``ps`` state ``T``). Fails
+        loudly if the SIGSTOP fault is a no-op rather than silently exercising
+        nothing."""
+        wait_until(
+            lambda: self._broker_process_state(node, pid) == "T",
+            timeout_sec=timeout_sec,
+            backoff_sec=1,
+            err_msg=lambda: "SIGSTOP fault was a no-op: broker pid %s on %s never "
+                            "reached stopped (T) state (last state=%r)" %
+                            (pid, node.account.hostname,
+                             self._broker_process_state(node, pid)),
+        )
+
+    def _wait_for_broker_running(self, node, pid, timeout_sec=60):
+        """Assert the broker JVM resumed after SIGCONT (still alive, not ``T``)."""
+        wait_until(
+            lambda: self._broker_process_state(node, pid) not in ("", "T"),
+            timeout_sec=timeout_sec,
+            backoff_sec=1,
+            err_msg=lambda: "Broker pid %s on %s did not resume after SIGCONT "
+                            "(last state=%r)" %
+                            (pid, node.account.hostname,
+                             self._broker_process_state(node, pid)),
+        )
 
     def _wait_for_mid_switch_state(
             self, state, min_partition_seconds=None, min_oldest_age_ms=None, timeout_sec=120) -> None:
@@ -1202,8 +1304,13 @@ class InklessClassicToDisklessSwitchTest(Test):
             self._stop_broker(leader_node, clean_shutdown=False)
             self._start_broker(leader_node)
         elif leader_failure_mode == "sigstop":
+            leader_pid = self._broker_pid(leader_node)
             pause = self._pause_broker_process(leader_node, duration_ms=pause_duration_ms)
+            # Confirm the fault actually took effect: a silent no-op here would
+            # let the whole scenario pass without ever freezing the leader.
+            self._wait_for_broker_stopped(leader_node, leader_pid)
             pause.wait_for_done(timeout_sec=pause_duration_ms // 1000 + 60)
+            self._wait_for_broker_running(leader_node, leader_pid)
         else:
             raise AssertionError("Unknown leader_failure_mode: %s" % leader_failure_mode)
 
