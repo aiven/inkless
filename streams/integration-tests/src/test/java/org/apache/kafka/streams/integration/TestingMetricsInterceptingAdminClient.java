@@ -95,6 +95,7 @@ import org.apache.kafka.clients.admin.DescribeShareGroupsOptions;
 import org.apache.kafka.clients.admin.DescribeShareGroupsResult;
 import org.apache.kafka.clients.admin.DescribeStreamsGroupsOptions;
 import org.apache.kafka.clients.admin.DescribeStreamsGroupsResult;
+import org.apache.kafka.clients.admin.DescribeTopicPartitionsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
 import org.apache.kafka.clients.admin.DescribeTopicsResult;
 import org.apache.kafka.clients.admin.DescribeTransactionsOptions;
@@ -396,6 +397,11 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     @Override
     public UpdateFeaturesResult updateFeatures(final Map<String, FeatureUpdate> featureUpdates, final UpdateFeaturesOptions options) {
         return adminDelegate.updateFeatures(featureUpdates, options);
+    }
+
+    @Override
+    public DescribeTopicPartitionsResult describeTopicPartitions(final Collection<String> topics, final DescribeTopicsOptions options) {
+        return adminDelegate.describeTopicPartitions(topics, options);
     }
 
     @Override

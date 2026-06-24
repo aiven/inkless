@@ -1795,6 +1795,85 @@ public class KafkaAdminClientTest {
     }
 
     @Test
+    public void testDescribeTopicPartitionsRawResponse() throws ExecutionException, InterruptedException {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            String topicName = "test-topic";
+            Uuid topicId = Uuid.randomUuid();
+
+            DescribeTopicPartitionsResponseData responseData = new DescribeTopicPartitionsResponseData();
+            addPartitionToDescribeTopicPartitionsResponse(responseData, topicName, topicId, asList(0, 1));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(responseData));
+
+            DescribeTopicPartitionsResult result = env.adminClient().describeTopicPartitions(
+                singletonList(topicName), new DescribeTopicsOptions());
+            DescribeTopicPartitionsResponseData data = result.rawResponse().get();
+
+            assertEquals(1, data.topics().size());
+            DescribeTopicPartitionsResponseTopic topic = data.topics().find(topicName);
+            assertEquals(topicName, topic.name());
+            assertEquals(topicId, topic.topicId());
+            assertEquals(2, topic.partitions().size());
+            assertEquals(0, topic.partitions().get(0).partitionIndex());
+            assertEquals(1, topic.partitions().get(1).partitionIndex());
+        }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsEmptyTopicsThrows() {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            assertThrows(IllegalArgumentException.class,
+                () -> env.adminClient().describeTopicPartitions(List.of(), new DescribeTopicsOptions()));
+        }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsTopicIdChangedDuringPagination() {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            String topicName = "test-topic";
+            Uuid originalId = Uuid.randomUuid();
+            Uuid newId = Uuid.randomUuid();
+
+            DescribeTopicPartitionsResponseData firstPage = new DescribeTopicPartitionsResponseData();
+            addPartitionToDescribeTopicPartitionsResponse(firstPage, topicName, originalId, singletonList(0));
+            firstPage.setNextCursor(new DescribeTopicPartitionsResponseData.Cursor()
+                .setTopicName(topicName)
+                .setPartitionIndex(1));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(firstPage));
+
+            DescribeTopicPartitionsResponseData secondPage = new DescribeTopicPartitionsResponseData();
+            addPartitionToDescribeTopicPartitionsResponse(secondPage, topicName, newId, singletonList(1));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(secondPage));
+
+            DescribeTopicPartitionsResult result = env.adminClient().describeTopicPartitions(
+                singletonList(topicName), new DescribeTopicsOptions());
+
+            TestUtils.assertFutureThrows(UnknownTopicOrPartitionException.class, result.rawResponse());
+        }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsTopicError() {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            String topicName = "unauthorized-topic";
+
+            DescribeTopicPartitionsResponseData responseData = new DescribeTopicPartitionsResponseData();
+            responseData.topics().add(new DescribeTopicPartitionsResponseTopic()
+                .setErrorCode(Errors.TOPIC_AUTHORIZATION_FAILED.code())
+                .setTopicId(Uuid.ZERO_UUID)
+                .setName(topicName));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(responseData));
+
+            DescribeTopicPartitionsResult result = env.adminClient().describeTopicPartitions(
+                singletonList(topicName), new DescribeTopicsOptions());
+
+            TestUtils.assertFutureThrows(TopicAuthorizationException.class, result.rawResponse());
+        }
+    }
+
+    @Test
     public void testAdminClientApisAuthenticationFailure() {
         Cluster cluster = mockBootstrapCluster();
         try (final AdminClientUnitTestEnv env = new AdminClientUnitTestEnv(Time.SYSTEM, cluster,
