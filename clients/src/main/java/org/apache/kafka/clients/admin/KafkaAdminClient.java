@@ -2455,6 +2455,84 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
+    public DescribeTopicPartitionsResult describeTopicPartitions(Collection<String> topics, DescribeTopicsOptions options) {
+        if (topics.isEmpty()) {
+            throw new IllegalArgumentException("topics must not be empty");
+        }
+        final KafkaFutureImpl<DescribeTopicPartitionsResponseData> future = new KafkaFutureImpl<>();
+        final DescribeTopicPartitionsResponseData accumulated = new DescribeTopicPartitionsResponseData();
+        final long now = time.milliseconds();
+        final List<String> topicNamesList = new ArrayList<>(topics);
+        topicNamesList.sort(String::compareTo);
+
+        runnable.call(new Call("describeTopicPartitions", calcDeadlineMs(now, options.timeoutMs()),
+            new LeastLoadedNodeProvider()) {
+            DescribeTopicPartitionsResponseData.Cursor cursor = null;
+
+            @Override
+            DescribeTopicPartitionsRequest.Builder createRequest(int timeoutMs) {
+                DescribeTopicPartitionsRequestData request = new DescribeTopicPartitionsRequestData()
+                    .setTopics(topicNamesList.stream()
+                        .map(name -> new TopicRequest().setName(name))
+                        .collect(Collectors.toList()))
+                    .setResponsePartitionLimit(options.partitionSizeLimitPerResponse());
+                if (cursor != null) {
+                    request.setCursor(new DescribeTopicPartitionsRequestData.Cursor()
+                        .setTopicName(cursor.topicName())
+                        .setPartitionIndex(cursor.partitionIndex()));
+                }
+                return new DescribeTopicPartitionsRequest.Builder(request);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                DescribeTopicPartitionsResponse response = (DescribeTopicPartitionsResponse) abstractResponse;
+                DescribeTopicPartitionsResponseData data = response.data();
+
+                for (DescribeTopicPartitionsResponseTopic topic : data.topics()) {
+                    Errors error = Errors.forCode(topic.errorCode());
+                    if (error != Errors.NONE) {
+                        future.completeExceptionally(error.exception());
+                        return;
+                    }
+                    for (DescribeTopicPartitionsResponsePartition partition : topic.partitions()) {
+                        Errors partitionError = Errors.forCode(partition.errorCode());
+                        if (partitionError != Errors.NONE) {
+                            future.completeExceptionally(partitionError.exception());
+                            return;
+                        }
+                    }
+                    DescribeTopicPartitionsResponseTopic existing = accumulated.topics().find(topic.name());
+                    if (existing != null) {
+                        if (!existing.topicId().equals(topic.topicId())) {
+                            future.completeExceptionally(new UnknownTopicOrPartitionException(
+                                "Topic " + topic.name() + " changed while fetching paginated response"));
+                            return;
+                        }
+                        existing.partitions().addAll(topic.partitions());
+                    } else {
+                        accumulated.topics().add(topic.duplicate());
+                    }
+                }
+
+                cursor = data.nextCursor();
+                if (cursor != null) {
+                    runnable.call(this, time.milliseconds());
+                } else {
+                    future.complete(accumulated);
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        }, now);
+
+        return new DescribeTopicPartitionsResult(future);
+    }
+
+    @Override
     public DescribeClusterResult describeCluster(DescribeClusterOptions options) {
         final KafkaFutureImpl<Collection<Node>> describeClusterFuture = new KafkaFutureImpl<>();
         final KafkaFutureImpl<Node> controllerFuture = new KafkaFutureImpl<>();
