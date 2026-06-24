@@ -488,21 +488,26 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         boolean mirrorDeleted = newImage.configs()
                                 .configProperties(e.getKey()).isEmpty();
                         if (mirrorDeleted) {
-                            log.info("Mirror '{}' has been deleted. Writing tombstone records.", mirrorName);
+                            log.info("Mirror '{}' has been deleted. Writing tombstone records and recreating connections.", mirrorName);
                             tombstoneWriter.ifPresent(h -> h.accept(mirrorName));
                         }
 
                         boolean connectionConfigChanged = e.getValue().changes().keySet().stream()
                                 .anyMatch(key -> !NON_CONNECTION_CONFIGS.contains(key));
 
+                        if (connectionConfigChanged) {
+                            log.info("Mirror '{}' has connection config changed. Recreating connections.", mirrorName);
+                        }
                         if (connectionConfigChanged || mirrorDeleted) {
                             sourceLeaders.remove(mirrorName);
                             sourceClusterIds.remove(mirrorName);
                             Admin admin = srcAdmins.remove(mirrorName);
                             if (admin != null) {
-                                admin.close();
+                                admin.close(Duration.ZERO);
                             }
-                            replicaManagerSupplier.get().mirrorFetcherManager().removeFetchersForMirror(mirrorName);
+                            var mirrorFetcherManager = replicaManagerSupplier.get().mirrorFetcherManager();
+                            mirrorFetcherManager.removeFetchersForMirror(mirrorName);
+                            mirrorFetcherManager.shutdownIdleFetcherThreads();
                             if (!mirrorDeleted) {
                                 reconnectedMirrors.add(mirrorName);
                             }
