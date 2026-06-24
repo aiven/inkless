@@ -5202,7 +5202,7 @@ class ReplicaManagerInklessTest {
       // Apply a delta that makes this broker the leader (post-restart path).
       val delta = new TopicsDelta(TopicsImage.EMPTY)
       delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
-      delta.replay(new PartitionRecord()
+      val partitionRecord = new PartitionRecord()
         .setPartitionId(0)
         .setTopicId(topicId)
         .setReplicas(util.Arrays.asList(brokerId, brokerId + 1))
@@ -5210,7 +5210,9 @@ class ReplicaManagerInklessTest {
         .setLeader(brokerId)
         .setLeaderEpoch(0)
         .setPartitionEpoch(0)
-      )
+      partitionRecord.unknownTaggedFields().add(
+        InitDisklessLogFields.encodeClassicToDisklessStartOffset(10L))
+      delta.replay(partitionRecord)
       replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
 
       val partition = replicaManager.getPartition(tp)
@@ -5243,7 +5245,7 @@ class ReplicaManagerInklessTest {
 
       val delta = new TopicsDelta(TopicsImage.EMPTY)
       delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
-      delta.replay(new PartitionRecord()
+      val partitionRecord = new PartitionRecord()
         .setPartitionId(0)
         .setTopicId(topicId)
         .setReplicas(util.Arrays.asList(brokerId, brokerId + 1))
@@ -5251,7 +5253,9 @@ class ReplicaManagerInklessTest {
         .setLeader(brokerId)
         .setLeaderEpoch(0)
         .setPartitionEpoch(0)
-      )
+      partitionRecord.unknownTaggedFields().add(
+        InitDisklessLogFields.encodeClassicToDisklessStartOffset(10L))
+      delta.replay(partitionRecord)
       replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
 
       val partition = replicaManager.getPartition(tp)
@@ -5409,10 +5413,16 @@ class ReplicaManagerInklessTest {
   }
 
   // Build a follower delta where `brokerId` is a follower of `leaderId` for the given topic.
-  private def disklessFollowerDelta(topicName: String, topicId: Uuid, brokerId: Int, leaderId: Int): TopicsDelta = {
+  private def disklessFollowerDelta(
+    topicName: String,
+    topicId: Uuid,
+    brokerId: Int,
+    leaderId: Int,
+    classicToDisklessStartOffset: Long = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
+  ): TopicsDelta = {
     val delta = new TopicsDelta(TopicsImage.EMPTY)
     delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
-    delta.replay(new PartitionRecord()
+    val partitionRecord = new PartitionRecord()
       .setPartitionId(0)
       .setTopicId(topicId)
       .setReplicas(util.Arrays.asList(brokerId, leaderId))
@@ -5420,7 +5430,23 @@ class ReplicaManagerInklessTest {
       .setLeader(leaderId)
       .setLeaderEpoch(0)
       .setPartitionEpoch(0)
-    )
+    if (classicToDisklessStartOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+      partitionRecord.unknownTaggedFields().add(
+        InitDisklessLogFields.encodeClassicToDisklessStartOffset(classicToDisklessStartOffset))
+    }
+    delta.replay(partitionRecord)
+    delta
+  }
+
+  private def promoteFollowerToLeaderDelta(topicsImage: TopicsImage,
+                                           topicId: Uuid,
+                                           partitionId: Int,
+                                           brokerId: Int): TopicsDelta = {
+    val delta = new TopicsDelta(topicsImage)
+    delta.replay(new PartitionChangeRecord()
+      .setTopicId(topicId)
+      .setPartitionId(partitionId)
+      .setLeader(brokerId))
     delta
   }
 
@@ -5517,6 +5543,157 @@ class ReplicaManagerInklessTest {
 
       // Nothing to catch up — no fetcher should be added for this partition.
       verify(mockFetcherManager, never()).addFetcherForPartitions(any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaRestoresStaleHwmWhenSwitchedFollowerBecomesLeader(): Unit = {
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager),
+      initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager]))
+    ))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = 5L)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+
+      val followerDelta = disklessFollowerDelta(
+        topicName,
+        topicId,
+        brokerId,
+        leaderId,
+        classicToDisklessStartOffset = sealOffset
+      )
+      val followerImage = imageFromTopics(followerDelta.apply())
+      replicaManager.applyDelta(followerDelta, followerImage)
+
+      assertFalse(replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online].partition.isLeader)
+      assertEquals(5L, replicaManager.localLogOrException(tp).highWatermark)
+
+      val leaderDelta = promoteFollowerToLeaderDelta(
+        followerImage.topics(),
+        topicId,
+        tp.partition(),
+        brokerId
+      )
+      replicaManager.applyDelta(leaderDelta, imageFromTopics(leaderDelta.apply()))
+
+      val promotedPartition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online].partition
+      assertTrue(promotedPartition.isLeader)
+      assertTrue(promotedPartition.isSealed)
+      assertEquals(sealOffset, promotedPartition.localLogOrException.highWatermark,
+        "Promoted switched leader must restore stale HW to the committed seal")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaTruncatesSwitchedFollowerTailWhenBecomingLeader(): Unit = {
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager),
+      initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager]))
+    ))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 13L, hw = sealOffset)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+
+      val followerDelta = disklessFollowerDelta(
+        topicName,
+        topicId,
+        brokerId,
+        leaderId,
+        classicToDisklessStartOffset = sealOffset
+      )
+      val followerImage = imageFromTopics(followerDelta.apply())
+      replicaManager.applyDelta(followerDelta, followerImage)
+      assertEquals(13L, replicaManager.localLogOrException(tp).logEndOffset)
+
+      val leaderDelta = promoteFollowerToLeaderDelta(
+        followerImage.topics(),
+        topicId,
+        tp.partition(),
+        brokerId
+      )
+      replicaManager.applyDelta(leaderDelta, imageFromTopics(leaderDelta.apply()))
+
+      val promotedPartition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online].partition
+      assertTrue(promotedPartition.isLeader)
+      assertEquals(sealOffset, promotedPartition.localLogOrException.logEndOffset,
+        "Promoted switched leader must drop uncommitted classic records at or beyond the seal")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaFencesSwitchedFollowerBelowSealWhenBecomingLeader(): Unit = {
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager),
+      initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager]))
+    ))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 5L, hw = 5L)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+
+      val followerDelta = disklessFollowerDelta(
+        topicName,
+        topicId,
+        brokerId,
+        leaderId,
+        classicToDisklessStartOffset = sealOffset
+      )
+      val followerImage = imageFromTopics(followerDelta.apply())
+      replicaManager.applyDelta(followerDelta, followerImage)
+
+      val leaderDelta = promoteFollowerToLeaderDelta(
+        followerImage.topics(),
+        topicId,
+        tp.partition(),
+        brokerId
+      )
+      replicaManager.applyDelta(leaderDelta, imageFromTopics(leaderDelta.apply()))
+
+      val partition = replicaManager.getPartition(tp)
+      assertTrue(partition.isInstanceOf[HostedPartition.Offline],
+        s"Promoted leader below the committed seal must be fenced offline, but was $partition")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
@@ -6526,7 +6703,7 @@ class ReplicaManagerInklessTest {
 
   @Test
   def testApplyDeltaFencesLeaderWithLocalLogBelowCommittedSeal(): Unit = {
-    // Corruption-detection branch of maybeTruncateNewlySwitchedPartition: the switch is committed
+    // Corruption-detection branch of maybeReconcileSwitchedLeader: the switch is committed
     // (PENDING -> seal) while this broker is the leader, but the local log ends below the seal.
     // This is unreachable in normal operation (unclean leader election is not supported by the
     // diskless switch). Reaching here therefore means the leader's classic prefix has a hole in
@@ -6544,7 +6721,7 @@ class ReplicaManagerInklessTest {
 
     // disklessManagedReplicasEnabled and a present InitDisklessLogManager are both required so the
     // active classic-to-diskless switch branch runs for the leader (it bails out early otherwise),
-    // letting the seal-commit delta reach maybeTruncateNewlySwitchedPartition. The seal is committed
+    // letting the seal-commit delta reach maybeReconcileSwitchedLeader. The seal is committed
     // (>= 0, not PENDING), so the manager is never actually invoked here and a mock suffices.
     val replicaManager = spy(createReplicaManager(
       Seq(topicName),

@@ -3299,22 +3299,73 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
-   * Reconciles a partition whose classic-to-diskless seal was *just committed* in this delta
-   * (previous seal < 0, now >= 0); other transitions are left untouched. Records beyond the seal
-   * are uncommitted (the diskless log continues from the seal), so:
-   *  - LEO > seal: truncate down to the seal (a follower/deposed leader that held un-replicated
-   *    records past a seal a different broker committed at a lower HW);
-   *  - LEO < seal and leader: fence offline. Unreachable on the clean path (the driving leader
-   *    seals at its own HW == LEO; a cleanly-elected leader comes from the ISR with LEO >= seal),
-   *    so it implies a corrupt classic prefix -- don't serve an incomplete prefix below the seal.
+   * Reconcile a leader whose classic-to-diskless seal has already been committed.
    *
-   * Must run after makeLeader/makeFollower (so the log exists) and before any catch-up or
-   * consolidation fetcher starts (so they initialize from the reconciled LEO).
+   * A committed seal is the first diskless offset and the classic prefix [0, seal) must be fully
+   * present on any cleanly-elected leader. Once sealed, the local classic log cannot advance HW
+   * naturally, so a leader promoted with a stale checkpointed HW must restore HW to the seal.
+   *
+   *  - LEO > seal: truncate down to the seal. Records at or above the seal are uncommitted classic
+   *    tail; diskless owns that range.
+   *  - LEO == seal and HW < seal: advance HW to the seal so consumers can cross into diskless.
+   *  - LEO < seal: fence offline. The classic prefix is incomplete, so serving it would hide a
+   *    hole in acknowledged data.
+   *
+   * Must run after makeLeader (so the log exists) and before any consolidation fetcher starts.
    */
-  private def maybeTruncateNewlySwitchedPartition(tp: TopicPartition,
-                                                  topicId: Uuid,
-                                                  newRegistration: PartitionRegistration,
-                                                  delta: TopicsDelta): Unit = {
+  private def maybeReconcileSwitchedLeader(tp: TopicPartition,
+                                           topicId: Uuid,
+                                           newRegistration: PartitionRegistration): Unit = {
+    val seal = newRegistration.classicToDisklessStartOffset
+    if (seal < 0) return
+
+    onlinePartition(tp).foreach { partition =>
+      partition.log match {
+        case Some(log) =>
+          try {
+            if (log.logEndOffset > seal) {
+              stateChangeLogger.info(s"Truncating switched partition $tp from LEO ${log.logEndOffset} " +
+                s"to classic-to-diskless start offset $seal")
+              // Seal is the classicToDisklessStartOffset, the first offset owned by diskless storage.
+              // truncateTo(seal) removes all entries with offset >= seal, leaving LEO = seal.
+              // The last classic record is at offset seal - 1.
+              partition.truncateTo(seal, isFuture = false)
+            }
+            if (partition.isLeader) {
+              if (log.logEndOffset >= seal && log.highWatermark < seal) {
+                log.maybeUpdateHighWatermark(seal)
+                stateChangeLogger.info(s"Stale high watermark detected: advanced high watermark to seal offset $seal for " +
+                  s"switched leader partition $tp")
+              } else if (log.logEndOffset < seal) {
+                // This is unreachable in normal operation
+                stateChangeLogger.error(s"Leader partition $tp has LEO ${log.logEndOffset} below " +
+                  s"classic-to-diskless start offset $seal; cannot catch up from another replica. " +
+                  s"Marking the partition offline as its local log is corrupt below the committed seal.")
+                markPartitionOffline(tp)
+              }
+            }
+          } catch {
+            case e: KafkaStorageException =>
+              stateChangeLogger.error(s"Unable to reconcile switched partition $tp " +
+                s"with topic ID $topicId due to a storage error ${e.getMessage}", e)
+              markPartitionOffline(tp)
+          }
+        case None =>
+          stateChangeLogger.warn(s"Skipping switched partition reconciliation for $tp " +
+            s"with topic ID $topicId because the local log is not available")
+      }
+    }
+  }
+
+  /**
+   * Followers truncate only when the seal is committed in the current metadata delta. A switched
+   * follower may later grow past the seal as part of normal consolidation/catch-up flows; unlike a
+   * promoted leader, a follower should not be re-truncated on every unrelated metadata change.
+   */
+  private def maybeTruncateNewlySwitchedFollower(tp: TopicPartition,
+                                                 topicId: Uuid,
+                                                 newRegistration: PartitionRegistration,
+                                                 delta: TopicsDelta): Unit = {
     val seal = newRegistration.classicToDisklessStartOffset
     if (seal < 0) return
 
@@ -3325,27 +3376,23 @@ class ReplicaManager(val config: KafkaConfig,
     if (!sealJustCommitted) return
 
     onlinePartition(tp).foreach { partition =>
-      try {
-        val log = partition.localLogOrException
-        if (log.logEndOffset > seal) {
-          stateChangeLogger.info(s"Truncating switched partition $tp from LEO ${log.logEndOffset} " +
-            s"to classic-to-diskless start offset $seal")
-          // Seal is the classicToDisklessStartOffset, the first offset owned by diskless storage.
-          // truncateTo(seal) removes all entries with offset >= seal, leaving LEO = seal.
-          // The last classic record is at offset seal - 1.
-          partition.truncateTo(seal, isFuture = false)
-        } else if (log.logEndOffset < seal && partition.isLeader) {
-          // This is unreachable in normal operation
-          stateChangeLogger.error(s"Leader partition $tp has LEO ${log.logEndOffset} below " +
-            s"classic-to-diskless start offset $seal; cannot catch up from another replica. " +
-            s"Marking the partition offline as its local log is corrupt below the committed seal.")
-          markPartitionOffline(tp)
-        }
-      } catch {
-        case e: KafkaStorageException =>
-          stateChangeLogger.error(s"Unable to reconcile switched partition $tp " +
-            s"with topic ID $topicId due to a storage error ${e.getMessage}", e)
-          markPartitionOffline(tp)
+      partition.log match {
+        case Some(log) =>
+          try {
+            if (log.logEndOffset > seal) {
+              stateChangeLogger.info(s"Truncating switched follower partition $tp from LEO ${log.logEndOffset} " +
+                s"to classic-to-diskless start offset $seal")
+              partition.truncateTo(seal, isFuture = false)
+            }
+          } catch {
+            case e: KafkaStorageException =>
+              stateChangeLogger.error(s"Unable to reconcile switched follower partition $tp " +
+                s"with topic ID $topicId due to a storage error ${e.getMessage}", e)
+              markPartitionOffline(tp)
+          }
+        case None =>
+          stateChangeLogger.warn(s"Skipping switched follower partition reconciliation for $tp " +
+            s"with topic ID $topicId because the local log is not available")
       }
     }
   }
@@ -3526,16 +3573,6 @@ class ReplicaManager(val config: KafkaConfig,
             // local log; seal() here just marks the partition sealed for the HW restore below.
             partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
             partition.seal()
-            // makeLeader reloads HW from the on-disk checkpoint, which may be stale
-            // (unclean shutdown, or checkpoint interval hadn't fired). Since the
-            // partition is sealed, no produces or follower fetches can ever advance
-            // HW naturally — restore it to the seal offset so consumers can read.
-            val sealOffset = _inklessMetadataView.getClassicToDisklessStartOffset(tp)
-            if (sealOffset >= 0 && partition.localLogOrException.highWatermark < sealOffset) {
-              partition.localLogOrException.maybeUpdateHighWatermark(sealOffset)
-              stateChangeLogger.info(s"Advanced high watermark to seal offset $sealOffset for " +
-                s"switched leader partition $tp after restart")
-            }
             changedPartitions.add(partition)
           } catch {
             case e: KafkaStorageException =>
@@ -3547,13 +3584,11 @@ class ReplicaManager(val config: KafkaConfig,
       }
     }
 
-    // Truncate any partition whose seal was just committed in this delta and whose local log still
-    // runs past it (uncommitted records beyond the committed seal). This must happen after
-    // makeLeader (so the log exists) and before the consolidation fetchers below start, so
-    // consolidation initializes against the truncated LEO. For the broker that drove the switch
-    // this is a no-op (it seals at its own HW == LEO); it is kept here as defense.
+    // Reconcile switched leaders after makeLeader so promoted leaders with stale checkpointed HW
+    // are immediately readable up to the seal, and corrupt/incomplete prefixes are fenced before
+    // serving reads.
     localLeaders.foreachEntry { (tp, info) =>
-      maybeTruncateNewlySwitchedPartition(tp, info.topicId, info.partition, delta)
+      maybeReconcileSwitchedLeader(tp, info.topicId, info.partition)
     }
 
     if (consolidatingDisklessPartitionsToStartFetching.nonEmpty) {
@@ -3683,7 +3718,7 @@ class ReplicaManager(val config: KafkaConfig,
     // truncated LEO. The fetch decisions above key off the high watermark (which never exceeds
     // the seal), so truncating here does not change which partitions need a catch-up fetcher.
     localFollowers.foreachEntry { (tp, info) =>
-      maybeTruncateNewlySwitchedPartition(tp, info.topicId, info.partition, delta)
+      maybeTruncateNewlySwitchedFollower(tp, info.topicId, info.partition, delta)
     }
 
     if (partitionsToStartFetching.nonEmpty) {
