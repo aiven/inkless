@@ -56,9 +56,12 @@ import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
 import org.apache.kafka.common.message.MetadataResponseData;
+import org.apache.kafka.common.message.PauseMirrorTopicsRequestData;
 import org.apache.kafka.common.message.ReadMirrorStatesRequestData;
 import org.apache.kafka.common.message.ReadMirrorStatesResponseData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsRequestData;
 import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StopMirrorTopicsRequestData;
 import org.apache.kafka.common.message.WriteMirrorStatesRequestData;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.network.ChannelBuilders;
@@ -70,14 +73,22 @@ import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.CreateTopicsRequest;
 import org.apache.kafka.common.requests.CreateTopicsResponse;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
+import org.apache.kafka.common.requests.AbstractRequest;
+import org.apache.kafka.common.requests.AbstractResponse;
 import org.apache.kafka.common.requests.DeleteClusterMirrorRequest;
 import org.apache.kafka.common.requests.DeleteClusterMirrorResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
+import org.apache.kafka.common.requests.PauseMirrorTopicsRequest;
+import org.apache.kafka.common.requests.PauseMirrorTopicsResponse;
 import org.apache.kafka.common.requests.ReadMirrorStatesRequest;
 import org.apache.kafka.common.requests.ReadMirrorStatesResponse;
+import org.apache.kafka.common.requests.ResumeMirrorTopicsRequest;
+import org.apache.kafka.common.requests.ResumeMirrorTopicsResponse;
 import org.apache.kafka.common.requests.StartMirrorTopicsRequest;
+import org.apache.kafka.common.requests.StartMirrorTopicsResponse;
 import org.apache.kafka.common.requests.StopMirrorTopicsRequest;
+import org.apache.kafka.common.requests.StopMirrorTopicsResponse;
 import org.apache.kafka.common.requests.WriteMirrorStatesRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesResponse;
 import org.apache.kafka.common.resource.ResourceType;
@@ -121,6 +132,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -257,7 +269,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private boolean isLocalCoordinator(String mirrorName, String topic, int partition) {
-        if (coordPartitionFinderByKey.isPresent()) {
+        if (coordPartitionFinderByKey.isPresent() && metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME) != null) {
             int activeCoordinator = metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME)
                     .partitions().get(coordPartitionFinderByKey.get().apply(
                             new ClusterMirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), partition))).leader;
@@ -2009,6 +2021,180 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         }
                     }
                 });
+    }
+
+    /**
+     * Generic optimistic locking validation for mirror state operations.
+     * Validates desired mirror states (from MetadataImage) and coordinator partition states
+     * (local + remote) against the allowed sets, captures the metadata offset, then delegates
+     * to {@code sendAction} for forwarding the request to the controller.
+     */
+    private void validateMirrorStatesAndForward(
+            String mirrorName,
+            Set<String> topics,
+            Set<Integer> allowedDesiredStates,
+            Set<MirrorPartitionState> allowedCoordinatorStates,
+            boolean allowMissingTopics,
+            BiConsumer<Long, Consumer<Optional<Errors>>> sendAction,
+            Consumer<Optional<Errors>> callback) {
+        MetadataImage curImage = metadataImage;
+        long brokerMetadataOffset = curImage.offset();
+        Map<String, Set<Integer>> remotePartitions = new HashMap<>();
+
+        for (String topic : topics) {
+            TopicImage topicImage = curImage.topics().getTopic(topic);
+            if (topicImage == null) {
+                if (!allowMissingTopics) {
+                    log.error("Topic {} not found in metadata image.", topic);
+                    callback.accept(Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES));
+                    return;
+                }
+                continue;
+            }
+            if (!allowedDesiredStates.contains(topicImage.desiredMirrorState())) {
+                log.error("Topic {} desired mirror state is {}, expected one of {}.",
+                        topic, MirrorPartitionState.fromValue((byte) topicImage.desiredMirrorState()), allowedDesiredStates);
+                callback.accept(Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES));
+                return;
+            }
+            int partitionSize = topicImage.partitions().size();
+            for (int i = 0; i < partitionSize; i++) {
+                if (isLocalCoordinator(mirrorName, topic, i)) {
+                    MirrorPartitionState state = partitionStates.getOrDefault(
+                            new ClusterMirrorUtils.PartitionKey(mirrorName, topic, i), MirrorPartitionState.UNKNOWN);
+                    if (!allowedCoordinatorStates.contains(state)) {
+                        log.error("Partition {}-{} is in {} state, expected one of {}.", topic, i, state, allowedCoordinatorStates);
+                        callback.accept(Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES));
+                        return;
+                    }
+                } else {
+                    if (metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME) != null) {
+                        remotePartitions.computeIfAbsent(topic, k -> new HashSet<>()).add(i);
+                    } else {
+                        log.info("Topic {} is not created completely. This means the mirror state is empty (UNKNOWN), so pass the validation.",
+                                MIRROR_STATE_TOPIC_NAME);
+                    }
+                }
+            }
+        }
+
+        if (remotePartitions.isEmpty()) {
+            sendAction.accept(brokerMetadataOffset, callback);
+            return;
+        }
+
+        readStatesFromRemoteCoordinator(mirrorName, remotePartitions, response -> {
+            if (response.data().errorCode() != Errors.NONE.code()) {
+                log.error("Error reading states from remote coordinator. Error code: {} and message: {}",
+                        response.data().errorCode(), response.data().errorMessage());
+                callback.accept(Optional.of(Errors.forCode(response.data().errorCode())));
+                return;
+            }
+
+            for (var topicResult : response.data().topics()) {
+                for (var partitionResult : topicResult.partitions()) {
+                    if (partitionResult.errorCode() != Errors.NONE.code()) {
+                        log.error("Error reading state from remote coordinator for partition {}-{}. Error code: {}",
+                                topicResult.name(), partitionResult.partitionIndex(), partitionResult.errorCode());
+                        callback.accept(Optional.of(Errors.forCode(partitionResult.errorCode())));
+                        return;
+                    }
+                    MirrorPartitionState remoteState = MirrorPartitionState.fromValue(partitionResult.state());
+                    if (!allowedCoordinatorStates.contains(remoteState)) {
+                        log.error("Remote partition {}-{} is in {} state, expected one of {}.",
+                                topicResult.name(), partitionResult.partitionIndex(), remoteState, allowedCoordinatorStates);
+                        callback.accept(Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES));
+                        return;
+                    }
+                }
+            }
+            sendAction.accept(brokerMetadataOffset, callback);
+        });
+    }
+
+    /**
+     * Generic method for sending a mirror operation request to the controller via channelManager.
+     * Extracts the error code from the response and invokes the callback.
+     */
+    private void sendMirrorOperationRequest(
+            AbstractRequest.Builder<?> builder,
+            Function<AbstractResponse, Short> errorCodeExtractor,
+            Consumer<Optional<Errors>> callback) {
+        channelManager.sendRequest(builder, new ControllerRequestCompletionHandler() {
+            @Override
+            public void onTimeout() {
+                log.warn("{} request timed out", builder.apiKey());
+                callback.accept(Optional.of(Errors.REQUEST_TIMED_OUT));
+            }
+
+            @Override
+            public void onComplete(ClientResponse response) {
+                short errorCode = errorCodeExtractor.apply(response.responseBody());
+                if (errorCode != Errors.NONE.code()) {
+                    log.error("Error returned from {} request. Error code: {}",
+                            builder.apiKey(), Errors.forCode(errorCode));
+                    callback.accept(Optional.of(Errors.forCode(errorCode)));
+                } else {
+                    callback.accept(Optional.empty());
+                }
+            }
+        });
+    }
+
+    void validateAndForwardStartMirror(StartMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        Set<String> topics = data.topics().stream()
+                .map(StartMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
+        validateMirrorStatesAndForward(data.mirrorName(), topics,
+                Set.of((int) MirrorPartitionState.STOPPED.value(), (int) MirrorPartitionState.UNKNOWN.value()),
+                Set.of(MirrorPartitionState.STOPPED, MirrorPartitionState.UNKNOWN),
+                true,
+                (offset, cb) -> {
+                    data.setStateValidationOffset(offset);
+                    sendMirrorOperationRequest(new StartMirrorTopicsRequest.Builder(data),
+                            resp -> ((StartMirrorTopicsResponse) resp).data().errorCode(), cb);
+                }, callback);
+    }
+
+    void validateAndForwardStopMirror(StopMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        Set<String> topics = data.topics().stream()
+                .map(StopMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
+        validateMirrorStatesAndForward(data.mirrorName(), topics,
+                Set.of((int) MirrorPartitionState.MIRRORING.value(), (int) MirrorPartitionState.PAUSED.value()),
+                Set.of(MirrorPartitionState.MIRRORING, MirrorPartitionState.PAUSED),
+                false,
+                (offset, cb) -> {
+                    data.setStateValidationOffset(offset);
+                    sendMirrorOperationRequest(new StopMirrorTopicsRequest.Builder(data),
+                            resp -> ((StopMirrorTopicsResponse) resp).data().errorCode(), cb);
+                }, callback);
+    }
+
+    void validateAndForwardPauseMirror(PauseMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        Set<String> topics = data.topics().stream()
+                .map(PauseMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
+        validateMirrorStatesAndForward(data.mirrorName(), topics,
+                Set.of((int) MirrorPartitionState.MIRRORING.value()),
+                Set.of(MirrorPartitionState.MIRRORING),
+                false,
+                (offset, cb) -> {
+                    data.setStateValidationOffset(offset);
+                    sendMirrorOperationRequest(new PauseMirrorTopicsRequest.Builder(data),
+                            resp -> ((PauseMirrorTopicsResponse) resp).data().errorCode(), cb);
+                }, callback);
+    }
+
+    void validateAndForwardResumeMirror(ResumeMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        Set<String> topics = data.topics().stream()
+                .map(ResumeMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
+        validateMirrorStatesAndForward(data.mirrorName(), topics,
+                Set.of((int) MirrorPartitionState.PAUSED.value()),
+                Set.of(MirrorPartitionState.PAUSED),
+                false,
+                (offset, cb) -> {
+                    data.setStateValidationOffset(offset);
+                    sendMirrorOperationRequest(new ResumeMirrorTopicsRequest.Builder(data),
+                            resp -> ((ResumeMirrorTopicsResponse) resp).data().errorCode(), cb);
+                }, callback);
     }
 
     String getSourceClusterId(String mirrorName) {

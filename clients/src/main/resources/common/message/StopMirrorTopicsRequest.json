@@ -31,6 +31,8 @@
           "about": "The topic name." }
       ]},
     { "name": "Patterns", "type": "[]string", "versions": "0+",
-      "about": "Patterns to update in mirror.topics.include/exclude." }
+      "about": "Patterns to update in mirror.topics.include/exclude." },
+    { "name": "StateValidationOffset", "type": "int64", "versions": "0+", "default": "-1",
+      "about": "Metadata log offset at which partition states were validated. -1 to skip fencing."}
   ]
 }

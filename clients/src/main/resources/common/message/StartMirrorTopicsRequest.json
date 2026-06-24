@@ -35,6 +35,8 @@
     { "name": "IncludePatterns", "type": "[]string", "versions": "0+",
       "about": "Regex patterns to add to mirror.topics.include." },
     { "name": "ExcludePatterns", "type": "[]string", "versions": "0+",
-      "about": "Regex patterns to add to mirror.topics.exclude." }
+      "about": "Regex patterns to add to mirror.topics.exclude." },
+    { "name": "StateValidationOffset", "type": "int64", "versions": "0+", "default": "-1",
+      "about": "Metadata log offset at which partition states were validated. -1 to skip fencing."}
   ]
 }

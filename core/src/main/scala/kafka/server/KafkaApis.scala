@@ -329,13 +329,19 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleStartMirrorTopics(request: RequestChannel.Request): Unit = {
-    // TODO: do the mirror partition state validation before forwarding to controller
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring start mirror topics request")
       requestHelper.sendMaybeThrottle(request, new StartMirrorTopicsResponse(new StartMirrorTopicsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
-    forwardToController(request)
+    val data = request.body[StartMirrorTopicsRequest].data()
+    clusterMirrorCoordinator.startMirrorTopics(data, errOpt => {
+      if (errOpt.isPresent) {
+        requestHelper.sendMaybeThrottle(request, new StartMirrorTopicsResponse(new StartMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
+      } else {
+        requestHelper.sendMaybeThrottle(request, new StartMirrorTopicsResponse(new StartMirrorTopicsResponseData()))
+      }
+    })
   }
 
   def handleStopMirrorTopics(request: RequestChannel.Request): Unit = {
@@ -344,7 +350,14 @@ class KafkaApis(val requestChannel: RequestChannel,
       requestHelper.sendMaybeThrottle(request, new StopMirrorTopicsResponse(new StopMirrorTopicsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
-    forwardToController(request)
+    val data = request.body[StopMirrorTopicsRequest].data()
+    clusterMirrorCoordinator.stopMirrorTopics(data, errOpt => {
+      if (errOpt.isPresent) {
+        requestHelper.sendMaybeThrottle(request, new StopMirrorTopicsResponse(new StopMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
+      } else {
+        requestHelper.sendMaybeThrottle(request, new StopMirrorTopicsResponse(new StopMirrorTopicsResponseData()))
+      }
+    })
   }
 
   def handlePauseMirrorTopics(request: RequestChannel.Request): Unit = {
@@ -353,7 +366,14 @@ class KafkaApis(val requestChannel: RequestChannel,
       requestHelper.sendMaybeThrottle(request, new PauseMirrorTopicsResponse(new PauseMirrorTopicsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
-    forwardToController(request)
+    val data = request.body[PauseMirrorTopicsRequest].data()
+    clusterMirrorCoordinator.pauseMirrorTopics(data, errOpt => {
+      if (errOpt.isPresent) {
+        requestHelper.sendMaybeThrottle(request, new PauseMirrorTopicsResponse(new PauseMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
+      } else {
+        requestHelper.sendMaybeThrottle(request, new PauseMirrorTopicsResponse(new PauseMirrorTopicsResponseData()))
+      }
+    })
   }
 
   def handleResumeMirrorTopics(request: RequestChannel.Request): Unit = {
@@ -362,7 +382,14 @@ class KafkaApis(val requestChannel: RequestChannel,
       requestHelper.sendMaybeThrottle(request, new ResumeMirrorTopicsResponse(new ResumeMirrorTopicsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
-    forwardToController(request)
+    val data = request.body[ResumeMirrorTopicsRequest].data()
+    clusterMirrorCoordinator.resumeMirrorTopics(data, errOpt => {
+      if (errOpt.isPresent) {
+        requestHelper.sendMaybeThrottle(request, new ResumeMirrorTopicsResponse(new ResumeMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
+      } else {
+        requestHelper.sendMaybeThrottle(request, new ResumeMirrorTopicsResponse(new ResumeMirrorTopicsResponseData()))
+      }
+    })
   }
 
   def handleDeleteClusterMirror(request: RequestChannel.Request): Unit = {

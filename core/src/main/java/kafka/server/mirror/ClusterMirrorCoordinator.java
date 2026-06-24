@@ -26,6 +26,10 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.internals.Topic;
+import org.apache.kafka.common.message.PauseMirrorTopicsRequestData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StopMirrorTopicsRequestData;
 import org.apache.kafka.common.message.MirrorPidResetRecord;
 import org.apache.kafka.common.message.WriteMirrorStatesResponseData;
 import org.apache.kafka.common.metrics.Metrics;
@@ -1058,6 +1062,22 @@ public class ClusterMirrorCoordinator {
     /** Returns the current partition states for all partitions in the given mirror. */
     public Map<TopicPartition, MirrorPartitionState> getMirrorStates(String mirrorName) {
         return metadataManager.getMirrorStates(mirrorName);
+    }
+
+    public void startMirrorTopics(StartMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validateAndForwardStartMirror(data, callback);
+    }
+
+    public void stopMirrorTopics(StopMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validateAndForwardStopMirror(data, callback);
+    }
+
+    public void pauseMirrorTopics(PauseMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validateAndForwardPauseMirror(data, callback);
+    }
+
+    public void resumeMirrorTopics(ResumeMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validateAndForwardResumeMirror(data, callback);
     }
 
     public void deleteClusterMirror(String mirrorName, Consumer<Optional<Errors>> callback) {
