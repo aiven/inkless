@@ -332,6 +332,29 @@ public interface Admin extends AutoCloseable {
     DescribeTopicsResult describeTopics(TopicCollection topics, DescribeTopicsOptions options);
 
     /**
+     * Describe topic partitions in the cluster, returning raw response data including unknown tagged fields.
+     * This is a convenience method for {@link #describeTopicPartitions(Collection, DescribeTopicsOptions)}
+     * with default options.
+     *
+     * @param topics The topics to describe.
+     * @return The DescribeTopicPartitionsResult containing raw response data.
+     */
+    default DescribeTopicPartitionsResult describeTopicPartitions(Collection<String> topics) {
+        return describeTopicPartitions(topics, new DescribeTopicsOptions());
+    }
+
+    /**
+     * Describe topic partitions in the cluster, returning raw response data including unknown tagged fields.
+     * This is useful for accessing Inkless-specific metadata (classicToDisklessStartOffset, disklessLeaderEpoch,
+     * producerStates) that are encoded as tagged fields on the DescribeTopicPartitions response.
+     *
+     * @param topics  The topics to describe.
+     * @param options The options to use when describing the topics.
+     * @return The DescribeTopicPartitionsResult containing raw response data.
+     */
+    DescribeTopicPartitionsResult describeTopicPartitions(Collection<String> topics, DescribeTopicsOptions options);
+
+    /**
      * Get information about the nodes in the cluster, using the default options.
      * <p>
      * This is a convenience method for {@link #describeCluster(DescribeClusterOptions)} with default options.
