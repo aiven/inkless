@@ -3320,34 +3320,39 @@ class ReplicaManager(val config: KafkaConfig,
     if (seal < 0) return
 
     onlinePartition(tp).foreach { partition =>
-      try {
-        val log = partition.localLogOrException
-        if (log.logEndOffset > seal) {
-          stateChangeLogger.info(s"Truncating switched partition $tp from LEO ${log.logEndOffset} " +
-            s"to classic-to-diskless start offset $seal")
-          // Seal is the classicToDisklessStartOffset, the first offset owned by diskless storage.
-          // truncateTo(seal) removes all entries with offset >= seal, leaving LEO = seal.
-          // The last classic record is at offset seal - 1.
-          partition.truncateTo(seal, isFuture = false)
-        }
-        if (partition.isLeader) {
-          if (log.logEndOffset >= seal && log.highWatermark < seal) {
-            log.maybeUpdateHighWatermark(seal)
-            stateChangeLogger.info(s"Stale high watermark detected: advanced high watermark to seal offset $seal for " +
-              s"switched leader partition $tp")
-          } else if (log.logEndOffset < seal) {
-            // This is unreachable in normal operation
-            stateChangeLogger.error(s"Leader partition $tp has LEO ${log.logEndOffset} below " +
-              s"classic-to-diskless start offset $seal; cannot catch up from another replica. " +
-              s"Marking the partition offline as its local log is corrupt below the committed seal.")
-            markPartitionOffline(tp)
+      partition.log match {
+        case Some(log) =>
+          try {
+            if (log.logEndOffset > seal) {
+              stateChangeLogger.info(s"Truncating switched partition $tp from LEO ${log.logEndOffset} " +
+                s"to classic-to-diskless start offset $seal")
+              // Seal is the classicToDisklessStartOffset, the first offset owned by diskless storage.
+              // truncateTo(seal) removes all entries with offset >= seal, leaving LEO = seal.
+              // The last classic record is at offset seal - 1.
+              partition.truncateTo(seal, isFuture = false)
+            }
+            if (partition.isLeader) {
+              if (log.logEndOffset >= seal && log.highWatermark < seal) {
+                log.maybeUpdateHighWatermark(seal)
+                stateChangeLogger.info(s"Stale high watermark detected: advanced high watermark to seal offset $seal for " +
+                  s"switched leader partition $tp")
+              } else if (log.logEndOffset < seal) {
+                // This is unreachable in normal operation
+                stateChangeLogger.error(s"Leader partition $tp has LEO ${log.logEndOffset} below " +
+                  s"classic-to-diskless start offset $seal; cannot catch up from another replica. " +
+                  s"Marking the partition offline as its local log is corrupt below the committed seal.")
+                markPartitionOffline(tp)
+              }
+            }
+          } catch {
+            case e: KafkaStorageException =>
+              stateChangeLogger.error(s"Unable to reconcile switched partition $tp " +
+                s"with topic ID $topicId due to a storage error ${e.getMessage}", e)
+              markPartitionOffline(tp)
           }
-        }
-      } catch {
-        case e: KafkaStorageException =>
-          stateChangeLogger.error(s"Unable to reconcile switched partition $tp " +
-            s"with topic ID $topicId due to a storage error ${e.getMessage}", e)
-          markPartitionOffline(tp)
+        case None =>
+          stateChangeLogger.warn(s"Skipping switched partition reconciliation for $tp " +
+            s"with topic ID $topicId because the local log is not available")
       }
     }
   }
@@ -3371,18 +3376,23 @@ class ReplicaManager(val config: KafkaConfig,
     if (!sealJustCommitted) return
 
     onlinePartition(tp).foreach { partition =>
-      try {
-        val log = partition.localLogOrException
-        if (log.logEndOffset > seal) {
-          stateChangeLogger.info(s"Truncating switched follower partition $tp from LEO ${log.logEndOffset} " +
-            s"to classic-to-diskless start offset $seal")
-          partition.truncateTo(seal, isFuture = false)
-        }
-      } catch {
-        case e: KafkaStorageException =>
-          stateChangeLogger.error(s"Unable to reconcile switched follower partition $tp " +
-            s"with topic ID $topicId due to a storage error ${e.getMessage}", e)
-          markPartitionOffline(tp)
+      partition.log match {
+        case Some(log) =>
+          try {
+            if (log.logEndOffset > seal) {
+              stateChangeLogger.info(s"Truncating switched follower partition $tp from LEO ${log.logEndOffset} " +
+                s"to classic-to-diskless start offset $seal")
+              partition.truncateTo(seal, isFuture = false)
+            }
+          } catch {
+            case e: KafkaStorageException =>
+              stateChangeLogger.error(s"Unable to reconcile switched follower partition $tp " +
+                s"with topic ID $topicId due to a storage error ${e.getMessage}", e)
+              markPartitionOffline(tp)
+          }
+        case None =>
+          stateChangeLogger.warn(s"Skipping switched follower partition reconciliation for $tp " +
+            s"with topic ID $topicId because the local log is not available")
       }
     }
   }
