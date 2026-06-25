@@ -25,11 +25,15 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.InvalidReplicaAssignmentException;
+import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.errors.InvalidTopicException;
 import org.apache.kafka.common.errors.PolicyViolationException;
 import org.apache.kafka.common.errors.StaleBrokerEpochException;
+import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.internals.Topic;
+import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
+import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignablePartition;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignableTopic;
@@ -7680,4 +7684,96 @@ public class ReplicationControlManagerTest {
 
     }
 
+    @Test
+    public void testAlterDisklessSwitchForcesSeal() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        Uuid topicId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+
+        ControllerResult<AlterDisklessSwitchResponseData> result =
+            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+                .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L));
+        assertEquals((short) 0, result.response().errorCode());
+        ctx.replay(result.records());
+
+        PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
+        assertEquals(100L, partition.classicToDisklessStartOffset);
+        // The current leader epoch is captured as the diskless leader epoch.
+        assertEquals(partition.leaderEpoch, partition.disklessLeaderEpoch);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchAbortsSwitch() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        Uuid topicId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+
+        // Seal first, then abort back to classic.
+        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+            .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L)).records());
+        assertEquals(100L, replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+
+        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+            .setTopicName("foo").setPartitionIndex(0).setSealOffset(-1L)).records());
+        assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+            replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchReArms() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        Uuid topicId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+
+        int leaderEpochBefore = replicationControl.getPartition(topicId, 0).leaderEpoch;
+        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+            .setTopicName("foo").setPartitionIndex(0).setSealOffset(-2L)).records());
+
+        PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
+        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING, partition.classicToDisklessStartOffset);
+        // Re-arming bumps the leader epoch to force the broker to seal again.
+        assertEquals(leaderEpochBefore + 1, partition.leaderEpoch);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsInvalidOffset() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+        assertThrows(InvalidRequestException.class, () ->
+            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+                .setTopicName("foo").setPartitionIndex(0).setSealOffset(-3L)));
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsUnknownTopic() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+
+        assertThrows(UnknownTopicOrPartitionException.class, () ->
+            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+                .setTopicName("nonexistent").setPartitionIndex(0).setSealOffset(100L)));
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsUnknownPartition() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+        assertThrows(UnknownTopicOrPartitionException.class, () ->
+            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+                .setTopicName("foo").setPartitionIndex(5).setSealOffset(100L)));
+    }
 }

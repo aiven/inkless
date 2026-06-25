@@ -22,6 +22,8 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
+import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
+import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.AlterPartitionRequestData;
@@ -433,6 +435,22 @@ public interface Controller extends AclMutator, AutoCloseable {
     CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
         ControllerRequestContext context,
         InitDisklessLogRequestData request
+    );
+
+    /**
+     * Override the classic-to-diskless switch state of a single partition. Unlike
+     * {@link #initDisklessLog}, this is an operator-driven write that does not require the caller
+     * to be the partition leader: a non-negative seal offset forces (re-)sealing, {@code -1} aborts
+     * the switch and reverts the partition to classic, and {@code -2} re-arms the switch as pending.
+     *
+     * @param context       The controller request context.
+     * @param request       The AlterDisklessSwitch request data.
+     *
+     * @return              A future yielding the response with the top-level error code.
+     */
+    CompletableFuture<AlterDisklessSwitchResponseData> alterDisklessSwitch(
+        ControllerRequestContext context,
+        AlterDisklessSwitchRequestData request
     );
 
     /**
