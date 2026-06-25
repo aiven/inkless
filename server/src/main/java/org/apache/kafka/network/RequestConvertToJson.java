@@ -28,6 +28,8 @@ import org.apache.kafka.common.message.AlterClientQuotasRequestDataJsonConverter
 import org.apache.kafka.common.message.AlterClientQuotasResponseDataJsonConverter;
 import org.apache.kafka.common.message.AlterConfigsRequestDataJsonConverter;
 import org.apache.kafka.common.message.AlterConfigsResponseDataJsonConverter;
+import org.apache.kafka.common.message.AlterDisklessSwitchRequestDataJsonConverter;
+import org.apache.kafka.common.message.AlterDisklessSwitchResponseDataJsonConverter;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestDataJsonConverter;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseDataJsonConverter;
 import org.apache.kafka.common.message.AlterPartitionRequestDataJsonConverter;
@@ -212,6 +214,8 @@ import org.apache.kafka.common.requests.AlterClientQuotasRequest;
 import org.apache.kafka.common.requests.AlterClientQuotasResponse;
 import org.apache.kafka.common.requests.AlterConfigsRequest;
 import org.apache.kafka.common.requests.AlterConfigsResponse;
+import org.apache.kafka.common.requests.AlterDisklessSwitchRequest;
+import org.apache.kafka.common.requests.AlterDisklessSwitchResponse;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsRequest;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsResponse;
 import org.apache.kafka.common.requests.AlterPartitionRequest;
@@ -503,6 +507,8 @@ public class RequestConvertToJson {
                 IncrementalAlterConfigsRequestDataJsonConverter.write(((IncrementalAlterConfigsRequest) request).data(), request.version());
             case INIT_DISKLESS_LOG ->
                 InitDisklessLogRequestDataJsonConverter.write(((InitDisklessLogRequest) request).data(), request.version());
+            case ALTER_DISKLESS_SWITCH ->
+                AlterDisklessSwitchRequestDataJsonConverter.write(((AlterDisklessSwitchRequest) request).data(), request.version());
             case INITIALIZE_SHARE_GROUP_STATE ->
                 InitializeShareGroupStateRequestDataJsonConverter.write(((InitializeShareGroupStateRequest) request).data(), request.version());
             case INIT_PRODUCER_ID ->
@@ -686,6 +692,8 @@ public class RequestConvertToJson {
                 IncrementalAlterConfigsResponseDataJsonConverter.write(((IncrementalAlterConfigsResponse) response).data(), version);
             case INIT_DISKLESS_LOG ->
                 InitDisklessLogResponseDataJsonConverter.write(((InitDisklessLogResponse) response).data(), version);
+            case ALTER_DISKLESS_SWITCH ->
+                AlterDisklessSwitchResponseDataJsonConverter.write(((AlterDisklessSwitchResponse) response).data(), version);
             case INITIALIZE_SHARE_GROUP_STATE ->
                 InitializeShareGroupStateResponseDataJsonConverter.write(((InitializeShareGroupStateResponse) response).data(), version);
             case INIT_PRODUCER_ID ->
