@@ -5418,7 +5418,8 @@ class ReplicaManagerInklessTest {
     topicId: Uuid,
     brokerId: Int,
     leaderId: Int,
-    classicToDisklessStartOffset: Long = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
+    classicToDisklessStartOffset: Long = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+    disklessLeaderEpoch: Int = PartitionRegistration.NO_DISKLESS_LEADER_EPOCH
   ): TopicsDelta = {
     val delta = new TopicsDelta(TopicsImage.EMPTY)
     delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
@@ -5433,6 +5434,10 @@ class ReplicaManagerInklessTest {
     if (classicToDisklessStartOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
       partitionRecord.unknownTaggedFields().add(
         InitDisklessLogFields.encodeClassicToDisklessStartOffset(classicToDisklessStartOffset))
+    }
+    if (disklessLeaderEpoch != PartitionRegistration.NO_DISKLESS_LEADER_EPOCH) {
+      partitionRecord.unknownTaggedFields().add(
+        InitDisklessLogFields.encodeDisklessLeaderEpoch(disklessLeaderEpoch))
     }
     delta.replay(partitionRecord)
     delta
@@ -5473,6 +5478,27 @@ class ReplicaManagerInklessTest {
     checkpoint.write(util.Collections.singletonMap(tp, java.lang.Long.valueOf(hw)))
     // Keep the in-memory HW in sync for any reads that happen before `applyDelta`
     // re-loads it from the checkpoint.
+    log.maybeUpdateHighWatermark(hw)
+  }
+
+  private def populateConsolidatedLocalLogAndCheckpointedHwm(replicaManager: ReplicaManager,
+                                                             tp: TopicPartition,
+                                                             log: UnifiedLog,
+                                                             seal: Long,
+                                                             leo: Long,
+                                                             disklessLeaderEpoch: Int,
+                                                             hw: Long): Unit = {
+    if (seal > 0) {
+      val classicRecords = (0L until seal).map(i => new SimpleRecord(s"classic-$i".getBytes))
+      log.appendAsFollower(TestUtils.records(classicRecords, baseOffset = 0L, partitionLeaderEpoch = 0), 0)
+    }
+    if (leo > seal) {
+      val disklessRecords = (seal until leo).map(i => new SimpleRecord(s"diskless-$i".getBytes))
+      log.appendAsFollower(TestUtils.records(disklessRecords, baseOffset = seal, partitionLeaderEpoch = disklessLeaderEpoch), disklessLeaderEpoch)
+    }
+
+    val checkpoint = replicaManager.highWatermarkCheckpoints(log.parentDir)
+    checkpoint.write(util.Collections.singletonMap(tp, java.lang.Long.valueOf(hw)))
     log.maybeUpdateHighWatermark(hw)
   }
 
@@ -5602,7 +5628,7 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
-  def testApplyDeltaTruncatesSwitchedFollowerTailWhenBecomingLeader(): Unit = {
+  def testApplyDeltaTruncatesSwitchedFollowerTail(): Unit = {
     val topicName = "switched-topic"
     val topicId = Uuid.randomUuid()
     val tp = new TopicPartition(topicName, 0)
@@ -5632,7 +5658,7 @@ class ReplicaManagerInklessTest {
       )
       val followerImage = imageFromTopics(followerDelta.apply())
       replicaManager.applyDelta(followerDelta, followerImage)
-      assertEquals(13L, replicaManager.localLogOrException(tp).logEndOffset)
+      assertEquals(sealOffset, replicaManager.localLogOrException(tp).logEndOffset)
 
       val leaderDelta = promoteFollowerToLeaderDelta(
         followerImage.topics(),
@@ -5648,6 +5674,106 @@ class ReplicaManagerInklessTest {
         "Promoted switched leader must drop uncommitted classic records at or beyond the seal")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaPreservesConsolidatedSuffixForSwitchedConsolidatingFollower(): Unit = {
+    val topicName = "consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+    val leo = 13L
+    val disklessLeaderEpoch = 5
+
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager])
+    try {
+      val replicaManager = createReplicaManager(
+        List(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+      )
+      try {
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateConsolidatedLocalLogAndCheckpointedHwm(
+          replicaManager, tp, log, sealOffset, leo, disklessLeaderEpoch, hw = sealOffset)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+
+        val followerDelta = disklessFollowerDelta(
+          topicName,
+          topicId,
+          brokerId,
+          leaderId,
+          classicToDisklessStartOffset = sealOffset,
+          disklessLeaderEpoch = disklessLeaderEpoch
+        )
+        replicaManager.applyDelta(followerDelta, imageFromTopics(followerDelta.apply()))
+
+        assertEquals(leo, replicaManager.localLogOrException(tp).logEndOffset,
+          "Consolidating follower must keep an E_d-stamped diskless suffix above the seal")
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
+  def testApplyDeltaPreservesConsolidatedSuffixForSwitchedConsolidatingLeader(): Unit = {
+    val topicName = "consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val otherReplica = 2
+    val sealOffset = 10L
+    val leo = 13L
+    val disklessLeaderEpoch = 5
+
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager])
+    try {
+      val replicaManager = createReplicaManager(
+        List(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+      )
+      try {
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateConsolidatedLocalLogAndCheckpointedHwm(
+          replicaManager, tp, log, sealOffset, leo, disklessLeaderEpoch, hw = sealOffset)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+
+        val delta = new TopicsDelta(TopicsImage.EMPTY)
+        delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+        val partitionRecord = new PartitionRecord()
+          .setPartitionId(0)
+          .setTopicId(topicId)
+          .setReplicas(util.Arrays.asList(brokerId, otherReplica))
+          .setIsr(util.Arrays.asList(brokerId, otherReplica))
+          .setLeader(brokerId)
+          .setLeaderEpoch(disklessLeaderEpoch + 1)
+          .setPartitionEpoch(0)
+        partitionRecord.unknownTaggedFields().add(
+          InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+        partitionRecord.unknownTaggedFields().add(
+          InitDisklessLogFields.encodeDisklessLeaderEpoch(disklessLeaderEpoch))
+        delta.replay(partitionRecord)
+
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        val partition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online].partition
+        assertTrue(partition.isLeader)
+        assertEquals(leo, partition.localLogOrException.logEndOffset,
+          "Consolidating leader must keep an E_d-stamped diskless suffix above the seal")
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
     }
   }
 
@@ -6266,6 +6392,8 @@ class ReplicaManagerInklessTest {
     when(inklessMetadata.isDisklessTopic(any())).thenReturn(false)
     when(inklessMetadata.getClassicToDisklessStartOffset(any()))
       .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(inklessMetadata.getDisklessLeaderEpoch(any()))
+      .thenReturn(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
     when(inklessMetadata.getTopicId(anyString())).thenAnswer{ invocation =>
       val topicName = invocation.getArgument(0, classOf[String])
       topicIdMapping.getOrElse(topicName, Uuid.ZERO_UUID)
@@ -6623,13 +6751,9 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
-  def testApplyDeltaDoesNotTruncateWhenSealAlreadyCommittedInBaseImage(): Unit = {
-    // Counterpart to testApplyDeltaReconcilesCommittedSealOffsetWithOnlySealOffsetChange:
-    // there the seal flips PENDING -> committed in this delta and the stale tail is truncated.
-    // Here the seal is ALREADY committed in the base image, so a later (metadata-only) delta
-    // must NOT re-truncate an already-progressed partition. This pins down the
-    // `sealJustCommitted` guard, which relies entirely on the delta.image() previous
-    // registration check.
+  def testApplyDeltaTruncatesNonConsolidatingTailWhenSealAlreadyCommittedInBaseImage(): Unit = {
+    // Non-consolidating switched replicas never own offsets at or above the seal locally, even if
+    // this broker first observes the partition after the seal has already been committed.
     val topicName = "switched-topic"
     val topicId = Uuid.randomUuid()
     val tp = new TopicPartition(topicName, 0)
@@ -6646,15 +6770,12 @@ class ReplicaManagerInklessTest {
     ))
     try {
       val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
-      // Local log runs past the seal (LEO 13 > seal 10), as it would for a partition that has
-      // already progressed beyond the seal on this broker.
       populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 13L, hw = sealOffset)
 
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
 
-      // First delta already carries a committed seal (>= 0). Because the base image (EMPTY) has
-      // no prior registration, this is treated as "not just committed" and must not truncate;
-      // catching such a partition up is the catch-up/consolidation path's job.
+      // First delta already carries a committed seal (>= 0). This still truncates because the
+      // partition is not consolidating, so the local suffix cannot be valid diskless materialization.
       val committedDelta = new TopicsDelta(TopicsImage.EMPTY)
       committedDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
       val committedRecord = new PartitionRecord()
@@ -6672,15 +6793,14 @@ class ReplicaManagerInklessTest {
       val committedImage = imageFromTopics(committedDelta.apply())
       replicaManager.applyDelta(committedDelta, committedImage)
 
-      assertEquals(13L, replicaManager.localLogOrException(tp).logEndOffset,
-        "A seal that predates this broker's view must not be truncated by the just-committed guard")
+      assertEquals(sealOffset, replicaManager.localLogOrException(tp).logEndOffset,
+        "Non-consolidating switched replicas must drop local records at or beyond the seal")
 
       clearInvocations(mockFetcherManager)
 
       // A later metadata-only change that leaves the seal unchanged at 10. An empty
       // PartitionChangeRecord still bumps the partition epoch (PartitionRegistration.merge), so
-      // the partition is re-processed as a follower, but the seal now already exists in the base
-      // image (sealJustCommitted == false).
+      // the partition is re-processed as a follower, but truncation is now a no-op.
       val laterDelta = new TopicsDelta(committedImage.topics())
       laterDelta.replay(new PartitionChangeRecord()
         .setTopicId(topicId)
@@ -6691,9 +6811,7 @@ class ReplicaManagerInklessTest {
 
       replicaManager.applyDelta(laterDelta, imageFromTopics(laterDelta.apply()))
 
-      // The stale tail beyond the seal is NOT re-truncated, and no fetcher work is triggered by
-      // the metadata-only delta.
-      assertEquals(13L, replicaManager.localLogOrException(tp).logEndOffset)
+      assertEquals(sealOffset, replicaManager.localLogOrException(tp).logEndOffset)
       verify(mockFetcherManager, never()).removeFetcherForPartitions(any())
       verify(mockFetcherManager, never()).addFetcherForPartitions(any())
     } finally {
