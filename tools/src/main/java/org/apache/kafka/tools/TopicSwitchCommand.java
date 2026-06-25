@@ -85,6 +85,13 @@ public abstract class TopicSwitchCommand {
                 }
                 break;
             case "seal":
+                try (Admin adminClient = Admin.create(properties)) {
+                    sealCommand(System.out, adminClient, topic,
+                        namespace.getInt("partition"),
+                        Optional.ofNullable(namespace.getLong("offset")),
+                        namespace.getBoolean("dry_run"));
+                }
+                break;
             case "repair":
                 throw new RuntimeException("Command \"" + command + "\" not implemented");
             default:
@@ -123,6 +130,17 @@ public abstract class TopicSwitchCommand {
                     .help("Topic name for the specified topic.");
         }
 
+        sealParser.addArgument("--partition", "-p")
+                .action(store())
+                .type(Integer.class)
+                .required(true)
+                .help("The partition index to seal.");
+        sealParser.addArgument("--offset", "-o")
+                .action(store())
+                .type(Long.class)
+                .help("The seal offset to commit: >= 0 forces (re-)sealing at that offset, -1 aborts the "
+                        + "switch and reverts the partition to classic, and -2 re-arms the switch as pending. "
+                        + "If omitted, the partition's current end offset is used.");
         sealParser.addArgument("--dry-run", "-d")
                 .action(storeTrue())
                 .help("Whether to only perform validation when adjusting the seal offset.");
@@ -193,6 +211,51 @@ public abstract class TopicSwitchCommand {
                 }
             }
             stream.println();
+        }
+    }
+
+    static void sealCommand(PrintStream stream, Admin adminClient, String topic, int partition,
+                            Optional<Long> offset, boolean dryRun) throws Exception {
+        if (offset.isPresent() && offset.get() < PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
+            throw new RuntimeException("Invalid seal offset " + offset.get()
+                + "; must be >= -2 (-2 re-arms, -1 aborts, >= 0 seals at that offset).");
+        }
+
+        TopicPartition tp = new TopicPartition(topic, partition);
+        long sealOffset;
+        if (offset.isEmpty() || offset.get() >= 0) {
+            long endOffset = adminClient.listOffsets(Map.of(tp, OffsetSpec.latest()))
+                .all().get().get(tp).offset();
+            sealOffset = offset.orElse(endOffset);
+            if (endOffset < sealOffset) {
+                throw new RuntimeException(String.format(
+                    "Cannot seal %s-%d at offset %d: it is past the partition end offset %d.",
+                    topic, partition, sealOffset, endOffset));
+            }
+            stream.printf("Validated %s-%d: seal offset %d <= end offset %d.%n",
+                topic, partition, sealOffset, endOffset);
+        } else {
+            sealOffset = offset.get();
+        }
+
+        if (dryRun) {
+            stream.printf("[dry-run] Would set %s-%d classicToDisklessStartOffset to %s.%n",
+                topic, partition, describeSealOffset(sealOffset));
+            return;
+        }
+
+        adminClient.alterDisklessSwitch(topic, partition, sealOffset).all().get();
+        stream.printf("Set %s-%d classicToDisklessStartOffset to %s.%n",
+            topic, partition, describeSealOffset(sealOffset));
+    }
+
+    private static String describeSealOffset(long sealOffset) {
+        if (sealOffset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+            return "-1 (abort switch, revert to classic)";
+        } else if (sealOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
+            return "-2 (re-arm switch)";
+        } else {
+            return String.valueOf(sealOffset);
         }
     }
 
