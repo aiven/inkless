@@ -259,6 +259,45 @@ public abstract class AbstractControlPlaneTest {
     }
 
     @Test
+    void findBelowLogStartOffsetIsOutOfRange() {
+        final String objectKey = "a";
+
+        // Commit a single batch spanning offsets [0, 10), then advance the log start offset to 5
+        // via deleteRecords. A fetch for an offset in [0, 5) is now below the log start.
+        controlPlane.commitFile(
+            objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+                List.of(
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 0, 9, 1000, TimestampType.CREATE_TIME)
+            )
+        );
+
+        assertThat(controlPlane.deleteRecords(List.of(
+            new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 5)
+        ))).containsExactly(DeleteRecordsResponse.success(5));
+
+        // Fetching at offset 2 (below the log start offset of 5) must be out of range, not silently
+        // return the first batch at or after the requested offset. The returned log start offset and
+        // high watermark still describe the current log boundaries.
+        final List<FindBatchResponse> belowLogStart = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 2, Integer.MAX_VALUE)),
+            Integer.MAX_VALUE, 0
+        );
+        assertThat(belowLogStart).containsExactly(
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 5, 10)
+        );
+
+        // Fetching exactly at the log start offset succeeds and returns the surviving batch.
+        final List<FindBatchResponse> atLogStart = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 5, Integer.MAX_VALUE)),
+            Integer.MAX_VALUE, 0
+        );
+        assertThat(atLogStart).hasSize(1);
+        assertThat(atLogStart.get(0).errors()).isEqualTo(Errors.NONE);
+        assertThat(atLogStart.get(0).logStartOffset()).isEqualTo(5);
+        assertThat(atLogStart.get(0).batches()).hasSize(1);
+    }
+
+    @Test
     void findNegativeOffset() {
         final String objectKey = "a";
 
@@ -440,12 +479,21 @@ public abstract class AbstractControlPlaneTest {
             DeleteRecordsResponse.unknownTopicOrPartition()
         );
 
+        // Fetching at offset 0, now below the advanced log start offset (3), is out of range.
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)),
             Integer.MAX_VALUE, 0
         );
 
         assertThat(findResponse).containsExactly(
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 3, 10)
+        );
+        // Fetching at the log start offset still returns the batch.
+        final List<FindBatchResponse> findResponseAtLogStart = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 3, Integer.MAX_VALUE)),
+            Integer.MAX_VALUE, 0
+        );
+        assertThat(findResponseAtLogStart).containsExactly(
             new FindBatchResponse(Errors.NONE, findResponseBeforeDelete.get(0).batches(), 3, 10)
         );
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
@@ -500,12 +548,21 @@ public abstract class AbstractControlPlaneTest {
             DeleteRecordsResponse.unknownTopicOrPartition()
         );
 
+        // Fetching at offset 0, now below the advanced log start offset (19), is out of range.
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)),
             Integer.MAX_VALUE, 0
         );
 
         assertThat(findResponse).containsExactly(
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 19, 30)
+        );
+        // Fetching at the log start offset returns the surviving batches.
+        final List<FindBatchResponse> findResponseAtLogStart = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 19, Integer.MAX_VALUE)),
+            Integer.MAX_VALUE, 0
+        );
+        assertThat(findResponseAtLogStart).containsExactly(
             new FindBatchResponse(Errors.NONE, List.of(
                 findResponseBeforeDelete.get(0).batches().get(1),
                 findResponseBeforeDelete.get(0).batches().get(2)
@@ -576,11 +633,21 @@ public abstract class AbstractControlPlaneTest {
             DeleteRecordsResponse.success(10)
         );
 
+        // Fetching at offset 0, now below the advanced log start offset (10), is out of range.
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)),
             Integer.MAX_VALUE, 0
         );
         assertThat(findResponse).containsExactly(
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 10, 10)
+        );
+        // Fetching at the log start offset (== high watermark) returns an empty success: the
+        // consumer is caught up, not out of range.
+        final List<FindBatchResponse> findResponseAtLogStart = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 10, Integer.MAX_VALUE)),
+            Integer.MAX_VALUE, 0
+        );
+        assertThat(findResponseAtLogStart).containsExactly(
             new FindBatchResponse(Errors.NONE, List.of(), 10, 10)
         );
 
