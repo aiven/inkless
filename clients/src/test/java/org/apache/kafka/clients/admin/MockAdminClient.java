@@ -1265,6 +1265,11 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
+    public AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset, AlterDisklessSwitchOptions options) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
     public DescribeMetadataQuorumResult describeMetadataQuorum(DescribeMetadataQuorumOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
