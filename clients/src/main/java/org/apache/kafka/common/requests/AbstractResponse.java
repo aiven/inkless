@@ -293,6 +293,8 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
                 return DeleteShareGroupOffsetsResponse.parse(readable, version);
             case INIT_DISKLESS_LOG:
                 return InitDisklessLogResponse.parse(readable, version);
+            case ALTER_DISKLESS_SWITCH:
+                return AlterDisklessSwitchResponse.parse(readable, version);
             default:
                 throw new AssertionError(String.format("ApiKey %s is not currently handled in `parseResponse`, the " +
                         "code should be updated to do so.", apiKey));
