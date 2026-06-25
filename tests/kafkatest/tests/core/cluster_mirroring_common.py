@@ -203,6 +203,16 @@ class MirrorUtils:
         wait_until(check, timeout_sec=120, backoff_sec=2, err_msg=err_msg)
 
     @staticmethod
+    def wait_mirror_lag_zero(logger, kafka, client_node, mirror_name,
+                             topics, err_msg="Mirror did not catch up"):
+        """Wait until all mirror partitions reach MIRRORING state with zero lag."""
+        def check():
+            return MirrorUtils.all_satisfy_in_mirror(logger,
+                kafka, client_node, mirror_name,
+                lambda p: p["lag"] == 0 and p["state"] == "MIRRORING", topics)
+        wait_until(check, timeout_sec=120, backoff_sec=2, err_msg=err_msg)
+
+    @staticmethod
     def wait_for_metadata_refresh(logger, kafka, client_node, mirror_name):
         """Wait for metadata sync by sleeping based on the configured refresh interval."""
         kafka.describe_mirror_config(client_node, mirror_name)
@@ -214,16 +224,6 @@ class MirrorUtils:
         sleep_s = interval_ms // 1000
         logger.info("Waiting %ds for metadata sync (interval=%dms)", sleep_s, interval_ms)
         time.sleep(sleep_s)
-
-    @staticmethod
-    def wait_mirror_lag_zero(logger, kafka, client_node, mirror_name,
-                             topics, err_msg="Mirror did not catch up"):
-        """Wait until all mirror partitions reach MIRRORING state with zero lag."""
-        def check():
-            return MirrorUtils.all_satisfy_in_mirror(logger,
-                kafka, client_node, mirror_name,
-                lambda p: p["lag"] == 0 and p["state"] == "MIRRORING", topics)
-        wait_until(check, timeout_sec=120, backoff_sec=2, err_msg=err_msg)
 
     @staticmethod
     def describe_consumer_group(kafka, group, client_node):

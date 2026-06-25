@@ -113,7 +113,7 @@ abstract class AbstractFetcherThread(name: String,
 
   protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {}
 
-  protected def refreshSourceClusterMetadata(mirrorPartitions: Set[TopicPartition]): Unit = {}
+  protected def refreshSourceClusterMetadata(mirrorPartitions: Set[TopicPartition], reason: String): Unit = {}
 
   protected def shouldUpdateMirrorLeaderEpoch(topicPartition: TopicPartition): Boolean = {
     false
@@ -170,7 +170,7 @@ abstract class AbstractFetcherThread(name: String,
       if (fetchException.exists(_.isInstanceOf[IOException]) && mirrorName.nonEmpty && isRunning) {
         try {
           partitions.foreach(markPartitionRemoved)
-          refreshSourceClusterMetadata(partitions.toSet)
+          refreshSourceClusterMetadata(partitions.toSet, s"Fetch IO error: ${fetchException.get.getMessage}")
         } catch {
           case t: Throwable =>
             warn(s"Failed to re-resolve source leader for mirror $mirrorName", t)
@@ -229,12 +229,12 @@ abstract class AbstractFetcherThread(name: String,
     catch {
       case e: KafkaStorageException =>
         error(s"Failed to truncate $topicPartition at offset ${truncationState.offset}", e)
-        markPartitionFailed(topicPartition)
+        markPartitionFailed(topicPartition, s"Truncation failed: ${e.getMessage}")
         false
       case t: Throwable =>
         error(s"Unexpected error occurred during truncation for $topicPartition "
           + s"at offset ${truncationState.offset}", t)
-        markPartitionFailed(topicPartition)
+        markPartitionFailed(topicPartition, s"Truncation failed: ${t.getMessage}")
         false
     }
   }
@@ -276,7 +276,7 @@ abstract class AbstractFetcherThread(name: String,
     if (!partitionsNeedsRefreshMetadata.isEmpty) {
       info(s"Refreshing source metadata for mirror name $mirrorName with partitions: $partitionsNeedsRefreshMetadata")
       removeFetcherForPartitions(partitionsNeedsRefreshMetadata.asScala)
-      refreshSourceClusterMetadata(partitionsNeedsRefreshMetadata.asScala)
+      refreshSourceClusterMetadata(partitionsNeedsRefreshMetadata.asScala, "Truncation requires source metadata refresh")
     }
   }
 
@@ -320,7 +320,7 @@ abstract class AbstractFetcherThread(name: String,
     partitionStates.set(newStates)
     if (!partitionsToBeRemoved.isEmpty) {
       removeFetcherForPartitions(partitionsToBeRemoved.asScala)
-      refreshSourceClusterMetadata(partitionsToBeRemoved.asScala)
+      refreshSourceClusterMetadata(partitionsToBeRemoved.asScala, "Source leader changed")
     }
   }
 
@@ -357,7 +357,7 @@ abstract class AbstractFetcherThread(name: String,
       warn(s"No endpoint info to redirect mirror partitions $stalePartitions, refreshing source metadata")
       stalePartitions.foreach(markPartitionRemoved)
       removeFetcherForPartitions(stalePartitions)
-      refreshSourceClusterMetadata(stalePartitions)
+      refreshSourceClusterMetadata(stalePartitions, "No endpoint info in fetch response")
     }
   }
 
@@ -437,7 +437,7 @@ abstract class AbstractFetcherThread(name: String,
       if (requestEpoch.isPresent && requestEpoch.get == currentLeaderEpoch) {
         info(s"Partition $tp has an older epoch ($currentLeaderEpoch) than the current leader. Will await " +
           s"the new LeaderAndIsr state before resuming fetching.")
-        markPartitionFailed(tp)
+        markPartitionFailed(tp, s"Leader epoch $currentLeaderEpoch is older than current leader")
         false
       } else {
         info(s"Partition $tp has a newer epoch ($currentLeaderEpoch) than the current leader. Retry the partition later.")
@@ -578,7 +578,7 @@ abstract class AbstractFetcherThread(name: String,
                     case e: KafkaStorageException =>
                       error(s"Error while processing data for partition $topicPartition " +
                         s"at offset ${currentFetchState.fetchOffset}", e)
-                      markPartitionFailed(topicPartition)
+                      markPartitionFailed(topicPartition, s"Storage error: ${e.getMessage}")
                     case e: MirrorLeaderEpochExceededException =>
                       error(s"Error while processing data for mirror partition $topicPartition " +
                         s"at offset ${currentFetchState.fetchOffset}, triggering leader epoch bump.", e)
@@ -588,12 +588,11 @@ abstract class AbstractFetcherThread(name: String,
                       error(s"Error while processing data for mirror partition $topicPartition " +
                         s"at offset ${currentFetchState.fetchOffset}, triggering metadata update.", e)
                       markPartitionRemoved(topicPartition)
-                      refreshSourceClusterMetadata(Set(topicPartition))
+                      refreshSourceClusterMetadata(Set(topicPartition), e.getMessage)
                     case t: Throwable =>
-                      // stop monitoring this partition and add it to the set of failed partitions
                       error(s"Unexpected error occurred while processing data for partition $topicPartition " +
                         s"at offset ${currentFetchState.fetchOffset}", t)
-                      markPartitionFailed(topicPartition)
+                      markPartitionFailed(topicPartition, s"Unexpected error: ${t.getMessage}")
                   }
                 case Errors.OFFSET_OUT_OF_RANGE =>
                   if (!handleOutOfRangeError(topicPartition, currentFetchState, fetchPartitionData.currentLeaderEpoch))
@@ -695,12 +694,12 @@ abstract class AbstractFetcherThread(name: String,
     warn(s"Partition $topicPartition marked as failed")
   }
 
-  private def markPartitionFailed(topicPartition: TopicPartition): Unit = {
+  private def markPartitionFailed(topicPartition: TopicPartition, reason: String): Unit = {
     markPartitionRemoved(topicPartition)
-    handlePartitionFailed(topicPartition)
+    handlePartitionFailed(topicPartition, reason)
   }
 
-  protected def handlePartitionFailed(topicPartition: TopicPartition): Unit = {}
+  protected def handlePartitionFailed(topicPartition: TopicPartition, reason: String): Unit = {}
 
   /**
    * Returns initial partition fetch state based on current state and the provided `initialFetchState`.

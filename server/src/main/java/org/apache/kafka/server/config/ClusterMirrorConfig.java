@@ -84,7 +84,7 @@ public final class ClusterMirrorConfig {
     public static final int MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DEFAULT = 10;
     public static final String MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DOC = "The maximum number of automatic retry attempts for a mirror partition in FAILED state. " +
             "After this limit is reached, manual intervention is required via the start-mirror-topics command. " +
-            "Set to 0 for unlimited retries.";
+            "Set to 0 to disable automatic retries.";
 
     // ---------------------------------------------------------------
     // Mirror level configs: Set when creating/altering a specific mirror. Stored in cluster metadata.

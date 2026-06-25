@@ -133,7 +133,8 @@ public enum MirrorPartitionState {
                 return source == MirrorPartitionState.LOG_TRUNCATION
                         || source == MirrorPartitionState.EPOCH_FENCING
                         || source == MirrorPartitionState.PAUSED
-                        || source == MirrorPartitionState.FAILED;
+                        || source == MirrorPartitionState.FAILED
+                        || source == MirrorPartitionState.MIRRORING;
             case PAUSING:
                 return source == MirrorPartitionState.MIRRORING;
             case PAUSED:

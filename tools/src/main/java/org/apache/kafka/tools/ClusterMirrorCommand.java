@@ -18,14 +18,13 @@ package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.ClusterMirrorDescription;
+import org.apache.kafka.clients.admin.ClusterMirrorDesc;
 import org.apache.kafka.clients.admin.ClusterMirrorListing;
 import org.apache.kafka.clients.admin.CreateClusterMirrorOptions;
 import org.apache.kafka.clients.admin.CreateClusterMirrorResult;
 import org.apache.kafka.clients.admin.DeleteClusterMirrorOptions;
 import org.apache.kafka.clients.admin.DeleteClusterMirrorResult;
 import org.apache.kafka.clients.admin.DescribeClusterMirrorsOptions;
-import org.apache.kafka.clients.admin.DescribeClusterMirrorsResult;
 import org.apache.kafka.clients.admin.ListClusterMirrorsResult;
 import org.apache.kafka.clients.admin.PauseMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.PauseMirrorTopicsResult;
@@ -255,18 +254,12 @@ public abstract class ClusterMirrorCommand {
         }
 
         private void describeClusterMirrors(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
-            // If --mirror is specified, describe only that mirror; otherwise describe all mirrors
             List<String> mirrorNames = opts.mirror().isPresent()
                 ? List.of(opts.mirror().get())
                 : List.of();
 
-            // Describe the mirror(s) using the admin client
-            DescribeClusterMirrorsResult result = adminClient.describeClusterMirrors(
-                mirrorNames,
-                new DescribeClusterMirrorsOptions()
-            );
-
-            Map<String, ClusterMirrorDescription> descriptions = result.allDescriptions().get();
+            Map<String, ClusterMirrorDesc> descriptions = adminClient.describeClusterMirrors(
+                mirrorNames, new DescribeClusterMirrorsOptions()).allDescriptions().get();
 
             if (descriptions.isEmpty()) {
                 if (opts.hasJsonOption()) {
@@ -277,30 +270,12 @@ public abstract class ClusterMirrorCommand {
                 return;
             }
 
-            // Collect partition states from all mirrors (one entry per mirror+topic+partition)
-            List<PartitionInfo> partitionInfos = new ArrayList<>();
-            for (Map.Entry<String, ClusterMirrorDescription> mirrorEntry : descriptions.entrySet()) {
-                String mirrorName = mirrorEntry.getKey();
-                ClusterMirrorDescription description = mirrorEntry.getValue();
+            List<PartitionInfo> partitionInfos = collectPartitionInfos(descriptions);
 
-                for (Map.Entry<String, Set<ClusterMirrorDescription.LeaderState>> topicEntry : description.topics().entrySet()) {
-                    String topic = topicEntry.getKey();
-                    for (ClusterMirrorDescription.LeaderState state : topicEntry.getValue()) {
-                        partitionInfos.add(new PartitionInfo(
-                            mirrorName,
-                            topic,
-                            state.topicPartition().partition(),
-                            state.sourceOffset(),
-                            state.destinationOffset(),
-                            state.lag(),
-                            state.state(),
-                            state.lastMirrorEpoch()
-                        ));
-                    }
-                }
+            if (opts.hasFailedOption()) {
+                partitionInfos.removeIf(info -> !"FAILED".equals(info.state()));
             }
 
-            // Sort by mirror, then topic, then partition
             partitionInfos.sort(Comparator.comparing(PartitionInfo::mirror)
                 .thenComparing(PartitionInfo::topic)
                 .thenComparing(PartitionInfo::partition));
@@ -314,20 +289,88 @@ public abstract class ClusterMirrorCommand {
                 }
             }
 
-            // Only print header and results if there are partitions to display
-            if (!partitionInfos.isEmpty()) {
-                System.out.printf("%-30s %-40s %-10s %-15s %-18s %-10s %-12s%n",
-                    "MIRROR", "TOPIC", "PARTITION", "SOURCE-OFFSET", "DESTINATION-OFFSET", "LAG", "STATE");
-                for (PartitionInfo info : partitionInfos) {
-                    System.out.printf("%-30s %-40s %-10d %-15s %-18s %-10s %-12s%n",
-                        truncateLeft(info.mirror(), 30),
-                        truncateLeft(info.topic(), 40),
-                        info.partition(),
-                        formatOffset(info.sourceOffset()),
-                        formatOffset(info.destinationOffset()),
-                        formatOffset(info.lag()),
-                        info.state());
+            if (partitionInfos.isEmpty()) {
+                if (opts.hasFailedOption()) {
+                    System.out.println("No failed partitions found");
                 }
+                return;
+            }
+
+            if (opts.hasFailedOption()) {
+                printFailedPartitions(partitionInfos, getMaxRetryAttempts());
+            } else {
+                printPartitions(partitionInfos);
+            }
+        }
+
+        private List<PartitionInfo> collectPartitionInfos(Map<String, ClusterMirrorDesc> descriptions) {
+            List<PartitionInfo> partitionInfos = new ArrayList<>();
+            for (Map.Entry<String, ClusterMirrorDesc> mirrorEntry : descriptions.entrySet()) {
+                String mirrorName = mirrorEntry.getKey();
+                for (Map.Entry<String, Set<ClusterMirrorDesc.LeaderStateDesc>> topicEntry : mirrorEntry.getValue().topics().entrySet()) {
+                    String topic = topicEntry.getKey();
+                    for (ClusterMirrorDesc.LeaderStateDesc state : topicEntry.getValue()) {
+                        partitionInfos.add(new PartitionInfo(
+                            mirrorName, topic,
+                            state.topicPartition().partition(),
+                            state.sourceOffset(), state.destinationOffset(), state.lag(),
+                            state.state(), state.retryAttempt(), state.errorMessage(),
+                            state.lastMirrorEpoch()));
+                    }
+                }
+            }
+            return partitionInfos;
+        }
+
+        private int getMaxRetryAttempts() {
+            try {
+                String brokerId = adminClient.describeCluster().nodes().get().iterator().next().idString();
+                ConfigResource brokerResource = new ConfigResource(ConfigResource.Type.BROKER, brokerId);
+                var configs = adminClient.describeConfigs(List.of(brokerResource)).all().get();
+                var brokerConfig = configs.get(brokerResource);
+                if (brokerConfig != null) {
+                    var entry = brokerConfig.get("mirror.failed.retry.max.attempts");
+                    if (entry != null) {
+                        return Integer.parseInt(entry.value());
+                    }
+                }
+            } catch (RuntimeException | InterruptedException | ExecutionException e) {
+                // fall through to default
+            }
+            return 10;
+        }
+
+        private void printFailedPartitions(List<PartitionInfo> partitionInfos, int maxRetryAttempts) {
+            int maxError = 80;
+            System.out.printf("%-30s %-40s %-10s %-7s %s%n",
+                "MIRROR", "TOPIC", "PARTITION", "RETRY", "ERROR");
+            for (PartitionInfo info : partitionInfos) {
+                String error = info.errorMessage() != null ? info.errorMessage() : "";
+                if (error.length() > maxError) {
+                    error = error.substring(0, maxError - 3) + "...";
+                }
+                String retry = info.retryAttempt() + "/" + maxRetryAttempts;
+                System.out.printf("%-30s %-40s %-10d %-7s %s%n",
+                    truncateLeft(info.mirror(), 30),
+                    truncateLeft(info.topic(), 40),
+                    info.partition(),
+                    retry,
+                    error);
+            }
+        }
+
+        private void printPartitions(List<PartitionInfo> partitionInfos) {
+            System.out.printf("%-30s %-40s %-10s %-15s %-18s %-10s %-12s%n",
+                "MIRROR", "TOPIC", "PARTITION", "SOURCE-OFFSET", "DESTINATION-OFFSET", "LAG", "STATE");
+            for (PartitionInfo info : partitionInfos) {
+                System.out.printf("%-30s %-40s %-10d %-15s %-18s %-10s %-12s%n",
+                    truncateLeft(info.mirror(), 30),
+                    truncateLeft(info.topic(), 40),
+                    info.partition(),
+                    formatOffset(info.sourceOffset()),
+                    formatOffset(info.destinationOffset()),
+                    formatOffset(info.lag()),
+                    info.state());
             }
         }
 
@@ -359,7 +402,9 @@ public abstract class ClusterMirrorCommand {
         }
 
         private record PartitionInfo(String mirror, String topic, int partition,
-                                     long sourceOffset, long destinationOffset, long lag, String state, int lastMirrorEpoch) { }
+                                     long sourceOffset, long destinationOffset, long lag,
+                                     String state, short retryAttempt, String errorMessage,
+                                     int lastMirrorEpoch) { }
     }
 
     private static final class MirrorCommandOptions extends CommandDefaultOptions {
@@ -378,6 +423,7 @@ public abstract class ClusterMirrorCommand {
         private final ArgumentAcceptingOptionSpec<String> topicsOpt;
         private final ArgumentAcceptingOptionSpec<String> excludeOpt;
         private final OptionSpecBuilder jsonOpt;
+        private final OptionSpecBuilder failedOpt;
 
         MirrorCommandOptions(String[] args) {
             super(args);
@@ -423,6 +469,7 @@ public abstract class ClusterMirrorCommand {
                 .ofType(String.class);
 
             jsonOpt = parser.accepts("json", "Output description in JSON format");
+            failedOpt = parser.accepts("failed", "Show only failed partitions with error details.");
 
             options = parser.parse(args);
             checkArgs();
@@ -466,6 +513,10 @@ public abstract class ClusterMirrorCommand {
 
         private boolean hasJsonOption() {
             return has(jsonOpt);
+        }
+
+        private boolean hasFailedOption() {
+            return has(failedOpt);
         }
 
         private boolean hasDescribeOption() {
@@ -554,6 +605,9 @@ public abstract class ClusterMirrorCommand {
 
             if (has(jsonOpt) && !has(describeOpt))
                 throw new IllegalArgumentException("--json is only supported for describing mirrors");
+
+            if (has(failedOpt) && !has(describeOpt))
+                throw new IllegalArgumentException("--failed is only supported for describing mirrors");
         }
     }
 }

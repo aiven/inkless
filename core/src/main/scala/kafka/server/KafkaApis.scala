@@ -440,6 +440,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           val lagInfoMap = replicaManager.getMirrorLagInfo(mirrorName)
           val partitionStates = clusterMirrorCoordinator.getMirrorStates(mirrorName).asScala
           val lastMirrorEpoch = clusterMirrorCoordinator.getLastMirrorEpochs(mirrorName)
+          val failedInfo = clusterMirrorCoordinator.getFailedPartitionInfo()
 
           // Report partition if: (1) we have lag info, OR (2) we're the partition leader and have no lag info
           val partitionsToReport = (lagInfoMap.keySet ++ partitionStates.keySet.filter { tp =>
@@ -458,12 +459,16 @@ class KafkaApis(val requestChannel: RequestChannel,
                 tp
               })
 
+              val state = partitionStates.getOrElse(topicPartition, MirrorPartitionState.UNKNOWN)
+              val isMirroring = state == MirrorPartitionState.MIRRORING
               val partitionDetail = new DescribeClusterMirrorsResponseData.PartitionDetail()
                 .setPartitionIndex(topicPartition.partition())
-                .setSourceOffset(lagInfoMap.get(topicPartition).map(_.sourceOffset).getOrElse(-1L))
-                .setDestinationOffset(lagInfoMap.get(topicPartition).map(_.destinationOffset).getOrElse(-1L))
-                .setLag(lagInfoMap.get(topicPartition).map(_.lag).getOrElse(-1L))
-                .setStateValue(partitionStates.getOrElse(topicPartition, MirrorPartitionState.UNKNOWN).name())
+                .setSourceOffset(if (isMirroring) lagInfoMap.get(topicPartition).map(_.sourceOffset).getOrElse(-1L) else -1L)
+                .setDestinationOffset(if (isMirroring) lagInfoMap.get(topicPartition).map(_.destinationOffset).getOrElse(-1L) else -1L)
+                .setLag(if (isMirroring) lagInfoMap.get(topicPartition).map(_.lag).getOrElse(-1L) else -1L)
+                .setStateValue(state.name())
+                .setRetryAttempt(Option(failedInfo.get(topicPartition)).map(_.retryAttempt()).getOrElse(0.toShort))
+                .setErrorMessage(Option(failedInfo.get(topicPartition)).map(_.errorMessage()).orNull)
                 .setLastMirrorEpoch(lastMirrorEpoch.getOrDefault(topicPartition, -1))
 
               topicPartitions.partitions().add(partitionDetail)

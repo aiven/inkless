@@ -20,12 +20,14 @@ import kafka.log.LogManager;
 import kafka.server.KafkaConfig;
 import kafka.server.NetworkUtils;
 import kafka.server.ReplicaManager;
+import kafka.server.mirror.ClusterMirrorUtils.FailedPartitionInfo;
+import kafka.server.mirror.ClusterMirrorUtils.PartitionKey;
 
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.AlterConfigOp;
-import org.apache.kafka.clients.admin.ClusterMirrorDescription;
+import org.apache.kafka.clients.admin.ClusterMirrorDesc;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.DescribeClusterMirrorsResult;
@@ -175,27 +177,25 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private volatile Admin dstAdmin; // group offset and ACLs sync
 
     // Map from mirror name to cluster id. The cluster id is represented as a String because KIP-78
-    // does not mandate the use of UUIDs for it and assuming so may break compatibility with existing clusters
+    // does not mandate the use of UUIDs for it and assuming so may break compatibility with existing clusters.
     private final Map<String, String> sourceClusterIds = new ConcurrentHashMap<>();
+
     private final Map<String, Map<TopicPartition, ClusterMirrorUtils.LeaderInfo>> sourceLeaders = new ConcurrentHashMap<>();
-    private final Map<ClusterMirrorUtils.PartitionKey, MirrorPartitionState> partitionStates = new ConcurrentHashMap<>();
-    private final Map<ClusterMirrorUtils.PartitionKey, MirrorPartitionState> partitionPreviousStates = new ConcurrentHashMap<>();
-    private final Map<ClusterMirrorUtils.PartitionKey, Integer> lastMirrorEpochs = new ConcurrentHashMap<>();
+    private final Map<PartitionKey, MirrorPartitionState> partitionStates = new ConcurrentHashMap<>();
+    private final Map<PartitionKey, Integer> lastMirrorEpochs = new ConcurrentHashMap<>();
     private final Map<MirrorPartitionState, AtomicLong> partitionStateCounts = new ConcurrentHashMap<>();
+    private final Map<TopicPartition, FailedPartitionInfo> failedPartitionInfo = new ConcurrentHashMap<>();
+    private final Map<TopicPartition, MirrorPartitionState> pendingPartitionStates = new ConcurrentHashMap<>();
+    private final Set<String> pendingTopicCreations = ConcurrentHashMap.newKeySet();
+
+    // Leader epoch bumps require a request to the controller followed by a metadata log fetch.
+    // The bump must be confirmed on the broker side before we can write the PID reset control record.
+    private final Set<ClusterMirrorUtils.LeaderEpochBump> pendingLeaderEpochBumps = ConcurrentHashMap.newKeySet();
 
     private Optional<ClusterMirrorUtils.StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Consumer<String>> tombstoneWriter = Optional.empty();
     private Optional<Function<ClusterMirrorRecordKey, Integer>> coordPartitionFinderByKey = Optional.empty();
     private Optional<Function<String, Integer>> coordPartitionFinderByName = Optional.empty();
-
-    // lets the transition handler skip partitions that are already being processed
-    private final Map<TopicPartition, MirrorPartitionState> pendingPartitionStates = new ConcurrentHashMap<>();
-    private final Map<TopicPartition, Integer> failedRetryAttempts = new ConcurrentHashMap<>();
-    private final Set<String> pendingTopicCreations = ConcurrentHashMap.newKeySet();
-
-    // Leader epoch bumps require a request to the controller followed by a metadata log fetch.
-    // The bump must be confirmed on the broker side before we can write the PID reset record.
-    private final Set<ClusterMirrorUtils.LeaderEpochBump> pendingLeaderEpochBumps = ConcurrentHashMap.newKeySet();
 
     private final AtomicLong metadataRefreshError;
     private final AtomicLong topicConfigSyncError;
@@ -293,6 +293,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Admin getOrCreateSourceAdmin(String mirrorName) {
         return srcAdmins.computeIfAbsent(mirrorName, k -> {
             Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_MIRROR, k));
+            props.put(AdminClientConfig.CLIENT_ID_CONFIG, "mirror-src-admin-" + k + "-" + nodeId);
             return Admin.create(props);
         });
     }
@@ -311,12 +312,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Called when cluster metadata is updated.
+     * Called when cluster metadata is updated and it is executed in the KRaft metadata publisher thread.
      * Detects mirror partition leadership changes and triggers state transitions via batched coordinator reads.
+     * On connection config changes, source connections are recreated, source metadata is fetched eagerly,
+     * and fetchers are re-created for affected MIRRORING partitions.
      *
-     * This is executed in the KRaft metadata publisher thread.
-     * Must be called after ReplicaManager#applyDelta.
-     * The metadata cache can't be used here because it is updated concurrently.
+     * This method must be called after ReplicaManager#applyDelta.
+     * The metadataCache can't be used here because it is updated concurrently.
      */
     @Override
     public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage, LoaderManifest manifest) {
@@ -324,50 +326,156 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             return;
         }
 
-        // Caching the metadata image for query purpose
         this.metadataImage = newImage;
 
         Set<String> reconnectedMirrors = maybeRecreateSourceConnection(delta, newImage);
-
-        // Get all mirror partition leaders on this node based on the delta
-        Set<TopicPartition> mirrorLeaders = getMirrorLeadersAndClearFollowerStates(delta, newImage);
-
-        // After a connection config change (e.g. bootstrap.servers), fetchers were removed
-        // and must be recreated by re-evaluating MIRRORING partitions for the affected mirrors
-        if (!reconnectedMirrors.isEmpty()) {
-            partitionStates.forEach((key, state) -> {
-                if (reconnectedMirrors.contains(key.mirrorName()) && state == MirrorPartitionState.MIRRORING) {
-                    mirrorLeaders.add(new TopicPartition(key.topic(), key.partition()));
-                }
-            });
-        }
+        Set<TopicPartition> mirrorLeaders = collectMirrorLeaderChanges(delta, newImage, reconnectedMirrors);
 
         if (mirrorLeaders.isEmpty()) {
             return;
         }
 
-        log.info("onMetadataUpdate: {}", mirrorLeaders);
+        log.info("Processing metadata update for {} mirror leader partition(s): {}", mirrorLeaders.size(), mirrorLeaders);
 
-        // Collect remote coordinator partitions grouped by mirrorName for batched reads
+        processStateTransitions(mirrorLeaders, newImage);
+        maybeCompletePendingEpochBumps();
+    }
+
+    /**
+     * Handles mirror config changes from the metadata delta. When a connection config changes
+     * (e.g. bootstrap.servers), closes the old source AdminClient, removes fetchers, and eagerly
+     * fetches source metadata so fetchers can be recreated immediately. When a mirror is deleted,
+     * writes tombstone records and cleans up all cached state.
+     *
+     * @return names of mirrors whose source connections were recreated (excludes deleted mirrors)
+     */
+    private Set<String> maybeRecreateSourceConnection(MetadataDelta delta, MetadataImage newImage) {
+        Set<String> reconnectedMirrors = new HashSet<>();
+        if (delta.configsDelta() != null) {
+            delta.configsDelta().changes().entrySet().stream()
+                    .filter(e -> e.getKey().type() == ConfigResource.Type.CLUSTER_MIRROR)
+                    .forEach(e -> {
+                        String mirrorName = e.getKey().name();
+                        boolean mirrorDeleted = newImage.configs().configProperties(e.getKey()).isEmpty();
+                        if (mirrorDeleted) {
+                            log.info("Mirror '{}' has been deleted. Writing tombstone records.", mirrorName);
+                            tombstoneWriter.ifPresent(h -> h.accept(mirrorName));
+                        }
+
+                        boolean connectionConfigChanged = e.getValue().changes().keySet().stream()
+                                .anyMatch(key -> !NON_CONNECTION_CONFIGS.contains(key));
+                        if (connectionConfigChanged) {
+                            log.info("Mirror '{}' has connection config changed. Recreating connections.", mirrorName);
+                        }
+                        if (connectionConfigChanged || mirrorDeleted) {
+                            sourceLeaders.remove(mirrorName);
+                            sourceClusterIds.remove(mirrorName);
+                            Admin admin = srcAdmins.remove(mirrorName);
+                            if (admin != null) {
+                                admin.close(Duration.ZERO);
+                            }
+                            var mirrorFetcherManager = replicaManagerSupplier.get().mirrorFetcherManager();
+                            mirrorFetcherManager.removeFetchersForMirror(mirrorName);
+                            mirrorFetcherManager.shutdownIdleFetcherThreads();
+                            if (!mirrorDeleted) {
+                                reconnectedMirrors.add(mirrorName);
+                            }
+                        }
+                    });
+        }
+        return reconnectedMirrors;
+    }
+
+    /**
+     * Collects mirror partitions that need state transitions and cleans up state for lost leadership.
+     * Three phases:
+     * 1. Collect new mirror leaders from the topics delta (leadership gains and mirror state changes)
+     * 2. Clean up cached state for partitions where this broker lost leadership
+     * 3. Re-add MIRRORING partitions for reconnected mirrors so their fetchers get recreated
+     */
+    private Set<TopicPartition> collectMirrorLeaderChanges(MetadataDelta delta, MetadataImage image,
+                                                           Set<String> reconnectedMirrors) {
+        Set<TopicPartition> mirrorLeaderPartitions = new HashSet<>();
+
+        if (delta.topicsDelta() != null) {
+            LocalReplicaChanges localReplicaChanges = delta.topicsDelta().localChanges(nodeId);
+
+            // Phase 1: collect partitions where this broker gained mirror leadership
+            localReplicaChanges.leaders().keySet().forEach(tp -> {
+                String mirrorName = image.topics().getTopic(tp.topic()).mirrorName();
+                if (mirrorName != null && !mirrorName.isBlank()) {
+                    mirrorLeaderPartitions.add(tp);
+                }
+            });
+            localReplicaChanges.mirrorTopicStates().keySet().forEach(topicId -> {
+                TopicImage topicImage = image.topics().getTopic(topicId);
+                if (topicImage != null) {
+                    topicImage.partitions().forEach((partitionId, partition) -> {
+                        if (partition.leader == nodeId) {
+                            mirrorLeaderPartitions.add(new TopicPartition(topicImage.name(), partitionId));
+                        }
+                    });
+                }
+            });
+
+            // Phase 2: clean up state for partitions where this broker lost leadership
+            localReplicaChanges.followers().keySet().forEach(tp -> {
+                String mirrorName = image.topics().getTopic(tp.topic()).mirrorName();
+                if (mirrorName == null || mirrorName.isBlank()) {
+                    return;
+                }
+                pendingPartitionStates.remove(tp);
+                pendingLeaderEpochBumps.removeIf(bump -> {
+                    if (bump.partitionToEpoch().containsKey(tp)) {
+                        bump.future().completeExceptionally(new IllegalStateException("Not leader anymore for " + tp));
+                        return true;
+                    }
+                    return false;
+                });
+                if (!isLocalCoordinator(mirrorName, tp.topic(), tp.partition())) {
+                    PartitionKey key = new PartitionKey(mirrorName, tp.topic(), tp.partition());
+                    removePartitionState(key);
+                    lastMirrorEpochs.remove(key);
+                }
+            });
+        }
+
+        // Phase 3: re-add MIRRORING partitions for mirrors whose source connection was recreated
+        if (!reconnectedMirrors.isEmpty()) {
+            log.info("Re-evaluating MIRRORING partitions for reconnected mirrors: {}", reconnectedMirrors);
+            partitionStates.forEach((key, state) -> {
+                if (reconnectedMirrors.contains(key.mirrorName()) && state == MirrorPartitionState.MIRRORING) {
+                    mirrorLeaderPartitions.add(new TopicPartition(key.topic(), key.partition()));
+                }
+            });
+        }
+
+        return mirrorLeaderPartitions;
+    }
+
+    /**
+     * Applies state transitions for mirror leader partitions. Local coordinator partitions are handled
+     * inline. Remote coordinator partitions are grouped by mirror for batched reads, then transitions
+     * are applied from the responses.
+     */
+    private void processStateTransitions(Set<TopicPartition> mirrorLeaders, MetadataImage newImage) {
         Map<String, Map<String, Set<Integer>>> remotePartitionsByMirror = new HashMap<>();
         Map<String, Map<TopicPartition, Boolean>> remoteStopFlags = new HashMap<>();
         Map<String, Map<TopicPartition, Boolean>> remotePauseFlags = new HashMap<>();
 
         mirrorLeaders.forEach(tp -> {
             TopicImage topicImage = newImage.topics().getTopic(tp.topic());
-            String rawMirrorName = topicImage.mirrorName();
+            String mirrorName = topicImage.mirrorName();
             int desiredMirrorState = topicImage.desiredMirrorState();
             boolean stopRequested = desiredMirrorState == MirrorPartitionState.STOPPED.value();
             boolean pauseRequested = desiredMirrorState == MirrorPartitionState.PAUSED.value();
-            String mirrorName = rawMirrorName;
 
-            ClusterMirrorUtils.PartitionKey key = new ClusterMirrorUtils.PartitionKey(mirrorName, tp.topic(), tp.partition());
+            PartitionKey key = new PartitionKey(mirrorName, tp.topic(), tp.partition());
             if (isLocalCoordinator(key.mirrorName(), key.topic(), key.partition())) {
-                // Handle local coordinator partitions inline (no network call needed)
                 MirrorPartitionState curState = partitionStates.getOrDefault(key, MirrorPartitionState.UNKNOWN);
-                applyMirrorStateTransition(key.mirrorName(), tp, curState, null, stopRequested, pauseRequested);
+                log.debug("Local transition for {} (current: {})", tp, curState);
+                applyStateTransition(key.mirrorName(), tp, curState, null, stopRequested, pauseRequested);
             } else {
-                // Collect for batched remote read
                 remotePartitionsByMirror
                         .computeIfAbsent(mirrorName, k -> new HashMap<>())
                         .computeIfAbsent(tp.topic(), k -> new HashSet<>())
@@ -381,10 +489,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             }
         });
 
-        // Send one batched read per mirrorName (readStatesFromRemoteCoordinator handles per-node batching internally)
         remotePartitionsByMirror.forEach((mirrorName, partitions) -> {
             Map<TopicPartition, Boolean> stopFlags = remoteStopFlags.get(mirrorName);
             Map<TopicPartition, Boolean> pauseFlags = remotePauseFlags.get(mirrorName);
+            log.debug("Reading remote coordinator state for mirror '{}': {}", mirrorName, partitions);
             readStatesFromRemoteCoordinator(mirrorName, partitions, res ->
                     res.data().topics().forEach(topic ->
                             topic.partitions().forEach(partition -> {
@@ -397,16 +505,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                 MirrorPartitionState state = MirrorPartitionState.fromValue(partition.state());
                                 boolean stopRequested = stopFlags.getOrDefault(resTp, false);
                                 boolean pauseRequested = pauseFlags.getOrDefault(resTp, false);
-                                ClusterMirrorUtils.PartitionKey mpk = new ClusterMirrorUtils.PartitionKey(mirrorName, resTp.topic(), resTp.partition());
+                                PartitionKey mpk = new PartitionKey(mirrorName, resTp.topic(), resTp.partition());
                                 MirrorPartitionState curState = partitionStates.getOrDefault(mpk, MirrorPartitionState.UNKNOWN);
-                                applyMirrorStateTransition(mirrorName, resTp, curState, state, stopRequested, pauseRequested);
+                                applyStateTransition(mirrorName, resTp, curState, state, stopRequested, pauseRequested);
                             })));
         });
-
-        if (delta.topicsDelta() != null) {
-            clearFollowersState(delta.topicsDelta().localChanges(nodeId).followers().keySet(), newImage);
-        }
-        maybeCompletePendingEpochBumps();
     }
 
     @Override
@@ -431,9 +534,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     void clearCache() {
-        failedRetryAttempts.clear();
+        failedPartitionInfo.clear();
         partitionStates.clear();
-        partitionPreviousStates.clear();
         partitionStateCounts.clear();
         lastMirrorEpochs.clear();
         sourceClusterIds.clear();
@@ -447,74 +549,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return pendingPartitionStates;
     }
 
-    /** Returns the per-partition count of consecutive failed retry attempts. */
-    public Map<TopicPartition, Integer> failedRetryAttempts() {
-        return failedRetryAttempts;
+    public Map<TopicPartition, FailedPartitionInfo> failedPartitionInfo() {
+        return failedPartitionInfo;
     }
 
-    /** Returns the previous state of each partition before its last transition. */
-    public Map<ClusterMirrorUtils.PartitionKey, MirrorPartitionState> partitionPreviousStates() {
-        return partitionPreviousStates;
-    }
-
-    /** Transitions a mirror partition to the given state via the configured state transitioner. */
-    public void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state) {
-        stateTransitioner.ifPresent(st -> st.transitionTo(mirrorName, topicPartition, state));
-    }
-
-    private void retryPendingTombstoneWrites() {
-        if (tombstoneWriter.isEmpty()) {
-            log.warn("Mirror deletion handler not configured. Tombstone record writes will be skipped.");
-            return;
-        }
-        Set<String> configuredMirrors = getConfiguredMirrors();
-        Set<String> staleMirrors = partitionStates.keySet().stream()
-            .map(ClusterMirrorUtils.PartitionKey::mirrorName)
-            .filter(name -> !configuredMirrors.contains(name))
-            .collect(Collectors.toSet());
-        for (String mirrorName : staleMirrors) {
-            log.info("Found stale partition states for deleted mirror '{}'. Writing tombstones.", mirrorName);
-            tombstoneWriter.ifPresent(h -> h.accept(mirrorName));
-        }
-    }
-
-    private Set<String> maybeRecreateSourceConnection(MetadataDelta delta, MetadataImage newImage) {
-        Set<String> reconnectedMirrors = new HashSet<>();
-        if (delta.configsDelta() != null) {
-            delta.configsDelta().changes().entrySet().stream()
-                    .filter(e -> e.getKey().type() == ConfigResource.Type.CLUSTER_MIRROR)
-                    .forEach(e -> {
-                        String mirrorName = e.getKey().name();
-                        boolean mirrorDeleted = newImage.configs()
-                                .configProperties(e.getKey()).isEmpty();
-                        if (mirrorDeleted) {
-                            log.info("Mirror '{}' has been deleted. Writing tombstone records and recreating connections.", mirrorName);
-                            tombstoneWriter.ifPresent(h -> h.accept(mirrorName));
-                        }
-
-                        boolean connectionConfigChanged = e.getValue().changes().keySet().stream()
-                                .anyMatch(key -> !NON_CONNECTION_CONFIGS.contains(key));
-
-                        if (connectionConfigChanged) {
-                            log.info("Mirror '{}' has connection config changed. Recreating connections.", mirrorName);
-                        }
-                        if (connectionConfigChanged || mirrorDeleted) {
-                            sourceLeaders.remove(mirrorName);
-                            sourceClusterIds.remove(mirrorName);
-                            Admin admin = srcAdmins.remove(mirrorName);
-                            if (admin != null) {
-                                admin.close(Duration.ZERO);
-                            }
-                            var mirrorFetcherManager = replicaManagerSupplier.get().mirrorFetcherManager();
-                            mirrorFetcherManager.removeFetchersForMirror(mirrorName);
-                            mirrorFetcherManager.shutdownIdleFetcherThreads();
-                            if (!mirrorDeleted) {
-                                reconnectedMirrors.add(mirrorName);
-                            }
-                        }
-                    });
-        }
-        return reconnectedMirrors;
+    public void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state, String errorMessage) {
+        stateTransitioner.ifPresent(st -> st.transitionTo(mirrorName, topicPartition, state, errorMessage));
     }
 
     /**
@@ -530,51 +570,61 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      *
      * When stopRequested=false and pauseRequested=false:
      *   1. if it's in PAUSED state, we should move it to MIRRORING state. It will happen when users resume mirroring
-     *   2. if it's in UNKNOWN or STOPPED state, we should move it to LOG_TRUNCATION state. It will happen when users startMirrorTopics
+     *   2. if it's in UNKNOWN, STOPPED, or FAILED state, we should move it to LOG_TRUNCATION state.
+     *      UNKNOWN/STOPPED happens on startMirrorTopics. FAILED happens on manual restart after retries are exhausted.
      *   3. else, keep the same state as is. This could happen like leadership change, and the new leader should continue to complete the process in previous leader
      */
-    private void applyMirrorStateTransition(String mirrorName, TopicPartition tp,
-                                            MirrorPartitionState curState, MirrorPartitionState fetchedState,
-                                            boolean stopRequested, boolean pauseRequested) {
+    private void applyStateTransition(String mirrorName, TopicPartition tp,
+                                      MirrorPartitionState curState, MirrorPartitionState fetchedState,
+                                      boolean stopRequested, boolean pauseRequested) {
         stateTransitioner.ifPresent(t -> {
             if (stopRequested) {
                 if (curState != MirrorPartitionState.STOPPED) {
-                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPING);
+                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPING, null);
                 } else {
-                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPED);
+                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPED, null);
                 }
             } else if (pauseRequested) {
                 if (curState != MirrorPartitionState.PAUSED) {
-                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSING);
+                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSING, null);
                 } else {
-                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED);
+                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED, null);
                 }
             } else if (curState == MirrorPartitionState.PAUSED) {
-                t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.MIRRORING);
+                t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.MIRRORING, null);
             } else if (curState == MirrorPartitionState.UNKNOWN
-                    || curState == MirrorPartitionState.STOPPED) {
-                t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION);
+                    || curState == MirrorPartitionState.STOPPED
+                    || curState == MirrorPartitionState.FAILED) {
+                t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION, null);
             } else {
-                t.transitionTo(mirrorName, Set.of(tp), fetchedState != null ? fetchedState : curState);
+                t.transitionTo(mirrorName, Set.of(tp), fetchedState != null ? fetchedState : curState, null);
             }
         });
     }
 
+    public void scheduleSourceMetadataSync(String mirrorName) {
+        scheduler.scheduleOnce("SourceMetadataSync", () -> {
+            syncTopicMetadata(mirrorName);
+        });
+    }
 
     /** Periodic metadata refresh entry point. */
     void runMetadataRefresh() {
+        // retry the pending tombstone writes first to make sure they are all clean up even if no mirror existed
+        retryPendingTombstoneWrites();
+
         Set<String> mirrors = getConfiguredMirrors();
         if (mirrors.isEmpty()) {
             return;
         }
 
-        log.info("Running metadata refresh for mirrors: {}", mirrors);
+        log.info("Refreshing metadata for mirrors: {}", mirrors);
 
         for (String mirrorName : mirrors) {
             try {
                 validateSourceClusterId(mirrorName);
-                var topicsState = syncSourceTopicsState(mirrorName);
-                syncCoordinatorMetadata(mirrorName, topicsState);
+                var topicMetadata = syncTopicMetadata(mirrorName);
+                syncCoordinatorMetadata(mirrorName, topicMetadata);
             } catch (Exception e) {
                 log.error("Failed to refresh metadata for mirror {}", mirrorName, e);
             }
@@ -584,11 +634,20 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         metadataRefreshError.incrementAndGet();
     }
 
-    /** Schedules a source cluster metadata update. */
-    public void scheduleSourceClusterMetadataUpdate(String mirrorName) {
-        scheduler.scheduleOnce("SourceClusterMetadataUpdate", () -> {
-            syncSourceTopicsState(mirrorName);
-        });
+    private void retryPendingTombstoneWrites() {
+        if (tombstoneWriter.isEmpty()) {
+            log.warn("Mirror deletion handler not configured. Tombstone record writes will be skipped.");
+            return;
+        }
+        Set<String> configuredMirrors = getConfiguredMirrors();
+        Set<String> staleMirrors = partitionStates.keySet().stream()
+                .map(ClusterMirrorUtils.PartitionKey::mirrorName)
+                .filter(name -> !configuredMirrors.contains(name))
+                .collect(Collectors.toSet());
+        for (String mirrorName : staleMirrors) {
+            log.info("Found stale partition states for deleted mirror '{}'. Writing tombstones.", mirrorName);
+            tombstoneWriter.ifPresent(h -> h.accept(mirrorName));
+        }
     }
 
     private void validateSourceClusterId(String mirrorName) {
@@ -615,7 +674,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * Fetches topics metadata from the source cluster via Admin.describeTopics.
      * Runs on every broker to keep partition leaders, topic creation, topic deletion, and partition counts in sync.
      */
-    private Optional<List<SourceTopicState>> syncSourceTopicsState(String mirrorName) {
+    private Optional<List<SourceTopicState>> syncTopicMetadata(String mirrorName) {
         log.info("Syncing source topic state for mirror {}", mirrorName);
         Set<String> topics = getConfiguredTopics(mirrorName, false);
         if (topics.isEmpty()) {
@@ -789,7 +848,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 Set.copyOf(partitionStates.keySet()).stream()
                         .filter(key -> key.mirrorName().equals(mirrorName) && key.topic().equals(name))
                         .forEach(key -> stateTransitioner.ifPresent(t ->
-                                t.transitionTo(mirrorName, Set.of(new TopicPartition(key.topic(), key.partition())), MirrorPartitionState.STOPPING)));
+                                t.transitionTo(mirrorName, Set.of(new TopicPartition(key.topic(), key.partition())), MirrorPartitionState.STOPPING, null)));
             }
         });
     }
@@ -817,7 +876,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             return;
         }
         partitionLeaders.keySet().forEach(tp -> {
-            ClusterMirrorUtils.PartitionKey key = new ClusterMirrorUtils.PartitionKey(mirrorName, tp.topic(), tp.partition());
+            PartitionKey key = new PartitionKey(mirrorName, tp.topic(), tp.partition());
             if (partitionStates.getOrDefault(key, MirrorPartitionState.UNKNOWN) != MirrorPartitionState.UNKNOWN) {
                 return;
             }
@@ -828,7 +887,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             var partition = topicImage.partitions().get(tp.partition());
             if (partition != null && partition.leader == nodeId) {
                 log.info("Source leader for {} discovered after initial onMetadataUpdate, transitioning to LOG_TRUNCATION", tp);
-                stateTransitioner.ifPresent(t -> t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION));
+                stateTransitioner.ifPresent(t -> t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION, null));
             }
         });
     }
@@ -1330,64 +1389,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         );
     }
 
-    /** Returns mirror partitions led by this broker, detecting both leadership and config changes */
-    private Set<TopicPartition> getMirrorLeadersAndClearFollowerStates(MetadataDelta delta, MetadataImage image) {
-        Set<TopicPartition> mirrorLeaderPartitions = new HashSet<>();
-
-        if (delta.topicsDelta() != null) {
-            LocalReplicaChanges localReplicaChanges = delta.topicsDelta().localChanges(nodeId);
-            // new partition leader in topicsDelta that has mirror.name not empty
-            localReplicaChanges.leaders().keySet().forEach(tp -> {
-                String mirrorName = image.topics().getTopic(tp.topic()).mirrorName();
-                if (mirrorName != null && !mirrorName.isBlank()) {
-                    mirrorLeaderPartitions.add(tp);
-                }
-            });
-
-            localReplicaChanges.mirrorTopicStates().keySet().forEach(topicId -> {
-                // get the partition leader is the local node
-                TopicImage topicImage = image.topics().getTopic(topicId);
-                if (topicImage != null) {
-                    topicImage.partitions().forEach((partitionId, partition) -> {
-                        if (partition.leader == nodeId) {
-                            mirrorLeaderPartitions.add(new TopicPartition(topicImage.name(), partitionId));
-                        }
-                    });
-                }
-            });
-
-            // remove the pending state from this node because it is not the leader anymore
-            localReplicaChanges.followers().keySet().forEach(tp -> {
-                String mirrorName = image.topics().getTopic(tp.topic()).mirrorName();
-                if (mirrorName != null && !mirrorName.isBlank()) {
-                    pendingPartitionStates.remove(tp);
-                    pendingLeaderEpochBumps.removeIf(bumpLeaderEpoch -> {
-                        if (bumpLeaderEpoch.partitionToEpoch().containsKey(tp)) {
-                            bumpLeaderEpoch.future().completeExceptionally(
-                                    new IllegalStateException("Not leader anymore for " + tp));
-                            return true;
-                        }
-                        return false;
-                    });
-                }
-            });
-        }
-
-        return mirrorLeaderPartitions;
-    }
-
-    /** Clears state for partitions where this broker lost leadership, unless it is the coordinator */
-    private void clearFollowersState(Set<TopicPartition> followerDelta, MetadataImage newImage) {
-        followerDelta.forEach(followerTp -> {
-            String mirrorName = newImage.topics().getTopic(followerTp.topic()).mirrorName();
-            if (mirrorName != null && !mirrorName.isEmpty() && !isLocalCoordinator(mirrorName, followerTp.topic(), followerTp.partition())) {
-                ClusterMirrorUtils.PartitionKey key = new ClusterMirrorUtils.PartitionKey(mirrorName, followerTp.topic(), followerTp.partition());
-                removePartitionState(key);
-                lastMirrorEpochs.remove(key);
-            }
-        });
-    }
-
     /** Finds the coordinator node (leader of the __mirror_state partition) for a mirror record key */
     private Node findCoordinatorNode(ClusterMirrorRecordKey key) {
         try {
@@ -1542,7 +1543,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         // Update cache
                         readMirrorStatesResponse.data().topics().forEach(topic -> {
                             topic.partitions().forEach(partition -> {
-                                ClusterMirrorUtils.PartitionKey mpk = new ClusterMirrorUtils.PartitionKey(
+                                PartitionKey mpk = new PartitionKey(
                                         mirrorName, topic.name(), partition.partitionIndex());
                                 TopicPartition tp = new TopicPartition(topic.name(), partition.partitionIndex());
                                 if (partition.lastMirrorEpoch() != -1) {
@@ -1552,8 +1553,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                     partitionStates.put(mpk, MirrorPartitionState.fromValue(partition.state()));
                                 }
                                 if (partition.state() == MirrorPartitionState.FAILED.value()) {
-                                    partitionPreviousStates.put(mpk, MirrorPartitionState.fromValue(partition.previousState()));
-                                    failedRetryAttempts.put(tp, (int) partition.retryAttempt());
+                                    failedPartitionInfo.put(tp, new FailedPartitionInfo(
+                                            partition.retryAttempt(), partition.errorMessage(),
+                                            MirrorPartitionState.fromValue(partition.previousState())));
                                 }
                             });
                         });
@@ -1575,7 +1577,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             ReadMirrorStatesResponseData.TopicResult topicResult = new ReadMirrorStatesResponseData.TopicResult().setName(tp);
             List<ReadMirrorStatesResponseData.PartitionResult> partitionResults = new ArrayList<>();
             parts.forEach(part -> {
-                ClusterMirrorUtils.PartitionKey pk = new ClusterMirrorUtils.PartitionKey(mirrorName, tp, part);
+                PartitionKey pk = new PartitionKey(mirrorName, tp, part);
                 ReadMirrorStatesResponseData.PartitionResult partitionResult = new ReadMirrorStatesResponseData.PartitionResult();
                 if (!isLocalCoordinator(mirrorName, tp, part)) {
                     partitionResult.setErrorCode(Errors.NOT_COORDINATOR.code());
@@ -1583,10 +1585,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     partitionResult.setPartitionIndex(part);
                     partitionResult.setLastMirrorEpoch(lastMirrorEpochs.getOrDefault(pk, -1));
                     partitionResult.setState(partitionStates.getOrDefault(pk, MirrorPartitionState.UNKNOWN).value());
+                    FailedPartitionInfo fpi = failedPartitionInfo.get(new TopicPartition(tp, part));
                     partitionResult.setPreviousState(
-                            partitionPreviousStates.getOrDefault(pk, MirrorPartitionState.UNKNOWN).value());
-                    partitionResult.setRetryAttempt(
-                            failedRetryAttempts.getOrDefault(new TopicPartition(tp, part), 0).shortValue());
+                            fpi != null ? fpi.previousState().value() : MirrorPartitionState.UNKNOWN.value());
+                    partitionResult.setRetryAttempt(fpi != null ? fpi.retryAttempt() : 0);
+                    partitionResult.setErrorMessage(fpi != null ? fpi.errorMessage() : null);
                 }
                 partitionResults.add(partitionResult);
             });
@@ -1606,6 +1609,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         Properties props = new Properties();
         props.put(BOOTSTRAP_SERVERS_CONFIG, endpoint.host() + ":" + endpoint.port());
+        props.put(AdminClientConfig.CLIENT_ID_CONFIG, "mirror-dst-admin-" + brokerConfig.nodeId());
 
         SecurityProtocol securityProtocol = endpoint.securityProtocol();
         props.put(AdminClientConfig.SECURITY_PROTOCOL_CONFIG, securityProtocol.name);
@@ -1645,7 +1649,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         sourceLeaders.computeIfAbsent(mirrorName, k -> new ConcurrentHashMap<>()).put(tp, leader);
     }
 
-    /** Resolves source partition leader from cache, falling back to bootstrap server if not cached. */
     public ClusterMirrorUtils.LeaderInfo resolveSourceLeader(String mirrorName, TopicPartition tp) {
         var partitionLeaders = sourceLeaders.get(mirrorName);
         if (partitionLeaders != null) {
@@ -1654,12 +1657,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 return leader;
             }
         }
-        // No cached metadata. We throw exception and enter FAILED state and do the source cluster metadata refresh
         throw new IllegalStateException("No source cluster metadata available for mirror " + mirrorName + " partition:" + tp);
     }
 
     // Atomic per-key update to keep partition state counts consistent
-    void updatePartitionState(ClusterMirrorUtils.PartitionKey key, MirrorPartitionState newState) {
+    void updatePartitionState(PartitionKey key, MirrorPartitionState newState) {
         partitionStates.compute(key, (k, oldState) -> {
             if (oldState != null && oldState != newState) {
                 partitionStateCounts.computeIfAbsent(oldState, s -> new AtomicLong()).decrementAndGet();
@@ -1672,12 +1674,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     // Atomic remove + counter decrement to keep partition state counts consistent
-    void removePartitionState(ClusterMirrorUtils.PartitionKey key) {
+    void removePartitionState(PartitionKey key) {
         partitionStates.computeIfPresent(key, (k, oldState) -> {
             partitionStateCounts.computeIfAbsent(oldState, s -> new AtomicLong()).decrementAndGet();
             return null;
         });
-        partitionPreviousStates.remove(key);
     }
 
     void removeMirrorStates(String mirrorName) {
@@ -1694,7 +1695,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     void removeStateForPartitions(Set<TopicPartition> partitions) {
         partitions.forEach(tp -> {
             pendingPartitionStates.remove(tp);
-            failedRetryAttempts.remove(tp);
+            failedPartitionInfo.remove(tp);
         });
         pendingLeaderEpochBumps.removeIf(bump -> {
             bump.partitionToEpoch().keySet().removeAll(partitions);
@@ -1711,14 +1712,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     public MirrorPartitionState getPartitionState(String mirrorName, TopicPartition topicPartition) {
-        return partitionStates.get(new ClusterMirrorUtils.PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()));
+        return partitionStates.get(new PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()));
     }
 
     /** Schedules a source metadata sync followed by a leader epoch bump request. */
     public CompletableFuture<Void> scheduleBumpLeaderEpochs(String mirrorName, Set<TopicPartition> topicPartitions) {
         CompletableFuture<Void> future = new CompletableFuture<>();
         scheduler.scheduleOnce("bump-leader-epoch", () -> {
-            Optional<List<SourceTopicState>> topics = syncSourceTopicsState(mirrorName);
+            Optional<List<SourceTopicState>> topics = syncTopicMetadata(mirrorName);
             maybeBumpLeaderEpochs(mirrorName, topics, topicPartitions)
                     .whenComplete((v, ex) -> {
                         if (ex != null) {
@@ -1785,6 +1786,27 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return future;
     }
 
+    private void maybeCompletePendingEpochBumps() {
+        pendingLeaderEpochBumps.removeIf(bumpLeaderEpoch -> {
+            Set<TopicPartition> pendingPartitions = bumpLeaderEpoch.partitionToEpoch().entrySet().stream().filter(entry -> {
+                TopicPartition tp = entry.getKey();
+                int epoch = entry.getValue();
+                var topicImage = metadataImage.topics().getTopic(tp.topic());
+                if (topicImage == null) return false;
+                var partitionReg = topicImage.partitions().get(tp.partition());
+                if (partitionReg == null) return false;
+                return partitionReg.leaderEpoch <= epoch;
+            }).map(Map.Entry::getKey).collect(Collectors.toSet());
+            if (pendingPartitions.isEmpty()) {
+                bumpLeaderEpoch.future().complete(null);
+                return true;
+            } else {
+                log.info("bumpLeaderEpoch future is pending for partitions: {}, all: {}", pendingPartitions, bumpLeaderEpoch.partitionToEpoch().keySet());
+                return false;
+            }
+        });
+    }
+
     private Map<TopicPartition, Integer> buildSourceEpochBumpTargets(String mirrorName, List<SourceTopicState> topicInfos, Set<TopicPartition> topicPartitions) {
         Set<String> mirrorTopics = topicPartitions.isEmpty() ? getConfiguredTopics(mirrorName, false) : Set.of();
         Map<TopicPartition, Integer> leaderEpochFromMetadata = new HashMap<>();
@@ -1835,27 +1857,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             partitionMinEpochs.put(tp, epoch);
         });
         return partitionMinEpochs;
-    }
-
-    private void maybeCompletePendingEpochBumps() {
-        pendingLeaderEpochBumps.removeIf(bumpLeaderEpoch -> {
-            Set<TopicPartition> pendingPartitions = bumpLeaderEpoch.partitionToEpoch().entrySet().stream().filter(entry -> {
-                TopicPartition tp = entry.getKey();
-                int epoch = entry.getValue();
-                var topicImage = metadataImage.topics().getTopic(tp.topic());
-                if (topicImage == null) return false;
-                var partitionReg = topicImage.partitions().get(tp.partition());
-                if (partitionReg == null) return false;
-                return partitionReg.leaderEpoch <= epoch;
-            }).map(Map.Entry::getKey).collect(Collectors.toSet());
-            if (pendingPartitions.isEmpty()) {
-                bumpLeaderEpoch.future().complete(null);
-                return true;
-            } else {
-                log.info("bumpLeaderEpoch future is pending for partitions: {}, all: {}", pendingPartitions, bumpLeaderEpoch.partitionToEpoch().keySet());
-                return false;
-            }
-        });
     }
 
     /**
@@ -1946,7 +1947,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
             for (int i = 0; i < partitionSize; i++) {
                 if (isLocalCoordinator(mirrorName, topic, i)) {
-                    MirrorPartitionState state = partitionStates.getOrDefault(new ClusterMirrorUtils.PartitionKey(mirrorName, topic, i), MirrorPartitionState.UNKNOWN);
+                    MirrorPartitionState state = partitionStates.getOrDefault(new PartitionKey(mirrorName, topic, i), MirrorPartitionState.UNKNOWN);
                     if (state != MirrorPartitionState.STOPPED) {
                         log.error("Partition {}-{} is not in STOPPED state. Current state: {}.", topic, i, state);
                         callback.accept(Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES));
@@ -2079,28 +2080,27 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /** Truncates local replicas using last mirrored leader epochs from this broker's coordinator cache. */
-    CompletionStage<Map<String, ClusterMirrorDescription>> truncateToLastMirrorEpochs(
+    CompletionStage<Map<String, ClusterMirrorDesc>> truncateToLastMirrorEpochs(
             String mirrorName, Set<TopicPartition> topicPartitionSet) {
         log.info("Truncating to last mirrored epochs from local state for mirror {}: {}", mirrorName, topicPartitionSet);
-        Admin admin = srcAdmins.computeIfAbsent(mirrorName, k -> {
-            Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_MIRROR, k));
-            return Admin.create(props);
-        });
+        Admin admin = getOrCreateSourceAdmin(mirrorName);
         DescribeClusterMirrorsResult result = admin.describeClusterMirrors(List.of(mirrorName));
-        return result.allDescriptions().toCompletionStage();
+        return result.allDescriptions().toCompletionStage()
+                .toCompletableFuture()
+                .orTimeout(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
     }
 
     /** Removes stopped partition epochs and upserts added ones, returning the full epoch map for record serialization. */
-    Map<ClusterMirrorUtils.PartitionKey, Integer> updateLastMirrorEpochs(
+    Map<PartitionKey, Integer> updateLastMirrorEpochs(
             String clusterName, Map<String, Map<Integer, Integer>> addedEpochs, Map<String, Map<Integer, Integer>> stoppedEpochs) {
         stoppedEpochs.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
-                lastMirrorEpochs.remove(new ClusterMirrorUtils.PartitionKey(clusterName, topic, partition));
+                lastMirrorEpochs.remove(new PartitionKey(clusterName, topic, partition));
             });
         });
         addedEpochs.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
-                lastMirrorEpochs.put(new ClusterMirrorUtils.PartitionKey(clusterName, topic, partition), offset);
+                lastMirrorEpochs.put(new PartitionKey(clusterName, topic, partition), offset);
             });
         });
         return lastMirrorEpochs;

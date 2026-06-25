@@ -42,8 +42,9 @@ class ClusterMirroringCompTest(MirrorUtils, Test):
         ["share.coordinator.state.topic.replication.factor", "2"],
         ["share.coordinator.state.topic.min.isr", "1"],
         ["mirror.state.topic.replication.factor", "2"],
-        ["mirror.metadata.refresh.interval.ms", "10000"],
+        ["mirror.metadata.refresh.interval.ms", "5000"],
         ["mirror.num.replica.fetchers", "2"],
+        ["mirror.socket.timeout.ms", "5000"],
     ]
 
     SOURCE_SERVER_PROPS = [
