@@ -17,6 +17,7 @@
 package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.AlterDisklessSwitchResult;
 import org.apache.kafka.clients.admin.DescribeTopicPartitionsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
@@ -40,11 +41,19 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -168,6 +177,102 @@ public class TopicSwitchCommandTest {
         String output = runStateCommand();
         assertTrue(output.contains("classicToDisklessStartOffset=100"));
         assertTrue(output.contains("classicToDisklessStartOffset=-1 (not switched)"));
+    }
+
+    @Test
+    public void testSealCommitsExplicitOffset() throws Exception {
+        mockEndOffset(0, 150);
+        mockAlterDisklessSwitch();
+
+        String output = runSealCommand(0, Optional.of(100L), false);
+
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(100L));
+        assertTrue(output.contains("seal offset 100 <= end offset 150"));
+        assertTrue(output.contains("Set test-topic-0 classicToDisklessStartOffset to 100"));
+    }
+
+    @Test
+    public void testSealDefaultsToEndOffset() throws Exception {
+        mockEndOffset(0, 150);
+        mockAlterDisklessSwitch();
+
+        String output = runSealCommand(0, Optional.empty(), false);
+
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(150L));
+        assertTrue(output.contains("Set test-topic-0 classicToDisklessStartOffset to 150"));
+    }
+
+    @Test
+    public void testSealDryRunDoesNotCommit() throws Exception {
+        mockEndOffset(0, 150);
+
+        String output = runSealCommand(0, Optional.of(100L), true);
+
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong());
+        assertTrue(output.contains("[dry-run]"));
+        assertTrue(output.contains("Would set test-topic-0 classicToDisklessStartOffset to 100"));
+    }
+
+    @Test
+    public void testSealRejectsOffsetAboveEndOffset() throws Exception {
+        mockEndOffset(0, 90);
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+            () -> runSealCommand(0, Optional.of(100L), false));
+        assertTrue(ex.getMessage().contains("past the partition end offset 90"));
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong());
+    }
+
+    @Test
+    public void testSealAbortDoesNotCheckEndOffset() throws Exception {
+        mockAlterDisklessSwitch();
+
+        String output = runSealCommand(0, Optional.of(-1L), false);
+
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(-1L));
+        assertTrue(output.contains("-1 (abort switch, revert to classic)"));
+        assertFalse(output.contains("end offset"));
+    }
+
+    @Test
+    public void testSealReArm() throws Exception {
+        mockAlterDisklessSwitch();
+
+        String output = runSealCommand(0, Optional.of(-2L), false);
+
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(-2L));
+        assertTrue(output.contains("-2 (re-arm switch)"));
+    }
+
+    @Test
+    public void testSealRejectsInvalidOffset() {
+        RuntimeException ex = assertThrows(RuntimeException.class,
+            () -> runSealCommand(0, Optional.of(-3L), false));
+        assertTrue(ex.getMessage().contains("Invalid seal offset -3"));
+    }
+
+    private void mockEndOffset(int partition, long offset) {
+        when(adminClient.listOffsets(anyMap()))
+            .thenAnswer(invocation -> {
+                TopicPartition tp = new TopicPartition(TOPIC, partition);
+                Map<TopicPartition, KafkaFuture<ListOffsetsResult.ListOffsetsResultInfo>> futures = Map.of(
+                    tp, KafkaFuture.completedFuture(
+                        new ListOffsetsResult.ListOffsetsResultInfo(offset, -1, Optional.empty())));
+                return new ListOffsetsResult(futures);
+            });
+    }
+
+    private void mockAlterDisklessSwitch() {
+        AlterDisklessSwitchResult result = mock(AlterDisklessSwitchResult.class);
+        when(result.all()).thenReturn(KafkaFuture.completedFuture(null));
+        when(adminClient.alterDisklessSwitch(any(), anyInt(), anyLong())).thenReturn(result);
+    }
+
+    private String runSealCommand(int partition, Optional<Long> offset, boolean dryRun) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        PrintStream stream = new PrintStream(out, false, StandardCharsets.UTF_8);
+        TopicSwitchCommand.sealCommand(stream, adminClient, TOPIC, partition, offset, dryRun);
+        return out.toString(StandardCharsets.UTF_8);
     }
 
     private String runStateCommand() throws Exception {
