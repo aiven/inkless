@@ -261,8 +261,12 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             return FindBatchResponse.unknownTopicOrPartition();
         }
 
-        if (request.offset() < 0) {
-            LOGGER.debug("Invalid offset {} for {}", request.offset(), request.topicIdPartition());
+        // A fetch below the log start offset is out of range: the requested records have been
+        // deleted/retained away. Returning the first batch at or after the offset (via the tailSet
+        // below) would silently skip the gap [offset, logStartOffset) instead of signalling it.
+        if (request.offset() < logInfo.logStartOffset) {
+            LOGGER.debug("Offset {} below log start offset {} for {}",
+                request.offset(), logInfo.logStartOffset, request.topicIdPartition());
             return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
         }
 
