@@ -141,6 +141,21 @@ Under ``inkless.``
   * Valid Values: [1,...]
   * Importance: low
 
+``consume.cross.tier.log.start.cache.enabled``
+  If true, the cross-tier log start offset cache is enabled. It caches the EARLIEST offset of consolidating diskless topics to avoid querying the control plane on every request.
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``consume.cross.tier.log.start.cache.ttl.ms``
+  Time to live in milliseconds for an entry in the cross-tier log start offset cache. A stale entry can only ever be too low (the safe direction), so this only bounds how quickly a retention advance becomes visible from non-leader brokers.
+
+  * Type: int
+  * Default: 10000 (10 seconds)
+  * Valid Values: [1,...]
+  * Importance: low
+
 ``fetch.data.thread.pool.size``
   Thread pool size to concurrently fetch data files from remote storage
 

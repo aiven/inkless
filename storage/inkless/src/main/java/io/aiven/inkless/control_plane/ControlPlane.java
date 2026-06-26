@@ -73,6 +73,18 @@ public interface ControlPlane extends Closeable, Configurable {
 
     List<EnforceRetentionResponse> enforceRetention(List<EnforceRetentionRequest> requests, int maxBatchesPerRequest);
 
+    /**
+     * Forward-only update of the cross-tier (remote) log start offset for the given partitions.
+     * <p>
+     * Called by the partition's classic leader whenever its remote retention advances the lowest
+     * offset still readable from the remote + local tiers. The stored value never moves backwards,
+     * so this operation is idempotent and safe under retries.
+     *
+     * @param requests the list of advance requests
+     * @return list of responses, one per request, in the same order as the requests.
+     */
+    List<AdvanceCrossTierLogStartOffsetResponse> advanceCrossTierLogStartOffset(List<AdvanceCrossTierLogStartOffsetRequest> requests);
+
     List<FileToDelete> getFilesToDelete();
 
     void deleteFiles(DeleteFilesRequest request);
