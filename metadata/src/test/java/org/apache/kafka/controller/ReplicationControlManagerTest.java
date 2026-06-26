@@ -6760,7 +6760,8 @@ public class ReplicationControlManagerTest {
                 .build();
             ctx.registerBrokers(0, 1, 2);
             ctx.unfenceBrokers(0, 1, 2);
-            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), (short) 0);
 
             // Fence all brokers to make the partition offline
             ctx.fenceBrokers(0, 1, 2);
@@ -6784,7 +6785,8 @@ public class ReplicationControlManagerTest {
                 .build();
             ctx.registerBrokers(0, 1, 2, 3);
             ctx.unfenceBrokers(0, 1, 2, 3);
-            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), (short) 0);
 
             // Start a reassignment
             ControllerResult<AlterPartitionReassignmentsResponseData> alterResult =
@@ -6814,7 +6816,8 @@ public class ReplicationControlManagerTest {
                 .build();
             ctx.registerBrokers(0, 1, 2);
             ctx.unfenceBrokers(0, 1, 2);
-            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), (short) 0).topicId();
 
             // Shrink ISR to make it under-replicated (fence one broker then unfence it without rejoining ISR)
             ctx.fenceBrokers(2);
@@ -6844,7 +6847,8 @@ public class ReplicationControlManagerTest {
                 .build();
             ctx.registerBrokers(0, 1, 2);
             ctx.unfenceBrokers(0, 1, 2);
-            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), (short) 0).topicId();
 
             // Fence broker 2 — ISR drops below minISR (3), so broker 2 goes to ELR
             ctx.fenceBrokers(2);
@@ -6875,7 +6879,8 @@ public class ReplicationControlManagerTest {
                 .build();
             ctx.registerBrokers(0, 1, 2);
             ctx.unfenceBrokers(0, 1, 2);
-            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), (short) 0).topicId();
 
             // Fence broker 2 — ISR drops below minISR (3), so broker 2 goes to ELR
             ctx.fenceBrokers(2);
@@ -6905,7 +6910,8 @@ public class ReplicationControlManagerTest {
                 .build();
             ctx.registerBrokers(0, 1, 2);
             ctx.unfenceBrokers(0, 1, 2);
-            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), (short) 0).topicId();
 
             // Fence brokers 1, 2 to shrink ISR to [0]
             ctx.fenceBrokers(1, 2);
@@ -7042,15 +7048,18 @@ public class ReplicationControlManagerTest {
             PartitionRegistration partition = ctx.replicationControl.getPartition(fooId, 0);
             assertTrue(partition.isr.length < partition.replicas.length);
 
-            // Legacy AlterConfigs with only retention.ms (omits diskless.enable).
-            // Since this would implicitly switch via broker default and the partition
-            // is under-replicated, it must be rejected.
+            // Legacy AlterConfigs with retention.ms and remote.storage.enable=true
+            // (omits diskless.enable). Since this would implicitly switch via broker
+            // default and the partition is under-replicated, it must be rejected.
+            Map<String, String> legacyConfigs = Map.of(
+                "retention.ms", "86400000",
+                REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
             ControllerResult<Map<ConfigResource, ApiError>> legacyResult =
                 ctx.configurationControl.legacyAlterConfigs(
-                    Map.of(resource, Map.of("retention.ms", "86400000")),
+                    Map.of(resource, legacyConfigs),
                     false,
                     r -> ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(
-                        r, Map.of(resource, Map.of("retention.ms", "86400000"))));
+                        r, Map.of(resource, legacyConfigs)));
 
             assertEquals(Errors.INVALID_CONFIG, legacyResult.response().get(resource).error(),
                 "Legacy AlterConfigs should reject implicit diskless switch when under-replicated");
@@ -7074,11 +7083,12 @@ public class ReplicationControlManagerTest {
 
             ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
 
-            // Legacy AlterConfigs with only retention.ms (omits diskless.enable).
-            // Partitions are healthy, so the implicit switch should succeed and produce
-            // switch-pending records.
+            // Legacy AlterConfigs with retention.ms and remote.storage.enable=true
+            // (omits diskless.enable). Partitions are healthy, so the implicit switch
+            // should succeed and produce switch-pending records.
             Map<ConfigResource, Map<String, String>> newConfigs =
-                Map.of(resource, Map.of("retention.ms", "86400000"));
+                Map.of(resource, Map.of("retention.ms", "86400000",
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"));
             ControllerResult<Map<ConfigResource, ApiError>> legacyResult =
                 ctx.configurationControl.legacyAlterConfigs(newConfigs, false,
                     r -> ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(
@@ -7147,6 +7157,96 @@ public class ReplicationControlManagerTest {
             assertEquals(Errors.INVALID_REQUEST.code(), partitionResult.errorCode());
             assertTrue(partitionResult.errorMessage().contains("pending classic-to-diskless switch"),
                 "Expected pending switch message in: " + partitionResult.errorMessage());
+        }
+
+        @Test
+        public void testSwitchRejectedWhenRemoteStorageNotEnabled() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot switch topic foo to diskless: " +
+                "remote storage must be enabled.", error.message());
+        }
+
+        @Test
+        public void testSwitchAllowedWhenRemoteStorageEnabledOnTopic() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), (short) 0);
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
+
+            assertEquals(ApiError.NONE, error);
+        }
+
+        @Test
+        public void testSwitchAllowedWhenRemoteStorageEnabledInSameBatch() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(
+                    DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true"),
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
+
+            assertEquals(ApiError.NONE, error);
+        }
+
+        @Test
+        public void testLegacySwitchRejectedWhenRemoteStorageNotEnabled() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDefaultDisklessEnable(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0);
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, String>> newConfigs = Map.of(resource, Map.of(
+                DISKLESS_ENABLE_CONFIG, "true"));
+
+            ApiError error =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(resource, newConfigs);
+
+            assertEquals(Errors.INVALID_CONFIG, error.error());
+            assertEquals("Cannot switch topic foo to diskless: " +
+                "remote storage must be enabled.", error.message());
         }
 
         @Test
@@ -7233,7 +7333,8 @@ public class ReplicationControlManagerTest {
                 .build();
             ctx.registerBrokers(0, 1, 2);
             ctx.unfenceBrokers(0, 1, 2);
-            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), (short) 0);
 
             ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
             Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
@@ -7369,7 +7470,8 @@ public class ReplicationControlManagerTest {
             ctx.registerBrokers(0, 1, 2);
             ctx.unfenceBrokers(0, 1, 2);
             Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
-                Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0).topicId();
+                Map.of(DISKLESS_ENABLE_CONFIG, "false",
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), (short) 0).topicId();
 
             // Make the partition under-replicated
             ctx.fenceBrokers(2);
@@ -7666,11 +7768,13 @@ public class ReplicationControlManagerTest {
             ctx.registerBrokers(0, 1, 2);
             ctx.unfenceBrokers(0, 1, 2);
             ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
-                Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0);
+                Map.of(DISKLESS_ENABLE_CONFIG, "false",
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), (short) 0);
 
             ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
             Map<ConfigResource, Map<String, String>> newConfigs = Map.of(resource, Map.of(
-                DISKLESS_ENABLE_CONFIG, "true"));
+                DISKLESS_ENABLE_CONFIG, "true",
+                REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"));
 
             ApiError error =
                 ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(resource, newConfigs);

@@ -677,7 +677,8 @@ class LogConfigTest {
     // Case 7: diskless is enabled and remote storage becomes enabled
     assertValid(existingWithDisklessTrueRemoteFalse, setDisklessTrueRemoteStorageTrue, kafkaConfig, disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = true)
     assertValid(existingWithDisklessTrueRemoteFalse, setDisklessTrueRemoteStorageTrue, kafkaConfig, remoteStorageConsolidationEnabled = true)
-    assertInvalid(existingWithDisklessTrueRemoteFalse, setDisklessTrueRemoteStorageTrue, mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true)
+    // Enabling remote storage on a diskless topic is a valid classic-to-diskless switch
+    assertValid(existingWithDisklessTrueRemoteFalse, setDisklessTrueRemoteStorageTrue, kafkaConfig, disklessAllowFromClassic = true)
     assertInvalid(existingWithDisklessTrueRemoteFalse, setDisklessTrueRemoteStorageTrue, mutualExclusionError, kafkaConfig)
 
     // Case 8: if diskless and remote is enabled, can't disable remote storage
@@ -718,8 +719,8 @@ class LogConfigTest {
     assertValid(existingWithRemoteTrue, setDisklessTrueWithExistingRemoteTrue, kafkaConfig, disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = true)
     // CLASSIC→DISKLESS direct switch: both diskless.enable=true and remote.storage.enable=true on a topic with neither config
     assertValid(existingWithoutDisklessOrRemote, setDisklessTrueWithExistingRemoteTrue, kafkaConfig, disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = true)
-    // Same switch rejected without consolidation gate
-    assertInvalid(existingWithoutDisklessOrRemote, setDisklessTrueWithExistingRemoteTrue, mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = false)
+    // Same switch is allowed without consolidation: the switch only requires allow-from-classic
+    assertValid(existingWithoutDisklessOrRemote, setDisklessTrueWithExistingRemoteTrue, kafkaConfig, disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = false)
 
     // Case 2: set diskless.enable=false with allowFromClassic=true - disabling diskless is still forbidden
     val setDisklessFalse = topicProps(TopicConfig.DISKLESS_ENABLE_CONFIG -> "false")

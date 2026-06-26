@@ -391,8 +391,10 @@ public class InklessConfigsTest {
                 createTopic(admin, topic, Map.of());
                 assertEquals("false", getTopicConfig(admin, topic).get(DISKLESS_ENABLE_CONFIG));
 
-                alterTopicConfig(admin, topic, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
-                assertEquals("true", getTopicConfig(admin, topic).get(DISKLESS_ENABLE_CONFIG));
+                alterTopicConfig(admin, topic, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true", DISKLESS_ENABLE_CONFIG, "true"));
+                Map<String, String> topicConfig = getTopicConfig(admin, topic);
+                assertEquals("true", topicConfig.get(DISKLESS_ENABLE_CONFIG));
+                assertEquals("true", topicConfig.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
             } finally {
                 cluster.close();
             }

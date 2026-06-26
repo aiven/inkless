@@ -221,7 +221,9 @@ public class InklessTopicTypeSwitcherClusterTest {
 
             try {
                 log.warn("[stage=switch-start] Enabling diskless for topic={} via {}", classicToDisklessTopic, alterConfigsMode);
-                alterTopicConfig(admin, classicToDisklessTopic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"), alterConfigsMode);
+                alterTopicConfig(admin, classicToDisklessTopic, Map.of(
+                    TopicConfig.DISKLESS_ENABLE_CONFIG, "true",
+                    TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), alterConfigsMode);
 
                 log.warn("[stage=await-switch] Waiting for diskless.enable=true on topic={}", classicToDisklessTopic);
                 waitForTopicDisklessValue(admin, classicToDisklessTopic, "true");
@@ -405,6 +407,27 @@ public class InklessTopicTypeSwitcherClusterTest {
     }
 
     @Test
+    public void testSwitchRejectedWhenRemoteStorageDisabled() throws Exception {
+        final String topic = "switch-remote-disabled-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            // Create a classic topic with RF=3
+            admin.createTopics(List.of(
+                new NewTopic(topic, 1, (short) 3)
+                    .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(30, TimeUnit.SECONDS);
+
+            // Attempt to switch to diskless
+            final ExecutionException ex = assertThrows(ExecutionException.class, () ->
+                alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(
+                    TopicConfig.DISKLESS_ENABLE_CONFIG, "true")));
+            assertInstanceOf(InvalidConfigurationException.class, ex.getCause());
+            assertTrue(ex.getCause().getMessage().contains("remote storage must be enabled"),
+                "Expected 'remote storage must be enabled' in: " + ex.getCause().getMessage());
+        }
+    }
+
+    @Test
     public void testSwitchRejectedWhenPartitionIsOfflineOrUnderReplicated() throws Exception {
         final String topic = "switch-unhealthy-" + UUID.randomUUID().toString().substring(0, 8);
 
@@ -422,7 +445,9 @@ public class InklessTopicTypeSwitcherClusterTest {
 
             // Attempt to switch to diskless (should fail with INVALID_CONFIG due to under-replication)
             final ExecutionException ex = assertThrows(ExecutionException.class, () ->
-                alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")));
+                alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(
+                    TopicConfig.DISKLESS_ENABLE_CONFIG, "true",
+                    TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")));
             assertInstanceOf(InvalidConfigurationException.class, ex.getCause());
             assertTrue(ex.getCause().getMessage().contains("under-replicated"),
                 "Expected 'under-replicated' in: " + ex.getCause().getMessage());
@@ -432,8 +457,12 @@ public class InklessTopicTypeSwitcherClusterTest {
             waitForIsrRecovery(admin, topic, 0, 3);
 
             // Now the switch should succeed
-            alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
-            assertEquals("true", getTopicConfig(admin, topic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+            alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(
+                TopicConfig.DISKLESS_ENABLE_CONFIG, "true",
+                TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"));
+            Map<String, String> topicConfig = getTopicConfig(admin, topic);
+            assertEquals("true", topicConfig.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+            assertEquals("true", topicConfig.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
         }
     }
 
@@ -486,7 +515,9 @@ public class InklessTopicTypeSwitcherClusterTest {
 
             // Enable diskless to mark partition as switch pending
             alterTopicConfigWithIncrementalAlterConfigs(
-                    admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+                    admin, topic, Map.of(
+                        TopicConfig.DISKLESS_ENABLE_CONFIG, "true",
+                        TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"));
 
             // Should fail trying to enable unclean leader election
             final ExecutionException ex = assertThrows(ExecutionException.class, () ->
