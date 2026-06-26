@@ -67,17 +67,11 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
       val consolidatingPartitionAndOffsets: mutable.HashMap[TopicPartition, InitialFetchState] =
         initConsolidatingPartitionFetching(consolidatingPartitions)
 
-      // Mark topics throttled BEFORE starting fetchers: addFetcherForPartitions starts the
-      // fetcher threads immediately, and ReplicaFetcherThread only records bytes to the quota
-      // when the partition is already throttled. Marking after would let the first fetch/append
-      // bypass the quota. Unlike classic replication (where throttled replicas are set via topic
-      // config during reassignment), consolidation marks all topics unconditionally — every
-      // consolidating partition's bytes must count toward the dedicated bandwidth quota.
-      //
-      // We never removeThrottle on stop: this follows the classic ReplicaFetcher pattern, where
-      // the topic-keyed throttle map is only cleared via config changes (ConfigHandler), not on
-      // per-partition fetcher removal. Entries are tiny (topic -> List(-1)) and bounded by the
-      // set of topics that have ever consolidated on this broker, so the residue is benign.
+      // Mark topics throttled BEFORE starting fetchers: addFetcherForPartitions starts the threads
+      // immediately and bytes only count toward the quota while the partition is already throttled,
+      // so marking after would let the first fetch bypass the quota. All consolidating topics are
+      // marked unconditionally. We never removeThrottle on stop (matching the classic ReplicaFetcher
+      // pattern); the leftover topic -> List(-1) entries are tiny and bounded, so the residue is benign.
       consolidatingPartitionAndOffsets.keys.map(_.topic).toSet.foreach((topic: String) => consolidationQuotaManager.markThrottled(topic))
       consolidationFetcherManager.addFetcherForPartitions(consolidatingPartitionAndOffsets)
       consolidatingPartitionAndOffsets.keys.foreach(tp => consolidationMetrics.registerPartition(tp))
@@ -165,10 +159,6 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
     }
   }
 
-  // Arms consolidation from the current LEO, gating pruning at the higher of the seal and the
-  // current log start offset: at first switch the floor is the seal (blocking pruning of the
-  // diskless region until consolidation has tiered past the boundary), while on resume
-  // logStartOffset has advanced past the seal and reflects real pruning progress.
   private def armConsolidationAtLeo(partition: Partition, log: UnifiedLog, seal: Long): ConsolidationStartState = {
     partition.ensureConsolidationPruneFloorAtLeast(math.max(seal, log.logStartOffset))
     ConsolidationStartState.Ready(log.logEndOffset)
