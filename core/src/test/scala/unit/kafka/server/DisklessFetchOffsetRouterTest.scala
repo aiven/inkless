@@ -87,6 +87,12 @@ class DisklessFetchOffsetRouterTest {
   private def resolvedStatus(response: ListOffsetsPartitionResponse): ListOffsetsPartitionStatus =
     ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(response)).build()
 
+  // A diskless leg result carrying a concrete offset.
+  private def offsetResult(offset: Long, timestamp: Long = 0L, leaderEpoch: Int = 1): FileRecordsOrError =
+    new FileRecordsOrError(
+      Optional.empty(),
+      Optional.of(new FileRecords.TimestampAndOffset(timestamp, offset, Optional.of[Integer](leaderEpoch))))
+
   // Invoke `route()` with the standard test wiring.
   private def route(router: DisklessFetchOffsetRouter,
                     timestamp: Long,
@@ -463,44 +469,94 @@ class DisklessFetchOffsetRouterTest {
   }
 
   @Test
-  def hybridConsolidatingEarliestAlwaysTriesClassicFirstWithDisklessFallback(): Unit = {
+  def consolidatingEarliestReturnsMaxOffsetFromDisklessWhenDisklessIsHigher(): Unit = {
     when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
     when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+    // classic leg resolves to offset 10, diskless leg to offset 50 => max picks 50.
+    disklessTaskFuture.complete(offsetResult(50L))
+    val classicHit = resolvedStatus(makeResponse(offset = 10L, timestamp = 111L))
 
     val status = route(
-      newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
+      newRouter(disklessConsolidationEnabled = true),
       timestamp = ListOffsetsRequest.EARLIEST_TIMESTAMP,
-      classicLogStartOffset = Some(100L)
+      classicResult = classicHit
     )
 
-    assertSame(defaultClassicResult, status)
+    // Both legs run: classic is invoked and the diskless lookup is added to the job.
     assertClassicCalledWith(allowFromFollower = true)
-    verify(job, never()).add(any(), any())
+    verify(job).add(eqTo(tp), any())
+    assertTrue(status.futureHolderOpt.isPresent)
+    val result = status.futureHolderOpt.get.taskFuture.get(1, TimeUnit.SECONDS)
+    assertEquals(50L, result.timestampAndOffset.get.offset)
   }
 
   @Test
-  def hybridConsolidatingEarliestFallsBackToDisklessWhenClassicReturnsNoMatchEvenIfLogPastBoundary(): Unit = {
+  def consolidatingEarliestReturnsMaxOffsetFromClassicWhenClassicIsHigher(): Unit = {
     when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
     when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
-    val noMatch = resolvedStatus(makeResponse(offset = -1L, errorCode = Errors.NONE.code))
+    // classic leg resolves to offset 80, diskless leg to offset 50 => max picks 80.
+    disklessTaskFuture.complete(offsetResult(50L))
+    val classicHit = resolvedStatus(makeResponse(offset = 80L, timestamp = 222L))
 
     val status = route(
       newRouter(disklessConsolidationEnabled = true),
       timestamp = ListOffsetsRequest.EARLIEST_TIMESTAMP,
       classicLogStartOffset = Some(100L),
-      classicResult = noMatch
+      classicResult = classicHit
     )
 
     assertClassicCalledWith(allowFromFollower = true)
     verify(job).add(eqTo(tp), any())
-    assertTrue(status.futureHolderOpt.isPresent, "fallback to diskless surfaces an async holder")
-    assertNotSame(noMatch, status)
+    assertTrue(status.futureHolderOpt.isPresent)
+    val result = status.futureHolderOpt.get.taskFuture.get(1, TimeUnit.SECONDS)
+    assertEquals(80L, result.timestampAndOffset.get.offset)
   }
 
   @Test
-  def hybridConsolidatingWithCommittedBoundaryRequiresCompleteClassicPrefixForFollowerAccess(): Unit = {
+  def consolidatingEarliestUsesDisklessOffsetWhenClassicLegFails(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+    // classic leg errors; the diskless offset must still be returned (an error on one leg
+    // must not discard a valid offset from the other).
+    disklessTaskFuture.complete(offsetResult(50L))
+    val classicError = resolvedStatus(makeResponse(offset = -1L, errorCode = Errors.LEADER_NOT_AVAILABLE.code))
+
+    val status = route(
+      newRouter(disklessConsolidationEnabled = true),
+      timestamp = ListOffsetsRequest.EARLIEST_TIMESTAMP,
+      classicResult = classicError
+    )
+
+    assertTrue(status.futureHolderOpt.isPresent)
+    val result = status.futureHolderOpt.get.taskFuture.get(1, TimeUnit.SECONDS)
+    assertFalse(result.hasException)
+    assertEquals(50L, result.timestampAndOffset.get.offset)
+  }
+
+  @Test
+  def consolidatingEarliestSurfacesErrorWhenBothLegsFail(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+    val disklessFailure = new RuntimeException("diskless boom")
+    disklessTaskFuture.completeExceptionally(disklessFailure)
+    val classicError = resolvedStatus(makeResponse(offset = -1L, errorCode = Errors.LEADER_NOT_AVAILABLE.code))
+
+    val status = route(
+      newRouter(disklessConsolidationEnabled = true),
+      timestamp = ListOffsetsRequest.EARLIEST_TIMESTAMP,
+      classicResult = classicError
+    )
+
+    assertTrue(status.futureHolderOpt.isPresent)
+    val result = status.futureHolderOpt.get.taskFuture.get(1, TimeUnit.SECONDS)
+    assertTrue(result.hasException)
+  }
+
+  @Test
+  def consolidatingEarliestWithCommittedBoundaryDeniesFollowerAccessWhenPrefixIncomplete(): Unit = {
     when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
     when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+    disklessTaskFuture.complete(offsetResult(50L))
 
     val status = route(
       newRouter(disklessConsolidationEnabled = true),
@@ -509,25 +565,10 @@ class DisklessFetchOffsetRouterTest {
       hasCompleteClassicPrefix = false
     )
 
-    assertSame(defaultClassicResult, status)
+    // Both legs run, but the classic leg must be denied follower access until the local prefix is complete.
     assertClassicCalledWith(allowFromFollower = false)
-    verify(job, never()).add(any(), any())
-  }
-
-  @Test
-  def hybridConsolidatingEarliestReturnsClassicWhenClassicHitsEvenIfLogPastBoundary(): Unit = {
-    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
-    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
-
-    val status = route(
-      newRouter(disklessConsolidationEnabled = true),
-      timestamp = ListOffsetsRequest.EARLIEST_TIMESTAMP,
-      classicLogStartOffset = Some(100L)
-    )
-
-    assertSame(defaultClassicResult, status)
-    assertClassicCalledWith(allowFromFollower = true)
-    verify(job, never()).add(any(), any())
+    verify(job).add(eqTo(tp), any())
+    assertTrue(status.futureHolderOpt.isPresent)
   }
   
   @Test

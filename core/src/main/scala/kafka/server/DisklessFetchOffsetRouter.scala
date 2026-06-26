@@ -32,7 +32,7 @@ import org.apache.kafka.storage.internals.log.OffsetResultHolder.FileRecordsOrEr
 
 import java.util.Optional
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.{CompletableFuture, CopyOnWriteArrayList, Future}
+import java.util.concurrent.{CompletableFuture, CompletionException, CopyOnWriteArrayList, Future}
 import scala.jdk.OptionConverters.RichOptional
 
 /**
@@ -136,9 +136,13 @@ class DisklessFetchOffsetRouter(
           classicLookup()
 
         case ListOffsetsRequest.EARLIEST_TIMESTAMP =>
-          // Always do classic first and then fall back to diskless with consolidating partitions
           if (isConsolidatingPartition) {
-            classicWithDisklessFallbackLookup(topicPartition, version, classicLookup _, disklessLookup _, disklessLookupOnNewJob _)
+            // The cross-tier earliest offset lives on the classic leader's UnifiedLog; followers only
+            // learn it via the control plane (populated by the leader's CrossTierLogStartReporter).
+            // Take the max of both legs so the freshest authoritative value wins regardless of which
+            // broker serves: on the leader the classic leg is authoritative, on followers the classic
+            // leg is stale-low (safe) and the control-plane leg supplies the correct value.
+            maxOfClassicAndDiskless(topicPartition, classicLookupOf(classicLookup(), version), disklessLookup)
           // Try classic first when classic data is still on disk, otherwise go straight to diskless.
           } else if (classicLogStartOffsetProvider(topicPartition).exists(_ < classicToDisklessStartOffset)) {
             classicLookup()
@@ -180,6 +184,31 @@ class DisklessFetchOffsetRouter(
         else () => disklessLookupOnNewJob()
       withFallback(topicPartition, classicLookupOf(classic, version), fallback)
     } else classic
+  }
+
+  /**
+   * Run both legs and return the result carrying the larger offset. Used for EARLIEST on
+   * consolidating partitions, where the authoritative cross-tier earliest offset may live on
+   * either the classic leg (the leader's local UnifiedLog) or the diskless leg (the control
+   * plane, populated by the leader for followers). Both legs are normalized so an error on one
+   * leg does not discard a valid offset from the other; if neither leg yields an offset, an
+   * error (if any) is surfaced. The single cancel hook fans out to both underlying jobs.
+   */
+  private def maxOfClassicAndDiskless(
+    tp: TopicPartition,
+    classic: Lookup,
+    diskless: Lookup
+  ): ListOffsetsPartitionStatus = {
+    val cancelSignal = new FanOutCancelFuture
+    cancelSignal.addTarget(classic.jobFuture)
+    cancelSignal.addTarget(diskless.jobFuture)
+
+    val combined = normalizeToResult(classic.taskFuture).thenCombine[FileRecordsOrError, FileRecordsOrError](
+      normalizeToResult(diskless.taskFuture),
+      (c: FileRecordsOrError, d: FileRecordsOrError) => maxOffsetResult(c, d)
+    )
+
+    asStatus(tp, new AsyncOffsetReadFutureHolder(cancelSignal, combined))
   }
 
   /**
@@ -321,6 +350,47 @@ private[server] object DisklessFetchOffsetRouter {
   /** Sync classic responses with `errorCode == NONE && offset < 0` are the "no match" sentinel. */
   private def isSyncNoMatch(r: ListOffsetsPartitionResponse): Boolean =
     r.errorCode == Errors.NONE.code && r.offset < 0
+
+  /**
+   * Ensure a lookup future always completes normally with a `FileRecordsOrError`, converting an
+   * exceptional completion into a `FileRecordsOrError` carrying the (unwrapped) exception. This
+   * lets [[maxOfClassicAndDiskless]] combine both legs without one leg's failure discarding the
+   * other leg's valid offset.
+   */
+  private def normalizeToResult(f: CompletableFuture[FileRecordsOrError]): CompletableFuture[FileRecordsOrError] =
+    f.exceptionally { t =>
+      val cause = t match {
+        case ce: CompletionException if ce.getCause != null => ce.getCause
+        case other => other
+      }
+      val ex = cause match {
+        case e: Exception => e
+        case other => new RuntimeException(other)
+      }
+      new FileRecordsOrError(Optional.of(ex), Optional.empty())
+    }
+
+  /**
+   * Combine two lookup results into the one carrying the larger offset. If only one leg has an
+   * offset, that leg wins; if neither does, an exception (if present) is surfaced, else the empty
+   * result is returned. Returning too-low an EARLIEST is safe (the consumer re-resolves), while
+   * returning too-high would skip readable data, so this never drops a known-higher offset.
+   */
+  private def maxOffsetResult(a: FileRecordsOrError, b: FileRecordsOrError): FileRecordsOrError = {
+    val aHas = a.hasTimestampAndOffset
+    val bHas = b.hasTimestampAndOffset
+    if (aHas && bHas) {
+      if (b.timestampAndOffset.get.offset > a.timestampAndOffset.get.offset) b else a
+    } else if (aHas) {
+      a
+    } else if (bHas) {
+      b
+    } else if (a.hasException) {
+      a
+    } else {
+      b
+    }
+  }
 
   private def syncResponseToResult(r: ListOffsetsPartitionResponse): FileRecordsOrError = {
     if (r.errorCode != Errors.NONE.code) {
