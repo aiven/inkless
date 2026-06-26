@@ -1,0 +1,31 @@
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+{
+  "apiKey": 501,
+  "type": "request",
+  "listeners": ["broker", "controller"],
+  "name": "AlterDisklessSwitchRequest",
+  "validVersions": "0",
+  "flexibleVersions": "0+",
+  "fields": [
+    { "name": "TopicName", "type": "string", "versions": "0+", "entityType": "topicName",
+      "about": "The name of the topic whose classic-to-diskless switch state is being altered." },
+    { "name": "PartitionIndex", "type": "int32", "versions": "0+",
+      "about": "The partition index." },
+    { "name": "SealOffset", "type": "int64", "versions": "0+",
+      "about": "The classic-to-diskless start offset to commit: >= 0 forces (re-)sealing at that offset, -1 aborts the switch and reverts the partition to classic, and -2 re-arms the switch as pending." }
+  ]
+}

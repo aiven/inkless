@@ -26,6 +26,8 @@ import org.apache.kafka.common.errors.NotControllerException;
 import org.apache.kafka.common.errors.ThrottlingQuotaExceededException;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
+import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
+import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.AlterPartitionRequestData;
@@ -528,6 +530,14 @@ public class MockController implements Controller {
     public CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
         ControllerRequestContext context,
         InitDisklessLogRequestData request
+    ) {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
+    @Override
+    public CompletableFuture<AlterDisklessSwitchResponseData> alterDisklessSwitch(
+        ControllerRequestContext context,
+        AlterDisklessSwitchRequestData request
     ) {
         throw new UnsupportedOperationException("not implemented");
     }

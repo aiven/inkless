@@ -303,13 +303,12 @@ public class PartitionRegistration {
 
         int[] newElr = (record.eligibleLeaderReplicas() == null) ? elr : Replicas.toArray(record.eligibleLeaderReplicas());
         int[] newLastKnownElr = (record.lastKnownElr() == null) ? lastKnownElr : Replicas.toArray(record.lastKnownElr());
-        long newClassicToDisklessStartOffset = InitDisklessLogFields.decodeClassicToDisklessStartOffset(record.unknownTaggedFields());
+        long newClassicToDisklessStartOffset =
+            InitDisklessLogFields.decodeClassicToDisklessStartOffsetIfPresent(record.unknownTaggedFields())
+                .orElse(classicToDisklessStartOffset);
         List<InitDisklessLogFields.ProducerStateEntry> newDisklessProducerStates =
-            InitDisklessLogFields.decodeProducerStates(record.unknownTaggedFields());
-        if (newClassicToDisklessStartOffset == NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
-            newClassicToDisklessStartOffset = classicToDisklessStartOffset;
-            newDisklessProducerStates = disklessProducerStates;
-        }
+            InitDisklessLogFields.decodeProducerStatesIfPresent(record.unknownTaggedFields())
+                .orElse(disklessProducerStates);
         // The diskless leader epoch is captured at the classic-to-diskless switch and only carried by that
         // single change record; every other change record omits the tag, so keep the existing value.
         int newDisklessLeaderEpoch = InitDisklessLogFields.decodeDisklessLeaderEpoch(record.unknownTaggedFields());

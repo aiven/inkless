@@ -169,6 +169,8 @@ import org.apache.kafka.common.message.UnregisterBrokerResponseData;
 import org.apache.kafka.common.message.WriteTxnMarkersResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.protocol.MessageUtil;
+import org.apache.kafka.common.protocol.types.RawTaggedField;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaEntity;
 import org.apache.kafka.common.quota.ClientQuotaFilter;
@@ -1817,6 +1819,40 @@ public class KafkaAdminClientTest {
             assertEquals(0, topic.partitions().get(0).partitionIndex());
             assertEquals(1, topic.partitions().get(1).partitionIndex());
         }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsPreservesUnknownTaggedFieldsAcrossWire() {
+        int classicToDisklessStartOffsetTag = 100;
+        byte[] encodedOffset = ByteBuffer.allocate(Long.BYTES).putLong(42L).array();
+
+        DescribeTopicPartitionsResponsePartition partition = new DescribeTopicPartitionsResponsePartition()
+            .setErrorCode((short) 0)
+            .setPartitionIndex(0)
+            .setLeaderId(0)
+            .setLeaderEpoch(0)
+            .setReplicaNodes(singletonList(0))
+            .setIsrNodes(singletonList(0));
+        partition.unknownTaggedFields().add(new RawTaggedField(classicToDisklessStartOffsetTag, encodedOffset));
+
+        DescribeTopicPartitionsResponseData responseData = new DescribeTopicPartitionsResponseData();
+        responseData.topics().add(new DescribeTopicPartitionsResponseTopic()
+            .setErrorCode((short) 0)
+            .setName("test-topic")
+            .setTopicId(Uuid.randomUuid())
+            .setIsInternal(false)
+            .setPartitions(singletonList(partition)));
+
+        short version = ApiKeys.DESCRIBE_TOPIC_PARTITIONS.latestVersion();
+        DescribeTopicPartitionsResponseData roundTrippedData = new DescribeTopicPartitionsResponseData(
+            MessageUtil.toByteBufferAccessor(responseData, version), version);
+
+        List<RawTaggedField> taggedFields = roundTrippedData.topics().find("test-topic")
+            .partitions().get(0).unknownTaggedFields();
+        assertEquals(1, taggedFields.size());
+        RawTaggedField roundTripped = taggedFields.get(0);
+        assertEquals(classicToDisklessStartOffsetTag, roundTripped.tag());
+        assertEquals(42L, ByteBuffer.wrap(roundTripped.data()).getLong());
     }
 
     @Test
