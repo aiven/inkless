@@ -113,6 +113,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -585,9 +586,7 @@ public class ReplicationControlManager {
                     isReassignmentInProgress(prevPartInfo), isReassignmentInProgress(newPartInfo));
         }
 
-        // Diskless topics are excluded: the metadata transformer handles leader routing,
-        // so tracking preferred leader imbalance is unnecessary.
-        if (!isDisklessTopic(topicInfo.name)) {
+        if (shouldTrackPreferredLeader(topicInfo.name)) {
             if (newPartInfo.hasPreferredLeader()) {
                 imbalancedPartitions.remove(new TopicIdPartition(record.topicId(), record.partitionId()));
             } else {
@@ -635,7 +634,7 @@ public class ReplicationControlManager {
             record.topicId();
         newPartitionInfo.maybeLogPartitionChange(log, topicPart, prevPartitionInfo);
 
-        if (!isDisklessTopic(topicInfo.name)) {
+        if (shouldTrackPreferredLeader(topicInfo.name)) {
             if (newPartitionInfo.hasPreferredLeader()) {
                 imbalancedPartitions.remove(new TopicIdPartition(record.topicId(), record.partitionId()));
             } else {
@@ -934,13 +933,19 @@ public class ReplicationControlManager {
                 PartitionAssignment partitionAssignment = new PartitionAssignment(assignment.brokerIds(), clusterDescriber);
                 validateManualPartitionAssignment(partitionAssignment, replicationFactor);
                 replicationFactor = OptionalInt.of(assignment.brokerIds().size());
-                List<Integer> isr = assignment.brokerIds().stream().
-                    filter(clusterControl::isActive).toList();
-                if (isr.isEmpty()) {
+                // At least one active broker is required for initial leader election,
+                // even for diskless (data is in object storage, but clients need a leader to connect to).
+                if (assignment.brokerIds().stream().noneMatch(clusterControl::isActive)) {
                     return new ApiError(Errors.INVALID_REPLICA_ASSIGNMENT,
                         "All brokers specified in the manual partition assignment for " +
                         "partition " + assignment.partitionIndex() + " are fenced or in controlled shutdown.");
                 }
+                // For diskless: ISR = all replicas (data in object storage, fencing doesn't affect availability).
+                // Active replicas first so buildPartitionRegistration picks an active leader via isr.get(0).
+                // For classic: ISR = active replicas only.
+                List<Integer> isr = disklessEnabled
+                    ? assignment.brokerIds().stream().sorted(activeFirstComparator()).toList()
+                    : assignment.brokerIds().stream().filter(clusterControl::isActive).toList();
                 newParts.put(
                     assignment.partitionIndex(),
                     buildPartitionRegistration(partitionAssignment, isr)
@@ -984,13 +989,14 @@ public class ReplicationControlManager {
                         numPartitions,
                         replicationFactor
                     ), clusterDescriber);
-                    brokerFilter = clusterControl::isActive;
+                    // For diskless (managed or not): ISR = all replicas regardless of fenced state.
+                    // Data lives in object storage, so broker fencing doesn't affect availability.
+                    brokerFilter = disklessEnabled ? x -> true : clusterControl::isActive;
                 } else {
                     topicAssignment = createDisklessAssignment(numPartitions);
                     if (topicAssignment == null) {
                         return new ApiError(Errors.BROKER_NOT_AVAILABLE, "No brokers available to create diskless topic.");
                     }
-                    // For diskless, it doesn't matter if a broker is fenced of not.
                     brokerFilter = x -> true;
                 }
 
@@ -1449,7 +1455,7 @@ public class ReplicationControlManager {
                     partition,
                     topic.id,
                     partitionId,
-                    new LeaderAcceptor(clusterControl, partition),
+                    leaderAcceptorFor(topic.name, partition),
                     featureControl.metadataVersionOrThrow(),
                     getTopicEffectiveMinIsr(topic.name)
                 )
@@ -1889,6 +1895,37 @@ public class ReplicationControlManager {
             (short) 0));
         generateLeaderAndIsrUpdates("handleBrokerUnfenced", NO_LEADER, brokerId, NO_LEADER, records,
             brokersToIsrs.partitionsWithNoLeader());
+
+        if (isDisklessManagedReplicasEnabled) {
+            expandIsrForDisklessManagedPartitions(brokerId, records);
+        }
+    }
+
+    // Full scan of all topics/partitions is acceptable: broker unfence is a rare state transition
+    // (not a hot path) and the per-partition work is O(1) array membership checks.
+    private void expandIsrForDisklessManagedPartitions(int brokerId, List<ApiMessageAndVersion> records) {
+        int expanded = 0;
+        for (TopicControlInfo topic : topics.values()) {
+            if (!isDisklessTopic(topic.name)) continue;
+            for (var entry : topic.parts.entrySet()) {
+                int partitionId = entry.getKey();
+                PartitionRegistration partition = entry.getValue();
+                if (!Replicas.contains(partition.replicas, brokerId)) continue;
+                if (Replicas.contains(partition.isr, brokerId)) continue;
+                // Broker is a replica but not in ISR — expand ISR
+                int[] newIsr = Replicas.copyWith(partition.isr, brokerId);
+                PartitionChangeRecord changeRecord = new PartitionChangeRecord()
+                    .setTopicId(topic.id)
+                    .setPartitionId(partitionId)
+                    .setIsr(Replicas.toList(newIsr));
+                records.add(new ApiMessageAndVersion(changeRecord, (short) 0));
+                expanded++;
+            }
+        }
+        if (expanded > 0) {
+            log.info("handleBrokerUnfenced: expanded ISR for {} diskless managed partition(s) " +
+                "to include broker {}", expanded, brokerId);
+        }
     }
 
     /**
@@ -2065,7 +2102,7 @@ public class ReplicationControlManager {
             partition,
             topicId,
             partitionId,
-            new LeaderAcceptor(clusterControl, partition),
+            leaderAcceptorFor(topic, partition),
             featureControl.metadataVersionOrThrow(),
             getTopicEffectiveMinIsr(topic)
         )
@@ -2218,13 +2255,7 @@ public class ReplicationControlManager {
                 continue;
             }
 
-            // Skip diskless topics: the metadata transformer handles leader routing,
-            // so controller-level preferred leader election is unnecessary.
-            // After reassignment, the leader may not match the preferred replica (replicas[0])
-            // because PartitionChangeBuilder.electLeader() prefers keeping the current leader.
-            // This is intentional — the metadata transformer routes requests independently of
-            // the preferred replica order.
-            if (isDisklessTopic(topic.name)) {
+            if (!shouldTrackPreferredLeader(topic.name)) {
                 continue;
             }
 
@@ -2234,12 +2265,12 @@ public class ReplicationControlManager {
                 continue;
             }
 
-            // Attempt to perform a preferred leader election
+            // Attempt to perform a preferred leader election.
             new PartitionChangeBuilder(
                 partition,
                 topicPartition.topicId(),
                 topicPartition.partitionId(),
-                new LeaderAcceptor(clusterControl, partition),
+                leaderAcceptorFor(topic.name, partition),
                 featureControl.metadataVersionOrThrow(),
                 getTopicEffectiveMinIsr(topic.name)
             )
@@ -2395,6 +2426,13 @@ public class ReplicationControlManager {
 
         List<PartitionAssignment> partitionAssignments;
         List<List<Integer>> isrs;
+        // For diskless (managed or not), ISR includes all replicas regardless of fenced state.
+        // Data lives in object storage, so broker fencing doesn't affect data availability.
+        boolean isDiskless = isDisklessTopic(topic.name());
+        Predicate<Integer> brokerFilter = isDiskless
+            ? x -> true
+            : clusterControl::isActive;
+
         if (topic.assignments() != null) {
             partitionAssignments = new ArrayList<>();
             isrs = new ArrayList<>();
@@ -2403,13 +2441,15 @@ public class ReplicationControlManager {
                 PartitionAssignment partitionAssignment = new PartitionAssignment(replicas, clusterDescriber);
                 validateManualPartitionAssignment(partitionAssignment, OptionalInt.of(replicationFactor));
                 partitionAssignments.add(partitionAssignment);
-                List<Integer> isr = partitionAssignment.replicas().stream().
-                    filter(clusterControl::isActive).toList();
-                if (isr.isEmpty()) {
+                // At least one active broker required for initial leader election
+                if (replicas.stream().noneMatch(clusterControl::isActive)) {
                     throw new InvalidReplicaAssignmentException(
                         "All brokers specified in the manual partition assignment for " +
                             "partition " + (startPartitionId + i) + " are fenced or in controlled shutdown.");
                 }
+                List<Integer> isr = isDiskless
+                    ? partitionAssignment.replicas().stream().sorted(activeFirstComparator()).toList()
+                    : partitionAssignment.replicas().stream().filter(brokerFilter).toList();
                 isrs.add(isr);
             }
         } else {
@@ -2419,13 +2459,6 @@ public class ReplicationControlManager {
             ).assignments();
             isrs = partitionAssignments.stream().map(PartitionAssignment::replicas).toList();
         }
-        // For unmanaged diskless, ISR includes all replicas regardless of fenced state —
-        // consistent with topic creation. Data lives in object storage, so broker fencing
-        // doesn't affect data availability.
-        boolean isDiskless = isDisklessTopic(topic.name());
-        Predicate<Integer> brokerFilter = (isDiskless && !isDisklessManagedReplicasEnabled)
-            ? x -> true
-            : clusterControl::isActive;
 
         int partitionId = startPartitionId;
         for (int i = 0; i < partitionAssignments.size(); i++) {
@@ -2541,7 +2574,7 @@ public class ReplicationControlManager {
                 partition,
                 topicIdPart.topicId(),
                 topicIdPart.partitionId(),
-                new LeaderAcceptor(clusterControl, partition, isAcceptableLeader),
+                leaderAcceptorFor(topic.name, partition, isAcceptableLeader),
                 featureControl.metadataVersionOrThrow(),
                 getTopicEffectiveMinIsr(topic.name)
             );
@@ -2666,7 +2699,7 @@ public class ReplicationControlManager {
             part,
             tp.topicId(),
             tp.partitionId(),
-            new LeaderAcceptor(clusterControl, part),
+            leaderAcceptorFor(topicName, part),
             featureControl.metadataVersionOrThrow(),
             getTopicEffectiveMinIsr(topicName)
         );
@@ -2729,22 +2762,16 @@ public class ReplicationControlManager {
         PartitionReassignmentReplicas reassignment =
             new PartitionReassignmentReplicas(currentAssignment, targetAssignment);
 
-        boolean isDiskless = isDisklessTopic(topics.get(tp.topicId()).name);
-
-        // Diskless topics don't use local directories — skip the directory check in leader election.
-        // Any active (unfenced, not in controlled shutdown) broker can lead a diskless partition,
-        // since it reads all data from object storage rather than local disk.
-        IntPredicate leaderAcceptor = isDiskless
-            ? clusterControl::isActive
-            : new LeaderAcceptor(clusterControl, part);
+        String topicName = topics.get(tp.topicId()).name;
+        boolean isDiskless = isDisklessTopic(topicName);
 
         PartitionChangeBuilder builder = new PartitionChangeBuilder(
             part,
             tp.topicId(),
             tp.partitionId(),
-            leaderAcceptor,
+            leaderAcceptorFor(topicName, part),
             featureControl.metadataVersionOrThrow(),
-            getTopicEffectiveMinIsr(topics.get(tp.topicId()).name)
+            getTopicEffectiveMinIsr(topicName)
         );
         builder.setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
 
@@ -2765,15 +2792,16 @@ public class ReplicationControlManager {
             //    storage. A future optimization could pre-warm target brokers' caches before
             //    completing the reassignment.
             if (!target.replicas().equals(currentReplicas)) {
-                List<Integer> activeIsr = target.replicas().stream()
-                    .filter(clusterControl::isActive)
-                    .toList();
-                if (activeIsr.isEmpty()) {
+                // Reject if no target broker is active (can't elect a leader).
+                boolean anyActive = target.replicas().stream()
+                    .anyMatch(clusterControl::isActive);
+                if (!anyActive) {
                     throw new InvalidReplicaAssignmentException(
                         "None of the target replicas " + target.replicas() + " are active.");
                 }
+                // ISR = all replicas: data is in object storage, fencing doesn't affect availability.
                 builder.setTargetReplicas(target.replicas());
-                builder.setTargetIsr(activeIsr);
+                builder.setTargetIsr(target.replicas());
             }
         } else {
             if (!reassignment.replicas().equals(currentReplicas)) {
@@ -2855,7 +2883,7 @@ public class ReplicationControlManager {
                                     partitionRegistration,
                                     topicId,
                                     partitionIndex,
-                                    new LeaderAcceptor(clusterControl, partitionRegistration),
+                                    leaderAcceptorFor(topicName, partitionRegistration),
                                     featureControl.metadataVersionOrThrow(),
                                     getTopicEffectiveMinIsr(topicName)
                             )
@@ -3245,6 +3273,34 @@ public class ReplicationControlManager {
         public String toString() {
             return replicaId + " (" + reason + ")";
         }
+    }
+
+    // Classic topics always participate in preferred leader balancing. Diskless topics only
+    // participate when the managed-replicas flag is enabled — without it, the metadata
+    // transformer handles leader routing and there's no multi-replica leadership to balance.
+    private boolean shouldTrackPreferredLeader(String topicName) {
+        return !isDisklessTopic(topicName) || isDisklessManagedReplicasEnabled;
+    }
+
+    // Active brokers sort first so buildPartitionRegistration picks an active leader via isr.get(0).
+    private Comparator<Integer> activeFirstComparator() {
+        return Comparator.comparingInt(b -> clusterControl.isActive(b) ? 0 : 1);
+    }
+
+    /**
+     * Returns the appropriate leader acceptor for the given topic. Diskless topics skip the
+     * directory-liveness check since they don't use local storage.
+     */
+    private IntPredicate leaderAcceptorFor(String topicName, PartitionRegistration partition) {
+        return isDisklessTopic(topicName)
+            ? clusterControl::isActive
+            : new LeaderAcceptor(clusterControl, partition);
+    }
+
+    private IntPredicate leaderAcceptorFor(String topicName, PartitionRegistration partition, IntPredicate isAcceptableLeader) {
+        return isDisklessTopic(topicName)
+            ? isAcceptableLeader
+            : new LeaderAcceptor(clusterControl, partition, isAcceptableLeader);
     }
 
     private static final class LeaderAcceptor implements IntPredicate {
