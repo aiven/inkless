@@ -2511,9 +2511,11 @@ public class KafkaAdminClient extends AdminClient {
                                 "Topic " + topic.name() + " changed while fetching paginated response"));
                             return;
                         }
-                        existing.partitions().addAll(topic.partitions());
+                        existing.partitions().addAll(copyPartitionsWithTaggedFields(topic.partitions()));
                     } else {
-                        accumulated.topics().add(topic.duplicate());
+                        DescribeTopicPartitionsResponseTopic copy = topic.duplicate();
+                        copy.setPartitions(copyPartitionsWithTaggedFields(topic.partitions()));
+                        accumulated.topics().add(copy);
                     }
                 }
 
@@ -2532,6 +2534,18 @@ public class KafkaAdminClient extends AdminClient {
         }, now);
 
         return new DescribeTopicPartitionsResult(future);
+    }
+
+    private static List<DescribeTopicPartitionsResponsePartition> copyPartitionsWithTaggedFields(
+            List<DescribeTopicPartitionsResponsePartition> partitions) {
+        List<DescribeTopicPartitionsResponsePartition> copies = new ArrayList<>(partitions.size());
+        for (DescribeTopicPartitionsResponsePartition partition : partitions) {
+            DescribeTopicPartitionsResponsePartition copy = partition.duplicate();
+            // duplicate() drops the unknown tagged fields
+            copy.unknownTaggedFields().addAll(partition.unknownTaggedFields());
+            copies.add(copy);
+        }
+        return copies;
     }
 
     @Override
