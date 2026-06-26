@@ -88,16 +88,11 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
     val consolidatingDisklessPartitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     topicPartitions.foreach { tp =>
       replicaManager.onlinePartition(tp).foreach { partition =>
-        // This hook is the only trigger for a classic/untiered-diskless -> consolidated config flip:
-        // remote.storage.enable=true arrives as a config-only metadata change that the leader-delta
-        // path never re-enters, so if we skip the partition here it never starts consolidating.
-        // The broker metadata cache backing isConsolidatingDisklessTopic can lag the config record
-        // that has *already* updated this partition's local log -- the cache image and the dynamic
-        // config publisher are applied by separate publishers within the same metadata delta -- so
-        // gating solely on the cache can spuriously drop a partition that has, in fact, just become
-        // consolidating. The partition's own log config was updated synchronously before this hook
-        // ran, so trust it too: a diskless topic whose local log now has remote storage enabled is
-        // consolidating.
+        // This hook is the only trigger for an untiered-diskless -> consolidated flip, since
+        // remote.storage.enable=true is a config-only change the leader-delta path never re-enters.
+        // The metadata cache behind isConsolidatingDisklessTopic can lag the config record that has
+        // already enabled remote on the local log, so also trust the partition's own log: a diskless
+        // topic whose local log has remote storage enabled is consolidating.
         val isConsolidating = inklessMetadataView.isConsolidatingDisklessTopic(tp.topic) ||
           (inklessMetadataView.isDisklessTopic(tp.topic) && partition.log.exists(_.remoteLogEnabled()))
         if (isConsolidating) {
@@ -144,49 +139,38 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
         val log = partition.localLogOrException
         if (log.logEndOffset < seal) {
           if (partition.isLeader && log.remoteLogEnabled()) {
-            // Leader with a below-seal local log. A healthy leader is never below the seal: the
-            // seal is taken from the leader's own LEO when the classic log finishes draining, and
-            // consolidation only ever appends above it. The only way to observe this is local-log
-            // loss on the elected leader -- a full local-storage wipe / disaster-recovery restart
-            // where the controller (whose metadata survived) elects a replica that came back with
-            // an empty log. Unlike a follower (which can still replicate the classic prefix from a
-            // live leader, hence the Retry below), a leader has no peer source: the classic prefix
-            // [0, seal) lives only in the remote tier. Start consolidation anyway, armed at the
-            // current (post-loss) LEO, so the fetcher's first request lands below the diskless WAL
-            // start and DisklessLeaderEndPoint answers OFFSET_MOVED_TO_TIERED_STORAGE. That drives
-            // the stock tier-state machine to rebuild the leader-epoch cache + producer snapshot
-            // and the whole-log start from remote before resuming the WAL fetch; without this the
-            // partition would wait forever for a classic catch-up that can never happen.
-            val pruneFloor = math.max(seal, log.logStartOffset)
-            partition.ensureConsolidationPruneFloorAtLeast(pruneFloor)
-            ConsolidationStartState.Ready(log.logEndOffset)
+            // A leader below the seal means its local log was lost (e.g. a wiped replica promoted
+            // by the controller, whose metadata survived). Unlike a follower it has no peer to
+            // replicate the classic prefix [0, seal) from -- that prefix lives only in remote.
+            // Arm consolidation at the current LEO so the first fetch lands below the diskless WAL
+            // start, DisklessLeaderEndPoint answers OFFSET_MOVED_TO_TIERED_STORAGE, and the
+            // tier-state machine rebuilds the whole log from remote. Otherwise the partition would
+            // wait forever for a classic catch-up that can never happen.
+            armConsolidationAtLeo(partition, log, seal)
           } else {
-            // Follower (or remote storage not yet enabled) whose classic prefix hasn't been fully
-            // replicated locally yet; a classic catch-up fetcher must finish bringing the local log
-            // up to the seal before consolidation can take over.
+            // Follower (or remote not yet enabled) below the seal: a classic catch-up fetcher must
+            // still bring the local log up to the seal before consolidation can take over.
             ConsolidationStartState.Retry(
               s"Skipping consolidation for $tp because local LEO ${log.logEndOffset} is below " +
                 s"classic-to-diskless start offset $seal")
           }
         } else {
-          // LEO >= seal. This covers both the initial switch (LEO == seal, nothing consolidated
-          // yet) and resuming an already-progressed partition after a restart, leadership
-          // failover, or reassignment (the local log either kept its consolidated frontier or
-          // was rehydrated from tiered storage). In every case we resume from the current local
-          // LEO so we never re-consolidate or skip data the local log already holds.
-          //
-          // The prune floor is the higher of the seal and the current log start offset:
-          //  - at first switch logStartOffset is still the classic prefix start, so the floor is
-          //    the seal, which blocks pruning the diskless region until consolidation has tiered
-          //    past the boundary;
-          //  - on resume logStartOffset has advanced past the seal as consolidated segments were
-          //    tiered and deleted, so it reflects real pruning progress.
-          val pruneFloor = math.max(seal, log.logStartOffset)
-          partition.ensureConsolidationPruneFloorAtLeast(pruneFloor)
-          ConsolidationStartState.Ready(log.logEndOffset)
+          // LEO >= seal: the initial switch (LEO == seal) or a resume after restart, failover, or
+          // reassignment, where the local log kept or rehydrated its consolidated frontier. Resume
+          // from the current LEO so we neither re-consolidate nor skip data already held locally.
+          armConsolidationAtLeo(partition, log, seal)
         }
       case unexpected =>
         ConsolidationStartState.Failed(new ReconciliationException(s"Skipping consolidation for $tp due to unexpected classic-to-diskless start offset: $unexpected"))
     }
+  }
+
+  // Arms consolidation from the current LEO, gating pruning at the higher of the seal and the
+  // current log start offset: at first switch the floor is the seal (blocking pruning of the
+  // diskless region until consolidation has tiered past the boundary), while on resume
+  // logStartOffset has advanced past the seal and reflects real pruning progress.
+  private def armConsolidationAtLeo(partition: Partition, log: UnifiedLog, seal: Long): ConsolidationStartState = {
+    partition.ensureConsolidationPruneFloorAtLeast(math.max(seal, log.logStartOffset))
+    ConsolidationStartState.Ready(log.logEndOffset)
   }
 }
