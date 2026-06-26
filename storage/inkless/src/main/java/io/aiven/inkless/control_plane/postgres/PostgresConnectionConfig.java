@@ -37,6 +37,21 @@ public class PostgresConnectionConfig extends AbstractControlPlaneConfig {
     public static final String MAX_CONNECTIONS_CONFIG = "max.connections";
     private static final String MAX_CONNECTIONS_DOC = "Maximum number of connections to the database";
 
+    public static final String CONNECTION_POOL_TIMEOUT_MS_CONFIG = "connection.pool.timeout.ms";
+    private static final String CONNECTION_POOL_TIMEOUT_MS_DOC =
+        "Maximum time in milliseconds to wait for a PostgreSQL connection from the pool.";
+    private static final long CONNECTION_POOL_TIMEOUT_MS_DEFAULT = 5_000;
+
+    public static final String TCP_CONNECT_TIMEOUT_MS_CONFIG = "tcp.connect.timeout.ms";
+    private static final String TCP_CONNECT_TIMEOUT_MS_DOC =
+        "Maximum time in milliseconds to establish a PostgreSQL TCP connection.";
+    private static final int TCP_CONNECT_TIMEOUT_MS_DEFAULT = 5_000;
+
+    public static final String SOCKET_TIMEOUT_MS_CONFIG = "socket.timeout.ms";
+    private static final String SOCKET_TIMEOUT_MS_DOC =
+        "Maximum time in milliseconds to wait for PostgreSQL socket reads.";
+    private static final int SOCKET_TIMEOUT_MS_DEFAULT = 5_000;
+
     public static ConfigDef configDef() {
         return baseConfigDef()
             .define(
@@ -70,6 +85,30 @@ public class PostgresConnectionConfig extends AbstractControlPlaneConfig {
                 ConfigDef.Range.atLeast(1),
                 ConfigDef.Importance.MEDIUM,
                 MAX_CONNECTIONS_DOC
+            )
+            .define(
+                CONNECTION_POOL_TIMEOUT_MS_CONFIG,
+                ConfigDef.Type.LONG,
+                CONNECTION_POOL_TIMEOUT_MS_DEFAULT,
+                ConfigDef.Range.atLeast(250),
+                ConfigDef.Importance.MEDIUM,
+                CONNECTION_POOL_TIMEOUT_MS_DOC
+            )
+            .define(
+                TCP_CONNECT_TIMEOUT_MS_CONFIG,
+                ConfigDef.Type.INT,
+                TCP_CONNECT_TIMEOUT_MS_DEFAULT,
+                ConfigDef.Range.atLeast(1),
+                ConfigDef.Importance.MEDIUM,
+                TCP_CONNECT_TIMEOUT_MS_DOC
+            )
+            .define(
+                SOCKET_TIMEOUT_MS_CONFIG,
+                ConfigDef.Type.INT,
+                SOCKET_TIMEOUT_MS_DEFAULT,
+                ConfigDef.Range.atLeast(1),
+                ConfigDef.Importance.MEDIUM,
+                SOCKET_TIMEOUT_MS_DOC
             );
     }
 
@@ -92,5 +131,17 @@ public class PostgresConnectionConfig extends AbstractControlPlaneConfig {
 
     public int maxConnections() {
         return getInt(MAX_CONNECTIONS_CONFIG);
+    }
+
+    public long connectionPoolTimeoutMs() {
+        return getLong(CONNECTION_POOL_TIMEOUT_MS_CONFIG);
+    }
+
+    public int tcpConnectTimeoutMs() {
+        return getInt(TCP_CONNECT_TIMEOUT_MS_CONFIG);
+    }
+
+    public int socketTimeoutMs() {
+        return getInt(SOCKET_TIMEOUT_MS_CONFIG);
     }
 }
