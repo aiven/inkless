@@ -419,6 +419,25 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized List<AdvanceCrossTierLogStartOffsetResponse> advanceCrossTierLogStartOffset(final List<AdvanceCrossTierLogStartOffsetRequest> requests) {
+        final List<AdvanceCrossTierLogStartOffsetResponse> responses = new ArrayList<>();
+        for (final AdvanceCrossTierLogStartOffsetRequest request : requests) {
+            final TopicIdPartition tidp = findTopicIdPartition(request.topicId(), request.partition());
+            final LogInfo logInfo;
+            if (tidp == null || (logInfo = logs.get(tidp)) == null) {
+                responses.add(AdvanceCrossTierLogStartOffsetResponse.unknownTopicOrPartition());
+                continue;
+            }
+            // Forward-only update.
+            if (logInfo.remoteLogStartOffset < 0 || request.remoteLogStartOffset() > logInfo.remoteLogStartOffset) {
+                logInfo.remoteLogStartOffset = request.remoteLogStartOffset();
+            }
+            responses.add(AdvanceCrossTierLogStartOffsetResponse.success(logInfo.remoteLogStartOffset));
+        }
+        return responses;
+    }
+
+    @Override
     public List<FileToDelete> getFilesToDelete() {
         return files.values().stream()
             .filter(f -> f.fileState == FileState.DELETING)
@@ -449,7 +468,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         }
 
         final long timestamp = request.timestamp();
-        if (timestamp == ListOffsetsRequest.EARLIEST_TIMESTAMP || timestamp == ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP) {
+        if (timestamp == ListOffsetsRequest.EARLIEST_TIMESTAMP) {
+            // Prefer the cross-tier (remote) start when known; fall back to log_start_offset otherwise.
+            final long earliest = logInfo.remoteLogStartOffset >= 0 ? logInfo.remoteLogStartOffset : logInfo.logStartOffset;
+            return ListOffsetsResponse.success(request.topicIdPartition(), NO_TIMESTAMP, earliest);
+        } else if (timestamp == ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP) {
             return ListOffsetsResponse.success(request.topicIdPartition(), NO_TIMESTAMP, logInfo.logStartOffset);
         } else if (timestamp == ListOffsetsRequest.LATEST_TIMESTAMP) {
             return ListOffsetsResponse.success(request.topicIdPartition(), NO_TIMESTAMP, logInfo.highWatermark);
@@ -618,6 +641,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         long highWatermark = 0;
         long byteSize = 0;
         long disklessStartOffset = 0;
+        // -1 means "no remote tier tracked yet"; mirrors the NULL sentinel of logs.remote_log_start_offset.
+        long remoteLogStartOffset = -1;
     }
 
     private static class FileInfo {
