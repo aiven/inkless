@@ -329,12 +329,16 @@ class ConsolidationVerifier(object):
             },
         })
 
-    def produce(self, topic, num_records, label="", timeout_sec=180):
+    def produce(self, topic, num_records, label="", timeout_sec=180, throughput=-1):
         """Produce ``num_records`` to ``topic`` with a one-shot ``VerifiableProducer``
         and return the acked count, asserting there were no worker errors. The
-        producer node is freed before returning so the slot can be reused."""
+        producer node is freed before returning so the slot can be reused.
+
+        ``throughput`` is records/sec (``-1`` = unthrottled). A finite rate spreads
+        record timestamps over wall-clock time, which a ``retention.ms`` test needs
+        so that only an aged prefix is eligible for deletion."""
         producer = VerifiableProducer(self.kafka.context, num_nodes=1, kafka=self.kafka,
-                                      topic=topic, max_messages=num_records, throughput=-1)
+                                      topic=topic, max_messages=num_records, throughput=throughput)
         producer.start()
         wait_until(lambda: producer.num_acked >= num_records or producer.worker_errors,
                    timeout_sec=timeout_sec, backoff_sec=1,
@@ -526,6 +530,64 @@ class ConsolidationVerifier(object):
                             "the classic prefix through the seal was not tiered to remote"
                             % (topic, partition, min_offset, timeout_sec)))
         return result["offset"]
+
+    def delete_records_before(self, topic, offset, partition=0):
+        """Issue a ``DeleteRecords`` that advances the partition's log-start to
+        ``offset`` via ``kafka-delete-records.sh``. Writes the required offset-JSON
+        file on a broker node, runs the tool against it, and asserts success.
+
+        On a consolidating topic the requested ``offset`` may sit inside the prefix
+        that already lives only in the remote tier (WAL pruned, local segments
+        evicted), so this exercises deletion *across* tiers, not just a local
+        truncation."""
+        node = self.kafka.nodes[0]
+        spec = {"partitions": [{"topic": topic, "partition": partition, "offset": offset}],
+                "version": 1}
+        json_path = "/tmp/delete-records-%s-%d.json" % (topic, partition)
+        node.account.create_file(json_path, json.dumps(spec))
+        cmd = "%s --bootstrap-server %s --offset-json-file %s" % (
+            self.kafka.path.script("kafka-delete-records.sh", node),
+            self.kafka.bootstrap_servers(),
+            json_path,
+        )
+        out = "".join(node.account.ssh_capture(cmd, allow_fail=False))
+        self.logger.info("DeleteRecords(%s-%d, before offset %d): %s"
+                         % (topic, partition, offset, out.strip()))
+
+    def wait_for_earliest_stable(self, topic, partition=0, settle_samples=3,
+                                 backoff_sec=5, timeout_sec=240):
+        """Wait until the *topic's* earliest readable offset
+        (``kafka-get-offsets.sh --time -2``) has advanced past 0 and then held
+        steady across ``settle_samples`` consecutive samples, and return that stable
+        value.
+
+        Unlike ``min_log_start_offset`` (the diskless WAL log-start in Postgres), the
+        topic earliest reflects the whole log across tiers: it stays at 0 while the
+        consolidated prefix ``[0, diskless_start)`` is still served from remote, and
+        only advances once that prefix is actually deleted -- including removal of
+        the remote segments below the new start. It is therefore the signal that
+        cross-tier deletion has taken effect, not merely a WAL prune.
+
+        Why *stable* and not just "above N": once the reclaim has finished, earliest
+        should stop moving. Polling for a stable value avoids racing a consumer
+        group (whose ``earliest`` reset can lag behind a still-advancing floor)
+        and gives a trustworthy boundary for an explicit-offset read."""
+        state = {"last": -1, "stable": 0, "value": 0}
+
+        def check():
+            cur = self.offset_at(topic, time_spec=-2, partition=partition)
+            state["stable"] = state["stable"] + 1 if (cur > 0 and cur == state["last"]) else 0
+            state["last"] = cur
+            state["value"] = cur
+            self.logger.info("Topic %s-%d earliest offset: %d (stable for %d samples)"
+                             % (topic, partition, cur, state["stable"]))
+            return state["stable"] >= settle_samples
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=backoff_sec,
+                   err_msg=("earliest offset for %s-%d did not advance past 0 and settle within "
+                            "%ds; cross-tier deletion did not reach a stable floor"
+                            % (topic, partition, timeout_sec)))
+        return state["value"]
 
     def read_contiguous_from(self, topic, from_offset=0, max_messages=1, partition=0,
                              timeout_ms=120000):
