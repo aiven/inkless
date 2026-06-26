@@ -271,11 +271,35 @@ Under ``inkless.control.plane.``
   * Default: null
   * Importance: high
 
+``connection.pool.timeout.ms``
+  Maximum time in milliseconds to wait for a PostgreSQL connection from the pool.
+
+  * Type: long
+  * Default: 5000 (5 seconds)
+  * Valid Values: [250,...]
+  * Importance: medium
+
 ``max.connections``
   Maximum number of connections to the database
 
   * Type: int
   * Default: 10
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``socket.timeout.ms``
+  Maximum time in milliseconds to wait for PostgreSQL socket reads.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``tcp.connect.timeout.ms``
+  Maximum time in milliseconds to establish a PostgreSQL TCP connection.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
   * Valid Values: [1,...]
   * Importance: medium
 
@@ -307,11 +331,35 @@ Under ``inkless.control.plane.read.``
   * Default: null
   * Importance: high
 
+``connection.pool.timeout.ms``
+  Maximum time in milliseconds to wait for a PostgreSQL connection from the pool.
+
+  * Type: long
+  * Default: 5000 (5 seconds)
+  * Valid Values: [250,...]
+  * Importance: medium
+
 ``max.connections``
   Maximum number of connections to the database
 
   * Type: int
   * Default: 10
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``socket.timeout.ms``
+  Maximum time in milliseconds to wait for PostgreSQL socket reads.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``tcp.connect.timeout.ms``
+  Maximum time in milliseconds to establish a PostgreSQL TCP connection.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
   * Valid Values: [1,...]
   * Importance: medium
 
@@ -343,11 +391,35 @@ Under ``inkless.control.plane.write.``
   * Default: null
   * Importance: high
 
+``connection.pool.timeout.ms``
+  Maximum time in milliseconds to wait for a PostgreSQL connection from the pool.
+
+  * Type: long
+  * Default: 5000 (5 seconds)
+  * Valid Values: [250,...]
+  * Importance: medium
+
 ``max.connections``
   Maximum number of connections to the database
 
   * Type: int
   * Default: 10
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``socket.timeout.ms``
+  Maximum time in milliseconds to wait for PostgreSQL socket reads.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``tcp.connect.timeout.ms``
+  Maximum time in milliseconds to establish a PostgreSQL TCP connection.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
   * Valid Values: [1,...]
   * Importance: medium
 
