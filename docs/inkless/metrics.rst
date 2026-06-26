@@ -233,6 +233,21 @@ RetentionEnforcementTotalTime             Total time spent on a retention enforc
 ========================================  =================================================================
 
 
+CrossTierLogStartReporter metrics
+==================================
+
+io.aiven.inkless.delete:type=CrossTierLogStartReporter
+------------------------------------------------------
+
+===================  ================================================================================================
+Attribute name       Description                                                                                     
+===================  ================================================================================================
+PartitionsReported   Total number of partition cross-tier log start offsets accepted by the control plane            
+PendingPartitions    Current number of partitions with a buffered cross-tier log start offset awaiting the next flush
+ReportErrors         Total number of errors while reporting cross-tier log start offsets to the control plane        
+===================  ================================================================================================
+
+
 ClientAzAwareness metrics
 ==================================
 
@@ -257,38 +272,40 @@ PostgresControlPlane metrics
 io.aiven.inkless.control_plane.postgres:type=PostgresControlPlane
 -----------------------------------------------------------------
 
-=============================  ==================================================================
-Attribute name                 Description                                                       
-=============================  ==================================================================
-CommitFileQueryRate            Total number of CommitFile queries executed                       
-CommitFileQueryTime            Time spent executing the CommitFile query in milliseconds         
-DeleteRecordsQueryRate         Total number of DeleteRecords queries executed                    
-DeleteRecordsQueryTime         Time spent executing the DeleteRecords query in milliseconds      
-EnforceRetentionQueryRate      Total number of EnforceRetention queries executed                 
-EnforceRetentionQueryTime      Time spent executing the EnforceRetention query in milliseconds   
-FilesDeleteQueryRate           Total number of FilesDelete queries executed                      
-FilesDeleteQueryTime           Time spent executing the FilesDelete query in milliseconds        
-FindBatchesQueryRate           Total number of FindBatches queries executed                      
-FindBatchesQueryTime           Time spent executing the FindBatches query in milliseconds        
-GetFilesToDeleteQueryRate      Total number of GetFilesToDelete queries executed                 
-GetFilesToDeleteQueryTime      Time spent executing the GetFilesToDelete query in milliseconds   
-GetLogInfoQueryRate            Total number of GetLogInfo queries executed                       
-GetLogInfoQueryTime            Time spent executing the GetLogInfo query in milliseconds         
-GetLogsQueryRate               Total number of GetLogs queries executed                          
-GetLogsQueryTime               Time spent executing the GetLogs query in milliseconds            
-GetProducerStateQueryRate      Total number of GetProducerState queries executed                 
-GetProducerStateQueryTime      Time spent executing the GetProducerState query in milliseconds   
-InitDisklessLogQueryRate       Total number of InitDisklessLog queries executed                  
-InitDisklessLogQueryTime       Time spent executing the InitDisklessLog query in milliseconds    
-ListOffsetsQueryRate           Total number of ListOffsets queries executed                      
-ListOffsetsQueryTime           Time spent executing the ListOffsets query in milliseconds        
-SafeDeleteFileCheckQueryRate   Total number of SafeDeleteFileCheck queries executed              
-SafeDeleteFileCheckQueryTime   Time spent executing the SafeDeleteFileCheck query in milliseconds
-TopicCreateQueryRate           Total number of TopicCreate queries executed                      
-TopicCreateQueryTime           Time spent executing the TopicCreate query in milliseconds        
-TopicDeleteQueryRate           Total number of TopicDelete queries executed                      
-TopicDeleteQueryTime           Time spent executing the TopicDelete query in milliseconds        
-=============================  ==================================================================
+==================================  =======================================================================
+Attribute name                      Description                                                            
+==================================  =======================================================================
+AdvanceCrossTierLogStartQueryRate   Total number of AdvanceCrossTierLogStart queries executed              
+AdvanceCrossTierLogStartQueryTime   Time spent executing the AdvanceCrossTierLogStart query in milliseconds
+CommitFileQueryRate                 Total number of CommitFile queries executed                            
+CommitFileQueryTime                 Time spent executing the CommitFile query in milliseconds              
+DeleteRecordsQueryRate              Total number of DeleteRecords queries executed                         
+DeleteRecordsQueryTime              Time spent executing the DeleteRecords query in milliseconds           
+EnforceRetentionQueryRate           Total number of EnforceRetention queries executed                      
+EnforceRetentionQueryTime           Time spent executing the EnforceRetention query in milliseconds        
+FilesDeleteQueryRate                Total number of FilesDelete queries executed                           
+FilesDeleteQueryTime                Time spent executing the FilesDelete query in milliseconds             
+FindBatchesQueryRate                Total number of FindBatches queries executed                           
+FindBatchesQueryTime                Time spent executing the FindBatches query in milliseconds             
+GetFilesToDeleteQueryRate           Total number of GetFilesToDelete queries executed                      
+GetFilesToDeleteQueryTime           Time spent executing the GetFilesToDelete query in milliseconds        
+GetLogInfoQueryRate                 Total number of GetLogInfo queries executed                            
+GetLogInfoQueryTime                 Time spent executing the GetLogInfo query in milliseconds              
+GetLogsQueryRate                    Total number of GetLogs queries executed                               
+GetLogsQueryTime                    Time spent executing the GetLogs query in milliseconds                 
+GetProducerStateQueryRate           Total number of GetProducerState queries executed                      
+GetProducerStateQueryTime           Time spent executing the GetProducerState query in milliseconds        
+InitDisklessLogQueryRate            Total number of InitDisklessLog queries executed                       
+InitDisklessLogQueryTime            Time spent executing the InitDisklessLog query in milliseconds         
+ListOffsetsQueryRate                Total number of ListOffsets queries executed                           
+ListOffsetsQueryTime                Time spent executing the ListOffsets query in milliseconds             
+SafeDeleteFileCheckQueryRate        Total number of SafeDeleteFileCheck queries executed                   
+SafeDeleteFileCheckQueryTime        Time spent executing the SafeDeleteFileCheck query in milliseconds     
+TopicCreateQueryRate                Total number of TopicCreate queries executed                           
+TopicCreateQueryTime                Time spent executing the TopicCreate query in milliseconds             
+TopicDeleteQueryRate                Total number of TopicDelete queries executed                           
+TopicDeleteQueryTime                Time spent executing the TopicDelete query in milliseconds             
+==================================  =======================================================================
 
 
 PostgresConnectionPool metrics
@@ -328,6 +345,21 @@ CacheInvalidations     Total number of cache entry invalidations
 CacheMisses            Total number of batch coordinate cache misses                                   
 CacheSize              Current number of entries in the batch coordinate cache                         
 =====================  ================================================================================
+
+
+CrossTierLogStartCache metrics
+==================================
+
+io.aiven.inkless.cache:type=CrossTierLogStartCache
+--------------------------------------------------
+
+===============  ========================================================================================
+Attribute name   Description                                                                             
+===============  ========================================================================================
+CacheHits        Total number of cross-tier log start cache hits served without a control-plane call     
+CacheMisses      Total number of cross-tier log start cache misses that fell through to the control plane
+CacheSize        Current number of partitions cached for the cross-tier log start offset                 
+===============  ========================================================================================
 
 
 CaffeineCache metrics
