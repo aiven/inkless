@@ -3685,8 +3685,8 @@ class ReplicaManager(val config: KafkaConfig,
    * present on any cleanly-elected leader. Once sealed, the local classic log cannot advance HW
    * naturally, so a leader promoted with a stale checkpointed HW must restore HW to the seal.
    *
-   *  - LEO > seal: truncate down to the seal. Records at or above the seal are uncommitted classic
-   *    tail; diskless owns that range.
+   *  - LEO > seal: truncate down to the seal unless the local suffix [seal, LEO) is already
+   *    materialized consolidated diskless data.
    *  - LEO == seal and HW < seal: advance HW to the seal so consumers can cross into diskless.
    *  - LEO < seal: fence offline. The classic prefix is incomplete, so serving it would hide a
    *    hole in acknowledged data.
@@ -3703,11 +3703,11 @@ class ReplicaManager(val config: KafkaConfig,
       partition.log match {
         case Some(log) =>
           try {
-            if (log.logEndOffset > seal) {
+            if (shouldTruncateSwitchedPartitionToSeal(tp, log, seal)) {
               stateChangeLogger.info(s"Truncating switched partition $tp from LEO ${log.logEndOffset} " +
                 s"to classic-to-diskless start offset $seal")
               // Seal is the classicToDisklessStartOffset, the first offset owned by diskless storage.
-              // truncateTo(seal) removes all entries with offset >= seal, leaving LEO = seal.
+              // truncateTo(seal) removes local entries with offset >= seal, leaving LEO = seal.
               // The last classic record is at offset seal - 1.
               partition.truncateTo(seal, isFuture = false)
             }
@@ -3738,28 +3738,23 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
-   * Followers truncate only when the seal is committed in the current metadata delta. A switched
-   * follower may later grow past the seal as part of normal consolidation/catch-up flows; unlike a
-   * promoted leader, a follower should not be re-truncated on every unrelated metadata change.
+   * Reconcile a switched follower's local tail against the committed seal.
+   *
+   * Non-consolidating switched replicas must not retain local records at or above the seal.
+   * Consolidating replicas may already have materialized valid diskless records locally, so preserve
+   * the suffix only when the leader-epoch cache proves it belongs to the captured diskless epoch.
    */
-  private def maybeTruncateNewlySwitchedFollower(tp: TopicPartition,
-                                                 topicId: Uuid,
-                                                 newRegistration: PartitionRegistration,
-                                                 delta: TopicsDelta): Unit = {
+  private def maybeTruncateSwitchedFollower(tp: TopicPartition,
+                                            topicId: Uuid,
+                                            newRegistration: PartitionRegistration): Unit = {
     val seal = newRegistration.classicToDisklessStartOffset
     if (seal < 0) return
-
-    val previousPartition = Option(delta.image().getTopic(topicId)).flatMap { topicImage =>
-      Option(topicImage.partitions().get(tp.partition()))
-    }
-    val sealJustCommitted = previousPartition.exists(_.classicToDisklessStartOffset < 0)
-    if (!sealJustCommitted) return
 
     onlinePartition(tp).foreach { partition =>
       partition.log match {
         case Some(log) =>
           try {
-            if (log.logEndOffset > seal) {
+            if (shouldTruncateSwitchedPartitionToSeal(tp, log, seal)) {
               stateChangeLogger.info(s"Truncating switched follower partition $tp from LEO ${log.logEndOffset} " +
                 s"to classic-to-diskless start offset $seal")
               partition.truncateTo(seal, isFuture = false)
@@ -3774,6 +3769,54 @@ class ReplicaManager(val config: KafkaConfig,
           stateChangeLogger.warn(s"Skipping switched follower partition reconciliation for $tp " +
             s"with topic ID $topicId because the local log is not available")
       }
+    }
+  }
+
+  private def shouldTruncateSwitchedPartitionToSeal(tp: TopicPartition,
+                                                    log: UnifiedLog,
+                                                    seal: Long): Boolean = {
+    log.logEndOffset > seal && !hasConsolidatedDisklessSuffixFromSeal(tp, log, seal)
+  }
+
+  /**
+   * A consolidating replica may legitimately have materialized diskless records above the seal in
+   * its local log. Preserve that suffix only when the local leader-epoch cache proves every local
+   * epoch range above the seal belongs to the captured diskless leader epoch.
+   */
+  private def hasConsolidatedDisklessSuffixFromSeal(tp: TopicPartition,
+                                                    log: UnifiedLog,
+                                                    seal: Long): Boolean = {
+    if (!config.disklessRemoteStorageConsolidationEnabled ||
+        !_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)) {
+      return false
+    }
+
+    val leo = log.logEndOffset
+    if (leo <= seal) {
+      return false
+    }
+
+    val disklessLeaderEpoch = _inklessMetadataView.getDisklessLeaderEpoch(tp)
+    if (disklessLeaderEpoch == PartitionRegistration.NO_DISKLESS_LEADER_EPOCH) {
+      return false
+    }
+
+    // The local log may no longer contain the seal offset itself after tiering/retention has
+    // advanced localLogStartOffset. In that case, prove the suffix from the first still-local
+    // offset. Any local offset at or above the seal must be in the captured diskless epoch E_d.
+    val suffixStart = math.max(seal, log.localLogStartOffset())
+    val epochAtSuffixStart = log.leaderEpochCache.epochForOffset(suffixStart)
+    if (!epochAtSuffixStart.isPresent || epochAtSuffixStart.getAsInt != disklessLeaderEpoch) {
+      return false
+    }
+
+    // LeaderEpochFileCache stores epoch ranges as start offsets. Once suffixStart is in E_d,
+    // the suffix [suffixStart, LEO) is entirely consolidated diskless data if no later epoch
+    // entry inside that range switches away from E_d.
+    !log.leaderEpochCache.epochEntries().asScala.exists { entry =>
+      entry.startOffset() > suffixStart &&
+        entry.startOffset() < leo &&
+        entry.epoch() != disklessLeaderEpoch
     }
   }
 
@@ -4097,13 +4140,13 @@ class ReplicaManager(val config: KafkaConfig,
       }
     }
 
-    // Truncate any partition whose seal was just committed in this delta and whose local log ran
-    // past it. This runs after makeFollower (so the log exists) and before the fetchers below
-    // start, so both classic catch-up and consolidation fetchers initialize against the
-    // truncated LEO. The fetch decisions above key off the high watermark (which never exceeds
-    // the seal), so truncating here does not change which partitions need a catch-up fetcher.
+    // Truncate switched followers whose local log runs past the seal, unless the suffix is already
+    // proven consolidated diskless data. This runs after makeFollower (so the log exists) and before
+    // the fetchers below start, so fetchers initialize against the reconciled LEO. The fetch
+    // decisions above key off the high watermark (which never exceeds the seal), so truncating here
+    // does not change which partitions need a catch-up fetcher.
     localFollowers.foreachEntry { (tp, info) =>
-      maybeTruncateNewlySwitchedFollower(tp, info.topicId, info.partition, delta)
+      maybeTruncateSwitchedFollower(tp, info.topicId, info.partition)
     }
 
     if (partitionsToStartFetching.nonEmpty) {
