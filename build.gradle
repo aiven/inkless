@@ -2682,6 +2682,26 @@ project(':storage:inkless') {
   test {
     useJUnitPlatform {
       includeEngines 'jqwik', 'junit-jupiter'
+      // 'benchmark'-tagged tests are measurement harnesses (e.g. commit_file coalescing row reduction),
+      // not correctness gates. Exclude them from the default test run / CI; use the benchmarkTest task.
+      excludeTags 'benchmark'
+    }
+  }
+
+  // Opt-in task to run @Tag("benchmark") measurement tests on demand. Not wired into `check`/`test`
+  // or any CI workflow; run manually with `./gradlew :storage:inkless:benchmarkTest`.
+  tasks.register('benchmarkTest', Test) {
+    description = 'Runs @Tag("benchmark") inkless measurement tests (e.g. commit_file coalescing). Excluded from `check`/`test`.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+      includeTags 'benchmark'
+      includeEngines 'junit-jupiter'
+    }
+    // Surface the printed comparison report directly instead of digging it out of the test XML.
+    testLogging {
+      showStandardStreams = true
     }
   }
 
