@@ -25,7 +25,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PostgresControlPlaneConfigTest {
     @Test
@@ -35,7 +36,10 @@ class PostgresControlPlaneConfigTest {
                 "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
                 "username", "username",
                 "password", "password",
-                "max.connections", "11"
+                "max.connections", "11",
+                "connection.pool.timeout.ms", "501",
+                "tcp.connect.timeout.ms", "502",
+                "socket.timeout.ms", "503"
             )
         );
 
@@ -43,6 +47,9 @@ class PostgresControlPlaneConfigTest {
         assertThat(config.username()).isEqualTo("username");
         assertThat(config.password()).isEqualTo("password");
         assertThat(config.maxConnections()).isEqualTo(11);
+        assertThat(config.connectionPoolTimeoutMs()).isEqualTo(501);
+        assertThat(config.tcpConnectTimeoutMs()).isEqualTo(502);
+        assertThat(config.socketTimeoutMs()).isEqualTo(503);
     }
 
     @Test
@@ -59,6 +66,9 @@ class PostgresControlPlaneConfigTest {
         assertThat(config.username()).isEqualTo("username");
         assertThat(config.password()).isEqualTo("password");
         assertThat(config.maxConnections()).isEqualTo(10);
+        assertThat(config.connectionPoolTimeoutMs()).isEqualTo(5000);
+        assertThat(config.tcpConnectTimeoutMs()).isEqualTo(5000);
+        assertThat(config.socketTimeoutMs()).isEqualTo(5000);
 
         // ensure read/write configs are null when not set
         config.initializeReadWriteConfigs();
@@ -68,24 +78,24 @@ class PostgresControlPlaneConfigTest {
 
     @Test
     void connectionStringMissing() {
-        assertThatThrownBy(() -> new PostgresControlPlaneConfig(
-            Map.of(
-                "username", "username",
-                "password", "password"
-            )
-        )).isInstanceOf(ConfigException.class)
-            .hasMessage("Missing required configuration \"connection.string\" which has no default value.");
+        final Map<String, String> configs = Map.of(
+            "username", "username",
+            "password", "password"
+        );
+
+        final ConfigException exception = assertThrows(ConfigException.class, () -> new PostgresControlPlaneConfig(configs));
+        assertEquals("Missing required configuration \"connection.string\" which has no default value.", exception.getMessage());
     }
 
     @Test
     void usernameMissing() {
-        assertThatThrownBy(() -> new PostgresControlPlaneConfig(
-            Map.of(
-                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
-                "password", "password"
-            )
-        )).isInstanceOf(ConfigException.class)
-            .hasMessage("Missing required configuration \"username\" which has no default value.");
+        final Map<String, String> configs = Map.of(
+            "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+            "password", "password"
+        );
+
+        final ConfigException exception = assertThrows(ConfigException.class, () -> new PostgresControlPlaneConfig(configs));
+        assertEquals("Missing required configuration \"username\" which has no default value.", exception.getMessage());
     }
 
     @Test
