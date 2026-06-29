@@ -31,10 +31,12 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.errors.KafkaStorageException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
@@ -53,6 +55,11 @@ import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -65,6 +72,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntFunction;
 import java.util.stream.Collectors;
 
@@ -79,6 +87,8 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -93,6 +103,8 @@ public class InklessManagedReplicasClusterTest {
     protected static MinioContainer s3Container = S3TestContainer.minio();
 
     private static final Logger log = LoggerFactory.getLogger(InklessManagedReplicasClusterTest.class);
+    private static final String ROTATING_POSTGRES_HOST = "rotating-inkless-pg";
+    private static final int ROTATING_POSTGRES_PORT = 5432;
 
     private KafkaClusterTestKit cluster;
 
@@ -100,6 +112,11 @@ public class InklessManagedReplicasClusterTest {
     public void setup(final TestInfo testInfo) throws Exception {
         s3Container.createBucket(testInfo);
         pgContainer.createDatabase(testInfo);
+        RotatingPostgresSocketFactory.configure(
+            pgContainer.getHost(),
+            pgContainer.getMappedPort(5432),
+            Duration.ofMinutes(10)
+        );
 
         // Create 2-broker cluster with rack assignments (matching docker compose setup)
         // Node 0: combined broker+controller, Node 1: broker-only
@@ -121,9 +138,12 @@ public class InklessManagedReplicasClusterTest {
             .setConfigProp(ReplicationConfigs.DEFAULT_REPLICATION_FACTOR_CONFIG, "2")
             // PG control plane config
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
-            .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl())
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, rotatingPostgresJdbcUrl())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.USERNAME_CONFIG, PostgreSQLTestContainer.USERNAME)
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.PASSWORD_CONFIG, PostgreSQLTestContainer.PASSWORD)
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_POOL_TIMEOUT_MS_CONFIG, "1000")
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.TCP_CONNECT_TIMEOUT_MS_CONFIG, "1000")
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.SOCKET_TIMEOUT_MS_CONFIG, "1000")
             // S3 storage config
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_BACKEND_CLASS_CONFIG, S3Storage.class.getName())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_BUCKET_NAME_CONFIG, s3Container.getBucketName())
@@ -297,6 +317,61 @@ public class InklessManagedReplicasClusterTest {
         }
     }
 
+    @Test
+    public void produceRecoversAfterPostgresReplacement() throws Exception {
+        Map<String, Object> clientConfigs = new HashMap<>();
+        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+        clientConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+        clientConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+        clientConfigs.put(ProducerConfig.ACKS_CONFIG, "all");
+        clientConfigs.put(ProducerConfig.LINGER_MS_CONFIG, "0");
+        clientConfigs.put(ProducerConfig.RETRIES_CONFIG, "10");
+        clientConfigs.put(ProducerConfig.RETRY_BACKOFF_MS_CONFIG, "250");
+        clientConfigs.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, "10000");
+        clientConfigs.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, "30000");
+        String topicName = "diskless-pg-replacement-topic";
+        int partition = 0;
+
+        try (Admin admin = AdminClient.create(clientConfigs)) {
+            final NewTopic disklessTopic = new NewTopic(topicName, 1, (short) -1)
+                .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            CreateTopicsResult topics = admin.createTopics(List.of(disklessTopic));
+            topics.all().get(10, TimeUnit.SECONDS);
+        }
+
+        // Warm up the broker-side Hikari pool so it has connections to the original PostgreSQL process.
+        final RecordMetadata beforeReplacement = produceRecord(clientConfigs, topicName, partition, "before-pg-restart");
+        assertEquals(topicName, beforeReplacement.topic());
+        assertEquals(partition, beforeReplacement.partition());
+
+        // Replace PostgreSQL while preserving its logical database state, like a coordinator failover.
+        final int oldPostgresPort = RotatingPostgresSocketFactory.dnsEndpoint().port();
+        final String postgresDataDump = dumpPostgresData();
+        pgContainer.stop();
+        try (BlackholeServer blackholeServer = new BlackholeServer(oldPostgresPort)) {
+            assertTrue(blackholeServer.isOpen());
+            pgContainer.start();
+            restorePostgresData(postgresDataDump);
+
+            // Keep the client-side DNS cache pinned to the old endpoint even after DNS rotates.
+            RotatingPostgresSocketFactory.cacheCurrentDns(Duration.ofMinutes(10));
+            RotatingPostgresSocketFactory.rotateDns(pgContainer.getHost(), pgContainer.getMappedPort(5432));
+            assertEquals(pgContainer.getMappedPort(5432), RotatingPostgresSocketFactory.dnsEndpoint().port());
+
+            // The stale endpoint must fail quickly with a broker-side storage error, not a client timeout.
+            final Map<String, Object> noRetryClientConfigs = new HashMap<>(clientConfigs);
+            noRetryClientConfigs.put(ProducerConfig.RETRIES_CONFIG, "0");
+            assertProduceFailsWithStorageError(noRetryClientConfigs, topicName, partition, "stale-endpoint-attempt", Duration.ofSeconds(5));
+            RotatingPostgresSocketFactory.expireCachedDns();
+
+            // Once DNS is refreshed, new produce attempts should reconnect to the replacement PostgreSQL process.
+            final RecordMetadata afterReplacement =
+                produceRecordEventually(clientConfigs, topicName, partition, "fresh-producer-after-pg-replacement", Duration.ofSeconds(8));
+            assertEquals(topicName, afterReplacement.topic());
+            assertEquals(partition, afterReplacement.partition());
+        }
+    }
+
     private void produceRecords(Map<String, Object> configs, int numRecords,
                                 IntFunction<ProducerRecord<byte[], byte[]>> recordFactory) {
         AtomicInteger recordsProduced = new AtomicInteger();
@@ -341,6 +416,239 @@ public class InklessManagedReplicasClusterTest {
             }
         }
         assertEquals(numRecords, recordsConsumed);
+    }
+
+    private static String rotatingPostgresJdbcUrl() {
+        final String socketFactoryParam =
+            "socketFactory=" + InklessManagedReplicasClusterTest.RotatingPostgresSocketFactory.class.getName();
+        final String rewrittenUrl = pgContainer.getJdbcUrl()
+            .replaceFirst("//[^/]+", "//" + ROTATING_POSTGRES_HOST + ":" + ROTATING_POSTGRES_PORT);
+        final String separator = rewrittenUrl.contains("?") ? "&" : "?";
+        return rewrittenUrl + separator + socketFactoryParam;
+    }
+
+    private static String dumpPostgresData() throws Exception {
+        final org.testcontainers.containers.Container.ExecResult result = pgContainer.execInContainer(
+            "pg_dump",
+            "-U", PostgreSQLTestContainer.USERNAME,
+            "--inserts",
+            "--column-inserts",
+            "--no-owner",
+            "--no-privileges",
+            postgresDatabaseName()
+        );
+        if (result.getExitCode() != 0) {
+            throw new AssertionError("Failed to dump PostgreSQL data: " + result.getStderr());
+        }
+        return result.getStdout();
+    }
+
+    private static void restorePostgresData(final String postgresDataDump) throws Exception {
+        pgContainer.copyFileToContainer(
+            org.testcontainers.images.builder.Transferable.of(postgresDataDump.getBytes(StandardCharsets.UTF_8)),
+            "/tmp/inkless-data.sql"
+        );
+
+        final org.testcontainers.containers.Container.ExecResult result = pgContainer.execInContainer(
+            "psql",
+            "-v", "ON_ERROR_STOP=1",
+            "-U", PostgreSQLTestContainer.USERNAME,
+            "-d", postgresDatabaseName(),
+            "-f", "/tmp/inkless-data.sql"
+        );
+        if (result.getExitCode() != 0) {
+            throw new AssertionError("Failed to restore PostgreSQL data: " + result.getStderr());
+        }
+    }
+
+    private static String postgresDatabaseName() {
+        final String jdbcUrl = pgContainer.getJdbcUrl();
+        final int databaseNameStart = jdbcUrl.indexOf('/', "jdbc:postgresql://".length()) + 1;
+        final int queryStart = jdbcUrl.indexOf('?', databaseNameStart);
+        if (queryStart == -1) {
+            return jdbcUrl.substring(databaseNameStart);
+        }
+        return jdbcUrl.substring(databaseNameStart, queryStart);
+    }
+
+    private static class BlackholeServer implements AutoCloseable {
+        private final ServerSocket serverSocket;
+        private final List<Socket> sockets = Collections.synchronizedList(new ArrayList<>());
+        private final Thread acceptThread;
+        private volatile boolean closed = false;
+
+        BlackholeServer(int port) throws IOException {
+            serverSocket = new ServerSocket(port);
+            acceptThread = new Thread(this::acceptConnections, "postgres-blackhole");
+            acceptThread.setDaemon(true);
+            acceptThread.start();
+        }
+
+        boolean isOpen() {
+            return !serverSocket.isClosed();
+        }
+
+        private void acceptConnections() {
+            while (!closed) {
+                try {
+                    sockets.add(serverSocket.accept());
+                } catch (IOException e) {
+                    if (!closed) {
+                        log.warn("Postgres blackhole accept loop failed", e);
+                    }
+                }
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            closed = true;
+            serverSocket.close();
+            synchronized (sockets) {
+                for (Socket socket : sockets) {
+                    socket.close();
+                }
+            }
+        }
+    }
+
+    public static class RotatingPostgresSocketFactory extends javax.net.SocketFactory {
+        private static final AtomicReference<Endpoint> DNS_ENDPOINT = new AtomicReference<>();
+        private static final AtomicReference<CachedEndpoint> CACHED_ENDPOINT = new AtomicReference<>();
+        private static volatile long cacheTtlMs = 0L;
+
+        public static void configure(String host, int port, Duration ttl) {
+            final Endpoint endpoint = new Endpoint(host, port);
+            DNS_ENDPOINT.set(endpoint);
+            CACHED_ENDPOINT.set(new CachedEndpoint(endpoint, System.currentTimeMillis()));
+            cacheTtlMs = ttl.toMillis();
+        }
+
+        public static void rotateDns(String host, int port) {
+            DNS_ENDPOINT.set(new Endpoint(host, port));
+        }
+
+        public static void cacheCurrentDns(Duration ttl) {
+            final Endpoint endpoint = DNS_ENDPOINT.get();
+            if (endpoint == null) {
+                throw new IllegalStateException("Rotating Postgres DNS endpoint has not been configured");
+            }
+            CACHED_ENDPOINT.set(new CachedEndpoint(endpoint, System.currentTimeMillis()));
+            cacheTtlMs = ttl.toMillis();
+        }
+
+        public static void expireCachedDns() {
+            CACHED_ENDPOINT.set(null);
+            cacheTtlMs = 0L;
+        }
+
+        public static Endpoint dnsEndpoint() {
+            return DNS_ENDPOINT.get();
+        }
+
+        @Override
+        public Socket createSocket() throws IOException {
+            return connectSocket(null, 0);
+        }
+
+        @Override
+        public Socket createSocket(String host, int port) throws IOException {
+            return connectSocket(null, 0);
+        }
+
+        @Override
+        public Socket createSocket(String host, int port, InetAddress localHost, int localPort) throws IOException {
+            return connectSocket(localHost, localPort);
+        }
+
+        @Override
+        public Socket createSocket(InetAddress host, int port) throws IOException {
+            return connectSocket(null, 0);
+        }
+
+        @Override
+        public Socket createSocket(InetAddress address, int port, InetAddress localAddress, int localPort) throws IOException {
+            return connectSocket(localAddress, localPort);
+        }
+
+        private static Socket connectSocket(InetAddress localAddress, int localPort) throws IOException {
+            final Endpoint endpoint = resolveCachedEndpoint();
+            final Socket socket = new Socket();
+            if (localAddress != null) {
+                socket.bind(new InetSocketAddress(localAddress, localPort));
+            }
+            socket.connect(new InetSocketAddress(endpoint.host(), endpoint.port()));
+            return socket;
+        }
+
+        private static Endpoint resolveCachedEndpoint() {
+            final long now = System.currentTimeMillis();
+            final CachedEndpoint cached = CACHED_ENDPOINT.get();
+            if (cached != null && now - cached.cachedAtMs() < cacheTtlMs) {
+                return cached.endpoint();
+            }
+
+            final Endpoint endpoint = DNS_ENDPOINT.get();
+            if (endpoint == null) {
+                throw new IllegalStateException("Rotating Postgres DNS endpoint has not been configured");
+            }
+            CACHED_ENDPOINT.set(new CachedEndpoint(endpoint, now));
+            return endpoint;
+        }
+    }
+
+    public record Endpoint(String host, int port) {
+    }
+
+    private record CachedEndpoint(Endpoint endpoint, long cachedAtMs) {
+    }
+
+    private static RecordMetadata produceRecord(Map<String, Object> clientConfigs,
+                                                String topicName,
+                                                int partition,
+                                                String value) throws Exception {
+        try (Producer<byte[], byte[]> producer = new KafkaProducer<>(clientConfigs)) {
+            final ProducerRecord<byte[], byte[]> record =
+                new ProducerRecord<>(topicName, partition, null, value.getBytes(StandardCharsets.UTF_8));
+            return producer.send(record).get(30, TimeUnit.SECONDS);
+        }
+    }
+
+    private static void assertProduceFailsWithStorageError(Map<String, Object> clientConfigs,
+                                                           String topicName,
+                                                           int partition,
+                                                           String value,
+                                                           Duration timeout) {
+        try (Producer<byte[], byte[]> producer = new KafkaProducer<>(clientConfigs)) {
+            final ProducerRecord<byte[], byte[]> record =
+                new ProducerRecord<>(topicName, partition, null, value.getBytes(StandardCharsets.UTF_8));
+            final ExecutionException exception = assertThrows(
+                ExecutionException.class,
+                () -> producer.send(record).get(timeout.toMillis(), TimeUnit.MILLISECONDS)
+            );
+            assertInstanceOf(KafkaStorageException.class, exception.getCause());
+        }
+    }
+
+    private static RecordMetadata produceRecordEventually(Map<String, Object> clientConfigs,
+                                                          String topicName,
+                                                          int partition,
+                                                          String value,
+                                                          Duration timeout) throws Exception {
+        final long deadlineMs = System.currentTimeMillis() + timeout.toMillis();
+        Exception lastException = null;
+        while (System.currentTimeMillis() < deadlineMs) {
+            try {
+                return produceRecord(clientConfigs, topicName, partition, value);
+            } catch (ExecutionException e) {
+                if (e.getCause() instanceof org.apache.kafka.common.errors.TimeoutException) {
+                    throw e;
+                }
+                lastException = e;
+                Thread.sleep(250);
+            }
+        }
+        throw new AssertionError("Timed out waiting for produce to recover after PostgreSQL replacement", lastException);
     }
 
     // In multi-broker clusters, metadata propagation from the controller to follower brokers is async.
