@@ -403,8 +403,8 @@ class ReplicaManager(val config: KafkaConfig,
   private[kafka] val partitionCount = metricsGroup.newGauge(PartitionCountMetricName, () => allPartitions.size)
   metricsGroup.newGauge(OfflineReplicaCountMetricName, () => offlinePartitionCount)
   metricsGroup.newGauge(UnderReplicatedPartitionsMetricName, () => underReplicatedPartitionCount)
-  metricsGroup.newGauge(UnderMinIsrPartitionCountMetricName, () => leaderPartitionsIterator.count(_.isUnderMinIsr))
-  metricsGroup.newGauge(AtMinIsrPartitionCountMetricName, () => leaderPartitionsIterator.count(_.isAtMinIsr))
+  metricsGroup.newGauge(UnderMinIsrPartitionCountMetricName, () => underMinIsrPartitionCount)
+  metricsGroup.newGauge(AtMinIsrPartitionCountMetricName, () => atMinIsrPartitionCount)
   metricsGroup.newGauge(ReassigningPartitionsMetricName, () => reassigningPartitionsCount)
   metricsGroup.newGauge(SealedPartitionsCountMetricName, () => sealedPartitionsCount)
   metricsGroup.newGauge(PartitionsWithLateTransactionsCountMetricName, () => lateTransactionsCount)
@@ -425,7 +425,20 @@ class ReplicaManager(val config: KafkaConfig,
   val isrShrinkRate: Meter = metricsGroup.newMeter(IsrShrinksPerSecMetricName, "shrinks", TimeUnit.SECONDS)
   val failedIsrUpdatesRate: Meter = metricsGroup.newMeter(FailedIsrUpdatesPerSecMetricName, "failedUpdates", TimeUnit.SECONDS)
 
-  def underReplicatedPartitionCount: Int = leaderPartitionsIterator.count(_.isUnderReplicated)
+  private def isConsolidatingPartition(partition: Partition): Boolean =
+    config.disklessRemoteStorageConsolidationEnabled && _inklessMetadataView.isConsolidatingDisklessTopic(partition.topic)
+
+  def underReplicatedPartitionCount: Int = leaderPartitionsIterator.count { partition =>
+    partition.isUnderReplicated && !isConsolidatingPartition(partition)
+  }
+
+  def underMinIsrPartitionCount: Int = leaderPartitionsIterator.count { partition =>
+    partition.isUnderMinIsr && !isConsolidatingPartition(partition)
+  }
+
+  def atMinIsrPartitionCount: Int = leaderPartitionsIterator.count { partition =>
+    partition.isAtMinIsr && !isConsolidatingPartition(partition)
+  }
 
   def startHighWatermarkCheckPointThread(): Unit = {
     if (highWatermarkCheckPointThreadStarted.compareAndSet(false, true))
@@ -3814,9 +3827,9 @@ class ReplicaManager(val config: KafkaConfig,
     // the suffix [suffixStart, LEO) is entirely consolidated diskless data if no later epoch
     // entry inside that range switches away from E_d.
     !log.leaderEpochCache.epochEntries().asScala.exists { entry =>
-      entry.startOffset() > suffixStart &&
-        entry.startOffset() < leo &&
-        entry.epoch() != disklessLeaderEpoch
+      entry.startOffset > suffixStart &&
+        entry.startOffset < leo &&
+        entry.epoch != disklessLeaderEpoch
     }
   }
 
