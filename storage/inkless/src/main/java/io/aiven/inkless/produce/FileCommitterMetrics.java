@@ -18,6 +18,7 @@
 package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.MetricNameTemplate;
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
@@ -36,6 +37,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.control_plane.CommitBatchRequest;
 
 @CoverageIgnore
 public class FileCommitterMetrics implements Closeable {
@@ -71,6 +73,10 @@ public class FileCommitterMetrics implements Closeable {
     private static final String BATCHES_COUNT_DOC = "Number of batches per committed file";
     private static final String BATCHES_COMMIT_RATE = "BatchesCommitRate";
     private static final String BATCHES_COMMIT_RATE_DOC = "Rate of batches committed per second";
+    private static final String PARTITIONS_PER_COMMIT = "PartitionsPerCommit";
+    private static final String PARTITIONS_PER_COMMIT_DOC = "Number of distinct topic-partitions in a committed file";
+    private static final String BATCHES_PER_PARTITION_PER_COMMIT = "BatchesPerPartitionPerCommit";
+    private static final String BATCHES_PER_PARTITION_PER_COMMIT_DOC = "Number of batches a single topic-partition contributes to a committed file (per-partition fan-in).";
     private static final String WRITE_RATE = "WriteRate";
     private static final String WRITE_RATE_DOC = "Rate of successful write operations per second";
     private static final String WRITE_ERROR_RATE = "WriteErrorRate";
@@ -94,6 +100,8 @@ public class FileCommitterMetrics implements Closeable {
             new MetricNameTemplate(BATCHES_COMMIT_RATE, GROUP, BATCHES_COMMIT_RATE_DOC),
             new MetricNameTemplate(FILE_SIZE, GROUP, FILE_SIZE_DOC),
             new MetricNameTemplate(BATCHES_COUNT, GROUP, BATCHES_COUNT_DOC),
+            new MetricNameTemplate(PARTITIONS_PER_COMMIT, GROUP, PARTITIONS_PER_COMMIT_DOC),
+            new MetricNameTemplate(BATCHES_PER_PARTITION_PER_COMMIT, GROUP, BATCHES_PER_PARTITION_PER_COMMIT_DOC),
             new MetricNameTemplate(CACHE_STORE_TIME, GROUP, CACHE_STORE_TIME_DOC),
             new MetricNameTemplate(WRITE_RATE, GROUP, WRITE_RATE_DOC),
             new MetricNameTemplate(WRITE_ERROR_RATE, GROUP, WRITE_ERROR_RATE_DOC),
@@ -113,6 +121,9 @@ public class FileCommitterMetrics implements Closeable {
     private final Histogram fileCommitWaitTimeHistogram;
     private final Histogram fileSizeHistogram;
     private final Histogram batchesCountHistogram;
+    // Visible for testing.
+    final Histogram partitionsPerCommitHistogram;
+    final Histogram batchesPerPartitionPerCommitHistogram;
     private final Histogram cacheStoreTimeHistogram;
     private final Meter fileUploadRate;
     private final Meter fileUploadErrorRate;
@@ -136,6 +147,8 @@ public class FileCommitterMetrics implements Closeable {
         batchesCommitRate = metricsGroup.newMeter(BATCHES_COMMIT_RATE, "batches", TimeUnit.SECONDS, Map.of());
         fileSizeHistogram = metricsGroup.newHistogram(FILE_SIZE, true, Map.of());
         batchesCountHistogram = metricsGroup.newHistogram(BATCHES_COUNT, true, Map.of());
+        partitionsPerCommitHistogram = metricsGroup.newHistogram(PARTITIONS_PER_COMMIT, true, Map.of());
+        batchesPerPartitionPerCommitHistogram = metricsGroup.newHistogram(BATCHES_PER_PARTITION_PER_COMMIT, true, Map.of());
         cacheStoreTimeHistogram = metricsGroup.newHistogram(CACHE_STORE_TIME, true, Map.of());
         writeRate = metricsGroup.newMeter(WRITE_RATE, "writes", TimeUnit.SECONDS, Map.of());
         writeErrorRate = metricsGroup.newMeter(WRITE_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
@@ -156,6 +169,39 @@ public class FileCommitterMetrics implements Closeable {
     void batchesAdded(final int size) {
         batchesCountHistogram.update(size);
         batchesCommitRate.mark(size);
+    }
+
+    /**
+     * Records the partition fan-in of a committed file: the number of distinct topic-partitions, and the
+     * number of batches each one contributed.
+     *
+     * <p>Relies on {@code commitBatchRequests} being grouped by topic-partition (they are sorted that way
+     * in {@link BatchBuffer#close()}), so partitions and their batch counts are computed in a single
+     * linear pass over contiguous runs — no intermediate grouping map.
+     *
+     * @param sortedRequests the committed batch requests, grouped by topic-partition
+     */
+    void partitionFanInAdded(final List<CommitBatchRequest> sortedRequests) {
+        if (sortedRequests.isEmpty()) {
+            return;
+        }
+        int partitions = 0;
+        int runLength = 0;
+        TopicIdPartition current = null;
+        for (final CommitBatchRequest request : sortedRequests) {
+            final TopicIdPartition partition = request.topicIdPartition();
+            if (!partition.equals(current)) {
+                if (current != null) {
+                    batchesPerPartitionPerCommitHistogram.update(runLength);
+                }
+                partitions++;
+                runLength = 0;
+                current = partition;
+            }
+            runLength++;
+        }
+        batchesPerPartitionPerCommitHistogram.update(runLength); // flush the final run
+        partitionsPerCommitHistogram.update(partitions);
     }
 
     void fileUploadFinished(final long durationMs) {
@@ -215,6 +261,8 @@ public class FileCommitterMetrics implements Closeable {
         metricsGroup.removeMetric(CACHE_STORE_TIME);
         metricsGroup.removeMetric(BATCHES_COUNT);
         metricsGroup.removeMetric(BATCHES_COMMIT_RATE);
+        metricsGroup.removeMetric(PARTITIONS_PER_COMMIT);
+        metricsGroup.removeMetric(BATCHES_PER_PARTITION_PER_COMMIT);
         metricsGroup.removeMetric(WRITE_RATE);
         metricsGroup.removeMetric(WRITE_ERROR_RATE);
     }

@@ -177,27 +177,29 @@ FileCommitter metrics
 io.aiven.inkless.produce:type=FileCommitter
 -------------------------------------------
 
-========================  ===========================================================================
-Attribute name            Description                                                                
-========================  ===========================================================================
-BatchesCommitRate         Rate of batches committed per second                                       
-BatchesCount              Number of batches per committed file                                       
-CacheStoreTime            Time spent storing file data in the cache after commit in milliseconds     
-CommitQueueBytes          Current total bytes of files waiting to be committed                       
-CommitQueueFiles          Current number of files waiting to be committed                            
-FileCommitErrorRate       Rate of failed file commits per second                                     
-FileCommitRate            Rate of successful file commits per second                                 
-FileCommitTime            Time spent committing a file to the control plane in milliseconds          
-FileCommitWaitTime        Time a file waits before commit starts in milliseconds                     
-FileSize                  Size of committed files in bytes                                           
-FileTotalLifeTime         Total lifetime of a file from creation to commit completion in milliseconds
-FileUploadAndCommitTime   Time spent uploading and committing a file in milliseconds                 
-FileUploadErrorRate       Rate of failed file uploads per second                                     
-FileUploadRate            Rate of successful file uploads per second                                 
-FileUploadTime            Time spent uploading a file to object storage in milliseconds              
-WriteErrorRate            Rate of failed write operations per second                                 
-WriteRate                 Rate of successful write operations per second                             
-========================  ===========================================================================
+=============================  ==================================================================================================
+Attribute name                 Description                                                                                       
+=============================  ==================================================================================================
+BatchesCommitRate              Rate of batches committed per second                                                              
+BatchesCount                   Number of batches per committed file                                                              
+BatchesPerPartitionPerCommit   Number of batches a single topic-partition contributes to a committed file (per-partition fan-in).
+CacheStoreTime                 Time spent storing file data in the cache after commit in milliseconds                            
+CommitQueueBytes               Current total bytes of files waiting to be committed                                              
+CommitQueueFiles               Current number of files waiting to be committed                                                   
+FileCommitErrorRate            Rate of failed file commits per second                                                            
+FileCommitRate                 Rate of successful file commits per second                                                        
+FileCommitTime                 Time spent committing a file to the control plane in milliseconds                                 
+FileCommitWaitTime             Time a file waits before commit starts in milliseconds                                            
+FileSize                       Size of committed files in bytes                                                                  
+FileTotalLifeTime              Total lifetime of a file from creation to commit completion in milliseconds                       
+FileUploadAndCommitTime        Time spent uploading and committing a file in milliseconds                                        
+FileUploadErrorRate            Rate of failed file uploads per second                                                            
+FileUploadRate                 Rate of successful file uploads per second                                                        
+FileUploadTime                 Time spent uploading a file to object storage in milliseconds                                     
+PartitionsPerCommit            Number of distinct topic-partitions in a committed file                                           
+WriteErrorRate                 Rate of failed write operations per second                                                        
+WriteRate                      Rate of successful write operations per second                                                    
+=============================  ==================================================================================================
 
 
 FileCleaner metrics
