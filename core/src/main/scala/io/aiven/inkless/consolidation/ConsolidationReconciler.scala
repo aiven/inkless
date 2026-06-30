@@ -140,6 +140,8 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
             // start, DisklessLeaderEndPoint answers OFFSET_MOVED_TO_TIERED_STORAGE, and the
             // tier-state machine rebuilds the whole log from remote. Otherwise the partition would
             // wait forever for a classic catch-up that can never happen.
+            stateChangeLogger.warn(s"Leader $tp is below the classic-to-diskless seal $seal at " +
+              s"LEO ${log.logEndOffset}; assuming local-log loss and rebuilding from remote.")
             armConsolidationAtLeo(partition, log, seal)
           } else {
             // Follower (or remote not yet enabled) below the seal: a classic catch-up fetcher must
@@ -152,6 +154,8 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
           // LEO >= seal: the initial switch (LEO == seal) or a resume after restart, failover, or
           // reassignment, where the local log kept or rehydrated its consolidated frontier. Resume
           // from the current LEO so we neither re-consolidate nor skip data already held locally.
+          stateChangeLogger.info(s"Starting consolidation for $tp at LEO ${log.logEndOffset} " +
+            s"(>= classic-to-diskless seal $seal)")
           armConsolidationAtLeo(partition, log, seal)
         }
       case unexpected =>

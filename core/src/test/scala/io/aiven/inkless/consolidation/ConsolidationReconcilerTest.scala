@@ -246,7 +246,7 @@ class ConsolidationReconcilerTest {
   }
 
   @Test
-  def testLeaderBelowSealWithoutRemoteIsRetried(): Unit = {
+  def testLeaderBelowSealWithoutRemoteIsRetriedWithoutMarkingFailed(): Unit = {
     // Defensive: a leader below the seal but without remote storage enabled has no remote tier to
     // rebuild from, so there is nothing to do but retry (this should not occur for a consolidating
     // topic, where remote storage is always enabled).
