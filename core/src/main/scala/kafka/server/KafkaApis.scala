@@ -284,7 +284,8 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleWriteMirrorStates(request: RequestChannel.Request): Unit = {
     if (ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
       if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
-        requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData().setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)))
+        requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData()
+          .setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code).setErrorMessage(Errors.CLUSTER_AUTHORIZATION_FAILED.message)))
         return
       }
       val writeMirrorStatesRequest = request.body[WriteMirrorStatesRequest]
@@ -300,14 +301,16 @@ class KafkaApis(val requestChannel: RequestChannel,
       clusterMirrorCoordinator.updateTopicMetadata(mirrorName, partitionMetadata, res => requestHelper.sendMaybeThrottle(request, res))
     } else {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring write mirror states request")
-      requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
+      requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData()
+        .setErrorCode(Errors.UNSUPPORTED_VERSION.code).setErrorMessage(Errors.UNSUPPORTED_VERSION.message)))
     }
   }
 
   def handleReadMirrorStates(request: RequestChannel.Request): Unit = {
     if (ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
       if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
-        requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData().setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)))
+        requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData()
+          .setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code).setErrorMessage(Errors.CLUSTER_AUTHORIZATION_FAILED.message)))
         return
       }
       val readMirrorStatesRequest = request.body[ReadMirrorStatesRequest]
@@ -324,7 +327,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         res => requestHelper.sendMaybeThrottle(request, res))
     } else {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring read mirror states request")
-      requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
+      requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData()
+        .setErrorCode(Errors.UNSUPPORTED_VERSION.code).setErrorMessage(Errors.UNSUPPORTED_VERSION.message)))
     }
   }
 

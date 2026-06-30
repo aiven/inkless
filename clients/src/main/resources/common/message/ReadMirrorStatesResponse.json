@@ -41,12 +41,12 @@
           "about": "The mirror partition state." },
         { "name": "ErrorCode", "type": "int16", "versions": "0+",
           "about": "The error code, or 0 if there was no error." },
-        { "name": "PreviousState", "type": "int8", "taggedVersions": "0+", "tag": 0, "default": 16,
+        { "name": "PreviousState", "type": "int8", "versions": "0+", "default": 16,
           "about": "The mirror partition state before the last transition; UNKNOWN if not recorded." },
-        { "name": "RetryAttempt", "type": "int16", "taggedVersions": "0+", "tag": 1, "default": 0,
+        { "name": "RetryAttempt", "type": "int16", "versions": "0+", "default": 0,
           "about": "The number of automatic retry attempts while in FAILED state." },
-        { "name": "ErrorMessage", "type": "string", "taggedVersions": "0+", "tag": 2, "nullableVersions": "0+", "default": "null",
-          "about": "The error message when in FAILED state, or null if not applicable." }
+        { "name": "ErrorMessage", "type": "string", "versions": "0+", "nullableVersions": "0+", "default": "null",
+          "about": "The error message, or null if there was no error." }
       ]}
     ]}
   ]

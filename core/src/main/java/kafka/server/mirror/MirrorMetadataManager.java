@@ -1581,6 +1581,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 ReadMirrorStatesResponseData.PartitionResult partitionResult = new ReadMirrorStatesResponseData.PartitionResult();
                 if (!isLocalCoordinator(mirrorName, tp, part)) {
                     partitionResult.setErrorCode(Errors.NOT_COORDINATOR.code());
+                    partitionResult.setErrorMessage(Errors.NOT_COORDINATOR.message());
                 } else {
                     partitionResult.setPartitionIndex(part);
                     partitionResult.setLastMirrorEpoch(lastMirrorEpochs.getOrDefault(pk, -1));
