@@ -5943,6 +5943,44 @@ public class ReplicationControlManagerTest {
             assertEquals(Errors.INVALID_REPLICATION_FACTOR.code(),
                 result.response().topics().find("foo").errorCode());
         }
+
+        @Test
+        public void testUnfenceExpandsIsrAndClearsElr() {
+            // Regression test: expandIsrForDisklessManagedPartitions must reconcile ELR so that
+            // a broker added back to ISR on unfence is removed from ELR (ISR ∩ ELR = ∅, KIP-966).
+            MetadataVersion metadataVersion = MetadataVersion.latestTesting();
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(metadataVersion)
+                .setIsElrEnabled(true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Create a diskless topic with RF=3 and minISR=3 so any fencing drives ISR below minISR.
+            CreatableTopicResult createResult = ctx.createTestTopic("foo",
+                new int[][] {new int[] {0, 1, 2}}, Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0);
+            ctx.alterTopicConfig("foo", TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "3");
+            Uuid topicId = createResult.topicId();
+
+            // Fence broker 2: ISR shrinks to {0, 1}, ELR gets {2} (ISR < minISR=3).
+            ctx.fenceBrokers(2);
+            PartitionRegistration afterFence = replication.getPartition(topicId, 0);
+            assertFalse(Replicas.contains(afterFence.isr, 2), "broker 2 must be out of ISR after fencing");
+            assertTrue(Replicas.contains(afterFence.elr, 2), "broker 2 must be in ELR after fencing");
+
+            // Unfence broker 2: expandIsrForDisklessManagedPartitions fires.
+            ctx.unfenceBrokers(2);
+            PartitionRegistration afterUnfence = replication.getPartition(topicId, 0);
+
+            // ISR must contain broker 2 again.
+            assertTrue(Replicas.contains(afterUnfence.isr, 2), "broker 2 must be back in ISR after unfencing");
+            // ELR must NOT contain broker 2 — ISR ∩ ELR = ∅ invariant (KIP-966).
+            assertFalse(Replicas.contains(afterUnfence.elr, 2), "broker 2 must not be in ELR after ISR expansion");
+        }
     }
 
     @Nested

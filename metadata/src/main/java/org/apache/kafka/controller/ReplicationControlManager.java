@@ -1891,14 +1891,25 @@ public class ReplicationControlManager {
                 PartitionRegistration partition = entry.getValue();
                 if (!Replicas.contains(partition.replicas, brokerId)) continue;
                 if (Replicas.contains(partition.isr, brokerId)) continue;
-                // Broker is a replica but not in ISR — expand ISR
-                int[] newIsr = Replicas.copyWith(partition.isr, brokerId);
-                PartitionChangeRecord changeRecord = new PartitionChangeRecord()
-                    .setTopicId(topic.id)
-                    .setPartitionId(partitionId)
-                    .setIsr(Replicas.toList(newIsr));
-                records.add(new ApiMessageAndVersion(changeRecord, (short) 0));
-                expanded++;
+                // Use PartitionChangeBuilder so that ELR is reconciled alongside the ISR
+                // expansion — a raw PartitionChangeRecord setting only `isr` would leave any
+                // populated ELR untouched, violating the ISR ∩ ELR = ∅ invariant (KIP-966).
+                Optional<ApiMessageAndVersion> record = new PartitionChangeBuilder(
+                    partition,
+                    topic.id,
+                    partitionId,
+                    leaderAcceptorFor(topic.name, partition),
+                    featureControl.metadataVersionOrThrow(),
+                    getTopicEffectiveMinIsr(topic.name)
+                )
+                    .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
+                    .setTargetIsr(Replicas.toList(Replicas.copyWith(partition.isr, brokerId)))
+                    .setDefaultDirProvider(clusterDescriber)
+                    .build();
+                if (record.isPresent()) {
+                    records.add(record.get());
+                    expanded++;
+                }
             }
         }
         if (expanded > 0) {
