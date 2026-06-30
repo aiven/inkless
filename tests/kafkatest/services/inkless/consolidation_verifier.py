@@ -204,13 +204,17 @@ class ConsolidationVerifier(object):
         return keys
 
     def tiered_object_count(self):
-        # List only the tiered-storage prefix: the bucket persists across runs, so
-        # scanning the whole bucket here (called repeatedly in wait_until) would
-        # get slower and flakier over time.
+        # Count under the tiered-storage prefix only (scanning the whole bucket
+        # in wait_until would slow and flap). Not topic-scoped, and the prefix
+        # accumulates across tests in one `ducker-ak test` run (the whole inkless
+        # suite is one invocation). Use baseline + delta (`> baseline`);
+        # absolute `== N` flaps with test order.
         return len(self.object_keys(self.TIERED_PREFIX))
 
     def wal_object_count(self):
-        # Objects outside the tiered-storage prefix, i.e. diskless WAL files.
+        # Bucket-root count (outside tiered-storage/), i.e. diskless WAL files.
+        # Same accumulation caveats as tiered_object_count: baseline + delta
+        # only, never absolute.
         return len([k for k in self.object_keys() if not k.startswith(self.TIERED_PREFIX)])
 
     # --------------------- Control plane ---------------------

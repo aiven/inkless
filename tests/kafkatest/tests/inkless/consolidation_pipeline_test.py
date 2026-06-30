@@ -89,6 +89,8 @@ class ConsolidationPipelineTest(Test):
 
         baseline_tiered = verifier.tiered_object_count()
         self.logger.info("Baseline tiered-storage object count: %d" % baseline_tiered)
+        baseline_wal = verifier.wal_object_count()
+        self.logger.info("Baseline WAL object count: %d" % baseline_wal)
 
         # Start JmxTool on the brokers before producing so we sample the whole run.
         verifier.start_jmx()
@@ -128,7 +130,9 @@ class ConsolidationPipelineTest(Test):
         self.logger.info("Control plane pruned WAL: batch_count=%d, min_log_start_offset=%d" %
                          (verifier.wal_batch_count(self.TOPIC), verifier.min_log_start_offset(self.TOPIC)))
 
-        self.logger.info("WAL object count after prune: %d" % verifier.wal_object_count())
+        wal_after_prune = verifier.wal_object_count()
+        self.logger.info("WAL object count after prune: %d (baseline %d, delta %+d)" %
+                         (wal_after_prune, baseline_wal, wal_after_prune - baseline_wal))
 
         # Assert the consolidation gauges were exported and scraped (peaks logged
         # for diagnostics; we don't assert lag rose, as it is not reliably observable).
