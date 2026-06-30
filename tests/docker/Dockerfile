@@ -60,7 +60,9 @@ ARG ducker_creator=default
 LABEL ducker.creator=$ducker_creator
 
 # Update Linux and install necessary utilities.
-RUN apt update && apt install -y sudo git netcat iptables rsync unzip wget curl jq coreutils openssh-server net-tools vim python3-pip python3-dev libffi-dev libssl-dev cmake pkg-config libfuse-dev iperf traceroute iproute2 iputils-ping && apt-get -y clean
+# postgresql-client (psql) is used by the inkless consolidation pipeline test to
+# query the Postgres control plane (WAL batches / log_start_offset) and assert WAL pruning.
+RUN apt update && apt install -y sudo git netcat iptables rsync unzip wget curl jq coreutils openssh-server net-tools vim python3-pip python3-dev libffi-dev libssl-dev cmake pkg-config libfuse-dev iperf traceroute iproute2 iputils-ping postgresql-client && apt-get -y clean
 RUN python3 -m pip install -U pip==21.1.1;
 # NOTE: ducktape 0.12.0 supports py 3.9, 3.10, 3.11 and 3.12
 COPY requirements.txt requirements.txt
@@ -133,6 +135,19 @@ RUN mkdir -p /opt/tiered-storage-plugin/core /opt/tiered-storage-plugin/s3 && \
     tar xzf /tmp/core.tgz -C /opt/tiered-storage-plugin/core --strip-components=1 && \
     tar xzf /tmp/s3.tgz -C /opt/tiered-storage-plugin/s3 --strip-components=1 && \
     rm /tmp/*.tgz
+
+# MinIO client (mc) for consolidation system tests that assert object movement
+# (diskless WAL -> tiered-storage prefix) in MinIO.
+ARG mc_version=mc.RELEASE.2025-08-13T08-35-41Z
+RUN arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) mc_arch=amd64; mc_sha=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891 ;; \
+      arm64) mc_arch=arm64; mc_sha=14c8c9616cfce4636add161304353244e8de383b2e2752c0e9dad01d4c27c12c ;; \
+      *) echo "unsupported arch for mc: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 5 --retry-delay 5 "https://dl.min.io/client/mc/release/linux-${mc_arch}/archive/${mc_version}" -o /usr/local/bin/mc && \
+    echo "${mc_sha}  /usr/local/bin/mc" | sha256sum -c - && \
+    chmod +x /usr/local/bin/mc
 
 # To ensure the Kafka cluster starts successfully under JDK 17, we need to update the Zookeeper 
 # client from version 3.4.x to 3.5.7 in Kafka versions 2.1.1, 2.2.2, and 2.3.1, as the older Zookeeper 
