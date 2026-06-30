@@ -182,6 +182,10 @@ class FileCommitter implements Closeable {
             } else {
                 metrics.fileAdded(file.size());
                 metrics.batchesAdded(file.commitBatchRequests().size());
+                // Partition fan-in (distinct partitions and batches-per-partition) characterizes the
+                // batch-coalescing opportunity. The requests are already grouped by topic-partition, so
+                // the metric computes both in one linear pass — no extra grouping here.
+                metrics.partitionFanInAdded(file.commitBatchRequests());
                 totalFilesInProgress.addAndGet(1);
                 totalBytesInProgress.addAndGet(file.size());
 
