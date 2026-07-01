@@ -222,6 +222,15 @@ public class InklessConfig extends AbstractConfig {
         + "Setting this to a lower value can help to reduce the load on the control plane back-end.";
     private static final int RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DEFAULT = 0;
 
+    public static final String BATCH_COALESCING_ENABLED_CONFIG = CONTROL_PLANE_PREFIX + "batch.coalescing.enabled";
+    public static final String BATCH_COALESCING_ENABLED_DOC = "When true, contiguous same-partition batch runs within a single commit are collapsed "
+        + "into a single row in the batches table via commit_file_v2, reducing control-plane metadata growth "
+        + "for low-throughput producers. "
+        + "Set to true only after all brokers in the cluster have been upgraded to a version that supports "
+        + "reading coalesced rows. "
+        + "Defaults to false for safe rolling upgrades.";
+    private static final boolean BATCH_COALESCING_ENABLED_DEFAULT = false;
+
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
 
@@ -468,6 +477,14 @@ public class InklessConfig extends AbstractConfig {
             CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_DOC
         );
 
+        configDef.define(
+            BATCH_COALESCING_ENABLED_CONFIG,
+            ConfigDef.Type.BOOLEAN,
+            BATCH_COALESCING_ENABLED_DEFAULT,
+            ConfigDef.Importance.MEDIUM,
+            BATCH_COALESCING_ENABLED_DOC
+        );
+
         return configDef;
     }
 
@@ -603,6 +620,7 @@ public class InklessConfig extends AbstractConfig {
     public Duration produceUploadBackoff() {
         return Duration.ofMillis(getInt(PRODUCE_UPLOAD_BACKOFF_MS_CONFIG));
     }
+
 
     public int fetchCacheBlockBytes() {
         return getInt(CONSUME_CACHE_BLOCK_BYTES_CONFIG);

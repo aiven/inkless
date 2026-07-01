@@ -504,9 +504,13 @@ class FindBatchesJobTest {
             }
         }
 
+        // Use the non-coalescing commit (commit_file_v1) so this fixture creates exactly one batches row
+        // per request. These tests assert on per-batch counts/boundaries to exercise find_batches limit
+        // logic; coalescing (the production default) would collapse contiguous same-partition rows and
+        // change those counts. The row layout is what matters here, not how it was produced.
         final CommitFileJob commitJob = new CommitFileJob(
             time, pgContainer.getJooqCtx(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
-            BROKER_ID, FILE_SIZE, requests, duration -> {
+            BROKER_ID, FILE_SIZE, requests, false, duration -> {
         }
         );
         assertThat(commitJob.call()).isNotEmpty();

@@ -819,6 +819,222 @@ public class FetchCompleterTest {
     }
 
     @Test
+    public void testFetchCoalescedRunRelocatesOffsets() {
+        // A coalesced run (commit_file_v2): a SINGLE BatchInfo whose byte range contains three
+        // byte-contiguous physical batches. The control plane assigned the run base offset 5, so the
+        // physical batches must be relocated to absolute offsets 5,6 | 7 | 8,9.
+        byte[] v0 = {0};
+        byte[] v1 = {1};
+        byte[] v2 = {2};
+        byte[] v3 = {3};
+        byte[] v4 = {4};
+        // Batch A: 2 records, Batch B: 1 record, Batch C: 2 records. Each stored with base offset 0.
+        MemoryRecords batchA = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(v0), new SimpleRecord(v1));
+        MemoryRecords batchB = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(v2));
+        MemoryRecords batchC = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(v3), new SimpleRecord(v4));
+
+        final int sizeA = batchA.sizeInBytes();
+        final int sizeB = batchB.sizeInBytes();
+        final int sizeC = batchC.sizeInBytes();
+        final int totalSize = sizeA + sizeB + sizeC;
+        ByteBuffer concatenated = ByteBuffer.allocate(totalSize);
+        concatenated.put(batchA.buffer());
+        concatenated.put(batchB.buffer());
+        concatenated.put(batchC.buffer());
+
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 5, 0, 10000, Optional.empty())
+        );
+        int logStartOffset = 0;
+        long logAppendTimestamp = 10L;
+        long maxBatchTimestamp = 20L;
+        long runBaseOffset = 5L;
+        long runLastOffset = 9L; // 5 records total -> last offset 9
+        int highWatermark = 10;
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                // ONE BatchInfo spanning the whole 3-batch run.
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(
+                    partition0, 0, totalSize, runBaseOffset, runLastOffset, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
+            ), logStartOffset, highWatermark)
+        );
+
+        final ByteRange range = new ByteRange(0, totalSize);
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, concatenated))
+        );
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files, durationMs -> {}
+        );
+
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+        FetchPartitionData data = result.get(partition0);
+        assertThat(data.error).isEqualTo(Errors.NONE);
+        assertThat(data.records.sizeInBytes()).isEqualTo(totalSize);
+
+        // Each physical record must carry its correctly relocated absolute offset.
+        List<Long> offsets = new ArrayList<>();
+        List<ByteBuffer> values = new ArrayList<>();
+        for (Record r : data.records.records()) {
+            offsets.add(r.offset());
+            values.add(r.value());
+        }
+        assertThat(offsets).containsExactly(5L, 6L, 7L, 8L, 9L);
+        assertThat(values).containsExactly(
+            ByteBuffer.wrap(v0), ByteBuffer.wrap(v1), ByteBuffer.wrap(v2), ByteBuffer.wrap(v3), ByteBuffer.wrap(v4));
+
+        // The three physical batches must keep their original boundaries (base offsets 5, 7, 8).
+        List<Long> batchBaseOffsets = new ArrayList<>();
+        List<Long> batchLastOffsets = new ArrayList<>();
+        for (var b : data.records.batches()) {
+            batchBaseOffsets.add(b.baseOffset());
+            batchLastOffsets.add(b.lastOffset());
+        }
+        assertThat(batchBaseOffsets).containsExactly(5L, 7L, 8L);
+        assertThat(batchLastOffsets).containsExactly(6L, 7L, 9L);
+    }
+
+    @Test
+    public void testFetchCoalescedRunWithLogAppendTimeRelocatesOffsetsAndTimestamp() {
+        // Same as testFetchCoalescedRunRelocatesOffsets but for LOG_APPEND_TIME, which exercises the
+        // relocation walk's timestamp branch: every physical sub-batch must have its max timestamp
+        // overwritten with the row's single logAppendTimestamp, in addition to offset relocation.
+        byte[] v0 = {0};
+        byte[] v1 = {1};
+        byte[] v2 = {2};
+        MemoryRecords batchA = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(v0), new SimpleRecord(v1));
+        MemoryRecords batchB = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(v2));
+        final int totalSize = batchA.sizeInBytes() + batchB.sizeInBytes();
+        ByteBuffer concatenated = ByteBuffer.allocate(totalSize);
+        concatenated.put(batchA.buffer());
+        concatenated.put(batchB.buffer());
+
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 10000, Optional.empty())
+        );
+        long runBaseOffset = 7L;
+        long runLastOffset = 9L; // 3 records -> 7,8,9
+        long logAppendTimestamp = 4242L;
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(
+                    partition0, 0, totalSize, runBaseOffset, runLastOffset, logAppendTimestamp, 20L, TimestampType.LOG_APPEND_TIME))
+            ), 0, 10)
+        );
+
+        final ByteRange range = new ByteRange(0, totalSize);
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, concatenated))
+        );
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files, durationMs -> {}
+        );
+
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+        FetchPartitionData data = result.get(partition0);
+        assertThat(data.error).isEqualTo(Errors.NONE);
+
+        // Offsets relocated 7,8,9 and every physical batch reports the row's log-append timestamp.
+        List<Long> offsets = new ArrayList<>();
+        for (Record r : data.records.records()) {
+            offsets.add(r.offset());
+        }
+        assertThat(offsets).containsExactly(7L, 8L, 9L);
+        for (var b : data.records.batches()) {
+            assertThat(b.timestampType()).isEqualTo(TimestampType.LOG_APPEND_TIME);
+            assertThat(b.maxTimestamp()).isEqualTo(logAppendTimestamp);
+        }
+    }
+
+    @Test
+    public void testFetchCoalescedRunSplitAcrossExtentsRelocatesOffsets() {
+        // A coalesced run whose byte range is split across multiple cache-aligned extents (the shape the
+        // PG-backed integration test exercises with a small cache block). constructRecordsFromFile must
+        // reassemble the full range from the extents before the relocation walk runs.
+        final int blockSize = 16;
+        byte[] v0 = {0};
+        byte[] v1 = {1};
+        byte[] v2 = {2};
+        // Batch A: 2 records, Batch B: 1 record. Each stored with base offset 0.
+        MemoryRecords batchA = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(v0), new SimpleRecord(v1));
+        MemoryRecords batchB = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(v2));
+        final int totalSize = batchA.sizeInBytes() + batchB.sizeInBytes();
+        ByteBuffer concatenated = ByteBuffer.allocate(totalSize);
+        concatenated.put(batchA.buffer());
+        concatenated.put(batchB.buffer());
+
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 10000, Optional.empty())
+        );
+        long runBaseOffset = 3L;
+        long runLastOffset = 5L; // 3 records -> 3,4,5
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(
+                    partition0, 0, totalSize, runBaseOffset, runLastOffset, 10L, 20L, TimestampType.CREATE_TIME))
+            ), 0, 6)
+        );
+
+        // Split the coalesced range into block-aligned extents.
+        var ranges = new FixedBlockAlignment(blockSize).align(List.of(new ByteRange(0, totalSize)));
+        var fileExtents = new ArrayList<FileExtentResult>();
+        for (ByteRange range : ranges) {
+            final int startOffset = Math.toIntExact(range.offset());
+            final int length = Math.min(blockSize, totalSize - startOffset);
+            ByteBuffer copy = ByteBuffer.allocate(length);
+            copy.put(concatenated.duplicate().position(startOffset).limit(startOffset + length).slice());
+            fileExtents.add(new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy)));
+        }
+
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, fileExtents, durationMs -> {}
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+        FetchPartitionData data = result.get(partition0);
+
+        assertThat(data.error).isEqualTo(Errors.NONE);
+        List<Long> offsets = new ArrayList<>();
+        List<ByteBuffer> values = new ArrayList<>();
+        for (Record r : data.records.records()) {
+            offsets.add(r.offset());
+            values.add(r.value());
+        }
+        assertThat(offsets).containsExactly(3L, 4L, 5L);
+        assertThat(values).containsExactly(ByteBuffer.wrap(v0), ByteBuffer.wrap(v1), ByteBuffer.wrap(v2));
+    }
+
+    @Test
+    public void testFetchCoalescedRunWithMismatchedMetadataThrows() {
+        // If the metadata's last offset disagrees with the record count in the bytes, we must fail loudly
+        // rather than serve incorrectly-offset data.
+        MemoryRecords batchA = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(new byte[]{0}));
+        MemoryRecords batchB = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(new byte[]{1}));
+        final int totalSize = batchA.sizeInBytes() + batchB.sizeInBytes();
+        ByteBuffer concatenated = ByteBuffer.allocate(totalSize);
+        concatenated.put(batchA.buffer());
+        concatenated.put(batchB.buffer());
+
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 10000, Optional.empty())
+        );
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            // Says last offset 5 but the 2 records only span [0,1] -> mismatch.
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(
+                    partition0, 0, totalSize, 0, 5, 10L, 20L, TimestampType.CREATE_TIME))
+            ), 0, 6)
+        );
+        final ByteRange range = new ByteRange(0, totalSize);
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, concatenated))
+        );
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files, durationMs -> {}
+        );
+        assertThatThrownBy(job::get).isInstanceOf(FetchException.class);
+    }
+
+    @Test
     public void testCorruptedBatchWithInvalidCrcThrowsFetchException() {
         // Test that ensureValid() catches corrupted batches with invalid CRC checksums.
         // This validates data integrity even when size validation passes.

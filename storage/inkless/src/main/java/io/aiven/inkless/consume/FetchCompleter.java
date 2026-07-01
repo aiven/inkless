@@ -30,7 +30,6 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -305,33 +304,68 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
         return createMemoryRecords(ByteBuffer.wrap(buffer), batch);
     }
 
+    /**
+     * Re-assigns absolute offsets onto the physical record batches contained in a {@link BatchInfo}'s
+     * byte range.
+     */
     private static MemoryRecords createMemoryRecords(
         final ByteBuffer buffer,
         final BatchInfo batch
     ) {
-        MemoryRecords records = MemoryRecords.readableRecords(buffer);
-        Iterator<MutableRecordBatch> iterator = records.batches().iterator();
-        if (!iterator.hasNext()) {
+        final MemoryRecords records = MemoryRecords.readableRecords(buffer);
+        final List<MutableRecordBatch> physicalBatches = new ArrayList<>();
+        for (final MutableRecordBatch b : records.batches()) {
+            physicalBatches.add(b);
+        }
+        if (physicalBatches.isEmpty()) {
             throw new IllegalStateException("Backing file should have at least one batch");
         }
-        MutableRecordBatch mutableRecordBatch = iterator.next();
 
-        // Validate batch integrity (CRC checksum, size) before modifying it.
-        // This catches corrupted data that passed size validation but has invalid checksums.
-        // We validate before setLastOffset/setMaxTimestamp to avoid modifying corrupted batches.
-        mutableRecordBatch.ensureValid();
+        if (physicalBatches.size() == 1) {
+            // Classic single-batch coordinate (pg control plane commit_file_v1, in-memory control plane, batch-coordinate
+            // cache, or any pre-coalescing row). Behaviour is unchanged: trust the coordinate's last offset.
+            final MutableRecordBatch mutableRecordBatch = physicalBatches.get(0);
 
-        // set last offset
-        mutableRecordBatch.setLastOffset(batch.metadata().lastOffset());
+            // Validate batch integrity (CRC checksum, size) before modifying it.
+            // This catches corrupted data that passed size validation but has invalid checksums.
+            // We validate before setLastOffset/setMaxTimestamp to avoid modifying corrupted batches.
+            mutableRecordBatch.ensureValid();
 
-        // set log append timestamp
-        if (batch.metadata().timestampType() == TimestampType.LOG_APPEND_TIME) {
-            mutableRecordBatch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, batch.metadata().logAppendTimestamp());
+            mutableRecordBatch.setLastOffset(batch.metadata().lastOffset());
+
+            if (batch.metadata().timestampType() == TimestampType.LOG_APPEND_TIME) {
+                mutableRecordBatch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, batch.metadata().logAppendTimestamp());
+            }
+            return records;
         }
 
-        if (iterator.hasNext()) {
-            // TODO: support concatenating multiple batches into a single BatchInfo
-            throw new IllegalStateException("Backing file should have at only one batch");
+        // Coalesced run (pg control plane commit_file_v2): the coordinate's byte range contains several byte-contiguous
+        // physical batches. Relocate each one. Physical batch j's absolute base offset is
+        // metadata.baseOffset() + sum(record counts of batches before it). 
+        // The offset delta (last - base) is intrinsic to each batch's bytes and independent of the base offset, so
+        // setLastOffset(running + delta) places that physical batch's base at `running`.
+        long running = batch.metadata().baseOffset();
+        for (final MutableRecordBatch mutableRecordBatch : physicalBatches) {
+            mutableRecordBatch.ensureValid();
+
+            final long lastOffsetDelta = mutableRecordBatch.lastOffset() - mutableRecordBatch.baseOffset();
+            mutableRecordBatch.setLastOffset(running + lastOffsetDelta);
+
+            if (batch.metadata().timestampType() == TimestampType.LOG_APPEND_TIME) {
+                mutableRecordBatch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, batch.metadata().logAppendTimestamp());
+            }
+
+            running += lastOffsetDelta + 1L;
+        }
+
+        // The relocated offsets must exactly fill the coordinate's [baseOffset, lastOffset] span. A
+        // mismatch means the stored bytes and the coordinate disagree (corruption or a wrong coordinate),
+        // so we fail loudly rather than serve incorrectly-offset data.
+        final long expectedLastOffset = batch.metadata().lastOffset();
+        if (running - 1 != expectedLastOffset) {
+            throw new IllegalStateException(
+                "Coalesced batch offsets do not match metadata: computed last offset " + (running - 1)
+                    + " but expected " + expectedLastOffset + " for " + batch.metadata().topicIdPartition());
         }
 
         return records;
