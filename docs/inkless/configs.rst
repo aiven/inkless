@@ -39,6 +39,13 @@ Under ``inkless.``
   * Default: io.aiven.inkless.storage_backend.in_memory.InMemoryStorage
   * Importance: high
 
+``control.plane.batch.coalescing.enabled``
+  When true, contiguous same-partition batch runs within a single commit are collapsed into a single row in the batches table via commit_file_v2, reducing control-plane metadata growth for low-throughput producers. Set to true only after all brokers in the cluster have been upgraded to a version that supports reading coalesced rows. Defaults to false for safe rolling upgrades.
+
+  * Type: boolean
+  * Default: false
+  * Importance: medium
+
 ``fetch.lagging.consumer.request.rate.limit``
   Maximum requests per second for lagging consumer data fetches. Set to 0 to disable rate limiting. The upper bound of 10000 req/s is a safety limit to prevent misconfiguration. For high-throughput systems, consider the relationship between this rate limit, thread pool size, and storage backend capacity. At the default rate of 200 req/s with ~50ms per request latency, this allows ~10 concurrent requests. Note: hedge requests triggered by slow fetches are exempt from this limit. In the worst case, effective storage GET rate can reach up to 2x this value.
 
