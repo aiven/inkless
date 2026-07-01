@@ -125,7 +125,8 @@ class DisklessLeaderEndPoint(
                     logger.warn("Local log unavailable for topic-partition {}, returning unknown log start offset", tp.topicPartition)
                     UnifiedLog.UNKNOWN_OFFSET
           }
-          if (fetchResponseData.errorCode == Errors.NONE.code) {
+          if (fetchResponseData.errorCode == Errors.NONE.code
+            || fetchResponseData.errorCode == Errors.OFFSET_OUT_OF_RANGE.code) {
             // in case of an inconsistency log an error, set an unknown offset and also return unknown server error
             if (logStartOffset > data.highWatermark) {
               logger.error("Local log start offset ({}) is higher than high watermark ({}) for topic-partition {}, this may indicate a transient inconsistency during migration",
@@ -136,18 +137,18 @@ class DisklessLeaderEndPoint(
               fetchResponseData.setLogStartOffset(logStartOffset)
               // `data.logStartOffset` is the diskless WAL start (advanced to highestRemoteOffset + 1
               // as the WAL is pruned), not the whole-log start. Offsets in
-              // `[logStartOffset, disklessStart)` were consolidated to remote and only live there, so
+              // `[logStartOffset, disklessStartOffset)` were consolidated to remote and only live there, so
               // a fetch for them (e.g. after local-log loss) must come from the remote tier. Signal
               // OFFSET_MOVED_TO_TIERED_STORAGE so the tier-state machine rebuilds from remote.
-              val disklessStart = data.logStartOffset
+              val disklessStartOffset = data.logStartOffset
               val requestedOffset = Option(fetchInfos.get(tp)).map(_.fetchOffset).getOrElse(-1L)
               if (localLogOpt.exists(_.remoteLogEnabled())
                   && logStartOffset != UnifiedLog.UNKNOWN_OFFSET
                   && requestedOffset >= logStartOffset
-                  && requestedOffset < disklessStart) {
+                  && requestedOffset < disklessStartOffset) {
                 logger.debug("Offset {} for {} is below the diskless WAL start {} but at/above the whole-log start {}; " +
                   "signalling OFFSET_MOVED_TO_TIERED_STORAGE to rebuild the consolidated remote prefix.",
-                  requestedOffset, tp.topicPartition, disklessStart, logStartOffset)
+                  requestedOffset, tp.topicPartition, disklessStartOffset, logStartOffset)
                 fetchResponseData.setErrorCode(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code)
                 fetchResponseData.setRecords(MemoryRecords.EMPTY)
               }
