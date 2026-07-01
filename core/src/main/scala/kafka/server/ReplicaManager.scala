@@ -3363,9 +3363,10 @@ class ReplicaManager(val config: KafkaConfig,
                     s"seal $seal at LEO ${log.logEndOffset} with remote storage enabled; leaving online " +
                     s"for consolidation to rebuild the classic prefix from the remote tier.")
                 } else {
-                  stateChangeLogger.error(s"Leader partition $tp has LEO ${log.logEndOffset} below " +
-                    s"classic-to-diskless start offset $seal; cannot catch up from another replica. " +
-                    s"Marking the partition offline as its local log is corrupt below the committed seal.")
+                  stateChangeLogger.error(s"Leader partition $tp has LEO ${log.logEndOffset} below the " +
+                    s"classic-to-diskless seal $seal and the classic prefix [0, $seal) is locally incomplete " +
+                    s"and not recoverable from remote (no consolidation / remote storage on this broker); " +
+                    s"marking the partition offline. Cannot catch up from another replica.")
                   markPartitionOffline(tp)
                 }
               }
