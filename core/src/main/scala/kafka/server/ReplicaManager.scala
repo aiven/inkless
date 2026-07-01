@@ -3701,8 +3701,11 @@ class ReplicaManager(val config: KafkaConfig,
    *  - LEO > seal: truncate down to the seal unless the local suffix [seal, LEO) is already
    *    materialized consolidated diskless data.
    *  - LEO == seal and HW < seal: advance HW to the seal so consumers can cross into diskless.
-   *  - LEO < seal: fence offline. The classic prefix is incomplete, so serving it would hide a
-   *    hole in acknowledged data.
+   *  - LEO < seal: fence offline, unless this is a consolidating diskless topic with remote
+   *    storage enabled. In that case the classic prefix [0, seal) lives in the remote tier and
+   *    can be rebuilt, so the partition is left online for the ConsolidationReconciler to
+   *    rebuild from remote (the inline comment below carries the mechanism). Fencing here would
+   *    preempt that recovery: the reconciler only sees online partitions.
    *
    * Must run after makeLeader (so the log exists) and before any consolidation fetcher starts.
    */
@@ -3730,11 +3733,22 @@ class ReplicaManager(val config: KafkaConfig,
                 stateChangeLogger.info(s"Stale high watermark detected: advanced high watermark to seal offset $seal for " +
                   s"switched leader partition $tp")
               } else if (log.logEndOffset < seal) {
-                // This is unreachable in normal operation
-                stateChangeLogger.error(s"Leader partition $tp has LEO ${log.logEndOffset} below " +
-                  s"classic-to-diskless start offset $seal; cannot catch up from another replica. " +
-                  s"Marking the partition offline as its local log is corrupt below the committed seal.")
-                markPartitionOffline(tp)
+                if (isConsolidatingPartition(partition) && log.remoteLogEnabled()) {
+                  // The leader's local classic prefix was lost (full local-storage wipe / DR).
+                  // [0, seal) lives in the remote tier, so leave the partition online and let the
+                  // ConsolidationReconciler arm consolidation at the current LEO: the first fetch
+                  // lands below the diskless WAL start, answers OFFSET_MOVED_TO_TIERED_STORAGE, and
+                  // the tier-state machine rebuilds the log from remote.
+                  stateChangeLogger.warn(s"Switched leader partition $tp is below the classic-to-diskless " +
+                    s"seal $seal at LEO ${log.logEndOffset} with remote storage enabled; leaving online " +
+                    s"for consolidation to rebuild the classic prefix from the remote tier.")
+                } else {
+                  stateChangeLogger.error(s"Leader partition $tp has LEO ${log.logEndOffset} below the " +
+                    s"classic-to-diskless seal $seal and the classic prefix [0, $seal) is locally incomplete " +
+                    s"and not recoverable from remote (no consolidation / remote storage on this broker); " +
+                    s"marking the partition offline. Cannot catch up from another replica.")
+                  markPartitionOffline(tp)
+                }
               }
             }
           } catch {
@@ -4041,8 +4055,16 @@ class ReplicaManager(val config: KafkaConfig,
     }
 
     if (consolidatingDisklessPartitionsToStartFetching.nonEmpty) {
-      consolidationReconciler.foreach(_.startConsolidationFetchers(consolidatingDisklessPartitionsToStartFetching))
-      stateChangeLogger.info(s"Started consolidating diskless fetchers as part of become-leader for ${consolidatingDisklessPartitionsToStartFetching.size} partitions")
+      // maybeReconcileSwitchedLeader above may have fenced a below-seal leader whose local log
+      // cannot be rebuilt from remote. Skip any partition that is no longer online so the
+      // reconciler does not dereference a fenced partition's local log.
+      val onlineToStartFetching = consolidatingDisklessPartitionsToStartFetching.filter {
+        case (tp, _) => onlinePartition(tp).isDefined
+      }
+      if (onlineToStartFetching.nonEmpty) {
+        consolidationReconciler.foreach(_.startConsolidationFetchers(onlineToStartFetching))
+        stateChangeLogger.info(s"Started consolidating diskless fetchers as part of become-leader for ${onlineToStartFetching.size} partitions")
+      }
     }
   }
 
