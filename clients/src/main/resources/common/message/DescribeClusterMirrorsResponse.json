@@ -62,6 +62,7 @@
       ]}
     ]},
     { "name": "LineageResults", "type": "[]LineageTopicResult", "versions": "0+",
+      "taggedVersions": "0+", "tag": 0, "ignorable": true,
       "about": "LME results from cross-mirror topic lineage matching.", "fields": [
       { "name": "TopicId", "type": "uuid", "versions": "0+",
         "about": "The topic ID." },
