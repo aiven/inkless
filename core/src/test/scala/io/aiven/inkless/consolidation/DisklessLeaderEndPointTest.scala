@@ -737,7 +737,11 @@ class DisklessLeaderEndPointTest {
   }
 
   @Test
-  def testFetchReturnsUnknownLogStartOffsetWhenDisklessErrorEvenIfPartitionAvailable(): Unit = {
+  def testFetchReturnsLocalLogStartOffsetWhenOffsetOutOfRangeAndPartitionAvailable(): Unit = {
+    // OFFSET_OUT_OF_RANGE from the control plane enters the same logStartOffset resolution path as
+    // NONE. When the requested offset is outside the consolidated prefix (empty request →
+    // requestedOffset=-1 < logStartOffset=0), no redirect fires and logStartOffset is taken from
+    // the local log (0L), not UNKNOWN_OFFSET.
     val fetchHandler = mock(classOf[FetchHandler])
     val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
     val replicaManager = mock(classOf[ReplicaManager])
@@ -766,7 +770,46 @@ class DisklessLeaderEndPointTest {
 
     val pd = endPoint.fetch(fetchBuilder).get(topicPartition)
     assertEquals(Errors.OFFSET_OUT_OF_RANGE.code, pd.errorCode)
-    assertEquals(-1L, pd.logStartOffset)
+    assertEquals(0L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchSignalsOffsetMovedToTieredStorageWhenControlPlaneReturnsOffsetOutOfRange(): Unit = {
+    // The control plane returns OFFSET_OUT_OF_RANGE when the requested offset is below
+    // log_start_offset (the current WAL start, advanced as batches are pruned to remote storage).
+    // For offsets in [localLogStart, disklessStart) this means the data was already tiered —
+    // the endpoint must redirect just as it does for the NONE+empty-batch case.
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val partition = mock(classOf[Partition])
+    val localLog = mock(classOf[UnifiedLog])
+    when(partition.localLogOrException).thenReturn(localLog)
+    when(localLog.logStartOffset).thenReturn(0L)
+    when(localLog.remoteLogEnabled()).thenReturn(true)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+
+    // Control plane returns OFFSET_OUT_OF_RANGE with logStartOffset=100 (WAL start after pruning).
+    val fetchData = new FetchPartitionData(
+      Errors.OFFSET_OUT_OF_RANGE,
+      200L,
+      100L,
+      MemoryRecords.EMPTY,
+      Optional.empty(),
+      OptionalLong.empty(),
+      Optional.empty(),
+      OptionalInt.empty(),
+      false
+    )
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+
+    // Offset 50 is in [0, 100) — within the consolidated prefix pruned to remote.
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 50L)).get(topicPartition)
+
+    assertEquals(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code, pd.errorCode)
+    assertEquals(0L, pd.logStartOffset)
   }
 
   @Test
