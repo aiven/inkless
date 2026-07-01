@@ -174,6 +174,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final CommitFileJob job = new CommitFileJob(
             time, writeJooqCtx, // use specific write context when committing files
             objectKey, format, uploaderBrokerId, fileSize, requests.toList(),
+            controlPlaneConfig.batchCoalescingEnabled(),
             pgMetrics::onCommitFileCompleted);
         return job.call().iterator();
     }

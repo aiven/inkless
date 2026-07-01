@@ -58,13 +58,6 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     private final boolean coalesce;
     private final Consumer<Long> durationCallback;
 
-    /**
-     * Production entry point: always commits via {@code commit_file_v2}, which coalesces contiguous
-     * same-partition batch runs into a single {@code batches} row.
-     * {@code commit_file_v1} is retained only for rollback safety and for the coalescing benchmark
-     * to measure against; new code must not depend on it and it should be dropped once no supported
-     * release calls it.
-     */
     CommitFileJob(final Time time,
                   final DSLContext jooqCtx,
                   final String objectKey,
@@ -73,14 +66,13 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
                   final long fileSize,
                   final List<CommitBatchRequest> requests,
                   final Consumer<Long> durationCallback) {
-        this(time, jooqCtx, objectKey, format, uploaderBrokerId, fileSize, requests, true, durationCallback);
+        this(time, jooqCtx, objectKey, format, uploaderBrokerId, fileSize, requests, false, durationCallback);
     }
 
     /**
-     * Visible for testing/benchmarking: lets callers select the legacy non-coalescing
-     * {@code commit_file_v1} ({@code coalesce == false}) to compare against the production
-     * {@code commit_file_v2} ({@code coalesce == true}). Production code uses the public constructor above,
-     * which always coalesces.
+     * @param coalesce when true, uses {@code commit_file_v2} to collapse contiguous same-partition runs
+     *                 into fewer {@code batches} rows; when false, uses the legacy {@code commit_file_v1}.
+     *                 Controlled by {@code inkless.control.plane.batch.coalescing.enabled}.
      */
     CommitFileJob(final Time time,
                   final DSLContext jooqCtx,

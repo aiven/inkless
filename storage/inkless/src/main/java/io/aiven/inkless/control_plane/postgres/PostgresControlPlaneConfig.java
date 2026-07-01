@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import org.apache.kafka.common.config.ConfigDef;
+
 import java.util.Map;
 
 public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
@@ -24,11 +26,31 @@ public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
     public static final String READ_CONFIG_PREFIX = "read.";
     public static final String WRITE_CONFIG_PREFIX = "write.";
 
+    public static final String BATCH_COALESCING_ENABLED_CONFIG = "batch.coalescing.enabled";
+    private static final String BATCH_COALESCING_ENABLED_DOC = "When true, commit_file_v2 is used to collapse contiguous "
+        + "same-partition batch runs into a single batches row. "
+        + "Enable only after all brokers support reading coalesced rows. Defaults to false.";
+    private static final boolean BATCH_COALESCING_ENABLED_DEFAULT = false;
+
     private PostgresConnectionConfig readConfig;
     private PostgresConnectionConfig writeConfig;
 
     public PostgresControlPlaneConfig(final Map<?, ?> originals) {
-        super(configDef(), originals);
+        super(
+            PostgresConnectionConfig.configDef()
+                .define(
+                    BATCH_COALESCING_ENABLED_CONFIG,
+                    ConfigDef.Type.BOOLEAN,
+                    BATCH_COALESCING_ENABLED_DEFAULT,
+                    ConfigDef.Importance.MEDIUM,
+                    BATCH_COALESCING_ENABLED_DOC
+                ),
+            originals
+        );
+    }
+
+    public boolean batchCoalescingEnabled() {
+        return getBoolean(BATCH_COALESCING_ENABLED_CONFIG);
     }
 
     public void initializeReadWriteConfigs() {
