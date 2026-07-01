@@ -537,6 +537,11 @@ public class InklessTopicTypeSwitcherClusterTest {
                 .all().get(20, TimeUnit.SECONDS).get(tp).offset();
             log.warn("[stage=produced] topic={} endOffset={}", topic, endOffset);
 
+            // Switch to diskless
+            alterTopicConfigWithIncrementalAlterConfigs(
+                admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            waitForSealOffset(admin, topic, 0, offset -> offset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET);
+
             // Force a concrete seal at the end offset via the operator admin API.
             admin.alterDisklessSwitch(topic, 0, endOffset).all().get(20, TimeUnit.SECONDS);
             waitForSealOffset(admin, topic, 0, offset -> offset == endOffset);

@@ -7688,7 +7688,7 @@ public class ReplicationControlManagerTest {
     public void testAlterDisklessSwitchForcesSeal() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
-        Uuid topicId = createDisklessTestTopic(ctx);
+        Uuid topicId = createSwitchingTestTopic(ctx);
 
         ControllerResult<AlterDisklessSwitchResponseData> result =
             replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
@@ -7706,7 +7706,7 @@ public class ReplicationControlManagerTest {
     public void testAlterDisklessSwitchAbortsSwitch() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
-        Uuid topicId = createDisklessTestTopic(ctx);
+        Uuid topicId = createSwitchingTestTopic(ctx);
 
         // Seal first, then abort back to classic.
         ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
@@ -7728,7 +7728,7 @@ public class ReplicationControlManagerTest {
     public void testAlterDisklessSwitchReArms() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
-        Uuid topicId = createDisklessTestTopic(ctx);
+        Uuid topicId = createSwitchingTestTopic(ctx);
 
         // Seal first so there is dependent switch metadata to drop on re-arm.
         ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
@@ -7751,7 +7751,7 @@ public class ReplicationControlManagerTest {
     public void testAlterDisklessSwitchRejectsInvalidOffset() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
-        createDisklessTestTopic(ctx);
+        createSwitchingTestTopic(ctx);
 
         assertThrows(InvalidRequestException.class, () ->
             replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
@@ -7772,6 +7772,28 @@ public class ReplicationControlManagerTest {
     }
 
     @Test
+    public void testAlterDisklessSwitchRejectsPartitionNotInSwitch() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        // Born-diskless topic: diskless.enable=true but never part of a switch (classicToDisklessStartOffset=-1).
+        CreateTopicsRequestData.CreatableTopicConfigCollection configs =
+            new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(DISKLESS_ENABLE_CONFIG).setValue("true"));
+        CreateTopicsRequestData request = new CreateTopicsRequestData();
+        request.topics().add(new CreatableTopic()
+            .setName("foo").setNumPartitions(-1).setReplicationFactor((short) -1).setConfigs(configs));
+        ctx.replay(replicationControl.createTopics(
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo")).records());
+
+        assertThrows(InvalidRequestException.class, () ->
+            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+                .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L)));
+    }
+
+    @Test
     public void testAlterDisklessSwitchRejectsUnknownTopic() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
@@ -7785,7 +7807,7 @@ public class ReplicationControlManagerTest {
     public void testAlterDisklessSwitchRejectsUnknownPartition() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
-        createDisklessTestTopic(ctx);
+        createSwitchingTestTopic(ctx);
 
         assertThrows(UnknownTopicOrPartitionException.class, () ->
             replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
@@ -7794,27 +7816,25 @@ public class ReplicationControlManagerTest {
 
     private static ReplicationControlTestContext disklessSwitchTestContext() {
         return new ReplicationControlTestContext.Builder()
+            .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
             .setDisklessStorageSystemEnabled(true)
             .build();
     }
 
-    private static Uuid createDisklessTestTopic(ReplicationControlTestContext ctx) {
+    private static Uuid createSwitchingTestTopic(ReplicationControlTestContext ctx) {
         ctx.registerBrokers(0, 1, 2);
         ctx.unfenceBrokers(0, 1, 2);
-        CreateTopicsRequestData.CreatableTopicConfigCollection configs =
-            new CreateTopicsRequestData.CreatableTopicConfigCollection();
-        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
-            .setName(DISKLESS_ENABLE_CONFIG).setValue("true"));
-        CreateTopicsRequestData request = new CreateTopicsRequestData();
-        request.topics().add(new CreatableTopic()
-            .setName("foo")
-            .setNumPartitions(-1)
-            .setReplicationFactor((short) -1)
-            .setConfigs(configs));
-        ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
-            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
-        assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
-        ctx.replay(result.records());
-        return result.response().topics().find("foo").topicId();
+        Uuid topicId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+            Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0).topicId();
+
+        ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+        Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+            resource, Map.of(DISKLESS_ENABLE_CONFIG,
+                new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+        List<ApiMessageAndVersion> switchRecords = ctx.replicationControl.markClassicToDisklessSwitchStarted(
+            configChanges, Map.of(resource, ApiError.NONE));
+        ctx.replay(ctx.configurationControl.incrementalAlterConfigs(configChanges, true).records());
+        ctx.replay(switchRecords);
+        return topicId;
     }
 }

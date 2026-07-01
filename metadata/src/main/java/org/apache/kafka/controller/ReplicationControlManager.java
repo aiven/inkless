@@ -1708,6 +1708,11 @@ public class ReplicationControlManager {
             throw new UnknownTopicOrPartitionException("Partition not found: " +
                 request.topicName() + "-" + request.partitionIndex());
         }
+        if (partition.classicToDisklessStartOffset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+            throw new InvalidRequestException("Partition " + request.topicName() + "-" +
+                request.partitionIndex() + " is not part of a classic-to-diskless switch; there is " +
+                "nothing to override.");
+        }
 
         PartitionChangeRecord record = new PartitionChangeRecord()
             .setTopicId(topicId)
