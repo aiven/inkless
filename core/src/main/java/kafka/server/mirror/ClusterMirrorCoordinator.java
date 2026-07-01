@@ -77,6 +77,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -756,8 +757,10 @@ public class ClusterMirrorCoordinator {
             () -> {
                 try {
                     metadataManager.truncateToLastMirrorEpochs(mirrorName, topicPartitions)
-                        .whenComplete((epochs, error) -> {
-                            if (error != null) {
+                        .whenComplete((epochs, rawError) -> {
+                            if (rawError != null) {
+                                Throwable error = rawError instanceof CompletionException && rawError.getCause() != null
+                                        ? rawError.getCause() : rawError;
                                 if (error instanceof UnsupportedVersionException) {
                                     log.warn("Source cluster doesn't support DescribeClusterMirror API. " +
                                         "Replication will be one-way without failback");
