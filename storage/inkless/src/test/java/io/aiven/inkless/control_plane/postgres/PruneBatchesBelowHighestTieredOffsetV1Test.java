@@ -168,6 +168,8 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
         final String objectKey = "obj-prune-partial";
         final int b1 = 300;
         final int b2 = 300;
+        // Non-coalescing commit so the two contiguous same-partition batches stay as two distinct rows;
+        // this test asserts on per-batch prune boundaries. Coalescing (production default) would merge them.
         new CommitFileJob(
             time,
             pgContainer.getJooqCtx(),
@@ -179,6 +181,7 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
                 CommitBatchRequest.of(0, T0P0, 0, b1, 0L, 10L, 1000L, TimestampType.CREATE_TIME),
                 CommitBatchRequest.of(0, T0P0, b1, b2, 11L, 25L, 1000L, TimestampType.CREATE_TIME)
             ),
+            false,
             durationCallback
         ).call();
 
@@ -204,6 +207,8 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
         final String objectKey = "obj-prune-bytes";
         final int b1 = 300;
         final int b2 = 500;
+        // Non-coalescing commit so the two contiguous same-partition batches stay as two distinct rows;
+        // this test asserts on per-batch byte accounting after prune. Coalescing would merge them.
         new CommitFileJob(
             time,
             pgContainer.getJooqCtx(),
@@ -215,6 +220,7 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
                 CommitBatchRequest.of(0, T0P0, 0, b1, 0L, 10L, 1000L, TimestampType.CREATE_TIME),
                 CommitBatchRequest.of(0, T0P0, b1, b2, 11L, 25L, 1000L, TimestampType.CREATE_TIME)
             ),
+            false,
             durationCallback
         ).call();
         assertThat(singleLog().getByteSize()).isEqualTo(b1 + b2);
@@ -236,6 +242,8 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
         final String objectKey = "obj-prune-delete-records-partial";
         final int b1 = 300;
         final int b2 = 300;
+        // Non-coalescing commit so the two contiguous same-partition batches stay as two distinct rows;
+        // this test asserts on per-batch prune/delete-records interaction. Coalescing would merge them.
         new CommitFileJob(
             time,
             pgContainer.getJooqCtx(),
@@ -247,6 +255,7 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
                 CommitBatchRequest.of(0, T0P0, 0, b1, 0L, 10L, 1000L, TimestampType.CREATE_TIME),
                 CommitBatchRequest.of(0, T0P0, b1, b2, 11L, 25L, 1000L, TimestampType.CREATE_TIME)
             ),
+            false,
             durationCallback
         ).call();
         new DeleteRecordsJob(
