@@ -5371,7 +5371,7 @@ public class ReplicationControlManagerTest {
         }
 
         @Test
-        public void testReassignDisklessPartitionsToFencedBrokerExcludesFromIsr() {
+        public void testReassignDisklessPartitionsToFencedBrokerIncludesInIsr() {
             MetadataVersion metadataVersion = MetadataVersion.latestTesting();
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setMetadataVersion(metadataVersion)
@@ -5405,10 +5405,10 @@ public class ReplicationControlManagerTest {
 
             ctx.replay(alterResult.records());
 
-            // Verify replicas include both, but ISR only includes the active broker
+            // Verify replicas include both, and ISR includes all replicas (diskless: data in object storage)
             PartitionRegistration partition = replication.getPartition(createResult.topicId(), 0);
             assertEquals(List.of(1, 2), Replicas.toList(partition.replicas));
-            assertEquals(List.of(1), Replicas.toList(partition.isr));
+            assertEquals(List.of(1, 2), Replicas.toList(partition.isr));
         }
 
         @Test
@@ -5446,7 +5446,48 @@ public class ReplicationControlManagerTest {
         }
 
         @Test
-        public void testPeriodicLeaderBalancingSkipsDisklessTopics() {
+        public void testPeriodicLeaderBalancingSkipsUnmanagedDisklessTopics() {
+            MetadataVersion metadataVersion = MetadataVersion.latestTesting();
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(metadataVersion)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(false)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1);
+            ctx.unfenceBrokers(0, 1);
+
+            // Create a diskless topic with RF=1 (unmanaged — no manual assignment allowed)
+            String disklessTopic = "diskless-foo";
+            ctx.createTestTopic(disklessTopic, 1, (short) 1,
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"), NONE.code());
+
+            // Create an imbalanced classic topic to prove the balancer is functional
+            CreatableTopicResult classicResult = ctx.createTestTopic(
+                "classic-foo", new int[][] {new int[] {0, 1}});
+            // Reassign to [1, 0] — makes it imbalanced (preferred=1, leader=0)
+            ControllerResult<AlterPartitionReassignmentsResponseData> alterResult =
+                replication.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName("classic-foo").setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0).setReplicas(List.of(1, 0)))))));
+            ctx.replay(alterResult.records());
+
+            // Balancer produces records for the imbalanced classic topic but NOT for unmanaged diskless
+            ControllerResult<Boolean> balanceResult = replication.maybeBalancePartitionLeaders();
+            assertEquals(1, balanceResult.records().size(),
+                "Balancer should produce exactly one record (classic topic only, not diskless)");
+
+            // Verify only the classic topic was rebalanced
+            ctx.replay(balanceResult.records());
+            PartitionRegistration classicPartition = replication.getPartition(classicResult.topicId(), 0);
+            assertEquals(1, classicPartition.leader,
+                "Classic topic leader should move to preferred replica");
+        }
+
+        @Test
+        public void testPeriodicLeaderBalancingRebalancesManagedDisklessTopics() {
             MetadataVersion metadataVersion = MetadataVersion.latestTesting();
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setMetadataVersion(metadataVersion)
@@ -5473,17 +5514,65 @@ public class ReplicationControlManagerTest {
                             new ReassignablePartition().setPartitionIndex(0).setReplicas(List.of(1, 0)))))));
             ctx.replay(alterResult.records());
 
-            // Verify partition has preferred replica 1 but leader 0 (imbalanced from classic perspective)
+            // Verify partition has preferred replica 1 but leader 0 (imbalanced)
             PartitionRegistration partition = replication.getPartition(createResult.topicId(), 0);
             assertEquals(List.of(1, 0), Replicas.toList(partition.replicas));
             assertEquals(0, partition.leader);
             assertFalse(partition.hasPreferredLeader(),
                 "Leader should not be the preferred replica after reassignment");
 
-            // Periodic leader balancing should produce NO records for diskless topics
+            // Periodic leader balancing SHOULD rebalance managed diskless topics
             ControllerResult<Boolean> balanceResult = replication.maybeBalancePartitionLeaders();
-            assertTrue(balanceResult.records().isEmpty(),
-                "Periodic leader balancing should skip diskless topics");
+            assertFalse(balanceResult.records().isEmpty(),
+                "Periodic leader balancing should rebalance managed diskless topics");
+
+            // Replay balance records and verify leader moved to preferred replica
+            ctx.replay(balanceResult.records());
+            PartitionRegistration balanced = replication.getPartition(createResult.topicId(), 0);
+            assertEquals(1, balanced.leader,
+                "Leader should have moved to preferred replica after balancing");
+            assertTrue(balanced.hasPreferredLeader(),
+                "Partition should now have preferred leader after balancing");
+        }
+
+        @Test
+        public void testManagedDisklessIsrExpandsOnBrokerUnfenced() {
+            MetadataVersion metadataVersion = MetadataVersion.latestTesting();
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(metadataVersion)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Create a diskless topic with RF=3
+            String disklessTopic = "diskless-foo";
+            CreatableTopicResult createResult = ctx.createTestTopic(
+                disklessTopic, new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0);
+
+            // Verify initial ISR = [0, 1, 2]
+            PartitionRegistration partition = replication.getPartition(createResult.topicId(), 0);
+            assertEquals(List.of(0, 1, 2), Replicas.toList(partition.isr));
+            assertEquals(0, partition.leader);
+
+            // Fence broker 0 (current leader) — ISR shrinks, leader moves
+            ctx.fenceBrokers(0);
+            partition = replication.getPartition(createResult.topicId(), 0);
+            assertEquals(2, partition.isr.length, "ISR should shrink on fencing");
+            assertNotEquals(0, partition.leader, "Leader should move away from fenced broker");
+
+            // Unfence broker 0 — ISR should expand back to include all replicas
+            ctx.unfenceBrokers(0, 1, 2);
+            partition = replication.getPartition(createResult.topicId(), 0);
+            assertEquals(3, partition.isr.length,
+                "ISR should expand back to all replicas after unfencing for diskless managed topics");
+            assertTrue(Replicas.contains(partition.isr, 0), "Broker 0 should be back in ISR");
+            assertTrue(Replicas.contains(partition.isr, 1), "Broker 1 should be in ISR");
+            assertTrue(Replicas.contains(partition.isr, 2), "Broker 2 should be in ISR");
         }
 
         @Test
@@ -5558,7 +5647,7 @@ public class ReplicationControlManagerTest {
         }
 
         @Test
-        public void testAddPartitionsIsrExcludesFencedBrokers() {
+        public void testAddPartitionsIsrIncludesFencedBrokersForDiskless() {
             MetadataVersion metadataVersion = MetadataVersion.latestTesting();
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setMetadataVersion(metadataVersion)
@@ -5587,10 +5676,60 @@ public class ReplicationControlManagerTest {
             assertEquals(NONE.code(), addResult.response().get(0).errorCode());
             ctx.replay(addResult.records());
 
-            // Replicas include both, but ISR only includes the active broker
+            // For diskless topics, ISR includes all replicas regardless of fenced state
             PartitionRegistration partition = replication.getPartition(createResult.topicId(), 1);
             assertEquals(List.of(1, 2), Replicas.toList(partition.replicas));
-            assertEquals(List.of(1), Replicas.toList(partition.isr));
+            assertEquals(List.of(1, 2), Replicas.toList(partition.isr));
+        }
+
+        @Test
+        public void testAddPartitionsRejectsAllFencedBrokersForDiskless() {
+            MetadataVersion metadataVersion = MetadataVersion.latestTesting();
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(metadataVersion)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            String topic = "foo";
+            ctx.createTestTopic(topic, new int[][] {new int[] {0, 1}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0);
+
+            // Fence brokers 1 and 2
+            ctx.fenceBrokers(1, 2);
+
+            // Add partition with manual assignment where ALL target brokers are fenced
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_PARTITIONS);
+            ControllerResult<List<CreatePartitionsTopicResult>> addResult =
+                replication.createPartitions(requestContext, List.of(
+                    new CreatePartitionsTopic().setName(topic).setCount(2).setAssignments(List.of(
+                        new CreatePartitionsAssignment().setBrokerIds(List.of(1, 2))))));
+            assertEquals(INVALID_REPLICA_ASSIGNMENT.code(), addResult.response().get(0).errorCode(),
+                "Should reject when all target brokers are fenced — no active leader possible");
+        }
+
+        @Test
+        public void testCreateTopicManualAssignmentRejectsAllFencedBrokersForDiskless() {
+            MetadataVersion metadataVersion = MetadataVersion.latestTesting();
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(metadataVersion)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Fence brokers 1 and 2
+            ctx.fenceBrokers(1, 2);
+
+            // Create topic with manual assignment where all brokers are fenced — should be rejected
+            ctx.createTestTopic("bar", new int[][] {new int[] {1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"), INVALID_REPLICA_ASSIGNMENT.code());
         }
 
         @Test
@@ -5912,6 +6051,44 @@ public class ReplicationControlManagerTest {
                 replication.createTopics(requestContext, request, Set.of("foo"));
             assertEquals(Errors.INVALID_REPLICATION_FACTOR.code(),
                 result.response().topics().find("foo").errorCode());
+        }
+
+        @Test
+        public void testUnfenceExpandsIsrAndClearsElr() {
+            // Regression test: expandIsrForDisklessManagedPartitions must reconcile ELR so that
+            // a broker added back to ISR on unfence is removed from ELR (ISR ∩ ELR = ∅, KIP-966).
+            MetadataVersion metadataVersion = MetadataVersion.latestTesting();
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(metadataVersion)
+                .setIsElrEnabled(true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Create a diskless topic with RF=3 and minISR=3 so any fencing drives ISR below minISR.
+            CreatableTopicResult createResult = ctx.createTestTopic("foo",
+                new int[][] {new int[] {0, 1, 2}}, Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0);
+            ctx.alterTopicConfig("foo", TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "3");
+            Uuid topicId = createResult.topicId();
+
+            // Fence broker 2: ISR shrinks to {0, 1}, ELR gets {2} (ISR < minISR=3).
+            ctx.fenceBrokers(2);
+            PartitionRegistration afterFence = replication.getPartition(topicId, 0);
+            assertFalse(Replicas.contains(afterFence.isr, 2), "broker 2 must be out of ISR after fencing");
+            assertTrue(Replicas.contains(afterFence.elr, 2), "broker 2 must be in ELR after fencing");
+
+            // Unfence broker 2: expandIsrForDisklessManagedPartitions fires.
+            ctx.unfenceBrokers(2);
+            PartitionRegistration afterUnfence = replication.getPartition(topicId, 0);
+
+            // ISR must contain broker 2 again.
+            assertTrue(Replicas.contains(afterUnfence.isr, 2), "broker 2 must be back in ISR after unfencing");
+            // ELR must NOT contain broker 2 — ISR ∩ ELR = ∅ invariant (KIP-966).
+            assertFalse(Replicas.contains(afterUnfence.elr, 2), "broker 2 must not be in ELR after ISR expansion");
         }
     }
 
