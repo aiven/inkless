@@ -5221,10 +5221,9 @@ public class KafkaAdminClient extends AdminClient {
     @Override
     public DescribeClusterMirrorsResult describeClusterMirrors(Collection<String> mirrorNames, DescribeClusterMirrorsOptions options) {
         final KafkaFutureImpl<Map<String, ClusterMirrorDesc>> all = new KafkaFutureImpl<>();
+        final KafkaFutureImpl<Map<Uuid, Map<Integer, Integer>>> lineageAll = new KafkaFutureImpl<>();
         final long nowMetadata = time.milliseconds();
         final long deadline = calcDeadlineMs(nowMetadata, options.timeoutMs());
-        // We query all brokers to get up-to-date lag AND state
-        // Each broker that's actively fetching partitions already has state in its local cache
         runnable.call(new Call("findAllBrokers", deadline, new LeastLoadedNodeProvider()) {
             @Override
             MetadataRequest.Builder createRequest(int timeoutMs) {
@@ -5241,7 +5240,7 @@ public class KafkaAdminClient extends AdminClient {
                     throw new StaleMetadataException("Metadata fetch failed due to missing broker list");
 
                 HashSet<Node> allNodes = new HashSet<>(nodes);
-                final DescribeClusterMirrorsResults results = new DescribeClusterMirrorsResults(allNodes, mirrorNames, all);
+                final DescribeClusterMirrorsResults results = new DescribeClusterMirrorsResults(allNodes, mirrorNames, all, lineageAll);
 
                 for (final Node node : allNodes) {
                     final long nowDescribe = time.milliseconds();
@@ -5251,6 +5250,9 @@ public class KafkaAdminClient extends AdminClient {
                             DescribeClusterMirrorsRequestData data = new DescribeClusterMirrorsRequestData()
                                 .setMirrorNames(new ArrayList<>(mirrorNames))
                                 .setIncludeAuthorizedOperations(options.includeAuthorizedOperations());
+                            if (!options.topicLineages().isEmpty()) {
+                                data.setTopicLineages(new ArrayList<>(options.topicLineages()));
+                            }
                             return new DescribeClusterMirrorsRequest.Builder(data);
                         }
 
@@ -5261,6 +5263,7 @@ public class KafkaAdminClient extends AdminClient {
                                 for (DescribeClusterMirrorsResponseData.DescribedMirror mirror : response.data().mirrors()) {
                                     results.handleMirror(mirror);
                                 }
+                                results.handleLineageResults(response.data().lineageResults());
                                 results.tryComplete(node);
                             }
                         }
@@ -5280,10 +5283,11 @@ public class KafkaAdminClient extends AdminClient {
             void handleFailure(Throwable throwable) {
                 KafkaException exception = new KafkaException("Failed to find brokers to send DescribeMirrors", throwable);
                 all.completeExceptionally(exception);
+                lineageAll.completeExceptionally(exception);
             }
         }, nowMetadata);
 
-        return new DescribeClusterMirrorsResult(all);
+        return new DescribeClusterMirrorsResult(all, lineageAll);
     }
 
     private static final class DescribeClusterMirrorsResults {
@@ -5292,15 +5296,20 @@ public class KafkaAdminClient extends AdminClient {
         private final boolean describeAll;
         private final HashSet<Node> remaining;
         private final KafkaFutureImpl<Map<String, ClusterMirrorDesc>> allFuture;
+        private final KafkaFutureImpl<Map<Uuid, Map<Integer, Integer>>> lineageFuture;
+        private final Map<Uuid, Map<Integer, Integer>> lineageEpochs;
 
         DescribeClusterMirrorsResults(Collection<Node> brokers,
                                Collection<String> mirrorNames,
-                               KafkaFutureImpl<Map<String, ClusterMirrorDesc>> allFuture) {
+                               KafkaFutureImpl<Map<String, ClusterMirrorDesc>> allFuture,
+                               KafkaFutureImpl<Map<Uuid, Map<Integer, Integer>>> lineageFuture) {
             this.partialDescriptions = new HashMap<>();
             this.requestedMirrors = new HashSet<>(mirrorNames);
             this.describeAll = mirrorNames.isEmpty();
             this.remaining = new HashSet<>(brokers);
             this.allFuture = allFuture;
+            this.lineageFuture = lineageFuture;
+            this.lineageEpochs = new HashMap<>();
 
             // Pre-populate partial descriptions only if specific mirrors are requested
             if (!describeAll) {
@@ -5328,6 +5337,15 @@ public class KafkaAdminClient extends AdminClient {
             partial.merge(mirror);
         }
 
+        synchronized void handleLineageResults(List<DescribeClusterMirrorsResponseData.LineageTopicResult> results) {
+            for (DescribeClusterMirrorsResponseData.LineageTopicResult topic : results) {
+                Map<Integer, Integer> partitionEpochs = lineageEpochs.computeIfAbsent(topic.topicId(), k -> new HashMap<>());
+                for (DescribeClusterMirrorsResponseData.LineagePartitionResult partition : topic.partitions()) {
+                    partitionEpochs.merge(partition.partitionIndex(), partition.lastMirrorEpoch(), Math::max);
+                }
+            }
+        }
+
         synchronized void tryComplete(Node broker) {
             remaining.remove(broker);
             tryComplete();
@@ -5349,8 +5367,10 @@ public class KafkaAdminClient extends AdminClient {
                 }
                 if (descriptions.isEmpty() && firstError != null) {
                     allFuture.completeExceptionally(firstError);
+                    lineageFuture.completeExceptionally(firstError);
                 } else {
                     allFuture.complete(descriptions);
+                    lineageFuture.complete(lineageEpochs);
                 }
             }
         }
@@ -5358,6 +5378,9 @@ public class KafkaAdminClient extends AdminClient {
         synchronized void completeAllExceptionally(Throwable throwable) {
             if (!allFuture.isDone()) {
                 allFuture.completeExceptionally(throwable);
+            }
+            if (!lineageFuture.isDone()) {
+                lineageFuture.completeExceptionally(throwable);
             }
         }
 

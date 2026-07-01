@@ -22,7 +22,6 @@ import kafka.server.mirror.ClusterMirrorUtils.FailedPartitionInfo;
 import kafka.server.mirror.ClusterMirrorUtils.PartitionKey;
 
 import org.apache.kafka.clients.CommonClientConfigs;
-import org.apache.kafka.clients.admin.ClusterMirrorDesc;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
@@ -749,22 +748,22 @@ public class ClusterMirrorCoordinator {
         return future;
     }
 
-    /** Schedules truncation to align replicas with last mirrored epoch. */
+    /** Schedules truncation to align replicas with last mirror epoch. */
     private void scheduleTruncation(String mirrorName, Set<TopicPartition> topicPartitions) {
         final Consumer<TopicPartition> truncateCallback =
             partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING, null);
-        scheduler.scheduleOnce("LastMirrorEpochsTruncation",
+        scheduler.scheduleOnce("LastMirrorEpochTruncation",
             () -> {
                 try {
                     metadataManager.truncateToLastMirrorEpochs(mirrorName, topicPartitions)
-                        .whenComplete((descriptions, error) -> {
+                        .whenComplete((epochs, error) -> {
                             if (error != null) {
                                 if (error instanceof UnsupportedVersionException) {
                                     log.warn("Source cluster doesn't support DescribeClusterMirror API. " +
                                         "Replication will be one-way without failback");
-                                    Map<TopicPartition, Integer> epochs = topicPartitions.stream()
+                                    Map<TopicPartition, Integer> fallback = topicPartitions.stream()
                                         .collect(Collectors.toMap(tp -> tp, tp -> -1));
-                                    replicaManager.maybeTruncateForLeaderEpoch(epochs, truncateCallback);
+                                    replicaManager.maybeTruncateForLeaderEpoch(fallback, truncateCallback);
                                 } else {
                                     log.warn("Failed to truncate to last mirrored epoch for mirror {}", mirrorName, error);
                                     transitionTo(mirrorName, topicPartitions, MirrorPartitionState.FAILED, error.getMessage());
@@ -772,24 +771,6 @@ public class ClusterMirrorCoordinator {
                                 return;
                             }
 
-                            ClusterMirrorDesc description = descriptions.get(mirrorName);
-                            if (description == null) {
-                                log.warn("Mirror {} not found in source cluster. Replication will be one-way without failback",
-                                    mirrorName);
-                                Map<TopicPartition, Integer> epochs = topicPartitions.stream()
-                                    .collect(Collectors.toMap(tp -> tp, tp -> -1));
-                                replicaManager.maybeTruncateForLeaderEpoch(epochs, truncateCallback);
-                                return;
-                            }
-
-                            Map<TopicPartition, Integer> epochs = new HashMap<>();
-                            description.topics().forEach((topicName, leaderState) -> {
-                                leaderState.forEach(leaderStateEntry -> {
-                                    epochs.put(leaderStateEntry.topicPartition(), leaderStateEntry.lastMirrorEpoch());
-                                });
-                            });
-
-                            // if the source cluster doesn't have mirror info, no result will be returned.
                             if (epochs.size() != topicPartitions.size()) {
                                 topicPartitions.forEach(partition -> {
                                     if (!epochs.containsKey(partition)) {
@@ -798,8 +779,7 @@ public class ClusterMirrorCoordinator {
                                 });
                             }
 
-                            replicaManager.maybeTruncateForLeaderEpoch(epochs,
-                                    partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING, null));
+                            replicaManager.maybeTruncateForLeaderEpoch(epochs, truncateCallback);
                         });
                 } catch (Exception e) {
                     log.warn("Failed to truncate to last mirror epochs for mirror {}", mirrorName, e);

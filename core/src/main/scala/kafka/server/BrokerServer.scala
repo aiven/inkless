@@ -343,6 +343,7 @@ class BrokerServer(
 
       val mirrorScheduler = new KafkaScheduler(1, true, "ClusterMirror-")
       mirrorMetadataManager = new MirrorMetadataManager(
+        clusterId,
         config,
         clientToControllerChannelManager,
         () => replicaManager,

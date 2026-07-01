@@ -28,9 +28,9 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.AlterConfigOp;
-import org.apache.kafka.clients.admin.ClusterMirrorDesc;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.DescribeClusterMirrorsOptions;
 import org.apache.kafka.clients.admin.DescribeClusterMirrorsResult;
 import org.apache.kafka.clients.admin.GroupListing;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsSpec;
@@ -57,6 +57,7 @@ import org.apache.kafka.common.message.CreateAclsRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
+import org.apache.kafka.common.message.DescribeClusterMirrorsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
 import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.message.ReadMirrorStatesRequestData;
@@ -161,9 +162,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Logger log;
     private volatile boolean isInitialized = false;
     private final String name;
+    private final String clusterId;
+    private final KafkaConfig brokerConfig;
     private final int nodeId;
 
-    private final KafkaConfig brokerConfig;
     private final NodeToControllerChannelManager channelManager;
     private final Supplier<ReplicaManager> replicaManagerSupplier;
     private final MetadataCache metadataCache;
@@ -201,6 +203,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final AtomicLong aclSyncError;
 
     public MirrorMetadataManager(
+        String clusterId,
         KafkaConfig brokerConfig,
         NodeToControllerChannelManager channelManager,
         Supplier<ReplicaManager> replicaManagerSupplier,
@@ -209,6 +212,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         Metrics metrics,
         Time time
     ) {
+        this.clusterId = clusterId;
         this.brokerConfig = brokerConfig;
         this.name = "[" + MirrorMetadataManager.class.getSimpleName() + " id=" + brokerConfig.nodeId() + "] ";
         this.log = new LogContext(name).logger(MirrorMetadataManager.class);
@@ -2067,13 +2071,44 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /** Truncates local replicas using last mirrored leader epochs from this broker's coordinator cache. */
-    CompletionStage<Map<String, ClusterMirrorDesc>> truncateToLastMirrorEpochs(
+    CompletionStage<Map<TopicPartition, Integer>> truncateToLastMirrorEpochs(
             String mirrorName, Set<TopicPartition> topicPartitionSet) {
         log.info("Truncating to last mirrored epochs from local state for mirror {}: {}", mirrorName, topicPartitionSet);
         Admin admin = getOrCreateSourceAdmin(mirrorName);
-        DescribeClusterMirrorsResult result = admin.describeClusterMirrors(List.of(mirrorName));
-        return result.allDescriptions().toCompletionStage()
+
+        String srcClusterId = getSourceClusterId(mirrorName);
+        Map<Uuid, List<Integer>> topicPartitionsByTopicId = new HashMap<>();
+        for (TopicPartition tp : topicPartitionSet) {
+            Uuid topicId = metadataCache.getTopicId(tp.topic());
+            topicPartitionsByTopicId.computeIfAbsent(topicId, k -> new ArrayList<>()).add(tp.partition());
+        }
+
+        List<DescribeClusterMirrorsRequestData.TopicLineage> lineages = topicPartitionsByTopicId.entrySet().stream()
+                .map(e -> new DescribeClusterMirrorsRequestData.TopicLineage()
+                        .setTopicId(e.getKey())
+                        .setPartitions(e.getValue())
+                        .setSrcClusterId(srcClusterId != null ? srcClusterId : "")
+                        .setDstClusterId(clusterId))
+                .collect(Collectors.toList());
+
+        DescribeClusterMirrorsOptions options = new DescribeClusterMirrorsOptions()
+                .topicLineages(lineages);
+        DescribeClusterMirrorsResult result = admin.describeClusterMirrors(List.of(mirrorName), options);
+
+        return result.lineageEpochs().toCompletionStage()
                 .toCompletableFuture()
+                .thenApply(lineageEpochs -> {
+                    Map<TopicPartition, Integer> epochs = new HashMap<>();
+                    if (!lineageEpochs.isEmpty()) {
+                        lineageEpochs.forEach((topicId, partitionEpochs) -> {
+                            Optional<String> topicName = metadataCache.getTopicName(topicId);
+                            topicName.ifPresent(name ->
+                                    partitionEpochs.forEach((partIdx, lme) ->
+                                            epochs.put(new TopicPartition(name, partIdx), lme)));
+                        });
+                    }
+                    return epochs;
+                })
                 .orTimeout(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
     }
 

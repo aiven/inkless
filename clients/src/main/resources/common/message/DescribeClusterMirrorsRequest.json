@@ -25,6 +25,17 @@
     { "name": "MirrorNames", "type": "[]string", "versions": "0+", "entityType": "mirrorName",
       "about": "The names of the mirrors to describe. Null or empty array means all mirrors." },
     { "name": "IncludeAuthorizedOperations", "type": "bool", "versions": "0+", "default": "false",
-      "about": "Whether to include authorized operations." }
+      "about": "Whether to include authorized operations." },
+    { "name": "TopicLineages", "type": "[]TopicLineage", "versions": "0+",
+      "about": "Topic lineages for cross-mirror LME lookup during topology changes.", "fields": [
+      { "name": "TopicId", "type": "uuid", "versions": "0+",
+        "about": "The topic ID." },
+      { "name": "Partitions", "type": "[]int32", "versions": "0+",
+        "about": "The partition indexes." },
+      { "name": "SrcClusterId", "type": "string", "versions": "0+",
+        "about": "The source cluster ID from the requesting cluster's mirror config." },
+      { "name": "DstClusterId", "type": "string", "versions": "0+",
+        "about": "The requesting cluster's own cluster ID." }
+    ]}
   ]
 }

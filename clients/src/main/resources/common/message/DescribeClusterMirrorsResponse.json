@@ -60,6 +60,18 @@
           }
         ]}
       ]}
+    ]},
+    { "name": "LineageResults", "type": "[]LineageTopicResult", "versions": "0+",
+      "about": "LME results from cross-mirror topic lineage matching.", "fields": [
+      { "name": "TopicId", "type": "uuid", "versions": "0+",
+        "about": "The topic ID." },
+      { "name": "Partitions", "type": "[]LineagePartitionResult", "versions": "0+",
+        "about": "Per-partition LME from lineage matching.", "fields": [
+        { "name": "PartitionIndex", "type": "int32", "versions": "0+",
+          "about": "The partition index." },
+        { "name": "LastMirrorEpoch", "type": "int32", "versions": "0+", "default": "-1",
+          "about": "The max last mirror epoch across all matching mirrors, or -1 if not found." }
+      ]}
     ]}
   ]
 }
