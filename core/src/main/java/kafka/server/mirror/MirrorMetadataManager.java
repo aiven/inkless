@@ -24,6 +24,7 @@ import kafka.server.mirror.ClusterMirrorUtils.FailedPartitionInfo;
 import kafka.server.mirror.ClusterMirrorUtils.PartitionKey;
 
 import org.apache.kafka.clients.ClientResponse;
+import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.AlterConfigOp;
@@ -175,10 +176,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private volatile MirrorStateSender mirrorStateSender; // raw WriteMirrorStates/ReadMirrorStates RPCs to coord brokers
     private final Map<String, Admin> srcAdmins = new ConcurrentHashMap<>(); // source cluster metadata discovery (one per mirror)
     private volatile Admin dstAdmin; // group offset and ACLs sync
-
-    // Map from mirror name to cluster id. The cluster id is represented as a String because KIP-78
-    // does not mandate the use of UUIDs for it and assuming so may break compatibility with existing clusters.
-    private final Map<String, String> sourceClusterIds = new ConcurrentHashMap<>();
 
     private final Map<String, Map<TopicPartition, ClusterMirrorUtils.LeaderInfo>> sourceLeaders = new ConcurrentHashMap<>();
     private final Map<PartitionKey, MirrorPartitionState> partitionStates = new ConcurrentHashMap<>();
@@ -369,7 +366,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         }
                         if (connectionConfigChanged || mirrorDeleted) {
                             sourceLeaders.remove(mirrorName);
-                            sourceClusterIds.remove(mirrorName);
                             Admin admin = srcAdmins.remove(mirrorName);
                             if (admin != null) {
                                 admin.close(Duration.ZERO);
@@ -538,7 +534,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         partitionStates.clear();
         partitionStateCounts.clear();
         lastMirrorEpochs.clear();
-        sourceClusterIds.clear();
         sourceLeaders.clear();
         pendingLeaderEpochBumps.clear();
         pendingPartitionStates.clear();
@@ -656,7 +651,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             var clusterResult = srcAdmin.describeCluster();
             String newClusterId = clusterResult.clusterId().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
             if (newClusterId != null && !newClusterId.isEmpty()) {
-                String previousClusterId = sourceClusterIds.put(mirrorName, newClusterId);
+                String previousClusterId = getSourceClusterId(mirrorName);
                 if (previousClusterId != null && !previousClusterId.equals(newClusterId)) {
                     throw new IllegalStateException("Source cluster ID changed for mirror " + mirrorName
                             + ": expected " + previousClusterId + ", got " + newClusterId
@@ -2019,17 +2014,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     String getSourceClusterId(String mirrorName) {
-        String cached = sourceClusterIds.get(mirrorName);
-        if (cached != null) {
-            return cached;
-        }
-
-        try {
-            validateSourceClusterId(mirrorName);
-        } catch (Exception e) {
-            log.warn("Failed to resolve source cluster ID for mirror {}", mirrorName, e);
-        }
-        return sourceClusterIds.get(mirrorName);
+        Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_MIRROR, mirrorName));
+        return (String) props.get(CommonClientConfigs.MIRROR_SOURCE_CLUSTER_ID_CONFIG);
     }
 
     /** Groups loaded partition states by mirror and state, then invokes the callback for each group. */

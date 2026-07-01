@@ -31,6 +31,8 @@ import java.util.List;
 import java.util.Properties;
 import java.util.regex.Pattern;
 
+import static org.apache.kafka.clients.CommonClientConfigs.MIRROR_SOURCE_CLUSTER_ID_CONFIG;
+import static org.apache.kafka.clients.CommonClientConfigs.MIRROR_SOURCE_CLUSTER_ID_DOC;
 import static org.apache.kafka.common.config.ConfigDef.Importance.HIGH;
 import static org.apache.kafka.common.config.ConfigDef.Importance.LOW;
 import static org.apache.kafka.common.config.ConfigDef.Importance.MEDIUM;
@@ -285,6 +287,7 @@ public final class ClusterMirrorConfig {
     public static final ConfigDef CONFIG_DEF = new ConfigDef()
             // Connection
             .define(BOOTSTRAP_SERVERS_CONFIG, LIST, null, HIGH, BOOTSTRAP_SERVERS_DOC)
+            .define(MIRROR_SOURCE_CLUSTER_ID_CONFIG, STRING, null, HIGH, MIRROR_SOURCE_CLUSTER_ID_DOC)
             .define(REQUEST_TIMEOUT_MS_CONFIG, INT, REQUEST_TIMEOUT_MS_DEFAULT, atLeast(0), MEDIUM, REQUEST_TIMEOUT_MS_DOC)
             .define(CONNECTION_SETUP_TIMEOUT_MS_CONFIG, LONG, CONNECTION_SETUP_TIMEOUT_MS_DEFAULT, atLeast(0L), MEDIUM, CONNECTION_SETUP_TIMEOUT_MS_DOC)
             .define(CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG, LONG, CONNECTION_SETUP_TIMEOUT_MAX_MS_DEFAULT, atLeast(0L), MEDIUM, CONNECTION_SETUP_TIMEOUT_MAX_MS_DOC)

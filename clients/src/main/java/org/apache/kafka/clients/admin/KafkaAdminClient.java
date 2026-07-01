@@ -4866,8 +4866,20 @@ public class KafkaAdminClient extends AdminClient {
         final Call call = new Call("createClusterMirror", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
 
+            @SuppressWarnings("unchecked")
             @Override
             CreateClusterMirrorRequest.Builder createRequest(int timeoutMs) {
+                if (!configs.containsKey(CommonClientConfigs.MIRROR_SOURCE_CLUSTER_ID_CONFIG)) {
+                    Map<String, String> mutableConfigs = new HashMap<>(configs);
+                    try (Admin sourceAdmin = Admin.create((Map) mutableConfigs)) {
+                        var sourceClusterId = sourceAdmin.describeCluster().clusterId().get();
+                        mutableConfigs.put(CommonClientConfigs.MIRROR_SOURCE_CLUSTER_ID_CONFIG, sourceClusterId);
+                        return new CreateClusterMirrorRequest.Builder(mirrorName, mutableConfigs);
+                    } catch (Exception e) {
+                        log.error("Failed to get cluster id from source cluster", e);
+                        throw new RuntimeException(e);
+                    }
+                }
                 return new CreateClusterMirrorRequest.Builder(mirrorName, configs);
             }
 

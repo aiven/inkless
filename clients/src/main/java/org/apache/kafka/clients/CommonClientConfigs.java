@@ -247,6 +247,10 @@ public class CommonClientConfigs {
             "metadata for this interval, client repeats the bootstrap process using <code>bootstrap.servers</code> configuration.";
     public static final long DEFAULT_METADATA_RECOVERY_REBOOTSTRAP_TRIGGER_MS = 300 * 1000;
 
+    // the mirror configs for kafka admin client and server use
+    public static final String MIRROR_SOURCE_CLUSTER_ID_CONFIG = "mirror.source.cluster.id";
+    public static final String MIRROR_SOURCE_CLUSTER_ID_DOC = "The mirrored source cluster ID. This is a required configuration when creating a cluster mirror.";
+
     /**
      * Postprocess the configuration so that exponential backoff is disabled when reconnect backoff
      * is explicitly configured but the maximum reconnect backoff is not explicitly configured.
