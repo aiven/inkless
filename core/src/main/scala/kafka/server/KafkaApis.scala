@@ -282,54 +282,54 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleWriteMirrorStates(request: RequestChannel.Request): Unit = {
-    if (ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
-      if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
-        requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData()
-          .setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code).setErrorMessage(Errors.CLUSTER_AUTHORIZATION_FAILED.message)))
-        return
-      }
-      val writeMirrorStatesRequest = request.body[WriteMirrorStatesRequest]
-      val mirrorName = writeMirrorStatesRequest.data().mirrorName()
-      val partitionMetadata = new util.HashMap[String, util.Set[PartitionStateInfo]]()
-      writeMirrorStatesRequest.data().topics().forEach(topic => {
-        val partMetadata = new util.HashSet[PartitionStateInfo]()
-        topic.partitions().forEach(part => {
-          partMetadata.add(new PartitionStateInfo(part.partitionIndex(), MirrorPartitionState.fromValue(part.state()), part.lastMirrorEpoch()))
-        })
-        partitionMetadata.put(topic.name(), partMetadata)
-      })
-      clusterMirrorCoordinator.updateTopicMetadata(mirrorName, partitionMetadata, res => requestHelper.sendMaybeThrottle(request, res))
-    } else {
+    if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring write mirror states request")
       requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData()
         .setErrorCode(Errors.UNSUPPORTED_VERSION.code).setErrorMessage(Errors.UNSUPPORTED_VERSION.message)))
+      return
     }
+    if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+      requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData()
+        .setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code).setErrorMessage(Errors.CLUSTER_AUTHORIZATION_FAILED.message)))
+      return
+    }
+    val writeMirrorStatesRequest = request.body[WriteMirrorStatesRequest]
+    val mirrorName = writeMirrorStatesRequest.data().mirrorName()
+    val partitionMetadata = new util.HashMap[String, util.Set[PartitionStateInfo]]()
+    writeMirrorStatesRequest.data().topics().forEach(topic => {
+      val partMetadata = new util.HashSet[PartitionStateInfo]()
+      topic.partitions().forEach(part => {
+        partMetadata.add(new PartitionStateInfo(part.partitionIndex(), MirrorPartitionState.fromValue(part.state()), part.lastMirrorEpoch()))
+      })
+      partitionMetadata.put(topic.name(), partMetadata)
+    })
+    clusterMirrorCoordinator.updateTopicMetadata(mirrorName, partitionMetadata, res => requestHelper.sendMaybeThrottle(request, res))
   }
 
   def handleReadMirrorStates(request: RequestChannel.Request): Unit = {
-    if (ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
-      if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
-        requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData()
-          .setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code).setErrorMessage(Errors.CLUSTER_AUTHORIZATION_FAILED.message)))
-        return
-      }
-      val readMirrorStatesRequest = request.body[ReadMirrorStatesRequest]
-      val mirrorName = readMirrorStatesRequest.data().mirrorName()
-      val partitionMetadata = new util.HashMap[String, util.Set[Integer]]()
-      readMirrorStatesRequest.data().topics().forEach(topic => {
-        val parts = new util.HashSet[Integer]()
-        topic.partitions().forEach(part => {
-          parts.add(part.partitionIndex())
-        })
-        partitionMetadata.put(topic.name(), parts)
-      })
-      clusterMirrorCoordinator.getTopicMetadata(mirrorName, partitionMetadata,
-        res => requestHelper.sendMaybeThrottle(request, res))
-    } else {
+    if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring read mirror states request")
       requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData()
         .setErrorCode(Errors.UNSUPPORTED_VERSION.code).setErrorMessage(Errors.UNSUPPORTED_VERSION.message)))
+      return
     }
+    if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+      requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData()
+        .setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code).setErrorMessage(Errors.CLUSTER_AUTHORIZATION_FAILED.message)))
+      return
+    }
+    val readMirrorStatesRequest = request.body[ReadMirrorStatesRequest]
+    val mirrorName = readMirrorStatesRequest.data().mirrorName()
+    val partitionMetadata = new util.HashMap[String, util.Set[Integer]]()
+    readMirrorStatesRequest.data().topics().forEach(topic => {
+      val parts = new util.HashSet[Integer]()
+      topic.partitions().forEach(part => {
+        parts.add(part.partitionIndex())
+      })
+      partitionMetadata.put(topic.name(), parts)
+    })
+    clusterMirrorCoordinator.getTopicMetadata(mirrorName, partitionMetadata,
+      res => requestHelper.sendMaybeThrottle(request, res))
   }
 
   def handleStartMirrorTopics(request: RequestChannel.Request): Unit = {
@@ -388,26 +388,27 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleListClusterMirrorsRequest(request: RequestChannel.Request): Unit = {
     val responseData = new ListClusterMirrorsResponseData()
 
-    if (ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
-      val mirrors = new util.ArrayList[ListClusterMirrorsResponseData.ListedMirror]()
-      val authorizedMirrors = clusterMirrorCoordinator.getConfiguredMirrors().asScala
-        .filter(mirrorName => authHelper.authorize(request.context, DESCRIBE, CLUSTER_MIRROR, mirrorName, logIfDenied = false))
-      authorizedMirrors.foreach(mirrorName => {
-        val sourceClusterId = clusterMirrorCoordinator.getSourceClusterId(mirrorName)
-        mirrors.add(new ListClusterMirrorsResponseData.ListedMirror()
-          .setMirrorName(mirrorName)
-          .setSourceBootstrap(if (clusterMirrorCoordinator.getSourceBootstrap(mirrorName) != null)
-            clusterMirrorCoordinator.getSourceBootstrap(mirrorName) else "")
-          .setSourceClusterId(if (sourceClusterId != null) sourceClusterId else "")
-          .setTopicCount(clusterMirrorCoordinator.getActiveTopicCount(mirrorName)))
-      })
-      responseData.setMirrors(mirrors)
-      responseData.setErrorCode(Errors.NONE.code)
-    } else {
+    if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring list mirrors request")
       responseData.setErrorCode(Errors.UNSUPPORTED_VERSION.code)
+      requestHelper.sendMaybeThrottle(request, new ListClusterMirrorsResponse(responseData))
+      return
     }
 
+    val mirrors = new util.ArrayList[ListClusterMirrorsResponseData.ListedMirror]()
+    val authorizedMirrors = clusterMirrorCoordinator.getConfiguredMirrors().asScala
+      .filter(mirrorName => authHelper.authorize(request.context, DESCRIBE, CLUSTER_MIRROR, mirrorName, logIfDenied = false))
+    authorizedMirrors.foreach(mirrorName => {
+      val sourceClusterId = clusterMirrorCoordinator.getSourceClusterId(mirrorName)
+      mirrors.add(new ListClusterMirrorsResponseData.ListedMirror()
+        .setMirrorName(mirrorName)
+        .setSourceBootstrap(if (clusterMirrorCoordinator.getSourceBootstrap(mirrorName) != null)
+          clusterMirrorCoordinator.getSourceBootstrap(mirrorName) else "")
+        .setSourceClusterId(if (sourceClusterId != null) sourceClusterId else "")
+        .setTopicCount(clusterMirrorCoordinator.getActiveTopicCount(mirrorName)))
+    })
+    responseData.setMirrors(mirrors)
+    responseData.setErrorCode(Errors.NONE.code)
     requestHelper.sendMaybeThrottle(request, new ListClusterMirrorsResponse(responseData))
   }
 
@@ -415,84 +416,89 @@ class KafkaApis(val requestChannel: RequestChannel,
     val describeMirrorsRequest = request.body[DescribeClusterMirrorsRequest]
     val responseData = new DescribeClusterMirrorsResponseData()
 
-    if (ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
-      val describeAll = describeMirrorsRequest.data.mirrorNames.isEmpty
-      val requestedMirrors = if (describeAll) {
-        clusterMirrorCoordinator.getConfiguredMirrors().asScala.toSeq
-      } else {
-        describeMirrorsRequest.data.mirrorNames.asScala.toSeq
-      }
-
-      requestedMirrors.foreach { mirrorName =>
-        if (!authHelper.authorize(request.context, DESCRIBE, CLUSTER_MIRROR, mirrorName, logIfDenied = !describeAll)) {
-          if (!describeAll) {
-            responseData.mirrors().add(new DescribeClusterMirrorsResponseData.DescribedMirror()
-              .setMirrorName(mirrorName)
-              .setErrorCode(Errors.CLUSTER_MIRROR_AUTHORIZATION_FAILED.code))
-          }
-        } else {
-          val describedMirror = new DescribeClusterMirrorsResponseData.DescribedMirror()
-            .setMirrorName(mirrorName)
-            .setErrorCode(Errors.NONE.code)
-
-          if (describeMirrorsRequest.data.includeAuthorizedOperations) {
-            describedMirror.setAuthorizedOperations(authHelper.authorizedOperations(
-              request, new Resource(ResourceType.CLUSTER_MIRROR, mirrorName)))
-          }
-
-          // Each broker reports partitions it's responsible for to avoid duplicates
-          val lagInfoMap = replicaManager.getMirrorLagInfo(mirrorName)
-          val partitionStates = clusterMirrorCoordinator.getMirrorStates(mirrorName).asScala
-          val lastMirrorEpoch = clusterMirrorCoordinator.getLastMirrorEpochs(mirrorName)
-          val failedInfo = clusterMirrorCoordinator.getFailedPartitionInfo()
-
-          // Report partition if: (1) we have lag info, OR (2) we're the partition leader and have no lag info
-          val partitionsToReport = (lagInfoMap.keySet ++ partitionStates.keySet.filter { tp =>
-            !lagInfoMap.contains(tp) && replicaManager.onlinePartition(tp).exists(_.isLeader)
-          }).toSeq
-
-          if (partitionsToReport.nonEmpty) {
-            // Group partitions by topic
-            val topicsMap = scala.collection.mutable.Map[String, DescribeClusterMirrorsResponseData.TopicPartitions]()
-
-            partitionsToReport.foreach { topicPartition =>
-              val topicName = topicPartition.topic()
-              val topicPartitions = topicsMap.getOrElseUpdate(topicName, {
-                val tp = new DescribeClusterMirrorsResponseData.TopicPartitions().setTopicName(topicName)
-                tp.setPartitions(new util.ArrayList[DescribeClusterMirrorsResponseData.PartitionDetail]())
-                tp
-              })
-
-              val state = partitionStates.getOrElse(topicPartition, MirrorPartitionState.UNKNOWN)
-              val isMirroring = state == MirrorPartitionState.MIRRORING
-              val partitionDetail = new DescribeClusterMirrorsResponseData.PartitionDetail()
-                .setPartitionIndex(topicPartition.partition())
-                .setSourceOffset(if (isMirroring) lagInfoMap.get(topicPartition).map(_.sourceOffset).getOrElse(-1L) else -1L)
-                .setDestinationOffset(if (isMirroring) lagInfoMap.get(topicPartition).map(_.destinationOffset).getOrElse(-1L) else -1L)
-                .setLag(if (isMirroring) lagInfoMap.get(topicPartition).map(_.lag).getOrElse(-1L) else -1L)
-                .setStateValue(state.name())
-                .setRetryAttempt(Option(failedInfo.get(topicPartition)).map(_.retryAttempt()).getOrElse(0.toShort))
-                .setErrorMessage(Option(failedInfo.get(topicPartition)).map(_.errorMessage()).orNull)
-                .setLastMirrorEpoch(lastMirrorEpoch.getOrDefault(topicPartition, -1))
-
-              topicPartitions.partitions().add(partitionDetail)
-            }
-
-            val topicsList = new util.ArrayList[DescribeClusterMirrorsResponseData.TopicPartitions]()
-            topicsMap.values.foreach(tp => topicsList.add(tp))
-            describedMirror.setTopics(topicsList)
-          }
-
-          responseData.mirrors().add(describedMirror)
-        }
-      }
-
-      maybeHandleLineageResults(describeMirrorsRequest.data.topicLineages, responseData)
-
-    } else {
+    if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring describe mirrors request")
       responseData.setErrorCode(Errors.UNSUPPORTED_VERSION.code)
+      requestHelper.sendMaybeThrottle(request, new DescribeClusterMirrorsResponse(responseData))
+      return
     }
+
+    val describeAll = describeMirrorsRequest.data.mirrorNames.isEmpty
+    val requestedMirrors = if (describeAll) {
+      clusterMirrorCoordinator.getConfiguredMirrors().asScala.toSeq
+    } else {
+      describeMirrorsRequest.data.mirrorNames.asScala.toSeq
+    }
+
+    requestedMirrors.foreach { mirrorName =>
+      if (!authHelper.authorize(request.context, DESCRIBE, CLUSTER_MIRROR, mirrorName, logIfDenied = !describeAll)) {
+        if (!describeAll) {
+          responseData.mirrors().add(new DescribeClusterMirrorsResponseData.DescribedMirror()
+            .setMirrorName(mirrorName)
+            .setErrorCode(Errors.CLUSTER_MIRROR_AUTHORIZATION_FAILED.code))
+        }
+      } else {
+        val describedMirror = new DescribeClusterMirrorsResponseData.DescribedMirror()
+          .setMirrorName(mirrorName)
+          .setErrorCode(Errors.NONE.code)
+
+        if (describeMirrorsRequest.data.includeAuthorizedOperations) {
+          describedMirror.setAuthorizedOperations(authHelper.authorizedOperations(
+            request, new Resource(ResourceType.CLUSTER_MIRROR, mirrorName)))
+        }
+
+        // Each broker reports partitions it's responsible for to avoid duplicates
+        val lagInfoMap = replicaManager.getMirrorLagInfo(mirrorName)
+        val partitionStates = clusterMirrorCoordinator.getMirrorStates(mirrorName).asScala
+        val lastMirrorEpoch = clusterMirrorCoordinator.getLastMirrorEpochs(mirrorName)
+        val failedInfo = clusterMirrorCoordinator.getFailedPartitionInfo()
+
+        // Report partition if: (1) we have lag info, OR (2) we're the partition leader and have no lag info
+        val partitionsToReport = (lagInfoMap.keySet ++ partitionStates.keySet.filter { tp =>
+          !lagInfoMap.contains(tp) && replicaManager.onlinePartition(tp).exists(_.isLeader)
+        }).toSeq
+
+        if (partitionsToReport.nonEmpty) {
+          // Group partitions by topic
+          val topicsMap = scala.collection.mutable.Map[String, DescribeClusterMirrorsResponseData.TopicPartitions]()
+
+          partitionsToReport.foreach { topicPartition =>
+            val topicName = topicPartition.topic()
+            val topicPartitions = topicsMap.getOrElseUpdate(topicName, {
+              val tp = new DescribeClusterMirrorsResponseData.TopicPartitions().setTopicName(topicName)
+              tp.setPartitions(new util.ArrayList[DescribeClusterMirrorsResponseData.PartitionDetail]())
+              tp
+            })
+
+            val state = partitionStates.getOrElse(topicPartition, MirrorPartitionState.UNKNOWN)
+            val isMirroring = state == MirrorPartitionState.MIRRORING
+            val partitionDetail = new DescribeClusterMirrorsResponseData.PartitionDetail()
+              .setPartitionIndex(topicPartition.partition())
+              .setSourceOffset(if (isMirroring) lagInfoMap.get(topicPartition).map(_.sourceOffset).getOrElse(-1L) else -1L)
+              .setDestinationOffset(if (isMirroring) lagInfoMap.get(topicPartition).map(_.destinationOffset).getOrElse(-1L) else -1L)
+              .setLag(if (isMirroring) lagInfoMap.get(topicPartition).map(_.lag).getOrElse(-1L) else -1L)
+              .setStateValue(state.name())
+              .setRetryAttempt(Option(failedInfo.get(topicPartition)).map(_.retryAttempt()).getOrElse(0.toShort))
+              .setErrorMessage(Option(failedInfo.get(topicPartition)).map(_.errorMessage()).orNull)
+              .setLastMirrorEpoch(lastMirrorEpoch.getOrDefault(topicPartition, -1))
+
+            topicPartitions.partitions().add(partitionDetail)
+          }
+
+          val topicsList = new util.ArrayList[DescribeClusterMirrorsResponseData.TopicPartitions]()
+          topicsMap.values.foreach(tp => topicsList.add(tp))
+          describedMirror.setTopics(topicsList)
+        }
+
+        responseData.mirrors().add(describedMirror)
+      }
+    }
+
+    // On the source, for each (TopicId, PartitionIndex, SrcClusterId, DstClusterId) in TopicLineages:
+    // 1. Scan mirror configs to find all mirror names where mirror.source.cluster.id matches SrcClusterId OR DstClusterId
+    // 2. For those mirror names, look up LME for that specific (TopicId, PartitionIndex)
+    // 3. If multiple matches, take max LME for that partition
+    maybeHandleLineageResults(describeMirrorsRequest.data.topicLineages, responseData)
 
     requestHelper.sendMaybeThrottle(request, new DescribeClusterMirrorsResponse(responseData))
   }

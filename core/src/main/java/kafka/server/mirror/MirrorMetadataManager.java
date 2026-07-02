@@ -2100,11 +2100,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Builds topic lineage entries for all configured source cluster IDs.
-     * In failback/fan-out, the source needs to match against prior mirror configs.
-     *
      * A topic lineage is a tuple of (topicId, partitions, srcClusterId, dstClusterId)
      * that describes a past or current mirroring relationship for a topic.
+     *
+     * Builds topic lineage entries for all configured source cluster IDs.
+     * The source needs to match against prior mirror configs.
      */
     private List<DescribeClusterMirrorsRequestData.TopicLineage> buildTopicLineages(
             Set<TopicPartition> topicPartitionSet) {
