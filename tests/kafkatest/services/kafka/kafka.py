@@ -1370,6 +1370,47 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         self.logger.info("Running alter topic config command...\n%s" % cmd)
         node.account.ssh(cmd)
 
+    def alter_topic_configs(self, topic, configs, node=None):
+        """Atomically set multiple topic configs in a single ``--add-config`` alter.
+
+        ``configs`` is a dict of config name -> value. Combining configs into one
+        request matters for transitions that are only valid when applied together,
+        e.g. setting ``diskless.enable=true`` and ``remote.storage.enable=true`` at
+        once for a classic-to-consolidated switch (applying them in separate alters
+        either trips the mutual-exclusion validator or never starts consolidation).
+        kafka-configs uses commas to separate ``--add-config`` entries, so a value
+        that itself contains commas (e.g. a list like ``cleanup.policy=compact,delete``)
+        must use the bracket syntax ``cleanup.policy=[compact,delete]``; raw commas in
+        a value are rejected.
+        """
+        if node is None:
+            node = self.nodes[0]
+        self.logger.info("Altering topic %s configs %s", topic, configs)
+
+        assert configs, "alter_topic_configs requires at least one config to set"
+        for name, value in configs.items():
+            value_str = str(value)
+            # kafka-configs splits --add-config on commas, so a value with commas
+            # must be wrapped in [...] (e.g. cleanup.policy=[compact,delete]).
+            # Reject only raw, unbracketed commas that would corrupt the request.
+            if "," in value_str:
+                assert value_str.startswith("[") and value_str.endswith("]"), \
+                    ("alter_topic_configs value for '%s' contains a comma but is not wrapped "
+                     "in [...]; list values must use the bracket syntax "
+                     "(e.g. cleanup.policy=[compact,delete]): %s=%s"
+                     % (name, name, value_str))
+
+        force_use_zk_connection = not self.all_nodes_configs_command_uses_bootstrap_server()
+        # Sorted for a deterministic, easily-diffable command line.
+        add_config = ",".join("%s=%s" % (name, configs[name]) for name in sorted(configs))
+
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --entity-name %s --entity-type topics --alter --add-config %s" % \
+              (self.kafka_configs_cmd_with_optional_security_settings(node, force_use_zk_connection),
+               topic, add_config)
+        self.logger.info("Running alter topic configs command...\n%s" % cmd)
+        node.account.ssh(cmd)
+
     def describe_topic_config(self, topic, node=None):
         if node is None:
             node = self.nodes[0]
