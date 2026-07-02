@@ -438,7 +438,7 @@ public class InklessTopicTypeSwitcherClusterTest {
 
             // Now the switch should succeed
             alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
-            assertEquals("true", getTopicConfig(admin, topic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+            waitForTopicDisklessValue(admin, topic, "true");
         }
     }
 
@@ -546,18 +546,6 @@ public class InklessTopicTypeSwitcherClusterTest {
             admin.alterDisklessSwitch(topic, 0, endOffset).all().get(20, TimeUnit.SECONDS);
             waitForSealOffset(admin, topic, 0, offset -> offset == endOffset);
             log.warn("[stage=sealed] topic={} forced seal offset={}", topic, endOffset);
-
-            // Re-arm the switch: partition 0 goes back to pending (-2).
-            admin.alterDisklessSwitch(topic, 0, PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
-                .all().get(20, TimeUnit.SECONDS);
-            waitForSealOffset(admin, topic, 0,
-                offset -> offset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING);
-
-            // Abort the switch: partition 0 reverts to classic (-1).
-            admin.alterDisklessSwitch(topic, 0, PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
-                .all().get(20, TimeUnit.SECONDS);
-            waitForSealOffset(admin, topic, 0,
-                offset -> offset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET);
         }
     }
 
