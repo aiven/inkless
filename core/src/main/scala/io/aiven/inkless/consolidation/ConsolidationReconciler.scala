@@ -81,17 +81,19 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
   def startConsolidationFetchersForCaughtUpClassicPartitions(topicPartitions: Set[TopicPartition]): Unit = {
     val consolidatingDisklessPartitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     topicPartitions.foreach { tp =>
-      replicaManager.onlinePartition(tp).foreach { partition =>
-        // This hook is the only trigger for an untiered-diskless -> consolidated flip, since
-        // remote.storage.enable=true is a config-only change the leader-delta path never re-enters.
-        // The metadata cache behind isConsolidatingDisklessTopic can lag the config record that has
-        // already enabled remote on the local log, so also trust the partition's own log: a diskless
-        // topic whose local log has remote storage enabled is consolidating.
-        val isConsolidating = inklessMetadataView.isConsolidatingDisklessTopic(tp.topic) ||
-          (inklessMetadataView.isDisklessTopic(tp.topic) && partition.log.exists(_.remoteLogEnabled()))
-        if (isConsolidating) {
-          consolidatingDisklessPartitionsToStartFetching.put(tp, partition)
-        }
+      // Only diskless topics may be handed to the consolidation fetcher.
+      // The sole caller (ReplicaFetcherThread self-eviction, via ReplicaManager) selects partitions by
+      // seal state (committed seal + local LEO caught up), not by whether the topic is diskless,
+      // so this gate is where that precondition is established.
+      //
+      // Gating on diskless alone is sufficient (no separate remote-storage check needed):
+      // the reconciler only exists when broker consolidation is enabled (ReplicaManager builds it only then),
+      // and under the invariant `diskless.enable _is_ remote.storage.enable` (enforced atomically on the switch),
+      // a diskless topic is always consolidating.
+      // A topic that durably violates that invariant (remote storage off in the metadata cache) is not
+      // filtered out here — reconcileSwitchedConsolidatingDisklessPartition marks it Failed.
+      if (inklessMetadataView.isDisklessTopic(tp.topic)) {
+        replicaManager.onlinePartition(tp).foreach(partition => consolidatingDisklessPartitionsToStartFetching.put(tp, partition))
       }
     }
     startConsolidationFetchers(consolidatingDisklessPartitionsToStartFetching)
@@ -129,6 +131,22 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
         ConsolidationStartState.Ready(initialFetchOffset(partition.localLogOrException))
       case PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING =>
         ConsolidationStartState.Retry(s"Skipping consolidation for $tp because classic-to-diskless migration is still pending")
+      case seal if seal >= 0 && !inklessMetadataView.isRemoteStorageEnabled(tp.topic) =>
+        // Unsupported state: a switched topic (seal >= 0) with remote storage off.
+        // The switch auto-enables remote.storage.enable atomically with diskless.enable,
+        // so current code cannot produce this; it can only come from metadata written before that change
+        // (e.g. a pre-atomic-switch KRaft image).
+        // It is a durable broken invariant, not transient, so mark the partition Failed
+        // (flags it on FailedPartitionsCount) rather than Retry.
+        // Consolidating it would grow the local log unbounded (WAL materialized, never pruned).
+        // The partition stays online for reads/writes; the failed flag clears on the next leader-epoch change 
+        // (restart/reassignment), which re-runs this reconcile.
+        // The Failed handler logs the reason.
+        // Controller-side metric: DisklessWithoutRemoteStorageCount.
+        ConsolidationStartState.Failed(new ReconciliationException(
+          s"Diskless topic $tp has remote storage disabled but was switched from classic " +
+            s"(violates diskless.enable implies remote.storage.enable); consolidation cannot start " +
+            s"(see DisklessWithoutRemoteStorageCount)"))
       case seal if seal >= 0 =>
         val log = partition.localLogOrException
         if (log.logEndOffset < seal) {

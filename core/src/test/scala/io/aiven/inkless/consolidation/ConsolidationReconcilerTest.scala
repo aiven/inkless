@@ -60,6 +60,9 @@ class ConsolidationReconcilerTest {
   private def mockMetadataView(classicToDisklessStartOffset: Long): InklessMetadataView = {
     val view = mock(classOf[InklessMetadataView])
     when(view.isConsolidatingDisklessTopic(topicPartition.topic)).thenReturn(true)
+    // A consolidating diskless topic has remote storage on (diskless.enable _is_ remote.storage.enable);
+    // the reconciler skips the partition otherwise. Tests of the durable-violation path override this.
+    when(view.isRemoteStorageEnabled(topicPartition.topic)).thenReturn(true)
     when(view.getClassicToDisklessStartOffset(topicPartition)).thenReturn(classicToDisklessStartOffset)
     when(view.getTopicId(topicPartition.topic)).thenReturn(topicId)
     view
@@ -112,6 +115,27 @@ class ConsolidationReconcilerTest {
     assertEquals(100L, fetchStates(topicPartition).initOffset)
     verify(partition, never()).truncateTo(anyLong(), anyBoolean())
     verify(partition).ensureConsolidationPruneFloorAtLeast(100L)
+  }
+
+  @Test
+  def testConsolidationFailsWhenRemoteStorageDisabledOnSwitchedTopic(): Unit = {
+    // Unsupported state: a switched topic (seal >= 0) with remote storage OFF violates
+    // diskless.enable _is_ remote.storage.enable. The atomic switch always writes both flags together,
+    // so this is only possible for metadata written by an older, pre-atomic-switch path. Arming
+    // consolidation would materialize the WAL locally but never tier/prune it, growing the log unbounded.
+    // It is a durable broken invariant, not transient, so the reconciler marks the partition Failed
+    // (the failed flag clears on the next leader-epoch change); the controller-side metric alerts operators.
+    val view = mockMetadataView(classicToDisklessStartOffset = 100L)
+    when(view.isRemoteStorageEnabled(topicPartition.topic)).thenReturn(false)
+    val fetcherManager = mock(classOf[ConsolidationFetcherManager])
+    val (partition, _) = mockPartition(logStartOffset = 0L, logEndOffset = 100L)
+    val reconciler = newReconciler(view, fetcherManager)
+
+    val fetchStates = initFetchState(reconciler, partition)
+
+    assertTrue(fetchStates.isEmpty, "must not arm consolidation when remote storage is disabled")
+    verify(partition, never()).ensureConsolidationPruneFloorAtLeast(anyLong())
+    verify(fetcherManager).addFailedPartition(topicPartition)
   }
 
   @Test
@@ -282,44 +306,43 @@ class ConsolidationReconcilerTest {
   }
 
   @Test
-  def testStartConsolidationFetchersForCaughtUpClassicPartitionsStartsWhenMetadataCacheLagsRemoteFlip(): Unit = {
-    // Regression for the untiered-diskless -> consolidated upgrade: remote.storage.enable=true is a
-    // config-only metadata change with no leader-delta re-entry, so this hook is the sole trigger.
-    // The metadata cache backing isConsolidatingDisklessTopic can still report false at hook time
-    // (it lags the config record that already flipped remote on the local log), so the reconciler
-    // must fall back to the partition's own log and still start consolidation rather than silently
-    // drop the partition forever.
-    val view = mockMetadataView(classicToDisklessStartOffset = 100L)
-    when(view.isConsolidatingDisklessTopic(topicPartition.topic)).thenReturn(false)
+  def testStartConsolidationFetchersForCaughtUpClassicPartitionsStartsForDisklessTopicWithoutRecheckingConsolidating(): Unit = {
+    // The gate keys off isDisklessTopic alone (never isConsolidatingDisklessTopic): the atomic switch
+    // guarantees a diskless topic is remote-storage enabled, hence always consolidating. So it admits
+    // and arms the partition without consulting isConsolidatingDisklessTopic. (The durable
+    // remote-storage-off violation is a separate reconcile-time skip, tested elsewhere.)
+    val view = mock(classOf[InklessMetadataView])
     when(view.isDisklessTopic(topicPartition.topic)).thenReturn(true)
+    when(view.isRemoteStorageEnabled(topicPartition.topic)).thenReturn(true)
+    when(view.getClassicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+    when(view.getTopicId(topicPartition.topic)).thenReturn(topicId)
+
     val fetcherManager = mock(classOf[ConsolidationFetcherManager])
     val replicaManager = mock(classOf[ReplicaManager])
-    val (partition, _) = mockPartition(logStartOffset = 0L, logEndOffset = 100L,
-      isLeader = true, remoteLogEnabled = true)
+    val (partition, _) = mockPartition(logStartOffset = 0L, logEndOffset = 100L)
     when(replicaManager.onlinePartition(topicPartition)).thenReturn(Some(partition))
     val reconciler = newReconciler(view, fetcherManager, replicaManager = replicaManager)
 
     reconciler.startConsolidationFetchersForCaughtUpClassicPartitions(Set(topicPartition))
 
+    // Admitted and armed at the seal (LEO == seal): the fetcher is started for the partition.
     verify(fetcherManager).addFetcherForPartitions(any())
+    verify(view, never()).isConsolidatingDisklessTopic(topicPartition.topic)
   }
 
   @Test
-  def testStartConsolidationFetchersForCaughtUpClassicPartitionsSkipsNonConsolidatingTopic(): Unit = {
-    // A non-consolidating topic must never be routed to the consolidation fetcher: neither the
-    // metadata cache nor the local log reports it as a consolidating diskless topic.
-    val view = mockMetadataView(classicToDisklessStartOffset = 100L)
-    when(view.isConsolidatingDisklessTopic(topicPartition.topic)).thenReturn(false)
+  def testStartConsolidationFetchersForCaughtUpClassicPartitionsSkipsNonDisklessTopic(): Unit = {
+    // A non-diskless topic is never handed to the consolidation fetcher.
+    val view = mock(classOf[InklessMetadataView])
     when(view.isDisklessTopic(topicPartition.topic)).thenReturn(false)
+
     val fetcherManager = mock(classOf[ConsolidationFetcherManager])
     val replicaManager = mock(classOf[ReplicaManager])
-    val (partition, _) = mockPartition(logStartOffset = 0L, logEndOffset = 100L,
-      isLeader = true, remoteLogEnabled = false)
-    when(replicaManager.onlinePartition(topicPartition)).thenReturn(Some(partition))
     val reconciler = newReconciler(view, fetcherManager, replicaManager = replicaManager)
 
     reconciler.startConsolidationFetchersForCaughtUpClassicPartitions(Set(topicPartition))
 
+    verify(replicaManager, never()).onlinePartition(topicPartition)
     verify(fetcherManager, never()).addFetcherForPartitions(any())
   }
 
