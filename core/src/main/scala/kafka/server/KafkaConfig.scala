@@ -550,6 +550,10 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
         s"${ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG} requires ${ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG}=true")
       require(remoteLogManagerConfig.isRemoteStorageSystemEnabled,
         s"${ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG} requires ${RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP}=true")
+      // Consolidation builds on the classic-to-diskless switch: a switch auto-enables remote storage,
+      // so consolidation can assume diskless.enable implies remote.storage.enable.
+      require(disklessAllowFromClassicEnabled,
+        s"${ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG} requires ${ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG}=true")
     }
 
     require(logRollTimeMillis >= 1, "log.roll.ms must be greater than or equal to 1")

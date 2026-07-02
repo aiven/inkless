@@ -228,6 +228,7 @@ public final class QuorumController implements Controller {
         private boolean disklessStorageSystemEnabled = false;
         private boolean disklessManagedReplicasEnabled = false;
         private boolean disklessRemoteStorageConsolidationEnabled = false;
+        private boolean disklessAllowFromClassicEnabled = false;
         private boolean classicRemoteStorageForceEnabled = false;
         private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
         private boolean disklessForceEnabled = false;
@@ -309,6 +310,11 @@ public final class QuorumController implements Controller {
 
         public Builder setDisklessRemoteStorageConsolidationEnabled(boolean disklessRemoteStorageConsolidationEnabled) {
             this.disklessRemoteStorageConsolidationEnabled = disklessRemoteStorageConsolidationEnabled;
+            return this;
+        }
+
+        public Builder setDisklessAllowFromClassicEnabled(boolean disklessAllowFromClassicEnabled) {
+            this.disklessAllowFromClassicEnabled = disklessAllowFromClassicEnabled;
             return this;
         }
 
@@ -483,6 +489,7 @@ public final class QuorumController implements Controller {
                     disklessStorageSystemEnabled,
                     disklessManagedReplicasEnabled,
                     disklessRemoteStorageConsolidationEnabled,
+                    disklessAllowFromClassicEnabled,
                     classicRemoteStorageForceEnabled,
                     classicRemoteStorageForceExcludeTopicRegexes,
                     disklessForceEnabled,
@@ -1530,6 +1537,7 @@ public final class QuorumController implements Controller {
         boolean disklessStorageSystemEnabled,
         boolean disklessManagedReplicasEnabled,
         boolean disklessRemoteStorageConsolidationEnabled,
+        boolean disklessAllowFromClassicEnabled,
         boolean classicRemoteStorageForceEnabled,
         List<String> classicRemoteStorageForceExcludeTopicRegexes,
         boolean disklessForceEnabled,
@@ -1620,6 +1628,7 @@ public final class QuorumController implements Controller {
             setDisklessStorageSystemEnabled(disklessStorageSystemEnabled).
             setDisklessManagedReplicasEnabled(disklessManagedReplicasEnabled).
             setDisklessRemoteStorageConsolidationEnabled(disklessRemoteStorageConsolidationEnabled).
+            setDisklessAllowFromClassicEnabled(disklessAllowFromClassicEnabled).
             setClassicRemoteStorageForceEnabled(classicRemoteStorageForceEnabled).
             setClassicRemoteStorageForceExcludeTopicRegexes(classicRemoteStorageForceExcludeTopicRegexes).
             setDisklessForceEnabled(disklessForceEnabled).
@@ -1952,15 +1961,20 @@ public final class QuorumController implements Controller {
             return CompletableFuture.completedFuture(Map.of());
         }
         return appendWriteEvent("incrementalAlterConfigs", context.deadlineNs(), () -> {
+            // Auto-enable remote.storage.enable=true on a classic-to-diskless switch, before validation,
+            // so it is validated (fail-fast on an invalid switch, e.g. a compacted topic) and co-commits
+            // atomically with the diskless.enable record and the per-partition switch-pending records.
+            Map<ConfigResource, Map<String, Entry<OpType, String>>> effectiveChanges =
+                replicationControl.maybeAddRemoteStorageEnableForSwitch(configChanges);
             ControllerResult<Map<ConfigResource, ApiError>> result =
-                configurationControl.incrementalAlterConfigs(configChanges, false,
+                configurationControl.incrementalAlterConfigs(effectiveChanges, false,
                     resource -> replicationControl.validateClassicToDisklessSwitchPrecondition(
-                        resource, configChanges));
+                        resource, effectiveChanges));
             if (validateOnly) {
                 return result.withoutRecords();
             } else {
                 List<ApiMessageAndVersion> migrationRecords =
-                    replicationControl.markClassicToDisklessSwitchStarted(configChanges, result.response());
+                    replicationControl.markClassicToDisklessSwitchStarted(effectiveChanges, result.response());
                 if (!migrationRecords.isEmpty()) {
                     List<ApiMessageAndVersion> allRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
                     allRecords.addAll(result.records());
@@ -2007,15 +2021,19 @@ public final class QuorumController implements Controller {
             return CompletableFuture.completedFuture(Map.of());
         }
         return appendWriteEvent("legacyAlterConfigs", context.deadlineNs(), () -> {
+            // See incrementalAlterConfigs: auto-enable remote.storage.enable=true on a classic-to-diskless
+            // switch before validating, so the switch is validated and committed atomically.
+            Map<ConfigResource, Map<String, String>> effectiveConfigs =
+                replicationControl.maybeAddRemoteStorageEnableForLegacyAlterConfigs(newConfigs);
             ControllerResult<Map<ConfigResource, ApiError>> result =
-                configurationControl.legacyAlterConfigs(newConfigs, false,
+                configurationControl.legacyAlterConfigs(effectiveConfigs, false,
                     resource -> replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(
-                        resource, newConfigs));
+                        resource, effectiveConfigs));
             if (validateOnly) {
                 return result.withoutRecords();
             } else {
                 List<ApiMessageAndVersion> migrationRecords =
-                    replicationControl.markClassicToDisklessSwitchStartedForLegacyAlterConfigs(newConfigs, result.response());
+                    replicationControl.markClassicToDisklessSwitchStartedForLegacyAlterConfigs(effectiveConfigs, result.response());
                 if (!migrationRecords.isEmpty()) {
                     List<ApiMessageAndVersion> allRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
                     allRecords.addAll(result.records());
