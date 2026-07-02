@@ -26,4 +26,18 @@ import org.apache.kafka.common.annotation.InterfaceStability;
  */
 @InterfaceStability.Unstable
 public class AlterDisklessSwitchOptions extends AbstractOptions<AlterDisklessSwitchOptions> {
+    private boolean clearProducerStates = false;
+
+    /**
+     * When forcing a seal (offset {@code >= 0}), whether to clear the committed producer states.
+     * Ignored for negative seal offsets, which always clear them.
+     */
+    public AlterDisklessSwitchOptions clearProducerStates(boolean clearProducerStates) {
+        this.clearProducerStates = clearProducerStates;
+        return this;
+    }
+
+    public boolean clearProducerStates() {
+        return clearProducerStates;
+    }
 }

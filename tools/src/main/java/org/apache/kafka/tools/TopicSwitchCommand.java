@@ -18,6 +18,7 @@
 package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
 import org.apache.kafka.clients.admin.DescribeTopicPartitionsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
@@ -89,6 +90,7 @@ public abstract class TopicSwitchCommand {
                     sealCommand(System.out, adminClient, topic,
                         namespace.getInt("partition"),
                         Optional.ofNullable(namespace.getLong("offset")),
+                        namespace.getBoolean("clear_producer_states"),
                         namespace.getBoolean("dry_run"));
                 }
                 break;
@@ -141,6 +143,10 @@ public abstract class TopicSwitchCommand {
                 .help("The seal offset to commit: >= 0 forces (re-)sealing at that offset, -1 aborts the "
                         + "switch and reverts the partition to classic, and -2 re-arms the switch as pending. "
                         + "If omitted, the partition's current end offset is used.");
+        sealParser.addArgument("--clear-producer-states")
+                .action(storeTrue())
+                .help("When forcing a seal (offset >= 0), clear the committed producer states. Ignored for "
+                        + "negative offsets, which always clear them.");
         sealParser.addArgument("--dry-run", "-d")
                 .action(storeTrue())
                 .help("Whether to only perform validation when adjusting the seal offset.");
@@ -215,7 +221,7 @@ public abstract class TopicSwitchCommand {
     }
 
     static void sealCommand(PrintStream stream, Admin adminClient, String topic, int partition,
-                            Optional<Long> offset, boolean dryRun) throws Exception {
+                            Optional<Long> offset, boolean clearProducerStates, boolean dryRun) throws Exception {
         if (offset.isPresent() && offset.get() < PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
             throw new RuntimeException("Invalid seal offset " + offset.get()
                 + "; must be >= -2 (-2 re-arms, -1 aborts, >= 0 seals at that offset).");
@@ -244,7 +250,9 @@ public abstract class TopicSwitchCommand {
             return;
         }
 
-        adminClient.alterDisklessSwitch(topic, partition, sealOffset).all().get();
+        AlterDisklessSwitchOptions options = new AlterDisklessSwitchOptions()
+            .clearProducerStates(clearProducerStates);
+        adminClient.alterDisklessSwitch(topic, partition, sealOffset, options).all().get();
         stream.printf("Set %s-%d classicToDisklessStartOffset to %s.%n",
             topic, partition, describeSealOffset(sealOffset));
     }

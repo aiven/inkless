@@ -7700,6 +7700,26 @@ public class ReplicationControlManagerTest {
         assertEquals(100L, partition.classicToDisklessStartOffset);
         // The current leader epoch is captured as the diskless leader epoch.
         assertEquals(partition.leaderEpoch, partition.disklessLeaderEpoch);
+        // By default a forced seal leaves producer states untouched: no producer-states tag is written.
+        PartitionChangeRecord record = (PartitionChangeRecord) result.records().get(0).message();
+        assertTrue(InitDisklessLogFields.decodeProducerStatesIfPresent(record.unknownTaggedFields()).isEmpty());
+    }
+
+    @Test
+    public void testAlterDisklessSwitchForcesSealClearingProducerStates() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        createSwitchingTestTopic(ctx);
+
+        ControllerResult<AlterDisklessSwitchResponseData> result =
+            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+                .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L).setClearProducerStates(true));
+        assertEquals((short) 0, result.response().errorCode());
+
+        // With clearProducerStates the record carries an explicit empty producer-states tag so merge() clears them.
+        PartitionChangeRecord record = (PartitionChangeRecord) result.records().get(0).message();
+        assertEquals(List.of(), InitDisklessLogFields.decodeProducerStatesIfPresent(record.unknownTaggedFields())
+            .orElseThrow(() -> new AssertionError("expected an explicit producer-states tag")));
     }
 
     @Test

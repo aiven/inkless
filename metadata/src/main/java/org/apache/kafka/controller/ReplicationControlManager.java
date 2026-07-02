@@ -1724,6 +1724,11 @@ public class ReplicationControlManager {
         if (sealOffset >= 0) {
             record.unknownTaggedFields().add(
                 InitDisklessLogFields.encodeDisklessLeaderEpoch(partition.leaderEpoch));
+            if (request.clearProducerStates()) {
+                // Write an explicit empty producer-states tag; without it merge() leaves them unchanged.
+                record.unknownTaggedFields().add(
+                    InitDisklessLogFields.encodeProducerStates(List.of()));
+            }
         } else if (sealOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
             // Bump the leader epoch to force the broker to seal again, as the switch-pending mark does.
             record.setLeader(partition.leader);

@@ -26,6 +26,8 @@
     { "name": "PartitionIndex", "type": "int32", "versions": "0+",
       "about": "The partition index." },
     { "name": "SealOffset", "type": "int64", "versions": "0+",
-      "about": "The classic-to-diskless start offset to commit: >= 0 forces (re-)sealing at that offset, -1 aborts the switch and reverts the partition to classic, and -2 re-arms the switch as pending." }
+      "about": "The classic-to-diskless start offset to commit: >= 0 forces (re-)sealing at that offset, -1 aborts the switch and reverts the partition to classic, and -2 re-arms the switch as pending." },
+    { "name": "ClearProducerStates", "type": "bool", "versions": "0+", "default": "false",
+      "about": "When forcing a seal (SealOffset >= 0), whether to clear the committed producer states. Ignored for negative seal offsets, which always clear them." }
   ]
 }

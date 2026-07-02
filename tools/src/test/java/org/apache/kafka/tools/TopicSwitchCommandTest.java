@@ -17,6 +17,7 @@
 package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
 import org.apache.kafka.clients.admin.AlterDisklessSwitchResult;
 import org.apache.kafka.clients.admin.DescribeTopicPartitionsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
@@ -186,7 +187,7 @@ public class TopicSwitchCommandTest {
 
         String output = runSealCommand(0, Optional.of(100L), false);
 
-        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(100L));
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(100L), any(AlterDisklessSwitchOptions.class));
         assertTrue(output.contains("seal offset 100 <= end offset 150"));
         assertTrue(output.contains("Set test-topic-0 classicToDisklessStartOffset to 100"));
     }
@@ -198,7 +199,7 @@ public class TopicSwitchCommandTest {
 
         String output = runSealCommand(0, Optional.empty(), false);
 
-        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(150L));
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(150L), any(AlterDisklessSwitchOptions.class));
         assertTrue(output.contains("Set test-topic-0 classicToDisklessStartOffset to 150"));
     }
 
@@ -208,7 +209,7 @@ public class TopicSwitchCommandTest {
 
         String output = runSealCommand(0, Optional.of(100L), true);
 
-        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong());
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
         assertTrue(output.contains("[dry-run]"));
         assertTrue(output.contains("Would set test-topic-0 classicToDisklessStartOffset to 100"));
     }
@@ -220,7 +221,7 @@ public class TopicSwitchCommandTest {
         RuntimeException ex = assertThrows(RuntimeException.class,
             () -> runSealCommand(0, Optional.of(100L), false));
         assertTrue(ex.getMessage().contains("past the partition end offset 90"));
-        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong());
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
     }
 
     @Test
@@ -229,7 +230,7 @@ public class TopicSwitchCommandTest {
 
         String output = runSealCommand(0, Optional.of(-1L), false);
 
-        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(-1L));
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(-1L), any(AlterDisklessSwitchOptions.class));
         assertTrue(output.contains("-1 (abort switch, revert to classic)"));
         assertFalse(output.contains("end offset"));
     }
@@ -240,7 +241,7 @@ public class TopicSwitchCommandTest {
 
         String output = runSealCommand(0, Optional.of(-2L), false);
 
-        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(-2L));
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(-2L), any(AlterDisklessSwitchOptions.class));
         assertTrue(output.contains("-2 (re-arm switch)"));
     }
 
@@ -265,13 +266,14 @@ public class TopicSwitchCommandTest {
     private void mockAlterDisklessSwitch() {
         AlterDisklessSwitchResult result = mock(AlterDisklessSwitchResult.class);
         when(result.all()).thenReturn(KafkaFuture.completedFuture(null));
-        when(adminClient.alterDisklessSwitch(any(), anyInt(), anyLong())).thenReturn(result);
+        when(adminClient.alterDisklessSwitch(any(), anyInt(), anyLong(), any(AlterDisklessSwitchOptions.class)))
+            .thenReturn(result);
     }
 
     private String runSealCommand(int partition, Optional<Long> offset, boolean dryRun) throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         PrintStream stream = new PrintStream(out, false, StandardCharsets.UTF_8);
-        TopicSwitchCommand.sealCommand(stream, adminClient, TOPIC, partition, offset, dryRun);
+        TopicSwitchCommand.sealCommand(stream, adminClient, TOPIC, partition, offset, false, dryRun);
         return out.toString(StandardCharsets.UTF_8);
     }
 

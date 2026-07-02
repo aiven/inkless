@@ -4912,7 +4912,8 @@ public class KafkaAdminClient extends AdminClient {
                 AlterDisklessSwitchRequestData data = new AlterDisklessSwitchRequestData()
                     .setTopicName(topic)
                     .setPartitionIndex(partition)
-                    .setSealOffset(sealOffset);
+                    .setSealOffset(sealOffset)
+                    .setClearProducerStates(options.clearProducerStates());
                 return new AlterDisklessSwitchRequest.Builder(data);
             }
 
