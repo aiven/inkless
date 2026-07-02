@@ -7722,6 +7722,8 @@ public class ReplicationControlManagerTest {
         // Aborting drops the dependent switch metadata from the previous completed switch.
         assertEquals(List.of(), aborted.disklessProducerStates);
         assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, aborted.disklessLeaderEpoch);
+        // ...and reverts the topic back to classic.
+        assertEquals("false", ctx.configurationControl.currentTopicConfig("foo").get(DISKLESS_ENABLE_CONFIG));
     }
 
     @Test

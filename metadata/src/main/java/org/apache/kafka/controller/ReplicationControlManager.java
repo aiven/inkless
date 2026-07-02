@@ -1719,19 +1719,28 @@ public class ReplicationControlManager {
             .setPartitionId(request.partitionIndex());
         record.unknownTaggedFields().add(
             InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset));
+
+        List<ApiMessageAndVersion> records = new ArrayList<>();
         if (sealOffset >= 0) {
             record.unknownTaggedFields().add(
                 InitDisklessLogFields.encodeDisklessLeaderEpoch(partition.leaderEpoch));
         } else if (sealOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
             // Bump the leader epoch to force the broker to seal again, as the switch-pending mark does.
             record.setLeader(partition.leader);
+        } else {
+            // Aborting reverts the topic to classic
+            records.add(new ApiMessageAndVersion(new ConfigRecord()
+                .setResourceType(ResourceType.TOPIC.code())
+                .setResourceName(topic.name)
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue("false"), (short) 0));
         }
+        records.add(new ApiMessageAndVersion(record, (short) 0));
 
         log.info("AlterDisklessSwitch for {}-{}: classicToDisklessStartOffset={}",
             topic.name, request.partitionIndex(), sealOffset);
 
-        return ControllerResult.of(List.of(new ApiMessageAndVersion(record, (short) 0)),
-            new AlterDisklessSwitchResponseData());
+        return ControllerResult.of(records, new AlterDisklessSwitchResponseData());
     }
 
     /**
