@@ -61,12 +61,12 @@
         ]}
       ]}
     ]},
-    { "name": "LineageResults", "type": "[]LineageTopicResult", "versions": "0+",
+    { "name": "LineageResults", "type": "[]LineageResult", "versions": "0+",
       "taggedVersions": "0+", "tag": 0, "ignorable": true,
       "about": "LME results from cross-mirror topic lineage matching.", "fields": [
       { "name": "TopicId", "type": "uuid", "versions": "0+",
         "about": "The topic ID." },
-      { "name": "Partitions", "type": "[]LineagePartitionResult", "versions": "0+",
+      { "name": "Partitions", "type": "[]PartitionResult", "versions": "0+",
         "about": "Per-partition LME from lineage matching.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0+",
           "about": "The partition index." },

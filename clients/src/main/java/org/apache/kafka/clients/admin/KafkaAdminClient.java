@@ -5333,14 +5333,15 @@ public class KafkaAdminClient extends AdminClient {
                 partialDescriptions.put(mirror.mirrorName(), partial);
             }
 
-            // Merge this broker's data
+            // Merge across all brokers
             partial.merge(mirror);
         }
 
-        synchronized void handleLineageResults(List<DescribeClusterMirrorsResponseData.LineageTopicResult> results) {
-            for (DescribeClusterMirrorsResponseData.LineageTopicResult topic : results) {
-                Map<Integer, Integer> partitionEpochs = lineageEpochs.computeIfAbsent(topic.topicId(), k -> new HashMap<>());
-                for (DescribeClusterMirrorsResponseData.LineagePartitionResult partition : topic.partitions()) {
+        synchronized void handleLineageResults(List<DescribeClusterMirrorsResponseData.LineageResult> results) {
+            for (DescribeClusterMirrorsResponseData.LineageResult result : results) {
+                Map<Integer, Integer> partitionEpochs = lineageEpochs.computeIfAbsent(result.topicId(), k -> new HashMap<>());
+                // Merge across all brokers
+                for (DescribeClusterMirrorsResponseData.PartitionResult partition : result.partitions()) {
                     partitionEpochs.merge(partition.partitionIndex(), partition.lastMirrorEpoch(), Math::max);
                 }
             }
@@ -5419,7 +5420,6 @@ public class KafkaAdminClient extends AdminClient {
                     this.authorizedOperations = mirror.authorizedOperations();
                 }
 
-                // Merge topic partitions
                 for (DescribeClusterMirrorsResponseData.TopicPartitions topic : mirror.topics()) {
                     Set<ClusterMirrorDesc.LeaderStateDesc> partitions =
                             topicPartitions.computeIfAbsent(topic.topicName(), k -> new HashSet<>());

@@ -748,14 +748,14 @@ public class ClusterMirrorCoordinator {
         return future;
     }
 
-    /** Schedules truncation to align replicas with last mirror epoch. */
+    /** Schedules log truncation to align replicas with their last mirror epoch. */
     private void scheduleTruncation(String mirrorName, Set<TopicPartition> topicPartitions) {
         final Consumer<TopicPartition> truncateCallback =
             partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING, null);
         scheduler.scheduleOnce("LastMirrorEpochTruncation",
             () -> {
                 try {
-                    metadataManager.truncateToLastMirrorEpochs(mirrorName, topicPartitions)
+                    metadataManager.lookupLineageEpochs(mirrorName, topicPartitions)
                         .whenComplete((epochs, rawError) -> {
                             if (rawError != null) {
                                 Throwable error = rawError instanceof CompletionException && rawError.getCause() != null

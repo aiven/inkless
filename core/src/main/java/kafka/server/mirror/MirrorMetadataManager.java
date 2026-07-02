@@ -571,7 +571,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      *   1. if it's in PAUSED state, we should move it to MIRRORING state. It will happen when users resume mirroring
      *   2. if it's in UNKNOWN, STOPPED, or FAILED state, we should move it to LOG_TRUNCATION state.
      *      UNKNOWN/STOPPED happens on startMirrorTopics. FAILED happens on manual restart after retries are exhausted.
-     *   3. else, keep the same state as is. This could happen like leadership change, and the new leader should continue to complete the process in previous leader
+     *   3. else, keep the same state as is. This could happen like leadership change, and the new leader should
+     *      continue to complete the process in previous leader
      */
     private void applyStateTransition(String mirrorName, TopicPartition tp,
                                       MirrorPartitionState curState, MirrorPartitionState fetchedState,
@@ -2070,18 +2071,46 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return result;
     }
 
-    /** Truncates local replicas using last mirrored leader epochs from this broker's coordinator cache. */
-    CompletionStage<Map<TopicPartition, Integer>> truncateToLastMirrorEpochs(
+    /** Looks up lineage epochs from the source cluster for failback/fan-out truncation. */
+    CompletionStage<Map<TopicPartition, Integer>> lookupLineageEpochs(
             String mirrorName, Set<TopicPartition> topicPartitionSet) {
-        log.info("Truncating to last mirror epochs from local state for mirror {}: {}", mirrorName, topicPartitionSet);
+        log.info("Truncating to LME for mirror {}: {}", mirrorName, topicPartitionSet);
         Admin admin = getOrCreateSourceAdmin(mirrorName);
 
-        // Collect sourceClusterIds from ALL mirror configs, not just the current one.
-        // In fan-out/failback, the source needs to match against prior mirror configs
-        // (e.g. D2 has old "s-to-d2" with srcCID=S, which D1 matches via its "s-to-d1").
+        DescribeClusterMirrorsOptions options = new DescribeClusterMirrorsOptions()
+                .topicLineages(buildTopicLineages(topicPartitionSet));
+        DescribeClusterMirrorsResult result = admin.describeClusterMirrors(List.of(mirrorName), options);
+
+        return result.lineageEpochs().toCompletionStage()
+                .toCompletableFuture()
+                .thenApply(lineageEpochs -> {
+                    Map<TopicPartition, Integer> epochs = new HashMap<>();
+                    if (!lineageEpochs.isEmpty()) {
+                        lineageEpochs.forEach((topicId, partitionEpochs) -> {
+                            Optional<String> topicName = metadataCache.getTopicName(topicId);
+                            topicName.ifPresent(name ->
+                                    partitionEpochs.forEach((partIdx, lme) ->
+                                            epochs.put(new TopicPartition(name, partIdx), lme)));
+                        });
+                    }
+                    log.info("Lineage LME lookup for mirror {}: {}", mirrorName, epochs);
+                    return epochs;
+                })
+                .orTimeout(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Builds topic lineage entries for all configured source cluster IDs.
+     * In failback/fan-out, the source needs to match against prior mirror configs.
+     *
+     * A topic lineage is a tuple of (topicId, partitions, srcClusterId, dstClusterId)
+     * that describes a past or current mirroring relationship for a topic.
+     */
+    private List<DescribeClusterMirrorsRequestData.TopicLineage> buildTopicLineages(
+            Set<TopicPartition> topicPartitionSet) {
         Set<String> allSourceClusterIds = new HashSet<>();
-        for (String mn : getConfiguredMirrors()) {
-            String cid = getSourceClusterId(mn);
+        for (String mirrorName : getConfiguredMirrors()) {
+            String cid = getSourceClusterId(mirrorName);
             if (cid != null && !cid.isEmpty()) {
                 allSourceClusterIds.add(cid);
             }
@@ -2103,27 +2132,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         .setDstClusterId(clusterId));
             }
         }
-
-        DescribeClusterMirrorsOptions options = new DescribeClusterMirrorsOptions()
-                .topicLineages(lineages);
-        DescribeClusterMirrorsResult result = admin.describeClusterMirrors(List.of(mirrorName), options);
-
-        return result.lineageEpochs().toCompletionStage()
-                .toCompletableFuture()
-                .thenApply(lineageEpochs -> {
-                    Map<TopicPartition, Integer> epochs = new HashMap<>();
-                    if (!lineageEpochs.isEmpty()) {
-                        lineageEpochs.forEach((topicId, partitionEpochs) -> {
-                            Optional<String> topicName = metadataCache.getTopicName(topicId);
-                            topicName.ifPresent(name ->
-                                    partitionEpochs.forEach((partIdx, lme) ->
-                                            epochs.put(new TopicPartition(name, partIdx), lme)));
-                        });
-                    }
-                    log.info("Lineage LME lookup for mirror {}: {}", mirrorName, epochs);
-                    return epochs;
-                })
-                .orTimeout(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
+        return lineages;
     }
 
     /** Removes stopped partition epochs and upserts added ones, returning the full epoch map for record serialization. */
