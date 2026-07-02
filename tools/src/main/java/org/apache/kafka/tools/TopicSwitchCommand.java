@@ -142,7 +142,9 @@ public abstract class TopicSwitchCommand {
                 .type(Long.class)
                 .help("The seal offset to commit: >= 0 forces (re-)sealing at that offset, -1 aborts the "
                         + "switch and reverts the partition to classic, and -2 re-arms the switch as pending. "
-                        + "If omitted, the partition's current end offset is used.");
+                        + "-1 and -2 are only allowed while the switch is still pending (no seal committed yet). "
+                        + "If omitted, the partition's current end offset is used; omitting it is only allowed "
+                        + "before a seal is committed, otherwise an explicit offset is required.");
         sealParser.addArgument("--clear-producer-states")
                 .action(storeTrue())
                 .help("When forcing a seal (offset >= 0), clear the committed producer states. Ignored for "
@@ -227,19 +229,18 @@ public abstract class TopicSwitchCommand {
                 + "; must be >= -2 (-2 re-arms, -1 aborts, >= 0 seals at that offset).");
         }
 
-        TopicPartition tp = new TopicPartition(topic, partition);
         long sealOffset;
-        if (offset.isEmpty() || offset.get() >= 0) {
-            long endOffset = adminClient.listOffsets(Map.of(tp, OffsetSpec.latest()))
-                .all().get().get(tp).offset();
-            sealOffset = offset.orElse(endOffset);
-            if (endOffset < sealOffset) {
+        if (offset.isEmpty()) {
+            long committedSeal = readClassicToDisklessStartOffset(adminClient, topic, partition);
+            if (committedSeal >= 0) {
                 throw new RuntimeException(String.format(
-                    "Cannot seal %s-%d at offset %d: it is past the partition end offset %d.",
-                    topic, partition, sealOffset, endOffset));
+                    "%s-%d already has a committed seal offset (%d); pass an explicit --offset to re-seal.",
+                    topic, partition, committedSeal));
             }
-            stream.printf("Validated %s-%d: seal offset %d <= end offset %d.%n",
-                topic, partition, sealOffset, endOffset);
+            TopicPartition tp = new TopicPartition(topic, partition);
+            sealOffset = adminClient.listOffsets(Map.of(tp, OffsetSpec.latest()))
+                .all().get().get(tp).offset();
+            stream.printf("Validated %s-%d: sealing at end offset %d.%n", topic, partition, sealOffset);
         } else {
             sealOffset = offset.get();
         }
@@ -255,6 +256,21 @@ public abstract class TopicSwitchCommand {
         adminClient.alterDisklessSwitch(topic, partition, sealOffset, options).all().get();
         stream.printf("Set %s-%d classicToDisklessStartOffset to %s.%n",
             topic, partition, describeSealOffset(sealOffset));
+    }
+
+    private static long readClassicToDisklessStartOffset(Admin adminClient, String topic, int partition)
+            throws Exception {
+        DescribeTopicPartitionsResponseData responseData = adminClient
+            .describeTopicPartitions(List.of(topic), new DescribeTopicsOptions()).rawResponse().get();
+        DescribeTopicPartitionsResponseTopic topicData = responseData.topics().find(topic);
+        if (topicData == null) {
+            throw new RuntimeException("Topic not found: " + topic);
+        }
+        return topicData.partitions().stream()
+            .filter(p -> p.partitionIndex() == partition)
+            .findFirst()
+            .map(p -> InitDisklessLogFields.decodeClassicToDisklessStartOffset(p.unknownTaggedFields()))
+            .orElseThrow(() -> new RuntimeException("Partition not found: " + topic + "-" + partition));
     }
 
     private static String describeSealOffset(long sealOffset) {

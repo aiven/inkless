@@ -182,18 +182,18 @@ public class TopicSwitchCommandTest {
 
     @Test
     public void testSealCommitsExplicitOffset() throws Exception {
-        mockEndOffset(0, 150);
         mockAlterDisklessSwitch();
 
         String output = runSealCommand(0, Optional.of(100L), false);
 
         verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(100L), any(AlterDisklessSwitchOptions.class));
-        assertTrue(output.contains("seal offset 100 <= end offset 150"));
         assertTrue(output.contains("Set test-topic-0 classicToDisklessStartOffset to 100"));
     }
 
     @Test
-    public void testSealDefaultsToEndOffset() throws Exception {
+    public void testSealDefaultsToEndOffsetWhenPending() throws Exception {
+        // Pending switch (offset -2): default seals at the current end offset.
+        mockDescribeSeal(0, -2L);
         mockEndOffset(0, 150);
         mockAlterDisklessSwitch();
 
@@ -204,24 +204,23 @@ public class TopicSwitchCommandTest {
     }
 
     @Test
-    public void testSealDryRunDoesNotCommit() throws Exception {
-        mockEndOffset(0, 150);
+    public void testSealDefaultRejectedWhenAlreadyCommitted() throws Exception {
+        // Already committed (offset 100): defaulting would use the diskless end offset, so require --offset.
+        mockDescribeSeal(0, 100L);
 
+        RuntimeException ex = assertThrows(RuntimeException.class,
+            () -> runSealCommand(0, Optional.empty(), false));
+        assertTrue(ex.getMessage().contains("already has a committed seal offset (100)"));
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+    }
+
+    @Test
+    public void testSealDryRunDoesNotCommit() throws Exception {
         String output = runSealCommand(0, Optional.of(100L), true);
 
         verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
         assertTrue(output.contains("[dry-run]"));
         assertTrue(output.contains("Would set test-topic-0 classicToDisklessStartOffset to 100"));
-    }
-
-    @Test
-    public void testSealRejectsOffsetAboveEndOffset() throws Exception {
-        mockEndOffset(0, 90);
-
-        RuntimeException ex = assertThrows(RuntimeException.class,
-            () -> runSealCommand(0, Optional.of(100L), false));
-        assertTrue(ex.getMessage().contains("past the partition end offset 90"));
-        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
     }
 
     @Test
@@ -261,6 +260,14 @@ public class TopicSwitchCommandTest {
                         new ListOffsetsResult.ListOffsetsResultInfo(offset, -1, Optional.empty())));
                 return new ListOffsetsResult(futures);
             });
+    }
+
+    // Mocks describeTopicPartitions so the seal command can read the current committed offset.
+    private void mockDescribeSeal(int partition, long classicToDisklessStartOffset) {
+        DescribeTopicPartitionsResponseData responseData = buildResponseData(List.of(
+            buildPartition(partition, 1, 0, classicToDisklessStartOffset, -1)));
+        when(adminClient.describeTopicPartitions(ArgumentMatchers.any(), any(DescribeTopicsOptions.class)))
+            .thenReturn(new DescribeTopicPartitionsResult(KafkaFuture.completedFuture(responseData)));
     }
 
     private void mockAlterDisklessSwitch() {

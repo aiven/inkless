@@ -7728,21 +7728,13 @@ public class ReplicationControlManagerTest {
         ReplicationControlManager replicationControl = ctx.replicationControl;
         Uuid topicId = createSwitchingTestTopic(ctx);
 
-        // Seal first, then abort back to classic.
-        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-            .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L)).records());
-        PartitionRegistration sealed = replicationControl.getPartition(topicId, 0);
-        assertEquals(100L, sealed.classicToDisklessStartOffset);
-        assertEquals(sealed.leaderEpoch, sealed.disklessLeaderEpoch);
-
+        // Abort the pending switch back to classic.
         ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
             .setTopicName("foo").setPartitionIndex(0).setSealOffset(-1L)).records());
         PartitionRegistration aborted = replicationControl.getPartition(topicId, 0);
         assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, aborted.classicToDisklessStartOffset);
-        // Aborting drops the dependent switch metadata from the previous completed switch.
         assertEquals(List.of(), aborted.disklessProducerStates);
         assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, aborted.disklessLeaderEpoch);
-        // ...and reverts the topic back to classic.
         assertEquals("false", ctx.configurationControl.currentTopicConfig("foo").get(DISKLESS_ENABLE_CONFIG));
     }
 
@@ -7751,22 +7743,55 @@ public class ReplicationControlManagerTest {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
         Uuid topicId = createSwitchingTestTopic(ctx);
-
-        // Seal first so there is dependent switch metadata to drop on re-arm.
-        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-            .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L)).records());
         int leaderEpochBefore = replicationControl.getPartition(topicId, 0).leaderEpoch;
 
+        // Re-arm the pending switch.
         ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
             .setTopicName("foo").setPartitionIndex(0).setSealOffset(-2L)).records());
 
         PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
         assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING, partition.classicToDisklessStartOffset);
-        // Re-arming bumps the leader epoch to force the broker to seal again...
+        // Re-arming bumps the leader epoch to force the broker to seal again.
         assertEquals(leaderEpochBefore + 1, partition.leaderEpoch);
-        // ...and drops the dependent switch metadata so the next initDisklessLog re-captures it.
-        assertEquals(List.of(), partition.disklessProducerStates);
-        assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, partition.disklessLeaderEpoch);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchCannotAbortCommittedSeal() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        createSwitchingTestTopic(ctx);
+
+        // Commit a seal; diskless data may now exist past it, so abort/re-arm must be rejected.
+        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+            .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L)).records());
+
+        assertThrows(InvalidRequestException.class, () ->
+            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+                .setTopicName("foo").setPartitionIndex(0).setSealOffset(-1L)));
+        assertThrows(InvalidRequestException.class, () ->
+            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+                .setTopicName("foo").setPartitionIndex(0).setSealOffset(-2L)));
+    }
+
+    @Test
+    public void testAlterDisklessSwitchCannotReSealBeyondCommittedSeal() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        Uuid topicId = createSwitchingTestTopic(ctx);
+
+        // Commit a seal at 100. The classic log is truncated to the seal, so 100 is its end offset.
+        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+            .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L)).records());
+
+        // Re-sealing beyond the committed seal would route non-existent classic offsets and is rejected.
+        assertThrows(InvalidRequestException.class, () ->
+            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+                .setTopicName("foo").setPartitionIndex(0).setSealOffset(150L)));
+
+        // Re-sealing at or below the committed seal is allowed (correcting a bad seal downward).
+        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+            .setTopicName("foo").setPartitionIndex(0).setSealOffset(50L)).records());
+        assertEquals(50L, replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
     }
 
     @Test

@@ -1713,6 +1713,17 @@ public class ReplicationControlManager {
                 request.partitionIndex() + " is not part of a classic-to-diskless switch; there is " +
                 "nothing to override.");
         }
+        if (sealOffset < 0 && partition.classicToDisklessStartOffset >= 0) {
+            throw new InvalidRequestException("Cannot abort or re-arm the classic-to-diskless switch for " +
+                request.topicName() + "-" + request.partitionIndex() + ": it has already committed a seal " +
+                "offset (" + partition.classicToDisklessStartOffset + "), and diskless data may exist past it.");
+        }
+        if (sealOffset > 0 && partition.classicToDisklessStartOffset >= 0
+                && sealOffset > partition.classicToDisklessStartOffset) {
+            throw new InvalidRequestException("Cannot seal " + request.topicName() + "-" +
+                request.partitionIndex() + " at offset " + sealOffset + ": it exceeds the committed seal " +
+                "offset (" + partition.classicToDisklessStartOffset + "), beyond which no classic data exists.");
+        }
 
         PartitionChangeRecord record = new PartitionChangeRecord()
             .setTopicId(topicId)
