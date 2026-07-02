@@ -4142,6 +4142,23 @@ class PartitionTest extends AbstractPartitionTest {
   }
 
   @Test
+  def testUnsealPartitionAllowsAppends(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+
+    val requestLocal = RequestLocal.withThreadConfinedCaching
+
+    partition.seal()
+    assertTrue(partition.isSealed)
+
+    partition.unseal()
+    assertFalse(partition.isSealed)
+
+    val records = TestUtils.records(List(new SimpleRecord("k".getBytes, "v".getBytes)))
+    partition.appendRecordsToLeader(records, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal)
+  }
+
+  @Test
   def testSealedPartitionStabilizesLeo(): Unit = {
     val leaderEpoch = 1
     partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
