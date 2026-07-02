@@ -296,6 +296,19 @@ public class ConfigurationControlManager {
             StartMirrorTopicsResponseData.TopicResult topicRes = new StartMirrorTopicsResponseData.TopicResult();
             String topicName = topic.name();
 
+            ReplicationControlManager.TopicControlInfo existingTopic = replicationControl.getTopicByName(topicName);
+            if (existingTopic != null) {
+                String currMirrorNameValue = existingTopic.mirrorName();
+                int currMirrorStateChange = existingTopic.mirrorState();
+                if (currMirrorNameValue != null && !currMirrorNameValue.isBlank() && currMirrorStateChange != MirrorPartitionState.STOPPED.value()) {
+                    topicRes.setErrorCode(Errors.TOPIC_ALREADY_IN_CLUSTER_MIRROR.code()).setName(topicName)
+                            .setErrorMessage("Topic '" + topicName + "' is already in mirror '" + currMirrorNameValue
+                                    + "' in " + MirrorPartitionState.fromValue((byte) currMirrorStateChange) + " state");
+                    topicResList.add(topicRes);
+                    continue;
+                }
+            }
+
             if (topic.id().equals(Uuid.ZERO_UUID) && topic.numPartitions() <= 0) {
                 log.warn("Topic {} for mirror {} has no topic ID or partition info and will be" +
                         " created at the next metadata refresh", topicName, mirrorName);
@@ -316,19 +329,6 @@ public class ConfigurationControlManager {
                 }
             }
 
-            ReplicationControlManager.TopicControlInfo topicInfo = replicationControl.getTopic(topicId);
-            if (topicInfo != null) {
-                String currMirrorNameValue = topicInfo.mirrorName();
-                int currMirrorStateChange = topicInfo.mirrorState();
-                if (currMirrorNameValue != null && !currMirrorNameValue.isBlank() && currMirrorStateChange != MirrorPartitionState.STOPPED.value()) {
-                    topicRes.setErrorCode(Errors.TOPIC_ALREADY_IN_CLUSTER_MIRROR.code()).setName(topicName)
-                            .setErrorMessage("Topic '" + topicName + "' is already in mirror '" + currMirrorNameValue
-                                    + "' in " + MirrorPartitionState.fromValue((byte) currMirrorStateChange) + " state");
-                    topicResList.add(topicRes);
-                    continue;
-                }
-            }
-
             records.add(new ApiMessageAndVersion(
                     new MirrorTopicStateChangeRecord()
                             .setTopicId(topicId)
@@ -340,6 +340,14 @@ public class ConfigurationControlManager {
             topicResList.add(topicRes);
         }
         data.setTopics(topicResList);
+
+        for (StartMirrorTopicsResponseData.TopicResult tr : topicResList) {
+            if (tr.errorCode() != Errors.NONE.code()) {
+                data.setErrorCode(tr.errorCode());
+                data.setErrorMessage(tr.errorMessage());
+                break;
+            }
+        }
 
         return ControllerResult.of(records, data);
     }

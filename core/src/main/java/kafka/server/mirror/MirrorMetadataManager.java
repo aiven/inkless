@@ -2073,23 +2073,36 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     /** Truncates local replicas using last mirrored leader epochs from this broker's coordinator cache. */
     CompletionStage<Map<TopicPartition, Integer>> truncateToLastMirrorEpochs(
             String mirrorName, Set<TopicPartition> topicPartitionSet) {
-        log.info("Truncating to last mirrored epochs from local state for mirror {}: {}", mirrorName, topicPartitionSet);
+        log.info("Truncating to last mirror epochs from local state for mirror {}: {}", mirrorName, topicPartitionSet);
         Admin admin = getOrCreateSourceAdmin(mirrorName);
 
-        String srcClusterId = getSourceClusterId(mirrorName);
+        // Collect sourceClusterIds from ALL mirror configs, not just the current one.
+        // In fan-out/failback, the source needs to match against prior mirror configs
+        // (e.g. D2 has old "s-to-d2" with srcCID=S, which D1 matches via its "s-to-d1").
+        Set<String> allSourceClusterIds = new HashSet<>();
+        for (String mn : getConfiguredMirrors()) {
+            String cid = getSourceClusterId(mn);
+            if (cid != null && !cid.isEmpty()) {
+                allSourceClusterIds.add(cid);
+            }
+        }
+
         Map<Uuid, List<Integer>> topicPartitionsByTopicId = new HashMap<>();
         for (TopicPartition tp : topicPartitionSet) {
             Uuid topicId = metadataCache.getTopicId(tp.topic());
             topicPartitionsByTopicId.computeIfAbsent(topicId, k -> new ArrayList<>()).add(tp.partition());
         }
 
-        List<DescribeClusterMirrorsRequestData.TopicLineage> lineages = topicPartitionsByTopicId.entrySet().stream()
-                .map(e -> new DescribeClusterMirrorsRequestData.TopicLineage()
-                        .setTopicId(e.getKey())
-                        .setPartitions(e.getValue())
-                        .setSrcClusterId(srcClusterId != null ? srcClusterId : "")
-                        .setDstClusterId(clusterId))
-                .collect(Collectors.toList());
+        List<DescribeClusterMirrorsRequestData.TopicLineage> lineages = new ArrayList<>();
+        for (Map.Entry<Uuid, List<Integer>> entry : topicPartitionsByTopicId.entrySet()) {
+            for (String srcClusterId : allSourceClusterIds) {
+                lineages.add(new DescribeClusterMirrorsRequestData.TopicLineage()
+                        .setTopicId(entry.getKey())
+                        .setPartitions(entry.getValue())
+                        .setSrcClusterId(srcClusterId)
+                        .setDstClusterId(clusterId));
+            }
+        }
 
         DescribeClusterMirrorsOptions options = new DescribeClusterMirrorsOptions()
                 .topicLineages(lineages);
