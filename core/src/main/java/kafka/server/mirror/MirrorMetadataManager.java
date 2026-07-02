@@ -2120,6 +2120,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                             epochs.put(new TopicPartition(name, partIdx), lme)));
                         });
                     }
+                    log.info("Lineage LME lookup for mirror {}: {}", mirrorName, epochs);
                     return epochs;
                 })
                 .orTimeout(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);

@@ -104,9 +104,9 @@ class ClusterMirroringFanOutTest(MirrorUtils, Test):
         """Verify fan-out LME lookup: S -> D1, S -> D2, then D1 -> D2 after S crashes."""
         topic = "t1"
 
-        self.logger.info("Create topic on source and produce initial data")
+        self.logger.info("Create topic on source and produce first batch")
         self.source_kafka.create_topic({"topic": topic, "partitions": 1, "replication-factor": 2})
-        MirrorUtils.produce_messages(self.logger, self.source_kafka, self.client_node, topic, 10)
+        MirrorUtils.produce_messages(self.logger, self.source_kafka, self.client_node, topic, 5)
 
         self.logger.info("Create mirror s-to-d1 on D1 from S")
         s_to_d1_cfg = MirrorConfig(self.source_kafka.bootstrap_servers())
@@ -139,6 +139,24 @@ class ClusterMirroringFanOutTest(MirrorUtils, Test):
         )
 
         self.logger.info("Wait for both destinations to catch up")
+        MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest1_kafka, self.client_node,
+                                         "s-to-d1", [topic])
+        MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest2_kafka, self.client_node,
+                                         "s-to-d2", [topic])
+
+        self.logger.info("Restart source nodes and produce to bump leader epoch")
+        for node in self.source_kafka.nodes:
+            self.source_kafka.restart_node(node)
+        MirrorUtils.produce_messages(self.logger, self.source_kafka, self.client_node, topic, 5)
+        MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest1_kafka, self.client_node,
+                                         "s-to-d1", [topic])
+        MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest2_kafka, self.client_node,
+                                         "s-to-d2", [topic])
+
+        self.logger.info("Restart source nodes again and produce to bump leader epoch further")
+        for node in self.source_kafka.nodes:
+            self.source_kafka.restart_node(node)
+        MirrorUtils.produce_messages(self.logger, self.source_kafka, self.client_node, topic, 5)
         MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest1_kafka, self.client_node,
                                          "s-to-d1", [topic])
         MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest2_kafka, self.client_node,
@@ -180,17 +198,24 @@ class ClusterMirroringFanOutTest(MirrorUtils, Test):
                                          "d1-to-d2", [topic],
                                          err_msg="D2 did not catch up from D1 after fan-out redirection")
 
-        self.logger.info("Verify LME was resolved via lineage (not -1 fallback)")
-        MirrorUtils.all_satisfy_in_mirror(self.logger, self.dest2_kafka, self.client_node,
-                                          "d1-to-d2", lambda p: p["lme"] >= 0, [topic])
-        output = self.dest2_kafka.describe_cluster_mirror(self.client_node)
-        mirrors = self.dest2_kafka.parse_describe_cluster_mirror(output)
-        for partition, info in mirrors["d1-to-d2"][topic].items():
-            self.logger.info("d1-to-d2 %s-%d: lme=%d", topic, partition, info["lme"])
-            assert info["lme"] >= 0, \
-                "Partition %d LME is %d (lineage lookup failed, expected >= 0)" % (partition, info["lme"])
+        self.logger.info("Verify LME lookup: replication did not start from scratch")
+        log_path = "%s/info/server.log" % self.dest2_kafka.OPERATIONAL_LOG_DIR
+        pattern = "Lineage LME lookup for mirror d1-to-d2"
+        found = False
+        for node in self.dest2_kafka.nodes:
+            for line in node.account.ssh_capture(
+                    "grep '%s' %s 2>/dev/null || true" % (pattern, log_path),
+                    allow_fail=True):
+                line = line.strip()
+                if line:
+                    self.logger.info("LME lookup log on %s: %s", node.name, line)
+                    epoch = int(line.split(topic + "-0=")[1].split("}")[0])
+                    assert epoch >= 2, \
+                        "Expected LME epoch >= 2, got %d in: %s" % (epoch, line)
+                    found = True
+        assert found, "No lineage LME lookup log found on any D2 broker"
 
-        self.logger.info("Verify data completeness on D2")
+        self.logger.info("Verify data completeness on D2 (15 original + 5 new)")
         count = MirrorUtils.consume_messages(self.logger, self.dest2_kafka, self.client_node, topic,
-                                             max_messages=15, expected_count=15)
-        assert count == 15, "Expected 15 messages on D2, got %d" % count
+                                             max_messages=20, expected_count=20)
+        assert count == 20, "Expected 20 messages on D2, got %d" % count

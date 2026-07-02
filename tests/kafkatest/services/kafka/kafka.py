@@ -2202,8 +2202,7 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
                 "src_offset": item["sourceOffset"],
                 "dst_offset": item["destinationOffset"],
                 "lag": item["lag"],
-                "state": item["state"],
-                "lme": item.get("lastMirrorEpoch", -1)
+                "state": item["state"]
             }
 
         return mirrors
