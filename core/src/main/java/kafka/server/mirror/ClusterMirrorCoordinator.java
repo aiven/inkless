@@ -109,6 +109,7 @@ public class ClusterMirrorCoordinator {
     private final ClusterMirrorRecordSerde serde = new ClusterMirrorRecordSerde();
     private volatile ScheduledFuture<?> metadataRefreshFuture;
     private final Scheduler scheduler;
+    private final Scheduler refreshScheduler;
     private final Metrics metrics;
     private final Time time;
 
@@ -118,6 +119,7 @@ public class ClusterMirrorCoordinator {
             MirrorMetadataManager metadataManager,
             MetadataCache metadataCache,
             Scheduler scheduler,
+            Scheduler refreshScheduler,
             Metrics metrics,
             Time time
     ) {
@@ -128,6 +130,7 @@ public class ClusterMirrorCoordinator {
         this.metadataManager = metadataManager;
         this.metadataCache = metadataCache;
         this.scheduler = scheduler;
+        this.refreshScheduler = refreshScheduler;
         this.metrics = metrics;
         this.time = time;
     }
@@ -155,9 +158,11 @@ public class ClusterMirrorCoordinator {
                 this::getCoordinatorPartitionByName);
 
         scheduler.startup();
+        refreshScheduler.startup();
 
-        // periodically query source cluster to get the metadata
-        metadataRefreshFuture = scheduler.schedule("MirrorMetadataRefresh",
+        // periodically query source cluster to get the metadata (on its own thread
+        // so RPC timeouts against unreachable sources don't block state transitions)
+        metadataRefreshFuture = refreshScheduler.schedule("MirrorMetadataRefresh",
                 metadataManager::runMetadataRefresh, 0, brokerConfig.mirrorConfig().metadataRefreshIntervalMs());
 
         log.info("Startup complete.");
@@ -168,7 +173,7 @@ public class ClusterMirrorCoordinator {
         if (oldFuture != null) {
             oldFuture.cancel(false);
         }
-        metadataRefreshFuture = scheduler.schedule("MirrorMetadataRefresh",
+        metadataRefreshFuture = refreshScheduler.schedule("MirrorMetadataRefresh",
                 metadataManager::runMetadataRefresh, newIntervalMs, newIntervalMs);
         log.info("Rescheduled metadata refresh with interval {} ms", newIntervalMs);
     }
@@ -186,6 +191,12 @@ public class ClusterMirrorCoordinator {
         // in-flight periodicSync admin calls (describeCluster, describeTopics)
         // fail immediately instead of blocking for up to requestTimeoutMs each.
         metadataManager.closeSourceAdmins();
+        try {
+            refreshScheduler.shutdown();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Interrupted while shutting down refresh scheduler", e);
+        }
         try {
             scheduler.shutdown();
         } catch (InterruptedException e) {

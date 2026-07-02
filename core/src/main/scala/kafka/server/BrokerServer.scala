@@ -342,6 +342,7 @@ class BrokerServer(
       val defaultActionQueue = new DelayedActionQueue
 
       val mirrorScheduler = new KafkaScheduler(1, true, "ClusterMirror-")
+      val mirrorRefreshScheduler = new KafkaScheduler(1, true, "ClusterMirrorRefresh-")
       mirrorMetadataManager = new MirrorMetadataManager(
         clusterId,
         config,
@@ -404,7 +405,7 @@ class BrokerServer(
         producerIdManagerSupplier, metrics, metadataCache, Time.SYSTEM)
 
       clusterMirrorCoordinator = new ClusterMirrorCoordinator(config, replicaManager,
-        mirrorMetadataManager, metadataCache, mirrorScheduler, metrics, Time.SYSTEM)
+        mirrorMetadataManager, metadataCache, mirrorScheduler, mirrorRefreshScheduler, metrics, Time.SYSTEM)
 
       autoTopicCreationManager = new DefaultAutoTopicCreationManager(
         config, clientToControllerChannelManager, groupCoordinator,

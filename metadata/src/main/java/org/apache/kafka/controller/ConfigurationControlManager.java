@@ -309,15 +309,20 @@ public class ConfigurationControlManager {
                 }
             }
 
-            if (topic.id().equals(Uuid.ZERO_UUID) && topic.numPartitions() <= 0) {
+            Uuid topicId = topic.id();
+            if (topicId.equals(Uuid.ZERO_UUID) && existingTopic != null) {
+                topicId = existingTopic.topicId();
+            }
+            if (topicId.equals(Uuid.ZERO_UUID) && topic.numPartitions() <= 0) {
                 log.warn("Topic {} for mirror {} has no topic ID or partition info and will be" +
                         " created at the next metadata refresh", topicName, mirrorName);
                 topicRes.setName(topicName);
                 topicResList.add(topicRes);
                 continue;
             }
-
-            Uuid topicId = topic.id().equals(Uuid.ZERO_UUID) ? Uuid.randomUuid() : topic.id();
+            if (topicId.equals(Uuid.ZERO_UUID)) {
+                topicId = Uuid.randomUuid();
+            }
 
             if (topic.numPartitions() > 0) {
                 ApiError createError = replicationControl.createMirrorTopic(

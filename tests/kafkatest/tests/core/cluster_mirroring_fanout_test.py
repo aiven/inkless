@@ -155,6 +155,7 @@ class ClusterMirroringFanOutTest(MirrorUtils, Test):
         self.dest2_kafka.stop_cluster_mirror_topics(self.client_node, "s-to-d2", topic)
         MirrorUtils.wait_mirror_state(self.logger, self.dest2_kafka, self.client_node,
                                        "s-to-d2", [topic], "STOPPED")
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest2_kafka, self.client_node, "s-to-d2")
 
         self.logger.info("Produce new data on D1 (it is now the new source)")
         MirrorUtils.produce_messages(self.logger, self.dest1_kafka, self.client_node, topic, 5)
