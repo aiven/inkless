@@ -4866,8 +4866,20 @@ public class KafkaAdminClient extends AdminClient {
         final Call call = new Call("createClusterMirror", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
 
+            @SuppressWarnings("unchecked")
             @Override
             CreateClusterMirrorRequest.Builder createRequest(int timeoutMs) {
+                if (!configs.containsKey(CommonClientConfigs.MIRROR_SOURCE_CLUSTER_ID_CONFIG)) {
+                    Map<String, String> mutableConfigs = new HashMap<>(configs);
+                    try (Admin sourceAdmin = Admin.create((Map) mutableConfigs)) {
+                        var sourceClusterId = sourceAdmin.describeCluster().clusterId().get();
+                        mutableConfigs.put(CommonClientConfigs.MIRROR_SOURCE_CLUSTER_ID_CONFIG, sourceClusterId);
+                        return new CreateClusterMirrorRequest.Builder(mirrorName, mutableConfigs);
+                    } catch (Exception e) {
+                        log.error("Failed to get cluster id from source cluster", e);
+                        throw new RuntimeException(e);
+                    }
+                }
                 return new CreateClusterMirrorRequest.Builder(mirrorName, configs);
             }
 
@@ -5208,7 +5220,7 @@ public class KafkaAdminClient extends AdminClient {
 
     @Override
     public DescribeClusterMirrorsResult describeClusterMirrors(Collection<String> mirrorNames, DescribeClusterMirrorsOptions options) {
-        final KafkaFutureImpl<Map<String, ClusterMirrorDescription>> all = new KafkaFutureImpl<>();
+        final KafkaFutureImpl<Map<String, ClusterMirrorDesc>> all = new KafkaFutureImpl<>();
         final long nowMetadata = time.milliseconds();
         final long deadline = calcDeadlineMs(nowMetadata, options.timeoutMs());
         // We query all brokers to get up-to-date lag AND state
@@ -5279,11 +5291,11 @@ public class KafkaAdminClient extends AdminClient {
         private final Set<String> requestedMirrors;
         private final boolean describeAll;
         private final HashSet<Node> remaining;
-        private final KafkaFutureImpl<Map<String, ClusterMirrorDescription>> allFuture;
+        private final KafkaFutureImpl<Map<String, ClusterMirrorDesc>> allFuture;
 
         DescribeClusterMirrorsResults(Collection<Node> brokers,
                                Collection<String> mirrorNames,
-                               KafkaFutureImpl<Map<String, ClusterMirrorDescription>> allFuture) {
+                               KafkaFutureImpl<Map<String, ClusterMirrorDesc>> allFuture) {
             this.partialDescriptions = new HashMap<>();
             this.requestedMirrors = new HashSet<>(mirrorNames);
             this.describeAll = mirrorNames.isEmpty();
@@ -5323,7 +5335,7 @@ public class KafkaAdminClient extends AdminClient {
 
         private synchronized void tryComplete() {
             if (remaining.isEmpty()) {
-                Map<String, ClusterMirrorDescription> descriptions = new HashMap<>(partialDescriptions.size());
+                Map<String, ClusterMirrorDesc> descriptions = new HashMap<>(partialDescriptions.size());
                 Throwable firstError = null;
                 for (Map.Entry<String, PartialMirrorDescription> entry : partialDescriptions.entrySet()) {
                     PartialMirrorDescription partial = entry.getValue();
@@ -5349,10 +5361,10 @@ public class KafkaAdminClient extends AdminClient {
             }
         }
 
-        // Accumulated ClusterMirrorDescription data from all brokers
+        // Accumulated ClusterMirrorDesc data from all brokers
         private static class PartialMirrorDescription {
             final String mirrorName;
-            final Map<String, Set<ClusterMirrorDescription.LeaderState>> topicPartitions;
+            final Map<String, Set<ClusterMirrorDesc.LeaderStateDesc>> topicPartitions;
             int authorizedOperations;
             boolean hasSuccess;
             Throwable error;
@@ -5386,18 +5398,20 @@ public class KafkaAdminClient extends AdminClient {
 
                 // Merge topic partitions
                 for (DescribeClusterMirrorsResponseData.TopicPartitions topic : mirror.topics()) {
-                    Set<ClusterMirrorDescription.LeaderState> partitions =
+                    Set<ClusterMirrorDesc.LeaderStateDesc> partitions =
                             topicPartitions.computeIfAbsent(topic.topicName(), k -> new HashSet<>());
 
                     for (DescribeClusterMirrorsResponseData.PartitionDetail partition : topic.partitions()) {
                         TopicPartition tp = new TopicPartition(topic.topicName(), partition.partitionIndex());
-                        ClusterMirrorDescription.LeaderState leaderState =
-                                new ClusterMirrorDescription.LeaderState(
+                        ClusterMirrorDesc.LeaderStateDesc leaderState =
+                                new ClusterMirrorDesc.LeaderStateDesc(
                                         tp,
                                         partition.sourceOffset(),
                                         partition.destinationOffset(),
                                         partition.lag(),
                                         partition.stateValue(),
+                                        partition.retryAttempt(),
+                                        partition.errorMessage(),
                                         partition.lastMirrorEpoch()
                                 );
                         partitions.add(leaderState);
@@ -5406,8 +5420,8 @@ public class KafkaAdminClient extends AdminClient {
 
             }
 
-            ClusterMirrorDescription toMirrorDescription() {
-                return new ClusterMirrorDescription(
+            ClusterMirrorDesc toMirrorDescription() {
+                return new ClusterMirrorDesc(
                         mirrorName,
                         topicPartitions,
                         validAclOperations(authorizedOperations)

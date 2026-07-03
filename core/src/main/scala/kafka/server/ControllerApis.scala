@@ -29,6 +29,7 @@ import kafka.server.logger.RuntimeLoggerManager
 import kafka.server.metadata.KRaftMetadataCache
 import kafka.server.mirror.ClusterMirrorUtils
 import kafka.utils.Logging
+import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.admin.{AlterConfigOp, EndpointType}
 import org.apache.kafka.common.Uuid.ZERO_UUID
 import org.apache.kafka.common.acl.AclOperation.{ALTER, ALTER_CONFIGS, CLUSTER_ACTION, CREATE, CREATE_TOKENS, DELETE, DESCRIBE, DESCRIBE_CONFIGS}
@@ -211,6 +212,13 @@ class ControllerApis(
     createMirrorRequest.data().config.forEach { config =>
       altersByName.put(config.name, new util.AbstractMap.SimpleEntry[AlterConfigOp.OpType, String](
         AlterConfigOp.OpType.forId(0), config.value))
+    }
+    if (!altersByName.containsKey(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG)) {
+      throw new InvalidRequestException(s"Missing required config ${CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG} in CreateClusterMirrorRequest")
+    }
+
+    if (!altersByName.containsKey(CommonClientConfigs.MIRROR_SOURCE_CLUSTER_ID_CONFIG)) {
+      throw new InvalidRequestException(s"Missing required config ${CommonClientConfigs.MIRROR_SOURCE_CLUSTER_ID_CONFIG} in CreateClusterMirrorRequest")
     }
 
     controller.createClusterMirror(context, createMirrorRequest.data().mirrorName(), altersByName)

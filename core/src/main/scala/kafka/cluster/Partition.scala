@@ -953,9 +953,11 @@ class Partition(val topicPartition: TopicPartition,
     // Check if this in-sync replica needs to be added to the ISR.
     maybeExpandIsr(replica)
 
-    // check if the HW of the partition can now be incremented
-    // since the replica may already be in the ISR and its LEO has just incremented
-    val leaderHWIncremented = if (prevFollowerEndOffset != replica.stateSnapshot.logEndOffset) {
+    // Check if HW can be incremented since the replica's LEO may have changed,
+    // or if a pending truncation callback needs to complete (followers may already
+    // be at the leader's LEO after mirror truncation reset both to the same offset).
+    val leaderHWIncremented = if (prevFollowerEndOffset != replica.stateSnapshot.logEndOffset
+        || onCompleteCallback.isPresent) {
       // the leader log may be updated by ReplicaAlterLogDirsThread so the following method must be in lock of
       // leaderIsrUpdateLock to prevent adding new hw to invalid log.
       inReadLock(leaderIsrUpdateLock) {
@@ -1262,7 +1264,7 @@ class Partition(val topicPartition: TopicPartition,
     if (onCompleteCallback.isPresent) {
       this.onCompleteCallback = onCompleteCallback
     }
-    if (onCompleteCallback.isEmpty) {
+    if (this.onCompleteCallback.isEmpty) {
       return false
     }
     if (onCaughtupCallback.isPresent) {

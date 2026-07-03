@@ -27,16 +27,16 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * A detailed description of a single mirror.
+ * A detailed description of a single cluster mirror.
  */
 @InterfaceStability.Evolving
-public class ClusterMirrorDescription {
+public class ClusterMirrorDesc {
     private final String mirrorName;
-    private final Map<String, Set<LeaderState>> topics;
+    private final Map<String, Set<LeaderStateDesc>> topics;
     private final Set<AclOperation> authorizedOperations;
 
-    public ClusterMirrorDescription(String mirrorName,
-                             Map<String, Set<LeaderState>> topics,
+    public ClusterMirrorDesc(String mirrorName,
+                             Map<String, Set<LeaderStateDesc>> topics,
                              Set<AclOperation> authorizedOperations) {
         this.mirrorName = mirrorName;
         this.topics = Collections.unmodifiableMap(topics);
@@ -47,13 +47,10 @@ public class ClusterMirrorDescription {
         return mirrorName;
     }
 
-    public Map<String, Set<LeaderState>> topics() {
+    public Map<String, Set<LeaderStateDesc>> topics() {
         return topics;
     }
 
-    /**
-     * Returns the authorized operations for this mirror, or null if not requested.
-     */
     public Set<AclOperation> authorizedOperations() {
         return authorizedOperations;
     }
@@ -62,7 +59,7 @@ public class ClusterMirrorDescription {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        ClusterMirrorDescription that = (ClusterMirrorDescription) o;
+        ClusterMirrorDesc that = (ClusterMirrorDesc) o;
         return Objects.equals(mirrorName, that.mirrorName) &&
                Objects.equals(topics, that.topics) &&
                Objects.equals(authorizedOperations, that.authorizedOperations);
@@ -75,35 +72,33 @@ public class ClusterMirrorDescription {
 
     @Override
     public String toString() {
-        return "ClusterMirrorDescription{" +
+        return "ClusterMirrorDesc{" +
                "mirrorName='" + mirrorName + '\'' +
                ", topics=" + topics +
                ", authorizedOperations=" + authorizedOperations +
                '}';
     }
 
-    /**
-     * Represents the mirroring state of the leader partition.
-     */
-    public static class LeaderState {
+    /** Represents the mirroring state of a leader partition. */
+    public static class LeaderStateDesc {
         private final TopicPartition topicPartition;
         private final long sourceOffset;
         private final long destinationOffset;
         private final long lag;
         private final String state;
+        private final short retryAttempt;
+        private final String errorMessage;
         private final int lastMirrorEpoch;
 
-        public LeaderState(TopicPartition topicPartition,
-                           long sourceOffset,
-                           long destinationOffset,
-                           long lag,
-                           String state,
-                           int lastMirrorEpoch) {
+        public LeaderStateDesc(TopicPartition topicPartition, long sourceOffset, long destinationOffset,
+                               long lag, String state, short retryAttempt, String errorMessage, int lastMirrorEpoch) {
             this.topicPartition = topicPartition;
             this.sourceOffset = sourceOffset;
             this.destinationOffset = destinationOffset;
             this.lag = lag;
             this.state = state;
+            this.retryAttempt = retryAttempt;
+            this.errorMessage = errorMessage;
             this.lastMirrorEpoch = lastMirrorEpoch;
         }
 
@@ -127,6 +122,14 @@ public class ClusterMirrorDescription {
             return state;
         }
 
+        public short retryAttempt() {
+            return retryAttempt;
+        }
+
+        public String errorMessage() {
+            return errorMessage;
+        }
+
         public int lastMirrorEpoch() {
             return lastMirrorEpoch;
         }
@@ -135,28 +138,32 @@ public class ClusterMirrorDescription {
         public boolean equals(Object o) {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
-            LeaderState that = (LeaderState) o;
+            LeaderStateDesc that = (LeaderStateDesc) o;
             return sourceOffset == that.sourceOffset &&
                    destinationOffset == that.destinationOffset &&
                    lag == that.lag &&
+                   retryAttempt == that.retryAttempt &&
                    lastMirrorEpoch == that.lastMirrorEpoch &&
                    Objects.equals(topicPartition, that.topicPartition) &&
-                   Objects.equals(state, that.state);
+                   Objects.equals(state, that.state) &&
+                   Objects.equals(errorMessage, that.errorMessage);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(topicPartition, sourceOffset, destinationOffset, lag, state, lastMirrorEpoch);
+            return Objects.hash(topicPartition, sourceOffset, destinationOffset, lag, state, retryAttempt, errorMessage, lastMirrorEpoch);
         }
 
         @Override
         public String toString() {
-            return "PartitionMirrorState{" +
+            return "LeaderStateDesc{" +
                    "topicPartition=" + topicPartition +
                    ", sourceOffset=" + sourceOffset +
                    ", destinationOffset=" + destinationOffset +
                    ", lag=" + lag +
                    ", state='" + state + '\'' +
+                   ", retryAttempt=" + retryAttempt +
+                   ", errorMessage='" + errorMessage + '\'' +
                    ", lastMirrorEpoch=" + lastMirrorEpoch +
                    '}';
         }

@@ -29,16 +29,16 @@ import java.util.Map;
  */
 @InterfaceStability.Evolving
 public class DescribeClusterMirrorsResult {
-    private final KafkaFuture<Map<String, ClusterMirrorDescription>> future;
+    private final KafkaFuture<Map<String, ClusterMirrorDesc>> future;
 
-    DescribeClusterMirrorsResult(KafkaFuture<Map<String, ClusterMirrorDescription>> future) {
+    DescribeClusterMirrorsResult(KafkaFuture<Map<String, ClusterMirrorDesc>> future) {
         this.future = future;
     }
 
     /**
      * Return a future which succeeds only if all the mirror descriptions succeed.
      */
-    public KafkaFuture<Map<String, ClusterMirrorDescription>> allDescriptions() {
+    public KafkaFuture<Map<String, ClusterMirrorDesc>> allDescriptions() {
         return future;
     }
 }

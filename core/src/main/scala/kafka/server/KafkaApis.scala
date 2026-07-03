@@ -284,7 +284,8 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleWriteMirrorStates(request: RequestChannel.Request): Unit = {
     if (ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
       if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
-        requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData().setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)))
+        requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData()
+          .setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code).setErrorMessage(Errors.CLUSTER_AUTHORIZATION_FAILED.message)))
         return
       }
       val writeMirrorStatesRequest = request.body[WriteMirrorStatesRequest]
@@ -300,14 +301,16 @@ class KafkaApis(val requestChannel: RequestChannel,
       clusterMirrorCoordinator.updateTopicMetadata(mirrorName, partitionMetadata, res => requestHelper.sendMaybeThrottle(request, res))
     } else {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring write mirror states request")
-      requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
+      requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData()
+        .setErrorCode(Errors.UNSUPPORTED_VERSION.code).setErrorMessage(Errors.UNSUPPORTED_VERSION.message)))
     }
   }
 
   def handleReadMirrorStates(request: RequestChannel.Request): Unit = {
     if (ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
       if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
-        requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData().setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)))
+        requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData()
+          .setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code).setErrorMessage(Errors.CLUSTER_AUTHORIZATION_FAILED.message)))
         return
       }
       val readMirrorStatesRequest = request.body[ReadMirrorStatesRequest]
@@ -324,7 +327,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         res => requestHelper.sendMaybeThrottle(request, res))
     } else {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring read mirror states request")
-      requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
+      requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(new ReadMirrorStatesResponseData()
+        .setErrorCode(Errors.UNSUPPORTED_VERSION.code).setErrorMessage(Errors.UNSUPPORTED_VERSION.message)))
     }
   }
 
@@ -467,6 +471,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           val lagInfoMap = replicaManager.getMirrorLagInfo(mirrorName)
           val partitionStates = clusterMirrorCoordinator.getMirrorStates(mirrorName).asScala
           val lastMirrorEpoch = clusterMirrorCoordinator.getLastMirrorEpochs(mirrorName)
+          val failedInfo = clusterMirrorCoordinator.getFailedPartitionInfo()
 
           // Report partition if: (1) we have lag info, OR (2) we're the partition leader and have no lag info
           val partitionsToReport = (lagInfoMap.keySet ++ partitionStates.keySet.filter { tp =>
@@ -485,12 +490,16 @@ class KafkaApis(val requestChannel: RequestChannel,
                 tp
               })
 
+              val state = partitionStates.getOrElse(topicPartition, MirrorPartitionState.UNKNOWN)
+              val isMirroring = state == MirrorPartitionState.MIRRORING
               val partitionDetail = new DescribeClusterMirrorsResponseData.PartitionDetail()
                 .setPartitionIndex(topicPartition.partition())
-                .setSourceOffset(lagInfoMap.get(topicPartition).map(_.sourceOffset).getOrElse(-1L))
-                .setDestinationOffset(lagInfoMap.get(topicPartition).map(_.destinationOffset).getOrElse(-1L))
-                .setLag(lagInfoMap.get(topicPartition).map(_.lag).getOrElse(-1L))
-                .setStateValue(partitionStates.getOrElse(topicPartition, MirrorPartitionState.UNKNOWN).name())
+                .setSourceOffset(if (isMirroring) lagInfoMap.get(topicPartition).map(_.sourceOffset).getOrElse(-1L) else -1L)
+                .setDestinationOffset(if (isMirroring) lagInfoMap.get(topicPartition).map(_.destinationOffset).getOrElse(-1L) else -1L)
+                .setLag(if (isMirroring) lagInfoMap.get(topicPartition).map(_.lag).getOrElse(-1L) else -1L)
+                .setStateValue(state.name())
+                .setRetryAttempt(Option(failedInfo.get(topicPartition)).map(_.retryAttempt()).getOrElse(0.toShort))
+                .setErrorMessage(Option(failedInfo.get(topicPartition)).map(_.errorMessage()).orNull)
                 .setLastMirrorEpoch(lastMirrorEpoch.getOrDefault(topicPartition, -1))
 
               topicPartitions.partitions().add(partitionDetail)

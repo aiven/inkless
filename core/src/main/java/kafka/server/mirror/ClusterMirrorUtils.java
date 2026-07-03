@@ -75,7 +75,8 @@ public final class ClusterMirrorUtils {
     public record PartitionStateInfo(int partition, MirrorPartitionState state, Integer leaderEpoch) { }
 
     public record PartitionStateLogEntry(String topic, int partition, MirrorPartitionState state,
-                                         MirrorPartitionState previousState, int retryAttempt) { }
+                                         MirrorPartitionState previousState, short retryAttempt,
+                                         String errorMessage) { }
 
     public record PartitionKey(String mirrorName, String topic, int partition) { }
 
@@ -83,8 +84,10 @@ public final class ClusterMirrorUtils {
 
     public record LeaderInfo(Node node, int leaderEpoch) { }
 
+    public record FailedPartitionInfo(short retryAttempt, String errorMessage, MirrorPartitionState previousState) { }
+
     interface StateTransitioner {
-        void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state);
+        void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state, String errorMessage);
     }
 
     interface StateTransitionCallback {

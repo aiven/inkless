@@ -48,6 +48,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
             ["mirror.state.topic.replication.factor", "2"],
             ["mirror.metadata.refresh.interval.ms", "5000"],
             ["mirror.num.replica.fetchers", "2"],
+            ["mirror.socket.timeout.ms", "5000"],
         ]
         self.source_kafka = KafkaService(
             test_context, num_nodes=2, zk=None,
@@ -396,6 +397,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
         self.logger.info("Send messages to source and verify they arrive at destination")
         MirrorUtils.produce_messages(self.logger, self.source_kafka, self.client_node, "my-topic", 3)
         MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest_kafka, self.client_node, "my-mirror", ["my-topic"])
+        MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.client_node, "my-mirror")
 
         count = MirrorUtils.consume_messages(self.logger, self.dest_kafka, self.client_node, "my-topic",
                                      max_messages=3, expected_count=3)

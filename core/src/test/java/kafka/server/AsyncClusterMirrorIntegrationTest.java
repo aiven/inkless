@@ -21,7 +21,7 @@ import kafka.utils.TestUtils;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.AlterConfigOp;
-import org.apache.kafka.clients.admin.ClusterMirrorDescription;
+import org.apache.kafka.clients.admin.ClusterMirrorDesc;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateClusterMirrorOptions;
 import org.apache.kafka.clients.admin.DeleteClusterMirrorOptions;
@@ -121,6 +121,15 @@ public class AsyncClusterMirrorIntegrationTest {
                 .setConfigProp(ServerLogConfigs.AUTO_CREATE_TOPICS_ENABLE_CONFIG, "false")
                 .setConfigProp(ClusterMirrorConfig.MIRROR_STATE_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
                 .setConfigProp(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
+
+                // Fast mirror timeouts and retry backoff for testing
+                .setConfigProp(ServerConfigs.REQUEST_TIMEOUT_MS_CONFIG, "5000")
+                .setConfigProp(ClusterMirrorConfig.MIRROR_SOCKET_TIMEOUT_MS_CONFIG, "5000")
+                .setConfigProp(ClusterMirrorConfig.MIRROR_FAILED_RETRY_MAX_ATTEMPTS_CONFIG, "3")
+                .setConfigProp(ClusterMirrorConfig.MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_CONFIG, "1000")
+                .setConfigProp(ClusterMirrorConfig.MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_CONFIG, "5000")
+
+                // Enable cluster mirroring in early access stage
                 .setConfigProp(ServerConfigs.UNSTABLE_API_VERSIONS_ENABLE_CONFIG, "true")
                 .setConfigProp(ServerConfigs.UNSTABLE_FEATURE_VERSIONS_ENABLE_CONFIG, "true")
                 .build();
@@ -548,6 +557,42 @@ public class AsyncClusterMirrorIntegrationTest {
         assertTrue(records.get(1).key().apiKey() == new LastMirrorEpochsKey().apiKey() && records.get(1).value() == null);
     }
 
+    @Test
+    void testFailedRetryExhaustion() throws Exception {
+        String topic = "failed-retry-topic";
+
+        srcAdmin.createTopics(List.of(
+                new NewTopic(topic, 2, (short) 1)
+        )).all().get(30, TimeUnit.SECONDS);
+
+        produceRecords(srcCluster, topic, 0, 50);
+
+        dstAdmin.createClusterMirror(MIRROR_NAME, Map.of(
+                "bootstrap.servers", singleSourceBootstrapServer
+        ), new CreateClusterMirrorOptions()).all().get(30, TimeUnit.SECONDS);
+        dstAdmin.startMirrorTopics(MIRROR_NAME, Set.of(topic), new StartMirrorTopicsOptions())
+                .all().get(30, TimeUnit.SECONDS);
+        waitForMirrorLagZero(topic);
+
+        // Stop all source brokers to trigger FAILED state
+        srcCluster.brokers().values().forEach(b -> b.shutdown());
+
+        waitForFailedWithRetriesExhausted(topic, 2);
+    }
+
+    private void waitForFailedWithRetriesExhausted(String topicPattern, int maxAttempts) throws Exception {
+        long deadline = System.currentTimeMillis() + 120_000;
+        while (System.currentTimeMillis() < deadline) {
+            if (allPartitionsSatisfy(topicPattern,
+                    s -> "FAILED".equals(s.state()) && s.retryAttempt() >= maxAttempts)) {
+                return;
+            }
+            TimeUnit.MILLISECONDS.sleep(1_000);
+        }
+        throw new AssertionError("Mirror partitions for " + topicPattern
+                + " did not exhaust retries within timeout");
+    }
+
     private void produceRecords(KafkaClusterTestKit cluster, String topic,
                                 int startIndex, int count) {
         Properties props = new Properties();
@@ -626,11 +671,11 @@ public class AsyncClusterMirrorIntegrationTest {
     }
 
     private boolean allPartitionsSatisfy(
-            String topicPattern, Predicate<ClusterMirrorDescription.LeaderState> condition) throws Exception {
+            String topicPattern, Predicate<ClusterMirrorDesc.LeaderStateDesc> condition) throws Exception {
         var result = dstAdmin.describeClusterMirrors(
                 List.of(MIRROR_NAME), new DescribeClusterMirrorsOptions());
         var descriptions = result.allDescriptions().get(5, TimeUnit.SECONDS);
-        ClusterMirrorDescription desc = descriptions.get(MIRROR_NAME);
+        ClusterMirrorDesc desc = descriptions.get(MIRROR_NAME);
         if (desc == null) return false;
         var pattern = java.util.regex.Pattern.compile(topicPattern);
         var matched = desc.topics().entrySet().stream()

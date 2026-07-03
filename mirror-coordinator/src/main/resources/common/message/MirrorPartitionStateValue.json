@@ -33,6 +33,8 @@
     { "name": "PreviousState", "type": "int8",  "versions": "0+", "default": 16,
       "about": "The mirror partition state before this transition; UNKNOWN if not recorded." },
     { "name": "RetryAttempt", "type": "int16", "versions": "0+", "default": "0",
-      "about": "The number of automatic retry attempts while in FAILED state." }
+      "about": "The number of automatic retry attempts while in FAILED state." },
+    { "name": "ErrorMessage", "type": "string", "versions": "0+", "nullableVersions": "0+", "default": "null",
+      "about": "The error message when in FAILED state, or null if not applicable." }
   ]
 }
