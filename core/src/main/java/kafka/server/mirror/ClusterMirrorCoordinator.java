@@ -85,6 +85,7 @@ import java.util.stream.Collectors;
 import scala.Option;
 import scala.jdk.javaapi.CollectionConverters;
 
+import static kafka.server.mirror.ClusterMirrorUtils.MIRROR_TERMINAL_FAILED_ATTEMPT;
 import static org.apache.kafka.common.utils.Utils.require;
 
 /**
@@ -148,7 +149,7 @@ public class ClusterMirrorCoordinator {
 
         metadataManager.initialize(
                 brokerConfig.mirrorConfig().metadataRefreshIntervalMs(),
-                (mirrorName, tp, state, errorMessage) -> transitionTo(mirrorName, tp, state, errorMessage),
+                (mirrorName, tp, state, errorMessage, isTerminalError) -> transitionTo(mirrorName, tp, state, errorMessage, isTerminalError),
                 this::tombstoneMirrorRecords,
                 this::getCoordinatorPartitionByKey,
                 this::getCoordinatorPartitionByName);
@@ -299,7 +300,7 @@ public class ClusterMirrorCoordinator {
                             log.error("Failed to bump leader epoch for {}", topicPartitions, ex);
                             transitionTo(mirrorName, topicPartitions, MirrorPartitionState.FAILED, ex.getMessage());
                         } else {
-                            transitionTo(mirrorName, topicPartitions, MirrorPartitionState.MIRRORING, null);
+                            transitionTo(mirrorName, topicPartitions, MirrorPartitionState.MIRRORING);
                         }
                     });
                 break;
@@ -310,7 +311,7 @@ public class ClusterMirrorCoordinator {
             case PAUSING:
                 log.info("PAUSING mirroring for topics {}.", topicPartitions);
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
-                topicPartitions.forEach(tp -> transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED, null));
+                topicPartitions.forEach(tp -> transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED));
                 break;
             case PAUSED:
                 log.info("PAUSED mirroring for topics {}.", topicPartitions);
@@ -361,12 +362,12 @@ public class ClusterMirrorCoordinator {
     }
 
     private void updateFailedState(TopicPartition tp, MirrorPartitionState currentState,
-                                   MirrorPartitionState newState, String errorMessage) {
+                                   MirrorPartitionState newState, String errorMessage, boolean isTerminalError) {
         if (newState == MirrorPartitionState.FAILED) {
             metadataManager.failedPartitionInfo().merge(tp,
                     new FailedPartitionInfo((short) 1, errorMessage, currentState),
                     (old, next) -> new FailedPartitionInfo(
-                            (short) (old.retryAttempt() + 1), next.errorMessage(), old.previousState()));
+                            isTerminalError ? MIRROR_TERMINAL_FAILED_ATTEMPT : (short) (old.retryAttempt() + 1), next.errorMessage(), old.previousState()));
         } else if (newState == MirrorPartitionState.LOG_TRUNCATION
                 || newState == MirrorPartitionState.STOPPED
                 || newState == MirrorPartitionState.PAUSED) {
@@ -380,6 +381,10 @@ public class ClusterMirrorCoordinator {
         topicPartitions.forEach(tp -> {
             FailedPartitionInfo fpi = metadataManager.failedPartitionInfo().get(tp);
             int attempt = fpi != null ? fpi.retryAttempt() : 1;
+            if (attempt == MIRROR_TERMINAL_FAILED_ATTEMPT) {
+                log.debug("Skip partition {} because it is in ternimal failed state, requires manual intervention.", tp);
+                return;
+            }
             if (attempt >= maxAttempts) {
                 log.error("Partition {} exceeded max retry attempts ({}), requires manual intervention.", tp, maxAttempts);
                 return;
@@ -394,17 +399,27 @@ public class ClusterMirrorCoordinator {
             long delay = failedRetryBackoff.backoff(attempt);
             MirrorPartitionState targetState = fpi != null ? fpi.previousState() : MirrorPartitionState.MIRRORING;
             log.info("Scheduling retry attempt #{} for partition {} in {} ms with target state {}.", attempt, tp, delay, targetState);
-            scheduler.scheduleOnce("MirrorFailedRetry-" + tp, () -> transitionTo(mirrorName, Set.of(tp), targetState, null), delay);
+            scheduler.scheduleOnce("MirrorFailedRetry-" + tp, () -> transitionTo(mirrorName, Set.of(tp), targetState), delay);
         });
     }
 
     public void transitionTo(String mirrorName, Set<TopicPartition> topicPartitions,
+                             MirrorPartitionState newState) {
+        transitionTo(mirrorName, topicPartitions, newState, null, false);
+    }
+
+    public void transitionTo(String mirrorName, Set<TopicPartition> topicPartitions,
                              MirrorPartitionState newState, String errorMessage) {
+        transitionTo(mirrorName, topicPartitions, newState, errorMessage, false);
+    }
+
+    public void transitionTo(String mirrorName, Set<TopicPartition> topicPartitions,
+                             MirrorPartitionState newState, String errorMessage, boolean isTerminalError) {
         topicPartitions.forEach(tp -> {
             MirrorPartitionState currentState = metadataManager.getPartitionState(mirrorName, tp);
             if (MirrorPartitionState.isValidTransition(currentState, newState)) {
                 log.debug("Transitioning partition {} from {} to {}.", tp, currentState, newState);
-                updateFailedState(tp, currentState, newState, errorMessage);
+                updateFailedState(tp, currentState, newState, errorMessage, isTerminalError);
                 updateMirrorPartitionState(mirrorName, tp, newState)
                         .whenComplete((optTp, ex) -> {
                             if (ex != null) {
@@ -740,8 +755,8 @@ public class ClusterMirrorCoordinator {
     /** Schedules log truncation to align replicas with their last mirror epoch. */
     private void scheduleTruncation(String mirrorName, Set<TopicPartition> topicPartitions) {
         final Consumer<TopicPartition> truncateCallback =
-            partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING, null);
-        scheduler.scheduleOnce("LastMirrorEpochTruncation",
+            partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING);
+        scheduler.scheduleOnce("LastMirrorEpochsTruncation",
             () -> {
                 try {
                     metadataManager.sendLastMirrorEpochLookup(mirrorName, topicPartitions)
@@ -806,7 +821,7 @@ public class ClusterMirrorCoordinator {
                 }
             }
             if (!succeeded.isEmpty()) {
-                transitionTo(mirrorName, succeeded, MirrorPartitionState.STOPPED, null);
+                transitionTo(mirrorName, succeeded, MirrorPartitionState.STOPPED);
             }
             if (!failed.isEmpty()) {
                 scheduler.scheduleOnce("MirrorPidResetRetry", () -> writeMirrorPidResetAndStop(mirrorName, failed), 5000);
