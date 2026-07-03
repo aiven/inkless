@@ -33,6 +33,7 @@ import java.time.Duration;
 public class CaffeineCrossTierLogStartCache implements CrossTierLogStartCache {
 
     private final Cache<TopicIdPartition, Long> cache;
+    private final CrossTierLogStartCacheMetrics metrics;
 
     public CaffeineCrossTierLogStartCache(final Duration ttl) {
         this(ttl, Ticker.systemTicker());
@@ -47,11 +48,18 @@ public class CaffeineCrossTierLogStartCache implements CrossTierLogStartCache {
             .expireAfterWrite(ttl)
             .ticker(ticker)
             .build();
+        this.metrics = new CrossTierLogStartCacheMetrics(cache::estimatedSize);
     }
 
     @Override
     public Long get(final TopicIdPartition topicIdPartition) {
-        return cache.getIfPresent(topicIdPartition);
+        final Long offset = cache.getIfPresent(topicIdPartition);
+        if (offset == null) {
+            metrics.recordCacheMiss();
+        } else {
+            metrics.recordCacheHit();
+        }
+        return offset;
     }
 
     @Override
@@ -66,5 +74,6 @@ public class CaffeineCrossTierLogStartCache implements CrossTierLogStartCache {
     public void close() throws IOException {
         cache.invalidateAll();
         cache.cleanUp();
+        metrics.close();
     }
 }
