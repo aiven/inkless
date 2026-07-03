@@ -20,7 +20,7 @@ import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, Reader}
 import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState}
-import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
+import io.aiven.inkless.delete.{CrossTierLogStartReporter, DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.produce.AppendHandler
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, ConsolidationMetrics, ConsolidationReconciler}
 import kafka.cluster.Partition
@@ -467,6 +467,8 @@ class ReplicaManager(val config: KafkaConfig,
       scheduler.schedule("inkless-retention-enforcer", () => inklessRetentionEnforcer.foreach(_.run()), config.logInitialTaskDelayMs, 500L)  // the real interval is inside
 
       scheduler.schedule("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run()), sharedState.config().fileCleanerInterval().toMillis, sharedState.config().fileCleanerInterval().toMillis)
+
+      scheduler.schedule("inkless-cross-tier-log-start-reporter", () => sharedState.crossTierLogStartReporter().run(), config.logInitialTaskDelayMs, CrossTierLogStartReporter.FLUSH_INTERVAL_MS)
 
       inklessConsolidatedDisklessLogPruner.foreach { pruner =>
         scheduler.schedule("inkless-consolidated-diskless-log-pruner", () => pruner.run(),
