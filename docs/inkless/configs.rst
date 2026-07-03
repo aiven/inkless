@@ -39,6 +39,13 @@ Under ``inkless.``
   * Default: io.aiven.inkless.storage_backend.in_memory.InMemoryStorage
   * Importance: high
 
+``client.az.listener.map``
+  Cluster-wide mapping from AZ-specific listener aliases to physical availability zone (rack) IDs, used for listener-based AZ routing of diskless topic metadata. Format is a comma-separated list of LISTENER=az pairs, for example SASL_SSL_US_EAST_1_AZ_1=use1-az1,SASL_SSL_US_EAST_1_AZ_2=use1-az2. Every broker should use the same mapping. Listener names are matched case-insensitively (normalized to upper case). Defaults to empty (feature disabled).
+
+  * Type: list
+  * Default: ""
+  * Importance: medium
+
 ``control.plane.batch.coalescing.enabled``
   When true, contiguous same-partition batch runs within a single commit are collapsed into a single row in the batches table via commit_file_v2, reducing control-plane metadata growth for low-throughput producers. Set to true only after all brokers in the cluster have been upgraded to a version that supports reading coalesced rows. Defaults to false for safe rolling upgrades.
 

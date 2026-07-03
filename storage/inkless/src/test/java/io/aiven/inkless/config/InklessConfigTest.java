@@ -665,4 +665,71 @@ class InklessConfigTest {
         assertThat(config.fetchLaggingConsumerRequestRateLimit()).isEqualTo(300);
         assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(10);
     }
+
+    @Test
+    void clientAzListenerMapParsesEntries() {
+        final Map<String, String> configs = new HashMap<>();
+        configs.put("inkless.client.az.listener.map",
+            "SASL_SSL_EU_WEST_1_AZ_1=euw1-az1,SASL_SSL_EU_WEST_1_AZ_2=euw1-az2");
+        final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), configs));
+        assertThat(config.clientAzListenerMap()).isEqualTo(Map.of(
+            "SASL_SSL_EU_WEST_1_AZ_1", "euw1-az1",
+            "SASL_SSL_EU_WEST_1_AZ_2", "euw1-az2"
+        ));
+    }
+
+    @Test
+    void clientAzListenerMapNormalizesListenerToUpperCase() {
+        final Map<String, String> configs = new HashMap<>();
+        configs.put("inkless.client.az.listener.map", "sasl_ssl_us_east_1_az_1=use1-az1");
+        final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), configs));
+        assertThat(config.clientAzListenerMap()).isEqualTo(Map.of("SASL_SSL_US_EAST_1_AZ_1", "use1-az1"));
+    }
+
+    @Test
+    void clientAzListenerMapDefaultsToEmpty() {
+        final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), new HashMap<>()));
+        assertThat(config.clientAzListenerMap()).isEmpty();
+    }
+
+    private InklessConfig configWithAzMap(final String value) {
+        final Map<String, String> configs = new HashMap<>();
+        configs.put("inkless.client.az.listener.map", value);
+        return new InklessConfig(new AbstractConfig(new ConfigDef(), configs));
+    }
+
+    @Test
+    void clientAzListenerMapRejectsMissingSeparator() {
+        assertThatThrownBy(() -> configWithAzMap("SASL_SSL_AZ1"))
+            .isInstanceOf(ConfigException.class)
+            .hasMessageContaining("missing the '=' separator");
+    }
+
+    @Test
+    void clientAzListenerMapRejectsEmptyListener() {
+        assertThatThrownBy(() -> configWithAzMap("=euw1-az1"))
+            .isInstanceOf(ConfigException.class)
+            .hasMessageContaining("Listener name must not be empty");
+    }
+
+    @Test
+    void clientAzListenerMapRejectsEmptyAz() {
+        assertThatThrownBy(() -> configWithAzMap("SASL_SSL_AZ1="))
+            .isInstanceOf(ConfigException.class)
+            .hasMessageContaining("AZ must not be empty");
+    }
+
+    @Test
+    void clientAzListenerMapRejectsDuplicateListener() {
+        assertThatThrownBy(() -> configWithAzMap("SASL_SSL_AZ1=euw1-az1,SASL_SSL_AZ1=euw1-az2"))
+            .isInstanceOf(ConfigException.class)
+            .hasMessageContaining("Duplicate listener name");
+    }
+
+    @Test
+    void clientAzListenerMapRejectsCaseInsensitiveDuplicateListener() {
+        assertThatThrownBy(() -> configWithAzMap("SASL_SSL_AZ1=euw1-az1,sasl_ssl_az1=euw1-az2"))
+            .isInstanceOf(ConfigException.class)
+            .hasMessageContaining("Duplicate listener name");
+    }
 }
