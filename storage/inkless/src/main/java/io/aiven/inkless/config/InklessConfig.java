@@ -106,6 +106,16 @@ public class InklessConfig extends AbstractConfig {
         "The time to live must be <= than half of the value of of file.cleaner.interval.ms.";
     private static final int CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_DEFAULT = 5000;
 
+    public static final String CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_CONFIG = CONSUME_PREFIX + "cross.tier.log.start.cache.enabled";
+    public static final String CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_DOC = "If true, the cross-tier log start offset cache is enabled. " +
+        "It caches the EARLIEST offset of consolidating diskless topics to avoid querying the control plane on every request.";
+    private static final boolean CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_DEFAULT = true;
+
+    public static final String CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_CONFIG = CONSUME_PREFIX + "cross.tier.log.start.cache.ttl.ms";
+    public static final String CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_DOC = "Time to live in milliseconds for an entry in the cross-tier log start offset cache. " +
+        "A stale entry can only ever be too low (the safe direction), so this only bounds how quickly a retention advance becomes visible from non-leader brokers.";
+    private static final int CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_DEFAULT = 10000;
+
     public static final String RETENTION_ENFORCEMENT_INTERVAL_MS_CONFIG = "retention.enforcement.interval.ms";
     private static final String RETENTION_ENFORCEMENT_INTERVAL_MS_DOC = "The interval with which to enforce retention policies on a partition. " +
         "This interval is approximate, because each scheduling event is randomized. " +
@@ -476,6 +486,21 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Importance.LOW,
             CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_DOC
         );
+        configDef.define(
+            CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_CONFIG,
+            ConfigDef.Type.BOOLEAN,
+            CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_DEFAULT,
+            ConfigDef.Importance.LOW,
+            CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_DOC
+        );
+        configDef.define(
+            CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_DOC
+        );
 
         configDef.define(
             BATCH_COALESCING_ENABLED_CONFIG,
@@ -717,6 +742,14 @@ public class InklessConfig extends AbstractConfig {
 
     public Duration batchCoordinateCacheTtl() {
         return Duration.ofMillis(getInt(CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_CONFIG));
+    }
+
+    public boolean isCrossTierLogStartCacheEnabled() {
+        return getBoolean(CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_CONFIG);
+    }
+
+    public Duration crossTierLogStartCacheTtl() {
+        return Duration.ofMillis(getInt(CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_CONFIG));
     }
 
     public long cacheMaxBytes() {
