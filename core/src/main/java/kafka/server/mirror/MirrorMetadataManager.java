@@ -124,6 +124,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -168,17 +169,23 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     private final NodeToControllerChannelManager channelManager;
     private final Supplier<ReplicaManager> replicaManagerSupplier;
+    private volatile MetadataImage metadataImage = MetadataImage.EMPTY;
     private final MetadataCache metadataCache;
     private final KafkaScheduler scheduler;
     private final Metrics metrics;
     private final Time time;
 
-    private volatile MetadataImage metadataImage = MetadataImage.EMPTY;
+    private Optional<ClusterMirrorUtils.StateTransitioner> stateTransitioner = Optional.empty();
+    private Optional<Consumer<String>> tombstoneWriter = Optional.empty();
+    private Optional<Function<ClusterMirrorRecordKey, Integer>> coordPartitionFinderByKey = Optional.empty();
+    private Optional<Function<String, Integer>> coordPartitionFinderByName = Optional.empty();
 
+    // Network communication
     private volatile MirrorStateSender mirrorStateSender; // raw WriteMirrorStates/ReadMirrorStates RPCs to coord brokers
     private final Map<String, Admin> srcAdmins = new ConcurrentHashMap<>(); // source cluster metadata discovery (one per mirror)
     private volatile Admin dstAdmin; // group offset and ACLs sync
 
+    // Broker cache
     private final Map<String, Map<TopicPartition, ClusterMirrorUtils.LeaderInfo>> sourceLeaders = new ConcurrentHashMap<>();
     private final Map<PartitionKey, MirrorPartitionState> partitionStates = new ConcurrentHashMap<>();
     private final Map<PartitionKey, Integer> lastMirrorEpochs = new ConcurrentHashMap<>();
@@ -186,16 +193,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Map<TopicPartition, FailedPartitionInfo> failedPartitionInfo = new ConcurrentHashMap<>();
     private final Map<TopicPartition, MirrorPartitionState> pendingPartitionStates = new ConcurrentHashMap<>();
     private final Set<String> pendingTopicCreations = ConcurrentHashMap.newKeySet();
-
-    // Leader epoch bumps require a request to the controller followed by a metadata log fetch.
-    // The bump must be confirmed on the broker side before we can write the PID reset control record.
     private final Set<ClusterMirrorUtils.LeaderEpochBump> pendingLeaderEpochBumps = ConcurrentHashMap.newKeySet();
 
-    private Optional<ClusterMirrorUtils.StateTransitioner> stateTransitioner = Optional.empty();
-    private Optional<Consumer<String>> tombstoneWriter = Optional.empty();
-    private Optional<Function<ClusterMirrorRecordKey, Integer>> coordPartitionFinderByKey = Optional.empty();
-    private Optional<Function<String, Integer>> coordPartitionFinderByName = Optional.empty();
-
+    // Metrics
     private final AtomicLong metadataRefreshError;
     private final AtomicLong topicConfigSyncError;
     private final AtomicLong consumerGroupOffsetSyncError;
@@ -435,7 +435,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 if (!isLocalCoordinator(mirrorName, tp.topic(), tp.partition())) {
                     PartitionKey key = new PartitionKey(mirrorName, tp.topic(), tp.partition());
                     removePartitionState(key);
-                    lastMirrorEpochs.remove(key);
                 }
             });
         }
@@ -1540,15 +1539,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     if (response.responseBody() instanceof ReadMirrorStatesResponse readMirrorStatesResponse) {
                         log.debug("Read states from remote coordinator completed: {}", response.responseBody());
 
-                        // Update cache
                         readMirrorStatesResponse.data().topics().forEach(topic -> {
                             topic.partitions().forEach(partition -> {
                                 PartitionKey mpk = new PartitionKey(
                                         mirrorName, topic.name(), partition.partitionIndex());
                                 TopicPartition tp = new TopicPartition(topic.name(), partition.partitionIndex());
-                                if (partition.lastMirrorEpoch() != -1) {
-                                    lastMirrorEpochs.put(mpk, partition.lastMirrorEpoch());
-                                }
                                 if (partition.state() != -1) {
                                     partitionStates.put(mpk, MirrorPartitionState.fromValue(partition.state()));
                                 }
@@ -2072,17 +2067,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /** Looks up lineage epochs from the source cluster for failback/fan-out truncation. */
-    CompletionStage<Map<TopicPartition, Integer>> lookupLineageEpochs(
+    CompletionStage<Map<TopicPartition, Integer>> sendLmeLookup(
             String mirrorName, Set<TopicPartition> topicPartitionSet) {
-        log.info("Truncating to LME for mirror {}: {}", mirrorName, topicPartitionSet);
         Admin admin = getOrCreateSourceAdmin(mirrorName);
-
+        List<DescribeClusterMirrorsRequestData.TopicLineage> lineages = buildTopicLineages(topicPartitionSet);
+        log.info("Sending LME lookup for mirror {}, lineages {}", mirrorName, lineages);
         DescribeClusterMirrorsOptions options = new DescribeClusterMirrorsOptions()
-                .topicLineages(buildTopicLineages(topicPartitionSet));
+                .topicLineages(lineages);
         DescribeClusterMirrorsResult result = admin.describeClusterMirrors(List.of(mirrorName), options);
 
-        return result.lineageEpochs().toCompletionStage()
-                .toCompletableFuture()
+        return result.lineageEpochs().toCompletionStage().toCompletableFuture()
                 .thenApply(lineageEpochs -> {
                     Map<TopicPartition, Integer> epochs = new HashMap<>();
                     if (!lineageEpochs.isEmpty()) {
@@ -2093,56 +2087,140 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                             epochs.put(new TopicPartition(name, partIdx), lme)));
                         });
                     }
-                    log.info("Lineage LME lookup for mirror {}: {}", mirrorName, epochs);
+                    log.info("LME lookup result for mirror {}: {}", mirrorName, epochs);
                     return epochs;
                 })
                 .orTimeout(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
     }
 
     /**
-     * A topic lineage is a tuple of (topicId, partitions, srcClusterId, dstClusterId)
-     * that describes a past or current mirroring relationship for a topic.
-     *
      * Builds topic lineage entries for all configured source cluster IDs.
      * The source needs to match against prior mirror configs.
      */
     private List<DescribeClusterMirrorsRequestData.TopicLineage> buildTopicLineages(
             Set<TopicPartition> topicPartitionSet) {
-        Set<String> allSourceClusterIds = new HashSet<>();
+        Map<String, String> mirrorSourceClusterIds = new HashMap<>();
         for (String mirrorName : getConfiguredMirrors()) {
             String cid = getSourceClusterId(mirrorName);
             if (cid != null && !cid.isEmpty()) {
-                allSourceClusterIds.add(cid);
+                mirrorSourceClusterIds.put(mirrorName, cid);
             }
         }
 
-        Map<Uuid, List<Integer>> topicPartitionsByTopicId = new HashMap<>();
+        Map<Uuid, List<Integer>> partitionsByTopicId = new HashMap<>();
         for (TopicPartition tp : topicPartitionSet) {
             Uuid topicId = metadataCache.getTopicId(tp.topic());
-            topicPartitionsByTopicId.computeIfAbsent(topicId, k -> new ArrayList<>()).add(tp.partition());
+            partitionsByTopicId.computeIfAbsent(topicId, k -> new ArrayList<>()).add(tp.partition());
         }
 
+        List<String> allSrcClusterIds = new ArrayList<>(mirrorSourceClusterIds.values());
         List<DescribeClusterMirrorsRequestData.TopicLineage> lineages = new ArrayList<>();
-        for (Map.Entry<Uuid, List<Integer>> entry : topicPartitionsByTopicId.entrySet()) {
-            for (String srcClusterId : allSourceClusterIds) {
-                lineages.add(new DescribeClusterMirrorsRequestData.TopicLineage()
-                        .setTopicId(entry.getKey())
-                        .setPartitions(entry.getValue())
-                        .setSrcClusterId(srcClusterId)
-                        .setDstClusterId(clusterId));
-            }
+        for (Map.Entry<Uuid, List<Integer>> entry : partitionsByTopicId.entrySet()) {
+            List<Integer> partitions = entry.getValue();
+            lineages.add(new DescribeClusterMirrorsRequestData.TopicLineage()
+                    .setTopicId(entry.getKey())
+                    .setPartitions(partitions)
+                    .setSrcClusterIds(allSrcClusterIds)
+                    .setDstClusterId(clusterId));
         }
         return lineages;
     }
 
-    /** Removes stopped partition epochs and upserts added ones, returning the full epoch map for record serialization. */
-    Map<PartitionKey, Integer> updateLastMirrorEpochs(
-            String clusterName, Map<String, Map<Integer, Integer>> addedEpochs, Map<String, Map<Integer, Integer>> stoppedEpochs) {
-        stoppedEpochs.forEach((topic, partitionOffsets) -> {
-            partitionOffsets.forEach((partition, offset) -> {
-                lastMirrorEpochs.remove(new PartitionKey(clusterName, topic, partition));
+    /**
+     * Coordinator-aware LME lookup for lineage results. For each (mirror, topic, partition),
+     * reads from local cache if this broker is the coordinator, otherwise forwards a
+     * ReadMirrorStates request to the coordinator broker.
+     *
+     * @param mirrorPartitions mirrorName -> topicName -> partition indices
+     * @param callback receives mirrorName -> (TopicPartition -> LME) when all reads complete
+     */
+    void processLmeLookup(Map<String, Map<String, Set<Integer>>> mirrorPartitions,
+                          Consumer<Map<String, Map<TopicPartition, Integer>>> callback) {
+        log.debug("Preocessing LME lookup for {}", mirrorPartitions);
+        Map<String, Map<TopicPartition, Integer>> result = new ConcurrentHashMap<>();
+
+        // Group remote partitions by (coordinator node, mirror name)
+        Map<Node, Map<String, Map<String, Set<Integer>>>> remoteByNode = new HashMap<>();
+
+        mirrorPartitions.forEach((mirrorName, topicParts) -> {
+            topicParts.forEach((topic, parts) -> {
+                parts.forEach(part -> {
+                    if (isLocalCoordinator(mirrorName, topic, part)) {
+                        PartitionKey pk = new PartitionKey(mirrorName, topic, part);
+                        int lme = lastMirrorEpochs.getOrDefault(pk, -1);
+                        result.computeIfAbsent(mirrorName, k -> new ConcurrentHashMap<>())
+                                .put(new TopicPartition(topic, part), lme);
+                    } else {
+                        ClusterMirrorRecordKey key = new ClusterMirrorRecordKey(
+                                mirrorName, metadataCache.getTopicId(topic), part);
+                        Node node = findCoordinatorNode(key);
+                        if (!node.equals(Node.noNode())) {
+                            remoteByNode
+                                    .computeIfAbsent(node, k -> new HashMap<>())
+                                    .computeIfAbsent(mirrorName, k -> new HashMap<>())
+                                    .computeIfAbsent(topic, k -> new HashSet<>())
+                                    .add(part);
+                        }
+                    }
+                });
             });
         });
+
+        if (remoteByNode.isEmpty()) {
+            log.debug("LME lookup result (local): {}", result);
+            callback.accept(result);
+            return;
+        }
+
+        // Count total requests: one per (node, mirror) pair
+        int totalRequests = remoteByNode.values().stream()
+                .mapToInt(Map::size).sum();
+        AtomicInteger remaining = new AtomicInteger(totalRequests);
+
+        remoteByNode.forEach((node, mirrorMap) -> {
+            mirrorMap.forEach((mirrorName, topicParts) -> {
+                ReadMirrorStatesRequestData data = new ReadMirrorStatesRequestData()
+                        .setMirrorName(mirrorName);
+                List<ReadMirrorStatesRequestData.TopicMetadata> topicDataList = new ArrayList<>();
+                topicParts.forEach((topic, parts) -> {
+                    List<ReadMirrorStatesRequestData.PartitionData> partDataList = new ArrayList<>();
+                    parts.forEach(part -> partDataList.add(
+                            new ReadMirrorStatesRequestData.PartitionData().setPartitionIndex(part)));
+                    topicDataList.add(new ReadMirrorStatesRequestData.TopicMetadata()
+                            .setName(topic).setPartitions(partDataList));
+                });
+                data.setTopics(topicDataList);
+
+                mirrorStateSender.enqueue(new RequestAndCompletionHandler(
+                        time.milliseconds(), node,
+                        new ReadMirrorStatesRequest.Builder(data),
+                        response -> {
+                            if (response.responseBody() instanceof ReadMirrorStatesResponse resp) {
+                                resp.data().topics().forEach(topic -> {
+                                    topic.partitions().forEach(partition -> {
+                                        if (partition.lastMirrorEpoch() != -1) {
+                                            result.computeIfAbsent(mirrorName,
+                                                            k -> new ConcurrentHashMap<>())
+                                                    .put(new TopicPartition(topic.name(),
+                                                                    partition.partitionIndex()),
+                                                            partition.lastMirrorEpoch());
+                                        }
+                                    });
+                                });
+                            }
+                            if (remaining.decrementAndGet() == 0) {
+                                log.debug("LME lookup result (coordinator): {}", result);
+                                callback.accept(result);
+                            }
+                        }
+                ));
+            });
+        });
+    }
+
+    /** Upserts added paritions, returning the full epoch map for record serialization. */
+    Map<PartitionKey, Integer> updateLastMirrorEpochs(
+            String clusterName, Map<String, Map<Integer, Integer>> addedEpochs) {
         addedEpochs.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
                 lastMirrorEpochs.put(new PartitionKey(clusterName, topic, partition), offset);

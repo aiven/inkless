@@ -233,7 +233,7 @@ public class AsyncClusterMirrorIntegrationTest {
         topicLineage
                 .setTopicId(topicId)
                 .setPartitions(List.of(0))
-                .setSrcClusterId("")
+                .setSrcClusterIds(List.of())
                 .setDstClusterId(srcCluster.controllers().values().stream().findFirst().get().clusterId());
         DescribeClusterMirrorsResult describeClusterMirrors = dstAdmin.describeClusterMirrors(List.of(reverseMirror), new DescribeClusterMirrorsOptions().topicLineages(List.of(topicLineage)));
         // verify the returned lineageEpochs should contain the epoch >= 0 for the topic partition

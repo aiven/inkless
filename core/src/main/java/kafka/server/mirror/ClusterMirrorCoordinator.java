@@ -266,7 +266,7 @@ public class ClusterMirrorCoordinator {
                                 String clusterName = readMirrorNameFromKey(record.key());
                                 if (record.hasValue()) {
                                     Map<String, Map<Integer, Integer>> offsets = readLastMirrorEpochsValue(record.value());
-                                    metadataManager.updateLastMirrorEpochs(clusterName, offsets, Map.of());
+                                    metadataManager.updateLastMirrorEpochs(clusterName, offsets);
                                 } else {
                                     metadataManager.removeLastMirrorEpochs(clusterName);
                                 }
@@ -625,7 +625,7 @@ public class ClusterMirrorCoordinator {
         }
 
         // Update in-memory cache once with all offsets
-        var updatedOffsets = metadataManager.updateLastMirrorEpochs(mirrorName, partitionOffsets, Map.of());
+        var updatedOffsets = metadataManager.updateLastMirrorEpochs(mirrorName, partitionOffsets);
 
         // Write to local coordinator partitions (one append per coordinator partition)
         localByCoordPartition.forEach((coordPartition, tps) -> {
@@ -755,7 +755,7 @@ public class ClusterMirrorCoordinator {
         scheduler.scheduleOnce("LastMirrorEpochTruncation",
             () -> {
                 try {
-                    metadataManager.lookupLineageEpochs(mirrorName, topicPartitions)
+                    metadataManager.sendLmeLookup(mirrorName, topicPartitions)
                         .whenComplete((epochs, rawError) -> {
                             if (rawError != null) {
                                 Throwable error = rawError instanceof CompletionException && rawError.getCause() != null
@@ -880,6 +880,12 @@ public class ClusterMirrorCoordinator {
     /** Returns the cached last mirror epochs for the given mirror. */
     public Map<TopicPartition, Integer> getLastMirrorEpochs(String mirrorName) {
         return metadataManager.getLastMirrorEpochs(mirrorName);
+    }
+
+    /** Coordinator-aware LME lookup for lineage results. */
+    public void processLmeLookup(Map<String, Map<String, Set<Integer>>> mirrorPartitions,
+                                 Consumer<Map<String, Map<TopicPartition, Integer>>> callback) {
+        metadataManager.processLmeLookup(mirrorPartitions, callback);
     }
 
     private CoordinatorRecord buildPartitionStateRecord(String mirrorName, TopicPartition topicPartition, MirrorPartitionState state) {

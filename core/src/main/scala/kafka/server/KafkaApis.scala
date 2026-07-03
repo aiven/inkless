@@ -494,66 +494,92 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
     }
 
-    // On the source, for each (TopicId, PartitionIndex, SrcClusterId, DstClusterId) in TopicLineages:
-    // 1. Scan mirror configs to find all mirror names where mirror.source.cluster.id matches SrcClusterId OR DstClusterId
-    // 2. For those mirror names, look up LME for that specific (TopicId, PartitionIndex)
-    // 3. If multiple matches, take max LME for that partition
-    maybeHandleLineageResults(describeMirrorsRequest.data.topicLineages, responseData)
-
-    requestHelper.sendMaybeThrottle(request, new DescribeClusterMirrorsResponse(responseData))
+    maybeProcessLmeLookup(describeMirrorsRequest.data.topicLineages, responseData,
+      () => requestHelper.sendMaybeThrottle(request, new DescribeClusterMirrorsResponse(responseData)))
   }
 
   /*
-   * On the source, for each (TopicId, PartitionIndex, SrcClusterId, DstClusterId) in TopicLineages:
-   * 1. Scan mirror configs to find all mirror names where mirror.source.cluster.id matches SrcClusterId OR DstClusterId
-   * 2. For those mirror names, look up LME for that specific (TopicId, PartitionIndex)
-   * 3. If multiple matches, take max LME for that partition
+   * Handles TopicLineage entries by finding matching mirrors and looking up their LME
+   * from the coordinator. For each lineage, scans mirror configs to find mirrors whose
+   * source cluster ID matches any SrcClusterIds entry or DstClusterId. Then reads the
+   * LME from the coordinator (local cache if this broker is the coordinator, otherwise
+   * forwarded via ReadMirrorStates). Takes max LME per partition across matching mirrors.
    */
-  private def maybeHandleLineageResults(
+  private def maybeProcessLmeLookup(
     topicLineages: util.List[DescribeClusterMirrorsRequestData.TopicLineage],
-    responseData: DescribeClusterMirrorsResponseData
+    responseData: DescribeClusterMirrorsResponseData,
+    sendResponse: Runnable
   ): Unit = {
-    if (topicLineages == null || topicLineages.isEmpty) return
+    if (topicLineages == null || topicLineages.isEmpty) {
+      sendResponse.run()
+      return
+    }
 
     val configuredMirrors = clusterMirrorCoordinator.getConfiguredMirrors().asScala.toSeq
     val sourceClusterIds = configuredMirrors.flatMap { mirrorName =>
       Option(clusterMirrorCoordinator.getSourceClusterId(mirrorName)).map(cid => (mirrorName, cid))
     }
 
-    val lineageResultsMap = new util.HashMap[Uuid, util.Map[Integer, Integer]]()
+    // Collect (mirror -> topic -> partitions) for coordinator-aware LME lookup
+    val mirrorPartitions = new util.HashMap[String, util.Map[String, util.Set[Integer]]]()
+    // Track topicId for each topicName so we can map results back
+    val topicNameToId = new util.HashMap[String, Uuid]()
+
     topicLineages.forEach { lineage =>
+      val requestedSrcIds = lineage.srcClusterIds.asScala.toSet
       val matchingMirrors = sourceClusterIds
-        .filter { case (_, cid) => cid == lineage.srcClusterId || cid == lineage.dstClusterId }
+        .filter { case (_, cid) => requestedSrcIds.contains(cid) || cid == lineage.dstClusterId }
         .map(_._1)
 
       val topicNameOpt = metadataCache.getTopicName(lineage.topicId)
       if (topicNameOpt.isPresent) {
         val topicName = topicNameOpt.get
-        val partitionEpochs = lineageResultsMap.computeIfAbsent(lineage.topicId,
-          _ => new util.HashMap[Integer, Integer]())
+        topicNameToId.put(topicName, lineage.topicId)
 
         matchingMirrors.foreach { mirrorName =>
-          val lmeMap = clusterMirrorCoordinator.getLastMirrorEpochs(mirrorName)
           lineage.partitions.forEach { partIdx =>
-            val tp = new TopicPartition(topicName, partIdx)
-            val lme = lmeMap.getOrDefault(tp, -1)
-            partitionEpochs.merge(partIdx, lme, (a: Integer, b: Integer) => Math.max(a, b))
+            mirrorPartitions
+              .computeIfAbsent(mirrorName, _ => new util.HashMap[String, util.Set[Integer]]())
+              .computeIfAbsent(topicName, _ => new util.HashSet[Integer]())
+              .add(partIdx)
           }
         }
       }
     }
 
-    lineageResultsMap.forEach { (topicId, partitions) =>
-      val partitionResults = new util.ArrayList[DescribeClusterMirrorsResponseData.PartitionResult]()
-      partitions.forEach { (partIdx, lme) =>
-        partitionResults.add(new DescribeClusterMirrorsResponseData.PartitionResult()
-          .setPartitionIndex(partIdx)
-          .setLastMirrorEpoch(lme))
-      }
-      responseData.lineageResults().add(new DescribeClusterMirrorsResponseData.LineageResult()
-        .setTopicId(topicId)
-        .setPartitions(partitionResults))
+    if (mirrorPartitions.isEmpty) {
+      sendResponse.run()
+      return
     }
+
+    clusterMirrorCoordinator.processLmeLookup(mirrorPartitions, lmeResults => {
+      val lineageResultsMap = new util.HashMap[Uuid, util.Map[Integer, Integer]]()
+
+      lmeResults.forEach { (_, tpEpochs) =>
+        tpEpochs.forEach { (tp, lme) =>
+          val topicId = topicNameToId.get(tp.topic)
+          if (topicId != null) {
+            lineageResultsMap
+              .computeIfAbsent(topicId, _ => new util.HashMap[Integer, Integer]())
+              .merge(tp.partition, lme, (a: Integer, b: Integer) => Math.max(a, b))
+          }
+        }
+      }
+
+      lineageResultsMap.forEach { (topicId, partitions) =>
+        val partitionResults = new util.ArrayList[DescribeClusterMirrorsResponseData.PartitionResult]()
+        partitions.forEach { (partIdx, lme) =>
+          partitionResults.add(new DescribeClusterMirrorsResponseData.PartitionResult()
+            .setPartitionIndex(partIdx)
+            .setLastMirrorEpoch(lme))
+        }
+        responseData.lineageResults().add(new DescribeClusterMirrorsResponseData.LineageResult()
+          .setTopicId(topicId)
+          .setPartitions(partitionResults))
+      }
+
+      sendResponse.run()
+    })
   }
 
   def handleGetReplicaLogInfo(request: RequestChannel.Request): Unit = {
