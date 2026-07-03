@@ -74,10 +74,17 @@ class ConsolidationVerifier(object):
     SWITCH_JMX_ATTRIBUTES = ["Value"]
     SWITCH_TIMEOUT_SEC = 180
 
+    # ducknet aliases of the external inkless dependencies, keyed by the logical
+    # name a test uses to fault them (see block_dependency / heal_dependency).
+    DEP_ALIASES = {"object_storage": "storage", "control_plane": "postgres"}
+
     def __init__(self, kafka):
         self.kafka = kafka
         self.logger = kafka.logger
         self._mc_alias_ready = False
+        # node hostname -> {dependency: DROP'd IP}, so heal/teardown remove exactly the
+        # rules block_dependency added.
+        self._blocked = {}
 
     # --------------------- JMX ---------------------
 
@@ -179,7 +186,9 @@ class ConsolidationVerifier(object):
     # --------------------- Object store ---------------------
 
     def _storage_node(self):
-        # Any broker node resolves the postgres/storage aliases on ducknet.
+        # Any broker resolves the postgres/storage aliases on ducknet. During an
+        # outage the test only queries the dependency that is still up, so the default
+        # broker is always reachable for the query at hand.
         return self.kafka.nodes[0]
 
     def _ensure_mc_alias(self, node):
@@ -334,6 +343,33 @@ class ConsolidationVerifier(object):
         producer.stop()
         acked = producer.num_acked
         producer.free()
+        return acked
+
+    def attempt_produce(self, topic, num_records, window_sec, label="outage"):
+        """Best-effort produce that does NOT assert success. Runs a
+        ``VerifiableProducer`` for up to ``window_sec`` (e.g. while a dependency is
+        blocked), then SIGKILLs it and returns how many records got acked. The kill
+        is deliberate, not a graceful stop: a clean shutdown would block flushing
+        in-flight records against the dead dependency until ``delivery.timeout.ms``
+        (~120s), and this producer is being abandoned. Worker errors are expected and
+        not asserted on; callers use the acked count to check the broker does not ack
+        writes it can't durably commit."""
+        producer = VerifiableProducer(self.kafka.context, num_nodes=1, kafka=self.kafka,
+                                      topic=topic, max_messages=num_records, throughput=-1)
+        producer.start()
+        deadline = time.time() + window_sec
+        while time.time() < deadline and producer.num_acked < num_records:
+            time.sleep(2)
+        acked = producer.num_acked
+        for node in producer.nodes:
+            try:
+                producer.kill_node(node, clean_shutdown=False, allow_fail=True)
+            except Exception as e:  # noqa: BLE001 - producer may already be gone
+                self.logger.warn("attempt_produce(%s): kill failed on %s: %s"
+                                 % (label, node.account.hostname, e))
+        producer.free()
+        self.logger.info("attempt_produce(%s): acked %d/%d within %ds"
+                         % (label, acked, num_records, window_sec))
         return acked
 
     # --------------------- Switch completion (JMX) ---------------------
@@ -537,6 +573,69 @@ class ConsolidationVerifier(object):
                                              max_messages=1, partition=partition,
                                              timeout_ms=timeout_ms)
         return first
+
+    # --------------------- Dependency outage (iptables) ---------------------
+    #
+    # The object store ("storage") and control plane ("postgres") are standalone
+    # ducknet containers, not ducker-managed services, so a test can't docker-pause
+    # them. Instead we blackhole each broker's traffic to the dependency IP with an
+    # iptables OUTPUT DROP (Trogdor's network-partition primitive). DROP, not REJECT,
+    # so connections hang rather than get refused. The WAL and the tiered-storage RSM
+    # share the "storage" container, so blocking it is a full object-storage outage.
+    # Block only one dependency at a time so verifier queries can still reach the other.
+
+    def _dep_alias(self, dependency):
+        try:
+            return self.DEP_ALIASES[dependency]
+        except KeyError:
+            raise AssertionError("Unknown dependency %r; expected one of %s"
+                                 % (dependency, sorted(self.DEP_ALIASES)))
+
+    def _resolve_alias_ip(self, node, alias):
+        # Resolve via Docker's embedded DNS (127.0.0.11), which is broker-local and
+        # therefore unaffected by a DROP rule on the dependency's own IP.
+        out = "".join(node.account.ssh_capture("getent hosts %s" % alias, allow_fail=False))
+        parts = out.split()
+        assert parts, "Could not resolve ducknet alias '%s' on %s" % (alias, node.account.hostname)
+        return parts[0]
+
+    def block_dependency(self, dependency):
+        """Simulate an outage of ``dependency`` ("object_storage" or
+        "control_plane") by DROP'ing every broker's traffic to its resolved
+        ducknet IP. Idempotent per node (guarded with ``iptables -C``)."""
+        alias = self._dep_alias(dependency)
+        for node in self.kafka.nodes:
+            ip = self._resolve_alias_ip(node, alias)
+            node.account.ssh(
+                "sudo iptables -C OUTPUT -d %s -j DROP 2>/dev/null || "
+                "sudo iptables -A OUTPUT -d %s -j DROP" % (ip, ip), allow_fail=False)
+            self._blocked.setdefault(node.account.hostname, {})[dependency] = ip
+        self.logger.info("Blocked dependency %s (alias %s) on all brokers" % (dependency, alias))
+
+    def heal_dependency(self, dependency):
+        """Remove the exact DROP rule :meth:`block_dependency` added for ``dependency``
+        on every broker, restoring connectivity. Deletes the recorded IP rather than
+        re-resolving, so the rule still lifts even if the alias's IP changed."""
+        for node in self.kafka.nodes:
+            ip = self._blocked.get(node.account.hostname, {}).pop(dependency, None)
+            if ip is not None:
+                self._drop_rule(node, ip)
+        self.logger.info("Healed dependency %s on all brokers" % dependency)
+
+    def heal_all(self):
+        """Teardown safety net: flush every DROP rule this verifier ever added so a
+        failed assertion cannot leave a broker partitioned for later tests."""
+        for node in self.kafka.nodes:
+            for ip in list(self._blocked.get(node.account.hostname, {}).values()):
+                self._drop_rule(node, ip)
+        self._blocked = {}
+
+    @staticmethod
+    def _drop_rule(node, ip):
+        # Delete the rule repeatedly in case it was added more than once.
+        node.account.ssh(
+            "while sudo iptables -C OUTPUT -d %s -j DROP 2>/dev/null; do "
+            "sudo iptables -D OUTPUT -d %s -j DROP; done" % (ip, ip), allow_fail=True)
 
     def read_records_with_values_from(self, topic, from_offset, max_messages, partition=0,
                                       timeout_ms=120000):
