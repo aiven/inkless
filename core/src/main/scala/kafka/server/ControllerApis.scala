@@ -695,12 +695,13 @@ class ControllerApis(
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
     controller.alterDisklessSwitch(context, alterDisklessSwitchRequest.data).handle[Unit] { (result, e) =>
-      val response = if (e != null) {
-        alterDisklessSwitchRequest.getErrorResponse(e)
-      } else {
-        new AlterDisklessSwitchResponse(result)
-      }
-      requestHelper.sendResponseMaybeThrottle(request, _ => response)
+      requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs => {
+        if (e != null) {
+          alterDisklessSwitchRequest.getErrorResponse(requestThrottleMs, e)
+        } else {
+          new AlterDisklessSwitchResponse(result.setThrottleTimeMs(requestThrottleMs))
+        }
+      })
     }
   }
 
