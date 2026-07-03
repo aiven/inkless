@@ -279,10 +279,12 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                     // one), and waiting for an ongoing fetch is cheaper than a redundant cold fetch.
                     final FileExtent cached = cache.get(request.toCacheKey());
                     if (cached != null) {
-                        // Count the consolidation request even when served from the cache,
-                        // so consolidation fetch activity is not undercounted on cache hits
-                        // (recorded under the consolidation metrics group; see recordLaggingConsumerRequest).
-                        metrics.recordLaggingConsumerRequest();
+                        // A cache hit is hot reuse of consumer-cached data, not a cold fetch,
+                        // so count it as recent data.
+                        // This keeps the hot/cold split intact on the consolidation metrics group:
+                        // RecentDataRequestRate covers cache-hit peeks,
+                        // LaggingConsumerRequestRate covers only true cold fetches below.
+                        metrics.recordRecentDataRequest();
                         return CompletableFuture.completedFuture(cached);
                     }
                 } catch (final CompletionException | CancellationException e) {

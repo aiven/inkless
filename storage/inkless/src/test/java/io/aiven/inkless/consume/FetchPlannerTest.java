@@ -2639,8 +2639,10 @@ public class FetchPlannerTest {
                 // Fetcher was called exactly once (by the regular planner). The consolidation planner
                 // must have served the result from cache without a second fetch call.
                 verify(fetcher, times(1)).fetch(eq(OBJECT_KEY_A), any(ByteRange.class));
-                // The consolidation cache hit is still counted as a request so activity is not undercounted.
-                verify(metrics).recordLaggingConsumerRequest();
+                // A cache hit is hot reuse, counted as recent data, not a cold fetch. Twice total:
+                // once by the regular planner that populated the cache, once by the consolidation hit.
+                verify(metrics, times(2)).recordRecentDataRequest();
+                verify(metrics, never()).recordLaggingConsumerRequest();
             }
         }
 
@@ -2673,6 +2675,9 @@ public class FetchPlannerTest {
                 final List<ObjectFetchRequest> requests = consolidationPlanner.planJobs(coordinates);
                 assertThat(requests).hasSize(1);
                 assertThat(caffeineCache.get(requests.get(0).toCacheKey())).isNull();
+                // A cache miss is a true cold fetch, counted as a lagging request, not recent data.
+                verify(metrics).recordLaggingConsumerRequest();
+                verify(metrics, never()).recordRecentDataRequest();
             }
         }
 

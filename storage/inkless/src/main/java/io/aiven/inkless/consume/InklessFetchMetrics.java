@@ -81,11 +81,12 @@ public class InklessFetchMetrics {
     private static final String FETCH_OBJECTS_PER_FETCH_COUNT = "FetchObjectsPerFetchCount";
     private static final String FETCH_OBJECTS_PER_FETCH_COUNT_DOC = "Number of storage objects accessed per fetch request";
     private static final String RECENT_DATA_REQUEST_RATE = "RecentDataRequestRate";
-    private static final String RECENT_DATA_REQUEST_RATE_DOC = "Rate of requests served via the hot path (recent data with cache) per second";
+    private static final String RECENT_DATA_REQUEST_RATE_DOC = "Rate of requests served via the hot path (recent data with cache) per second. "
+        + "Under the consolidation metrics group (ConsolidationFetchMetrics) this counts cache-hit peeks that reuse consumer-cached data.";
     private static final String LAGGING_CONSUMER_REQUEST_RATE = "LaggingConsumerRequestRate";
     private static final String LAGGING_CONSUMER_REQUEST_RATE_DOC = "Rate of cold-path requests (bypass the cache) per second. "
         + "Under the consumer metrics group these are lagging-consumer fetches; under the consolidation group "
-        + "(ConsolidationFetchMetrics) these are consolidation fetches, including cache-hit reuse of consumer-cached data.";
+        + "(ConsolidationFetchMetrics) these are consolidation cold fetches (cache-hit peeks are counted under RecentDataRequestRate).";
     private static final String LAGGING_CONSUMER_REQUEST_REJECTED_RATE = "LaggingConsumerRequestRejectedRate";
     private static final String LAGGING_CONSUMER_REQUEST_REJECTED_RATE_DOC = "Rate of lagging consumer requests rejected due to executor unavailability per second";
     // Tracks wait time (including zero-wait) for ALL lagging consumer requests when rate limiting is enabled.
@@ -317,6 +318,9 @@ public class InklessFetchMetrics {
 
     /**
      * Records a request that used the hot path (recent data with cache).
+     * The consolidation Reader (own metrics group, so a distinct MBean from the consumer Reader)
+     * also records here on a cache-hit peek, since reusing consumer-cached data is hot reuse rather
+     * than a cold fetch.
      * Metric: RecentDataRequestRate
      */
     public void recordRecentDataRequest() {
@@ -326,9 +330,6 @@ public class InklessFetchMetrics {
     /**
      * Records a request that used the cold path (bypasses the cache).
      * Recorded for ALL cold path requests, regardless of rate limiting.
-     * The consolidation Reader (own metrics group, so a distinct MBean from the consumer Reader)
-     * also records here on a cache-hit peek, since consolidation is a cold-path fetcher that
-     * opportunistically reuses consumer-cached data.
      * Metric: LaggingConsumerRequestRate
      *
      * @see #recordRateLimitWaitTime(long) for requests that were actually rate limited
