@@ -24,8 +24,10 @@ import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ClusterMirrorDesc;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateClusterMirrorOptions;
+import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.DeleteClusterMirrorOptions;
 import org.apache.kafka.clients.admin.DescribeClusterMirrorsOptions;
+import org.apache.kafka.clients.admin.DescribeClusterMirrorsResult;
 import org.apache.kafka.clients.admin.ListConfigResourcesOptions;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.StartMirrorTopicsOptions;
@@ -42,6 +44,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
+import org.apache.kafka.common.message.DescribeClusterMirrorsRequestData;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
@@ -206,8 +209,9 @@ public class AsyncClusterMirrorIntegrationTest {
         String forwardMirror = "src-to-dst";
         String reverseMirror = "dst-to-src";
 
-        srcAdmin.createTopics(List.of(new NewTopic(topic, 1, (short) 1)))
-                .all().get(30, TimeUnit.SECONDS);
+        CreateTopicsResult createTopicsResult = srcAdmin.createTopics(List.of(new NewTopic(topic, 1, (short) 1)));
+        createTopicsResult.all().get(30, TimeUnit.SECONDS);
+        Uuid topicId = createTopicsResult.topicId(topic).get();
         produceRecords(srcCluster, topic, 0, 10);
 
         // Forward: src -> dst
@@ -223,6 +227,20 @@ public class AsyncClusterMirrorIntegrationTest {
                 .all().get(30, TimeUnit.SECONDS);
         waitForMirrorState(dstAdmin, forwardMirror, topic, "STOPPED");
         produceRecords(dstCluster, topic, 10, 5);
+
+        // sending a describeClusterMirror request with topicLineage info
+        DescribeClusterMirrorsRequestData.TopicLineage topicLineage = new DescribeClusterMirrorsRequestData.TopicLineage();
+        topicLineage
+                .setTopicId(topicId)
+                .setPartitions(List.of(0))
+                .setSrcClusterId("")
+                .setDstClusterId(srcCluster.controllers().values().stream().findFirst().get().clusterId());
+        DescribeClusterMirrorsResult describeClusterMirrors = dstAdmin.describeClusterMirrors(List.of(reverseMirror), new DescribeClusterMirrorsOptions().topicLineages(List.of(topicLineage)));
+        // verify the returned lineageEpochs should contain the epoch >= 0 for the topic partition
+        Map<Uuid, Map<Integer, Integer>> lineageEpochs = describeClusterMirrors.lineageEpochs().get(30, TimeUnit.SECONDS);
+        assertEquals(1, lineageEpochs.size(), "Should have one lineage");
+        assertEquals(1, lineageEpochs.get(topicId).size(), "Should have one partition");
+        assertTrue(lineageEpochs.get(topicId).get(0) >= 0, "Should have LME >= 0");
 
         // Failback: src mirrors from dst under a different name
         srcAdmin.createClusterMirror(reverseMirror, Map.of(
