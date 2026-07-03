@@ -22,6 +22,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.record.FileRecords;
+import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.metadata.LeaderAndIsr;
@@ -33,19 +34,22 @@ import org.slf4j.LoggerFactory;
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.cache.CrossTierLogStartCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.common.TopicIdEnricher;
@@ -83,7 +87,7 @@ public class FetchOffsetHandler implements Closeable {
     }
 
     public Job createJob() {
-        return new Job(state.metadata(), state.controlPlane(), executor, time, metrics);
+        return new Job(state.metadata(), state.controlPlane(), state.crossTierLogStartCache(), executor, time, metrics);
     }
 
     @Override
@@ -97,6 +101,7 @@ public class FetchOffsetHandler implements Closeable {
 
         private final MetadataView metadata;
         private final ControlPlane controlPlane;
+        private final CrossTierLogStartCache crossTierLogStartCache;
         private final ExecutorService executor;
 
         private final CompletableFuture<Void> cancelHandler = new CompletableFuture<>();
@@ -109,11 +114,13 @@ public class FetchOffsetHandler implements Closeable {
 
         public Job(final MetadataView metadata,
                    final ControlPlane controlPlane,
+                   final CrossTierLogStartCache crossTierLogStartCache,
                    final ExecutorService executor,
                    final Time time,
                    final InklessFetchOffsetMetrics metrics) {
             this.metadata = metadata;
             this.controlPlane = controlPlane;
+            this.crossTierLogStartCache = crossTierLogStartCache;
             this.executor = executor;
             this.time = time;
             this.metrics = metrics;
@@ -173,9 +180,29 @@ public class FetchOffsetHandler implements Closeable {
         }
 
         private void queryControlPlane(final Map<TopicIdPartition, ListOffsetsRequestData.ListOffsetsPartition> requestsEnriched) {
-            final List<ListOffsetsRequest> controlPlaneRequests = requestsEnriched.entrySet()
-                .stream().map(e -> new ListOffsetsRequest(e.getKey(), e.getValue().timestamp()))
-                .collect(Collectors.toList());
+            final List<ListOffsetsRequest> controlPlaneRequests = new ArrayList<>();
+            // Partitions whose EARLIEST result came from the control plane and should be cached for future reads.
+            final Set<TopicPartition> cacheableEarliest = new HashSet<>();
+
+            for (final var entry : requestsEnriched.entrySet()) {
+                final TopicIdPartition topicIdPartition = entry.getKey();
+                final long timestamp = entry.getValue().timestamp();
+                if (isCrossTierEarliest(topicIdPartition, timestamp)) {
+                    final Long cached = crossTierLogStartCache.get(topicIdPartition);
+                    if (cached != null) {
+                        completeEarliestFromCache(topicIdPartition.topicPartition(), cached);
+                        continue;
+                    }
+                    cacheableEarliest.add(topicIdPartition.topicPartition());
+                }
+                controlPlaneRequests.add(new ListOffsetsRequest(topicIdPartition, timestamp));
+            }
+
+            if (controlPlaneRequests.isEmpty()) {
+                // Every request was served from the cache.
+                metrics.fetchOffsetCompleted(startTime);
+                return;
+            }
 
             final List<ListOffsetsResponse> controlPlaneResponses;
             try {
@@ -183,19 +210,25 @@ public class FetchOffsetHandler implements Closeable {
             } catch (final Exception exception) {
                 // Handle global errors (e.g. control plane not available).
                 for (final var future : futures.values()) {
-                    future.complete(new OffsetResultHolder.FileRecordsOrError(
-                        Optional.of(exception),
-                        Optional.empty()
-                    ));
+                    if (!future.isDone()) {
+                        future.complete(new OffsetResultHolder.FileRecordsOrError(
+                            Optional.of(exception),
+                            Optional.empty()
+                        ));
+                    }
                 }
                 metrics.fetchOffsetFailed();
                 return;
             }
 
             for (final var response : controlPlaneResponses) {
-                final var future = futures.get(response.topicIdPartition().topicPartition());
+                final TopicPartition topicPartition = response.topicIdPartition().topicPartition();
+                final var future = futures.get(topicPartition);
                 final ApiException exception = response.errors().exception();
                 if (exception == null) {
+                    if (cacheableEarliest.contains(topicPartition)) {
+                        crossTierLogStartCache.put(response.topicIdPartition(), response.offset());
+                    }
                     future.complete(new OffsetResultHolder.FileRecordsOrError(
                         Optional.empty(),
                         Optional.of(new FileRecords.TimestampAndOffset(response.timestamp(), response.offset(), Optional.of(LeaderAndIsr.INITIAL_LEADER_EPOCH)))
@@ -208,6 +241,18 @@ public class FetchOffsetHandler implements Closeable {
                 }
             }
             metrics.fetchOffsetCompleted(startTime);
+        }
+
+        private boolean isCrossTierEarliest(final TopicIdPartition topicIdPartition, final long timestamp) {
+            return timestamp == org.apache.kafka.common.requests.ListOffsetsRequest.EARLIEST_TIMESTAMP
+                && metadata.isConsolidatingDisklessTopic(topicIdPartition.topic());
+        }
+
+        private void completeEarliestFromCache(final TopicPartition topicPartition, final long offset) {
+            futures.get(topicPartition).complete(new OffsetResultHolder.FileRecordsOrError(
+                Optional.empty(),
+                Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, offset, Optional.of(LeaderAndIsr.INITIAL_LEADER_EPOCH)))
+            ));
         }
     }
 }
