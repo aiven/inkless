@@ -38,6 +38,8 @@ import java.util.stream.Stream;
 
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.AbstractControlPlane;
+import io.aiven.inkless.control_plane.AdvanceCrossTierLogStartOffsetRequest;
+import io.aiven.inkless.control_plane.AdvanceCrossTierLogStartOffsetResponse;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlaneException;
@@ -220,6 +222,17 @@ public class PostgresControlPlane extends AbstractControlPlane {
             return job.call();
         } catch (final Exception e) {
             throw new ControlPlaneException("Failed to enforce retention", e);
+        }
+    }
+
+    @Override
+    public List<AdvanceCrossTierLogStartOffsetResponse> advanceCrossTierLogStartOffset(final List<AdvanceCrossTierLogStartOffsetRequest> requests) {
+        try {
+            final AdvanceCrossTierLogStartOffsetJob job = new AdvanceCrossTierLogStartOffsetJob(
+                time, writeJooqCtx, requests, duration -> { });
+            return job.call();
+        } catch (final Exception e) {
+            throw new ControlPlaneException("Failed to advance cross-tier log start offset", e);
         }
     }
 
