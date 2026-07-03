@@ -237,12 +237,21 @@ public abstract class TopicSwitchCommand {
                     "%s-%d already has a committed seal offset (%d); pass an explicit --offset to re-seal.",
                     topic, partition, committedSeal));
             }
-            TopicPartition tp = new TopicPartition(topic, partition);
-            sealOffset = adminClient.listOffsets(Map.of(tp, OffsetSpec.latest()))
-                .all().get().get(tp).offset();
+            sealOffset = endOffset(adminClient, topic, partition);
             stream.printf("Validated %s-%d: sealing at end offset %d.%n", topic, partition, sealOffset);
         } else {
             sealOffset = offset.get();
+            if (sealOffset >= 0) {
+                long startOffset = startOffset(adminClient, topic, partition);
+                long endOffset = endOffset(adminClient, topic, partition);
+                if (sealOffset < startOffset || sealOffset > endOffset) {
+                    throw new RuntimeException(String.format(
+                        "Cannot seal %s-%d at offset %d: it is outside the classic log range [%d, %d].",
+                        topic, partition, sealOffset, startOffset, endOffset));
+                }
+                stream.printf("Validated %s-%d: seal offset %d within classic log range [%d, %d].%n",
+                    topic, partition, sealOffset, startOffset, endOffset);
+            }
         }
 
         if (dryRun) {
@@ -256,6 +265,16 @@ public abstract class TopicSwitchCommand {
         adminClient.alterDisklessSwitch(topic, partition, sealOffset, options).all().get();
         stream.printf("Set %s-%d classicToDisklessStartOffset to %s.%n",
             topic, partition, describeSealOffset(sealOffset));
+    }
+
+    private static long startOffset(Admin adminClient, String topic, int partition) throws Exception {
+        TopicPartition tp = new TopicPartition(topic, partition);
+        return adminClient.listOffsets(Map.of(tp, OffsetSpec.earliest())).all().get().get(tp).offset();
+    }
+
+    private static long endOffset(Admin adminClient, String topic, int partition) throws Exception {
+        TopicPartition tp = new TopicPartition(topic, partition);
+        return adminClient.listOffsets(Map.of(tp, OffsetSpec.latest())).all().get().get(tp).offset();
     }
 
     private static long readClassicToDisklessStartOffset(Admin adminClient, String topic, int partition)

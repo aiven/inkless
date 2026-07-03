@@ -182,19 +182,41 @@ public class TopicSwitchCommandTest {
 
     @Test
     public void testSealCommitsExplicitOffset() throws Exception {
+        mockLogRange(0, 10, 150);
         mockAlterDisklessSwitch();
 
         String output = runSealCommand(0, Optional.of(100L), false);
 
         verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(100L), any(AlterDisklessSwitchOptions.class));
+        assertTrue(output.contains("within classic log range [10, 150]"));
         assertTrue(output.contains("Set test-topic-0 classicToDisklessStartOffset to 100"));
+    }
+
+    @Test
+    public void testSealRejectsExplicitOffsetAboveEndOffset() throws Exception {
+        mockLogRange(0, 0, 90);
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+            () -> runSealCommand(0, Optional.of(100L), false));
+        assertTrue(ex.getMessage().contains("outside the classic log range [0, 90]"));
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+    }
+
+    @Test
+    public void testSealRejectsExplicitOffsetBelowStartOffset() throws Exception {
+        mockLogRange(0, 50, 150);
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+            () -> runSealCommand(0, Optional.of(20L), false));
+        assertTrue(ex.getMessage().contains("outside the classic log range [50, 150]"));
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
     }
 
     @Test
     public void testSealDefaultsToEndOffsetWhenPending() throws Exception {
         // Pending switch (offset -2): default seals at the current end offset.
         mockDescribeSeal(0, -2L);
-        mockEndOffset(0, 150);
+        mockLogRange(0, 0, 150);
         mockAlterDisklessSwitch();
 
         String output = runSealCommand(0, Optional.empty(), false);
@@ -216,6 +238,8 @@ public class TopicSwitchCommandTest {
 
     @Test
     public void testSealDryRunDoesNotCommit() throws Exception {
+        mockLogRange(0, 0, 150);
+
         String output = runSealCommand(0, Optional.of(100L), true);
 
         verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
@@ -251,9 +275,12 @@ public class TopicSwitchCommandTest {
         assertTrue(ex.getMessage().contains("Invalid seal offset -3"));
     }
 
-    private void mockEndOffset(int partition, long offset) {
+    private void mockLogRange(int partition, long startOffset, long endOffset) {
         when(adminClient.listOffsets(anyMap()))
             .thenAnswer(invocation -> {
+                Map<TopicPartition, OffsetSpec> request = invocation.getArgument(0);
+                boolean isLatest = request.values().stream().anyMatch(s -> s instanceof OffsetSpec.LatestSpec);
+                long offset = isLatest ? endOffset : startOffset;
                 TopicPartition tp = new TopicPartition(TOPIC, partition);
                 Map<TopicPartition, KafkaFuture<ListOffsetsResult.ListOffsetsResultInfo>> futures = Map.of(
                     tp, KafkaFuture.completedFuture(
