@@ -570,42 +570,34 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      *   1. if it's in PAUSED state, we should move it to MIRRORING state. It will happen when users resume mirroring
      *   2. if it's in UNKNOWN, STOPPED, or FAILED state, we should move it to LOG_TRUNCATION state.
      *      UNKNOWN/STOPPED happens on startMirrorTopics. FAILED happens on manual restart after retries are exhausted.
-     *   3. if it's in LOG_TRUNCATION or EPOCH_FENCING, skip. These transient states are already being processed
-     *      and re-triggering would cause redundant work (e.g. duplicate LME lookups).
-     *   4. else, keep the same state as is. This could happen like leadership change, and the new leader should
+     *   3. else, keep the same state as is. This could happen like leadership change, and the new leader should
      *      continue to complete the process in previous leader
      */
     private void applyStateTransition(String mirrorName, TopicPartition tp,
                                       MirrorPartitionState curState, MirrorPartitionState fetchedState,
                                       boolean stopRequested, boolean pauseRequested) {
         stateTransitioner.ifPresent(t -> {
-            MirrorPartitionState newState;
             if (stopRequested) {
-                newState = curState != MirrorPartitionState.STOPPED
-                        ? MirrorPartitionState.STOPPING : MirrorPartitionState.STOPPED;
+                if (curState != MirrorPartitionState.STOPPED) {
+                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPING, null);
+                } else {
+                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPED, null);
+                }
             } else if (pauseRequested) {
-                newState = curState != MirrorPartitionState.PAUSED
-                        ? MirrorPartitionState.PAUSING : MirrorPartitionState.PAUSED;
+                if (curState != MirrorPartitionState.PAUSED) {
+                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSING, null);
+                } else {
+                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED, null);
+                }
             } else if (curState == MirrorPartitionState.PAUSED) {
-                newState = MirrorPartitionState.MIRRORING;
+                t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.MIRRORING, null);
             } else if (curState == MirrorPartitionState.UNKNOWN
                     || curState == MirrorPartitionState.STOPPED
                     || curState == MirrorPartitionState.FAILED) {
-                newState = MirrorPartitionState.LOG_TRUNCATION;
-            } else if (curState == MirrorPartitionState.LOG_TRUNCATION
-                    || curState == MirrorPartitionState.EPOCH_FENCING) {
-                // Transient state already in progress. Re-triggering would cause redundant work.
-                log.debug("Partition {} already in transient state {}, skipping re-transition.", tp, curState);
-                return;
+                t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION, null);
             } else {
-                newState = fetchedState != null ? fetchedState : curState;
+                t.transitionTo(mirrorName, Set.of(tp), fetchedState != null ? fetchedState : curState, null);
             }
-            // Eagerly update the cache before the async coordinator write. This prevents a
-            // second metadata update (e.g. epoch bump) from seeing stale UNKNOWN and re-triggering
-            // the same transition. Safe because the coordinator retries writes on failure, so the
-            // state will eventually be confirmed.
-            updatePartitionState(new PartitionKey(mirrorName, tp.topic(), tp.partition()), newState);
-            t.transitionTo(mirrorName, Set.of(tp), newState, null);
         });
     }
 
