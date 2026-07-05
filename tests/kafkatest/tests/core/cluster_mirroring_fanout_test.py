@@ -200,7 +200,7 @@ class ClusterMirroringFanOutTest(MirrorUtils, Test):
 
         self.logger.info("Verify LME lookup: replication did not start from scratch")
         log_path = "%s/info/server.log" % self.dest2_kafka.OPERATIONAL_LOG_DIR
-        pattern = "LME lookup result for mirror d1-to-d2"
+        pattern = "LME lookup response for mirror d1-to-d2"
         found = False
         for node in self.dest2_kafka.nodes:
             for line in node.account.ssh_capture(

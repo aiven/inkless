@@ -424,7 +424,10 @@ public class ClusterMirrorCoordinator {
                 updateMirrorPartitionState(mirrorName, tp, newState)
                         .whenComplete((optTp, ex) -> {
                             if (ex != null) {
-                                log.error("Failed to update partition state for {}: {}", tp, ex.getMessage());
+                                // TODO: handle failure, we can't retry forever
+                                log.error("Failed to update partition state for {}: {}, retrying", tp, ex.getMessage());
+                                scheduler.scheduleOnce("MirrorStateUpdateRetry-" + tp,
+                                        () -> transitionTo(mirrorName, Set.of(tp), newState, errorMessage), 100);
                             } else {
                                 // successfully writes data into internal log
                                 try {
@@ -715,10 +718,7 @@ public class ClusterMirrorCoordinator {
                         partitionResponses.foreach(partitionRes -> {
                             ProduceResponse.PartitionResponse pr = partitionRes._2;
                             if (pr.error.code() != Errors.NONE.code()) {
-                                // TODO: handle failure, we can't retry forever
-                                log.error("Failed to write partition state to coordinator: {}, retrying", pr.error.message());
-                                scheduler.scheduleOnce("PartitionStateWriteRetry-" + topicPartition,
-                                        () -> updateMirrorPartitionState(mirrorName, topicPartition, newState), 100);
+                                log.error("Failed to write partition state to coordinator: {}", pr.error.message());
                                 future.completeExceptionally(pr.error.exception());
                             } else {
                                 metadataManager.updatePartitionState(new PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()), newState);
@@ -742,10 +742,7 @@ public class ClusterMirrorCoordinator {
                             metadataManager.updatePartitionState(new PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()), newState);
                             future.complete(Optional.of(topicPartition));
                         } else {
-                            // TODO: handle failure, we can't retry forever
-                            log.error("Failed to write partition state to remote coordinator: {}, retrying", par.errorCode());
-                            scheduler.scheduleOnce("PartitionStateWriteRetry-" + topicPartition,
-                                    () -> updateMirrorPartitionState(mirrorName, topicPartition, newState), 100);
+                            log.error("Failed to write partition state to remote coordinator: {}", par.errorCode());
                             future.completeExceptionally(Errors.forCode(par.errorCode()).exception());
                         }
                     })));
