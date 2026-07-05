@@ -570,34 +570,42 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      *   1. if it's in PAUSED state, we should move it to MIRRORING state. It will happen when users resume mirroring
      *   2. if it's in UNKNOWN, STOPPED, or FAILED state, we should move it to LOG_TRUNCATION state.
      *      UNKNOWN/STOPPED happens on startMirrorTopics. FAILED happens on manual restart after retries are exhausted.
-     *   3. else, keep the same state as is. This could happen like leadership change, and the new leader should
+     *   3. if it's in LOG_TRUNCATION or EPOCH_FENCING, skip. These transient states are already being processed
+     *      and re-triggering would cause redundant work (e.g. duplicate LME lookups).
+     *   4. else, keep the same state as is. This could happen like leadership change, and the new leader should
      *      continue to complete the process in previous leader
      */
     private void applyStateTransition(String mirrorName, TopicPartition tp,
                                       MirrorPartitionState curState, MirrorPartitionState fetchedState,
                                       boolean stopRequested, boolean pauseRequested) {
         stateTransitioner.ifPresent(t -> {
+            MirrorPartitionState newState;
             if (stopRequested) {
-                if (curState != MirrorPartitionState.STOPPED) {
-                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPING, null);
-                } else {
-                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPED, null);
-                }
+                newState = curState != MirrorPartitionState.STOPPED
+                        ? MirrorPartitionState.STOPPING : MirrorPartitionState.STOPPED;
             } else if (pauseRequested) {
-                if (curState != MirrorPartitionState.PAUSED) {
-                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSING, null);
-                } else {
-                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED, null);
-                }
+                newState = curState != MirrorPartitionState.PAUSED
+                        ? MirrorPartitionState.PAUSING : MirrorPartitionState.PAUSED;
             } else if (curState == MirrorPartitionState.PAUSED) {
-                t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.MIRRORING, null);
+                newState = MirrorPartitionState.MIRRORING;
             } else if (curState == MirrorPartitionState.UNKNOWN
                     || curState == MirrorPartitionState.STOPPED
                     || curState == MirrorPartitionState.FAILED) {
-                t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION, null);
+                newState = MirrorPartitionState.LOG_TRUNCATION;
+            } else if (curState == MirrorPartitionState.LOG_TRUNCATION
+                    || curState == MirrorPartitionState.EPOCH_FENCING) {
+                // Transient state already in progress. Re-triggering would cause redundant work.
+                log.debug("Partition {} already in transient state {}, skipping re-transition.", tp, curState);
+                return;
             } else {
-                t.transitionTo(mirrorName, Set.of(tp), fetchedState != null ? fetchedState : curState, null);
+                newState = fetchedState != null ? fetchedState : curState;
             }
+            // Eagerly update the cache before the async coordinator write. This prevents a
+            // second metadata update (e.g. epoch bump) from seeing stale UNKNOWN and re-triggering
+            // the same transition. Safe because the coordinator retries writes on failure, so the
+            // state will eventually be confirmed.
+            updatePartitionState(new PartitionKey(mirrorName, tp.topic(), tp.partition()), newState);
+            t.transitionTo(mirrorName, Set.of(tp), newState, null);
         });
     }
 
@@ -881,6 +889,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             }
             TopicImage topicImage = metadataImage.topics().getTopic(tp.topic());
             if (topicImage == null) {
+                return;
+            }
+            // Skip stopped/paused topics: if the partition cache was cleared (e.g. coordinator
+            // leadership change), the state defaults to UNKNOWN and would be restarted here.
+            int desiredState = topicImage.desiredMirrorState();
+            if (desiredState == MirrorPartitionState.STOPPED.value()
+                    || desiredState == MirrorPartitionState.PAUSED.value()) {
                 return;
             }
             var partition = topicImage.partitions().get(tp.partition());
@@ -2071,7 +2086,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             String mirrorName, Set<TopicPartition> topicPartitionSet) {
         Admin admin = getOrCreateSourceAdmin(mirrorName);
         List<DescribeClusterMirrorsRequestData.TopicLineage> lineages = buildTopicLineages(topicPartitionSet);
-        log.info("Sending LME lookup for mirror {}, lineages {}", mirrorName, lineages);
+        log.info("LME lookup request for mirror {}: {}", mirrorName, lineages);
         DescribeClusterMirrorsOptions options = new DescribeClusterMirrorsOptions()
                 .topicLineages(lineages);
         DescribeClusterMirrorsResult result = admin.describeClusterMirrors(List.of(mirrorName), options);
@@ -2087,7 +2102,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                             epochs.put(new TopicPartition(name, partIdx), lme)));
                         });
                     }
-                    log.info("LME lookup result for mirror {}: {}", mirrorName, epochs);
+                    log.info("LME lookup response for mirror {}: {}", mirrorName, epochs);
                     return epochs;
                 })
                 .orTimeout(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
@@ -2136,7 +2151,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      */
     void processLmeLookup(Map<String, Map<String, Set<Integer>>> mirrorPartitions,
                           Consumer<Map<String, Map<TopicPartition, Integer>>> callback) {
-        log.debug("Preocessing LME lookup for {}", mirrorPartitions);
+        log.debug("Processing LME lookup for {}", mirrorPartitions);
         Map<String, Map<TopicPartition, Integer>> result = new ConcurrentHashMap<>();
 
         // Group remote partitions by (coordinator node, mirror name)
