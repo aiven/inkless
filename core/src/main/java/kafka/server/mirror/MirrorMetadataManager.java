@@ -923,7 +923,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             syncTopicConfigs(mirrorName, mirrorConfig);
             syncGroupOffsets(mirrorName, mirrorConfig);
             syncAcls(mirrorName, mirrorConfig);
-            maybeBumpLeaderEpochs(mirrorName, topicInfos, Set.of());
+            if (!getConfiguredTopics(mirrorName, false, false).isEmpty()) {
+                maybeBumpLeaderEpochs(mirrorName, topicInfos, Set.of());
+            }
             discoverTopicsByPattern(mirrorName, mirrorConfig);
             enforceExcludePatterns(mirrorName, mirrorConfig);
         } catch (Exception e) {
