@@ -34,9 +34,7 @@
       { "name": "Partitions", "type": "[]int32", "versions": "0+",
         "about": "The partition indexes." },
       { "name": "SrcClusterIds", "type": "[]string", "versions": "0+",
-        "about": "The source cluster IDs from the requesting cluster's mirror configs." },
-      { "name": "DstClusterId", "type": "string", "versions": "0+",
-        "about": "The requesting cluster's own cluster ID." }
+        "about": "Cluster IDs to match against stored mirror configs on the receiving broker. Includes the requesting cluster's own ID and source IDs from its mirror configs." }
     ]}
   ]
 }

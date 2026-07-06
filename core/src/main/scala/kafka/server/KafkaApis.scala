@@ -501,7 +501,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   /*
    * Handles TopicLineage entries by finding matching mirrors and looking up their LME
    * from the local coordinator cache. For each lineage, scans mirror configs to find
-   * mirrors whose source cluster ID matches any SrcClusterIds entry or DstClusterId.
+   * mirrors whose source cluster ID matches any KnownClusterIds entry.
    * Returns -1 for partitions not coordinated by this broker. The admin client
    * broadcasts to all brokers and takes the max LME per partition.
    */
@@ -526,9 +526,9 @@ class KafkaApis(val requestChannel: RequestChannel,
     val topicNameToId = new util.HashMap[String, Uuid]()
 
     topicLineages.forEach { lineage =>
-      val requestedSrcIds = lineage.srcClusterIds.asScala.toSet
+      val requestedIds = lineage.srcClusterIds.asScala.toSet
       val matchingMirrors = sourceClusterIds
-        .filter { case (_, cid) => requestedSrcIds.contains(cid) || cid == lineage.dstClusterId }
+        .filter { case (_, cid) => requestedIds.contains(cid) }
         .map(_._1)
 
       val topicNameOpt = metadataCache.getTopicName(lineage.topicId)

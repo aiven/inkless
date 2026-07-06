@@ -2124,15 +2124,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             partitionsByTopicId.computeIfAbsent(topicId, k -> new ArrayList<>()).add(tp.partition());
         }
 
-        List<String> allSrcClusterIds = new ArrayList<>(mirrorSourceClusterIds.values());
+        List<String> srcClusterIds = new ArrayList<>(mirrorSourceClusterIds.values());
+        srcClusterIds.add(clusterId);
         List<DescribeClusterMirrorsRequestData.TopicLineage> lineages = new ArrayList<>();
         for (Map.Entry<Uuid, List<Integer>> entry : partitionsByTopicId.entrySet()) {
-            List<Integer> partitions = entry.getValue();
             lineages.add(new DescribeClusterMirrorsRequestData.TopicLineage()
                     .setTopicId(entry.getKey())
-                    .setPartitions(partitions)
-                    .setSrcClusterIds(allSrcClusterIds)
-                    .setDstClusterId(clusterId));
+                    .setPartitions(entry.getValue())
+                    .setSrcClusterIds(srcClusterIds));
         }
         return lineages;
     }
