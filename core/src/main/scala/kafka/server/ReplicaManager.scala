@@ -19,6 +19,7 @@ package kafka.server
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, Reader}
+import io.aiven.inkless.storage_backend.common.ObjectFetcher
 import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.produce.AppendHandler
@@ -307,13 +308,24 @@ class ReplicaManager(val config: KafkaConfig,
           state.brokerTopicStats(),
           config.disklessConsolidationFetchMetadataThreadPoolSize,
           config.disklessConsolidationFetchDataThreadPoolSize,
-          // no lagging fetch for consolidation
-          Optional.empty(), 0L, 0, 0,
+          // Cold path: use backgroundStorage to bypass cache for unconsolidated blob fetches.
+          // Lagging pool size is 0: the consolidation Reader always takes the cold path, so the cold
+          // path reuses the (otherwise idle) consolidation data pool rather than allocating a second one.
+          // Tune concurrency via diskless.consolidation.fetch.data.thread.pool.size.
+          Optional.of[ObjectFetcher](state.backgroundStorage()),
+          // Reuse the consumer lagging threshold (default -1 = cache TTL) as a recency cutoff.
+          // isConsolidationFetch forces the cold *path* regardless; this only selects range alignment:
+          // data younger than the cutoff is fixed-block aligned so the cache peek can reuse a
+          // consumer-cached block, older data is bounding-range aligned for a cheaper cold fetch.
+          state.config().fetchLaggingConsumerThresholdMs(),
+          config.disklessConsolidationFetchLaggingRequestRateLimit,
+          0, // use the consolidation data pool instead
           // no hedged fetch for consolidation
           0L, 0L,
           config.disklessConsolidationFindBatchesMaxPerPartition,
           new KafkaMetricsGroup("io.aiven.inkless.consolidation", "ConsolidationFetchMetrics"),
-          "inkless-consolidation-"
+          "inkless-consolidation-",
+          true // is consolidating fetch
         )
         new FetchHandler(reader)
       }

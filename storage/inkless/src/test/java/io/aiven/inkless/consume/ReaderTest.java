@@ -85,6 +85,8 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -1141,9 +1143,165 @@ public class ReaderTest {
     }
 
     @Nested
+    @MockitoSettings(strictness = Strictness.LENIENT)
+    class ConsolidationColdPathTests {
+        private ExecutorService consolidationDataExecutor;
+        @Mock
+        private ObjectFetcher coldPathFetcher;
+        @Mock
+        private ControlPlane coldPathControlPlane;
+        @Mock
+        private InklessFetchMetrics coldPathMetrics;
+
+        @BeforeEach
+        void setUp() {
+            consolidationDataExecutor = Executors.newSingleThreadExecutor();
+        }
+
+        @AfterEach
+        void tearDown() {
+            consolidationDataExecutor.shutdownNow();
+        }
+
+        @Test
+        void closeOnlyShutsFetchDataExecutorOnce() throws Exception {
+            final ExecutorService metadataExec = Executors.newSingleThreadExecutor();
+            // Pool-reuse config: no dedicated lagging pool + a fetcher present, so the cold path
+            // reuses fetchDataExecutor and does not own it. close() must therefore shut this pool
+            // down exactly once (guarded by ownsLaggingExecutor), not twice via the lagging path.
+            // Spy so the shutdown count is verifiable — isShutdown() alone can't distinguish 1 from 2.
+            final ExecutorService dataExec = spy(Executors.newSingleThreadExecutor());
+            // try-with-resources guarantees close() runs even if the body throws.
+            try (Reader ignored = new Reader(
+                time,
+                OBJECT_KEY_CREATOR,
+                KEY_ALIGNMENT_STRATEGY,
+                OBJECT_CACHE,
+                coldPathControlPlane,
+                objectFetcher,
+                10,
+                metadataExec,
+                dataExec,
+                coldPathFetcher, // cold path fetcher present
+                60_000L,
+                0, // no rate limit
+                null, // no dedicated pool — reuse fetchDataExecutor
+                null, 0, 0,
+                coldPathMetrics,
+                new BrokerTopicStats(),
+                "consolidation-"
+            )) {
+                // Reader constructed; close() runs at the end of the block.
+            }
+            // Both executors are terminated after close.
+            assertThat(metadataExec.isShutdown()).isTrue();
+            assertThat(dataExec.isShutdown()).isTrue();
+            // The reused pool is shut down exactly once — regresses to 2 if the ownsLaggingExecutor
+            // guard in close() is dropped.
+            verify(dataExec, times(1)).shutdown();
+        }
+
+        @Test
+        void coldPathEnabledWithoutDedicatedPool() throws Exception {
+            // Verify Reader wiring for the "reuse pool" case: a cold-path fetcher is present but no
+            // dedicated lagging pool is configured, so the cold path reuses fetchDataExecutor.
+            // This only checks the Reader constructs and fetches without error;
+            // the full cold-path routing is tested at the FetchPlanner level (FetchPlannerTest.ColdPathTests).
+            // try-with-resources guarantees close() runs even if the fetch or assertion throws,
+            // so the Reader-owned metadata executor is not leaked on failure.
+            try (Reader reader = new Reader(
+                time,
+                OBJECT_KEY_CREATOR,
+                KEY_ALIGNMENT_STRATEGY,
+                OBJECT_CACHE,
+                coldPathControlPlane,
+                objectFetcher,
+                10,
+                Executors.newSingleThreadExecutor(),
+                consolidationDataExecutor,
+                coldPathFetcher,
+                60_000L,
+                0,
+                null, // no dedicated pool — reuse consolidationDataExecutor
+                null, 0, 0,
+                coldPathMetrics,
+                new BrokerTopicStats(),
+                "consolidation-"
+            )) {
+                // Verify fetch with empty request works (basic wiring sanity)
+                final var result = reader.fetch(fetchParams, Collections.emptyMap()).get(5, SECONDS);
+                assertThat(result).isEmpty();
+            }
+        }
+
+        @Test
+        void dedicatedLaggingExecutorWithoutFetcherThrows() {
+            // A dedicated lagging executor exists only to run cold-path fetches, so it is invalid
+            // without a fetcher. (Guard fires before the same-instance guard even though both
+            // executor slots share consolidationDataExecutor here — the missing fetcher wins.)
+            assertThatThrownBy(() -> new Reader(
+                time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE,
+                coldPathControlPlane, objectFetcher, 10,
+                consolidationDataExecutor,   // metadataExecutor
+                consolidationDataExecutor,   // fetchDataExecutor
+                null,                        // laggingConsumerObjectFetcher — MISSING
+                60_000L, 0,
+                consolidationDataExecutor,   // laggingFetchDataExecutor — present
+                null, 0, 0,
+                coldPathMetrics, new BrokerTopicStats(), "consolidation-"
+            )).isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("nothing to execute");
+        }
+
+        @Test
+        void consolidationFetchWithoutFetcherThrows() {
+            // isConsolidationFetch=true must have a cold-path fetcher to read blobs on cache miss.
+            assertThatThrownBy(() -> new Reader(
+                time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE,
+                coldPathControlPlane, objectFetcher, 10,
+                consolidationDataExecutor,   // metadataExecutor
+                consolidationDataExecutor,   // fetchDataExecutor
+                null,                        // laggingConsumerObjectFetcher — MISSING
+                60_000L, 0,
+                null,                        // laggingFetchDataExecutor absent, so guard 1 is skipped
+                null, 0, 0,
+                coldPathMetrics, new BrokerTopicStats(), "consolidation-",
+                true                         // isConsolidationFetch
+            )).isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("isConsolidationFetch=true requires a lagging ObjectFetcher");
+        }
+
+        @Test
+        void laggingExecutorSameInstanceAsFetchDataExecutorThrows() {
+            // The dedicated lagging executor must be distinct from the hot-path executor; passing
+            // the same instance would cause double-shutdown and duplicate monitoring.
+            // metadataExecutor must be a distinct instance and is shut down explicitly: the
+            // constructor throws before Reader takes ownership, so close() never runs on it.
+            final ExecutorService metadataExecutor = Executors.newSingleThreadExecutor();
+            try {
+                assertThatThrownBy(() -> new Reader(
+                    time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE,
+                    coldPathControlPlane, objectFetcher, 10,
+                    metadataExecutor,          // metadataExecutor (distinct)
+                    consolidationDataExecutor, // fetchDataExecutor
+                    coldPathFetcher,           // fetcher present, so guard 1 is skipped
+                    60_000L, 0,
+                    consolidationDataExecutor, // laggingFetchDataExecutor == fetchDataExecutor
+                    null, 0, 0,
+                    coldPathMetrics, new BrokerTopicStats(), "consolidation-"
+                )).isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("must be a distinct instance from fetchDataExecutor");
+            } finally {
+                metadataExecutor.shutdownNow();
+            }
+        }
+    }
+
+    @Nested
     class ConstructorValidation {
         @Test
-        void poolSizeZeroWithEmptyStorageDisablesLaggingConsumer() throws Exception {
+        void poolSizeZeroWithEmptyStorageIsAccepted() throws Exception {
+            // Lagging feature disabled (pool size 0, no storage): constructor accepts it without throwing.
             final Reader reader = new Reader(
                 time,
                 OBJECT_KEY_CREATOR,
@@ -1166,7 +1324,8 @@ public class ReaderTest {
         }
 
         @Test
-        void poolSizePositiveWithStoragePresentEnablesLaggingConsumer() throws Exception {
+        void poolSizePositiveWithStorageIsAccepted() throws Exception {
+            // Dedicated lagging pool (pool size > 0) with storage: constructor accepts it without throwing.
             final Reader reader = new Reader(
                 time,
                 OBJECT_KEY_CREATOR,
@@ -1181,6 +1340,32 @@ public class ReaderTest {
                 60_000L, // laggingConsumerThresholdMs
                 0, // laggingConsumerRequestRateLimit
                 4, // laggingConsumerThreadPoolSize — feature enabled
+                0, // hedgeTtfbThresholdMs — disabled
+                0, // hedgeTotalTimeThresholdMs — disabled
+                10 // maxBatchesPerPartitionToFind
+            );
+            reader.close();
+        }
+
+        @Test
+        void poolSizeZeroWithStorageIsAccepted() throws Exception {
+            // Cold path reusing the data pool (pool size 0 + storage present): constructor accepts it
+            // without throwing. The reuse behavior itself is verified in
+            // ConsolidationColdPathTests.closeOnlyShutsFetchDataExecutorOnce, where the executor is injectable.
+            final Reader reader = new Reader(
+                time,
+                OBJECT_KEY_CREATOR,
+                KEY_ALIGNMENT_STRATEGY,
+                OBJECT_CACHE,
+                controlPlane,
+                objectFetcher,
+                mock(BrokerTopicStats.class),
+                1, // fetchMetadataThreadPoolSize
+                1, // fetchDataThreadPoolSize
+                Optional.of(mock(StorageBackend.class)),
+                60_000L, // laggingConsumerThresholdMs
+                0, // laggingConsumerRequestRateLimit
+                0, // laggingConsumerThreadPoolSize — no dedicated pool, reuses data pool
                 0, // hedgeTtfbThresholdMs — disabled
                 0, // hedgeTotalTimeThresholdMs — disabled
                 10 // maxBatchesPerPartitionToFind
@@ -1207,7 +1392,7 @@ public class ReaderTest {
                 0, // hedgeTtfbThresholdMs — disabled
                 0, // hedgeTotalTimeThresholdMs — disabled
                 10 // maxBatchesPerPartitionToFind
-            )).isInstanceOf(IllegalStateException.class)
+            )).isInstanceOf(IllegalArgumentException.class)
               .hasMessageContaining("no lagging fetch storage was provided");
         }
     }
