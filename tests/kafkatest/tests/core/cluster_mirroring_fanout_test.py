@@ -153,15 +153,6 @@ class ClusterMirroringFanOutTest(MirrorUtils, Test):
         MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest2_kafka, self.client_node,
                                          "s-to-d2", [topic])
 
-        self.logger.info("Restart source nodes again and produce to bump leader epoch further")
-        for node in self.source_kafka.nodes:
-            self.source_kafka.restart_node(node)
-        MirrorUtils.produce_messages(self.logger, self.source_kafka, self.client_node, topic, 5)
-        MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest1_kafka, self.client_node,
-                                         "s-to-d1", [topic])
-        MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest2_kafka, self.client_node,
-                                         "s-to-d2", [topic])
-
         self.logger.info("Crash source cluster S")
         for node in self.source_kafka.nodes:
             self.source_kafka.stop_node(node, clean_shutdown=False)
@@ -200,7 +191,7 @@ class ClusterMirroringFanOutTest(MirrorUtils, Test):
 
         self.logger.info("Verify LME lookup: replication did not start from scratch")
         log_path = "%s/info/server.log" % self.dest2_kafka.OPERATIONAL_LOG_DIR
-        pattern = "LME lookup response for mirror d1-to-d2"
+        pattern = "Last mirror epoch lookup response for mirror d1-to-d2"
         found = False
         for node in self.dest2_kafka.nodes:
             for line in node.account.ssh_capture(

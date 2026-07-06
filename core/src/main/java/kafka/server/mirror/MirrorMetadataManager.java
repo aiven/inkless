@@ -1553,6 +1553,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                 PartitionKey mpk = new PartitionKey(
                                         mirrorName, topic.name(), partition.partitionIndex());
                                 TopicPartition tp = new TopicPartition(topic.name(), partition.partitionIndex());
+                                if (partition.lastMirrorEpoch() != -1) {
+                                    lastMirrorEpochs.put(mpk, partition.lastMirrorEpoch());
+                                }
                                 if (partition.state() != -1) {
                                     partitionStates.put(mpk, MirrorPartitionState.fromValue(partition.state()));
                                 }
@@ -2080,7 +2083,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             String mirrorName, Set<TopicPartition> topicPartitionSet) {
         Admin admin = getOrCreateSourceAdmin(mirrorName);
         List<DescribeClusterMirrorsRequestData.TopicLineage> lineages = buildTopicLineages(topicPartitionSet);
-        log.info("LME lookup request for mirror {}: {}", mirrorName, lineages);
+        log.info("Last mirror epoch lookup request for mirror {}: {}", mirrorName, lineages);
         DescribeClusterMirrorsOptions options = new DescribeClusterMirrorsOptions()
                 .topicLineages(lineages);
         DescribeClusterMirrorsResult result = admin.describeClusterMirrors(List.of(mirrorName), options);
@@ -2096,7 +2099,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                             epochs.put(new TopicPartition(name, partIdx), lme)));
                         });
                     }
-                    log.info("LME lookup response for mirror {}: {}", mirrorName, epochs);
+                    log.info("Last mirror epoch lookup response for mirror {}: {}", mirrorName, epochs);
                     return epochs;
                 })
                 .orTimeout(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
