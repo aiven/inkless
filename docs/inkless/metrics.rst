@@ -301,6 +301,8 @@ InitDisklessLogQueryRate            Total number of InitDisklessLog queries exec
 InitDisklessLogQueryTime            Time spent executing the InitDisklessLog query in milliseconds         
 ListOffsetsQueryRate                Total number of ListOffsets queries executed                           
 ListOffsetsQueryTime                Time spent executing the ListOffsets query in milliseconds             
+RepairDisklessLogQueryRate          Total number of RepairDisklessLog queries executed                     
+RepairDisklessLogQueryTime          Time spent executing the RepairDisklessLog query in milliseconds       
 SafeDeleteFileCheckQueryRate        Total number of SafeDeleteFileCheck queries executed                   
 SafeDeleteFileCheckQueryTime        Time spent executing the SafeDeleteFileCheck query in milliseconds     
 TopicCreateQueryRate                Total number of TopicCreate queries executed                           
