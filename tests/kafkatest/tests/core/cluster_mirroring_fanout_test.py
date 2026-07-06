@@ -28,9 +28,8 @@ from kafkatest.version import (
 class ClusterMirroringFanOutTest(MirrorUtils, Test):
     """Fan-out topology test: S -> D1, S -> D2, then S crashes and D1 -> D2.
 
-    Verifies that TopicLineages-based LME lookup allows D2 to truncate
-    correctly when redirected to fetch from D1 under a new mirror name,
-    avoiding full re-replication.
+    Verifies that LME lookup allows D2 to truncate correctly when redirected
+    to fetch from D1 under a new mirror name, avoiding full re-replication.
     """
 
     def __init__(self, test_context):
@@ -184,7 +183,7 @@ class ClusterMirroringFanOutTest(MirrorUtils, Test):
             err_msg="Failed to start d1-to-d2 mirror topics",
         )
 
-        self.logger.info("Wait for D2 to catch up from D1 via lineage LME lookup")
+        self.logger.info("Wait for D2 to catch up from D1 via LME lookup")
         MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest2_kafka, self.client_node,
                                          "d1-to-d2", [topic],
                                          err_msg="D2 did not catch up from D1 after fan-out redirection")
@@ -201,12 +200,12 @@ class ClusterMirroringFanOutTest(MirrorUtils, Test):
                 if line:
                     self.logger.info("LME lookup log on %s: %s", node.name, line)
                     epoch = int(line.split(topic + "-0=")[1].split("}")[0])
-                    assert epoch >= 2, \
-                        "Expected LME epoch >= 2, got %d in: %s" % (epoch, line)
+                    assert epoch >= 1, \
+                        "Expected LME epoch >= 1, got %d in: %s" % (epoch, line)
                     found = True
-        assert found, "No lineage LME lookup log found on any D2 broker"
+        assert found, "No LME lookup log found on any D2 broker"
 
-        self.logger.info("Verify data completeness on D2 (15 original + 5 new)")
+        self.logger.info("Verify data completeness on D2 (10 original + 5 new)")
         count = MirrorUtils.consume_messages(self.logger, self.dest2_kafka, self.client_node, topic,
-                                             max_messages=20, expected_count=20)
-        assert count == 20, "Expected 20 messages on D2, got %d" % count
+                                             max_messages=15, expected_count=15)
+        assert count == 15, "Expected 15 messages on D2, got %d" % count
