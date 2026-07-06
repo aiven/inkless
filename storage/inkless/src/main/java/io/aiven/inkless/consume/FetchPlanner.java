@@ -24,7 +24,9 @@ import org.apache.kafka.common.utils.Time;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -88,6 +90,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
     private final long hedgeTotalTimeThresholdMs;
     private final ConcurrentHashMap<CompletableFuture<?>, AtomicBoolean> hedgeGuards;
     private final Map<TopicIdPartition, FindBatchResponse> batchCoordinates;
+    private final boolean isConsolidationFetch;
     private final InklessFetchMetrics metrics;
 
     public FetchPlanner(
@@ -106,6 +109,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         long hedgeTotalTimeThresholdMs,
         ConcurrentHashMap<CompletableFuture<?>, AtomicBoolean> hedgeGuards,
         Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
+        boolean isConsolidationFetch,
         InklessFetchMetrics metrics
     ) {
         this.time = time;
@@ -123,6 +127,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         this.hedgeTotalTimeThresholdMs = hedgeTotalTimeThresholdMs;
         this.hedgeGuards = hedgeGuards;
         this.batchCoordinates = batchCoordinates;
+        this.isConsolidationFetch = isConsolidationFetch;
         this.metrics = metrics;
     }
 
@@ -245,8 +250,9 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
     }
 
     private CompletableFuture<FileExtent> submitSingleRequest(final ObjectFetchRequest request) {
-        if (!request.lagging()) {
+        if (!request.lagging() && !isConsolidationFetch) {
             // Hot path: up-to-date consumers use cache + recentDataExecutor
+            // Do not use this path when it is a consolidation fetch request
             metrics.recordRecentDataRequest();
             // Per-caller TTFB signal: set by the load function's TTFB callback when first byte arrives.
             // On a cache dedup (computeIfAbsent returns an existing in-flight future), the load function
@@ -262,6 +268,35 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
             return withHedge(primary, objectFetcher, request, fetchDataExecutor, firstByteReceived,
                 CompletableFuture.completedFuture(null));
         } else {
+            // Consolidation recent data: check cache without writing on miss.
+            // Hot data may already be cached by a regular consumer fetch — reuse it for free.
+            // On miss, fall through to the cold fetch without populating the cache.
+            if (isConsolidationFetch) {
+                try {
+                    // cache.get() joins the in-flight load if a concurrent consumer is already fetching
+                    // this key, so it can briefly block. That block lands on a consolidation metadata
+                    // thread (this runs on the dedicated consolidation executor, never a consumer-facing
+                    // one), and waiting for an ongoing fetch is cheaper than a redundant cold fetch.
+                    final FileExtent cached = cache.get(request.toCacheKey());
+                    if (cached != null) {
+                        // A cache hit is hot reuse of consumer-cached data, not a cold fetch,
+                        // so count it as recent data.
+                        // This keeps the hot/cold split intact on the consolidation metrics group:
+                        // RecentDataRequestRate covers cache-hit peeks,
+                        // LaggingConsumerRequestRate covers only true cold fetches below.
+                        metrics.recordRecentDataRequest();
+                        return CompletableFuture.completedFuture(cached);
+                    }
+                } catch (final CompletionException | CancellationException e) {
+                    // cache.get() joins an in-flight future.
+                    // join() throws only CompletionException (the concurrent consumer fetch failed),
+                    // or CancellationException (it was cancelled, thrown unwrapped),
+                    // so catching both is exhaustive: a failed peek can never fail the consolidation fetch.
+                    // Record it so a systemic cache-load failure that silently forces the cold path stays visible,
+                    // then fall through to the cold fetch.
+                    metrics.cacheFetchFailed();
+                }
+            }
             // Cold path: lagging consumers bypass cache, use dedicated executor with rate limiting.
             // Cache bypass rationale: Objects are multi-partition blobs, caching them would evict hot data
             // and provide little benefit to the lagging consumer. Backpressure via AbortPolicy: queue full

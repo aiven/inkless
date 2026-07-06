@@ -99,6 +99,7 @@ public class Reader implements AutoCloseable {
     private final ExecutorService fetchDataExecutor;
     private final long laggingConsumerThresholdMs;
     private final ExecutorService laggingFetchDataExecutor;
+    private final boolean ownsLaggingExecutor;
     /**
      * Separate ObjectFetcher for lagging consumer requests to provide resource isolation.
      *
@@ -114,6 +115,7 @@ public class Reader implements AutoCloseable {
     // Per-key hedge dedup: ensures at most one hedge per primary future across all concurrent callers.
     // Keyed by CF identity (same instance = same cache-deduped primary). Entries are removed on completion.
     private final ConcurrentHashMap<CompletableFuture<?>, AtomicBoolean> hedgeGuards = new ConcurrentHashMap<>();
+    private final boolean isConsolidationFetch;
     private final InklessFetchMetrics fetchMetrics;
     private final BrokerTopicStats brokerTopicStats;
     private final Bucket rateLimiter;
@@ -175,19 +177,70 @@ public class Reader implements AutoCloseable {
             cache,
             controlPlane,
             objectFetcher,
+            brokerTopicStats,
+            fetchMetadataThreadPoolSize,
+            fetchDataThreadPoolSize,
+            maybeLaggingFetchStorage,
+            laggingConsumerThresholdMs,
+            laggingConsumerRequestRateLimit,
+            laggingConsumerThreadPoolSize,
+            hedgeTtfbThresholdMs,
+            hedgeTotalTimeThresholdMs,
+            maxBatchesPerPartitionToFind,
+            metricsGroup,
+            threadNamePrefix,
+            false // consumer-fetch reader, not consolidating
+        );
+    }
+
+    public Reader(
+        Time time,
+        ObjectKeyCreator objectKeyCreator,
+        KeyAlignmentStrategy keyAlignmentStrategy,
+        ObjectCache cache,
+        ControlPlane controlPlane,
+        ObjectFetcher objectFetcher,
+        BrokerTopicStats brokerTopicStats,
+        int fetchMetadataThreadPoolSize,
+        int fetchDataThreadPoolSize,
+        Optional<ObjectFetcher> maybeLaggingFetchStorage,
+        long laggingConsumerThresholdMs,
+        int laggingConsumerRequestRateLimit,
+        int laggingConsumerThreadPoolSize,
+        long hedgeTtfbThresholdMs,
+        long hedgeTotalTimeThresholdMs,
+        int maxBatchesPerPartitionToFind,
+        KafkaMetricsGroup metricsGroup,
+        String threadNamePrefix,
+        boolean isConsolidationFetch
+    ) {
+        this(
+            time,
+            objectKeyCreator,
+            keyAlignmentStrategy,
+            cache,
+            controlPlane,
+            objectFetcher,
             maxBatchesPerPartitionToFind,
             Executors.newFixedThreadPool(fetchMetadataThreadPoolSize, new InklessThreadFactory(threadNamePrefix + "fetch-metadata-", false)),
             Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory(threadNamePrefix + "fetch-data-", false)),
+            // laggingConsumerObjectFetcher: the storage client the cold path reads through.
+            // Pass it through whenever present, regardless of pool size — pool size only controls
+            // whether a dedicated executor is created (owned by Reader) or the cold path reuses
+            // fetchDataExecutor.
+            // Reject pool size > 0 with no fetcher here, so the error names the missing storage config.
+            // (Defensive: in production both are gated on the same config, so this only guards
+            // direct/test construction. The private constructor rejects the same combination too,
+            // but with a more generic executor-without-fetcher message.)
             laggingConsumerThreadPoolSize > 0
-                ? maybeLaggingFetchStorage.orElseThrow(() -> new IllegalStateException(
+                ? maybeLaggingFetchStorage.orElseThrow(() -> new IllegalArgumentException(
                     "Lagging consumer thread pool size is " + laggingConsumerThreadPoolSize
                         + " but no lagging fetch storage was provided"))
-                : null,
+                : maybeLaggingFetchStorage.orElse(null),
             laggingConsumerThresholdMs,
             laggingConsumerRequestRateLimit,
-            // Only create lagging consumer resources when feature is enabled (pool size > 0).
-            // A pool size of 0 is a valid configuration that explicitly disables the feature
-            // by passing both a null executor and a null lagging fetch storage.
+            // Only create a dedicated lagging pool when pool size > 0.
+            // When pool size is 0 and a fetcher is present, the cold path reuses fetchDataExecutor.
             laggingConsumerThreadPoolSize > 0
                 ? createBoundedThreadPool(threadNamePrefix, laggingConsumerThreadPoolSize)
                 : null,
@@ -200,7 +253,8 @@ public class Reader implements AutoCloseable {
             hedgeTotalTimeThresholdMs,
             new InklessFetchMetrics(time, cache, metricsGroup),
             brokerTopicStats,
-            threadNamePrefix
+            threadNamePrefix,
+            isConsolidationFetch
         );
     }
 
@@ -229,7 +283,7 @@ public class Reader implements AutoCloseable {
             0L,                          // keepAliveTime: unused for fixed pools (core threads don't time out)
             TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue<>(queueCapacity),  // Bounded queue prevents OOM
-            new InklessThreadFactory(threadNamePrefix + "fetch-lagging-consumer-", false),
+            new InklessThreadFactory(threadNamePrefix + "fetch-lagging-", false),
             // Why AbortPolicy: CallerRunsPolicy would block request handler threads causing broker-wide degradation
             new ThreadPoolExecutor.AbortPolicy()      // Reject when full, don't block callers
         );
@@ -257,6 +311,36 @@ public class Reader implements AutoCloseable {
         BrokerTopicStats brokerTopicStats,
         String monitorPrefix
     ) {
+        this(time, objectKeyCreator, keyAlignmentStrategy, cache, controlPlane, objectFetcher,
+            maxBatchesPerPartitionToFind, metadataExecutor, fetchDataExecutor,
+            laggingConsumerObjectFetcher, laggingConsumerThresholdMs, laggingConsumerRequestRateLimit,
+            laggingFetchDataExecutor, hedgeScheduler, hedgeTtfbThresholdMs, hedgeTotalTimeThresholdMs,
+            fetchMetrics, brokerTopicStats, monitorPrefix, false);
+    }
+
+    // visible for testing
+    Reader(
+        Time time,
+        ObjectKeyCreator objectKeyCreator,
+        KeyAlignmentStrategy keyAlignmentStrategy,
+        ObjectCache cache,
+        ControlPlane controlPlane,
+        ObjectFetcher objectFetcher,
+        int maxBatchesPerPartitionToFind,
+        ExecutorService metadataExecutor,
+        ExecutorService fetchDataExecutor,
+        ObjectFetcher laggingConsumerObjectFetcher,
+        long laggingConsumerThresholdMs,
+        int laggingConsumerRequestRateLimit,
+        ExecutorService laggingFetchDataExecutor,
+        ScheduledExecutorService hedgeScheduler,
+        long hedgeTtfbThresholdMs,
+        long hedgeTotalTimeThresholdMs,
+        InklessFetchMetrics fetchMetrics,
+        BrokerTopicStats brokerTopicStats,
+        String monitorPrefix,
+        boolean isConsolidationFetch
+    ) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
         this.keyAlignmentStrategy = keyAlignmentStrategy;
@@ -266,28 +350,45 @@ public class Reader implements AutoCloseable {
         this.maxBatchesPerPartitionToFind = maxBatchesPerPartitionToFind;
         this.metadataExecutor = metadataExecutor;
         this.fetchDataExecutor = fetchDataExecutor;
-        this.laggingFetchDataExecutor = laggingFetchDataExecutor;
         this.laggingConsumerThresholdMs = laggingConsumerThresholdMs;
         this.laggingConsumerObjectFetcher = laggingConsumerObjectFetcher;
         this.hedgeScheduler = hedgeScheduler;
         this.hedgeTtfbThresholdMs = hedgeTtfbThresholdMs;
         this.hedgeTotalTimeThresholdMs = hedgeTotalTimeThresholdMs;
 
-        // Validate that lagging consumer resources are consistently configured:
-        // both executor and fetcher must be null (feature disabled) or both must be non-null (feature enabled).
-        // This ensures fail-fast behavior rather than silent runtime failure.
-        if ((laggingFetchDataExecutor == null) != (laggingConsumerObjectFetcher == null)) {
+        // Validate: a dedicated executor exists only to run cold-path fetches, so it is valid
+        // only when paired with a fetcher to execute.
+        if (laggingFetchDataExecutor != null && laggingConsumerObjectFetcher == null) {
             throw new IllegalArgumentException(
-                "Lagging consumer feature requires both laggingFetchDataExecutor and laggingConsumerObjectFetcher "
-                    + "to be non-null (feature enabled) or both to be null (feature disabled). "
-                    + "Found: executor=" + (laggingFetchDataExecutor != null ? "non-null" : "null")
-                    + ", fetcher=" + (laggingConsumerObjectFetcher != null ? "non-null" : "null")
-            );
+                "Dedicated lagging executor provided but no lagging ObjectFetcher — nothing to execute");
+        }
+        // Validate: consolidation mode requires a cold-path fetcher to read unconsolidated blobs
+        // from remote storage on cache miss.
+        if (isConsolidationFetch && laggingConsumerObjectFetcher == null) {
+            throw new IllegalArgumentException(
+                "isConsolidationFetch=true requires a lagging ObjectFetcher (backgroundStorage) — "
+                    + "consolidation must be able to fetch blobs from remote storage on cache miss");
+        }
+        // Validate: the dedicated lagging executor must be a distinct instance from the hot-path
+        // executor. Passing the same instance for both would cause double-shutdown and duplicate
+        // thread-pool monitoring.
+        if (laggingFetchDataExecutor != null && laggingFetchDataExecutor == fetchDataExecutor) {
+            throw new IllegalArgumentException(
+                "laggingFetchDataExecutor must be a distinct instance from fetchDataExecutor — "
+                    + "passing the same pool would cause double-shutdown and duplicate monitoring");
         }
 
-        // Initialize rate limiter only if lagging consumer feature is enabled (executor exists) and rate limit > 0
+        // Resolve effective executor: if a dedicated pool is provided, use it and own it.
+        // If only a fetcher is provided (no dedicated pool), reuse fetchDataExecutor (cold path
+        // enabled but no separate pool — used by consolidation to avoid extra threads).
+        this.ownsLaggingExecutor = laggingFetchDataExecutor != null;
+        this.laggingFetchDataExecutor = laggingFetchDataExecutor != null
+            ? laggingFetchDataExecutor
+            : (laggingConsumerObjectFetcher != null ? fetchDataExecutor : null);
+
+        // Initialize rate limiter only if cold path is enabled (resolved executor exists) and rate limit > 0
         // This avoids creating unused objects when the feature is disabled
-        if (laggingFetchDataExecutor != null && laggingConsumerRequestRateLimit > 0) {
+        if (this.laggingFetchDataExecutor != null && laggingConsumerRequestRateLimit > 0) {
             // Rate limiter configuration:
             // - capacity = rateLimit: Allows initial burst up to full rate limit (e.g., 200 tokens for 200 req/s)
             // - refillGreedy: Refills at rateLimit tokens per second
@@ -306,6 +407,7 @@ public class Reader implements AutoCloseable {
             this.rateLimiter = null;
         }
 
+        this.isConsolidationFetch = isConsolidationFetch;
         this.fetchMetrics = fetchMetrics;
         this.brokerTopicStats = brokerTopicStats;
         try {
@@ -313,9 +415,10 @@ public class Reader implements AutoCloseable {
             // If any monitor creation fails, none are assigned, preventing inconsistent monitoring state.
             final ThreadPoolMonitor metadataMonitor = new ThreadPoolMonitor(monitorPrefix + "fetch-metadata", metadataExecutor);
             final ThreadPoolMonitor dataMonitor = new ThreadPoolMonitor(monitorPrefix + "fetch-data", fetchDataExecutor);
-            // Only create monitor if lagging consumer executor exists (feature enabled)
-            final ThreadPoolMonitor laggingMonitor = laggingFetchDataExecutor != null
-                ? new ThreadPoolMonitor(monitorPrefix + "fetch-lagging-consumer", laggingFetchDataExecutor)
+            // Only create monitor if we own a dedicated lagging executor (avoids duplicate monitoring
+            // when laggingFetchDataExecutor is resolved to fetchDataExecutor).
+            final ThreadPoolMonitor laggingMonitor = ownsLaggingExecutor
+                ? new ThreadPoolMonitor(monitorPrefix + "fetch-lagging", this.laggingFetchDataExecutor)
                 : null;
             // All monitors created successfully, assign to fields
             this.metadataThreadPoolMonitor = metadataMonitor;
@@ -393,6 +496,7 @@ public class Reader implements AutoCloseable {
                     hedgeTotalTimeThresholdMs,
                     hedgeGuards,
                     coordinates,
+                    isConsolidationFetch,
                     fetchMetrics
                 ).get();
             })
@@ -512,7 +616,11 @@ public class Reader implements AutoCloseable {
         ThreadUtils.shutdownExecutorServiceQuietly(hedgeScheduler, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         ThreadUtils.shutdownExecutorServiceQuietly(metadataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         ThreadUtils.shutdownExecutorServiceQuietly(fetchDataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        ThreadUtils.shutdownExecutorServiceQuietly(laggingFetchDataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        // Only shut down lagging executor if we own it (dedicated pool). When the cold path reuses
+        // fetchDataExecutor, it was already shut down above.
+        if (ownsLaggingExecutor) {
+            ThreadUtils.shutdownExecutorServiceQuietly(laggingFetchDataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        }
         if (metadataThreadPoolMonitor != null) metadataThreadPoolMonitor.close();
         if (dataThreadPoolMonitor != null) dataThreadPoolMonitor.close();
         if (laggingConsumerThreadPoolMonitor != null) laggingConsumerThreadPoolMonitor.close();
