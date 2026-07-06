@@ -21,20 +21,20 @@ package io.aiven.inkless.consolidation
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import kafka.server.{KafkaConfig, ReplicaManager, ReplicaQuota}
 import kafka.utils.Logging
-import org.apache.kafka.common.Uuid
 import org.apache.kafka.common.errors.{KafkaStorageException, UnknownTopicOrPartitionException}
-import org.apache.kafka.common.message.{FetchResponseData, OffsetForLeaderEpochRequestData}
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
+import org.apache.kafka.common.message.{FetchResponseData, OffsetForLeaderEpochRequestData}
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
-import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, ListOffsetsRequest, OffsetsForLeaderEpochResponse}
-import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.record.MemoryRecords
+import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, ListOffsetsRequest, OffsetsForLeaderEpochResponse}
+import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.metadata.{LeaderAndIsr, PartitionRegistration}
 import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.network.BrokerEndPoint
-import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams}
+import org.apache.kafka.server.purgatory.TopicPartitionOperationKey
+import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
 import org.apache.kafka.server.{LeaderEndPoint, PartitionFetchState, ReplicaFetch, ResultWithPartitions}
 import org.apache.kafka.storage.internals.log.OffsetResultHolder.FileRecordsOrError
 import org.apache.kafka.storage.internals.log.UnifiedLog
@@ -42,6 +42,7 @@ import org.apache.kafka.storage.internals.log.UnifiedLog
 import java.util
 import java.util.Optional
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.util.Try
@@ -69,6 +70,7 @@ class DisklessLeaderEndPoint(
   private val minBytes = brokerConfig.disklessConsolidationFetchMinBytes
   private val maxBytes = brokerConfig.disklessConsolidationFetchResponseMaxBytes
   private val fetchSize = brokerConfig.disklessConsolidationFetchMaxBytes
+  private val unsafeSegmentConfigWarnings = ConcurrentHashMap.newKeySet[TopicPartition]()
 
   override def isTruncationOnFetchSupported: Boolean = false
 
@@ -89,14 +91,16 @@ class DisklessLeaderEndPoint(
     val fetchParams = new FetchParams(
       FetchRequest.FUTURE_LOCAL_REPLICA_ID,
       -1,
-      0L,
-      request.minBytes,
+      // specific consolidation maxWait so the delayed operation parks idle partitions instead of hammering PG.
+      maxWait.toLong,
+      // minBytes drives completion only on the initial metadata probe.
+      minBytes,
       request.maxBytes,
       FetchIsolation.LOG_END,
       Optional.empty()
     )
 
-    val response = fetchHandler.handle(fetchParams, fetchInfos).get()
+    val response = awaitDelayedFetch(fetchParams, fetchInfos)
     response.asScala.map { case (tp, data) =>
       val abortedTransactions = data.abortedTransactions.orElse(null)
       val lastStableOffset: Long = data.lastStableOffset.orElse(FetchResponse.INVALID_LAST_STABLE_OFFSET)
@@ -159,6 +163,38 @@ class DisklessLeaderEndPoint(
       }
       tp.topicPartition -> fetchResponseData
     }.toMap.asJava
+  }
+
+  /**
+   * Run a [[DelayedConsolidationFetch]] on the broker's `delayedConsolidationFetchPurgatory`
+   * and block the calling fetcher thread until it completes.
+   * Park-and-wait when the diskless data is below `minBytes` and expire at `maxWaitMs`.
+   */
+  private def awaitDelayedFetch(
+    fetchParams: FetchParams,
+    fetchInfos: util.Map[TopicIdPartition, FetchRequest.PartitionData]
+  ): util.Map[TopicIdPartition, FetchPartitionData] = {
+    if (fetchInfos.isEmpty) return util.Map.of()
+
+    val resultFuture = new CompletableFuture[util.Map[TopicIdPartition, FetchPartitionData]]()
+    val delayedFetch = new DelayedConsolidationFetch(
+      params = fetchParams,
+      fetchInfos = fetchInfos,
+      fetchHandler = fetchHandler,
+      replicaManager = replicaManager,
+      responseCallback = response => resultFuture.complete(response)
+    )
+
+    val watchKeys = new util.ArrayList[TopicPartitionOperationKey](fetchInfos.size)
+    fetchInfos.keySet().forEach(tp => watchKeys.add(new TopicPartitionOperationKey(tp.topicPartition)))
+
+    replicaManager.delayedConsolidationFetchPurgatory.tryCompleteElseWatch(delayedFetch, watchKeys)
+
+    // Block until the op completes so only one fetch is in flight per fetcher (backpressure).
+    // Unbounded on purpose: shutdown must stop the fetchers before the purgatory (see
+    // ReplicaManager.shutdown), else the reaper never expires a parked op and this
+    // non-interruptible thread is stranded.
+    resultFuture.get()
   }
 
   override def fetchEarliestOffset(topicPartition: TopicPartition, currentLeaderEpoch: Int): OffsetAndEpoch =
@@ -315,7 +351,20 @@ class DisklessLeaderEndPoint(
       partitions.forEach { (topicPartition, fetchState) =>
         if (fetchState.isReadyForFetch && !shouldFollowerThrottle(quota, fetchState, topicPartition)) {
           try {
-            val logStartOffset = replicaManager.localLogOrException(topicPartition).logStartOffset
+            val localLog = replicaManager.localLogOrException(topicPartition)
+            val logStartOffset = localLog.logStartOffset
+            val logConfig = localLog.config
+            // findBatches may include one whole batch beyond maxBytes; leave room so follower append
+            // does not reject the fetched records block as larger than the destination segment.
+            val maxOvershootBytes = math.min(logConfig.maxMessageSize, logConfig.segmentSize - 1)
+            val segmentSafeFetchSize = math.max(1, logConfig.segmentSize - maxOvershootBytes)
+            val partitionFetchSize = math.min(fetchSize, segmentSafeFetchSize)
+            if (logConfig.maxMessageSize >= logConfig.segmentSize && unsafeSegmentConfigWarnings.add(topicPartition)) {
+              logger.warn("Topic-partition {} has max.message.bytes ({}) >= segment.bytes ({}). " +
+                "Consolidation fetch maxBytes is clamped to {} byte(s) to leave whole-batch overshoot headroom; " +
+                "increase segment.bytes above max.message.bytes for normal consolidation throughput.",
+                topicPartition, logConfig.maxMessageSize, logConfig.segmentSize, partitionFetchSize)
+            }
             val lastFetchedEpoch = Optional.empty[Integer]()
             requestMap.put(
               topicPartition,
@@ -323,7 +372,7 @@ class DisklessLeaderEndPoint(
                 fetchState.topicId().orElse(Uuid.ZERO_UUID),
                 fetchState.fetchOffset(),
                 logStartOffset,
-                fetchSize,
+                partitionFetchSize,
                 Optional.of(fetchState.currentLeaderEpoch()),
                 lastFetchedEpoch
               )

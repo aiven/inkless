@@ -30,7 +30,7 @@ import org.apache.kafka.server.config.ReplicationQuotaManagerConfig
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.quota.QuotaType
 import org.apache.kafka.server.{PartitionFetchState, ReplicaState}
-import org.apache.kafka.storage.internals.log.UnifiedLog
+import org.apache.kafka.storage.internals.log.{LogConfig, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.mockito.Mockito.{mock, when}
@@ -70,7 +70,11 @@ class ConsolidationQuotaManagerTest {
     val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
     val replicaManager = mock(classOf[ReplicaManager])
     val log = mock(classOf[UnifiedLog])
+    val logConfig = mock(classOf[LogConfig])
     when(log.logStartOffset).thenReturn(0L)
+    when(logConfig.segmentSize()).thenReturn(Int.MaxValue)
+    when(logConfig.maxMessageSize()).thenReturn(1024 * 1024)
+    when(log.config()).thenReturn(logConfig)
     when(replicaManager.localLogOrException(tp)).thenReturn(log)
 
     val props = TestUtils.createBrokerConfig(brokerEndPoint.id, port = brokerEndPoint.port)

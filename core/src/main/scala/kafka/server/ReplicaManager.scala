@@ -23,7 +23,7 @@ import io.aiven.inkless.storage_backend.common.ObjectFetcher
 import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, RepairDisklessLogRequest}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.produce.AppendHandler
-import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, ConsolidationMetrics, ConsolidationReconciler}
+import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, ConsolidationMetrics, ConsolidationReconciler, DelayedConsolidationFetch}
 import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
@@ -269,6 +269,21 @@ class ReplicaManager(val config: KafkaConfig,
     new DelayedOperationPurgatory[DelayedShareFetch](
       shareFetchPurgatoryName, delayedShareFetchTimer, config.brokerId,
       config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
+  // Hosts long-poll DelayedConsolidationFetch operations created by the consolidation fetcher (DisklessLeaderEndPoint).
+  // Kept separate from delayedFetchPurgatory because the latter is strictly typed to DelayedFetch.
+  // Operations perform one initial metadata probe, then complete via maxWaitMs timeout if parked;
+  // wake-up sites are intentionally not mirrored here to keep control-plane pressure bounded.
+  //
+  // purgeInterval = 0 (matches delayedRemoteFetchPurgatory) so completed ops release their captured response
+  // references immediately for GC.
+  // Each completed op pins a Map[TopicIdPartition, FetchPartitionData] holding fetched records,
+  // bounded per partition by diskless.consolidation.fetch.max.bytes and in aggregate by
+  // diskless.consolidation.fetch.response.max.bytes.
+  // Without aggressive purging, watch lists accumulate up to ~purgeInterval completed ops worth of records
+  // and exhaust the heap.
+  val delayedConsolidationFetchPurgatory =
+    new DelayedOperationPurgatory[DelayedConsolidationFetch](
+      "ConsolidationFetch", config.brokerId, 0)
 
   private val _inklessMetadataView: InklessMetadataView = inklessMetadataView.getOrElse(new InklessMetadataView(metadataCache.asInstanceOf[KRaftMetadataCache], () => config.extractLogConfigMap))
   private val inklessAppendHandler: Option[AppendHandler] = inklessSharedState.map(new AppendHandler(_))
@@ -2006,6 +2021,16 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
+  /**
+   * Best-effort batch-metadata lookup for callers that can tolerate a stale view.
+   *
+   * With the batch coordinate cache enabled (default) it consults only this broker's local cache,
+   * which holds only data this broker produced.
+   * It cannot see batches committed on other brokers, so a negative answer does not mean "no data
+   * exists" -- only "none known locally".
+   * Callers needing an authoritative answer must go to the control plane (see FindBatchesJob).
+   * Only with the cache disabled does this query the control plane directly.
+   */
   def findDisklessBatches(requests: Seq[FindBatchRequest]): Option[util.List[FindBatchResponse]] = {
     inklessSharedState.flatMap { sharedState =>
       if (!sharedState.isBatchCoordinateCacheEnabled) {
@@ -2014,7 +2039,17 @@ class ReplicaManager(val config: KafkaConfig,
         Some(requests.map { request =>
           val logFragment = sharedState.batchCoordinateCache().get(request.topicIdPartition(), request.offset())
           if (logFragment == null) {
-            FindBatchResponse.success(util.List.of(), -1, -1)
+            // Local miss: report empty rather than fall back to PG.
+            // A cross-broker partition always misses here, so the caller must have its own fallback.
+            //
+            // TODO: route by recency once a per-partition HWM reference exists.
+            // A caught-up fetch expects nothing, so a miss is fine, but a lagging fetch has data to
+            // catch up on and should go to PG instead of waiting out the timeout.
+            FindBatchResponse.success(
+              util.List.of(),
+              FindBatchResponse.UNKNOWN_OFFSET,
+              FindBatchResponse.UNKNOWN_OFFSET
+            )
           } else {
             FindBatchResponse.success(
               logFragment.batches().stream().map[BatchInfo](batchCoordinate => batchCoordinate.batchInfo(request.topicIdPartition())).toList,
@@ -3013,7 +3048,13 @@ class ReplicaManager(val config: KafkaConfig,
       logDirFailureHandler.shutdown()
     replicaFetcherManager.shutdown()
     replicaAlterLogDirsManager.shutdown()
+    // Stop the consolidation fetchers before their purgatory. A parked fetcher blocks (unbounded) in
+    // DisklessLeaderEndPoint.awaitDelayedFetch until its op expires, and only the purgatory reaper can
+    // expire it. Since that thread is non-interruptible, shutting the purgatory down first would strand
+    // it forever, so the fetcher drain must run while delayedConsolidationFetchPurgatory is still alive.
+    consolidationFetcherManager.foreach(_.shutdown())
     delayedFetchPurgatory.shutdown()
+    delayedConsolidationFetchPurgatory.shutdown()
     delayedRemoteFetchPurgatory.shutdown()
     delayedRemoteListOffsetsPurgatory.shutdown()
     delayedProducePurgatory.shutdown()
@@ -3021,7 +3062,6 @@ class ReplicaManager(val config: KafkaConfig,
     delayedShareFetchPurgatory.shutdown()
     if (checkpointHW)
       checkpointHighWatermarks()
-    consolidationFetcherManager.foreach(_.shutdown())
     consolidationFetchHandler.foreach(_.close())
     consolidationMetrics.foreach(_.close())
     replicaSelectorPlugin.foreach(_.close)

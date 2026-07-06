@@ -162,12 +162,14 @@ public class ServerConfigs {
         "Kafka tiered log storage on the configured topic.";
 
     public static final String DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_CONFIG = "diskless.consolidation.fetch.max.bytes";
-    public static final int DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_DEFAULT = 1024 * 1024; // 1MB
+    public static final int DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_DEFAULT = 10 * 1024 * 1024; // 10MB
     public static final String DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_DOC = "The maximum number of bytes per partition the consolidation " +
-        "fetcher will request per iteration. Larger values fetch more batches per iteration, reducing control-plane query frequency.";
+        "fetcher will request per iteration. Larger values fetch more batches per iteration, reducing control-plane query frequency. " +
+        "For consolidated topics, keep topic-level segment.bytes greater than max.message.bytes; otherwise the fetcher must clamp " +
+        "the per-partition request size to leave headroom for a whole-batch control-plane overshoot.";
 
     public static final String DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_CONFIG = "diskless.consolidation.fetch.response.max.bytes";
-    public static final int DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_DEFAULT = 10 * 1024 * 1024; // 10MB
+    public static final int DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_DEFAULT = 64 * 1024 * 1024; // 64MB
     public static final String DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_DOC = "The maximum total bytes the consolidation fetcher " +
         "will accept across all partitions in a single fetch response. Caps aggregate network I/O per request when multiple " +
         "partitions are fetched from the same leader.";
@@ -195,12 +197,12 @@ public class ServerConfigs {
         "to concurrently fetch data files from remote storage. Lower than the consumer fetch pool since consolidation is background work.";
 
     public static final String DISKLESS_CONSOLIDATION_FETCH_MIN_BYTES_CONFIG = "diskless.consolidation.fetch.min.bytes";
-    public static final int DISKLESS_CONSOLIDATION_FETCH_MIN_BYTES_DEFAULT = 1;
+    public static final int DISKLESS_CONSOLIDATION_FETCH_MIN_BYTES_DEFAULT = 8 * 1024 * 1024; // 8MB
     public static final String DISKLESS_CONSOLIDATION_FETCH_MIN_BYTES_DOC = "The minimum number of bytes the consolidation fetcher will wait for " +
         "before returning. Combined with diskless.consolidation.fetch.max.wait.ms, controls how often the fetcher wakes up when there is little new data.";
 
     public static final String DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_CONFIG = "diskless.consolidation.fetch.max.wait.ms";
-    public static final int DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_DEFAULT = 500;
+    public static final int DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_DEFAULT = 1000;
     public static final String DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_DOC = "The maximum time the consolidation fetcher will wait " +
         "for minBytes of data before returning. Higher values reduce iteration frequency when there is little new data.";
     public static final String DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_CONFIG = "diskless.consolidation.fetch.rate.limit.bytes.per.second";
