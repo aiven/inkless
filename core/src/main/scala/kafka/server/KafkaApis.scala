@@ -500,10 +500,10 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   /*
    * Handles TopicLineage entries by finding matching mirrors and looking up their LME
-   * from the coordinator. For each lineage, scans mirror configs to find mirrors whose
-   * source cluster ID matches any SrcClusterIds entry or DstClusterId. Then reads the
-   * LME from the coordinator (local cache if this broker is the coordinator, otherwise
-   * forwarded via ReadMirrorStates). Takes max LME per partition across matching mirrors.
+   * from the local coordinator cache. For each lineage, scans mirror configs to find
+   * mirrors whose source cluster ID matches any SrcClusterIds entry or DstClusterId.
+   * Returns -1 for partitions not coordinated by this broker. The admin client
+   * broadcasts to all brokers and takes the max LME per partition.
    */
   private def maybeProcessLmeLookup(
     topicLineages: util.List[DescribeClusterMirrorsRequestData.TopicLineage],

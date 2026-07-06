@@ -653,6 +653,7 @@ public class ClusterMirrorCoordinator {
                                 log.error("Failed to write LMEs to coordinator: {}, retrying", partitionRes.error.message());
                                 scheduler.scheduleOnce("LmeWriteRetry-" + mirrorName,
                                         () -> updateLastMirrorEpochs(mirrorName, partitionOffsets), 100);
+                                future.completeExceptionally(partitionRes.error.exception());
                             } else {
                                 future.complete(null);
                             }
@@ -676,6 +677,7 @@ public class ClusterMirrorCoordinator {
                             log.error("Failed to write LMEs to remote coordinator: {}, retrying", partitionResult.errorCode());
                             scheduler.scheduleOnce("LmeWriteRetry-" + mirrorName,
                                     () -> updateLastMirrorEpochs(mirrorName, partitionOffsets), 100);
+                            future.completeExceptionally(Errors.forCode(partitionResult.errorCode()).exception());
                         } else {
                             future.complete(null);
                         }

@@ -124,7 +124,6 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -2139,95 +2138,29 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Coordinator-aware LME lookup for lineage results. For each (mirror, topic, partition),
-     * reads from local cache if this broker is the coordinator, otherwise forwards a
-     * ReadMirrorStates request to the coordinator broker.
+     * Local-only LME lookup for lineage results. Returns LME from the local
+     * coordinator cache for partitions this broker coordinates, and -1 for
+     * the rest. The admin client broadcasts DescribeClusterMirrors to all
+     * brokers and takes the max, so each broker only needs its local view.
      *
      * @param mirrorPartitions mirrorName -> topicName -> partition indices
-     * @param callback receives mirrorName -> (TopicPartition -> LME) when all reads complete
+     * @param callback receives mirrorName -> (TopicPartition -> LME) when done
      */
     void processLmeLookup(Map<String, Map<String, Set<Integer>>> mirrorPartitions,
                           Consumer<Map<String, Map<TopicPartition, Integer>>> callback) {
-        log.debug("Processing LME lookup for {}", mirrorPartitions);
-        Map<String, Map<TopicPartition, Integer>> result = new ConcurrentHashMap<>();
-
-        // Group remote partitions by (coordinator node, mirror name)
-        Map<Node, Map<String, Map<String, Set<Integer>>>> remoteByNode = new HashMap<>();
-
+        Map<String, Map<TopicPartition, Integer>> result = new HashMap<>();
         mirrorPartitions.forEach((mirrorName, topicParts) -> {
             topicParts.forEach((topic, parts) -> {
                 parts.forEach(part -> {
-                    if (isLocalCoordinator(mirrorName, topic, part)) {
-                        PartitionKey pk = new PartitionKey(mirrorName, topic, part);
-                        int lme = lastMirrorEpochs.getOrDefault(pk, -1);
-                        result.computeIfAbsent(mirrorName, k -> new ConcurrentHashMap<>())
-                                .put(new TopicPartition(topic, part), lme);
-                    } else {
-                        ClusterMirrorRecordKey key = new ClusterMirrorRecordKey(
-                                mirrorName, metadataCache.getTopicId(topic), part);
-                        Node node = findCoordinatorNode(key);
-                        if (!node.equals(Node.noNode())) {
-                            remoteByNode
-                                    .computeIfAbsent(node, k -> new HashMap<>())
-                                    .computeIfAbsent(mirrorName, k -> new HashMap<>())
-                                    .computeIfAbsent(topic, k -> new HashSet<>())
-                                    .add(part);
-                        }
-                    }
+                    PartitionKey pk = new PartitionKey(mirrorName, topic, part);
+                    int lme = isLocalCoordinator(mirrorName, topic, part)
+                            ? lastMirrorEpochs.getOrDefault(pk, -1) : -1;
+                    result.computeIfAbsent(mirrorName, k -> new HashMap<>())
+                            .put(new TopicPartition(topic, part), lme);
                 });
             });
         });
-
-        if (remoteByNode.isEmpty()) {
-            log.debug("LME lookup result (local): {}", result);
-            callback.accept(result);
-            return;
-        }
-
-        // Count total requests: one per (node, mirror) pair
-        int totalRequests = remoteByNode.values().stream()
-                .mapToInt(Map::size).sum();
-        AtomicInteger remaining = new AtomicInteger(totalRequests);
-
-        remoteByNode.forEach((node, mirrorMap) -> {
-            mirrorMap.forEach((mirrorName, topicParts) -> {
-                ReadMirrorStatesRequestData data = new ReadMirrorStatesRequestData()
-                        .setMirrorName(mirrorName);
-                List<ReadMirrorStatesRequestData.TopicMetadata> topicDataList = new ArrayList<>();
-                topicParts.forEach((topic, parts) -> {
-                    List<ReadMirrorStatesRequestData.PartitionData> partDataList = new ArrayList<>();
-                    parts.forEach(part -> partDataList.add(
-                            new ReadMirrorStatesRequestData.PartitionData().setPartitionIndex(part)));
-                    topicDataList.add(new ReadMirrorStatesRequestData.TopicMetadata()
-                            .setName(topic).setPartitions(partDataList));
-                });
-                data.setTopics(topicDataList);
-
-                mirrorStateSender.enqueue(new RequestAndCompletionHandler(
-                        time.milliseconds(), node,
-                        new ReadMirrorStatesRequest.Builder(data),
-                        response -> {
-                            if (response.responseBody() instanceof ReadMirrorStatesResponse resp) {
-                                resp.data().topics().forEach(topic -> {
-                                    topic.partitions().forEach(partition -> {
-                                        if (partition.lastMirrorEpoch() != -1) {
-                                            result.computeIfAbsent(mirrorName,
-                                                            k -> new ConcurrentHashMap<>())
-                                                    .put(new TopicPartition(topic.name(),
-                                                                    partition.partitionIndex()),
-                                                            partition.lastMirrorEpoch());
-                                        }
-                                    });
-                                });
-                            }
-                            if (remaining.decrementAndGet() == 0) {
-                                log.debug("LME lookup result (coordinator): {}", result);
-                                callback.accept(result);
-                            }
-                        }
-                ));
-            });
-        });
+        callback.accept(result);
     }
 
     /** Upserts added paritions, returning the full epoch map for record serialization. */
