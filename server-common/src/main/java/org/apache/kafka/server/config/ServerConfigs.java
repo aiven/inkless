@@ -210,6 +210,12 @@ public class ServerConfigs {
         "on the broker. Set to 0 to pause all consolidation fetches. " +
         "Set to " + Long.MAX_VALUE + " (default) to disable rate limiting. This config can be updated dynamically.";
 
+    public static final String DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_CONFIG = "diskless.consolidation.fetch.lagging.request.rate.limit";
+    public static final int DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_DEFAULT = 0;
+    public static final String DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_DOC = "Maximum request rate (requests per second) " +
+        "for consolidation cold-path fetches. 0 (default) means unlimited — consolidation is internal background work and does not " +
+        "need throttling under normal conditions. Set > 0 as a safety valve to bound object storage request rate from consolidation.";
+
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG = "classic.remote.storage.force.enable";
     public static final boolean CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT = false;
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC = "Force classic topics to be created with remote.storage.enable=true, " +
@@ -305,6 +311,8 @@ public class ServerConfigs {
             // leader/follower replication throttle semantics (QuotaConfig.brokerQuotaConfigs).
             .define(DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_CONFIG, LONG, DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_DEFAULT,
                 atLeast(0), LOW, DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_DOC)
+            .define(DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_CONFIG, INT, DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_DEFAULT,
+                atLeast(0), LOW, DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG, BOOLEAN, CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT, LOW,
                 CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG, LIST, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DEFAULT,

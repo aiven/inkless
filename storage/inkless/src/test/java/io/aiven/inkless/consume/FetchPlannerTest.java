@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -1056,6 +1057,7 @@ public class FetchPlannerTest {
                             0, // total-time hedging disabled
                             new ConcurrentHashMap<>(),
                             coordinates,
+                            false,
                             metrics
                         );
 
@@ -1135,6 +1137,7 @@ public class FetchPlannerTest {
                         0, // total-time hedging disabled
                         new ConcurrentHashMap<>(),
                         coordinates,
+                        false,
                         metrics
                     );
 
@@ -1258,6 +1261,7 @@ public class FetchPlannerTest {
                             0, // total-time hedging disabled
                             new ConcurrentHashMap<>(),
                             coordinates,
+                            false,
                             metrics
                         );
 
@@ -1610,6 +1614,7 @@ public class FetchPlannerTest {
             0, // total-time hedging disabled
             new ConcurrentHashMap<>(),
             batchCoordinatesFuture,
+            false,
             metrics
         );
     }
@@ -1684,6 +1689,7 @@ public class FetchPlannerTest {
                 hedgeThresholdMs,
                 hedgeGuards,
                 coordinates,
+                false,
                 metrics
             );
         }
@@ -1766,6 +1772,7 @@ public class FetchPlannerTest {
                     hedgeThresholdMs,
                     hedgeGuards,
                     coordinates,
+                    false,
                     metrics
                 );
 
@@ -1869,6 +1876,7 @@ public class FetchPlannerTest {
                     hedgeThresholdMs,
                     hedgeGuards,
                     coordinates,
+                    false,
                     metrics
                 );
 
@@ -1933,6 +1941,7 @@ public class FetchPlannerTest {
                     hedgeThresholdMs,
                     hedgeGuards,
                     coordinates,
+                    false,
                     metrics
                 );
 
@@ -1996,6 +2005,7 @@ public class FetchPlannerTest {
                     hedgeThresholdMs,
                     hedgeGuards,
                     coordinates,
+                    false,
                     metrics
                 );
 
@@ -2065,6 +2075,7 @@ public class FetchPlannerTest {
                     hedgeThresholdMs,
                     hedgeGuards,
                     coordinates,
+                    false,
                     metrics
                 );
 
@@ -2140,6 +2151,7 @@ public class FetchPlannerTest {
                     totalTimeThreshold,
                     hedgeGuards,
                     coordinates,
+                    false,
                     metrics
                 );
 
@@ -2204,6 +2216,7 @@ public class FetchPlannerTest {
                 totalTimeThreshold,
                 hedgeGuards,
                 coordinates,
+                false,
                 metrics
             );
 
@@ -2265,6 +2278,7 @@ public class FetchPlannerTest {
                     totalTimeThreshold,
                     hedgeGuards,
                     coordinates,
+                    false,
                     metrics
                 );
 
@@ -2335,12 +2349,12 @@ public class FetchPlannerTest {
                 final FetchPlanner planner1 = new FetchPlanner(
                     time, OBJECT_KEY_CREATOR, keyAlignmentStrategy, cache, fetcher,
                     multiExecutor, fetcher, 60 * 1000L, null, laggingFetchDataExecutor,
-                    hedgeScheduler, 0, hedgeThresholdMs, hedgeGuards, coordinates, metrics
+                    hedgeScheduler, 0, hedgeThresholdMs, hedgeGuards, coordinates, false, metrics
                 );
                 final FetchPlanner planner2 = new FetchPlanner(
                     time, OBJECT_KEY_CREATOR, keyAlignmentStrategy, cache, fetcher,
                     multiExecutor, fetcher, 60 * 1000L, null, laggingFetchDataExecutor,
-                    hedgeScheduler, 0, hedgeThresholdMs, hedgeGuards, coordinates, metrics
+                    hedgeScheduler, 0, hedgeThresholdMs, hedgeGuards, coordinates, false, metrics
                 );
 
                 final List<FetchPlanner.FetchRequestWithFuture> results1 = planner1.get();
@@ -2425,6 +2439,7 @@ public class FetchPlannerTest {
                     hedgeThresholdMs,   // 50ms total-time threshold
                     hedgeGuards,
                     coordinates,
+                    false,
                     metrics
                 );
 
@@ -2498,6 +2513,7 @@ public class FetchPlannerTest {
                     hedgeThresholdMs,   // 50ms total-time threshold
                     hedgeGuards,
                     coordinates,
+                    false,
                     metrics
                 );
 
@@ -2518,6 +2534,224 @@ public class FetchPlannerTest {
                 releasePrimary.countDown();
                 multiExecutor.shutdownNow();
             }
+        }
+    }
+
+    @Nested
+    class ConsolidationFetchTests {
+
+        @Test
+        public void cacheHitOnInFlightFetchJoinsExistingFuture() throws Exception {
+            // When a regular consumer is loading a key, cache.get() blocks briefly (future.join()).
+            // The consolidation planner must wait for and reuse that result rather than issuing
+            // a second cold fetch.
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
+                final byte[] data = "in-flight-data".getBytes();
+                final CountDownLatch fetchStarted = new CountDownLatch(1);
+                final CountDownLatch releaseFetch = new CountDownLatch(1);
+                final long recentTimestamp = time.milliseconds();
+                final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                    partition0, FindBatchResponse.success(List.of(
+                        new BatchInfo(1L, OBJECT_KEY_A.value(),
+                            BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                    ), 0, 1)
+                );
+
+                // Regular fetcher: blocks until releaseFetch, signalling fetchStarted when it begins.
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenAnswer(inv -> {
+                    fetchStarted.countDown();
+                    assertThat(releaseFetch.await(5, TimeUnit.SECONDS)).isTrue();
+                    return mock(ReadableByteChannel.class);
+                });
+                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(data));
+
+                final FetchPlanner regularPlanner = createFetchPlannerWithCustomThreshold(
+                    keyAlignmentStrategy, caffeineCache, coordinates,
+                    60 * 1000L, laggingFetchDataExecutor, null
+                );
+                final FetchPlanner consolidationPlanner = createConsolidationFetchPlanner(
+                    caffeineCache, coordinates
+                );
+
+                // Start the regular (hot-path) fetch — it will block inside fetcher.fetch().
+                final List<FetchPlanner.FetchRequestWithFuture> regularResults = regularPlanner.get();
+                assertThat(fetchStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+                // The in-flight future is now in cache. Run consolidation in a background thread
+                // so we can observe it blocking on future.join() inside cache.get().
+                final CompletableFuture<FileExtent> consolidationResult = CompletableFuture.supplyAsync(() -> {
+                    final List<FetchPlanner.FetchRequestWithFuture> results = consolidationPlanner.get();
+                    assertThat(results).hasSize(1);
+                    try {
+                        return results.get(0).future().get(5, TimeUnit.SECONDS);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+
+                // Consolidation must not have completed yet (still waiting on the in-flight future).
+                assertThat(consolidationResult.isDone()).isFalse();
+
+                // Release the regular fetch — both planners should now complete with the same data.
+                releaseFetch.countDown();
+                assertThat(regularResults.get(0).future().get(5, TimeUnit.SECONDS).data()).isEqualTo(data);
+                assertThat(consolidationResult.get(5, TimeUnit.SECONDS).data()).isEqualTo(data);
+
+                // Fetcher called exactly once — consolidation piggybacked on the in-flight fetch.
+                verify(fetcher, times(1)).fetch(eq(OBJECT_KEY_A), any(ByteRange.class));
+            }
+        }
+
+        @Test
+        public void cacheHitReturnedWithoutFetch() throws Exception {
+            // Consolidation planner must reuse a cached entry without calling the fetcher.
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
+                final byte[] cachedData = "hot-data".getBytes();
+                final long recentTimestamp = time.milliseconds();
+                final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                    partition0, FindBatchResponse.success(List.of(
+                        new BatchInfo(1L, OBJECT_KEY_A.value(),
+                            BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                    ), 0, 1)
+                );
+
+                final FetchPlanner regularPlanner = createFetchPlannerWithCustomThreshold(
+                    keyAlignmentStrategy, caffeineCache, coordinates,
+                    60 * 1000L, laggingFetchDataExecutor, null
+                );
+
+                // Pre-populate cache by running the regular (hot-path) planner.
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(cachedData));
+                final List<FetchPlanner.FetchRequestWithFuture> regularResults = regularPlanner.get();
+                regularResults.get(0).future().get(5, TimeUnit.SECONDS);
+
+                // Now run a consolidation planner against the same cache.
+                final FetchPlanner consolidationPlanner = createConsolidationFetchPlanner(
+                    caffeineCache, coordinates
+                );
+                final List<FetchPlanner.FetchRequestWithFuture> results = consolidationPlanner.get();
+                assertThat(results).hasSize(1);
+
+                final FileExtent result = results.get(0).future().get(5, TimeUnit.SECONDS);
+                assertThat(result.data()).isEqualTo(cachedData);
+
+                // Fetcher was called exactly once (by the regular planner). The consolidation planner
+                // must have served the result from cache without a second fetch call.
+                verify(fetcher, times(1)).fetch(eq(OBJECT_KEY_A), any(ByteRange.class));
+                // A cache hit is hot reuse, counted as recent data, not a cold fetch. Twice total:
+                // once by the regular planner that populated the cache, once by the consolidation hit.
+                verify(metrics, times(2)).recordRecentDataRequest();
+                verify(metrics, never()).recordLaggingConsumerRequest();
+            }
+        }
+
+        @Test
+        public void cacheMissGoesToColdPathWithoutWriteBack() throws Exception {
+            // On a cache miss, consolidation must fetch cold without writing the result into the cache.
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
+                final byte[] coldData = "consolidation-data".getBytes();
+                final long recentTimestamp = time.milliseconds();
+                final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                    partition0, FindBatchResponse.success(List.of(
+                        new BatchInfo(1L, OBJECT_KEY_A.value(),
+                            BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                    ), 0, 1)
+                );
+
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(coldData));
+
+                final FetchPlanner consolidationPlanner = createConsolidationFetchPlanner(
+                    caffeineCache, coordinates
+                );
+                final List<FetchPlanner.FetchRequestWithFuture> results = consolidationPlanner.get();
+                assertThat(results).hasSize(1);
+                final FileExtent result = results.get(0).future().get(5, TimeUnit.SECONDS);
+                assertThat(result.data()).isEqualTo(coldData);
+
+                // After the consolidation fetch, the cache entry must still be absent:
+                // no write-back should have occurred.
+                final List<ObjectFetchRequest> requests = consolidationPlanner.planJobs(coordinates);
+                assertThat(requests).hasSize(1);
+                assertThat(caffeineCache.get(requests.get(0).toCacheKey())).isNull();
+                // A cache miss is a true cold fetch, counted as a lagging request, not recent data.
+                verify(metrics).recordLaggingConsumerRequest();
+                verify(metrics, never()).recordRecentDataRequest();
+            }
+        }
+
+        @Test
+        public void cacheGetCompletionExceptionRecordedAndFallsThroughToColdPath() throws Exception {
+            // A concurrent consumer's in-flight load failed: join() throws CompletionException.
+            assertCacheGetFailureFallsThroughToColdPath(
+                new CompletionException(new RuntimeException("in-flight load failed")));
+        }
+
+        @Test
+        public void cacheGetCancellationRecordedAndFallsThroughToColdPath() throws Exception {
+            // A concurrent consumer's in-flight load was cancelled: join() throws
+            // CancellationException (unwrapped, not a CompletionException) — must still fall through.
+            assertCacheGetFailureFallsThroughToColdPath(new CancellationException("in-flight load cancelled"));
+        }
+
+        /**
+         * When the in-flight future joined by cache.get() did not produce a value (failed or
+         * cancelled), consolidation records the failure (so a systemic cache-load problem is
+         * visible) and still serves the request from the cold path rather than propagating the error.
+         */
+        private void assertCacheGetFailureFallsThroughToColdPath(final RuntimeException cacheGetFailure) throws Exception {
+            final byte[] coldData = "consolidation-data".getBytes();
+            final long recentTimestamp = time.milliseconds();
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, recentTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            // Cache whose get() surfaces the failure exactly as future.join() would.
+            final ObjectCache failingCache = mock(ObjectCache.class);
+            when(failingCache.get(any())).thenThrow(cacheGetFailure);
+
+            when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(coldData));
+
+            final FetchPlanner consolidationPlanner = createConsolidationFetchPlanner(failingCache, coordinates);
+            final List<FetchPlanner.FetchRequestWithFuture> results = consolidationPlanner.get();
+            assertThat(results).hasSize(1);
+
+            // Cold path still serves the data despite the cache-get failure.
+            final FileExtent result = results.get(0).future().get(5, TimeUnit.SECONDS);
+            assertThat(result.data()).isEqualTo(coldData);
+
+            // The swallowed failure is recorded as a cache-fetch failure.
+            verify(metrics).cacheFetchFailed();
+        }
+
+        private FetchPlanner createConsolidationFetchPlanner(
+            ObjectCache cache,
+            Map<TopicIdPartition, FindBatchResponse> coordinates
+        ) {
+            return new FetchPlanner(
+                time,
+                FetchPlannerTest.OBJECT_KEY_CREATOR,
+                keyAlignmentStrategy,
+                cache,
+                fetcher,
+                fetchDataExecutor,
+                fetcher,
+                60 * 1000L,
+                null, // no rate limiter
+                laggingFetchDataExecutor,
+                null, // no hedge scheduler
+                0,    // TTFB hedging disabled
+                0,    // total-time hedging disabled
+                new ConcurrentHashMap<>(),
+                coordinates,
+                true, // isConsolidationFetch
+                metrics
+            );
         }
     }
 }
