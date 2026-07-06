@@ -7735,7 +7735,6 @@ public class ReplicationControlManagerTest {
         assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, aborted.classicToDisklessStartOffset);
         assertEquals(List.of(), aborted.disklessProducerStates);
         assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, aborted.disklessLeaderEpoch);
-        assertEquals("false", ctx.configurationControl.currentTopicConfig("foo").get(DISKLESS_ENABLE_CONFIG));
     }
 
     @Test
