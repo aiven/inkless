@@ -211,7 +211,6 @@ public final class SharedState implements Closeable {
         Utils.closeQuietly(fetchStorage, "fetchStorage");
         Utils.closeQuietly(storageMetrics, "storageMetrics");
         Utils.closeQuietly(batchCoordinateCache, "batchCoordinateCache");
-        Utils.closeQuietly(crossTierLogStartReporter, "crossTierLogStartReporter");
         Utils.closeQuietly(crossTierLogStartCache, "crossTierLogStartCache");
         Utils.closeQuietly(cache, "objectCache");
     }

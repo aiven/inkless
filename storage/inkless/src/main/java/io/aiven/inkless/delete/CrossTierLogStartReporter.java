@@ -27,7 +27,6 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.Closeable;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -55,7 +54,7 @@ import io.aiven.inkless.control_plane.MetadataView;
  * partitions into a single control-plane call. Only strictly-advancing values are reported, since
  * remote retention is monotonic and the control plane stores the value forward-only.
  */
-public class CrossTierLogStartReporter implements Runnable, Closeable {
+public class CrossTierLogStartReporter implements Runnable {
     private static final Logger LOGGER = LoggerFactory.getLogger(CrossTierLogStartReporter.class);
 
     /** How often the buffered updates are flushed to the control plane. */
@@ -191,10 +190,5 @@ public class CrossTierLogStartReporter implements Runnable, Closeable {
     // Visible for testing.
     Map<TopicIdPartition, Long> pendingView() {
         return Map.copyOf(pending);
-    }
-
-    @Override
-    public void close() {
-        // Scheduling and lifecycle are owned externally; nothing to release here.
     }
 }
