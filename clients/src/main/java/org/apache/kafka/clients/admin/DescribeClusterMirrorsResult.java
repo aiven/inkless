@@ -32,16 +32,16 @@ import java.util.Map;
 @InterfaceStability.Evolving
 public class DescribeClusterMirrorsResult {
     private final KafkaFuture<Map<String, ClusterMirrorDesc>> future;
-    private final KafkaFuture<Map<Uuid, Map<Integer, Integer>>> lineageEpochsFuture;
+    private final KafkaFuture<Map<Uuid, Map<Integer, Integer>>> lookupEpochsFuture;
 
     DescribeClusterMirrorsResult(KafkaFuture<Map<String, ClusterMirrorDesc>> future) {
         this(future, KafkaFuture.completedFuture(Collections.emptyMap()));
     }
 
     DescribeClusterMirrorsResult(KafkaFuture<Map<String, ClusterMirrorDesc>> future,
-                                 KafkaFuture<Map<Uuid, Map<Integer, Integer>>> lineageEpochsFuture) {
+                                 KafkaFuture<Map<Uuid, Map<Integer, Integer>>> lookupEpochsFuture) {
         this.future = future;
-        this.lineageEpochsFuture = lineageEpochsFuture;
+        this.lookupEpochsFuture = lookupEpochsFuture;
     }
 
     /**
@@ -52,10 +52,10 @@ public class DescribeClusterMirrorsResult {
     }
 
     /**
-     * Return a future containing lineage-based LME results.
+     * Return a future containing last mirror epoch lookup results.
      * Keyed by topicId, then partitionIndex to lastMirrorEpoch.
      */
-    public KafkaFuture<Map<Uuid, Map<Integer, Integer>>> lineageEpochs() {
-        return lineageEpochsFuture;
+    public KafkaFuture<Map<Uuid, Map<Integer, Integer>>> lookupEpochs() {
+        return lookupEpochsFuture;
     }
 }

@@ -242,41 +242,43 @@ class ClusterMirroringTest(MirrorUtils, Test):
 
     @cluster(num_nodes=7)
     @defaults(metadata_quorum=[quorum.isolated_kraft])
-    def test_start_stop(self, metadata_quorum):
-        """Verify failover makes destination writable and failback truncates non-mirrored data."""
+    def test_failover_failback(self, metadata_quorum):
+        """Verify failover makes destination writable and failback leverages LME lookup for incremental mirroring."""
         self.source_kafka.create_topic({"topic": "my-topic", "partitions": 1, "replication-factor": 2})
 
         self.logger.info("Send 3 messages to source")
         MirrorUtils.produce_messages(self.logger, self.source_kafka, self.client_node, "my-topic", 3)
 
-        self.logger.info("Start cluster mirror on destination")
+        self.logger.info("Rolling restart source and produce to bump leader epoch")
+        for node in self.source_kafka.nodes:
+            self.source_kafka.restart_node(node)
+        MirrorUtils.produce_messages(self.logger, self.source_kafka, self.client_node, "my-topic", 3)
+
+        self.logger.info("Start cluster mirror s-to-d on destination")
         mirror_cfg = MirrorConfig(self.source_kafka.bootstrap_servers())
 
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
-                self.client_node, "my-mirror", mirror_cfg),
+                self.client_node, "s-to-d", mirror_cfg),
             timeout_sec=120, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
-                self.client_node, "my-mirror", "my-topic"),
+                self.client_node, "s-to-d", "my-topic"),
             timeout_sec=120, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
-        MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest_kafka, self.client_node, "my-mirror", ["my-topic"])
+        MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest_kafka, self.client_node, "s-to-d", ["my-topic"])
 
-        self.logger.info("Consume from destination (expect 3 messages)")
+        self.logger.info("Consume from destination (expect 6 messages)")
         count = MirrorUtils.consume_messages(self.logger, self.dest_kafka, self.client_node, "my-topic",
-                                     max_messages=3, expected_count=3)
-        assert count >= 3, "Expected 3 messages on my-topic, got %d" % count
-
-        self.logger.info("Produce to destination while mirroring (should fail)")
-        MirrorUtils.produce_messages(self.logger, self.dest_kafka, self.client_node, "my-topic", 1)
+                                     max_messages=6, expected_count=6)
+        assert count >= 6, "Expected 6 messages on my-topic, got %d" % count
 
         self.logger.info("Failover: stop mirror so destination topic becomes writable")
-        self.dest_kafka.stop_cluster_mirror_topics(self.client_node, "my-mirror", "my-topic")
-        MirrorUtils.wait_mirror_state(self.logger, self.dest_kafka, self.client_node, "my-mirror", ["my-topic"], "STOPPED")
+        self.dest_kafka.stop_cluster_mirror_topics(self.client_node, "s-to-d", "my-topic")
+        MirrorUtils.wait_mirror_state(self.logger, self.dest_kafka, self.client_node, "s-to-d", ["my-topic"], "STOPPED")
 
         self.logger.info("Send 1 record to destination (should work now)")
         MirrorUtils.produce_messages(self.logger, self.dest_kafka, self.client_node, "my-topic", 1)
@@ -284,33 +286,49 @@ class ClusterMirroringTest(MirrorUtils, Test):
         self.logger.info("Send 2 more messages to source (not mirrored)")
         MirrorUtils.produce_messages(self.logger, self.source_kafka, self.client_node, "my-topic", 2)
 
-        self.logger.info("Consume from source (expect 5 messages)")
+        self.logger.info("Consume from source (expect 8 messages)")
         count = MirrorUtils.consume_messages(self.logger, self.source_kafka, self.client_node, "my-topic",
-                                     max_messages=5, expected_count=5)
-        assert count >= 5, "Expected 5 messages on my-topic, got %d" % count
+                                     max_messages=8, expected_count=8)
+        assert count >= 8, "Expected 8 messages on my-topic, got %d" % count
 
-        # Use the same mirror name to retrieve the LME
-        self.logger.info("Failback: source mirrors from destination")
+        self.logger.info("Failback: source mirrors from destination via d-to-s")
         mirror_cfg = MirrorConfig(self.dest_kafka.bootstrap_servers())
 
         wait_until(
             lambda: self.source_kafka.create_cluster_mirror(
-                self.client_node, "my-mirror", mirror_cfg),
+                self.client_node, "d-to-s", mirror_cfg),
             timeout_sec=120, backoff_sec=2,
             err_msg="Failed to create reverse cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.source_kafka.start_cluster_mirror_topics(
-                self.client_node, "my-mirror", "my-topic"),
+                self.client_node, "d-to-s", "my-topic"),
             timeout_sec=120, backoff_sec=2,
             err_msg="Failed to start reverse mirror topics",
         )
-        MirrorUtils.wait_mirror_lag_zero(self.logger, self.source_kafka, self.client_node, "my-mirror", ["my-topic"])
+        MirrorUtils.wait_mirror_lag_zero(self.logger, self.source_kafka, self.client_node, "d-to-s", ["my-topic"])
+
+        self.logger.info("Verify LME lookup found a valid epoch (direct failback)")
+        log_path = "%s/info/server.log" % self.source_kafka.OPERATIONAL_LOG_DIR
+        pattern = "Last mirror epoch lookup response for mirror d-to-s"
+        found = False
+        for node in self.source_kafka.nodes:
+            for line in node.account.ssh_capture(
+                    "grep '%s' %s 2>/dev/null || true" % (pattern, log_path),
+                    allow_fail=True):
+                line = line.strip()
+                if line:
+                    self.logger.info("LME lookup log on %s: %s", node.name, line)
+                    epoch = int(line.split("my-topic-0=")[1].split("}")[0])
+                    assert epoch >= 1, \
+                        "Expected LME epoch >= 1, got %d in: %s" % (epoch, line)
+                    found = True
+        assert found, "No LME lookup log found on any source broker"
 
         self.logger.info("Consume from source (non-mirrored data should be truncated)")
         count = MirrorUtils.consume_messages(self.logger, self.source_kafka, self.client_node, "my-topic",
-                                     max_messages=5, timeout_ms=5000, expected_count=4)
-        assert count >= 4, "Expected 4 messages on my-topic, got %d" % count
+                                     max_messages=8, timeout_ms=5000, expected_count=7)
+        assert count >= 7, "Expected 7 messages on my-topic, got %d" % count
 
     @cluster(num_nodes=7)
     @defaults(metadata_quorum=[quorum.isolated_kraft])

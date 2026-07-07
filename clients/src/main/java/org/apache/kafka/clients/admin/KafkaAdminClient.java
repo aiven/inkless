@@ -5250,8 +5250,8 @@ public class KafkaAdminClient extends AdminClient {
                             DescribeClusterMirrorsRequestData data = new DescribeClusterMirrorsRequestData()
                                 .setMirrorNames(new ArrayList<>(mirrorNames))
                                 .setIncludeAuthorizedOperations(options.includeAuthorizedOperations());
-                            if (!options.topicLineages().isEmpty()) {
-                                data.setTopicLineages(new ArrayList<>(options.topicLineages()));
+                            if (!options.lmeLookups().isEmpty()) {
+                                data.setLmeLookups(new ArrayList<>(options.lmeLookups()));
                             }
                             return new DescribeClusterMirrorsRequest.Builder(data);
                         }
@@ -5263,7 +5263,7 @@ public class KafkaAdminClient extends AdminClient {
                                 for (DescribeClusterMirrorsResponseData.DescribedMirror mirror : response.data().mirrors()) {
                                     results.handleMirror(mirror);
                                 }
-                                results.handleLineageResults(response.data().lineageResults());
+                                results.handleLookupResults(response.data().lookupResults());
                                 results.tryComplete(node);
                             }
                         }
@@ -5296,20 +5296,20 @@ public class KafkaAdminClient extends AdminClient {
         private final boolean describeAll;
         private final HashSet<Node> remaining;
         private final KafkaFutureImpl<Map<String, ClusterMirrorDesc>> allFuture;
-        private final KafkaFutureImpl<Map<Uuid, Map<Integer, Integer>>> lineageFuture;
-        private final Map<Uuid, Map<Integer, Integer>> lineageEpochs;
+        private final KafkaFutureImpl<Map<Uuid, Map<Integer, Integer>>> lookupFuture;
+        private final Map<Uuid, Map<Integer, Integer>> lookupEpochs;
 
         DescribeClusterMirrorsResults(Collection<Node> brokers,
                                Collection<String> mirrorNames,
                                KafkaFutureImpl<Map<String, ClusterMirrorDesc>> allFuture,
-                               KafkaFutureImpl<Map<Uuid, Map<Integer, Integer>>> lineageFuture) {
+                               KafkaFutureImpl<Map<Uuid, Map<Integer, Integer>>> lookupFuture) {
             this.partialDescriptions = new HashMap<>();
             this.requestedMirrors = new HashSet<>(mirrorNames);
             this.describeAll = mirrorNames.isEmpty();
             this.remaining = new HashSet<>(brokers);
             this.allFuture = allFuture;
-            this.lineageFuture = lineageFuture;
-            this.lineageEpochs = new HashMap<>();
+            this.lookupFuture = lookupFuture;
+            this.lookupEpochs = new HashMap<>();
 
             // Pre-populate partial descriptions only if specific mirrors are requested
             if (!describeAll) {
@@ -5337,9 +5337,9 @@ public class KafkaAdminClient extends AdminClient {
             partial.merge(mirror);
         }
 
-        synchronized void handleLineageResults(List<DescribeClusterMirrorsResponseData.LineageResult> results) {
-            for (DescribeClusterMirrorsResponseData.LineageResult result : results) {
-                Map<Integer, Integer> partitionEpochs = lineageEpochs.computeIfAbsent(result.topicId(), k -> new HashMap<>());
+        synchronized void handleLookupResults(List<DescribeClusterMirrorsResponseData.LookupResult> results) {
+            for (DescribeClusterMirrorsResponseData.LookupResult result : results) {
+                Map<Integer, Integer> partitionEpochs = lookupEpochs.computeIfAbsent(result.topicId(), k -> new HashMap<>());
                 // Merge across all brokers
                 for (DescribeClusterMirrorsResponseData.PartitionResult partition : result.partitions()) {
                     partitionEpochs.merge(partition.partitionIndex(), partition.lastMirrorEpoch(), Math::max);
@@ -5368,10 +5368,10 @@ public class KafkaAdminClient extends AdminClient {
                 }
                 if (descriptions.isEmpty() && firstError != null) {
                     allFuture.completeExceptionally(firstError);
-                    lineageFuture.completeExceptionally(firstError);
+                    lookupFuture.completeExceptionally(firstError);
                 } else {
                     allFuture.complete(descriptions);
-                    lineageFuture.complete(lineageEpochs);
+                    lookupFuture.complete(lookupEpochs);
                 }
             }
         }
@@ -5380,8 +5380,8 @@ public class KafkaAdminClient extends AdminClient {
             if (!allFuture.isDone()) {
                 allFuture.completeExceptionally(throwable);
             }
-            if (!lineageFuture.isDone()) {
-                lineageFuture.completeExceptionally(throwable);
+            if (!lookupFuture.isDone()) {
+                lookupFuture.completeExceptionally(throwable);
             }
         }
 

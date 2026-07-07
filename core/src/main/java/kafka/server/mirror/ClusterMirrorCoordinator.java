@@ -873,10 +873,10 @@ public class ClusterMirrorCoordinator {
         return metadataManager.getLastMirrorEpochs(mirrorName);
     }
 
-    /** Coordinator-aware LME lookup for lineage results. */
-    public void processLmeLookup(Map<String, Map<String, Set<Integer>>> mirrorPartitions,
-                                 Consumer<Map<String, Map<TopicPartition, Integer>>> callback) {
-        metadataManager.processLmeLookup(mirrorPartitions, callback);
+    /** Local-only LME lookup for failback truncation. */
+    public Map<String, Map<TopicPartition, Integer>> processLmeLookup(
+            Map<String, Map<String, Set<Integer>>> mirrorPartitions) {
+        return metadataManager.processLmeLookup(mirrorPartitions);
     }
 
     private CoordinatorRecord buildPartitionStateRecord(String mirrorName, TopicPartition topicPartition, MirrorPartitionState state) {

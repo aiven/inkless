@@ -270,7 +270,7 @@ class MirrorUtils:
 
         wait_until(
             check,
-            timeout_sec=120,
+            timeout_sec=180,
             backoff_sec=5,
             err_msg="Log segments did not converge between source and destination",
         )

@@ -32,7 +32,7 @@ import java.util.List;
 public class DescribeClusterMirrorsOptions extends AbstractOptions<DescribeClusterMirrorsOptions> {
 
     private boolean includeAuthorizedOperations = false;
-    private List<DescribeClusterMirrorsRequestData.TopicLineage> topicLineages = Collections.emptyList();
+    private List<DescribeClusterMirrorsRequestData.LmeLookup> lmeLookups = Collections.emptyList();
 
     /**
      * Set whether authorized operations should be included in the response.
@@ -52,12 +52,12 @@ public class DescribeClusterMirrorsOptions extends AbstractOptions<DescribeClust
         return includeAuthorizedOperations;
     }
 
-    public DescribeClusterMirrorsOptions topicLineages(List<DescribeClusterMirrorsRequestData.TopicLineage> topicLineages) {
-        this.topicLineages = topicLineages;
+    public DescribeClusterMirrorsOptions lmeLookups(List<DescribeClusterMirrorsRequestData.LmeLookup> lmeLookups) {
+        this.lmeLookups = lmeLookups;
         return this;
     }
 
-    public List<DescribeClusterMirrorsRequestData.TopicLineage> topicLineages() {
-        return topicLineages;
+    public List<DescribeClusterMirrorsRequestData.LmeLookup> lmeLookups() {
+        return lmeLookups;
     }
 }

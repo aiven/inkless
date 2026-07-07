@@ -200,14 +200,14 @@ public class AsyncClusterMirrorIntegrationTest {
 
     /**
      * Failover then failback with a different mirror name.
-     * Uses TopicLineages so the destination finds the LME from the old mirror
-     * and avoids re-replicating from zero.
+     * Uses LmeLookups so the destination finds the LME from the
+     * old mirror and avoids re-replicating from scratch.
      */
     @Test
     void testFailoverFailback() throws Exception {
         String topic = "failback-topic";
-        String forwardMirror = "src-to-dst";
-        String reverseMirror = "dst-to-src";
+        String forwardMirror = "s-to-d";
+        String reverseMirror = "d-to-s";
 
         CreateTopicsResult createTopicsResult = srcAdmin.createTopics(List.of(new NewTopic(topic, 1, (short) 1)));
         createTopicsResult.all().get(30, TimeUnit.SECONDS);
@@ -228,18 +228,17 @@ public class AsyncClusterMirrorIntegrationTest {
         waitForMirrorState(dstAdmin, forwardMirror, topic, "STOPPED");
         produceRecords(dstCluster, topic, 10, 5);
 
-        // sending a describeClusterMirror request with topicLineage info
-        DescribeClusterMirrorsRequestData.TopicLineage topicLineage = new DescribeClusterMirrorsRequestData.TopicLineage();
-        topicLineage
+        // sending a describeClusterMirror request with epoch lookup info
+        DescribeClusterMirrorsRequestData.LmeLookup lmeLookup = new DescribeClusterMirrorsRequestData.LmeLookup();
+        lmeLookup
                 .setTopicId(topicId)
                 .setPartitions(List.of(0))
-                .setSrcClusterIds(List.of(srcCluster.controllers().values().stream().findFirst().get().clusterId()));
-        DescribeClusterMirrorsResult describeClusterMirrors = dstAdmin.describeClusterMirrors(List.of(reverseMirror), new DescribeClusterMirrorsOptions().topicLineages(List.of(topicLineage)));
-        // verify the returned lineageEpochs should contain the epoch >= 0 for the topic partition
-        Map<Uuid, Map<Integer, Integer>> lineageEpochs = describeClusterMirrors.lineageEpochs().get(30, TimeUnit.SECONDS);
-        assertEquals(1, lineageEpochs.size(), "Should have one lineage");
-        assertEquals(1, lineageEpochs.get(topicId).size(), "Should have one partition");
-        assertTrue(lineageEpochs.get(topicId).get(0) >= 0, "Should have LME >= 0");
+                .setClusterId(srcCluster.controllers().values().stream().findFirst().get().clusterId());
+        DescribeClusterMirrorsResult describeClusterMirrors = dstAdmin.describeClusterMirrors(List.of(reverseMirror), new DescribeClusterMirrorsOptions().lmeLookups(List.of(lmeLookup)));
+        Map<Uuid, Map<Integer, Integer>> lookupEpochs = describeClusterMirrors.lookupEpochs().get(30, TimeUnit.SECONDS);
+        assertEquals(1, lookupEpochs.size(), "Should have one lookup result");
+        assertEquals(1, lookupEpochs.get(topicId).size(), "Should have one partition");
+        assertTrue(lookupEpochs.get(topicId).get(0) >= 0, "Should have LME >= 0");
 
         // Failback: src mirrors from dst under a different name
         srcAdmin.createClusterMirror(reverseMirror, Map.of(
