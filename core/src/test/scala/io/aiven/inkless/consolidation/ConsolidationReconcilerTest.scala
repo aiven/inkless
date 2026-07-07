@@ -60,8 +60,7 @@ class ConsolidationReconcilerTest {
   private def mockMetadataView(classicToDisklessStartOffset: Long): InklessMetadataView = {
     val view = mock(classOf[InklessMetadataView])
     when(view.isConsolidatingDisklessTopic(topicPartition.topic)).thenReturn(true)
-    // A consolidating diskless topic has remote storage on (diskless.enable _is_ remote.storage.enable);
-    // the reconciler skips the partition otherwise. Tests of the durable-violation path override this.
+    // A consolidating diskless topic has remote storage on (see invariant in ConsolidationReconciler).
     when(view.isRemoteStorageEnabled(topicPartition.topic)).thenReturn(true)
     when(view.getClassicToDisklessStartOffset(topicPartition)).thenReturn(classicToDisklessStartOffset)
     when(view.getTopicId(topicPartition.topic)).thenReturn(topicId)
@@ -119,12 +118,8 @@ class ConsolidationReconcilerTest {
 
   @Test
   def testConsolidationFailsWhenRemoteStorageDisabledOnSwitchedTopic(): Unit = {
-    // Unsupported state: a switched topic (seal >= 0) with remote storage OFF violates
-    // diskless.enable _is_ remote.storage.enable. The atomic switch always writes both flags together,
-    // so this is only possible for metadata written by an older, pre-atomic-switch path. Arming
-    // consolidation would materialize the WAL locally but never tier/prune it, growing the log unbounded.
-    // It is a durable broken invariant, not transient, so the reconciler marks the partition Failed
-    // (the failed flag clears on the next leader-epoch change); the controller-side metric alerts operators.
+    // Regression: a switched topic (seal >= 0) with remote storage OFF violates the invariant.
+    // Only possible from pre-atomic-switch metadata. Mark Failed rather than growing the log unbounded.
     val view = mockMetadataView(classicToDisklessStartOffset = 100L)
     when(view.isRemoteStorageEnabled(topicPartition.topic)).thenReturn(false)
     val fetcherManager = mock(classOf[ConsolidationFetcherManager])

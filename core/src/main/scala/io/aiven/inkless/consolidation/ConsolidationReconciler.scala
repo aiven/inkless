@@ -46,6 +46,20 @@ private object ConsolidationStartState {
 
 private class ReconciliationException(message: String) extends RuntimeException(message)
 
+/**
+ * Starts and manages consolidation fetchers for diskless topics migrating from classic to consolidated storage.
+ *
+ * ==Invariant: diskless.enable and remote.storage.enable are set together==
+ * 
+ * The classic-to-diskless switch enforces this invariant atomically:
+ * a switched topic has both `diskless.enable=true` AND `remote.storage.enable=true` set together in the
+ * same controller batch. Therefore, a diskless topic is always consolidating (tiering to remote storage).
+ *
+ * This reconciler assumes the invariant holds. A topic that violates it (e.g., from pre-atomic-switch metadata)
+ * is marked Failed rather than silently dropping or growing the log unbounded.
+ *
+ * @see LogConfigTest.scala header for the full state machine and valid transitions
+ */
 class ConsolidationReconciler(replicaManager: ReplicaManager,
                               stateChangeLogger: StateChangeLogger,
                               consolidationMetrics: ConsolidationMetrics,
@@ -85,13 +99,7 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
       // The sole caller (ReplicaFetcherThread self-eviction, via ReplicaManager) selects partitions by
       // seal state (committed seal + local LEO caught up), not by whether the topic is diskless,
       // so this gate is where that precondition is established.
-      //
-      // Gating on diskless alone is sufficient (no separate remote-storage check needed):
-      // the reconciler only exists when broker consolidation is enabled (ReplicaManager builds it only then),
-      // and under the invariant `diskless.enable _is_ remote.storage.enable` (enforced atomically on the switch),
-      // a diskless topic is always consolidating.
-      // A topic that durably violates that invariant (remote storage off in the metadata cache) is not
-      // filtered out here — reconcileSwitchedConsolidatingDisklessPartition marks it Failed.
+      // Under the diskless+remote-storage invariant, a diskless topic is always consolidating.
       if (inklessMetadataView.isDisklessTopic(tp.topic)) {
         replicaManager.onlinePartition(tp).foreach(partition => consolidatingDisklessPartitionsToStartFetching.put(tp, partition))
       }
@@ -132,17 +140,11 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
       case PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING =>
         ConsolidationStartState.Retry(s"Skipping consolidation for $tp because classic-to-diskless migration is still pending")
       case seal if seal >= 0 && !inklessMetadataView.isRemoteStorageEnabled(tp.topic) =>
-        // Unsupported state: a switched topic (seal >= 0) with remote storage off.
-        // The switch auto-enables remote.storage.enable atomically with diskless.enable,
-        // so current code cannot produce this; it can only come from metadata written before that change
-        // (e.g. a pre-atomic-switch KRaft image).
-        // It is a durable broken invariant, not transient, so mark the partition Failed
-        // (flags it on FailedPartitionsCount) rather than Retry.
-        // Consolidating it would grow the local log unbounded (WAL materialized, never pruned).
-        // The partition stays online for reads/writes; the failed flag clears on the next leader-epoch change 
-        // (restart/reassignment), which re-runs this reconcile.
-        // The Failed handler logs the reason.
-        // Controller-side metric: DisklessWithoutRemoteStorageCount.
+        // Unsupported state: a switched topic (seal >= 0) with remote storage off violates the invariant.
+        // This can only come from metadata written before the atomic switch enforcement.
+        // Mark Failed (not Retry) to prevent unbounded log growth — FailedPartitionsCount metric surfaces it.
+        // Recovery: operator must set remote.storage.enable=true and trigger a leader-epoch increment
+        // (restart/reassignment/preferred-leader-election) to re-run reconciliation.
         ConsolidationStartState.Failed(new ReconciliationException(
           s"Diskless topic $tp has remote storage disabled but was switched from classic " +
             s"(violates diskless.enable implies remote.storage.enable); consolidation cannot start " +

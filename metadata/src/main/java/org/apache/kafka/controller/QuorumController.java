@@ -1961,9 +1961,6 @@ public final class QuorumController implements Controller {
             return CompletableFuture.completedFuture(Map.of());
         }
         return appendWriteEvent("incrementalAlterConfigs", context.deadlineNs(), () -> {
-            // Auto-enable remote.storage.enable=true on a classic-to-diskless switch, before validation,
-            // so it is validated (fail-fast on an invalid switch, e.g. a compacted topic) and co-commits
-            // atomically with the diskless.enable record and the per-partition switch-pending records.
             Map<ConfigResource, Map<String, Entry<OpType, String>>> effectiveChanges =
                 replicationControl.maybeAddRemoteStorageEnableForSwitch(configChanges);
             ControllerResult<Map<ConfigResource, ApiError>> result =
@@ -2021,8 +2018,6 @@ public final class QuorumController implements Controller {
             return CompletableFuture.completedFuture(Map.of());
         }
         return appendWriteEvent("legacyAlterConfigs", context.deadlineNs(), () -> {
-            // See incrementalAlterConfigs: auto-enable remote.storage.enable=true on a classic-to-diskless
-            // switch before validating, so the switch is validated and committed atomically.
             Map<ConfigResource, Map<String, String>> effectiveConfigs =
                 replicationControl.maybeAddRemoteStorageEnableForLegacyAlterConfigs(newConfigs);
             ControllerResult<Map<ConfigResource, ApiError>> result =
