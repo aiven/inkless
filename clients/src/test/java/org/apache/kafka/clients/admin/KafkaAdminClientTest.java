@@ -169,6 +169,7 @@ import org.apache.kafka.common.message.UnregisterBrokerResponseData;
 import org.apache.kafka.common.message.WriteTxnMarkersResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.protocol.types.RawTaggedField;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaEntity;
 import org.apache.kafka.common.quota.ClientQuotaFilter;
@@ -1816,6 +1817,35 @@ public class KafkaAdminClientTest {
             assertEquals(2, topic.partitions().size());
             assertEquals(0, topic.partitions().get(0).partitionIndex());
             assertEquals(1, topic.partitions().get(1).partitionIndex());
+        }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsPreservesUnknownTaggedFields() throws Exception {
+        int classicToDisklessStartOffsetTag = 100;
+        byte[] encodedOffset = ByteBuffer.allocate(Long.BYTES).putLong(42L).array();
+
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            String topicName = "test-topic";
+            Uuid topicId = Uuid.randomUuid();
+
+            DescribeTopicPartitionsResponseData responseData = new DescribeTopicPartitionsResponseData();
+            addPartitionToDescribeTopicPartitionsResponse(responseData, topicName, topicId, singletonList(0));
+            responseData.topics().find(topicName).partitions().get(0).unknownTaggedFields()
+                .add(new RawTaggedField(classicToDisklessStartOffsetTag, encodedOffset));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(responseData));
+
+            DescribeTopicPartitionsResult result = env.adminClient().describeTopicPartitions(
+                singletonList(topicName), new DescribeTopicsOptions());
+            DescribeTopicPartitionsResponseData data = result.rawResponse().get();
+
+            List<RawTaggedField> taggedFields = data.topics().find(topicName)
+                .partitions().get(0).unknownTaggedFields();
+            assertEquals(1, taggedFields.size());
+            RawTaggedField preserved = taggedFields.get(0);
+            assertEquals(classicToDisklessStartOffsetTag, preserved.tag());
+            assertEquals(42L, ByteBuffer.wrap(preserved.data()).getLong());
         }
     }
 

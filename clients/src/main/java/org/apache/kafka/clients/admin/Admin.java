@@ -355,6 +355,40 @@ public interface Admin extends AutoCloseable {
     DescribeTopicPartitionsResult describeTopicPartitions(Collection<String> topics, DescribeTopicsOptions options);
 
     /**
+     * Override the classic-to-diskless switch state of a single partition. This is an operator
+     * tool that writes the {@code classicToDisklessStartOffset} directly on the controller without
+     * requiring the caller to be the partition leader.
+     *
+     * This is a convenience method for {@link #alterDisklessSwitch(String, int, long, AlterDisklessSwitchOptions)}
+     * with default options.
+     *
+     * @param topic       The topic name.
+     * @param partition   The partition index.
+     * @param sealOffset  The seal offset to commit: {@code >= 0} forces (re-)sealing at that offset,
+     *                    {@code -1} aborts the switch and reverts the partition to classic, and
+     *                    {@code -2} re-arms the switch as pending.
+     * @return The AlterDisklessSwitchResult.
+     */
+    default AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset) {
+        return alterDisklessSwitch(topic, partition, sealOffset, new AlterDisklessSwitchOptions());
+    }
+
+    /**
+     * Override the classic-to-diskless switch state of a single partition. This is an operator
+     * tool that writes the {@code classicToDisklessStartOffset} directly on the controller without
+     * requiring the caller to be the partition leader.
+     *
+     * @param topic       The topic name.
+     * @param partition   The partition index.
+     * @param sealOffset  The seal offset to commit: {@code >= 0} forces (re-)sealing at that offset,
+     *                    {@code -1} aborts the switch and reverts the partition to classic, and
+     *                    {@code -2} re-arms the switch as pending.
+     * @param options     The options to use.
+     * @return The AlterDisklessSwitchResult.
+     */
+    AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset, AlterDisklessSwitchOptions options);
+
+    /**
      * Get information about the nodes in the cluster, using the default options.
      * <p>
      * This is a convenience method for {@link #describeCluster(DescribeClusterOptions)} with default options.
