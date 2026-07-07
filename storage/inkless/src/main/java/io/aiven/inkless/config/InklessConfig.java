@@ -21,9 +21,13 @@ import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.metrics.Metrics;
+import org.apache.kafka.common.network.ListenerName;
 
 import java.lang.reflect.InvocationTargetException;
 import java.time.Duration;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import io.aiven.inkless.common.config.validators.Subclass;
@@ -230,6 +234,14 @@ public class InklessConfig extends AbstractConfig {
         + "reading coalesced rows. "
         + "Defaults to false for safe rolling upgrades.";
     private static final boolean BATCH_COALESCING_ENABLED_DEFAULT = false;
+
+    public static final String CLIENT_AZ_LISTENER_MAP_CONFIG = "client.az.listener.map";
+    private static final String CLIENT_AZ_LISTENER_MAP_DOC = "Cluster-wide mapping from AZ-specific listener aliases to physical "
+        + "availability zone (rack) IDs, used for listener-based AZ routing of diskless topic metadata. "
+        + "Format is a comma-separated list of LISTENER=az pairs, for example "
+        + "SASL_SSL_US_EAST_1_AZ_1=use1-az1,SASL_SSL_US_EAST_1_AZ_2=use1-az2. "
+        + "Every broker should use the same mapping. Listener names are matched case-insensitively "
+        + "(normalized to upper case). Defaults to empty (feature disabled).";
 
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
@@ -485,7 +497,45 @@ public class InklessConfig extends AbstractConfig {
             BATCH_COALESCING_ENABLED_DOC
         );
 
+        configDef.define(
+            CLIENT_AZ_LISTENER_MAP_CONFIG,
+            ConfigDef.Type.LIST,
+            Collections.emptyList(),
+            ConfigDef.Importance.MEDIUM,
+            CLIENT_AZ_LISTENER_MAP_DOC
+        );
+
         return configDef;
+    }
+
+    private static Map<String, String> parseClientAzListenerMap(final List<String> entries) {
+        final Map<String, String> result = new LinkedHashMap<>();
+        for (final String entry : entries) {
+            final int sep = entry.indexOf('=');
+            if (sep < 0) {
+                throw new ConfigException(
+                    CLIENT_AZ_LISTENER_MAP_CONFIG, entry,
+                    "Entry is missing the '=' separator between listener name and AZ.");
+            }
+            final String listener = entry.substring(0, sep).trim();
+            final String az = entry.substring(sep + 1).trim();
+            if (listener.isEmpty()) {
+                throw new ConfigException(
+                    CLIENT_AZ_LISTENER_MAP_CONFIG, entry, "Listener name must not be empty.");
+            }
+            if (az.isEmpty()) {
+                throw new ConfigException(
+                    CLIENT_AZ_LISTENER_MAP_CONFIG, entry, "AZ must not be empty.");
+            }
+            final String normalizedListener = ListenerName.normalised(listener).value();
+            if (result.containsKey(normalizedListener)) {
+                throw new ConfigException(
+                    CLIENT_AZ_LISTENER_MAP_CONFIG, entry,
+                    "Duplicate listener name '" + normalizedListener + "' (matching is case-insensitive).");
+            }
+            result.put(normalizedListener, az);
+        }
+        return result;
     }
 
     public InklessConfig(final AbstractConfig config) {
@@ -572,6 +622,13 @@ public class InklessConfig extends AbstractConfig {
                     + FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG + " (" + hedgeTtfbMs + "ms) when both are enabled."
             );
         }
+
+        // Parse the AZ listener map to trigger strict validation at startup.
+        // The parsed result is discarded here; the accessor re-parses on demand.
+        @SuppressWarnings("unchecked")
+        final List<String> azListenerEntries =
+            (List<String>) parsedProps.get(CLIENT_AZ_LISTENER_MAP_CONFIG);
+        parseClientAzListenerMap(azListenerEntries);
 
         return configDef;
     }
@@ -721,5 +778,10 @@ public class InklessConfig extends AbstractConfig {
 
     public long cacheMaxBytes() {
         return getLong(CONSUME_CACHE_MAX_BYTES_CONFIG);
+    }
+
+    public Map<String, String> clientAzListenerMap() {
+        return Collections.unmodifiableMap(
+            parseClientAzListenerMap(getList(CLIENT_AZ_LISTENER_MAP_CONFIG)));
     }
 }
