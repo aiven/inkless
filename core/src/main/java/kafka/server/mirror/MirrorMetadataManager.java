@@ -2099,6 +2099,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         List<DescribeClusterMirrorsRequestData.LmeLookup> lookups = buildLmeLookups(topicPartitionSet);
         log.info("Last mirror epoch lookup request for mirror {}: {}", mirrorName, lookups);
         DescribeClusterMirrorsOptions options = new DescribeClusterMirrorsOptions()
+                .clusterId(clusterId)
                 .lmeLookups(lookups);
         DescribeClusterMirrorsResult result = admin.describeClusterMirrors(List.of(mirrorName), options);
 
@@ -2136,8 +2137,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         for (Map.Entry<Uuid, List<Integer>> entry : partitionsByTopicId.entrySet()) {
             lookups.add(new DescribeClusterMirrorsRequestData.LmeLookup()
                     .setTopicId(entry.getKey())
-                    .setPartitions(entry.getValue())
-                    .setClusterId(clusterId));
+                    .setPartitions(entry.getValue()));
         }
         return lookups;
     }

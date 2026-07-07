@@ -26,15 +26,16 @@
       "about": "The names of the mirrors to describe. Null or empty array means all mirrors." },
     { "name": "IncludeAuthorizedOperations", "type": "bool", "versions": "0+", "default": "false",
       "about": "Whether to include authorized operations." },
+    { "name": "ClusterId", "type": "string", "versions": "0+", "nullableVersions": "0+",
+      "taggedVersions": "0+", "tag": 0, "ignorable": true, "default": "null",
+      "about": "The requesting cluster's own ID for last mirror epoch lookup." },
     { "name": "LmeLookups", "type": "[]LmeLookup", "versions": "0+",
-      "taggedVersions": "0+", "tag": 0, "ignorable": true,
+      "taggedVersions": "0+", "tag": 1, "ignorable": true,
       "about": "Last mirror epoch lookups for incremental mirroring when failing back.", "fields": [
       { "name": "TopicId", "type": "uuid", "versions": "0+",
         "about": "The topic ID." },
       { "name": "Partitions", "type": "[]int32", "versions": "0+",
-        "about": "The partition indexes." },
-      { "name": "ClusterId", "type": "string", "versions": "0+",
-        "about": "The requesting cluster's own ID. The receiving broker matches this against its mirror configs to find a direct failback relationship." }
+        "about": "The partition indexes." }
     ]}
   ]
 }

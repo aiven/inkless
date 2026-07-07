@@ -228,13 +228,14 @@ public class AsyncClusterMirrorIntegrationTest {
         waitForMirrorState(dstAdmin, forwardMirror, topic, "STOPPED");
         produceRecords(dstCluster, topic, 10, 5);
 
-        // sending a describeClusterMirror request with epoch lookup info
+        // Sending a describeClusterMirror request with LME lookup info
         DescribeClusterMirrorsRequestData.LmeLookup lmeLookup = new DescribeClusterMirrorsRequestData.LmeLookup();
         lmeLookup
                 .setTopicId(topicId)
-                .setPartitions(List.of(0))
-                .setClusterId(srcCluster.controllers().values().stream().findFirst().get().clusterId());
-        DescribeClusterMirrorsResult describeClusterMirrors = dstAdmin.describeClusterMirrors(List.of(reverseMirror), new DescribeClusterMirrorsOptions().lmeLookups(List.of(lmeLookup)));
+                .setPartitions(List.of(0));
+        String srcClusterId = srcCluster.controllers().values().stream().findFirst().get().clusterId();
+        DescribeClusterMirrorsResult describeClusterMirrors = dstAdmin.describeClusterMirrors(List.of(reverseMirror),
+                new DescribeClusterMirrorsOptions().clusterId(srcClusterId).lmeLookups(List.of(lmeLookup)));
         Map<Uuid, Map<Integer, Integer>> lookupEpochs = describeClusterMirrors.lookupEpochs().get(30, TimeUnit.SECONDS);
         assertEquals(1, lookupEpochs.size(), "Should have one lookup result");
         assertEquals(1, lookupEpochs.get(topicId).size(), "Should have one partition");

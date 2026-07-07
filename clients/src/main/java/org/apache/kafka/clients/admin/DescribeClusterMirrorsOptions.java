@@ -32,6 +32,7 @@ import java.util.List;
 public class DescribeClusterMirrorsOptions extends AbstractOptions<DescribeClusterMirrorsOptions> {
 
     private boolean includeAuthorizedOperations = false;
+    private String clusterId;
     private List<DescribeClusterMirrorsRequestData.LmeLookup> lmeLookups = Collections.emptyList();
 
     /**
@@ -50,6 +51,15 @@ public class DescribeClusterMirrorsOptions extends AbstractOptions<DescribeClust
      */
     public boolean includeAuthorizedOperations() {
         return includeAuthorizedOperations;
+    }
+
+    public DescribeClusterMirrorsOptions clusterId(String clusterId) {
+        this.clusterId = clusterId;
+        return this;
+    }
+
+    public String clusterId() {
+        return clusterId;
     }
 
     public DescribeClusterMirrorsOptions lmeLookups(List<DescribeClusterMirrorsRequestData.LmeLookup> lmeLookups) {

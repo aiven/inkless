@@ -501,7 +501,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
     }
 
-    maybeProcessLmeLookup(describeMirrorsRequest.data.lmeLookups, responseData,
+    maybeProcessLmeLookup(describeMirrorsRequest.data, responseData,
       () => requestHelper.sendMaybeThrottle(request, new DescribeClusterMirrorsResponse(responseData)))
   }
 
@@ -514,18 +514,16 @@ class KafkaApis(val requestChannel: RequestChannel,
    * broadcasts to all brokers and takes the max LME per partition.
    */
   private def maybeProcessLmeLookup(
-    lmeLookups: util.List[DescribeClusterMirrorsRequestData.LmeLookup],
+    requestData: DescribeClusterMirrorsRequestData,
     responseData: DescribeClusterMirrorsResponseData,
     sendResponse: Runnable
   ): Unit = {
-    if (lmeLookups == null || lmeLookups.isEmpty) {
+    val requestClusterId = requestData.clusterId
+    val lmeLookups = requestData.lmeLookups
+    if (requestClusterId == null || lmeLookups == null || lmeLookups.isEmpty) {
       sendResponse.run()
       return
     }
-
-    // ClusterId is the same for all lookups (the requesting cluster's own ID).
-    // Find matching mirrors once.
-    val requestClusterId = lmeLookups.get(0).clusterId
     val matchingMirrors = clusterMirrorCoordinator.getConfiguredMirrors().asScala.toSeq
       .filter(m => Option(clusterMirrorCoordinator.getSourceClusterId(m)).contains(requestClusterId))
 
@@ -560,22 +558,29 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     val lmeResults = clusterMirrorCoordinator.processLmeLookup(mirrorPartitions)
 
+    // Aggregate across mirrors: take max LME per (topic, partition)
+    val aggregated = new util.HashMap[Uuid, util.Map[Integer, Integer]]()
     lmeResults.forEach { (_, tpEpochs) =>
       tpEpochs.forEach { (tp, lme) =>
         val topicId = topicNameToId.get(tp.topic)
         if (topicId != null) {
-          responseData.lookupResults().asScala
-            .find(_.topicId == topicId)
-            .getOrElse {
-              val result = new DescribeClusterMirrorsResponseData.LookupResult().setTopicId(topicId)
-              responseData.lookupResults().add(result)
-              result
-            }
-            .partitions().add(new DescribeClusterMirrorsResponseData.PartitionResult()
-              .setPartitionIndex(tp.partition)
-              .setLastMirrorEpoch(lme))
+          aggregated
+            .computeIfAbsent(topicId, _ => new util.HashMap[Integer, Integer]())
+            .merge(tp.partition, lme, (a: Integer, b: Integer) => Math.max(a, b))
         }
       }
+    }
+
+    aggregated.forEach { (topicId, partitions) =>
+      val partitionResults = new util.ArrayList[DescribeClusterMirrorsResponseData.PartitionResult]()
+      partitions.forEach { (partIdx, lme) =>
+        partitionResults.add(new DescribeClusterMirrorsResponseData.PartitionResult()
+          .setPartitionIndex(partIdx)
+          .setLastMirrorEpoch(lme))
+      }
+      responseData.lookupResults().add(new DescribeClusterMirrorsResponseData.LookupResult()
+        .setTopicId(topicId)
+        .setPartitions(partitionResults))
     }
 
     sendResponse.run()
