@@ -6130,6 +6130,16 @@ public class ReplicationControlManagerTest {
 
     @Nested
     class InitDisklessLogTests {
+        private void markSwitchPending(ReplicationControlTestContext ctx, Uuid topicId, int partitionId) {
+            PartitionChangeRecord switchPendingRecord = new PartitionChangeRecord()
+                .setTopicId(topicId)
+                .setPartitionId(partitionId);
+            switchPendingRecord.unknownTaggedFields().add(
+                InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+                    PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING));
+            ctx.replay(List.of(new ApiMessageAndVersion(switchPendingRecord, (short) 0)));
+        }
+
         private InitDisklessLogRequestData singlePartitionRequest(
             int brokerId,
             long brokerEpoch,
@@ -6164,8 +6174,9 @@ public class ReplicationControlManagerTest {
                 new int[][] {new int[] {0, 1, 2}});
 
             Uuid topicId = createTopicResult.topicId();
+            markSwitchPending(ctx, topicId, 0);
             PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
-            assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, partition.classicToDisklessStartOffset);
+            assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING, partition.classicToDisklessStartOffset);
 
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
             InitDisklessLogRequestData request = singlePartitionRequest(
@@ -6226,6 +6237,7 @@ public class ReplicationControlManagerTest {
                 new int[][] {new int[] {0, 1, 2}});
 
             Uuid topicId = createTopicResult.topicId();
+            markSwitchPending(ctx, topicId, 0);
             PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
 
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
@@ -6409,6 +6421,7 @@ public class ReplicationControlManagerTest {
                 new int[][] {new int[] {0, 1, 2}});
 
             Uuid topicId = createTopicResult.topicId();
+            markSwitchPending(ctx, topicId, 0);
             PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
 
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
@@ -6435,6 +6448,32 @@ public class ReplicationControlManagerTest {
         }
 
         @Test
+        public void testInitDisklessLogNotSwitchPendingRejected() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            CreatableTopicResult createTopicResult = ctx.createTestTopic("foo",
+                new int[][] {new int[] {0, 1, 2}});
+
+            Uuid topicId = createTopicResult.topicId();
+            // The partition is not switch-pending (default -1), so InitDisklessLog must be rejected.
+            PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
+            assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, partition.classicToDisklessStartOffset);
+
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
+            InitDisklessLogRequestData request = singlePartitionRequest(
+                0, defaultBrokerEpoch(0), topicId, 0, 100L, partition.leaderEpoch, List.of());
+
+            ControllerResult<InitDisklessLogResponseData> result =
+                replicationControl.initDisklessLog(requestContext, request);
+
+            assertEquals(0, result.records().size());
+            assertEquals(INVALID_REQUEST.code(),
+                result.response().topics().get(0).partitions().get(0).errorCode());
+        }
+
+        @Test
         public void testInitDisklessLogNonClassicTopicPartiallyInitialized() {
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setDisklessStorageSystemEnabled(true)
@@ -6446,6 +6485,8 @@ public class ReplicationControlManagerTest {
                 "foo", 2, (short) 1, Map.of(DISKLESS_ENABLE_CONFIG, "true"), NONE.code());
 
             Uuid topicId = createTopicResult.topicId();
+            markSwitchPending(ctx, topicId, 0);
+            markSwitchPending(ctx, topicId, 1);
             PartitionRegistration partition0 = replicationControl.getPartition(topicId, 0);
             int leader0 = partition0.leader;
 
@@ -6493,6 +6534,7 @@ public class ReplicationControlManagerTest {
                 "foo", 1, (short) 1, Map.of(DISKLESS_ENABLE_CONFIG, "false"), NONE.code());
 
             Uuid topicId = createTopicResult.topicId();
+            markSwitchPending(ctx, topicId, 0);
             PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
             int leaderId = partition.leader;
 
@@ -6518,6 +6560,7 @@ public class ReplicationControlManagerTest {
                 new int[][] {new int[] {0, 1, 2}});
 
             Uuid topicId = createTopicResult.topicId();
+            markSwitchPending(ctx, topicId, 0);
             PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
 
             List<InitDisklessLogRequestData.ProducerState> producerStates = List.of(
@@ -6730,6 +6773,7 @@ public class ReplicationControlManagerTest {
                 new int[][] {new int[] {0, 1, 2}, new int[] {1, 2, 0}});
 
             Uuid topicId = createTopicResult.topicId();
+            markSwitchPending(ctx, topicId, 0);
             PartitionRegistration partition0 = replicationControl.getPartition(topicId, 0);
 
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);

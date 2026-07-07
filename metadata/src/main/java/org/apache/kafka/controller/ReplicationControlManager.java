@@ -1609,9 +1609,9 @@ public class ReplicationControlManager {
                     continue;
                 }
 
-                if (partition.classicToDisklessStartOffset >= 0) {
+                if (partition.classicToDisklessStartOffset != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
                     log.info("Rejecting InitDisklessLog request from node {} for {}-{} because " +
-                            "the partition is already initialized with classicToDisklessStartOffset={}.",
+                            "the partition is not switch-pending (classicToDisklessStartOffset={}).",
                         request.brokerId(), topic.name, partitionId, partition.classicToDisklessStartOffset);
                     partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
                         .setPartitionId(partitionId)
