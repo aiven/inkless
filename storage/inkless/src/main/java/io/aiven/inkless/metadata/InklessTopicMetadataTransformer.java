@@ -52,10 +52,16 @@ import io.aiven.inkless.control_plane.MetadataView;
  */
 public class InklessTopicMetadataTransformer implements Closeable {
     private final MetadataView metadataView;
+    private final Map<String, String> clientAzListenerMap;
     private final ClientAzAwarenessMetrics metrics;
 
-    public InklessTopicMetadataTransformer(final MetadataView metadataView) {
+    public InklessTopicMetadataTransformer(
+        final MetadataView metadataView,
+        final Map<String, String> clientAzListenerMap
+    ) {
         this.metadataView = Objects.requireNonNull(metadataView, "metadataView cannot be null");
+        this.clientAzListenerMap =
+            Objects.requireNonNull(clientAzListenerMap, "clientAzListenerMap cannot be null");
         metrics = new ClientAzAwarenessMetrics();
     }
 
@@ -71,7 +77,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
     ) {
         Objects.requireNonNull(topicMetadata, "topicMetadata cannot be null");
 
-        final String clientAZ = normalizeAZ(ClientAZExtractor.getClientAZ(clientId));
+        final String clientAZ = resolveClientAZ(listenerName, clientId);
 
         // Lazy-init: computed on first diskless topic, reused across all topics in the response.
         AliveBrokerSnapshot snapshot = null;
@@ -119,7 +125,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
     ) {
         Objects.requireNonNull(responseData, "responseData cannot be null");
 
-        final String clientAZ = normalizeAZ(ClientAZExtractor.getClientAZ(clientId));
+        final String clientAZ = resolveClientAZ(listenerName, clientId);
 
         // Lazy-init: computed on first diskless topic, reused across all topics in the response.
         AliveBrokerSnapshot snapshot = null;
@@ -410,6 +416,24 @@ public class InklessTopicMetadataTransformer implements Closeable {
 
     private static String normalizeAZ(final String az) {
         return (az == null || az.isBlank()) ? null : az;
+    }
+
+    /**
+     * Resolve the client AZ using based on client ID or listener name.
+     */
+    private String resolveClientAZ(final ListenerName listenerName, final String clientId) {
+        final String explicitAZ = normalizeAZ(ClientAZExtractor.getClientAZ(clientId));
+        if (explicitAZ != null) {
+            return explicitAZ;
+        }
+        if (listenerName != null) {
+            // Config keys are normalized upper-case; ListenerName.value() is already normalized.
+            final String az = clientAzListenerMap.get(listenerName.value());
+            if (az != null) {
+                return az;
+            }
+        }
+        return null;
     }
 
     /**
