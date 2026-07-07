@@ -23,11 +23,13 @@ import org.apache.kafka.clients.admin.DescribeTopicPartitionsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.admin.RepairDisklessLogResult;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponsePartition;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponseTopic;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.InitDisklessLogFields.ProducerStateEntry;
 
@@ -275,6 +277,64 @@ public class TopicSwitchCommandTest {
         assertTrue(ex.getMessage().contains("Invalid seal offset -3"));
     }
 
+    @Test
+    public void testRepairSinglePartition() throws Exception {
+        mockDescribe(List.of(buildPartition(0, 3, 5, 100L, 7)));
+        mockRepairDisklessLog();
+
+        String output = runRepairCommand(Optional.of(0));
+
+        verify(adminClient).repairDisklessLog(eq(TOPIC), eq(0), eq(3));
+        assertTrue(output.contains("Repaired test-topic-0 control-plane diskless log at seal offset 100 (leader 3)"));
+    }
+
+    @Test
+    public void testRepairAllPartitionsSkipsUnswitched() throws Exception {
+        // Partition 0 committed (seal 100), partition 1 not switched (-1).
+        mockDescribe(List.of(buildPartition(0, 3, 5, 100L, 7), buildPartition(1, 4, 6, -1L, -1)));
+        mockRepairDisklessLog();
+
+        String output = runRepairCommand(Optional.empty());
+
+        verify(adminClient).repairDisklessLog(eq(TOPIC), eq(0), eq(3));
+        verify(adminClient, never()).repairDisklessLog(eq(TOPIC), eq(1), anyInt());
+        assertTrue(output.contains("Skipping test-topic-1: not switched"));
+        assertTrue(output.contains("Repaired 1 partition(s)"));
+    }
+
+    @Test
+    public void testRepairRejectsUnknownPartition() throws Exception {
+        mockDescribe(List.of(buildPartition(0, 3, 5, 100L, 7)));
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+            () -> runRepairCommand(Optional.of(5)));
+        assertTrue(ex.getMessage().contains("Partition not found: test-topic-5"));
+        verify(adminClient, never()).repairDisklessLog(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    public void testRepairFailsOnTopicError() throws Exception {
+        DescribeTopicPartitionsResponseData responseData = buildResponseData(List.of(buildPartition(0, 3, 5, 100L, 7)));
+        responseData.topics().find(TOPIC).setErrorCode(Errors.TOPIC_AUTHORIZATION_FAILED.code());
+        when(adminClient.describeTopicPartitions(ArgumentMatchers.any(), any(DescribeTopicsOptions.class)))
+            .thenReturn(new DescribeTopicPartitionsResult(KafkaFuture.completedFuture(responseData)));
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+            () -> runRepairCommand(Optional.of(0)));
+        assertTrue(ex.getMessage().contains("Error describing topic " + TOPIC));
+        verify(adminClient, never()).repairDisklessLog(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    public void testRepairSkipsPartitionWithoutLeader() throws Exception {
+        mockDescribe(List.of(buildPartition(0, -1, 5, 100L, 7)));
+
+        String output = runRepairCommand(Optional.of(0));
+
+        verify(adminClient, never()).repairDisklessLog(any(), anyInt(), anyInt());
+        assertTrue(output.contains("Skipping test-topic-0: no current leader"));
+    }
+
     private void mockLogRange(int partition, long startOffset, long endOffset) {
         when(adminClient.listOffsets(anyMap()))
             .thenAnswer(invocation -> {
@@ -304,10 +364,29 @@ public class TopicSwitchCommandTest {
             .thenReturn(result);
     }
 
+    private void mockDescribe(List<DescribeTopicPartitionsResponsePartition> partitions) {
+        DescribeTopicPartitionsResponseData responseData = buildResponseData(partitions);
+        when(adminClient.describeTopicPartitions(ArgumentMatchers.any(), any(DescribeTopicsOptions.class)))
+            .thenReturn(new DescribeTopicPartitionsResult(KafkaFuture.completedFuture(responseData)));
+    }
+
+    private void mockRepairDisklessLog() {
+        RepairDisklessLogResult result = mock(RepairDisklessLogResult.class);
+        when(result.all()).thenReturn(KafkaFuture.completedFuture(null));
+        when(adminClient.repairDisklessLog(any(), anyInt(), anyInt())).thenReturn(result);
+    }
+
     private String runSealCommand(int partition, Optional<Long> offset, boolean dryRun) throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         PrintStream stream = new PrintStream(out, false, StandardCharsets.UTF_8);
         TopicSwitchCommand.sealCommand(stream, adminClient, TOPIC, partition, offset, false, dryRun);
+        return out.toString(StandardCharsets.UTF_8);
+    }
+
+    private String runRepairCommand(Optional<Integer> partition) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        PrintStream stream = new PrintStream(out, false, StandardCharsets.UTF_8);
+        TopicSwitchCommand.repairCommand(stream, adminClient, TOPIC, partition);
         return out.toString(StandardCharsets.UTF_8);
     }
 

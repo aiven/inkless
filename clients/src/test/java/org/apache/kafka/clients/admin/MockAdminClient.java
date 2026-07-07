@@ -1270,6 +1270,11 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
+    public RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId, RepairDisklessLogOptions options) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
     public DescribeMetadataQuorumResult describeMetadataQuorum(DescribeMetadataQuorumOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
