@@ -58,6 +58,8 @@ import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MetadataView;
 
+import static org.apache.kafka.common.requests.ListOffsetsRequest.EARLIEST_TIMESTAMP;
+
 public class FetchOffsetHandler implements Closeable {
     private final SharedState state;
     private final ExecutorService executor;
@@ -244,8 +246,7 @@ public class FetchOffsetHandler implements Closeable {
         }
 
         private boolean isCrossTierEarliest(final TopicIdPartition topicIdPartition, final long timestamp) {
-            return timestamp == org.apache.kafka.common.requests.ListOffsetsRequest.EARLIEST_TIMESTAMP
-                && metadata.isConsolidatingDisklessTopic(topicIdPartition.topic());
+            return timestamp == EARLIEST_TIMESTAMP && metadata.isConsolidatingDisklessTopic(topicIdPartition.topic());
         }
 
         private void completeEarliestFromCache(final TopicPartition topicPartition, final long offset) {
