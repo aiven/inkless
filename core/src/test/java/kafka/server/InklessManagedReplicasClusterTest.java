@@ -50,6 +50,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
@@ -135,6 +137,8 @@ public class InklessManagedReplicasClusterTest {
             .setConfigProp(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
             // Enable managed replicas with RF=2 (one replica per AZ)
             .setConfigProp(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, "true")
+            // Map the default test-kit broker listener (EXTERNAL) to az1 for listener-based AZ inference
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.CLIENT_AZ_LISTENER_MAP_CONFIG, "EXTERNAL=az1")
             .setConfigProp(ReplicationConfigs.DEFAULT_REPLICATION_FACTOR_CONFIG, "2")
             // PG control plane config
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
@@ -237,8 +241,12 @@ public class InklessManagedReplicasClusterTest {
         consumeWithAssign(clientConfigs, partitions, numRecords);
     }
 
-    @Test
-    public void produceAndConsumeWithClientAZ() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "diskless_az=az1",             // explicit AZ marker in client.id
+        "connector-producer-orders-0"  // no marker - AZ inferred from the EXTERNAL listener (mapped to az1)
+    })
+    public void produceAndConsumeWithClientAZ(final String clientId) throws Exception {
         Map<String, Object> clientConfigs = new HashMap<>();
         clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
         clientConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
@@ -246,8 +254,7 @@ public class InklessManagedReplicasClusterTest {
         clientConfigs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         clientConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         clientConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AutoOffsetResetStrategy.EARLIEST.name());
-        // Set client AZ via client.id prefix
-        clientConfigs.put(CommonClientConfigs.CLIENT_ID_CONFIG, "diskless_az=az1");
+        clientConfigs.put(CommonClientConfigs.CLIENT_ID_CONFIG, clientId);
 
         String topicName = "az-aware-topic";
         int numRecords = 50;
@@ -271,9 +278,10 @@ public class InklessManagedReplicasClusterTest {
             assertEquals(Set.of(0, 1), replicaIds,
                 "Replicas should include one broker from each rack");
 
-            // Verify AZ-aware routing: client hints az1, so transformer should select node 0 (az1) as leader
+            // Whether AZ comes from the client.id marker or is inferred from the EXTERNAL
+            // listener (mapped to az1), the transformer should select node 0 (az1) as leader.
             assertEquals(0, partition.leader().id(),
-                "Leader should be the az1 broker (node 0) for a client with diskless_az=az1");
+                "Leader should be the az1 broker (node 0) for client.id=" + clientId);
         }
 
         // Produce and consume records with AZ-aware client

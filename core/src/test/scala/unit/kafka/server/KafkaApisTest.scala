@@ -18,6 +18,7 @@
 package kafka.server
 
 import io.aiven.inkless.common.SharedState
+import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.control_plane.MetadataView
 import kafka.cluster.Partition
 import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinator}
@@ -3640,6 +3641,7 @@ class KafkaApisTest extends Logging {
     when(metadataView.isDisklessTopic(ArgumentMatchers.eq(inklessTopic))).thenReturn(true)
     val sharedState = mock(classOf[SharedState])
     when(sharedState.metadata()).thenReturn(metadataView)
+    when(sharedState.config()).thenReturn(new InklessConfig(util.Map.of[String, AnyRef]()))
     sharedState
   }
 
