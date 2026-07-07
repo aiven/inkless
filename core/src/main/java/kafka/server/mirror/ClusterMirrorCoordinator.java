@@ -22,7 +22,6 @@ import kafka.server.mirror.ClusterMirrorUtils.FailedPartitionInfo;
 import kafka.server.mirror.ClusterMirrorUtils.PartitionKey;
 
 import org.apache.kafka.clients.CommonClientConfigs;
-import org.apache.kafka.clients.admin.ClusterMirrorDesc;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
@@ -78,6 +77,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -156,7 +156,6 @@ public class ClusterMirrorCoordinator {
 
         scheduler.startup();
 
-        // periodically query source cluster to get the metadata
         metadataRefreshFuture = scheduler.schedule("MirrorMetadataRefresh",
                 metadataManager::runMetadataRefresh, 0, brokerConfig.mirrorConfig().metadataRefreshIntervalMs());
 
@@ -267,7 +266,7 @@ public class ClusterMirrorCoordinator {
                                 String clusterName = readMirrorNameFromKey(record.key());
                                 if (record.hasValue()) {
                                     Map<String, Map<Integer, Integer>> offsets = readLastMirrorEpochsValue(record.value());
-                                    metadataManager.updateLastMirrorEpochs(clusterName, offsets, Map.of());
+                                    metadataManager.updateLastMirrorEpochs(clusterName, offsets);
                                 } else {
                                     metadataManager.removeLastMirrorEpochs(clusterName);
                                 }
@@ -425,9 +424,10 @@ public class ClusterMirrorCoordinator {
                 updateMirrorPartitionState(mirrorName, tp, newState)
                         .whenComplete((optTp, ex) -> {
                             if (ex != null) {
-                                // TODO: a new component will handle state transitions from a shared queue, so retry means put back in the queue
+                                // TODO: handle failure, we can't retry forever
                                 log.error("Failed to update partition state for {}: {}, retrying", tp, ex.getMessage());
-                                scheduler.scheduleOnce("MirrorStateUpdateRetry", () -> updateMirrorPartitionState(mirrorName, tp, newState), 100);
+                                scheduler.scheduleOnce("MirrorStateUpdateRetry-" + tp,
+                                        () -> transitionTo(mirrorName, Set.of(tp), newState, errorMessage), 100);
                             } else {
                                 // successfully writes data into internal log
                                 try {
@@ -626,7 +626,7 @@ public class ClusterMirrorCoordinator {
         }
 
         // Update in-memory cache once with all offsets
-        var updatedOffsets = metadataManager.updateLastMirrorEpochs(mirrorName, partitionOffsets, Map.of());
+        var updatedOffsets = metadataManager.updateLastMirrorEpochs(mirrorName, partitionOffsets);
 
         // Write to local coordinator partitions (one append per coordinator partition)
         localByCoordPartition.forEach((coordPartition, tps) -> {
@@ -649,8 +649,10 @@ public class ClusterMirrorCoordinator {
                         response.foreach(res -> {
                             ProduceResponse.PartitionResponse partitionRes = res._2;
                             if (partitionRes.error.code() != Errors.NONE.code()) {
-                                // TODO: retry logic
-                                log.error("Failed to write last mirrored epochs to coordinator: {}", partitionRes.error.message());
+                                // TODO: handle failure, we can't retry forever
+                                log.error("Failed to write LMEs to coordinator: {}, retrying", partitionRes.error.message());
+                                scheduler.scheduleOnce("LmeWriteRetry-" + mirrorName,
+                                        () -> updateLastMirrorEpochs(mirrorName, partitionOffsets), 100);
                                 future.completeExceptionally(partitionRes.error.exception());
                             } else {
                                 future.complete(null);
@@ -671,7 +673,10 @@ public class ClusterMirrorCoordinator {
                 res.data().topics().forEach(topicResult -> {
                     topicResult.partitions().forEach(partitionResult -> {
                         if (partitionResult.errorCode() != Errors.NONE.code()) {
-                            log.error("Failed to write last mirrored epochs to remote coordinator: {}", partitionResult.errorCode());
+                            // TODO: handle failure, we can't retry forever
+                            log.error("Failed to write LMEs to remote coordinator: {}, retrying", partitionResult.errorCode());
+                            scheduler.scheduleOnce("LmeWriteRetry-" + mirrorName,
+                                    () -> updateLastMirrorEpochs(mirrorName, partitionOffsets), 100);
                             future.completeExceptionally(Errors.forCode(partitionResult.errorCode()).exception());
                         } else {
                             future.complete(null);
@@ -739,7 +744,6 @@ public class ClusterMirrorCoordinator {
                             metadataManager.updatePartitionState(new PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()), newState);
                             future.complete(Optional.of(topicPartition));
                         } else {
-                            // propagate remote coordinator errors to trigger retry
                             log.error("Failed to write partition state to remote coordinator: {}", par.errorCode());
                             future.completeExceptionally(Errors.forCode(par.errorCode()).exception());
                         }
@@ -749,22 +753,24 @@ public class ClusterMirrorCoordinator {
         return future;
     }
 
-    /** Schedules truncation to align replicas with last mirrored epoch. */
+    /** Schedules log truncation to align replicas with their last mirror epoch. */
     private void scheduleTruncation(String mirrorName, Set<TopicPartition> topicPartitions) {
         final Consumer<TopicPartition> truncateCallback =
             partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING, null);
-        scheduler.scheduleOnce("LastMirrorEpochsTruncation",
+        scheduler.scheduleOnce("LastMirrorEpochTruncation",
             () -> {
                 try {
-                    metadataManager.truncateToLastMirrorEpochs(mirrorName, topicPartitions)
-                        .whenComplete((descriptions, error) -> {
-                            if (error != null) {
+                    metadataManager.sendLmeLookup(mirrorName, topicPartitions)
+                        .whenComplete((epochs, rawError) -> {
+                            if (rawError != null) {
+                                Throwable error = rawError instanceof CompletionException && rawError.getCause() != null
+                                        ? rawError.getCause() : rawError;
                                 if (error instanceof UnsupportedVersionException) {
                                     log.warn("Source cluster doesn't support DescribeClusterMirror API. " +
                                         "Replication will be one-way without failback");
-                                    Map<TopicPartition, Integer> epochs = topicPartitions.stream()
+                                    Map<TopicPartition, Integer> fallback = topicPartitions.stream()
                                         .collect(Collectors.toMap(tp -> tp, tp -> -1));
-                                    replicaManager.maybeTruncateForLeaderEpoch(epochs, truncateCallback);
+                                    replicaManager.maybeTruncateForLeaderEpoch(fallback, truncateCallback);
                                 } else {
                                     log.warn("Failed to truncate to last mirrored epoch for mirror {}", mirrorName, error);
                                     transitionTo(mirrorName, topicPartitions, MirrorPartitionState.FAILED, error.getMessage());
@@ -772,24 +778,6 @@ public class ClusterMirrorCoordinator {
                                 return;
                             }
 
-                            ClusterMirrorDesc description = descriptions.get(mirrorName);
-                            if (description == null) {
-                                log.warn("Mirror {} not found in source cluster. Replication will be one-way without failback",
-                                    mirrorName);
-                                Map<TopicPartition, Integer> epochs = topicPartitions.stream()
-                                    .collect(Collectors.toMap(tp -> tp, tp -> -1));
-                                replicaManager.maybeTruncateForLeaderEpoch(epochs, truncateCallback);
-                                return;
-                            }
-
-                            Map<TopicPartition, Integer> epochs = new HashMap<>();
-                            description.topics().forEach((topicName, leaderState) -> {
-                                leaderState.forEach(leaderStateEntry -> {
-                                    epochs.put(leaderStateEntry.topicPartition(), leaderStateEntry.lastMirrorEpoch());
-                                });
-                            });
-
-                            // if the source cluster doesn't have mirror info, no result will be returned.
                             if (epochs.size() != topicPartitions.size()) {
                                 topicPartitions.forEach(partition -> {
                                     if (!epochs.containsKey(partition)) {
@@ -798,8 +786,7 @@ public class ClusterMirrorCoordinator {
                                 });
                             }
 
-                            replicaManager.maybeTruncateForLeaderEpoch(epochs,
-                                    partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING, null));
+                            replicaManager.maybeTruncateForLeaderEpoch(epochs, truncateCallback);
                         });
                 } catch (Exception e) {
                     log.warn("Failed to truncate to last mirror epochs for mirror {}", mirrorName, e);
@@ -898,6 +885,12 @@ public class ClusterMirrorCoordinator {
     /** Returns the cached last mirror epochs for the given mirror. */
     public Map<TopicPartition, Integer> getLastMirrorEpochs(String mirrorName) {
         return metadataManager.getLastMirrorEpochs(mirrorName);
+    }
+
+    /** Coordinator-aware LME lookup for lineage results. */
+    public void processLmeLookup(Map<String, Map<String, Set<Integer>>> mirrorPartitions,
+                                 Consumer<Map<String, Map<TopicPartition, Integer>>> callback) {
+        metadataManager.processLmeLookup(mirrorPartitions, callback);
     }
 
     private CoordinatorRecord buildPartitionStateRecord(String mirrorName, TopicPartition topicPartition, MirrorPartitionState state) {

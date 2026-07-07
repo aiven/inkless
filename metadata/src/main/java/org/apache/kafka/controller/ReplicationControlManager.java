@@ -1220,6 +1220,11 @@ public class ReplicationControlManager {
         return topics.get(topicId);
     }
 
+    TopicControlInfo getTopicByName(String topicName) {
+        Uuid id = topicsByName.get(topicName);
+        return id != null ? topics.get(id) : null;
+    }
+
     Set<TopicControlInfo> getMirrorTopics() {
         return topics.values().stream()
             .filter(topicControlInfo ->

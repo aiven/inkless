@@ -27,7 +27,7 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * A detailed description of a single cluster mirror.
+ * A detailed description of a cluster mirror.
  */
 @InterfaceStability.Evolving
 public class ClusterMirrorDesc {

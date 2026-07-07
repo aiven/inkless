@@ -25,6 +25,16 @@
     { "name": "MirrorNames", "type": "[]string", "versions": "0+", "entityType": "mirrorName",
       "about": "The names of the mirrors to describe. Null or empty array means all mirrors." },
     { "name": "IncludeAuthorizedOperations", "type": "bool", "versions": "0+", "default": "false",
-      "about": "Whether to include authorized operations." }
+      "about": "Whether to include authorized operations." },
+    { "name": "TopicLineages", "type": "[]TopicLineage", "versions": "0+",
+      "taggedVersions": "0+", "tag": 0, "ignorable": true,
+      "about": "Topic lineages for cross-mirror LME lookup during topology changes.", "fields": [
+      { "name": "TopicId", "type": "uuid", "versions": "0+",
+        "about": "The topic ID." },
+      { "name": "Partitions", "type": "[]int32", "versions": "0+",
+        "about": "The partition indexes." },
+      { "name": "SrcClusterIds", "type": "[]string", "versions": "0+",
+        "about": "Cluster IDs to match against stored mirror configs on the receiving broker. Includes the requesting cluster's own ID and source IDs from its mirror configs." }
+    ]}
   ]
 }
