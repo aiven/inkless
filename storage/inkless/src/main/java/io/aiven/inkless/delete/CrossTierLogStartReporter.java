@@ -57,9 +57,6 @@ import io.aiven.inkless.control_plane.MetadataView;
 public class CrossTierLogStartReporter implements Runnable {
     private static final Logger LOGGER = LoggerFactory.getLogger(CrossTierLogStartReporter.class);
 
-    /** How often the buffered updates are flushed to the control plane. */
-    public static final long FLUSH_INTERVAL_MS = 1_000L;
-
     // Bounds for the lastReported dedup cache. It is a soft optimization, not a source of truth:
     // the control plane is forward-only and idempotent, so an evicted entry only costs a single
     // redundant (no-op) advance call. Bounding it keeps a long-lived broker that leads many
