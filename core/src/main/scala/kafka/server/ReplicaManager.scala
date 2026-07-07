@@ -3982,6 +3982,13 @@ class ReplicaManager(val config: KafkaConfig,
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
             partition.makeLeader(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
+            // A classic topic must never stay sealed. If this partition was sealed for a
+            // classic-to-diskless switch that was then aborted, unseal it so classic produces resume.
+            if (!isDiskless && partition.isSealed) {
+              partition.unseal()
+              initDisklessLogManager.foreach(_.removePartition(tp))
+            }
+
             changedPartitions.add(partition)
             if (isConsolidatingDisklessTopic) {
               consolidatingDisklessPartitionsToStartFetching.put(tp, partition)

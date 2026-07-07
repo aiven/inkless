@@ -23,6 +23,7 @@ import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -32,9 +33,11 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.InvalidConfigurationException;
+import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.AlterConfigsRequest;
@@ -44,6 +47,9 @@ import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
+import org.apache.kafka.metadata.InitDisklessLogFields;
+import org.apache.kafka.metadata.PartitionRegistration;
+import org.apache.kafka.server.IntegrationTestUtils;
 import org.apache.kafka.server.config.ReplicationConfigs;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
@@ -432,7 +438,7 @@ public class InklessTopicTypeSwitcherClusterTest {
 
             // Now the switch should succeed
             alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
-            assertEquals("true", getTopicConfig(admin, topic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+            waitForTopicDisklessValue(admin, topic, "true");
         }
     }
 
@@ -503,6 +509,77 @@ public class InklessTopicTypeSwitcherClusterTest {
             assertEquals(Errors.INVALID_CONFIG, legacyError,
                     "Legacy path should reject enabling unclean leader election during pending switch");
         }
+    }
+
+    @Test
+    public void testAlterDisklessSwitchOverridesSealOffset() throws Exception {
+        final String topic = "switch-seal-override-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            // Create a classic topic; partition 0 starts out un-switched (-1).
+            admin.createTopics(List.of(
+                new NewTopic(topic, 1, (short) 3)
+                    .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(30, TimeUnit.SECONDS);
+            waitForSealOffset(admin, topic, 0,
+                offset -> offset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET);
+
+            // Produce some records so the partition has a non-empty log; a concrete seal must point at
+            // or below the log end offset, otherwise the broker marks the partition offline.
+            final TopicPartition tp = new TopicPartition(topic, 0);
+            try (Producer<byte[], byte[]> producer = new KafkaProducer<>(producerConfigs())) {
+                for (int i = 0; i < 10; i++) {
+                    producer.send(new ProducerRecord<>(topic, 0, null,
+                        ("value-" + i).getBytes(StandardCharsets.UTF_8))).get(10, TimeUnit.SECONDS);
+                }
+            }
+            final long endOffset = admin.listOffsets(Map.of(tp, OffsetSpec.latest()))
+                .all().get(20, TimeUnit.SECONDS).get(tp).offset();
+            log.warn("[stage=produced] topic={} endOffset={}", topic, endOffset);
+
+            // Switch to diskless
+            alterTopicConfigWithIncrementalAlterConfigs(
+                admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            waitForSealOffset(admin, topic, 0, offset -> offset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET);
+
+            // Force a concrete seal at the end offset via the operator admin API.
+            admin.alterDisklessSwitch(topic, 0, endOffset).all().get(20, TimeUnit.SECONDS);
+            waitForSealOffset(admin, topic, 0, offset -> offset == endOffset);
+            log.warn("[stage=sealed] topic={} forced seal offset={}", topic, endOffset);
+        }
+    }
+
+    private long waitForSealOffset(final Admin admin,
+                                   final String topic,
+                                   final int partition,
+                                   final java.util.function.LongPredicate condition) throws Exception {
+        final long deadline = System.currentTimeMillis() + Duration.ofSeconds(60).toMillis();
+        long last = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET;
+        while (System.currentTimeMillis() < deadline) {
+            last = readSealOffset(admin, topic, partition);
+            if (condition.test(last)) {
+                return last;
+            }
+            Thread.sleep(500);
+        }
+        throw new AssertionError("Seal offset for " + topic + "-" + partition
+            + " did not reach the expected state within timeout; last observed=" + last);
+    }
+
+    private long readSealOffset(final Admin admin, final String topic, final int partition) throws Exception {
+        final DescribeTopicPartitionsResponseData responseData =
+            admin.describeTopicPartitions(List.of(topic)).rawResponse().get(10, TimeUnit.SECONDS);
+        final DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponseTopic topicData =
+            responseData.topics().find(topic);
+        if (topicData == null) {
+            // Topic metadata may not have propagated to this broker yet; treat as not-yet-switched.
+            return PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET;
+        }
+        return topicData.partitions().stream()
+            .filter(p -> p.partitionIndex() == partition)
+            .findFirst()
+            .map(p -> InitDisklessLogFields.decodeClassicToDisklessStartOffset(p.unknownTaggedFields()))
+            .orElse(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET);
     }
 
     private void alterTopicConfigWithLegacyAlterConfigs(final String topic,

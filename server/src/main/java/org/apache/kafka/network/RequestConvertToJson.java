@@ -28,6 +28,8 @@ import org.apache.kafka.common.message.AlterClientQuotasRequestDataJsonConverter
 import org.apache.kafka.common.message.AlterClientQuotasResponseDataJsonConverter;
 import org.apache.kafka.common.message.AlterConfigsRequestDataJsonConverter;
 import org.apache.kafka.common.message.AlterConfigsResponseDataJsonConverter;
+import org.apache.kafka.common.message.AlterDisklessSwitchRequestDataJsonConverter;
+import org.apache.kafka.common.message.AlterDisklessSwitchResponseDataJsonConverter;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestDataJsonConverter;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseDataJsonConverter;
 import org.apache.kafka.common.message.AlterPartitionRequestDataJsonConverter;
@@ -212,6 +214,8 @@ import org.apache.kafka.common.requests.AlterClientQuotasRequest;
 import org.apache.kafka.common.requests.AlterClientQuotasResponse;
 import org.apache.kafka.common.requests.AlterConfigsRequest;
 import org.apache.kafka.common.requests.AlterConfigsResponse;
+import org.apache.kafka.common.requests.AlterDisklessSwitchRequest;
+import org.apache.kafka.common.requests.AlterDisklessSwitchResponse;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsRequest;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsResponse;
 import org.apache.kafka.common.requests.AlterPartitionRequest;
@@ -577,6 +581,8 @@ public class RequestConvertToJson {
                 return WriteTxnMarkersRequestDataJsonConverter.write(((WriteTxnMarkersRequest) request).data(), request.version());
             case INIT_DISKLESS_LOG:
                 return InitDisklessLogRequestDataJsonConverter.write(((InitDisklessLogRequest) request).data(), request.version());
+            case ALTER_DISKLESS_SWITCH:
+                return AlterDisklessSwitchRequestDataJsonConverter.write(((AlterDisklessSwitchRequest) request).data(), request.version());
             default:
                 throw new IllegalStateException("ApiKey " + request.apiKey() + " is not currently handled in `request`, the " +
                     "code should be updated to do so.");
@@ -765,6 +771,8 @@ public class RequestConvertToJson {
                 return WriteTxnMarkersResponseDataJsonConverter.write(((WriteTxnMarkersResponse) response).data(), version);
             case INIT_DISKLESS_LOG:
                 return InitDisklessLogResponseDataJsonConverter.write(((InitDisklessLogResponse) response).data(), version);
+            case ALTER_DISKLESS_SWITCH:
+                return AlterDisklessSwitchResponseDataJsonConverter.write(((AlterDisklessSwitchResponse) response).data(), version);
             default:
                 throw new IllegalStateException("ApiKey " + response.apiKey() + " is not currently handled in `response`, the " +
                     "code should be updated to do so.");

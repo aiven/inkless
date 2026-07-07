@@ -474,6 +474,17 @@ class Partition(val topicPartition: TopicPartition,
   }
 
   /**
+   * Unseal this Partition so classic appends are accepted again. Used when a classic-to-diskless
+   * switch is aborted and the partition reverts to a normal classic topic.
+   */
+  def unseal(): Unit = inWriteLock(leaderIsrUpdateLock) {
+    if (_sealed) {
+      _sealed = false
+      stateChangeLogger.info(s"Unsealed partition $topicPartition after classic-to-diskless switch abort")
+    }
+  }
+
+  /**
    * Abort all ongoing transactions by appending ABORT markers directly to the log.
    * Diskless topics do not support transactions, so any in-flight transaction must
    * be resolved before the switch from classic to diskless proceeds.

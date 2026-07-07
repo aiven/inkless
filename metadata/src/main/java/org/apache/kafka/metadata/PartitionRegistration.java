@@ -32,6 +32,7 @@ import org.slf4j.Logger;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalLong;
 
 import static org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE;
 
@@ -305,18 +306,23 @@ public class PartitionRegistration {
 
         int[] newElr = (record.eligibleLeaderReplicas() == null) ? elr : Replicas.toArray(record.eligibleLeaderReplicas());
         int[] newLastKnownElr = (record.lastKnownElr() == null) ? lastKnownElr : Replicas.toArray(record.lastKnownElr());
-        long newClassicToDisklessStartOffset = InitDisklessLogFields.decodeClassicToDisklessStartOffset(record.unknownTaggedFields());
-        List<InitDisklessLogFields.ProducerStateEntry> newDisklessProducerStates =
-            InitDisklessLogFields.decodeProducerStates(record.unknownTaggedFields());
-        if (newClassicToDisklessStartOffset == NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
-            newClassicToDisklessStartOffset = classicToDisklessStartOffset;
-            newDisklessProducerStates = disklessProducerStates;
-        }
-        // The diskless leader epoch is captured at the classic-to-diskless switch and only carried by that
-        // single change record; every other change record omits the tag, so keep the existing value.
-        int newDisklessLeaderEpoch = InitDisklessLogFields.decodeDisklessLeaderEpoch(record.unknownTaggedFields());
-        if (newDisklessLeaderEpoch == NO_DISKLESS_LEADER_EPOCH) {
-            newDisklessLeaderEpoch = disklessLeaderEpoch;
+        OptionalLong recordStartOffset =
+            InitDisklessLogFields.decodeClassicToDisklessStartOffsetIfPresent(record.unknownTaggedFields());
+        long newClassicToDisklessStartOffset = recordStartOffset.orElse(classicToDisklessStartOffset);
+
+        List<InitDisklessLogFields.ProducerStateEntry> newDisklessProducerStates;
+        int newDisklessLeaderEpoch;
+        // A negative start offset is a switch-undo, so we must drop stale diskless metadata
+        if (recordStartOffset.isPresent() && recordStartOffset.getAsLong() < 0) {
+            newDisklessProducerStates = List.of();
+            newDisklessLeaderEpoch = NO_DISKLESS_LEADER_EPOCH;
+        } else {
+            newDisklessProducerStates = InitDisklessLogFields.decodeProducerStatesIfPresent(record.unknownTaggedFields())
+                .orElse(disklessProducerStates);
+            newDisklessLeaderEpoch = InitDisklessLogFields.decodeDisklessLeaderEpoch(record.unknownTaggedFields());
+            if (newDisklessLeaderEpoch == NO_DISKLESS_LEADER_EPOCH) {
+                newDisklessLeaderEpoch = disklessLeaderEpoch;
+            }
         }
         return new PartitionRegistration(newReplicas,
             newDirectories,

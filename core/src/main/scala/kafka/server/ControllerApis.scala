@@ -139,6 +139,7 @@ class ControllerApis(
         case ApiKeys.REMOVE_RAFT_VOTER => handleRemoveRaftVoter(request)
         case ApiKeys.UPDATE_RAFT_VOTER => handleUpdateRaftVoter(request)
         case ApiKeys.INIT_DISKLESS_LOG => handleInitDisklessLogRequest(request)
+        case ApiKeys.ALTER_DISKLESS_SWITCH => handleAlterDisklessSwitchRequest(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
       }
 
@@ -683,6 +684,22 @@ class ControllerApis(
         new InitDisklessLogResponse(result)
       }
       requestHelper.sendResponseExemptThrottle(request, response)
+    }
+  }
+
+  def handleAlterDisklessSwitchRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    val alterDisklessSwitchRequest = request.body[AlterDisklessSwitchRequest]
+    authHelper.authorizeClusterOperation(request, ALTER)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      OptionalLong.empty())
+    controller.alterDisklessSwitch(context, alterDisklessSwitchRequest.data).handle[Unit] { (result, e) =>
+      requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs => {
+        if (e != null) {
+          alterDisklessSwitchRequest.getErrorResponse(requestThrottleMs, e)
+        } else {
+          new AlterDisklessSwitchResponse(result.setThrottleTimeMs(requestThrottleMs))
+        }
+      })
     }
   }
 

@@ -109,6 +109,7 @@ import org.apache.kafka.common.errors.UnsupportedSaslMechanismException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.internals.KafkaFutureImpl;
 import org.apache.kafka.common.message.AddRaftVoterRequestData;
+import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignableTopic;
 import org.apache.kafka.common.message.AlterReplicaLogDirsRequestData;
@@ -187,6 +188,8 @@ import org.apache.kafka.common.requests.AddRaftVoterRequest;
 import org.apache.kafka.common.requests.AddRaftVoterResponse;
 import org.apache.kafka.common.requests.AlterClientQuotasRequest;
 import org.apache.kafka.common.requests.AlterClientQuotasResponse;
+import org.apache.kafka.common.requests.AlterDisklessSwitchRequest;
+import org.apache.kafka.common.requests.AlterDisklessSwitchResponse;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsRequest;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsResponse;
 import org.apache.kafka.common.requests.AlterReplicaLogDirsRequest;
@@ -2509,9 +2512,11 @@ public class KafkaAdminClient extends AdminClient {
                                 "Topic " + topic.name() + " changed while fetching paginated response"));
                             return;
                         }
-                        existing.partitions().addAll(topic.partitions());
+                        existing.partitions().addAll(copyPartitionsWithTaggedFields(topic.partitions()));
                     } else {
-                        accumulated.topics().add(topic.duplicate());
+                        DescribeTopicPartitionsResponseTopic copy = topic.duplicate();
+                        copy.setPartitions(copyPartitionsWithTaggedFields(topic.partitions()));
+                        accumulated.topics().add(copy);
                     }
                 }
 
@@ -2530,6 +2535,18 @@ public class KafkaAdminClient extends AdminClient {
         }, now);
 
         return new DescribeTopicPartitionsResult(future);
+    }
+
+    private static List<DescribeTopicPartitionsResponsePartition> copyPartitionsWithTaggedFields(
+            List<DescribeTopicPartitionsResponsePartition> partitions) {
+        List<DescribeTopicPartitionsResponsePartition> copies = new ArrayList<>(partitions.size());
+        for (DescribeTopicPartitionsResponsePartition partition : partitions) {
+            DescribeTopicPartitionsResponsePartition copy = partition.duplicate();
+            // duplicate() drops the unknown tagged fields
+            copy.unknownTaggedFields().addAll(partition.unknownTaggedFields());
+            copies.add(copy);
+        }
+        return copies;
     }
 
     @Override
@@ -4878,6 +4895,44 @@ public class KafkaAdminClient extends AdminClient {
         };
         runnable.call(call, now);
         return new UnregisterBrokerResult(future);
+    }
+
+    @Override
+    public AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset,
+                                                         AlterDisklessSwitchOptions options) {
+        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        final Call call = new Call("alterDisklessSwitch", calcDeadlineMs(now, options.timeoutMs()),
+            new LeastLoadedBrokerOrActiveKController()) {
+
+            @Override
+            AlterDisklessSwitchRequest.Builder createRequest(int timeoutMs) {
+                AlterDisklessSwitchRequestData data = new AlterDisklessSwitchRequestData()
+                    .setTopicName(topic)
+                    .setPartitionIndex(partition)
+                    .setSealOffset(sealOffset)
+                    .setClearProducerStates(options.clearProducerStates());
+                return new AlterDisklessSwitchRequest.Builder(data);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final AlterDisklessSwitchResponse response = (AlterDisklessSwitchResponse) abstractResponse;
+                Errors error = Errors.forCode(response.data().errorCode());
+                if (error == Errors.NONE) {
+                    future.complete(null);
+                } else {
+                    future.completeExceptionally(error.exception(response.data().errorMessage()));
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return new AlterDisklessSwitchResult(future);
     }
 
     @Override

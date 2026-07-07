@@ -517,6 +517,45 @@ public class PartitionRegistrationTest {
     }
 
     @Test
+    public void testMergeStartOffsetWithoutProducerStatesTagPreservesProducerStates() {
+        List<InitDisklessLogFields.ProducerStateEntry> producerStates = List.of(
+            new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L)
+        );
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setClassicToDisklessStartOffset(42L).
+            setDisklessProducerStates(producerStates).build();
+
+        PartitionChangeRecord changeRecord = new PartitionChangeRecord();
+        changeRecord.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeClassicToDisklessStartOffset(99L));
+
+        PartitionRegistration merged = original.merge(changeRecord);
+        assertEquals(99L, merged.classicToDisklessStartOffset);
+        assertEquals(producerStates, merged.disklessProducerStates);
+    }
+
+    @Test
+    public void testMergeExplicitEmptyProducerStatesClearsThem() {
+        List<InitDisklessLogFields.ProducerStateEntry> producerStates = List.of(
+            new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L)
+        );
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setClassicToDisklessStartOffset(42L).
+            setDisklessProducerStates(producerStates).build();
+
+        PartitionChangeRecord changeRecord = new PartitionChangeRecord();
+        changeRecord.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeProducerStates(List.of()));
+
+        PartitionRegistration merged = original.merge(changeRecord);
+        assertEquals(List.of(), merged.disklessProducerStates);
+    }
+
+    @Test
     public void testDisklessFieldsInEqualsAndHashCode() {
         List<InitDisklessLogFields.ProducerStateEntry> states = List.of(
             new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L)
@@ -578,6 +617,50 @@ public class PartitionRegistrationTest {
 
         PartitionRegistration merged = original.merge(changeRecord);
         assertEquals(100L, merged.classicToDisklessStartOffset);
+    }
+
+    @Test
+    public void testMergeAbortsSwitchWithExplicitMinusOne() {
+        List<InitDisklessLogFields.ProducerStateEntry> producerStates = List.of(
+            new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L));
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setClassicToDisklessStartOffset(100L).
+            setDisklessProducerStates(producerStates).setDisklessLeaderEpoch(7).build();
+
+        PartitionChangeRecord changeRecord = new PartitionChangeRecord();
+        changeRecord.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+                PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET));
+
+        PartitionRegistration merged = original.merge(changeRecord);
+        assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, merged.classicToDisklessStartOffset);
+        // Aborting must drop the dependent switch metadata from the previous completed switch.
+        assertEquals(List.of(), merged.disklessProducerStates);
+        assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, merged.disklessLeaderEpoch);
+    }
+
+    @Test
+    public void testMergeReArmsSwitchWithExplicitMinusTwo() {
+        List<InitDisklessLogFields.ProducerStateEntry> producerStates = List.of(
+            new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L));
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setClassicToDisklessStartOffset(100L).
+            setDisklessProducerStates(producerStates).setDisklessLeaderEpoch(7).build();
+
+        PartitionChangeRecord changeRecord = new PartitionChangeRecord();
+        changeRecord.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+                PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING));
+
+        PartitionRegistration merged = original.merge(changeRecord);
+        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING, merged.classicToDisklessStartOffset);
+        // Re-arming must drop the dependent switch metadata so the next initDisklessLog re-captures it.
+        assertEquals(List.of(), merged.disklessProducerStates);
+        assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, merged.disklessLeaderEpoch);
     }
 
     @Test
