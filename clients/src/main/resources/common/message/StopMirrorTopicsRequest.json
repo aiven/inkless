@@ -31,6 +31,6 @@
           "about": "The topic name." }
       ]},
     { "name": "Patterns", "type": "[]string", "versions": "0+",
-      "about": "Patterns to update in mirror.topics.include/exclude." }
+      "about": "Topic patterns to remove from mirror.topics.include or add to mirror.topics.exclude." }
   ]
 }

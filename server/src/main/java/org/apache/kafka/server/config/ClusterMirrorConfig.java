@@ -156,8 +156,7 @@ public final class ClusterMirrorConfig {
                     + "log.message.timestamp.after.max.ms,"
                     + "message.timestamp.type,"
                     + "unclean.leader.election.enable,"
-                    + "min.insync.replicas,"
-                    + "mirror.name";
+                    + "min.insync.replicas";
     public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_DOC = "A comma-separated list of topic config property names to exclude from synchronization. "
             + "Properties in this list will not be replicated from the source cluster. "
             + "The mirror.name property is always excluded regardless of this setting.";
@@ -184,7 +183,7 @@ public final class ClusterMirrorConfig {
     public static final String MIRROR_GROUPS_EXCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to exclude from offset synchronization. "
             + "Groups matching the exclude pattern are not replicated even if they match mirror.groups.include.";
 
-    public static final String MIRROR_ACL_INCLUDE_CONFIG = "mirror.acl.include";
+    public static final String MIRROR_ACL_INCLUDE_CONFIG = "mirror.acls.include";
     public static final String MIRROR_ACL_INCLUDE_DEFAULT = "*";
     public static final String MIRROR_ACL_INCLUDE_DOC = "A comma-separated list of ACL include rules. Each rule uses semicolon-separated fields: "
             + "resourceType;resourceName;operation;permissionType;principal. Use '*' as wildcard for any field. The resourceName field supports "

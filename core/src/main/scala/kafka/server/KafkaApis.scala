@@ -376,13 +376,20 @@ class KafkaApis(val requestChannel: RequestChannel,
       return
     }
     val mirrorName = request.body[DeleteClusterMirrorRequest].data().mirrorName()
-    clusterMirrorCoordinator.deleteClusterMirror(mirrorName, errOpt => {
-      if (errOpt.isPresent) {
-        requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
-      } else {
-        requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData()))
-      }
-    })
+    if (!authHelper.authorize(request.context, DELETE, CLUSTER_MIRROR, mirrorName, logIfDenied = false)) {
+      requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(
+        new DeleteClusterMirrorResponseData()
+          .setErrorCode(Errors.CLUSTER_MIRROR_AUTHORIZATION_FAILED.code)
+          .setErrorMessage(Errors.CLUSTER_MIRROR_AUTHORIZATION_FAILED.message())))
+    } else {
+      clusterMirrorCoordinator.deleteClusterMirror(mirrorName, errOpt => {
+        if (errOpt.isPresent) {
+          requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
+        } else {
+          requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData()))
+        }
+      })
+    }
   }
 
   def handleListClusterMirrorsRequest(request: RequestChannel.Request): Unit = {

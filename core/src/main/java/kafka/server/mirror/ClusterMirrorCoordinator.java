@@ -78,7 +78,6 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -107,7 +106,6 @@ public class ClusterMirrorCoordinator {
     private final MirrorMetadataManager metadataManager;
     private final MetadataCache metadataCache;
     private final ClusterMirrorRecordSerde serde = new ClusterMirrorRecordSerde();
-    private volatile ScheduledFuture<?> metadataRefreshFuture;
     private final Scheduler scheduler;
     private final Metrics metrics;
     private final Time time;
@@ -139,8 +137,8 @@ public class ClusterMirrorCoordinator {
         return optLeaderAndIsr.isPresent() && optLeaderAndIsr.get().leader() == brokerConfig.nodeId();
     }
 
-    /** Starts the coordinator scheduler and mirror state sender. */
-    public void startup() {
+    /** Starts the coordinator. */
+    public void start() {
         if (!isRunning.compareAndSet(false, true)) {
             log.warn("Is already running.");
             return;
@@ -149,30 +147,16 @@ public class ClusterMirrorCoordinator {
         log.info("Starting up.");
 
         metadataManager.initialize(
+                brokerConfig.mirrorConfig().metadataRefreshIntervalMs(),
                 (mirrorName, tp, state, errorMessage) -> transitionTo(mirrorName, tp, state, errorMessage),
                 this::tombstoneMirrorRecords,
                 this::getCoordinatorPartitionByKey,
                 this::getCoordinatorPartitionByName);
 
-        scheduler.startup();
-
-        metadataRefreshFuture = scheduler.schedule("MirrorMetadataRefresh",
-                metadataManager::runMetadataRefresh, 0, brokerConfig.mirrorConfig().metadataRefreshIntervalMs());
-
         log.info("Startup complete.");
     }
 
-    public void rescheduleMetadataRefresh(long newIntervalMs) {
-        ScheduledFuture<?> oldFuture = metadataRefreshFuture;
-        if (oldFuture != null) {
-            oldFuture.cancel(false);
-        }
-        metadataRefreshFuture = scheduler.schedule("MirrorMetadataRefresh",
-                metadataManager::runMetadataRefresh, newIntervalMs, newIntervalMs);
-        log.info("Rescheduled metadata refresh with interval {} ms", newIntervalMs);
-    }
-
-    /** Shuts down the coordinator scheduler and mirror state sender. */
+    /** Shuts down the coordinator. */
     public void shutdown() {
         if (!isRunning.compareAndSet(true, false)) {
             log.warn("Is already shutting down.");
@@ -779,6 +763,8 @@ public class ClusterMirrorCoordinator {
                             }
 
                             if (epochs.size() != topicPartitions.size()) {
+                                log.warn("The returned epoch size is not equal to the requested epoch size for mirror. " +
+                                        "Requested topic partitions: {}, returned epochs: {}", topicPartitions, epochs);
                                 topicPartitions.forEach(partition -> {
                                     if (!epochs.containsKey(partition)) {
                                         epochs.put(partition, -1);
@@ -1031,6 +1017,11 @@ public class ClusterMirrorCoordinator {
         } else {
             throw new IllegalStateException("Unsupported partition state value version: " + version);
         }
+    }
+
+    /** Cancels any existing refresh task and schedules a new one at the given interval. */
+    public void scheduleMetadataRefresh(long intervalMs) {
+        metadataManager.scheduleMetadataRefresh(intervalMs);
     }
 
     /** Returns the set of all configured mirror names. */

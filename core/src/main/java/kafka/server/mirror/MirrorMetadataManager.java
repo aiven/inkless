@@ -123,6 +123,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -142,10 +143,10 @@ import static org.apache.kafka.common.internals.Topic.MIRROR_STATE_TOPIC_NAME;
  * Bridges the local destination cluster and remote source clusters for Cluster Mirroring.
  *
  * Implements {@link MetadataPublisher} to detect leadership and config changes, triggering
- * partition state transitions.
- * Periodically syncs topic metadata, configs, group offsets, and ACLs from source clusters using {@link Admin}.
- * Maintains in-memory caches of partition states and last mirror epochs. Routes state reads/writes
- * to the appropriate coordinator broker.
+ * mirrror partition state transitions.
+ * Periodically syncs topic metadata, configs, group offsets, and ACLs from source clusters
+ * using {@link Admin}. Maintains in-memory caches of partition states and last mirror epochs.
+ * Routes state reads/writes to the appropriate coordinator broker.
  *
  * Source topic metadata and broker discovery run on every broker so that all brokers keep an
  * up to date view of source partition leaders. Coordinator level sync (topic configs, group
@@ -173,6 +174,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final KafkaScheduler scheduler;
     private final Metrics metrics;
     private final Time time;
+    private volatile ScheduledFuture<?> metadataRefreshFuture;
 
     private Optional<ClusterMirrorUtils.StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Consumer<String>> tombstoneWriter = Optional.empty();
@@ -271,7 +273,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * Creates and starts the MirrorStateSender used for WriteMirrorStates and ReadMirrorStates RPCs.
      * Wires in the state transitioner, tombstone handler, and coordinator partition finders.
      */
-    public void initialize(ClusterMirrorUtils.StateTransitioner stateTransitioner,
+    public void initialize(long metadataRefreshIntervalMs,
+                           ClusterMirrorUtils.StateTransitioner stateTransitioner,
                            Consumer<String> tombStoneHandler,
                            Function<ClusterMirrorRecordKey, Integer> coordPartitionByKeyFinder,
                            Function<String, Integer> coordPartitionByNameFinder) {
@@ -286,8 +289,19 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.tombstoneWriter = Optional.of(tombStoneHandler);
         this.coordPartitionFinderByKey = Optional.of(coordPartitionByKeyFinder);
         this.coordPartitionFinderByName = Optional.of(coordPartitionByNameFinder);
+        scheduleMetadataRefresh(metadataRefreshIntervalMs);
 
         this.isInitialized = true;
+    }
+
+    void scheduleMetadataRefresh(long intervalMs) {
+        ScheduledFuture<?> oldFuture = metadataRefreshFuture;
+        if (oldFuture != null) {
+            oldFuture.cancel(false);
+        }
+        metadataRefreshFuture = scheduler.schedule("MirrorMetadataRefresh",
+                this::runMetadataRefresh, intervalMs, intervalMs);
+        log.info("Scheduled metadata refresh with interval {} ms", intervalMs);
     }
 
     private Admin getOrCreateSourceAdmin(String mirrorName) {
@@ -766,7 +780,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
 
         maybeScalePartitions(createPartitionsTopics);
-        maybeStopDeletedTopics(mirrorName, topicInfos);
+        maybeFailDeletedTopics(mirrorName, topicInfos);
         maybeStartMissedPartitions(mirrorName);
     }
 
@@ -819,7 +833,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    private void maybeStopDeletedTopics(String mirrorName, List<SourceTopicState> topicInfos) {
+    private void maybeFailDeletedTopics(String mirrorName, List<SourceTopicState> topicInfos) {
         List<String> deletedSourceTopicNames = new ArrayList<>(topicInfos.stream()
                 .filter(ti -> !ti.exists())
                 .map(SourceTopicState::topic).toList());
@@ -846,7 +860,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 Set.copyOf(partitionStates.keySet()).stream()
                         .filter(key -> key.mirrorName().equals(mirrorName) && key.topic().equals(name))
                         .forEach(key -> stateTransitioner.ifPresent(t ->
-                                t.transitionTo(mirrorName, Set.of(new TopicPartition(key.topic(), key.partition())), MirrorPartitionState.STOPPING, null)));
+                                t.transitionTo(mirrorName, Set.of(new TopicPartition(key.topic(), key.partition())),
+                                        MirrorPartitionState.FAILED, "The source topic is deleted.")));
             }
         });
     }
@@ -1056,7 +1071,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             for (var entry : allOffsets.entrySet()) {
                 String groupId = entry.getKey();
                 if (activeDestGroups.get().contains(groupId)) {
-                    log.debug("Skipping consumer group offset sync for group {} in mirror {}: active on destination", groupId, mirrorName);
+                    log.warn("Skipping consumer group offset sync for group {} in mirror {}: active on destination", groupId, mirrorName);
                     continue;
                 }
 
@@ -1147,7 +1162,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             for (var entry : allOffsets.entrySet()) {
                 String groupId = entry.getKey();
                 if (activeDestGroups.get().contains(groupId)) {
-                    log.debug("Skipping share group offset sync for group {} in mirror {}: active on destination", groupId, mirrorName);
+                    log.warn("Skipping share group offset sync for group {} in mirror {}: active on destination", groupId, mirrorName);
                     continue;
                 }
 

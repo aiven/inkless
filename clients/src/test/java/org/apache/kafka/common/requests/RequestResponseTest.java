@@ -1236,7 +1236,6 @@ public class RequestResponseTest {
 
     private StartMirrorTopicsResponse createStartMirrorTopicsResponse() {
         StartMirrorTopicsResponseData data = new StartMirrorTopicsResponseData()
-                .setMirrorName("mirror")
                 .setTopics(List.of(new StartMirrorTopicsResponseData.TopicResult().setName("topic")));
         return new StartMirrorTopicsResponse(data);
     }
@@ -1255,8 +1254,7 @@ public class RequestResponseTest {
 
     private StopMirrorTopicsResponse createStopMirrorTopicsResponse() {
         StopMirrorTopicsResponseData data = new StopMirrorTopicsResponseData()
-                .setTopics(List.of(new StopMirrorTopicsResponseData.TopicResult().setName("topic")))
-                .setMirrorName("mirror");
+                .setTopics(List.of(new StopMirrorTopicsResponseData.TopicResult().setName("topic")));
         return new StopMirrorTopicsResponse(data);
     }
 
@@ -1359,7 +1357,6 @@ public class RequestResponseTest {
 
     public PauseMirrorTopicsResponse createPauseMirrorTopicsResponse() {
         PauseMirrorTopicsResponseData data = new PauseMirrorTopicsResponseData()
-                .setMirrorName("mirror")
                 .setTopics(List.of(new PauseMirrorTopicsResponseData.TopicResult()
                         .setName("topic")));
         return new PauseMirrorTopicsResponse(data);
@@ -1379,7 +1376,6 @@ public class RequestResponseTest {
 
     public ResumeMirrorTopicsResponse createResumeMirrorTopicsResponse() {
         ResumeMirrorTopicsResponseData data = new ResumeMirrorTopicsResponseData()
-                .setMirrorName("mirror")
                 .setTopics(List.of(new ResumeMirrorTopicsResponseData.TopicResult()
                         .setName("topic")
                 ));

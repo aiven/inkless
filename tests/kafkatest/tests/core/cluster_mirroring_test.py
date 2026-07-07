@@ -443,7 +443,7 @@ class ClusterMirroringTest(MirrorUtils, Test):
     @cluster(num_nodes=7)
     @defaults(metadata_quorum=[quorum.isolated_kraft])
     def test_topic_deletion(self, metadata_quorum):
-        """Verify that deleting a source topic transitions mirror partitions to STOPPED."""
+        """Verify that deleting a source topic transitions mirror partitions to FAILED."""
         self.source_kafka.create_topic({"topic": "my-topic", "partitions": 1, "replication-factor": 2})
 
         self.logger.info("Start cluster mirror on destination")
@@ -467,8 +467,8 @@ class ClusterMirroringTest(MirrorUtils, Test):
         self.source_kafka.delete_topic("my-topic")
         MirrorUtils.wait_for_metadata_refresh(self.logger, self.dest_kafka, self.client_node, "my-mirror")
 
-        self.logger.info("Verify mirror partitions transitioned to STOPPED")
-        MirrorUtils.wait_mirror_state(self.logger, self.dest_kafka, self.client_node, "my-mirror", ["my-topic"], "STOPPED")
+        self.logger.info("Verify mirror partitions transitioned to FAILED")
+        MirrorUtils.wait_mirror_state(self.logger, self.dest_kafka, self.client_node, "my-mirror", ["my-topic"], "FAILED")
 
     @cluster(num_nodes=7)
     @defaults(metadata_quorum=[quorum.isolated_kraft])
