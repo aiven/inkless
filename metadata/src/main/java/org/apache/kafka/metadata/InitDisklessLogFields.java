@@ -22,6 +22,8 @@ import org.apache.kafka.common.protocol.types.RawTaggedField;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.OptionalLong;
 
 /**
  * Helpers for encoding/decoding Inkless-specific fields for classic-diskless migrations
@@ -46,12 +48,17 @@ public final class InitDisklessLogFields {
     }
 
     public static long decodeClassicToDisklessStartOffset(List<RawTaggedField> taggedFields) {
+        return decodeClassicToDisklessStartOffsetIfPresent(taggedFields)
+            .orElse(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET);
+    }
+
+    public static OptionalLong decodeClassicToDisklessStartOffsetIfPresent(List<RawTaggedField> taggedFields) {
         for (RawTaggedField field : taggedFields) {
             if (field.tag() == CLASSIC_TO_DISKLESS_START_OFFSET_TAG) {
-                return ByteBuffer.wrap(field.data()).getLong();
+                return OptionalLong.of(ByteBuffer.wrap(field.data()).getLong());
             }
         }
-        return PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET;
+        return OptionalLong.empty();
     }
 
     // --- disklessLeaderEpoch (tag 102): a single int32 ---
@@ -103,6 +110,10 @@ public final class InitDisklessLogFields {
     }
 
     public static List<ProducerStateEntry> decodeProducerStates(List<RawTaggedField> taggedFields) {
+        return decodeProducerStatesIfPresent(taggedFields).orElse(List.of());
+    }
+
+    public static Optional<List<ProducerStateEntry>> decodeProducerStatesIfPresent(List<RawTaggedField> taggedFields) {
         for (RawTaggedField field : taggedFields) {
             if (field.tag() == PRODUCER_STATES_TAG) {
                 ByteBuffer buf = ByteBuffer.wrap(field.data());
@@ -118,9 +129,9 @@ public final class InitDisklessLogFields {
                         buf.getLong()
                     ));
                 }
-                return entries;
+                return Optional.of(entries);
             }
         }
-        return List.of();
+        return Optional.empty();
     }
 }
