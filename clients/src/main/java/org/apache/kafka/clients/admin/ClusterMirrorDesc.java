@@ -90,7 +90,7 @@ public class ClusterMirrorDesc {
         private final String errorMessage;
 
         public LeaderStateDesc(TopicPartition topicPartition, long sourceOffset, long destinationOffset,
-                               long lag, String state, short retryAttempt, String errorMessage) {
+                               long lag, String state, int retryAttempt, String errorMessage) {
             this.topicPartition = topicPartition;
             this.sourceOffset = sourceOffset;
             this.destinationOffset = destinationOffset;

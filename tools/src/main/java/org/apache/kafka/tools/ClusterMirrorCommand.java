@@ -403,7 +403,7 @@ public abstract class ClusterMirrorCommand {
 
         private record PartitionInfo(String mirror, String topic, int partition,
                                      long sourceOffset, long destinationOffset, long lag,
-                                     String state, short retryAttempt, String errorMessage) { }
+                                     String state, int retryAttempt, String errorMessage) { }
     }
 
     private static final class MirrorCommandOptions extends CommandDefaultOptions {
