@@ -195,7 +195,7 @@ Under ``inkless.``
   * Importance: low
 
 ``fetch.hedge.total.time.threshold.ms``
-  Total time threshold in milliseconds to trigger a hedge request. When a storage fetch has not completed within this threshold, a competing hedge request is submitted. The first request to complete wins; the other continues in the background and its result is ignored. Set to 0 to disable total-time-based hedging. When both hedging thresholds are enabled, this value must be strictly greater than fetch.hedge.ttfb.threshold.ms. Capacity impact: hedges submit to the same executor as primaries (fetch.data.thread.pool.size for hot path, fetch.lagging.consumer.thread.pool.size for cold path). Normal case: only tail-latency requests (exceeding threshold) trigger hedges — typically <5% of traffic. Worst case: if all in-flight requests exceed the threshold, effective storage GET rate doubles (one primary + one hedge per request), bounded by executor thread pool + queue capacity. Monitor HedgeRequestRate to detect excessive hedging. If hedge rate is too high, increase this threshold.
+  Total time threshold in milliseconds to trigger a hedge request. When a storage fetch has not completed within this threshold, a competing hedge request is submitted. The first request to complete wins; the other continues in the background and its result is ignored. Set to 0 to disable total-time-based hedging. When both hedging thresholds are enabled, this value must be strictly greater than fetch.hedge.ttfb.threshold.ms. Capacity impact: hedges submit to the same executor as primaries (fetch.data.thread.pool.size for hot path, fetch.lagging.consumer.thread.pool.size for cold path). Normal case: only tail-latency requests (exceeding threshold) trigger hedges -- typically <5% of traffic. Worst case: if all in-flight requests exceed the threshold, effective storage GET rate doubles (one primary + one hedge per request), bounded by executor thread pool + queue capacity. Monitor HedgeRequestRate to detect excessive hedging. If hedge rate is too high, increase this threshold.
 
   * Type: long
   * Default: 0
@@ -211,7 +211,7 @@ Under ``inkless.``
   * Importance: low
 
 ``fetch.lagging.consumer.thread.pool.size``
-  Thread pool size for lagging consumer fetch requests (consumers reading old data). Set to 0 to disable the lagging consumer feature (all requests will use the recent data path). The default value of 16 is designed as approximately half of the default fetch.data.thread.pool.size (32), providing sufficient capacity for typical cold storage access patterns while leaving headroom for the hot path. The queue capacity is automatically set to thread.pool.size * 100, providing burst buffering (e.g., 16 threads = 1600 queue capacity ≈ 8 seconds buffer at 200 req/s). Tune based on lagging consumer SLA and expected load patterns.
+  Thread pool size for lagging consumer fetch requests (consumers reading old data). Set to 0 to disable the lagging consumer feature (all requests will use the recent data path). The default value of 16 is designed as approximately half of the default fetch.data.thread.pool.size (32), providing sufficient capacity for typical cold storage access patterns while leaving headroom for the hot path. The queue capacity is automatically set to thread.pool.size * 100, providing burst buffering (e.g., 16 threads = 1600 queue capacity ~= 8 seconds buffer at 200 req/s). Tune based on lagging consumer SLA and expected load patterns.
 
   * Type: int
   * Default: 16

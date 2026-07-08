@@ -48,7 +48,7 @@ import scala.util.Try
 
 /**
  * Leader endpoint for consolidation fetching from Inkless (object storage) on this broker.
- * [[FetchHandler]] performs the same diskless fetch path as the broker’s main fetch pipeline;
+ * [[FetchHandler]] performs the same diskless fetch path as the broker's main fetch pipeline;
  * [[FetchOffsetHandler]] backs list-offsets style APIs used by [[kafka.server.AbstractFetcherThread]].
  *
  * Fetch and offset handler instances are owned by [[kafka.server.ReplicaManager]]; this class does not close them.
