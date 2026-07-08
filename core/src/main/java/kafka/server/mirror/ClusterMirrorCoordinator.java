@@ -364,10 +364,18 @@ public class ClusterMirrorCoordinator {
     private void updateFailedState(TopicPartition tp, MirrorPartitionState currentState,
                                    MirrorPartitionState newState, String errorMessage, boolean isTerminalError) {
         if (newState == MirrorPartitionState.FAILED) {
-            metadataManager.failedPartitionInfo().merge(tp,
-                    new FailedPartitionInfo((short) 1, errorMessage, currentState),
-                    (old, next) -> new FailedPartitionInfo(
-                            isTerminalError ? MIRROR_TERMINAL_FAILED_ATTEMPT : (short) (old.retryAttempt() + 1), next.errorMessage(), old.previousState()));
+            metadataManager.failedPartitionInfo().compute(tp, (key, existing) -> {
+                short attempt;
+                if (isTerminalError) {
+                    attempt = MIRROR_TERMINAL_FAILED_ATTEMPT;
+                } else if (existing != null) {
+                    attempt = (short) (existing.retryAttempt() + 1);
+                } else {
+                    attempt = (short) 1;
+                }
+                MirrorPartitionState previousState = existing != null ? existing.previousState() : currentState;
+                return new FailedPartitionInfo(attempt, errorMessage, previousState);
+            });
         } else if (newState == MirrorPartitionState.LOG_TRUNCATION
                 || newState == MirrorPartitionState.STOPPED
                 || newState == MirrorPartitionState.PAUSED) {
@@ -382,13 +390,14 @@ public class ClusterMirrorCoordinator {
             FailedPartitionInfo fpi = metadataManager.failedPartitionInfo().get(tp);
             int attempt = fpi != null ? fpi.retryAttempt() : 1;
             if (attempt == MIRROR_TERMINAL_FAILED_ATTEMPT) {
-                log.debug("Skip partition {} because it is in ternimal failed state, requires manual intervention.", tp);
+                log.debug("Skip partition {} because it is in terminal failed state, requires manual intervention.", tp);
                 return;
             }
             if (attempt >= maxAttempts) {
                 log.error("Partition {} exceeded max retry attempts ({}), requires manual intervention.", tp, maxAttempts);
                 return;
             }
+
             // Exponential backoff for FAILED state retries with 20% jitter.
             // With defaults (initial=1s, max=300s): attempt 0 ~1s, attempt 1 ~2s, attempt 2 ~4s, ..., attempt 8+ ~300s.
             ExponentialBackoff failedRetryBackoff = new ExponentialBackoff(
@@ -426,7 +435,7 @@ public class ClusterMirrorCoordinator {
                                 // TODO: handle failure, we can't retry forever
                                 log.error("Failed to update partition state for {}: {}, retrying", tp, ex.getMessage());
                                 scheduler.scheduleOnce("MirrorStateUpdateRetry-" + tp,
-                                        () -> transitionTo(mirrorName, Set.of(tp), newState, errorMessage), 100);
+                                        () -> transitionTo(mirrorName, Set.of(tp), newState, errorMessage, isTerminalError), 100);
                             } else {
                                 // successfully writes data into internal log
                                 try {
