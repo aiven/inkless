@@ -649,6 +649,42 @@ public class AsyncClusterMirrorIntegrationTest {
         waitForFailedWithRetriesExhausted(topic, 2);
     }
 
+    /**
+     * Tests that deleting a source topic moves mirror partitions to non-retryable FAILED
+     * and that they remain in that state across metadata refresh cycles.
+     */
+    @Test
+    void testDeletedSourceTopicMovesToNonRetryableFailed() throws Exception {
+        String topic = "non-retryable-topic";
+
+        srcAdmin.createTopics(List.of(
+                new NewTopic(topic, 1, (short) 1)
+        )).all().get(30, TimeUnit.SECONDS);
+
+        produceRecords(srcCluster, topic, 0, 20);
+
+        dstAdmin.createClusterMirror(MIRROR_NAME, Map.of(
+                "bootstrap.servers", singleSourceBootstrapServer
+        ), new CreateClusterMirrorOptions()).all().get(30, TimeUnit.SECONDS);
+        dstAdmin.startMirrorTopics(MIRROR_NAME, Set.of(topic), new StartMirrorTopicsOptions())
+                .all().get(30, TimeUnit.SECONDS);
+        waitForMirrorLagZero(dstAdmin, MIRROR_NAME, topic);
+
+        // Delete source topic to trigger non-retryable failure
+        srcAdmin.deleteTopics(List.of(topic)).all().get(30, TimeUnit.SECONDS);
+
+        waitForNonRetryableFailed(topic);
+
+        // Verify partitions stay in FAILED across multiple refresh cycles
+        long deadline = System.currentTimeMillis() + 3 * METADATA_REFRESH_INTERVAL_MS;
+        while (System.currentTimeMillis() < deadline) {
+            assertTrue(allPartitionsSatisfy(dstAdmin, MIRROR_NAME, topic,
+                    s -> "FAILED".equals(s.state()) && s.retryAttempt() == -1),
+                    "Non-retryable partitions must not be restarted by metadata refresh");
+            TimeUnit.MILLISECONDS.sleep(1_000);
+        }
+    }
+
     private void produceRecords(KafkaClusterTestKit cluster, String topic,
                                 int startIndex, int count) {
         Properties props = new Properties();
@@ -797,6 +833,19 @@ public class AsyncClusterMirrorIntegrationTest {
         }
         throw new AssertionError("Mirror partitions for " + topicPattern
                 + " did not exhaust retries within timeout");
+    }
+
+    private void waitForNonRetryableFailed(String topicPattern) throws Exception {
+        long deadline = System.currentTimeMillis() + 120_000;
+        while (System.currentTimeMillis() < deadline) {
+            if (allPartitionsSatisfy(dstAdmin, MIRROR_NAME, topicPattern,
+                    s -> "FAILED".equals(s.state()) && s.retryAttempt() == -1)) {
+                return;
+            }
+            TimeUnit.MILLISECONDS.sleep(1_000);
+        }
+        throw new AssertionError("Mirror partitions for " + topicPattern
+                + " did not reach non-retryable failed state within timeout");
     }
 
     private void waitForListMirrorEmpty() {
