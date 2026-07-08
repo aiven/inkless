@@ -613,12 +613,9 @@ public class InklessTopicTypeSwitcherClusterTest {
     }
 
     private AlterConfigsResponse sendLegacyAlterConfigsRequest(final AlterConfigsRequest request) throws Exception {
-        return IntegrationTestUtils.connectAndReceive(
-            request,
-            cluster.brokers().values().iterator().next().socketServer(),
-            cluster.nodes().brokerListenerName(),
-            AlterConfigsResponse.class
-        );
+        final int port = cluster.brokers().values().iterator().next()
+            .boundPort(cluster.nodes().brokerListenerName());
+        return IntegrationTestUtils.connectAndReceive(request, port);
     }
 
     private void waitForIsrShrink(final Admin admin, final String topic,
