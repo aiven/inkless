@@ -86,9 +86,10 @@
               files="MemoryRecordsBuilder.java"/>
     <suppress checks="ParameterNumber"
               files="ClientUtils.java"/>
-    <!-- ReplicationControlManager is at the edge of crossing this limit; adding it to include params for diskless logic -->
+    <!-- ReplicationControlManager is at the edge of crossing this limit; adding it to include params for diskless logic.
+         The test context constructor mirrors the same param list, so it crosses the limit too. -->
     <suppress checks="ParameterNumber"
-              files="ReplicationControlManager.java"/>
+              files="(ReplicationControlManager|ReplicationControlManagerTest).java"/>
 
     <suppress checks="ClassDataAbstractionCoupling"
               files="(KafkaConsumer|ConsumerCoordinator|AbstractFetch|KafkaProducer|AbstractRequest|AbstractResponse|TransactionManager|Admin|KafkaAdminClient|MockAdminClient|KafkaNetworkChannelTest|ClientTelemetryReporterTest).java"/>
@@ -323,6 +324,9 @@
               files="(ClientQuotasImage|KafkaEventQueue|ReplicationControlManager|FeatureControlManager|KRaftMigrationDriver|ScramControlManager|ClusterControlManager|MetadataDelta|MetaPropertiesEnsemble).java"/>
     <!-- ReplicationControlManager has multiple long methods; suppression needed for diskless managed replicas logic -->
     <suppress checks="MethodLength"
+              files="ReplicationControlManager.java"/>
+    <!-- ReplicationControlManager crossed the class NCSS limit as diskless switch logic was added; the class already carries several complexity suppressions above -->
+    <suppress checks="JavaNCSS"
               files="ReplicationControlManager.java"/>
     <suppress checks="BooleanExpressionComplexity"
               files="(MetadataImage).java"/>

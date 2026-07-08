@@ -6376,6 +6376,8 @@ class ReplicaManagerInklessTest {
     if (disklessRemoteStorageConsolidationEnabled) {
       props.put(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, "true")
       props.put(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
+      // Consolidation requires the switch flag (KafkaConfig.validateValues).
+      props.put(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, "true")
     }
     props.put(
       ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG,
@@ -6406,7 +6408,13 @@ class ReplicaManagerInklessTest {
       topicIdMapping.getOrElse(topicName, Uuid.ZERO_UUID)
     }
     disklessTopics.foreach(t => when(inklessMetadata.isDisklessTopic(t)).thenReturn(true))
-    consolidatingDisklessTopics.foreach(t => when(inklessMetadata.isConsolidatingDisklessTopic(t)).thenReturn(true))
+    // A consolidating diskless topic is remote-storage enabled by definition
+    // (isConsolidatingDisklessTopic == isDiskless && isRemoteStorageEnabled); stub both so the mock
+    // stays faithful to that invariant and the reconciler's remote-storage safeguard is not tripped.
+    consolidatingDisklessTopics.foreach { t =>
+      when(inklessMetadata.isConsolidatingDisklessTopic(t)).thenReturn(true)
+      when(inklessMetadata.isRemoteStorageEnabled(t)).thenReturn(true)
+    }
     when(sharedState.metadata()).thenReturn(inklessMetadata)
 
     val logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size)

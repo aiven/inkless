@@ -183,6 +183,7 @@ public class ReplicationControlManager {
         private boolean isDisklessStorageSystemEnabled = false;
         private boolean isDisklessManagedReplicasEnabled = false;
         private boolean isDisklessRemoteStorageConsolidationEnabled = false;
+        private boolean isDisklessAllowFromClassicEnabled = false;
         private boolean classicRemoteStorageForceEnabled = false;
         private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
         private boolean disklessForceEnabled = false;
@@ -231,6 +232,11 @@ public class ReplicationControlManager {
 
         public Builder setDisklessRemoteStorageConsolidationEnabled(boolean isDisklessRemoteStorageConsolidationEnabled) {
             this.isDisklessRemoteStorageConsolidationEnabled = isDisklessRemoteStorageConsolidationEnabled;
+            return this;
+        }
+
+        public Builder setDisklessAllowFromClassicEnabled(boolean isDisklessAllowFromClassicEnabled) {
+            this.isDisklessAllowFromClassicEnabled = isDisklessAllowFromClassicEnabled;
             return this;
         }
 
@@ -298,6 +304,7 @@ public class ReplicationControlManager {
                 isDisklessStorageSystemEnabled,
                 isDisklessManagedReplicasEnabled,
                 isDisklessRemoteStorageConsolidationEnabled,
+                isDisklessAllowFromClassicEnabled,
                 classicRemoteStorageForceEnabled,
                 classicRemoteStorageForceExcludeTopicRegexes,
                 disklessForceEnabled,
@@ -389,6 +396,13 @@ public class ReplicationControlManager {
      * classic tiered storage behavior, which is controlled by {@code classicTopicRemoteStorageForcePolicy}.
      */
     private final boolean isDisklessRemoteStorageConsolidationEnabled;
+
+    /**
+     * When true, a classic topic may switch to diskless (classic-to-diskless switch is allowed).
+     * The switch auto-enables remote.storage.enable=true so a switched topic always has remote
+     * storage, independent of whether consolidation is enabled yet.
+     */
+    private final boolean isDisklessAllowFromClassicEnabled;
     private final CreateTopicConfigInterceptors createTopicConfigInterceptors;
 
     /**
@@ -490,6 +504,7 @@ public class ReplicationControlManager {
         boolean isDisklessStorageSystemEnabled,
         boolean isDisklessManagedReplicasEnabled,
         boolean isDisklessRemoteStorageConsolidationEnabled,
+        boolean isDisklessAllowFromClassicEnabled,
         boolean classicRemoteStorageForceEnabled,
         List<String> classicRemoteStorageForceExcludeTopicRegexes,
         boolean disklessForceEnabled,
@@ -508,6 +523,7 @@ public class ReplicationControlManager {
         this.isDisklessStorageSystemEnabled = isDisklessStorageSystemEnabled;
         this.isDisklessManagedReplicasEnabled = isDisklessManagedReplicasEnabled;
         this.isDisklessRemoteStorageConsolidationEnabled = isDisklessRemoteStorageConsolidationEnabled;
+        this.isDisklessAllowFromClassicEnabled = isDisklessAllowFromClassicEnabled;
         this.createTopicConfigInterceptors = CreateTopicConfigInterceptors.create(
             classicRemoteStorageForceEnabled,
             classicRemoteStorageForceExcludeTopicRegexes,
@@ -3267,6 +3283,90 @@ public class ReplicationControlManager {
     }
 
     /**
+     * Mirror the topic-creation auto-enable (see {@link #validConfigRecords}) on the classic-to-diskless
+     * switch: inject {@code remote.storage.enable=true} into the incremental AlterConfigs request before
+     * validation.
+     * Gating on the switch flag (not consolidation) makes {@code diskless.enable} imply
+     * {@code remote.storage.enable} for every switch, so a switched topic is never untiered diskless
+     * (it consolidates once consolidation is enabled).
+     * The injected {@link ConfigRecord} then co-commits atomically with the {@code diskless.enable}
+     * record and the PENDING {@link PartitionChangeRecord}s, and validation runs on the augmented
+     * request (fail-fast on an invalid switch, e.g. compacted topic).
+     *
+     * <p>No-op when the switch is not allowed, the topic is not switching, or remote storage is already on.
+     * The returned map shares untouched inner maps by reference and copies only the ones it augments;
+     * callers must not mutate the shared inner maps.
+     */
+    Map<ConfigResource, Map<String, Entry<OpType, String>>> maybeAddRemoteStorageEnableForSwitch(
+        Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges
+    ) {
+        if (!isDisklessAllowFromClassicEnabled) return configChanges;
+        Map<ConfigResource, Map<String, Entry<OpType, String>>> augmented = null;
+        for (Entry<ConfigResource, Map<String, Entry<OpType, String>>> configEntry : configChanges.entrySet()) {
+            ConfigResource resource = configEntry.getKey();
+            Map<String, Entry<OpType, String>> changes = configEntry.getValue();
+            if (resource.type() != TOPIC) continue;
+            if (!isSettingConfigToTrue(changes, DISKLESS_ENABLE_CONFIG)) continue;
+            if (isDisklessTopic(resource.name())) continue;
+            Entry<OpType, String> rsOp = changes.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG);
+            // Keep an explicit SET value: true is redundant, false is left for validation to reject.
+            // A DELETE or null-valued SET would strip the override, so treat it as absent and inject.
+            if (rsOp != null && rsOp.getKey() == SET && rsOp.getValue() != null) continue;
+            // Skip a topic already tiered — unless the op above would wipe that override.
+            if (rsOp == null && isRemoteStorageEnabledForTopic(resource.name())) continue;
+            if (augmented == null) augmented = new HashMap<>(configChanges);
+            Map<String, Entry<OpType, String>> newChanges = new HashMap<>(changes);
+            newChanges.put(REMOTE_LOG_STORAGE_ENABLE_CONFIG, new SimpleImmutableEntry<>(SET, "true"));
+            augmented.put(resource, newChanges);
+        }
+        return augmented == null ? configChanges : augmented;
+    }
+
+    /**
+     * Counterpart of {@link #maybeAddRemoteStorageEnableForSwitch} for the <em>legacy AlterConfigs API</em>
+     * (full config maps, not per-key ops). A switch is always an explicit {@code diskless.enable=true};
+     * an omission is rejected up front by {@link ConfigurationControlManager}, so there is no implicit
+     * revert-to-default switch.
+     *
+     * <p>Here the full-map replace implicitly deletes any omitted key, so {@code remote.storage.enable=true}
+     * is injected whenever it is not an explicit non-null value.
+     * Adding it for an untiered topic and re-pinning it for a tiered one (where the value is unchanged,
+     * so no record is written; the key is only kept out of the implicit-delete set).
+     */
+    Map<ConfigResource, Map<String, String>> maybeAddRemoteStorageEnableForLegacyAlterConfigs(
+        Map<ConfigResource, Map<String, String>> newConfigs
+    ) {
+        if (!isDisklessAllowFromClassicEnabled) return newConfigs;
+        Map<ConfigResource, Map<String, String>> augmented = null;
+        for (Entry<ConfigResource, Map<String, String>> configEntry : newConfigs.entrySet()) {
+            ConfigResource resource = configEntry.getKey();
+            Map<String, String> configs = configEntry.getValue();
+            if (!isSwitchingToDisklessViaLegacyAlterConfigs(resource, configs)) continue;
+            // Keep an explicit non-null value (false is left for validation to reject); an omitted or
+            // null-valued key would strip the override on the full-map replace, so inject true.
+            if (configs.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG) != null) continue;
+            if (augmented == null) augmented = new HashMap<>(newConfigs);
+            Map<String, String> newCfg = new HashMap<>(configs);
+            newCfg.put(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+            augmented.put(resource, newCfg);
+        }
+        return augmented == null ? newConfigs : augmented;
+    }
+
+    private boolean isSwitchingToDisklessViaLegacyAlterConfigs(ConfigResource resource, Map<String, String> configs) {
+        if (resource.type() != TOPIC) return false;
+        if (isDisklessTopic(resource.name())) return false;
+        // Only an explicit diskless.enable=true is a switch; an omitted key is rejected upstream.
+        return Boolean.parseBoolean(configs.get(DISKLESS_ENABLE_CONFIG));
+    }
+
+    private boolean isRemoteStorageEnabledForTopic(String topicName) {
+        return Boolean.parseBoolean(
+            configurationControl.currentTopicConfig(topicName)
+                .getOrDefault(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
+    }
+
+    /**
      * For every topic whose {@code diskless.enable} flips from {@code false} to {@code true},
      * emit a {@link PartitionChangeRecord} per partition marking
      * {@code classicToDisklessStartOffset = CLASSIC_TO_DISKLESS_SWITCH_PENDING} (-2).
@@ -3331,19 +3431,14 @@ public class ReplicationControlManager {
         for (Entry<ConfigResource, Map<String, String>> entry : newConfigs.entrySet()) {
             ConfigResource resource = entry.getKey();
             Map<String, String> configs = entry.getValue();
+            // A switch is only ever an explicit diskless.enable=true. An omitted diskless.enable is
+            // rejected up front by ConfigurationControlManager (the legacy omission would implicitly
+            // delete the override), so there is no implicit revert-to-default switch to mark here.
             String disklessEnable = configs.get(DISKLESS_ENABLE_CONFIG);
             if (disklessEnable != null) {
                 configChanges.put(resource, Map.of(
                     DISKLESS_ENABLE_CONFIG,
                     new SimpleImmutableEntry<>(SET, disklessEnable)
-                ));
-            } else if (defaultDisklessEnable
-                && resource.type() == TOPIC
-                && !isDisklessTopic(resource.name())
-                && "false".equals(configurationControl.currentTopicConfig(resource.name()).get(DISKLESS_ENABLE_CONFIG))) {
-                configChanges.put(resource, Map.of(
-                    DISKLESS_ENABLE_CONFIG,
-                    new SimpleImmutableEntry<>(SET, "true")
                 ));
             }
         }

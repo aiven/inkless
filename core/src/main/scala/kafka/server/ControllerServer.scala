@@ -242,6 +242,7 @@ class ControllerServer(
           setDisklessStorageSystemEnabled(config.disklessStorageSystemEnabled).
           setDisklessManagedReplicasEnabled(config.disklessManagedReplicasEnabled).
           setDisklessRemoteStorageConsolidationEnabled(config.disklessRemoteStorageConsolidationEnabled).
+          setDisklessAllowFromClassicEnabled(config.disklessAllowFromClassicEnabled).
           setClassicRemoteStorageForceEnabled(config.classicRemoteStorageForceEnabled).
           setClassicRemoteStorageForceExcludeTopicRegexes(config.classicRemoteStorageForceExcludeTopicRegexes).
           setDisklessForceEnabled(config.disklessForceEnabled).

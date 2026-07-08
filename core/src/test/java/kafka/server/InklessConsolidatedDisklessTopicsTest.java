@@ -275,7 +275,7 @@ public class InklessConsolidatedDisklessTopicsTest {
     }
 
     @Test
-    public void testClassicToDisklessToConsolidatedTopics() throws Exception {
+    public void testClassicToConsolidatedDisklessTopicSwitch() throws Exception {
         Map<String, Object> commonConfigs = new HashMap<>();
         commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
 
@@ -301,18 +301,11 @@ public class InklessConsolidatedDisklessTopicsTest {
             // prefix that must remain readable after the topic is migrated and consolidated.
             produceRecords(commonConfigs, preMigrationRecords, recordFactory);
 
-            // Phase 2: migrate the classic topic to diskless. With the consolidation flag enabled at the
-            // broker level the alter path does NOT auto-enable remote storage, so the topic becomes a
-            // plain (non-consolidated) diskless topic at this point.
-            log.info("Migrating classic topic {} to diskless", topicName);
-            incrementalAlterTopicConfigs(admin, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
-            waitForTopicConfigValue(admin, DISKLESS_ENABLE_CONFIG, "true");
-            assertEquals("false", getTopicConfigValue(admin, REMOTE_LOG_STORAGE_ENABLE_CONFIG),
-                "Diskless topic should not be consolidated yet (remote storage still disabled)");
-
-            // Phase 3: consolidate the diskless topic (remote.storage.enable=true) while a producer keeps
-            // sending records to it. The producer runs on a background thread so its sends overlap both the
-            // config change and the background consolidation (WAL -> tiered storage) that follows.
+            // Phase 2: migrate the classic topic to diskless while a producer keeps sending records.
+            // With the consolidation flag enabled at the broker level, the switch auto-enables remote
+            // storage atomically (like topic creation), so the topic becomes a consolidated diskless
+            // topic in a single step. The producer runs on a background thread so its sends overlap
+            // the switch and the background consolidation (WAL -> tiered storage) that follows.
             final AtomicReference<Throwable> producerFailure = new AtomicReference<>(null);
             final Thread producerThread = new Thread(() -> {
                 try {
@@ -325,8 +318,9 @@ public class InklessConsolidatedDisklessTopicsTest {
 
             producerThread.start();
             try {
-                log.info("Consolidating diskless topic {} (enabling remote storage)", topicName);
-                incrementalAlterTopicConfigs(admin, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"));
+                log.info("Migrating classic topic {} to diskless (remote storage auto-enabled atomically)", topicName);
+                incrementalAlterTopicConfigs(admin, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
+                waitForTopicConfigValue(admin, DISKLESS_ENABLE_CONFIG, "true");
                 waitForTopicConfigValue(admin, REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
             } finally {
                 producerThread.join(TimeUnit.SECONDS.toMillis(120));
@@ -343,9 +337,9 @@ public class InklessConsolidatedDisklessTopicsTest {
             }
 
             assertEquals("true", getTopicConfigValue(admin, DISKLESS_ENABLE_CONFIG),
-                "Topic should remain diskless after consolidation");
+                "Topic should be diskless after the switch");
             assertEquals("true", getTopicConfigValue(admin, REMOTE_LOG_STORAGE_ENABLE_CONFIG),
-                "Topic should be consolidated (remote storage enabled) after the alter");
+                "Switch should auto-enable remote storage atomically (consolidated diskless topic)");
         }
 
         // Consolidation copies the diskless WAL data into Kafka tiered storage; wait until at least one
