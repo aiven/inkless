@@ -762,6 +762,9 @@ class BrokerServer(
           logManager.getLog(tp).foreach { log =>
             log.updateLogStartOffsetFromRemoteTier(remoteLogStartOffset)
           }
+          // For consolidating diskless topics, persist the leader's cross-tier earliest offset in the
+          // control plane so any broker can serve it for ListOffsets(EARLIEST). No-op for classic topics.
+          maybeInklessSharedState.foreach(_.crossTierLogStartReporter().enqueue(tp, remoteLogStartOffset))
         },
         brokerTopicStats, metrics, endpoint.toJava)
       Some(rlm)

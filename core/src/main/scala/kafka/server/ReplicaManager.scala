@@ -488,6 +488,8 @@ class ReplicaManager(val config: KafkaConfig,
 
       scheduler.schedule("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run()), sharedState.config().fileCleanerInterval().toMillis, sharedState.config().fileCleanerInterval().toMillis)
 
+      scheduler.schedule("inkless-cross-tier-log-start-reporter", () => sharedState.crossTierLogStartReporter().run(), config.logInitialTaskDelayMs, sharedState.config().crossTierLogStartReportInterval().toMillis)
+
       inklessConsolidatedDisklessLogPruner.foreach { pruner =>
         scheduler.schedule("inkless-consolidated-diskless-log-pruner", () => pruner.run(),
           sharedState.config.consolidationCleanupInterval.toMillis, sharedState.config.consolidationCleanupInterval.toMillis)

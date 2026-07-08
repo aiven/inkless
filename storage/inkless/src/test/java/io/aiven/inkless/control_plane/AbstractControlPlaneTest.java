@@ -1557,6 +1557,85 @@ public abstract class AbstractControlPlaneTest {
         }
     }
 
+    @Nested
+    class AdvanceCrossTierLogStartOffset {
+        private static final String topicName = "crossTierTopic";
+        private static final Uuid topicId = new Uuid(54321, 9876);
+        private static final TopicIdPartition tidp = new TopicIdPartition(topicId, 0, topicName);
+
+        @BeforeEach
+        void prepare() {
+            controlPlane.createTopicAndPartitions(Set.of(
+                new CreateTopicAndPartitionsRequest(topicId, topicName, 1)
+            ));
+            // Commit 100 records so the partition has a high watermark above the cross-tier value.
+            controlPlane.commitFile("ct1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+                List.of(CommitBatchRequest.of(0, tidp, 0, 1, 0, 99, 1000, TimestampType.CREATE_TIME)));
+        }
+
+        @Test
+        void unknownTopicOrPartition() {
+            final List<AdvanceCrossTierLogStartOffsetResponse> responses = controlPlane.advanceCrossTierLogStartOffset(List.of(
+                new AdvanceCrossTierLogStartOffsetRequest(NONEXISTENT_TOPIC_ID, 0, 5)
+            ));
+            assertThat(responses).containsExactly(
+                AdvanceCrossTierLogStartOffsetResponse.unknownTopicOrPartition()
+            );
+        }
+
+        @Test
+        void advancesForwardOnly() {
+            // Nothing tracked yet → EARLIEST falls back to the log start offset (0).
+            assertThat(controlPlane.listOffsets(List.of(new ListOffsetsRequest(tidp, EARLIEST_TIMESTAMP))))
+                .containsExactly(ListOffsetsResponse.success(tidp, NO_TIMESTAMP, 0));
+
+            // First report advances the stored value to 50.
+            assertThat(controlPlane.advanceCrossTierLogStartOffset(List.of(
+                new AdvanceCrossTierLogStartOffsetRequest(topicId, 0, 50)
+            ))).containsExactly(AdvanceCrossTierLogStartOffsetResponse.success(50));
+
+            // A lower value is ignored (forward-only); the stored value stays 50.
+            assertThat(controlPlane.advanceCrossTierLogStartOffset(List.of(
+                new AdvanceCrossTierLogStartOffsetRequest(topicId, 0, 30)
+            ))).containsExactly(AdvanceCrossTierLogStartOffsetResponse.success(50));
+
+            // A higher value advances the stored value to 70.
+            assertThat(controlPlane.advanceCrossTierLogStartOffset(List.of(
+                new AdvanceCrossTierLogStartOffsetRequest(topicId, 0, 70)
+            ))).containsExactly(AdvanceCrossTierLogStartOffsetResponse.success(70));
+        }
+
+        @Test
+        void earliestReflectsCrossTierWhileEarliestLocalStaysAtLogStart() {
+            controlPlane.advanceCrossTierLogStartOffset(List.of(
+                new AdvanceCrossTierLogStartOffsetRequest(topicId, 0, 50)
+            ));
+
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(tidp, EARLIEST_TIMESTAMP),
+                new ListOffsetsRequest(tidp, EARLIEST_LOCAL_TIMESTAMP)
+            ))).containsExactly(
+                ListOffsetsResponse.success(tidp, NO_TIMESTAMP, 50),  // cross-tier (remote) start
+                ListOffsetsResponse.success(tidp, NO_TIMESTAMP, 0)     // local log start
+            );
+        }
+
+        @Test
+        void batchedRequestsAreHandledIndependently() {
+            // Mixes two existing partitions with a non-existent one to check per-request handling.
+            final List<AdvanceCrossTierLogStartOffsetResponse> responses = controlPlane.advanceCrossTierLogStartOffset(List.of(
+                new AdvanceCrossTierLogStartOffsetRequest(topicId, 0, 40),
+                new AdvanceCrossTierLogStartOffsetRequest(EXISTING_TOPIC_1_ID, 1, 60),
+                new AdvanceCrossTierLogStartOffsetRequest(NONEXISTENT_TOPIC_ID, 0, 5)
+            ));
+            assertThat(responses).containsExactly(
+                AdvanceCrossTierLogStartOffsetResponse.success(40),
+                AdvanceCrossTierLogStartOffsetResponse.success(60),
+                AdvanceCrossTierLogStartOffsetResponse.unknownTopicOrPartition()
+            );
+        }
+    }
+
     @Test
     void commitDuplicateFileNames() {
         final String objectKey = "a";
