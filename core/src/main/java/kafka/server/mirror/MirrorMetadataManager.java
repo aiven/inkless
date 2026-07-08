@@ -1642,7 +1642,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     FailedPartitionInfo fpi = failedPartitionInfo.get(new TopicPartition(tp, part));
                     partitionResult.setPreviousState(
                             fpi != null ? fpi.previousState().value() : MirrorPartitionState.UNKNOWN.value());
-                    partitionResult.setRetryAttempt(fpi != null ? fpi.retryAttempt() : 0);
+                    partitionResult.setRetryAttempt(fpi != null ? (short) fpi.retryAttempt() : (short) 0);
                     partitionResult.setErrorMessage(fpi != null ? fpi.errorMessage() : null);
                 }
                 partitionResults.add(partitionResult);

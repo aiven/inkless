@@ -484,7 +484,7 @@ class KafkaApis(val requestChannel: RequestChannel,
               .setDestinationOffset(if (isMirroring) lagInfoMap.get(topicPartition).map(_.destinationOffset).getOrElse(-1L) else -1L)
               .setLag(if (isMirroring) lagInfoMap.get(topicPartition).map(_.lag).getOrElse(-1L) else -1L)
               .setStateValue(state.name())
-              .setRetryAttempt(Option(failedInfo.get(topicPartition)).map(_.retryAttempt()).getOrElse(0.toShort))
+              .setRetryAttempt(Option(failedInfo.get(topicPartition)).map(_.retryAttempt().toShort).getOrElse(0.toShort))
               .setErrorMessage(Option(failedInfo.get(topicPartition)).map(_.errorMessage()).orNull)
 
             topicPartitions.partitions().add(partitionDetail)

@@ -37,6 +37,7 @@ import static org.apache.kafka.common.config.ConfigDef.Importance.HIGH;
 import static org.apache.kafka.common.config.ConfigDef.Importance.LOW;
 import static org.apache.kafka.common.config.ConfigDef.Importance.MEDIUM;
 import static org.apache.kafka.common.config.ConfigDef.Range.atLeast;
+import static org.apache.kafka.common.config.ConfigDef.Range.between;
 import static org.apache.kafka.common.config.ConfigDef.Type.INT;
 import static org.apache.kafka.common.config.ConfigDef.Type.LIST;
 import static org.apache.kafka.common.config.ConfigDef.Type.LONG;
@@ -524,7 +525,7 @@ public final class ClusterMirrorConfig {
                 .define(MIRROR_METADATA_REFRESH_INTERVAL_MS_CONFIG, LONG, MIRROR_METADATA_REFRESH_INTERVAL_MS_DEFAULT, atLeast(0L), MEDIUM, MIRROR_METADATA_REFRESH_INTERVAL_MS_DOC)
                 .define(MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_CONFIG, LONG, MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_DEFAULT, atLeast(1L), MEDIUM, MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_DOC)
                 .define(MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_CONFIG, LONG, MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_DEFAULT, atLeast(1L), MEDIUM, MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_DOC)
-                .define(MIRROR_FAILED_RETRY_MAX_ATTEMPTS_CONFIG, INT, MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DEFAULT, atLeast(0), MEDIUM, MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DOC)
+                .define(MIRROR_FAILED_RETRY_MAX_ATTEMPTS_CONFIG, INT, MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DEFAULT, between(0, Short.MAX_VALUE), MEDIUM, MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DOC)
                 .define(MIRROR_FETCH_BACKOFF_MS_CONFIG, LONG, MIRROR_FETCH_BACKOFF_MS_DEFAULT, atLeast(0L), MEDIUM, MIRROR_FETCH_BACKOFF_MS_DOC)
                 .define(MIRROR_FETCH_WAIT_MAX_MS_CONFIG, INT, MIRROR_FETCH_WAIT_MAX_MS_DEFAULT, atLeast(0), MEDIUM, MIRROR_FETCH_WAIT_MAX_MS_DOC)
                 .define(MIRROR_FETCH_MIN_BYTES_CONFIG, INT, MIRROR_FETCH_MIN_BYTES_DEFAULT, atLeast(0), MEDIUM, MIRROR_FETCH_MIN_BYTES_DOC)

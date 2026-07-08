@@ -911,7 +911,7 @@ public class ClusterMirrorCoordinator {
                 .setPartition(topicPartition.partition())
                 .setState(state.value())
                 .setPreviousState(fpi != null ? fpi.previousState().value() : MirrorPartitionState.UNKNOWN.value())
-                .setRetryAttempt(fpi != null ? fpi.retryAttempt() : 0)
+                .setRetryAttempt(fpi != null ? (short) fpi.retryAttempt() : (short) 0)
                 .setErrorMessage(fpi != null ? fpi.errorMessage() : null);
         var apiVersion = new ApiMessageAndVersion(val, MirrorPartitionStateValue.HIGHEST_SUPPORTED_VERSION);
         return CoordinatorRecord.record(key, apiVersion);
