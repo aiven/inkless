@@ -25,7 +25,7 @@ Choose your path based on what you want to do:
 | **Use prebuilt binaries**    | [Binary usage guide](QUICKSTART.md#using-prebuilt-binaries)   |
 | **Build from source**        | `make docker_build` ([details](QUICKSTART.md#using-a-locally-built-image))|
 
-See [Releases](RELEASES.md) for available versions.
+See [Releases](RELEASES.md) for active versions and release history.
 
 ## Documentation Index
 
