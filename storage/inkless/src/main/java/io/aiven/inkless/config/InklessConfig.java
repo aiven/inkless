@@ -174,7 +174,7 @@ public class InklessConfig extends AbstractConfig {
         + "The default value of 16 is designed as approximately half of the default fetch.data.thread.pool.size (32), "
         + "providing sufficient capacity for typical cold storage access patterns while leaving headroom for the hot path. "
         + "The queue capacity is automatically set to thread.pool.size * 100, providing burst buffering "
-        + "(e.g., 16 threads = 1600 queue capacity ≈ 8 seconds buffer at 200 req/s). "
+        + "(e.g., 16 threads = 1600 queue capacity ~= 8 seconds buffer at 200 req/s). "
         + "Tune based on lagging consumer SLA and expected load patterns.";
     // Default 16: Designed as half of default fetch.data.thread.pool.size (32), sufficient for typical
     // cold storage access patterns while leaving headroom for hot path. Tune based on lagging consumer SLA.
@@ -226,7 +226,7 @@ public class InklessConfig extends AbstractConfig {
         + FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG + ". "
         + "Capacity impact: hedges submit to the same executor as primaries (fetch.data.thread.pool.size for hot path, "
         + "fetch.lagging.consumer.thread.pool.size for cold path). "
-        + "Normal case: only tail-latency requests (exceeding threshold) trigger hedges — typically <5% of traffic. "
+        + "Normal case: only tail-latency requests (exceeding threshold) trigger hedges -- typically <5% of traffic. "
         + "Worst case: if all in-flight requests exceed the threshold, effective storage GET rate doubles "
         + "(one primary + one hedge per request), bounded by executor thread pool + queue capacity. "
         + "Monitor HedgeRequestRate to detect excessive hedging. If hedge rate is too high, increase this threshold.";
