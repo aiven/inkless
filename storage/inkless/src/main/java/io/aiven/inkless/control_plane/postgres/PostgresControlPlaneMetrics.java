@@ -38,7 +38,8 @@ public class PostgresControlPlaneMetrics implements Closeable {
         "TopicCreate", "TopicDelete", "FilesDelete", "ListOffsets",
         "DeleteRecords", "EnforceRetention", "GetFilesToDelete",
         "SafeDeleteFileCheck",
-        "GetLogInfo", "InitDisklessLog", "GetProducerState"
+        "GetLogInfo", "InitDisklessLog", "GetProducerState",
+        "AdvanceCrossTierLogStart"
     );
 
     /**
@@ -74,6 +75,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
     private final QueryMetrics initDisklessLogMetrics = new QueryMetrics("InitDisklessLog");
     private final QueryMetrics getProducerStateMetrics = new QueryMetrics("GetProducerState");
     private final QueryMetrics pruneDisklessLogsMetrics = new QueryMetrics("PruneDisklessLogs");
+    private final QueryMetrics advanceCrossTierLogStartMetrics = new QueryMetrics("AdvanceCrossTierLogStart");
 
     public PostgresControlPlaneMetrics(Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -139,6 +141,10 @@ public class PostgresControlPlaneMetrics implements Closeable {
         pruneDisklessLogsMetrics.record(duration);
     }
 
+    public void onAdvanceCrossTierLogStartCompleted(Long duration) {
+        advanceCrossTierLogStartMetrics.record(duration);
+    }
+
     @Override
     public void close() {
         findBatchesMetrics.remove();
@@ -156,6 +162,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
         initDisklessLogMetrics.remove();
         getProducerStateMetrics.remove();
         pruneDisklessLogsMetrics.remove();
+        advanceCrossTierLogStartMetrics.remove();
     }
 
     private class QueryMetrics {

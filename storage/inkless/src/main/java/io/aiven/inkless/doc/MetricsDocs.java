@@ -29,12 +29,14 @@ import java.util.TreeMap;
 
 import io.aiven.inkless.cache.BatchCoordinateCacheMetrics;
 import io.aiven.inkless.cache.CaffeineCacheMetricsRegistry;
+import io.aiven.inkless.cache.CrossTierLogStartCacheMetrics;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitorMetricsRegistry;
 import io.aiven.inkless.consume.InklessFetchMetrics;
 import io.aiven.inkless.consume.InklessFetchOffsetMetrics;
 import io.aiven.inkless.control_plane.postgres.PostgresConnectionPoolMetrics;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlaneMetrics;
+import io.aiven.inkless.delete.CrossTierLogStartReporterMetrics;
 import io.aiven.inkless.delete.FileCleanerMetrics;
 import io.aiven.inkless.delete.RetentionEnforcerMetrics;
 import io.aiven.inkless.metadata.ClientAzAwarenessMetrics;
@@ -92,6 +94,10 @@ public class MetricsDocs {
         out.println();
         out.println(toRstTable("io.aiven.inkless.delete", RetentionEnforcerMetrics.all()));
 
+        printHeading("CrossTierLogStartReporter metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.delete", CrossTierLogStartReporterMetrics.all()));
+
         // Metadata metrics
         printHeading("ClientAzAwareness metrics");
         out.println();
@@ -110,6 +116,10 @@ public class MetricsDocs {
         printHeading("BatchCoordinateCache metrics");
         out.println();
         out.println(toRstTable("io.aiven.inkless.cache", BatchCoordinateCacheMetrics.all()));
+
+        printHeading("CrossTierLogStartCache metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.cache", CrossTierLogStartCacheMetrics.all()));
 
         // Caffeine cache metrics
         printHeading("CaffeineCache metrics");
