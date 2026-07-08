@@ -37,13 +37,17 @@ import java.util.function.Supplier;
 import io.aiven.inkless.cache.BatchCoordinateCache;
 import io.aiven.inkless.cache.CaffeineBatchCoordinateCache;
 import io.aiven.inkless.cache.CaffeineCache;
+import io.aiven.inkless.cache.CaffeineCrossTierLogStartCache;
+import io.aiven.inkless.cache.CrossTierLogStartCache;
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.NullBatchCoordinateCache;
+import io.aiven.inkless.cache.NullCrossTierLogStartCache;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.delete.CrossTierLogStartReporter;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
@@ -68,6 +72,8 @@ public final class SharedState implements Closeable {
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache cache;
     private final BatchCoordinateCache batchCoordinateCache;
+    private final CrossTierLogStartCache crossTierLogStartCache;
+    private final CrossTierLogStartReporter crossTierLogStartReporter;
     private final BrokerTopicStats brokerTopicStats;
     private final Supplier<LogConfig> defaultTopicConfigs;
     private final Metrics storageMetrics;
@@ -87,6 +93,8 @@ public final class SharedState implements Closeable {
         final KeyAlignmentStrategy keyAlignmentStrategy,
         final ObjectCache cache,
         final BatchCoordinateCache batchCoordinateCache,
+        final CrossTierLogStartCache crossTierLogStartCache,
+        final CrossTierLogStartReporter crossTierLogStartReporter,
         final BrokerTopicStats brokerTopicStats,
         final Supplier<LogConfig> defaultTopicConfigs
     ) {
@@ -104,6 +112,8 @@ public final class SharedState implements Closeable {
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.cache = cache;
         this.batchCoordinateCache = batchCoordinateCache;
+        this.crossTierLogStartCache = crossTierLogStartCache;
+        this.crossTierLogStartReporter = crossTierLogStartReporter;
         this.brokerTopicStats = brokerTopicStats;
         this.defaultTopicConfigs = defaultTopicConfigs;
     }
@@ -126,6 +136,7 @@ public final class SharedState implements Closeable {
 
         CaffeineCache objectCache = null;
         BatchCoordinateCache batchCoordinateCache = null;
+        CrossTierLogStartCache crossTierLogStartCache = null;
         StorageBackend fetchStorage = null;
         StorageBackend laggingFetchStorage = null;
         StorageBackend produceStorage = null;
@@ -141,6 +152,9 @@ public final class SharedState implements Closeable {
             batchCoordinateCache = config.isBatchCoordinateCacheEnabled()
                 ? new CaffeineBatchCoordinateCache(config.batchCoordinateCacheTtl())
                 : new NullBatchCoordinateCache();
+            crossTierLogStartCache = config.isCrossTierLogStartCacheEnabled()
+                ? new CaffeineCrossTierLogStartCache(config.crossTierLogStartCacheTtl())
+                : new NullCrossTierLogStartCache();
 
             final MetricsReporter reporter = new JmxReporter();
             storageMetrics = new Metrics(
@@ -159,6 +173,7 @@ public final class SharedState implements Closeable {
             backgroundStorage = config.storage(storageMetrics);
             final var objectKeyCreator = ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked());
             final var keyAlignmentStrategy = new FixedBlockAlignment(config.fetchCacheBlockBytes());
+            final var crossTierLogStartReporter = new CrossTierLogStartReporter(metadata, controlPlane, crossTierLogStartCache);
             return new SharedState(
                 time,
                 brokerId,
@@ -174,6 +189,8 @@ public final class SharedState implements Closeable {
                 keyAlignmentStrategy,
                 objectCache,
                 batchCoordinateCache,
+                crossTierLogStartCache,
+                crossTierLogStartReporter,
                 brokerTopicStats,
                 defaultTopicConfigs
             );
@@ -184,6 +201,7 @@ public final class SharedState implements Closeable {
             Utils.closeQuietly(fetchStorage, "fetchStorage");
             Utils.closeQuietly(storageMetrics, "storageMetrics");
             Utils.closeQuietly(batchCoordinateCache, "batchCoordinateCache");
+            Utils.closeQuietly(crossTierLogStartCache, "crossTierLogStartCache");
             Utils.closeQuietly(objectCache, "objectCache");
             throw new RuntimeException("Failed to initialize SharedState", e);
         }
@@ -197,6 +215,7 @@ public final class SharedState implements Closeable {
         Utils.closeQuietly(fetchStorage, "fetchStorage");
         Utils.closeQuietly(storageMetrics, "storageMetrics");
         Utils.closeQuietly(batchCoordinateCache, "batchCoordinateCache");
+        Utils.closeQuietly(crossTierLogStartCache, "crossTierLogStartCache");
         Utils.closeQuietly(cache, "objectCache");
     }
 
@@ -238,6 +257,14 @@ public final class SharedState implements Closeable {
     
     public BatchCoordinateCache batchCoordinateCache() {
         return batchCoordinateCache;
+    }
+
+    public CrossTierLogStartCache crossTierLogStartCache() {
+        return crossTierLogStartCache;
+    }
+
+    public CrossTierLogStartReporter crossTierLogStartReporter() {
+        return crossTierLogStartReporter;
     }
 
     public BrokerTopicStats brokerTopicStats() {

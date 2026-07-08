@@ -155,6 +155,29 @@ Under ``inkless.``
   * Valid Values: [1,...]
   * Importance: low
 
+``consume.cross.tier.log.start.cache.enabled``
+  If true, the cross-tier log start offset cache is enabled. It caches the EARLIEST offset of consolidating diskless topics to avoid querying the control plane on every request.
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``consume.cross.tier.log.start.cache.ttl.ms``
+  Time to live in milliseconds for an entry in the cross-tier log start offset cache. A stale entry can only ever be too low (the safe direction), so this only bounds how quickly a retention advance becomes visible from non-leader brokers.
+
+  * Type: int
+  * Default: 10000 (10 seconds)
+  * Valid Values: [1,...]
+  * Importance: low
+
+``cross.tier.log.start.report.interval.ms``
+  The interval with which the leader reports the cross-tier (remote) log start offset of consolidating diskless partitions to the control plane. This is dwarfed by remote.log.manager.task.interval.ms (default 30s), which governs how often the underlying remote-retention observation is even produced, so raising this mainly trades off control-plane call frequency, not the effective staleness window.
+
+  * Type: int
+  * Default: 1000 (1 second)
+  * Valid Values: [1,...]
+  * Importance: low
+
 ``fetch.data.thread.pool.size``
   Thread pool size to concurrently fetch data files from remote storage
 
