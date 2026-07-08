@@ -46,6 +46,20 @@ private object ConsolidationStartState {
 
 private class ReconciliationException(message: String) extends RuntimeException(message)
 
+/**
+ * Starts and manages consolidation fetchers for diskless topics migrating from classic to consolidated storage.
+ *
+ * ==Invariant: diskless.enable and remote.storage.enable are set together==
+ * 
+ * The classic-to-diskless switch enforces this invariant atomically:
+ * a switched topic has both `diskless.enable=true` AND `remote.storage.enable=true` set together in the
+ * same controller batch. Therefore, a diskless topic is always consolidating (tiering to remote storage).
+ *
+ * This reconciler assumes the invariant holds. A topic that violates it (e.g., from pre-atomic-switch metadata)
+ * is marked Failed rather than silently dropping or growing the log unbounded.
+ *
+ * @see LogConfigTest.scala header for the full state machine and valid transitions
+ */
 class ConsolidationReconciler(replicaManager: ReplicaManager,
                               stateChangeLogger: StateChangeLogger,
                               consolidationMetrics: ConsolidationMetrics,
@@ -81,17 +95,13 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
   def startConsolidationFetchersForCaughtUpClassicPartitions(topicPartitions: Set[TopicPartition]): Unit = {
     val consolidatingDisklessPartitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     topicPartitions.foreach { tp =>
-      replicaManager.onlinePartition(tp).foreach { partition =>
-        // This hook is the only trigger for an untiered-diskless -> consolidated flip, since
-        // remote.storage.enable=true is a config-only change the leader-delta path never re-enters.
-        // The metadata cache behind isConsolidatingDisklessTopic can lag the config record that has
-        // already enabled remote on the local log, so also trust the partition's own log: a diskless
-        // topic whose local log has remote storage enabled is consolidating.
-        val isConsolidating = inklessMetadataView.isConsolidatingDisklessTopic(tp.topic) ||
-          (inklessMetadataView.isDisklessTopic(tp.topic) && partition.log.exists(_.remoteLogEnabled()))
-        if (isConsolidating) {
-          consolidatingDisklessPartitionsToStartFetching.put(tp, partition)
-        }
+      // Only diskless topics may be handed to the consolidation fetcher.
+      // The sole caller (ReplicaFetcherThread self-eviction, via ReplicaManager) selects partitions by
+      // seal state (committed seal + local LEO caught up), not by whether the topic is diskless,
+      // so this gate is where that precondition is established.
+      // Under the diskless+remote-storage invariant, a diskless topic is always consolidating.
+      if (inklessMetadataView.isDisklessTopic(tp.topic)) {
+        replicaManager.onlinePartition(tp).foreach(partition => consolidatingDisklessPartitionsToStartFetching.put(tp, partition))
       }
     }
     startConsolidationFetchers(consolidatingDisklessPartitionsToStartFetching)
@@ -129,6 +139,16 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
         ConsolidationStartState.Ready(initialFetchOffset(partition.localLogOrException))
       case PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING =>
         ConsolidationStartState.Retry(s"Skipping consolidation for $tp because classic-to-diskless migration is still pending")
+      case seal if seal >= 0 && !inklessMetadataView.isRemoteStorageEnabled(tp.topic) =>
+        // Unsupported state: a switched topic (seal >= 0) with remote storage off violates the invariant.
+        // This can only come from metadata written before the atomic switch enforcement.
+        // Mark Failed (not Retry) to prevent unbounded log growth — FailedPartitionsCount metric surfaces it.
+        // Recovery: operator must set remote.storage.enable=true and trigger a leader-epoch increment
+        // (restart/reassignment/preferred-leader-election) to re-run reconciliation.
+        ConsolidationStartState.Failed(new ReconciliationException(
+          s"Diskless topic $tp has remote storage disabled but was switched from classic " +
+            s"(violates diskless.enable implies remote.storage.enable); consolidation cannot start " +
+            s"(see DisklessWithoutRemoteStorageCount)"))
       case seal if seal >= 0 =>
         val log = partition.localLogOrException
         if (log.logEndOffset < seal) {

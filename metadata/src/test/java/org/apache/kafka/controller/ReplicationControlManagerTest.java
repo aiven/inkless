@@ -129,6 +129,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -176,6 +177,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -196,6 +198,7 @@ public class ReplicationControlManagerTest {
             private boolean disklessStorageSystemEnable = false;
             private boolean disklessManagedReplicasEnable = false;
             private boolean disklessRemoteStorageConsolidationEnabled = false;
+            private boolean disklessAllowFromClassicEnabled = false;
             private boolean classicRemoteStorageForceEnabled = false;
             private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
             private boolean disklessForceEnabled = false;
@@ -246,6 +249,11 @@ public class ReplicationControlManagerTest {
                 return this;
             }
 
+            Builder setDisklessAllowFromClassicEnabled(boolean enabled) {
+                this.disklessAllowFromClassicEnabled = enabled;
+                return this;
+            }
+
             Builder setClassicRemoteStorageForceEnabled(final boolean classicRemoteStorageForceEnabled) {
                 this.classicRemoteStorageForceEnabled = classicRemoteStorageForceEnabled;
                 return this;
@@ -276,6 +284,7 @@ public class ReplicationControlManagerTest {
                     disklessStorageSystemEnable,
                     disklessManagedReplicasEnable,
                     disklessRemoteStorageConsolidationEnabled,
+                    disklessAllowFromClassicEnabled,
                     classicRemoteStorageForceEnabled,
                     classicRemoteStorageForceExcludeTopicRegexes,
                     disklessForceEnabled,
@@ -309,6 +318,7 @@ public class ReplicationControlManagerTest {
             boolean disklessStorageSystemEnable,
             boolean disklessManagedReplicasEnable,
             boolean disklessRemoteStorageConsolidationEnabled,
+            boolean disklessAllowFromClassicEnabled,
             final boolean classicRemoteStorageForceEnabled,
             final List<String> classicRemoteStorageForceExcludeTopicRegexes,
             final boolean disklessForceEnabled,
@@ -360,6 +370,7 @@ public class ReplicationControlManagerTest {
                 setDisklessStorageSystemEnabled(disklessStorageSystemEnable).
                 setDisklessManagedReplicasEnabled(disklessManagedReplicasEnable).
                 setDisklessRemoteStorageConsolidationEnabled(disklessRemoteStorageConsolidationEnabled).
+                setDisklessAllowFromClassicEnabled(disklessAllowFromClassicEnabled).
                 setClassicRemoteStorageForceEnabled(classicRemoteStorageForceEnabled).
                 setClassicRemoteStorageForceExcludeTopicRegexes(classicRemoteStorageForceExcludeTopicRegexes).
                 setDisklessForceEnabled(disklessForceEnabled).
@@ -6303,6 +6314,409 @@ public class ReplicationControlManagerTest {
             assertEquals(Errors.INVALID_CONFIG.code(), result.response().topics().find("foo").errorCode(),
                 "Diskless topic with remote.storage.enable=false should be rejected");
         }
+
+        // ---- classic-to-diskless switch: auto-enable remote-storage atomically ----
+
+        private ReplicationControlTestContext.Builder consolidationSwitchCtxBuilder() {
+            return new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessAllowFromClassicEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(true);
+        }
+
+        private Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> setDisklessTrue(String topic) {
+            return Map.of(new ConfigResource(ConfigResource.Type.TOPIC, topic),
+                Map.of(DISKLESS_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+        }
+
+        @Test
+        void testSwitchInjectsRemoteStorageEnableForClassicUntiered() {
+            // A classic-untiered topic switching to diskless gets remote.storage.enable=true injected
+            // into the incremental AlterConfigs request, so it is validated and persisted in the same
+            // atomic batch as diskless.enable (mirroring topic creation).
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> augmented =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForSwitch(setDisklessTrue("foo"));
+
+            Entry<AlterConfigOp.OpType, String> rs = augmented.get(resource).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG);
+            assertNotNull(rs, "remote.storage.enable should be injected on the switch");
+            assertEquals(AlterConfigOp.OpType.SET, rs.getKey());
+            assertEquals("true", rs.getValue());
+            // diskless.enable is preserved untouched
+            assertEquals("true", augmented.get(resource).get(DISKLESS_ENABLE_CONFIG).getValue());
+        }
+
+        @Test
+        void testSwitchDoesNotDuplicateRemoteStorageForClassicTiered() {
+            // A classic-tiered topic (remote.storage.enable already true) switching to diskless must NOT
+            // get a second remote.storage.enable change injected — RS is already on.
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), NONE.code());
+
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> input = setDisklessTrue("foo");
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> augmented =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForSwitch(input);
+
+            // No augmentation: returns the original map unchanged.
+            assertSame(input, augmented);
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            assertFalse(augmented.get(resource).containsKey(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+        }
+
+        @Test
+        void testSwitchPreservesExplicitRemoteStorageInRequest() {
+            // When the switch request already carries remote.storage.enable explicitly, it is left as-is
+            // (validation rejects an explicit false; an explicit true needs no help).
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> input = Map.of(
+                resource, Map.of(
+                    DISKLESS_ENABLE_CONFIG, new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true"),
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "false")));
+
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> augmented =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForSwitch(input);
+            assertSame(input, augmented);
+            assertEquals("false", augmented.get(resource).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG).getValue());
+        }
+
+        @Test
+        void testSwitchInjectsRemoteStorageEnableWhenRequestDeletesIt() {
+            // A switch request that DELETEs remote.storage.enable would leave the topic untiered
+            // diskless. The DELETE is not treated as "provided": remote.storage.enable=true is
+            // injected (overwriting the DELETE) so the switch stays atomic.
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> input = Map.of(
+                resource, Map.of(
+                    DISKLESS_ENABLE_CONFIG, new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true"),
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.DELETE, null)));
+
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> augmented =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForSwitch(input);
+
+            Entry<AlterConfigOp.OpType, String> rs = augmented.get(resource).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG);
+            assertEquals(AlterConfigOp.OpType.SET, rs.getKey(), "the DELETE should be overwritten with a SET");
+            assertEquals("true", rs.getValue());
+        }
+
+        @Test
+        void testSwitchInjectsRemoteStorageEnableWhenRequestSetsNullValue() {
+            // A valueless SET (null value) on remote.storage.enable strips the override just like a
+            // DELETE, so it is not treated as "provided": remote.storage.enable=true is injected
+            // (overwriting the null SET) to keep the switch atomic.
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> input = Map.of(
+                resource, Map.of(
+                    DISKLESS_ENABLE_CONFIG, new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true"),
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, null)));
+
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> augmented =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForSwitch(input);
+
+            Entry<AlterConfigOp.OpType, String> rs = augmented.get(resource).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG);
+            assertEquals(AlterConfigOp.OpType.SET, rs.getKey());
+            assertEquals("true", rs.getValue(), "a null-valued SET should be overwritten with SET true");
+        }
+
+        @Test
+        void testSwitchOverridesRemoteStorageDeleteForClassicTiered() {
+            // A classic-tiered topic (remote.storage.enable already true) whose switch request DELETEs
+            // remote.storage.enable must still get true injected: the DELETE would otherwise strip the
+            // existing override and leave the topic untiered diskless.
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), NONE.code());
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> input = Map.of(
+                resource, Map.of(
+                    DISKLESS_ENABLE_CONFIG, new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true"),
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.DELETE, null)));
+
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> augmented =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForSwitch(input);
+
+            Entry<AlterConfigOp.OpType, String> rs = augmented.get(resource).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG);
+            assertEquals(AlterConfigOp.OpType.SET, rs.getKey(), "the DELETE should be overwritten with a SET");
+            assertEquals("true", rs.getValue());
+        }
+
+        @Test
+        void testSwitchInjectsRemoteStorageEnableWhenConsolidationDisabled() {
+            // The injection is gated on the switch flag, not consolidation: even with consolidation off,
+            // a classic-untiered switch gets remote.storage.enable=true, so a switched topic is never
+            // untiered diskless. It consolidates once consolidation is enabled (which requires the switch
+            // flag), without any remote-storage re-enable step.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessAllowFromClassicEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(false)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> augmented =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForSwitch(setDisklessTrue("foo"));
+
+            Entry<AlterConfigOp.OpType, String> rs = augmented.get(resource).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG);
+            assertNotNull(rs, "remote.storage.enable should be injected on the switch even without consolidation");
+            assertEquals(AlterConfigOp.OpType.SET, rs.getKey());
+            assertEquals("true", rs.getValue());
+        }
+
+        @Test
+        void testSwitchNoInjectionWhenAllowFromClassicDisabled() {
+            // The switch flag gates the injection: with allow-from-classic off there is no switch to
+            // augment (the switch itself is rejected elsewhere), so the request is returned unchanged.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, false)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(false)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> input = setDisklessTrue("foo");
+            assertSame(input, ctx.replicationControl.maybeAddRemoteStorageEnableForSwitch(input));
+        }
+
+        @Test
+        void testSwitchNoInjectionForAlreadyDisklessTopic() {
+            // A topic that is already diskless is not "switching"; no RS change is injected.
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", 1, (short) 1,
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"), NONE.code());
+
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> input = setDisklessTrue("foo");
+            assertSame(input, ctx.replicationControl.maybeAddRemoteStorageEnableForSwitch(input));
+        }
+
+        @Test
+        void testLegacyAlterConfigsSwitchInjectsRemoteStorageEnableForClassicUntiered() {
+            // Legacy AlterConfigs API (full config map) on a classic-untiered topic switching to diskless
+            // also injects remote.storage.enable=true.
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, String>> input = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
+            Map<ConfigResource, Map<String, String>> augmented =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForLegacyAlterConfigs(input);
+
+            assertEquals("true", augmented.get(resource).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG),
+                "remote.storage.enable should be injected on the legacy AlterConfigs switch");
+            assertEquals("true", augmented.get(resource).get(DISKLESS_ENABLE_CONFIG));
+        }
+
+        @Test
+        void testLegacyAlterConfigsSwitchRepinsRemoteStorageForClassicTiered() {
+            // A classic-tiered topic (remote.storage.enable already true) switched via legacy AlterConfigs
+            // that omits remote.storage.enable: the full-map replace would implicitly delete the override
+            // and leave the topic untiered diskless. Injection re-pins remote.storage.enable=true. The
+            // injected value equals the stored value, so no config record results; it only keeps the key
+            // present so it is not implicitly deleted.
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), NONE.code());
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, String>> input = Map.of(
+                resource, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
+            Map<ConfigResource, Map<String, String>> augmented =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForLegacyAlterConfigs(input);
+
+            assertEquals("true", augmented.get(resource).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG),
+                "remote.storage.enable must be re-pinned so the full-map replace does not delete it");
+            assertEquals("true", augmented.get(resource).get(DISKLESS_ENABLE_CONFIG));
+        }
+
+        @Test
+        void testLegacyAlterConfigsSwitchInjectsRemoteStorageEnableWhenValueIsNull() {
+            // A legacy switch request carrying remote.storage.enable with a null value would strip the
+            // override on the full-map replace, so it is injected as true (not treated as "provided").
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<String, String> configs = new HashMap<>();
+            configs.put(DISKLESS_ENABLE_CONFIG, "true");
+            configs.put(REMOTE_LOG_STORAGE_ENABLE_CONFIG, null);
+            Map<ConfigResource, Map<String, String>> input = Map.of(resource, configs);
+
+            Map<ConfigResource, Map<String, String>> augmented =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForLegacyAlterConfigs(input);
+
+            assertEquals("true", augmented.get(resource).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG),
+                "a null remote.storage.enable value must be overwritten with true");
+        }
+
+        @Test
+        void testLegacyAlterConfigsSwitchPreservesExplicitRemoteStorageFalse() {
+            // An explicit remote.storage.enable=false in a legacy switch request is left as-is (not
+            // overwritten) so validation rejects the contradictory switch (diskless with remote off).
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, String>> input = Map.of(
+                resource, Map.of(
+                    DISKLESS_ENABLE_CONFIG, "true",
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
+            Map<ConfigResource, Map<String, String>> augmented =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForLegacyAlterConfigs(input);
+
+            assertSame(input, augmented);
+            assertEquals("false", augmented.get(resource).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+        }
+
+        @Test
+        void testLegacyAlterConfigsImplicitDisklessDeletionRejectedNoHalfState() {
+            // A legacy AlterConfigs that omits diskless.enable on a classic topic (cluster default
+            // diskless) would implicitly delete the classic pin. That implicit switch is rejected up
+            // front, matching the incremental DELETE guard. Even though remote-storage injection runs
+            // before validation, the whole request is rejected, so no config records and no switch-pending
+            // markers are produced — no half-applied state.
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder()
+                .setDefaultDisklessEnable(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "false"), NONE.code());
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            // Legacy request omits diskless.enable (only carries an unrelated config).
+            Map<ConfigResource, Map<String, String>> newConfigs = Map.of(
+                resource, Map.of(SEGMENT_BYTES_CONFIG, "1048576"));
+
+            // Drive the same wiring QuorumController.legacyAlterConfigs uses.
+            Map<ConfigResource, Map<String, String>> effective =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForLegacyAlterConfigs(newConfigs);
+            ControllerResult<Map<ConfigResource, ApiError>> configResult =
+                ctx.configurationControl.legacyAlterConfigs(effective, false,
+                    r -> ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(r, effective));
+
+            assertEquals(Errors.INVALID_CONFIG, configResult.response().get(resource).error(),
+                "Implicit diskless.enable deletion via legacy AlterConfigs must be rejected");
+            assertTrue(configResult.response().get(resource).message().contains("not allowed to delete"),
+                "Expected delete-rejection message, got: " + configResult.response().get(resource).message());
+            assertTrue(configResult.records().isEmpty(),
+                "Rejected legacy AlterConfigs must not emit config records");
+
+            List<ApiMessageAndVersion> migrationRecords =
+                ctx.replicationControl.markClassicToDisklessSwitchStartedForLegacyAlterConfigs(
+                    effective, configResult.response());
+            assertTrue(migrationRecords.isEmpty(),
+                "Rejected implicit switch must not emit switch-pending markers");
+        }
+
+        @Test
+        void testSwitchCommitsRemoteStorageDisklessAndPendingInOneBatch() {
+            // The load-bearing invariant: on a classic-untiered switch, the augmented
+            // remote.storage.enable=true ConfigRecord, the diskless.enable=true ConfigRecord,
+            // and the per-partition PENDING PartitionChangeRecords must all land in ONE atomic batch.
+            // This drives the same wiring QuorumController.incrementalAlterConfigs uses
+            // (augment, validate, then merge with the marker records),
+            // and asserts all three record kinds co-commit.
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            CreatableTopicResult foo = ctx.createTestTopic("foo",
+                new int[][] {new int[] {0, 1, 2}, new int[] {1, 2, 0}});
+            Uuid topicId = foo.topicId();
+
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> requested = setDisklessTrue("foo");
+
+            // 1. Augment before validating (QuorumController step 1).
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> effective =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForSwitch(requested);
+
+            // 2. Validate + generate config records (QuorumController step 2).
+            ControllerResult<Map<ConfigResource, ApiError>> configResult =
+                ctx.configurationControl.incrementalAlterConfigs(effective, false,
+                    resource -> ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, effective));
+            assertEquals(ApiError.NONE,
+                configResult.response().get(new ConfigResource(ConfigResource.Type.TOPIC, "foo")));
+
+            // 3. Generate the per-partition switch-pending markers (QuorumController step 3).
+            List<ApiMessageAndVersion> migrationRecords =
+                ctx.replicationControl.markClassicToDisklessSwitchStarted(effective, configResult.response());
+
+            // 4. Merge into the one batch QuorumController commits via ControllerResult.atomicOf.
+            List<ApiMessageAndVersion> batch = new ArrayList<>();
+            batch.addAll(configResult.records());
+            batch.addAll(migrationRecords);
+
+            List<ConfigRecord> configRecords = batch.stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .toList();
+            assertTrue(configRecords.stream()
+                    .anyMatch(r -> r.name().equals(DISKLESS_ENABLE_CONFIG) && r.value().equals("true")),
+                "diskless.enable=true ConfigRecord must be in the batch");
+            assertTrue(configRecords.stream()
+                    .anyMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")),
+                "remote.storage.enable=true ConfigRecord must be in the batch");
+
+            List<PartitionChangeRecord> pendingRecords = batch.stream()
+                .filter(m -> m.message() instanceof PartitionChangeRecord)
+                .map(m -> (PartitionChangeRecord) m.message())
+                .filter(r -> r.topicId().equals(topicId))
+                .filter(r -> InitDisklessLogFields.decodeClassicToDisklessStartOffset(r.unknownTaggedFields())
+                    == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+                .toList();
+            assertEquals(2, pendingRecords.size(),
+                "both partitions must get a PENDING PartitionChangeRecord in the same batch");
+
+            // Replaying the whole batch leaves a coherent diskless topic (no half-applied state).
+            ctx.replay(batch);
+            assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
+                ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+        }
     }
 
     @Nested
@@ -7244,49 +7658,11 @@ public class ReplicationControlManagerTest {
         }
 
         @Test
-        public void testLegacyAlterConfigsRejectsImplicitSwitchWhenUnderReplicated() {
+        public void testLegacyAlterConfigsRejectsImplicitDisklessEnableDeletion() {
             // Legacy AlterConfigs replaces the entire config map. If a topic has
             // diskless.enable=false and the request omits it, the override would be deleted,
-            // switching to diskless via broker default. The precondition check must
-            // detect this implicit switch and reject it when partitions are unhealthy.
-            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
-                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
-                .setDisklessStorageSystemEnabled(true)
-                .setDefaultDisklessEnable(true)
-                .build();
-            ctx.registerBrokers(0, 1, 2);
-            ctx.unfenceBrokers(0, 1, 2);
-            Uuid fooId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
-                Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0).topicId();
-
-            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
-            assertEquals("false", ctx.configurationControl.currentTopicConfig("foo").get(DISKLESS_ENABLE_CONFIG));
-
-            // Make the partition under-replicated
-            ctx.fenceBrokers(2);
-            PartitionRegistration partition = ctx.replicationControl.getPartition(fooId, 0);
-            assertTrue(partition.isr.length < partition.replicas.length);
-
-            // Legacy AlterConfigs with only retention.ms (omits diskless.enable).
-            // Since this would implicitly switch via broker default and the partition
-            // is under-replicated, it must be rejected.
-            ControllerResult<Map<ConfigResource, ApiError>> legacyResult =
-                ctx.configurationControl.legacyAlterConfigs(
-                    Map.of(resource, Map.of("retention.ms", "86400000")),
-                    false,
-                    r -> ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(
-                        r, Map.of(resource, Map.of("retention.ms", "86400000"))));
-
-            assertEquals(Errors.INVALID_CONFIG, legacyResult.response().get(resource).error(),
-                "Legacy AlterConfigs should reject implicit diskless switch when under-replicated");
-            assertTrue(legacyResult.response().get(resource).message().contains("under-replicated"),
-                "Expected 'under-replicated' in: " + legacyResult.response().get(resource).message());
-        }
-
-        @Test
-        public void testLegacyAlterConfigsEmitsSwitchRecordsForImplicitSwitch() {
-            // When partitions are healthy and legacy AlterConfigs implicitly enables diskless
-            // via override deletion, switch-pending records must be emitted.
+            // switching to diskless via broker default. This must be rejected like an
+            // incremental DELETE of diskless.enable — a switch must be an explicit diskless.enable=true.
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
                 .setDisklessStorageSystemEnabled(true)
@@ -7298,27 +7674,74 @@ public class ReplicationControlManagerTest {
                 Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0);
 
             ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            assertEquals("false", ctx.configurationControl.currentTopicConfig("foo").get(DISKLESS_ENABLE_CONFIG));
 
             // Legacy AlterConfigs with only retention.ms (omits diskless.enable).
-            // Partitions are healthy, so the implicit switch should succeed and produce
-            // switch-pending records.
+            // Since this would delete diskless.enable=false, it must be rejected.
             Map<ConfigResource, Map<String, String>> newConfigs =
                 Map.of(resource, Map.of("retention.ms", "86400000"));
             ControllerResult<Map<ConfigResource, ApiError>> legacyResult =
                 ctx.configurationControl.legacyAlterConfigs(newConfigs, false,
                     r -> ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(
                         r, newConfigs));
-            assertEquals(ApiError.NONE, legacyResult.response().get(resource));
 
-            // Call before replay (same order as QuorumController) — the override still
-            // exists in configData at this point.
+            assertEquals(Errors.INVALID_CONFIG, legacyResult.response().get(resource).error(),
+                "Legacy AlterConfigs should reject implicit diskless.enable deletion");
+            assertTrue(legacyResult.response().get(resource).message().contains("not allowed to delete"),
+                "Expected delete rejection in: " + legacyResult.response().get(resource).message());
+            assertTrue(legacyResult.records().isEmpty(),
+                "Rejected legacy AlterConfigs must not emit config records");
+
             List<ApiMessageAndVersion> switchRecords =
                 ctx.replicationControl.markClassicToDisklessSwitchStartedForLegacyAlterConfigs(
                     newConfigs, legacyResult.response());
-            assertFalse(switchRecords.isEmpty(), "Expected switch-pending records for implicit diskless switch");
+            assertTrue(switchRecords.isEmpty(),
+                "Rejected implicit diskless deletion must not emit switch-pending records");
+        }
 
-            ctx.replay(legacyResult.records());
-            ctx.replay(switchRecords);
+        @Test
+        public void testLegacyAlterConfigsRejectsExplicitDisklessEnableNullDeletion() {
+            // The legacy AlterConfigs wire format allows null values (AlterConfigsRequest.json
+            // nullableVersions: "0+"). An explicit diskless.enable=null lands in
+            // recordsExplicitlyAltered and must be rejected, same as an implicit omission.
+            // Without this guard, the deletion would silently remove the diskless.enable override;
+            // with defaultDisklessEnable=true the controller would treat the topic as diskless
+            // without RS injection or switch-pending markers.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDefaultDisklessEnable(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "false"), (short) 0);
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            assertEquals("false", ctx.configurationControl.currentTopicConfig("foo").get(DISKLESS_ENABLE_CONFIG));
+
+            // Legacy AlterConfigs with diskless.enable=null (explicit null, not omission).
+            Map<String, String> explicitNull = new HashMap<>();
+            explicitNull.put(DISKLESS_ENABLE_CONFIG, null);
+            explicitNull.put("retention.ms", "86400000");
+            Map<ConfigResource, Map<String, String>> newConfigs = Map.of(resource, explicitNull);
+            ControllerResult<Map<ConfigResource, ApiError>> legacyResult =
+                ctx.configurationControl.legacyAlterConfigs(newConfigs, false,
+                    r -> ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(
+                        r, newConfigs));
+
+            assertEquals(Errors.INVALID_CONFIG, legacyResult.response().get(resource).error(),
+                "Legacy AlterConfigs should reject explicit diskless.enable=null");
+            assertTrue(legacyResult.response().get(resource).message().contains("not allowed to delete"),
+                "Expected delete rejection in: " + legacyResult.response().get(resource).message());
+            assertTrue(legacyResult.records().isEmpty(),
+                "Rejected request must not emit config records");
+
+            List<ApiMessageAndVersion> switchRecords =
+                ctx.replicationControl.markClassicToDisklessSwitchStartedForLegacyAlterConfigs(
+                    newConfigs, legacyResult.response());
+            assertTrue(switchRecords.isEmpty(),
+                "Rejected explicit null diskless deletion must not emit switch-pending records");
         }
 
         @Test

@@ -536,10 +536,6 @@ class DynamicConfigChangeUnitTest {
     when(replicaManager.remoteLogManager).thenReturn(Some(rlm))
     when(replicaManager.metadataCache).thenReturn(metadataCache)
     when(metadataCache.getTopicId(topic)).thenReturn(topicUuid)
-    // Classic-tiered topic: the consolidation hook must not fire for a non-diskless topic.
-    val inklessMetadataView = mock(classOf[kafka.server.metadata.InklessMetadataView])
-    when(inklessMetadataView.isDisklessTopic(topic)).thenReturn(false)
-    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
 
     val tp0 = new TopicPartition(topic, 0)
     val log0: UnifiedLog = mock(classOf[UnifiedLog])
@@ -568,87 +564,6 @@ class DynamicConfigChangeUnitTest {
     configHandler.maybeUpdateRemoteLogComponents(topic, Seq(log0, log1), isRemoteLogEnabledBeforeUpdate, false)
     assertEquals(Collections.singleton(partition0), leaderPartitionsArg.getValue)
     assertEquals(Collections.singleton(partition1), followerPartitionsArg.getValue)
-    verify(replicaManager, never()).startConsolidationFetchersForCaughtUpClassicPartitions(any())
-  }
-
-  @Test
-  def testEnableRemoteLogStorageOnDisklessTopicStartsConsolidation(): Unit = {
-    // A classic -> consolidated switch flips diskless.enable=true (sealing the classic log) and
-    // remote.storage.enable=true in separate controller deltas, with remote storage landing after
-    // the seal as a config-only change. This hook starts consolidation when remote storage flips on
-    // for a (now consolidating) diskless topic, since the leader-delta path no longer re-runs.
-    val topic = "diskless-topic"
-    val topicUuid = Uuid.randomUuid()
-    val rlm: RemoteLogManager = mock(classOf[RemoteLogManager])
-    val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
-    val metadataCache = mock(classOf[MetadataCache])
-    when(replicaManager.remoteLogManager).thenReturn(Some(rlm))
-    when(replicaManager.metadataCache).thenReturn(metadataCache)
-    when(metadataCache.getTopicId(topic)).thenReturn(topicUuid)
-    val inklessMetadataView = mock(classOf[kafka.server.metadata.InklessMetadataView])
-    when(inklessMetadataView.isDisklessTopic(topic)).thenReturn(true)
-    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
-
-    val tp0 = new TopicPartition(topic, 0)
-    val log0: UnifiedLog = mock(classOf[UnifiedLog])
-    val partition0: Partition = mock(classOf[Partition])
-    when(log0.topicPartition).thenReturn(tp0)
-    when(log0.remoteLogEnabled()).thenReturn(true)
-    when(partition0.isLeader).thenReturn(true)
-    when(partition0.topicPartition).thenReturn(tp0)
-    when(replicaManager.onlinePartition(tp0)).thenReturn(Some(partition0))
-    when(log0.config).thenReturn(new LogConfig(Collections.emptyMap()))
-
-    val tp1 = new TopicPartition(topic, 1)
-    val log1: UnifiedLog = mock(classOf[UnifiedLog])
-    val partition1: Partition = mock(classOf[Partition])
-    when(log1.topicPartition).thenReturn(tp1)
-    when(log1.remoteLogEnabled()).thenReturn(true)
-    when(partition1.isLeader).thenReturn(false)
-    when(partition1.topicPartition).thenReturn(tp1)
-    when(replicaManager.onlinePartition(tp1)).thenReturn(Some(partition1))
-    when(log1.config).thenReturn(new LogConfig(Collections.emptyMap()))
-
-    doNothing().when(rlm).onLeadershipChange(any(), any(), any())
-
-    val consolidatingArg: ArgumentCaptor[Set[TopicPartition]] = ArgumentCaptor.forClass(classOf[Set[TopicPartition]])
-    doNothing().when(replicaManager).startConsolidationFetchersForCaughtUpClassicPartitions(consolidatingArg.capture())
-
-    val isRemoteLogEnabledBeforeUpdate = false
-    val configHandler: TopicConfigHandler = new TopicConfigHandler(replicaManager, null, null)
-    configHandler.maybeUpdateRemoteLogComponents(topic, Seq(log0, log1), isRemoteLogEnabledBeforeUpdate, false)
-
-    // Both the leader and the follower partition are handed to the reconciler, which decides per
-    // partition whether they are ready to consolidate (at/above the seal) or must keep replicating.
-    assertEquals(Set(tp0, tp1), consolidatingArg.getValue)
-  }
-
-  @Test
-  def testEnableRemoteLogStorageOnAlreadyEnabledDisklessTopicDoesNotStartConsolidation(): Unit = {
-    // Remote storage was already on (e.g. the leader-delta path already started consolidation at the
-    // seal commit, or this is an unrelated config edit): the false->true transition guard must keep
-    // this from redundantly kicking off consolidation again.
-    val topic = "diskless-topic"
-    val rlm: RemoteLogManager = mock(classOf[RemoteLogManager])
-    val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
-    when(replicaManager.remoteLogManager).thenReturn(Some(rlm))
-    val inklessMetadataView = mock(classOf[kafka.server.metadata.InklessMetadataView])
-    when(inklessMetadataView.isDisklessTopic(topic)).thenReturn(true)
-    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
-
-    val tp0 = new TopicPartition(topic, 0)
-    val log0: UnifiedLog = mock(classOf[UnifiedLog])
-    val partition0: Partition = mock(classOf[Partition])
-    when(log0.topicPartition).thenReturn(tp0)
-    when(log0.remoteLogEnabled()).thenReturn(true)
-    when(partition0.isLeader).thenReturn(true)
-    when(replicaManager.onlinePartition(tp0)).thenReturn(Some(partition0))
-    when(log0.config).thenReturn(new LogConfig(Collections.emptyMap()))
-
-    val isRemoteLogEnabledBeforeUpdate = true
-    val configHandler: TopicConfigHandler = new TopicConfigHandler(replicaManager, null, null)
-    configHandler.maybeUpdateRemoteLogComponents(topic, Seq(log0), isRemoteLogEnabledBeforeUpdate, false)
-    verify(replicaManager, never()).startConsolidationFetchersForCaughtUpClassicPartitions(any())
   }
 
   @Test
