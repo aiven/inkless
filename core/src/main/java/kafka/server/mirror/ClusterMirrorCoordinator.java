@@ -390,7 +390,7 @@ public class ClusterMirrorCoordinator {
             FailedPartitionInfo fpi = metadataManager.failedPartitionInfo().get(tp);
             int attempt = fpi != null ? fpi.retryAttempt() : 1;
             if (attempt == MIRROR_TERMINAL_FAILED_ATTEMPT) {
-                log.debug("Skip partition {} because it is in terminal failed state, requires manual intervention.", tp);
+                log.debug("Skipping retry for partition {} because it is in terminal failed state, requires manual intervention.", tp);
                 return;
             }
             if (attempt >= maxAttempts) {

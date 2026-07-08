@@ -617,7 +617,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 || curState == MirrorPartitionState.FAILED) {
             FailedPartitionInfo fpi = failedPartitionInfo.get(tp);
             if (fpi != null && fpi.retryAttempt() == MIRROR_TERMINAL_FAILED_ATTEMPT) {
-                log.debug("Skip partition {} because it is in terminal failed state, requires manual intervention.", tp);
+                log.debug("Skipping state transition for partition {} because it is in terminal failed state, requires manual intervention.", tp);
                 return;
             }
             transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION);
