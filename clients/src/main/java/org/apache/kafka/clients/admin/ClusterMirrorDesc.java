@@ -88,10 +88,9 @@ public class ClusterMirrorDesc {
         private final String state;
         private final short retryAttempt;
         private final String errorMessage;
-        private final int lastMirrorEpoch;
 
         public LeaderStateDesc(TopicPartition topicPartition, long sourceOffset, long destinationOffset,
-                               long lag, String state, short retryAttempt, String errorMessage, int lastMirrorEpoch) {
+                               long lag, String state, short retryAttempt, String errorMessage) {
             this.topicPartition = topicPartition;
             this.sourceOffset = sourceOffset;
             this.destinationOffset = destinationOffset;
@@ -99,7 +98,6 @@ public class ClusterMirrorDesc {
             this.state = state;
             this.retryAttempt = retryAttempt;
             this.errorMessage = errorMessage;
-            this.lastMirrorEpoch = lastMirrorEpoch;
         }
 
         public TopicPartition topicPartition() {
@@ -130,10 +128,6 @@ public class ClusterMirrorDesc {
             return errorMessage;
         }
 
-        public int lastMirrorEpoch() {
-            return lastMirrorEpoch;
-        }
-
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
@@ -143,7 +137,6 @@ public class ClusterMirrorDesc {
                    destinationOffset == that.destinationOffset &&
                    lag == that.lag &&
                    retryAttempt == that.retryAttempt &&
-                   lastMirrorEpoch == that.lastMirrorEpoch &&
                    Objects.equals(topicPartition, that.topicPartition) &&
                    Objects.equals(state, that.state) &&
                    Objects.equals(errorMessage, that.errorMessage);
@@ -151,7 +144,7 @@ public class ClusterMirrorDesc {
 
         @Override
         public int hashCode() {
-            return Objects.hash(topicPartition, sourceOffset, destinationOffset, lag, state, retryAttempt, errorMessage, lastMirrorEpoch);
+            return Objects.hash(topicPartition, sourceOffset, destinationOffset, lag, state, retryAttempt, errorMessage);
         }
 
         @Override
@@ -164,7 +157,6 @@ public class ClusterMirrorDesc {
                    ", state='" + state + '\'' +
                    ", retryAttempt=" + retryAttempt +
                    ", errorMessage='" + errorMessage + '\'' +
-                   ", lastMirrorEpoch=" + lastMirrorEpoch +
                    '}';
         }
     }

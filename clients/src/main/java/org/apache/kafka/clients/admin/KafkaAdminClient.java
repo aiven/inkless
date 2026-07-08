@@ -5435,8 +5435,7 @@ public class KafkaAdminClient extends AdminClient {
                                         partition.lag(),
                                         partition.stateValue(),
                                         partition.retryAttempt(),
-                                        partition.errorMessage(),
-                                        partition.lastMirrorEpoch()
+                                        partition.errorMessage()
                                 );
                         partitions.add(leaderState);
                     }

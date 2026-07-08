@@ -457,7 +457,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         // Each broker reports partitions it's responsible for to avoid duplicates
         val lagInfoMap = replicaManager.getMirrorLagInfo(mirrorName)
         val partitionStates = clusterMirrorCoordinator.getMirrorStates(mirrorName).asScala
-        val lastMirrorEpoch = clusterMirrorCoordinator.getLastMirrorEpochs(mirrorName)
         val failedInfo = clusterMirrorCoordinator.getFailedPartitionInfo()
 
         // Report partition if: (1) we have lag info, OR (2) we're the partition leader and have no lag info
@@ -487,7 +486,6 @@ class KafkaApis(val requestChannel: RequestChannel,
               .setStateValue(state.name())
               .setRetryAttempt(Option(failedInfo.get(topicPartition)).map(_.retryAttempt()).getOrElse(0.toShort))
               .setErrorMessage(Option(failedInfo.get(topicPartition)).map(_.errorMessage()).orNull)
-              .setLastMirrorEpoch(lastMirrorEpoch.getOrDefault(topicPartition, -1))
 
             topicPartitions.partitions().add(partitionDetail)
           }

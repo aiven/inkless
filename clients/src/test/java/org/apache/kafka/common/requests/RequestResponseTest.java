@@ -1290,7 +1290,6 @@ public class RequestResponseTest {
                                         .setPartitionIndex(0)
                                         .setStateValue("MIRRORING")
                                         .setLag(100L)
-                                        .setLastMirrorEpoch(0)
                                         .setDestinationOffset(0)
                                         .setSourceOffset(100)
                                 ))

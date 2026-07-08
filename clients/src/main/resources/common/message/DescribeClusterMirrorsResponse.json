@@ -54,10 +54,7 @@
           { "name": "RetryAttempt", "type": "int16", "versions": "0+", "default": "0",
             "about": "The number of automatic retry attempts while in FAILED state." },
           { "name": "ErrorMessage", "type": "string", "versions": "0+", "nullableVersions": "0+", "default": "null",
-            "about": "The error message when in FAILED state, or null if not applicable." },
-          { "name": "LastMirrorEpoch", "type": "int32", "versions": "0+", "default": "-1",
-            "about": "The last mirror leader epoch, or -1 if not available."
-          }
+            "about": "The error message when in FAILED state, or null if not applicable." }
         ]}
       ]}
     ]},
