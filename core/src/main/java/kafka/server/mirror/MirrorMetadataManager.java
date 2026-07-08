@@ -136,7 +136,7 @@ import scala.Option;
 
 import static kafka.server.mirror.ClusterMirrorUtils.LEADER_EPOCH_BUMP_INCREMENT;
 import static kafka.server.mirror.ClusterMirrorUtils.LEADER_EPOCH_BUMP_THRESHOLD;
-import static kafka.server.mirror.ClusterMirrorUtils.MIRROR_TERMINAL_FAILED_ATTEMPT;
+import static kafka.server.mirror.ClusterMirrorUtils.NON_RETRYABLE_ATTEMPT;
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
 import static org.apache.kafka.common.internals.Topic.MIRROR_STATE_TOPIC_NAME;
 
@@ -573,8 +573,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         transitionTo(mirrorName, topicPartition, state, errorMessage, false);
     }
 
-    public void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state, String errorMessage, boolean isTerminalError) {
-        stateTransitioner.ifPresent(st -> st.transitionTo(mirrorName, topicPartition, state, errorMessage, isTerminalError));
+    public void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state, String errorMessage, boolean nonRetryable) {
+        stateTransitioner.ifPresent(st -> st.transitionTo(mirrorName, topicPartition, state, errorMessage, nonRetryable));
     }
 
     /**
@@ -616,8 +616,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 || curState == MirrorPartitionState.STOPPED
                 || curState == MirrorPartitionState.FAILED) {
             FailedPartitionInfo fpi = failedPartitionInfo.get(tp);
-            if (fpi != null && fpi.retryAttempt() == MIRROR_TERMINAL_FAILED_ATTEMPT) {
-                log.debug("Skipping state transition for partition {} because it is in terminal failed state, requires manual intervention.", tp);
+            if (fpi != null && fpi.retryAttempt() == NON_RETRYABLE_ATTEMPT) {
+                log.debug("Skipping state transition for partition {} because it is in non-retryable failed state, requires manual intervention.", tp);
                 return;
             }
             transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION);
@@ -685,10 +685,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     String errMsg = "Source cluster ID changed for mirror " + mirrorName
                             + ": expected " + previousClusterId + ", got " + newClusterId
                             + ". This may indicate a misconfiguration or that the source cluster has been replaced. "
-                            + "Moving all partitions to terminal failed state.";
+                            + "Moving all partitions to non-retryable failed state.";
                     log.error(errMsg);
 
-                    // get mirrored leader partitions for this mirror in this node, and move them to terminal failed state
+                    // Get mirrored leader partitions for this mirror in this node, and move them to non-retryable failed state
                     Set<String> mirroredTopics = getConfiguredTopics(mirrorName, true);
                     if (!mirroredTopics.isEmpty()) {
                         Set<TopicPartition> mirroredLeaderPartitions = new HashSet<>();
@@ -888,7 +888,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         getConfiguredTopics(mirrorName, true).forEach(name -> {
             if (deletedSourceTopicNames.contains(name)) {
-                log.info("Detected topic {} deleted in remote cluster {}, terminally failing the mirror partitions", name, mirrorName);
+                log.info("Detected topic {} deleted in remote cluster {}, marking mirror partitions as non-retryable", name, mirrorName);
                 // snapshot keyset to avoid skipping entries during concurrent modification
                 Set.copyOf(partitionStates.keySet()).stream()
                         .filter(key -> key.mirrorName().equals(mirrorName) && key.topic().equals(name))

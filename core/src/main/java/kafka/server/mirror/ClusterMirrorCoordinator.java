@@ -85,7 +85,7 @@ import java.util.stream.Collectors;
 import scala.Option;
 import scala.jdk.javaapi.CollectionConverters;
 
-import static kafka.server.mirror.ClusterMirrorUtils.MIRROR_TERMINAL_FAILED_ATTEMPT;
+import static kafka.server.mirror.ClusterMirrorUtils.NON_RETRYABLE_ATTEMPT;
 import static org.apache.kafka.common.utils.Utils.require;
 
 /**
@@ -149,7 +149,7 @@ public class ClusterMirrorCoordinator {
 
         metadataManager.initialize(
                 brokerConfig.mirrorConfig().metadataRefreshIntervalMs(),
-                (mirrorName, tp, state, errorMessage, isTerminalError) -> transitionTo(mirrorName, tp, state, errorMessage, isTerminalError),
+                (mirrorName, tp, state, errorMessage, nonRetryable) -> transitionTo(mirrorName, tp, state, errorMessage, nonRetryable),
                 this::tombstoneMirrorRecords,
                 this::getCoordinatorPartitionByKey,
                 this::getCoordinatorPartitionByName);
@@ -362,12 +362,12 @@ public class ClusterMirrorCoordinator {
     }
 
     private void updateFailedState(TopicPartition tp, MirrorPartitionState currentState,
-                                   MirrorPartitionState newState, String errorMessage, boolean isTerminalError) {
+                                   MirrorPartitionState newState, String errorMessage, boolean nonRetryable) {
         if (newState == MirrorPartitionState.FAILED) {
             metadataManager.failedPartitionInfo().compute(tp, (key, existing) -> {
                 int attempt;
-                if (isTerminalError) {
-                    attempt = MIRROR_TERMINAL_FAILED_ATTEMPT;
+                if (nonRetryable) {
+                    attempt = NON_RETRYABLE_ATTEMPT;
                 } else if (existing != null) {
                     attempt = existing.retryAttempt() + 1;
                 } else {
@@ -383,14 +383,14 @@ public class ClusterMirrorCoordinator {
         }
     }
 
-    /** Schedules retries with exponential backoff for partitions in FAILED state, restoring their previous state. */
+    /** Schedules retries with exponential backoff for partitions in FAILED state, restoring their previous state. Skips non-retryable partitions. */
     private void scheduleFailedRetries(String mirrorName, Set<TopicPartition> topicPartitions) {
         int maxAttempts = brokerConfig.mirrorConfig().failedRetryMaxAttempts();
         topicPartitions.forEach(tp -> {
             FailedPartitionInfo fpi = metadataManager.failedPartitionInfo().get(tp);
             int attempt = fpi != null ? fpi.retryAttempt() : 1;
-            if (attempt == MIRROR_TERMINAL_FAILED_ATTEMPT) {
-                log.debug("Skipping retry for partition {} because it is in terminal failed state, requires manual intervention.", tp);
+            if (attempt == NON_RETRYABLE_ATTEMPT) {
+                log.debug("Skipping retry for partition {} because it is in non-retryable failed state, requires manual intervention.", tp);
                 return;
             }
             if (attempt >= maxAttempts) {
@@ -423,19 +423,19 @@ public class ClusterMirrorCoordinator {
     }
 
     public void transitionTo(String mirrorName, Set<TopicPartition> topicPartitions,
-                             MirrorPartitionState newState, String errorMessage, boolean isTerminalError) {
+                             MirrorPartitionState newState, String errorMessage, boolean nonRetryable) {
         topicPartitions.forEach(tp -> {
             MirrorPartitionState currentState = metadataManager.getPartitionState(mirrorName, tp);
             if (MirrorPartitionState.isValidTransition(currentState, newState)) {
                 log.debug("Transitioning partition {} from {} to {}.", tp, currentState, newState);
-                updateFailedState(tp, currentState, newState, errorMessage, isTerminalError);
+                updateFailedState(tp, currentState, newState, errorMessage, nonRetryable);
                 updateMirrorPartitionState(mirrorName, tp, newState)
                         .whenComplete((optTp, ex) -> {
                             if (ex != null) {
                                 // TODO: handle failure, we can't retry forever
                                 log.error("Failed to update partition state for {}: {}, retrying", tp, ex.getMessage());
                                 scheduler.scheduleOnce("MirrorStateUpdateRetry-" + tp,
-                                        () -> transitionTo(mirrorName, Set.of(tp), newState, errorMessage, isTerminalError), 100);
+                                        () -> transitionTo(mirrorName, Set.of(tp), newState, errorMessage, nonRetryable), 100);
                             } else {
                                 // successfully writes data into internal log
                                 try {

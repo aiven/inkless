@@ -39,7 +39,7 @@ import java.util.concurrent.CompletableFuture;
 public final class ClusterMirrorUtils {
     public static final int LEADER_EPOCH_BUMP_THRESHOLD = 3;
     public static final int LEADER_EPOCH_BUMP_INCREMENT = 10;
-    public static final int MIRROR_TERMINAL_FAILED_ATTEMPT = -1;
+    public static final int NON_RETRYABLE_ATTEMPT = -1;
 
     private ClusterMirrorUtils() {}
 
@@ -88,7 +88,7 @@ public final class ClusterMirrorUtils {
     public record FailedPartitionInfo(int retryAttempt, String errorMessage, MirrorPartitionState previousState) { }
 
     interface StateTransitioner {
-        void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state, String errorMessage, boolean isTerminalError);
+        void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state, String errorMessage, boolean nonRetryable);
     }
 
     interface StateTransitionCallback {
