@@ -83,17 +83,6 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
         rlm.onLeadershipChange((leaderPartitions.toSet: Set[TopicPartitionLog]).asJava, (followerPartitions.toSet: Set[TopicPartitionLog]).asJava, topicIds))
     }
 
-    // Start consolidation on a classic -> consolidated switch. remote.storage.enable=true arrives as a
-    // config-only delta after the seal, with no partition/leader change, so applyLocalLeadersDelta never
-    // starts the consolidation fetcher. Kick it off here for the topic's online partitions; the reconciler
-    // skips any not yet at the seal (they resume via the classic fetcher's hand-off) and is a no-op for
-    // non-consolidating topics.
-    if (isRemoteLogEnabled && !wasRemoteLogEnabled &&
-        replicaManager.inklessMetadataView().isDisklessTopic(topic)) {
-      val consolidatingPartitions = (leaderPartitions ++ followerPartitions).map(_.topicPartition).toSet
-      replicaManager.startConsolidationFetchersForCaughtUpClassicPartitions(consolidatingPartitions)
-    }
-
     // When copy disabled, we should stop leaderCopyRLMTask, but keep expirationTask
     if (isRemoteLogEnabled && !wasCopyDisabled && isCopyDisabled) {
       replicaManager.remoteLogManager.foreach(rlm => {

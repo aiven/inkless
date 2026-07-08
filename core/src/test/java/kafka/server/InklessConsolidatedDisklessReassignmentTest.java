@@ -238,6 +238,8 @@ public class InklessConsolidatedDisklessReassignmentTest {
             .setConfigProp(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
             .setConfigProp(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, "true")
             .setConfigProp(ReplicationConfigs.DEFAULT_REPLICATION_FACTOR_CONFIG, String.valueOf(REPLICATION_FACTOR))
+            // Consolidation requires the switch flag (KafkaConfig.validateValues).
+            .setConfigProp(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, "true")
             .setConfigProp(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, "true");
     }
 

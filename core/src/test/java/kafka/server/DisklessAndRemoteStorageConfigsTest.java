@@ -56,6 +56,8 @@ import io.aiven.inkless.test_utils.MinioContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
 
+import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_COMPACT;
+import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
@@ -291,7 +293,8 @@ public class DisklessAndRemoteStorageConfigsTest {
      * 1  | (none)     → DISKLESS  | diskless.enable=true, no remote.storage.enable in request   | VALID (auto-enabled)       | testConsolidatedTransitionsWithAllowFromClassic
      * 2  | (none)     → DISKLESS  | diskless.enable=true, remote.storage.enable=true            | VALID                      | testConsolidatedTransitionsWithAllowFromClassic
      * 3  | (none)     → DISKLESS  | diskless.enable=true, remote.storage.enable=false           | REJECTED                   | testConsolidatedTransitionsWithAllowFromClassic
-     * 4  | CLASSIC    → DISKLESS  | allow-from-classic=true                                     | VALID (switch)             | testConsolidatedTransitionsWithAllowFromClassic
+     * 4  | CLASSIC    → DISKLESS  | allow-from-classic=true, diskless.enable=true only          | VALID (switch, RS auto-en.)| testConsolidatedTransitionsWithAllowFromClassic
+     * 4c | CLASSIC(compact)→DISKLESS | allow-from-classic=true, diskless.enable=true            | REJECTED (delete-policy)   | testConsolidatedTransitionsWithAllowFromClassic
      * 5  | CLASSIC    → DISKLESS  | allow-from-classic=false                                    | REJECTED                   | testConsolidatedTransitionsWithoutAllowFromClassic
      * 6  | TIERED     → DISKLESS  | allow-from-classic=true                                     | VALID (switch)             | testConsolidatedTransitionsWithAllowFromClassic
      * 7  | TIERED     → DISKLESS  | allow-from-classic=false                                    | REJECTED                   | testConsolidatedTransitionsWithoutAllowFromClassic
@@ -321,15 +324,44 @@ public class DisklessAndRemoteStorageConfigsTest {
                     REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
                 assertTrue(error.isPresent(), "Should reject diskless with remote.storage.enable=false");
 
-                // Scenario 4: CLASSIC → DISKLESS switch
+                // Scenario 4: classic-to-diskless switch with diskless.enable=true ONLY.
+                // The controller auto-enables remote-storage atomically, exactly like creation,
+                // so the switched topic ends up with both configs even though the request set only one.
                 createTopicAndAssertEffective(admin, "classic-to-diskless", Map.of(), "false", "false");
                 assertTrue(incrementalAlterTopicConfig(admin, "classic-to-diskless", Map.of(
-                    DISKLESS_ENABLE_CONFIG, "true",
-                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")).isEmpty(),
-                    "CLASSIC→DISKLESS switch should succeed with allow-from-classic + consolidation");
+                    DISKLESS_ENABLE_CONFIG, "true")).isEmpty(),
+                    "classic-to-diskless switch should succeed and auto-enable remote storage");
                 var classicConfig = getTopicConfig(admin, "classic-to-diskless");
                 assertEquals("true", classicConfig.get(DISKLESS_ENABLE_CONFIG));
-                assertEquals("true", classicConfig.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+                assertEquals("true", classicConfig.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG),
+                    "remote.storage.enable must be auto-enabled atomically on the switch");
+
+                // Scenario 4b: classic-to-diskless switch setting both flags explicitly still works.
+                createTopicAndAssertEffective(admin, "classic-to-diskless-explicit", Map.of(), "false", "false");
+                assertTrue(incrementalAlterTopicConfig(admin, "classic-to-diskless-explicit", Map.of(
+                    DISKLESS_ENABLE_CONFIG, "true",
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")).isEmpty(),
+                    "classic-to-diskless switch should succeed with both flags set explicitly");
+                var explicitConfig = getTopicConfig(admin, "classic-to-diskless-explicit");
+                assertEquals("true", explicitConfig.get(DISKLESS_ENABLE_CONFIG));
+                assertEquals("true", explicitConfig.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+
+                // Scenario 4c: a COMPACTED classic topic cannot switch (fail-fast).
+                // A diskless topic requires remote storage, which requires cleanup.policy=delete,
+                // so auto-enabling remote storage on the switch makes validation reject the compacted topic
+                // up front, and the topic stays classic.
+                createTopicAndAssertEffective(admin, "compacted-classic",
+                    Map.of(CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_COMPACT), "false", "false");
+                Optional<String> compactError = incrementalAlterTopicConfig(admin, "compacted-classic", Map.of(
+                    DISKLESS_ENABLE_CONFIG, "true"));
+                assertTrue(compactError.isPresent(), "Compacted topic switch to diskless should be rejected");
+                assertTrue(compactError.get().contains("cleanup.policy=delete"),
+                    "Expected delete-policy rejection, got: " + compactError.get());
+                var stillClassic = getTopicConfig(admin, "compacted-classic");
+                assertEquals("false", stillClassic.get(DISKLESS_ENABLE_CONFIG),
+                    "Rejected switch must not have half-applied diskless.enable");
+                assertEquals("false", stillClassic.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG),
+                    "Rejected switch must not have half-applied remote.storage.enable");
 
                 // Scenario 6: TIERED → DISKLESS switch
                 createTopicAndAssertEffective(admin, "tiered-to-diskless",
@@ -398,7 +430,10 @@ public class DisklessAndRemoteStorageConfigsTest {
                 .setConfigProp(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
                 .setConfigProp(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, "true")
                 .setConfigProp(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, String.valueOf(allowFromClassic))
-                .setConfigProp(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, "true")
+                // Consolidation requires the switch flag, so this test pairs them: when the switch is off,
+                // consolidation must be off too (KafkaConfig rejects consolidation without allow-from-classic).
+                // Both scenarios covered here run with consolidation matching the switch flag.
+                .setConfigProp(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, String.valueOf(allowFromClassic))
                 .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
                 .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, "org.apache.kafka.server.log.remote.storage.NoOpRemoteStorageManager")
                 .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_CLASS_NAME_PROP, "org.apache.kafka.server.log.remote.storage.NoOpRemoteLogMetadataManager")

@@ -25,9 +25,14 @@ import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
+import org.apache.kafka.common.protocol.ApiKeys;
+import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.requests.AlterConfigsRequest;
+import org.apache.kafka.common.requests.AlterConfigsResponse;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
+import org.apache.kafka.server.IntegrationTestUtils;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.config.ServerLogConfigs;
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
@@ -46,6 +51,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -165,6 +171,10 @@ public class InklessConfigsTest {
         assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")));
         // Then it's not possible to delete the diskless.enable config
         assertThrows(ExecutionException.class, () -> deleteTopicConfigs(admin, disklessTopic, List.of(DISKLESS_ENABLE_CONFIG)));
+        // Then it's not possible to set diskless.enable=false via legacy AlterConfigs
+        assertThrows(ExecutionException.class, () -> legacyAlterTopicConfig(admin, disklessTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")));
+        // Then it's not possible to delete diskless.enable via legacy AlterConfigs (implicit omission)
+        assertThrows(ExecutionException.class, () -> legacyAlterTopicConfig(admin, disklessTopic, Map.of()));
 
         admin.close();
         cluster.close();
@@ -188,6 +198,8 @@ public class InklessConfigsTest {
         assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
         // Then it's not possible to delete the diskless.enable config
         assertThrows(ExecutionException.class, () -> deleteTopicConfigs(admin, classicTopic, List.of(DISKLESS_ENABLE_CONFIG)));
+        // Then it's not possible to set diskless.enable=true via legacy AlterConfigs
+        assertThrows(ExecutionException.class, () -> legacyAlterTopicConfig(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
 
         // When creating a new topic with diskless.enable=false
         final String disklessDisabledTopic = "disklessDisabledTopic";
@@ -200,6 +212,10 @@ public class InklessConfigsTest {
             DISKLESS_ENABLE_CONFIG, "true")));
         // Then it's not possible to delete the diskless.enable config
         assertThrows(ExecutionException.class, () -> deleteTopicConfigs(admin, classicTopic, List.of(DISKLESS_ENABLE_CONFIG)));
+        // Then it's not possible to set diskless.enable=true via legacy AlterConfigs
+        assertThrows(ExecutionException.class, () -> legacyAlterTopicConfig(admin, disklessDisabledTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
+        // Then it's not possible to delete diskless.enable via legacy AlterConfigs (implicit omission)
+        assertThrows(ExecutionException.class, () -> legacyAlterTopicConfig(admin, disklessDisabledTopic, Map.of()));
 
         admin.close();
         cluster.close();
@@ -223,6 +239,10 @@ public class InklessConfigsTest {
                 DISKLESS_ENABLE_CONFIG, "true")));
             // Then it's not possible to delete diskless.enable=false because the default is true and it would enable diskless
             assertThrows(ExecutionException.class, () -> deleteTopicConfigs(admin, disklessDisabledTopic, List.of(DISKLESS_ENABLE_CONFIG)));
+            // Then it's not possible to set diskless.enable=true via legacy AlterConfigs
+            assertThrows(ExecutionException.class, () -> legacyAlterTopicConfig(admin, disklessDisabledTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
+            // Then it's not possible to delete diskless.enable via legacy AlterConfigs (implicit omission would enable diskless via default)
+            assertThrows(ExecutionException.class, () -> legacyAlterTopicConfig(admin, disklessDisabledTopic, Map.of()));
         }
         cluster.close();
     }
@@ -448,6 +468,15 @@ public class InklessConfigsTest {
         }
 
         @Test
+        void disklessRemoteStorageConsolidationRequiresAllowFromClassic() {
+            final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> init(false, true, false, true, true, true, false, List.of()));
+            assertEquals(
+                "requirement failed: diskless.remote.storage.consolidation.enable requires diskless.allow.from.classic.enable=true",
+                exception.getMessage());
+        }
+
+        @Test
         void fullDependencyChainSucceeds() throws Exception {
             final KafkaClusterTestKit cluster = init(false, true, true);
             cluster.close();
@@ -523,6 +552,27 @@ public class InklessConfigsTest {
         var topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
         var deleteEntries = configsToDelete.stream().map(configToDelete -> new AlterConfigOp(new ConfigEntry(configToDelete, ""), AlterConfigOp.OpType.DELETE)).toList();
         admin.incrementalAlterConfigs(Map.of(topicResource, deleteEntries)).all().get(10, TimeUnit.SECONDS);
+    }
+
+    private void legacyAlterTopicConfig(Admin admin, String topic, Map<String, String> newConfigs) throws Exception {
+        var topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
+        var configEntries = newConfigs.entrySet().stream()
+            .map(entry -> new AlterConfigsRequest.ConfigEntry(entry.getKey(), entry.getValue()))
+            .toList();
+        var config = new AlterConfigsRequest.Config(configEntries);
+        var request = new AlterConfigsRequest.Builder(Map.of(topicResource, config), false)
+            .build(ApiKeys.ALTER_CONFIGS.latestVersion());
+        AlterConfigsResponse response = IntegrationTestUtils.connectAndReceive(request, firstBrokerPort(admin));
+        var apiError = response.errors().get(topicResource);
+        assertNotNull(apiError, "Legacy AlterConfigs response did not contain topic resource " + topicResource);
+        if (apiError.error() != Errors.NONE) {
+            CompletableFuture.failedFuture(apiError.exception()).get(10, TimeUnit.SECONDS);
+        }
+    }
+
+    private int firstBrokerPort(Admin admin) throws Exception {
+        var nodes = admin.describeCluster().nodes().get(10, TimeUnit.SECONDS);
+        return nodes.iterator().next().port();
     }
 
 }

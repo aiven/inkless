@@ -286,14 +286,8 @@ public class ConfigurationControlManager {
             String opValue = opTypeAndNewValue.getValue();
             switch (opType) {
                 case SET:
-                    if (!newlyCreatedResource &&
-                        configResource.type().equals(Type.TOPIC) &&
-                        Objects.equals(key, TopicConfig.DISKLESS_ENABLE_CONFIG) &&
-                        Boolean.parseBoolean(opValue) &&
-                        !Boolean.parseBoolean(currentValue) &&
-                        !Boolean.parseBoolean(String.valueOf(staticConfig.getOrDefault(
-                            ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG,
-                            ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DEFAULT)))) {
+                    if (isDisallowedDisklessEnableOnExistingTopic(configResource, newlyCreatedResource,
+                            key, opValue, currentValue)) {
                         return ApiError.fromThrowable(
                             new InvalidConfigurationException("It is invalid to enable diskless on an already existing topic."));
                     }
@@ -372,12 +366,31 @@ public class ConfigurationControlManager {
             } else if (isDisallowedClusterMinIsrTransition(configRecord)) {
                 return DISALLOWED_CLUSTER_MIN_ISR_REMOVAL_ERROR;
             } else if (configRecord.value() == null) {
+                if (Objects.equals(configRecord.name(), TopicConfig.DISKLESS_ENABLE_CONFIG)) {
+                    // Deleting diskless.enable is not allowed: it would revert the topic to the
+                    // broker default, enabling an implicit classic-to-diskless switch (if the
+                    // default is true) without persisting diskless.enable=true or emitting the
+                    // required switch-pending markers.
+                    // A switch must always be an explicit diskless.enable=true.
+                    // If/when a diskless-to-classic rollback is supported,
+                    // this guard must be updated to allow an explicit diskless.enable=false instead.
+                    return ApiError.fromThrowable(
+                        new InvalidConfigurationException("It is not allowed to delete the diskless.enable config"));
+                }
                 allConfigs.remove(configRecord.name());
             } else if (configRecord.value().length() > Short.MAX_VALUE) {
                 // In KRaft mode, large config values cannot be created by appending.
                 // If the size exceeds Short.MAX_VALUE, this error will be thrown to notify the user.
                 return DISALLOWED_CONFIG_VALUE_SIZE_ERROR;
             } else {
+                // Mirror the incremental AlterConfigs SET guard: legacy AlterConfigs must not enable
+                // diskless on an existing classic topic when the allow-from-classic flag is off.
+                if (isDisallowedDisklessEnableOnExistingTopic(configResource, newlyCreatedResource,
+                        configRecord.name(), configRecord.value(),
+                        existingConfigsMap.get(TopicConfig.DISKLESS_ENABLE_CONFIG))) {
+                    return ApiError.fromThrowable(
+                        new InvalidConfigurationException("It is invalid to enable diskless on an already existing topic."));
+                }
                 allConfigs.put(configRecord.name(), configRecord.value());
             }
             alteredConfigsForAlterConfigPolicyCheck.put(configRecord.name(), configRecord.value());
@@ -388,6 +401,14 @@ public class ConfigurationControlManager {
                 return DISALLOWED_BROKER_MIN_ISR_TRANSITION_ERROR;
             } else if (isDisallowedClusterMinIsrTransition(configRecord)) {
                 return DISALLOWED_CLUSTER_MIN_ISR_REMOVAL_ERROR;
+            } else if (Objects.equals(configRecord.name(), TopicConfig.DISKLESS_ENABLE_CONFIG)) {
+                // Legacy AlterConfigs replaces the whole config map, so omitting diskless.enable
+                // implicitly deletes the override. Reject it, matching the incremental DELETE guard:
+                // a classic-to-diskless switch must be an explicit diskless.enable=true, never a
+                // revert-to-default via deletion. If a diskless-to-classic rollback is ever
+                // supported, this guard must be updated to allow an explicit diskless.enable=false.
+                return ApiError.fromThrowable(
+                    new InvalidConfigurationException("It is not allowed to delete the diskless.enable config"));
             } else {
                 allConfigs.remove(configRecord.name());
             }
@@ -433,6 +454,35 @@ public class ConfigurationControlManager {
     private static final ApiError DISALLOWED_CONFIG_VALUE_SIZE_ERROR =
         new ApiError(INVALID_CONFIG, "The configuration value cannot be added because " +
             "it exceeds the maximum value size of " + Short.MAX_VALUE + " bytes.");
+
+    /**
+     * A classic-to-diskless switch (flipping {@code diskless.enable} from false/unset to true on an
+     * existing topic) is only allowed when the {@code diskless.allow.from.classic.enable} broker flag
+     * is on. Shared by the incremental SET path and the legacy full-map path.
+     * If a diskless-to-classic rollback is ever supported, revisit whether an explicit
+     * {@code diskless.enable=false} should be allowed too.
+     *
+     * @param requestedValue the value being set (the SET opValue, or the legacy record value)
+     * @param currentValue   the topic's current {@code diskless.enable} value (null if unset)
+     */
+    private boolean isDisallowedDisklessEnableOnExistingTopic(ConfigResource configResource,
+                                                              boolean newlyCreatedResource,
+                                                              String key,
+                                                              String requestedValue,
+                                                              String currentValue) {
+        return !newlyCreatedResource
+            && configResource.type() == Type.TOPIC
+            && Objects.equals(key, TopicConfig.DISKLESS_ENABLE_CONFIG)
+            && Boolean.parseBoolean(requestedValue)
+            && !Boolean.parseBoolean(currentValue)
+            && !isDisklessAllowFromClassicEnabled();
+    }
+
+    private boolean isDisklessAllowFromClassicEnabled() {
+        return Boolean.parseBoolean(String.valueOf(staticConfig.getOrDefault(
+            ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG,
+            ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DEFAULT)));
+    }
 
     boolean isDisallowedBrokerMinIsrTransition(ConfigRecord configRecord) {
         if (configRecord.name().equals(MIN_IN_SYNC_REPLICAS_CONFIG) &&
