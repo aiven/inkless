@@ -100,16 +100,18 @@ When a cherry-pick has conflicts, resolve them following the patterns in [Confli
 
 **After resolving each conflict:**
 
-1. Compile to verify: `./gradlew :storage:inkless:compileJava :core:compileScala`
+1. Complete the cherry-pick: `git cherry-pick --continue`
 2. Document the resolution in the session file
-3. If compilation requires additional fixes, amend the cherry-pick commit with the fixes
+3. Then follow the **conflict path** in Step 6 below
 
-### Step 6: Compile After Each Cherry-pick
+### Step 6: Verify After Each Cherry-pick
 
-After each successful cherry-pick (with or without conflict resolution):
+Use the fast path when the cherry-pick applied cleanly; use the full path when it required conflict resolution.
+
+#### Fast path (no conflicts)
 
 ```bash
-# Core inkless modules (fast check)
+# Core inkless modules
 ./gradlew :storage:inkless:compileJava :core:compileScala
 
 # If the commit touches tests
@@ -117,6 +119,24 @@ After each successful cherry-pick (with or without conflict resolution):
 
 # If the commit touches metadata, clients, or other modules
 ./gradlew :metadata:compileJava :clients:compileJava
+```
+
+#### Full path (conflict resolution required)
+
+```bash
+# 1. Apply formatting — conflict resolution often leaves unused imports or style drift
+make fmt
+
+# 2. Amend the cherry-pick with any fmt changes before proceeding
+git add -p   # stage only fmt-related changes
+git commit --amend --no-edit
+
+# 3. Full build — catches cross-module regressions the fast path misses
+make build
+
+# 4. Re-run the tests introduced or modified by this commit
+#    Identify them from the commit diff, then run specifically, e.g.:
+./gradlew :storage:inkless:test --tests "io.aiven.inkless.SomeNewTest"
 ```
 
 Fix any compilation errors before proceeding to the next commit. Commit fixes as amendments to the cherry-pick (if the cherry-pick introduced the broken code) or as separate `sync(compile):` commits.
