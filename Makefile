@@ -10,7 +10,20 @@ DOCKER := docker
 
 .PHONY: build
 build:
-	./gradlew :core:build :storage:inkless:build :metadata:build -x test -x generateJooqClasses
+	./gradlew \
+	  :clients:check \
+	  :core:check \
+	  :metadata:check \
+	  :server:check \
+	  :server-common:check \
+	  :storage:check \
+	  :storage:storage-api:check \
+	  :storage:inkless:check \
+	  -x test -x generateJooqClasses
+
+.PHONY: build_all
+build_all:
+	./gradlew check -x test -x generateJooqClasses
 
 core/build/distributions/kafka_2.13-$(VERSION).tgz:
 	echo "Building Kafka distribution with version $(VERSION)"
@@ -145,7 +158,7 @@ fmt:
 test:
 	./gradlew :storage:inkless:test :storage:inkless:integrationTest -x generateJooqClasses
 	./gradlew :metadata:test --tests "org.apache.kafka.controller.*"
-	./gradlew :core:test --tests "*Inkless*"
+	./gradlew :core:test --tests "*Inkless*" --tests "*Diskless*" --tests "io.aiven.inkless.*"
 
 .PHONY: pitest
 pitest:

@@ -445,10 +445,26 @@ public class InklessConsolidatedDisklessTopicsTest {
     /**
      * Queries {@link OffsetSpec#earliest()} via the admin client (same basis as consumer
      * {@code auto.offset.reset=earliest}) and asserts every partition matches {@code expectedEarliest}.
+     *
+     * <p>The cross-tier earliest offset is published asynchronously: once the WAL is tiered and
+     * pruned, the leader's {@code RemoteLogManager} callback enqueues the remote log start offset and
+     * {@code CrossTierLogStartReporter} flushes it to the control plane on its next interval. Wait for
+     * that publication to converge before the hard assertion so the check does not race it.
      */
     private void assertBrokerEarliestOffsetsEqual(Map<String, Object> commonConfigs,
                                                   long expectedEarliest,
                                                   String context) throws Exception {
+        // Let query exceptions propagate: transient errors during convergence (e.g. LEADER_NOT_AVAILABLE)
+        // are retried by waitForCondition, and a persistent one is surfaced as the timeout's cause instead
+        // of being swallowed. lastSeen carries the offsets into the message for the stuck-value case.
+        final AtomicReference<Map<TopicPartition, Long>> lastSeen = new AtomicReference<>();
+        TestUtils.waitForCondition(() -> {
+            Map<TopicPartition, Long> earliest = queryBrokerEarliestOffsets(commonConfigs);
+            lastSeen.set(earliest);
+            return earliest.values().stream().allMatch(offset -> Long.valueOf(expectedEarliest).equals(offset));
+        }, 60_000, () -> "ListOffsets earliest for all partitions should converge to " + expectedEarliest
+            + " " + context + "; last observed: " + lastSeen.get());
+
         Map<TopicPartition, Long> earliest = queryBrokerEarliestOffsets(commonConfigs);
         log.info("Broker ListOffsets earliest per partition {}: {}", context, earliest);
         for (int p = 0; p < numPartitions; p++) {

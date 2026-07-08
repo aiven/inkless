@@ -213,7 +213,7 @@ public class ServerConfigs {
     public static final String DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_CONFIG = "diskless.consolidation.fetch.lagging.request.rate.limit";
     public static final int DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_DEFAULT = 0;
     public static final String DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_DOC = "Maximum request rate (requests per second) " +
-        "for consolidation cold-path fetches. 0 (default) means unlimited — consolidation is internal background work and does not " +
+        "for consolidation cold-path fetches. 0 (default) means unlimited -- consolidation is internal background work and does not " +
         "need throttling under normal conditions. Set > 0 as a safety valve to bound object storage request rate from consolidation.";
 
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG = "classic.remote.storage.force.enable";
