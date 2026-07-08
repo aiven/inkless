@@ -39,7 +39,7 @@ import java.util.concurrent.CompletableFuture;
 public final class ClusterMirrorUtils {
     public static final int LEADER_EPOCH_BUMP_THRESHOLD = 3;
     public static final int LEADER_EPOCH_BUMP_INCREMENT = 10;
-    public static final short MIRROR_TERMINAL_FAILED_ATTEMPT = -1;
+    public static final int MIRROR_TERMINAL_FAILED_ATTEMPT = -1;
 
     private ClusterMirrorUtils() {}
 
@@ -76,7 +76,7 @@ public final class ClusterMirrorUtils {
     public record PartitionStateInfo(int partition, MirrorPartitionState state, Integer leaderEpoch) { }
 
     public record PartitionStateLogEntry(String topic, int partition, MirrorPartitionState state,
-                                         MirrorPartitionState previousState, short retryAttempt,
+                                         MirrorPartitionState previousState, int retryAttempt,
                                          String errorMessage) { }
 
     public record PartitionKey(String mirrorName, String topic, int partition) { }
@@ -85,7 +85,7 @@ public final class ClusterMirrorUtils {
 
     public record LeaderInfo(Node node, int leaderEpoch) { }
 
-    public record FailedPartitionInfo(short retryAttempt, String errorMessage, MirrorPartitionState previousState) { }
+    public record FailedPartitionInfo(int retryAttempt, String errorMessage, MirrorPartitionState previousState) { }
 
     interface StateTransitioner {
         void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state, String errorMessage, boolean isTerminalError);

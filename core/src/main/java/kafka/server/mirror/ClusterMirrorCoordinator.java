@@ -351,7 +351,7 @@ public class ClusterMirrorCoordinator {
         }
     }
 
-    private void restoreFailedState(TopicPartition tp, MirrorPartitionState state, short retryAttempt,
+    private void restoreFailedState(TopicPartition tp, MirrorPartitionState state, int retryAttempt,
                                     String errorMessage, MirrorPartitionState previousState) {
         if (state == MirrorPartitionState.FAILED) {
             metadataManager.failedPartitionInfo().put(tp,
@@ -365,13 +365,13 @@ public class ClusterMirrorCoordinator {
                                    MirrorPartitionState newState, String errorMessage, boolean isTerminalError) {
         if (newState == MirrorPartitionState.FAILED) {
             metadataManager.failedPartitionInfo().compute(tp, (key, existing) -> {
-                short attempt;
+                int attempt;
                 if (isTerminalError) {
                     attempt = MIRROR_TERMINAL_FAILED_ATTEMPT;
                 } else if (existing != null) {
-                    attempt = (short) (existing.retryAttempt() + 1);
+                    attempt = existing.retryAttempt() + 1;
                 } else {
-                    attempt = (short) 1;
+                    attempt = 1;
                 }
                 MirrorPartitionState previousState = existing != null ? existing.previousState() : currentState;
                 return new FailedPartitionInfo(attempt, errorMessage, previousState);
