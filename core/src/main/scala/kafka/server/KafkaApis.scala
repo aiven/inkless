@@ -501,50 +501,49 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
     }
 
-    maybeProcessLmeLookup(describeMirrorsRequest.data.topicLineages, responseData,
+    maybeProcessLastMirrorEpochLookup(describeMirrorsRequest.data, responseData,
       () => requestHelper.sendMaybeThrottle(request, new DescribeClusterMirrorsResponse(responseData)))
   }
 
   /*
-   * Handles TopicLineage entries by finding matching mirrors and looking up their LME
-   * from the local coordinator cache. For each lineage, scans mirror configs to find
-   * mirrors whose source cluster ID matches any KnownClusterIds entry.
+   * Handles LastMirrorEpochLookup entries by finding matching mirrors and looking up
+   * their LME from the local coordinator cache. For each lookup, scans mirror configs
+   * to find mirrors whose source cluster ID matches ClusterId (the requesting
+   * cluster's own ID). This supports direct failback (A->B then B->A).
    * Returns -1 for partitions not coordinated by this broker. The admin client
    * broadcasts to all brokers and takes the max LME per partition.
    */
-  private def maybeProcessLmeLookup(
-    topicLineages: util.List[DescribeClusterMirrorsRequestData.TopicLineage],
+  private def maybeProcessLastMirrorEpochLookup(
+    requestData: DescribeClusterMirrorsRequestData,
     responseData: DescribeClusterMirrorsResponseData,
     sendResponse: Runnable
   ): Unit = {
-    if (topicLineages == null || topicLineages.isEmpty) {
+    val requestClusterId = requestData.clusterId
+    val lastMirrorEpochLookups = requestData.lastMirrorEpochLookups
+    if (requestClusterId == null || lastMirrorEpochLookups == null || lastMirrorEpochLookups.isEmpty) {
+      sendResponse.run()
+      return
+    }
+    val matchingMirrors = clusterMirrorCoordinator.getConfiguredMirrors().asScala.toSeq
+      .filter(m => Option(clusterMirrorCoordinator.getSourceClusterId(m)).contains(requestClusterId))
+
+    if (matchingMirrors.isEmpty) {
       sendResponse.run()
       return
     }
 
-    val configuredMirrors = clusterMirrorCoordinator.getConfiguredMirrors().asScala.toSeq
-    val sourceClusterIds = configuredMirrors.flatMap { mirrorName =>
-      Option(clusterMirrorCoordinator.getSourceClusterId(mirrorName)).map(cid => (mirrorName, cid))
-    }
-
-    // Collect (mirror -> topic -> partitions) for coordinator-aware LME lookup
+    // Collect (mirror -> topic -> partitions) for LME lookup
     val mirrorPartitions = new util.HashMap[String, util.Map[String, util.Set[Integer]]]()
     // Track topicId for each topicName so we can map results back
     val topicNameToId = new util.HashMap[String, Uuid]()
 
-    topicLineages.forEach { lineage =>
-      val requestedIds = lineage.srcClusterIds.asScala.toSet
-      val matchingMirrors = sourceClusterIds
-        .filter { case (_, cid) => requestedIds.contains(cid) }
-        .map(_._1)
-
-      val topicNameOpt = metadataCache.getTopicName(lineage.topicId)
+    lastMirrorEpochLookups.forEach { lookup =>
+      val topicNameOpt = metadataCache.getTopicName(lookup.topicId)
       if (topicNameOpt.isPresent) {
         val topicName = topicNameOpt.get
-        topicNameToId.put(topicName, lineage.topicId)
-
+        topicNameToId.put(topicName, lookup.topicId)
         matchingMirrors.foreach { mirrorName =>
-          lineage.partitions.forEach { partIdx =>
+          lookup.partitions.forEach { partIdx =>
             mirrorPartitions
               .computeIfAbsent(mirrorName, _ => new util.HashMap[String, util.Set[Integer]]())
               .computeIfAbsent(topicName, _ => new util.HashSet[Integer]())
@@ -559,34 +558,34 @@ class KafkaApis(val requestChannel: RequestChannel,
       return
     }
 
-    clusterMirrorCoordinator.processLmeLookup(mirrorPartitions, lmeResults => {
-      val lineageResultsMap = new util.HashMap[Uuid, util.Map[Integer, Integer]]()
+    val lmeResults = clusterMirrorCoordinator.processLastMirrorEpochLookup(mirrorPartitions)
 
-      lmeResults.forEach { (_, tpEpochs) =>
-        tpEpochs.forEach { (tp, lme) =>
-          val topicId = topicNameToId.get(tp.topic)
-          if (topicId != null) {
-            lineageResultsMap
-              .computeIfAbsent(topicId, _ => new util.HashMap[Integer, Integer]())
-              .merge(tp.partition, lme, (a: Integer, b: Integer) => Math.max(a, b))
-          }
+    // Aggregate across mirrors: take max LME per (topic, partition)
+    val aggregated = new util.HashMap[Uuid, util.Map[Integer, Integer]]()
+    lmeResults.forEach { (_, tpEpochs) =>
+      tpEpochs.forEach { (tp, lme) =>
+        val topicId = topicNameToId.get(tp.topic)
+        if (topicId != null) {
+          aggregated
+            .computeIfAbsent(topicId, _ => new util.HashMap[Integer, Integer]())
+            .merge(tp.partition, lme, (a: Integer, b: Integer) => Math.max(a, b))
         }
       }
+    }
 
-      lineageResultsMap.forEach { (topicId, partitions) =>
-        val partitionResults = new util.ArrayList[DescribeClusterMirrorsResponseData.PartitionResult]()
-        partitions.forEach { (partIdx, lme) =>
-          partitionResults.add(new DescribeClusterMirrorsResponseData.PartitionResult()
-            .setPartitionIndex(partIdx)
-            .setLastMirrorEpoch(lme))
-        }
-        responseData.lineageResults().add(new DescribeClusterMirrorsResponseData.LineageResult()
-          .setTopicId(topicId)
-          .setPartitions(partitionResults))
+    aggregated.forEach { (topicId, partitions) =>
+      val partitionResults = new util.ArrayList[DescribeClusterMirrorsResponseData.PartitionResult]()
+      partitions.forEach { (partIdx, lme) =>
+        partitionResults.add(new DescribeClusterMirrorsResponseData.PartitionResult()
+          .setPartitionIndex(partIdx)
+          .setLastMirrorEpoch(lme))
       }
+      responseData.lookupResults().add(new DescribeClusterMirrorsResponseData.LookupResult()
+        .setTopicId(topicId)
+        .setPartitions(partitionResults))
+    }
 
-      sendResponse.run()
-    })
+    sendResponse.run()
   }
 
   def handleGetReplicaLogInfo(request: RequestChannel.Request): Unit = {

@@ -2092,21 +2092,22 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return result;
     }
 
-    /** Looks up lineage epochs from the source cluster for failback/fan-out truncation. */
-    CompletionStage<Map<TopicPartition, Integer>> sendLmeLookup(
+    /** Looks up last mirror epochs from the source cluster for failback truncation. */
+    CompletionStage<Map<TopicPartition, Integer>> sendLastMirrorEpochLookup(
             String mirrorName, Set<TopicPartition> topicPartitionSet) {
         Admin admin = getOrCreateSourceAdmin(mirrorName);
-        List<DescribeClusterMirrorsRequestData.TopicLineage> lineages = buildTopicLineages(topicPartitionSet);
-        log.info("Last mirror epoch lookup request for mirror {}: {}", mirrorName, lineages);
+        List<DescribeClusterMirrorsRequestData.LastMirrorEpochLookup> lookups = buildLastMirrorEpochLookups(topicPartitionSet);
+        log.info("Last mirror epoch lookup request for mirror {}: {}", mirrorName, lookups);
         DescribeClusterMirrorsOptions options = new DescribeClusterMirrorsOptions()
-                .topicLineages(lineages);
+                .clusterId(clusterId)
+                .lastMirrorEpochLookups(lookups);
         DescribeClusterMirrorsResult result = admin.describeClusterMirrors(List.of(mirrorName), options);
 
-        return result.lineageEpochs().toCompletionStage().toCompletableFuture()
-                .thenApply(lineageEpochs -> {
+        return result.lookupEpochs().toCompletionStage().toCompletableFuture()
+                .thenApply(lookupEpochs -> {
                     Map<TopicPartition, Integer> epochs = new HashMap<>();
-                    if (!lineageEpochs.isEmpty()) {
-                        lineageEpochs.forEach((topicId, partitionEpochs) -> {
+                    if (!lookupEpochs.isEmpty()) {
+                        lookupEpochs.forEach((topicId, partitionEpochs) -> {
                             Optional<String> topicName = metadataCache.getTopicName(topicId);
                             topicName.ifPresent(name ->
                                     partitionEpochs.forEach((partIdx, lme) ->
@@ -2120,48 +2121,38 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Builds topic lineage entries for all configured source cluster IDs.
-     * The source needs to match against prior mirror configs.
+     * Builds LME lookup entries with only this cluster's own ID.
+     * The source matches this against its mirror configs to find cases
+     * where it previously mirrored from us (direct failback).
      */
-    private List<DescribeClusterMirrorsRequestData.TopicLineage> buildTopicLineages(
+    private List<DescribeClusterMirrorsRequestData.LastMirrorEpochLookup> buildLastMirrorEpochLookups(
             Set<TopicPartition> topicPartitionSet) {
-        Map<String, String> mirrorSourceClusterIds = new HashMap<>();
-        for (String mirrorName : getConfiguredMirrors()) {
-            String cid = getSourceClusterId(mirrorName);
-            if (cid != null && !cid.isEmpty()) {
-                mirrorSourceClusterIds.put(mirrorName, cid);
-            }
-        }
-
         Map<Uuid, List<Integer>> partitionsByTopicId = new HashMap<>();
         for (TopicPartition tp : topicPartitionSet) {
             Uuid topicId = metadataCache.getTopicId(tp.topic());
             partitionsByTopicId.computeIfAbsent(topicId, k -> new ArrayList<>()).add(tp.partition());
         }
 
-        List<String> srcClusterIds = new ArrayList<>(mirrorSourceClusterIds.values());
-        srcClusterIds.add(clusterId);
-        List<DescribeClusterMirrorsRequestData.TopicLineage> lineages = new ArrayList<>();
+        List<DescribeClusterMirrorsRequestData.LastMirrorEpochLookup> lookups = new ArrayList<>();
         for (Map.Entry<Uuid, List<Integer>> entry : partitionsByTopicId.entrySet()) {
-            lineages.add(new DescribeClusterMirrorsRequestData.TopicLineage()
+            lookups.add(new DescribeClusterMirrorsRequestData.LastMirrorEpochLookup()
                     .setTopicId(entry.getKey())
-                    .setPartitions(entry.getValue())
-                    .setSrcClusterIds(srcClusterIds));
+                    .setPartitions(entry.getValue()));
         }
-        return lineages;
+        return lookups;
     }
 
     /**
-     * Local-only LME lookup for lineage results. Returns LME from the local
-     * coordinator cache for partitions this broker coordinates, and -1 for
-     * the rest. The admin client broadcasts DescribeClusterMirrors to all
-     * brokers and takes the max, so each broker only needs its local view.
+     * Local-only LME lookup. Returns LME from the local coordinator cache
+     * for partitions this broker coordinates, and -1 for the rest. The admin
+     * client broadcasts DescribeClusterMirrors to all brokers and takes the
+     * max, so each broker only needs its local view.
      *
      * @param mirrorPartitions mirrorName -> topicName -> partition indices
-     * @param callback receives mirrorName -> (TopicPartition -> LME) when done
+     * @return mirrorName -> (TopicPartition -> LME)
      */
-    void processLmeLookup(Map<String, Map<String, Set<Integer>>> mirrorPartitions,
-                          Consumer<Map<String, Map<TopicPartition, Integer>>> callback) {
+    Map<String, Map<TopicPartition, Integer>> processLastMirrorEpochLookup(
+            Map<String, Map<String, Set<Integer>>> mirrorPartitions) {
         Map<String, Map<TopicPartition, Integer>> result = new HashMap<>();
         mirrorPartitions.forEach((mirrorName, topicParts) -> {
             topicParts.forEach((topic, parts) -> {
@@ -2174,7 +2165,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 });
             });
         });
-        callback.accept(result);
+        return result;
     }
 
     /** Upserts added paritions, returning the full epoch map for record serialization. */

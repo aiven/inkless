@@ -744,7 +744,7 @@ public class ClusterMirrorCoordinator {
         scheduler.scheduleOnce("LastMirrorEpochTruncation",
             () -> {
                 try {
-                    metadataManager.sendLmeLookup(mirrorName, topicPartitions)
+                    metadataManager.sendLastMirrorEpochLookup(mirrorName, topicPartitions)
                         .whenComplete((epochs, rawError) -> {
                             if (rawError != null) {
                                 Throwable error = rawError instanceof CompletionException && rawError.getCause() != null
@@ -873,10 +873,10 @@ public class ClusterMirrorCoordinator {
         return metadataManager.getLastMirrorEpochs(mirrorName);
     }
 
-    /** Coordinator-aware LME lookup for lineage results. */
-    public void processLmeLookup(Map<String, Map<String, Set<Integer>>> mirrorPartitions,
-                                 Consumer<Map<String, Map<TopicPartition, Integer>>> callback) {
-        metadataManager.processLmeLookup(mirrorPartitions, callback);
+    /** Local-only LME lookup for failback truncation. */
+    public Map<String, Map<TopicPartition, Integer>> processLastMirrorEpochLookup(
+            Map<String, Map<String, Set<Integer>>> mirrorPartitions) {
+        return metadataManager.processLastMirrorEpochLookup(mirrorPartitions);
     }
 
     private CoordinatorRecord buildPartitionStateRecord(String mirrorName, TopicPartition topicPartition, MirrorPartitionState state) {

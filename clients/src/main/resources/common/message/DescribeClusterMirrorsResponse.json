@@ -61,13 +61,13 @@
         ]}
       ]}
     ]},
-    { "name": "LineageResults", "type": "[]LineageResult", "versions": "0+",
+    { "name": "LookupResults", "type": "[]LookupResult", "versions": "0+",
       "taggedVersions": "0+", "tag": 0, "ignorable": true,
-      "about": "LME results from cross-mirror topic lineage matching.", "fields": [
+      "about": "Last mirror epoch lookup results incremental mirroring when failing back.", "fields": [
       { "name": "TopicId", "type": "uuid", "versions": "0+",
         "about": "The topic ID." },
       { "name": "Partitions", "type": "[]PartitionResult", "versions": "0+",
-        "about": "Per-partition LME from lineage matching.", "fields": [
+        "about": "Per-partition last mirror epoch results.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0+",
           "about": "The partition index." },
         { "name": "LastMirrorEpoch", "type": "int32", "versions": "0+", "default": "-1",

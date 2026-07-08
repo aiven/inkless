@@ -1779,12 +1779,9 @@ public interface Admin extends AutoCloseable {
     }
 
     /**
-     * Describe cluster mirrors.
-     *
-     * This operation retrieves detailed information about cluster mirrors including:
-     * - Topics being mirrored
-     * - Partition-level lag information
-     * - Mirroring state for each partition
+     * Describe cluster mirrors on the destination cluster. Returns per-partition state,
+     * replication lag, and last mirror epoch. Optionally performs last mirror epoch lookups
+     * for failback truncation when cluster ID and lookup entries are provided in the options.
      *
      * @param mirrorNames The names of the mirrors to describe
      * @param options The options to use when describing mirrors
