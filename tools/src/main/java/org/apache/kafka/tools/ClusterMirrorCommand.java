@@ -235,7 +235,7 @@ public abstract class ClusterMirrorCommand {
             listings.sort(Comparator.comparing(ClusterMirrorListing::mirrorName));
 
             // Print header
-            System.out.printf("%-30s %-10s %-26s %-50s%n", "MIRROR", "TOPICS", "SOURCE-CLUSTER-ID", "SOURCE-BOOTSTRAP");
+            System.out.printf("%-30s %-10s %-26s %-50s%n", "MIRROR", "TOPICS", "SOURCE-CLUSTER-ID", "SOURCE-BOOTSTRAP-SERVER");
 
             // Print each mirror
             for (ClusterMirrorListing listing : listings) {
