@@ -131,6 +131,14 @@ public class InklessConfig extends AbstractConfig {
     private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion.";
     private static final int FILE_CLEANER_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
 
+    public static final String CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_CONFIG = "cross.tier.log.start.report.interval.ms";
+    private static final String CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_DOC = "The interval with which the leader reports " +
+        "the cross-tier (remote) log start offset of consolidating diskless partitions to the control plane. " +
+        "This is dwarfed by remote.log.manager.task.interval.ms (default 30s), which governs how often the underlying " +
+        "remote-retention observation is even produced, so raising this mainly trades off control-plane call frequency, " +
+        "not the effective staleness window.";
+    private static final int CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_DEFAULT = 1000;
+
     public static final String FILE_CLEANER_RETENTION_PERIOD_MS_CONFIG = "file.cleaner.retention.period.ms";
     private static final String FILE_CLEANER_RETENTION_PERIOD_MS_DOC = "The retention period for files marked for deletion.";
     private static final int FILE_CLEANER_RETENTION_PERIOD_MS_DEFAULT = 60 * 1000;  // 1 minute
@@ -355,6 +363,15 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(1),
             ConfigDef.Importance.LOW,
             FILE_CLEANER_RETENTION_PERIOD_MS_DOC
+        );
+
+        configDef.define(
+            CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_DOC
         );
 
         configDef.define(
@@ -665,6 +682,10 @@ public class InklessConfig extends AbstractConfig {
 
     public Duration fileCleanerRetentionPeriod() {
         return Duration.ofMillis(getInt(FILE_CLEANER_RETENTION_PERIOD_MS_CONFIG));
+    }
+
+    public Duration crossTierLogStartReportInterval() {
+        return Duration.ofMillis(getInt(CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_CONFIG));
     }
 
 

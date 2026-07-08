@@ -163,6 +163,14 @@ Under ``inkless.``
   * Valid Values: [1,...]
   * Importance: low
 
+``cross.tier.log.start.report.interval.ms``
+  The interval with which the leader reports the cross-tier (remote) log start offset of consolidating diskless partitions to the control plane. This is dwarfed by remote.log.manager.task.interval.ms (default 30s), which governs how often the underlying remote-retention observation is even produced, so raising this mainly trades off control-plane call frequency, not the effective staleness window.
+
+  * Type: int
+  * Default: 1000 (1 second)
+  * Valid Values: [1,...]
+  * Importance: low
+
 ``fetch.data.thread.pool.size``
   Thread pool size to concurrently fetch data files from remote storage
 
