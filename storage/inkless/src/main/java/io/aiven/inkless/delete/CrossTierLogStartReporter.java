@@ -27,6 +27,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -54,7 +55,7 @@ import io.aiven.inkless.control_plane.MetadataView;
  * partitions into a single control-plane call. Only strictly-advancing values are reported, since
  * remote retention is monotonic and the control plane stores the value forward-only.
  */
-public class CrossTierLogStartReporter implements Runnable {
+public class CrossTierLogStartReporter implements Runnable, Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(CrossTierLogStartReporter.class);
 
     // Bounds for the lastReported dedup cache. It is a soft optimization, not a source of truth:
@@ -67,6 +68,7 @@ public class CrossTierLogStartReporter implements Runnable {
     private final MetadataView metadataView;
     private final ControlPlane controlPlane;
     private final CrossTierLogStartCache crossTierLogStartCache;
+    private final CrossTierLogStartReporterMetrics metrics;
 
     // Pending updates not yet flushed to the control plane (per partition, highest reported offset).
     private final ConcurrentHashMap<TopicIdPartition, Long> pending = new ConcurrentHashMap<>();
@@ -83,6 +85,7 @@ public class CrossTierLogStartReporter implements Runnable {
         this.metadataView = Objects.requireNonNull(metadataView, "metadataView cannot be null");
         this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane cannot be null");
         this.crossTierLogStartCache = Objects.requireNonNull(crossTierLogStartCache, "crossTierLogStartCache cannot be null");
+        this.metrics = new CrossTierLogStartReporterMetrics(pending::size);
     }
 
     /**
@@ -159,6 +162,7 @@ public class CrossTierLogStartReporter implements Runnable {
             for (int i = 0; i < requests.size(); i++) {
                 pending.merge(partitions.get(i), requests.get(i).remoteLogStartOffset(), Math::max);
             }
+            metrics.recordReportError();
             throw e;
         }
 
@@ -171,6 +175,7 @@ public class CrossTierLogStartReporter implements Runnable {
                     lastReported.asMap().merge(tidp, stored, Math::max);
                     // Write-through: keep the leader's local read path from re-querying the control plane.
                     crossTierLogStartCache.put(tidp, stored);
+                    metrics.recordPartitionReported();
                     LOGGER.trace("Reported cross-tier log start offset for {}: stored={}", tidp, stored);
                 }
                 case UNKNOWN_TOPIC_OR_PARTITION -> {
@@ -178,8 +183,10 @@ public class CrossTierLogStartReporter implements Runnable {
                     lastReported.invalidate(tidp);
                     LOGGER.debug("Cross-tier log start offset report for {} returned unknown topic or partition", tidp);
                 }
-                default ->
+                default -> {
+                    metrics.recordReportError();
                     LOGGER.error("Cross-tier log start offset report for {} returned error: {}", tidp, response.errors());
+                }
             }
         }
     }
@@ -187,5 +194,11 @@ public class CrossTierLogStartReporter implements Runnable {
     // Visible for testing.
     Map<TopicIdPartition, Long> pendingView() {
         return Map.copyOf(pending);
+    }
+
+    @Override
+    public void close() {
+        // Scheduling and lifecycle are owned externally; only the JMX metrics are owned here.
+        metrics.close();
     }
 }

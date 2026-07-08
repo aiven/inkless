@@ -229,7 +229,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     public List<AdvanceCrossTierLogStartOffsetResponse> advanceCrossTierLogStartOffset(final List<AdvanceCrossTierLogStartOffsetRequest> requests) {
         try {
             final AdvanceCrossTierLogStartOffsetJob job = new AdvanceCrossTierLogStartOffsetJob(
-                time, writeJooqCtx, requests, duration -> { });
+                time, writeJooqCtx, requests, pgMetrics::onAdvanceCrossTierLogStartCompleted);
             return job.call();
         } catch (final Exception e) {
             throw new ControlPlaneException("Failed to advance cross-tier log start offset", e);
