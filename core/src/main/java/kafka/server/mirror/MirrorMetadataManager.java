@@ -2093,14 +2093,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /** Looks up last mirror epochs from the source cluster for failback truncation. */
-    CompletionStage<Map<TopicPartition, Integer>> sendLmeLookup(
+    CompletionStage<Map<TopicPartition, Integer>> sendLastMirrorEpochLookup(
             String mirrorName, Set<TopicPartition> topicPartitionSet) {
         Admin admin = getOrCreateSourceAdmin(mirrorName);
-        List<DescribeClusterMirrorsRequestData.LmeLookup> lookups = buildLmeLookups(topicPartitionSet);
+        List<DescribeClusterMirrorsRequestData.LastMirrorEpochLookup> lookups = buildLastMirrorEpochLookups(topicPartitionSet);
         log.info("Last mirror epoch lookup request for mirror {}: {}", mirrorName, lookups);
         DescribeClusterMirrorsOptions options = new DescribeClusterMirrorsOptions()
                 .clusterId(clusterId)
-                .lmeLookups(lookups);
+                .lastMirrorEpochLookups(lookups);
         DescribeClusterMirrorsResult result = admin.describeClusterMirrors(List.of(mirrorName), options);
 
         return result.lookupEpochs().toCompletionStage().toCompletableFuture()
@@ -2125,7 +2125,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * The source matches this against its mirror configs to find cases
      * where it previously mirrored from us (direct failback).
      */
-    private List<DescribeClusterMirrorsRequestData.LmeLookup> buildLmeLookups(
+    private List<DescribeClusterMirrorsRequestData.LastMirrorEpochLookup> buildLastMirrorEpochLookups(
             Set<TopicPartition> topicPartitionSet) {
         Map<Uuid, List<Integer>> partitionsByTopicId = new HashMap<>();
         for (TopicPartition tp : topicPartitionSet) {
@@ -2133,9 +2133,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             partitionsByTopicId.computeIfAbsent(topicId, k -> new ArrayList<>()).add(tp.partition());
         }
 
-        List<DescribeClusterMirrorsRequestData.LmeLookup> lookups = new ArrayList<>();
+        List<DescribeClusterMirrorsRequestData.LastMirrorEpochLookup> lookups = new ArrayList<>();
         for (Map.Entry<Uuid, List<Integer>> entry : partitionsByTopicId.entrySet()) {
-            lookups.add(new DescribeClusterMirrorsRequestData.LmeLookup()
+            lookups.add(new DescribeClusterMirrorsRequestData.LastMirrorEpochLookup()
                     .setTopicId(entry.getKey())
                     .setPartitions(entry.getValue()));
         }
@@ -2151,7 +2151,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @param mirrorPartitions mirrorName -> topicName -> partition indices
      * @return mirrorName -> (TopicPartition -> LME)
      */
-    Map<String, Map<TopicPartition, Integer>> processLmeLookup(
+    Map<String, Map<TopicPartition, Integer>> processLastMirrorEpochLookup(
             Map<String, Map<String, Set<Integer>>> mirrorPartitions) {
         Map<String, Map<TopicPartition, Integer>> result = new HashMap<>();
         mirrorPartitions.forEach((mirrorName, topicParts) -> {

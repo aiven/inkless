@@ -5250,9 +5250,9 @@ public class KafkaAdminClient extends AdminClient {
                             DescribeClusterMirrorsRequestData data = new DescribeClusterMirrorsRequestData()
                                 .setMirrorNames(new ArrayList<>(mirrorNames))
                                 .setIncludeAuthorizedOperations(options.includeAuthorizedOperations());
-                            if (options.clusterId() != null && !options.lmeLookups().isEmpty()) {
+                            if (options.clusterId() != null && !options.lastMirrorEpochLookups().isEmpty()) {
                                 data.setClusterId(options.clusterId());
-                                data.setLmeLookups(new ArrayList<>(options.lmeLookups()));
+                                data.setLastMirrorEpochLookups(new ArrayList<>(options.lastMirrorEpochLookups()));
                             }
                             return new DescribeClusterMirrorsRequest.Builder(data);
                         }

@@ -200,14 +200,14 @@ public class AsyncClusterMirrorIntegrationTest {
 
     /**
      * Failover then failback with a different mirror name.
-     * Uses LmeLookups so the destination finds the LME from the
-     * old mirror and avoids re-replicating from scratch.
+     * Uses LastMirrorEpochLookups so the destination finds the LME
+     * from the old mirror and avoids re-replicating from scratch.
      */
     @Test
     void testFailoverFailback() throws Exception {
         String topic = "failback-topic";
-        String forwardMirror = "s-to-d";
-        String reverseMirror = "d-to-s";
+        String forwardMirror = "a-to-b";
+        String reverseMirror = "b-to-a";
 
         CreateTopicsResult createTopicsResult = srcAdmin.createTopics(List.of(new NewTopic(topic, 1, (short) 1)));
         createTopicsResult.all().get(30, TimeUnit.SECONDS);
@@ -229,13 +229,13 @@ public class AsyncClusterMirrorIntegrationTest {
         produceRecords(dstCluster, topic, 10, 5);
 
         // Sending a describeClusterMirror request with LME lookup info
-        DescribeClusterMirrorsRequestData.LmeLookup lmeLookup = new DescribeClusterMirrorsRequestData.LmeLookup();
-        lmeLookup
+        DescribeClusterMirrorsRequestData.LastMirrorEpochLookup lastMirrorEpochLookup = new DescribeClusterMirrorsRequestData.LastMirrorEpochLookup();
+        lastMirrorEpochLookup
                 .setTopicId(topicId)
                 .setPartitions(List.of(0));
         String srcClusterId = srcCluster.controllers().values().stream().findFirst().get().clusterId();
         DescribeClusterMirrorsResult describeClusterMirrors = dstAdmin.describeClusterMirrors(List.of(reverseMirror),
-                new DescribeClusterMirrorsOptions().clusterId(srcClusterId).lmeLookups(List.of(lmeLookup)));
+                new DescribeClusterMirrorsOptions().clusterId(srcClusterId).lastMirrorEpochLookups(List.of(lastMirrorEpochLookup)));
         Map<Uuid, Map<Integer, Integer>> lookupEpochs = describeClusterMirrors.lookupEpochs().get(30, TimeUnit.SECONDS);
         assertEquals(1, lookupEpochs.size(), "Should have one lookup result");
         assertEquals(1, lookupEpochs.get(topicId).size(), "Should have one partition");

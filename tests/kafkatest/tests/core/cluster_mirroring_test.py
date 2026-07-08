@@ -254,22 +254,22 @@ class ClusterMirroringTest(MirrorUtils, Test):
             self.source_kafka.restart_node(node)
         MirrorUtils.produce_messages(self.logger, self.source_kafka, self.client_node, "my-topic", 3)
 
-        self.logger.info("Start cluster mirror s-to-d on destination")
+        self.logger.info("Start cluster mirror a-to-b on destination")
         mirror_cfg = MirrorConfig(self.source_kafka.bootstrap_servers())
 
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
-                self.client_node, "s-to-d", mirror_cfg),
+                self.client_node, "a-to-b", mirror_cfg),
             timeout_sec=120, backoff_sec=2,
             err_msg="Failed to create cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.dest_kafka.start_cluster_mirror_topics(
-                self.client_node, "s-to-d", "my-topic"),
+                self.client_node, "a-to-b", "my-topic"),
             timeout_sec=120, backoff_sec=2,
             err_msg="Failed to start mirror topics",
         )
-        MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest_kafka, self.client_node, "s-to-d", ["my-topic"])
+        MirrorUtils.wait_mirror_lag_zero(self.logger, self.dest_kafka, self.client_node, "a-to-b", ["my-topic"])
 
         self.logger.info("Consume from destination (expect 6 messages)")
         count = MirrorUtils.consume_messages(self.logger, self.dest_kafka, self.client_node, "my-topic",
@@ -277,8 +277,8 @@ class ClusterMirroringTest(MirrorUtils, Test):
         assert count >= 6, "Expected 6 messages on my-topic, got %d" % count
 
         self.logger.info("Failover: stop mirror so destination topic becomes writable")
-        self.dest_kafka.stop_cluster_mirror_topics(self.client_node, "s-to-d", "my-topic")
-        MirrorUtils.wait_mirror_state(self.logger, self.dest_kafka, self.client_node, "s-to-d", ["my-topic"], "STOPPED")
+        self.dest_kafka.stop_cluster_mirror_topics(self.client_node, "a-to-b", "my-topic")
+        MirrorUtils.wait_mirror_state(self.logger, self.dest_kafka, self.client_node, "a-to-b", ["my-topic"], "STOPPED")
 
         self.logger.info("Send 1 record to destination (should work now)")
         MirrorUtils.produce_messages(self.logger, self.dest_kafka, self.client_node, "my-topic", 1)
@@ -291,26 +291,26 @@ class ClusterMirroringTest(MirrorUtils, Test):
                                      max_messages=8, expected_count=8)
         assert count >= 8, "Expected 8 messages on my-topic, got %d" % count
 
-        self.logger.info("Failback: source mirrors from destination via d-to-s")
+        self.logger.info("Failback: source mirrors from destination via b-to-a")
         mirror_cfg = MirrorConfig(self.dest_kafka.bootstrap_servers())
 
         wait_until(
             lambda: self.source_kafka.create_cluster_mirror(
-                self.client_node, "d-to-s", mirror_cfg),
+                self.client_node, "b-to-a", mirror_cfg),
             timeout_sec=120, backoff_sec=2,
             err_msg="Failed to create reverse cluster mirror",
         )
         wait_until(
             lambda: "Started" in self.source_kafka.start_cluster_mirror_topics(
-                self.client_node, "d-to-s", "my-topic"),
+                self.client_node, "b-to-a", "my-topic"),
             timeout_sec=120, backoff_sec=2,
             err_msg="Failed to start reverse mirror topics",
         )
-        MirrorUtils.wait_mirror_lag_zero(self.logger, self.source_kafka, self.client_node, "d-to-s", ["my-topic"])
+        MirrorUtils.wait_mirror_lag_zero(self.logger, self.source_kafka, self.client_node, "b-to-a", ["my-topic"])
 
         self.logger.info("Verify LME lookup found a valid epoch (direct failback)")
         log_path = "%s/info/server.log" % self.source_kafka.OPERATIONAL_LOG_DIR
-        pattern = "Last mirror epoch lookup response for mirror d-to-s"
+        pattern = "Last mirror epoch lookup response for mirror b-to-a"
         found = False
         for node in self.source_kafka.nodes:
             for line in node.account.ssh_capture(

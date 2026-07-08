@@ -33,7 +33,7 @@ public class DescribeClusterMirrorsOptions extends AbstractOptions<DescribeClust
 
     private boolean includeAuthorizedOperations = false;
     private String clusterId;
-    private List<DescribeClusterMirrorsRequestData.LmeLookup> lmeLookups = Collections.emptyList();
+    private List<DescribeClusterMirrorsRequestData.LastMirrorEpochLookup> lastMirrorEpochLookups = Collections.emptyList();
 
     /**
      * Set whether authorized operations should be included in the response.
@@ -62,12 +62,12 @@ public class DescribeClusterMirrorsOptions extends AbstractOptions<DescribeClust
         return clusterId;
     }
 
-    public DescribeClusterMirrorsOptions lmeLookups(List<DescribeClusterMirrorsRequestData.LmeLookup> lmeLookups) {
-        this.lmeLookups = lmeLookups;
+    public DescribeClusterMirrorsOptions lastMirrorEpochLookups(List<DescribeClusterMirrorsRequestData.LastMirrorEpochLookup> lastMirrorEpochLookups) {
+        this.lastMirrorEpochLookups = lastMirrorEpochLookups;
         return this;
     }
 
-    public List<DescribeClusterMirrorsRequestData.LmeLookup> lmeLookups() {
-        return lmeLookups;
+    public List<DescribeClusterMirrorsRequestData.LastMirrorEpochLookup> lastMirrorEpochLookups() {
+        return lastMirrorEpochLookups;
     }
 }

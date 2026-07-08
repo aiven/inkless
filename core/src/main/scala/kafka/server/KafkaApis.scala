@@ -501,26 +501,26 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
     }
 
-    maybeProcessLmeLookup(describeMirrorsRequest.data, responseData,
+    maybeProcessLastMirrorEpochLookup(describeMirrorsRequest.data, responseData,
       () => requestHelper.sendMaybeThrottle(request, new DescribeClusterMirrorsResponse(responseData)))
   }
 
   /*
-   * Handles LmeLookup entries by finding matching mirrors and looking up their LME
-   * from the local coordinator cache. For each lookup, scans mirror configs to find
-   * mirrors whose source cluster ID matches ClusterId (the requesting
+   * Handles LastMirrorEpochLookup entries by finding matching mirrors and looking up
+   * their LME from the local coordinator cache. For each lookup, scans mirror configs
+   * to find mirrors whose source cluster ID matches ClusterId (the requesting
    * cluster's own ID). This supports direct failback (A->B then B->A).
    * Returns -1 for partitions not coordinated by this broker. The admin client
    * broadcasts to all brokers and takes the max LME per partition.
    */
-  private def maybeProcessLmeLookup(
+  private def maybeProcessLastMirrorEpochLookup(
     requestData: DescribeClusterMirrorsRequestData,
     responseData: DescribeClusterMirrorsResponseData,
     sendResponse: Runnable
   ): Unit = {
     val requestClusterId = requestData.clusterId
-    val lmeLookups = requestData.lmeLookups
-    if (requestClusterId == null || lmeLookups == null || lmeLookups.isEmpty) {
+    val lastMirrorEpochLookups = requestData.lastMirrorEpochLookups
+    if (requestClusterId == null || lastMirrorEpochLookups == null || lastMirrorEpochLookups.isEmpty) {
       sendResponse.run()
       return
     }
@@ -532,10 +532,12 @@ class KafkaApis(val requestChannel: RequestChannel,
       return
     }
 
+    // Collect (mirror -> topic -> partitions) for LME lookup
     val mirrorPartitions = new util.HashMap[String, util.Map[String, util.Set[Integer]]]()
+    // Track topicId for each topicName so we can map results back
     val topicNameToId = new util.HashMap[String, Uuid]()
 
-    lmeLookups.forEach { lookup =>
+    lastMirrorEpochLookups.forEach { lookup =>
       val topicNameOpt = metadataCache.getTopicName(lookup.topicId)
       if (topicNameOpt.isPresent) {
         val topicName = topicNameOpt.get
@@ -556,7 +558,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       return
     }
 
-    val lmeResults = clusterMirrorCoordinator.processLmeLookup(mirrorPartitions)
+    val lmeResults = clusterMirrorCoordinator.processLastMirrorEpochLookup(mirrorPartitions)
 
     // Aggregate across mirrors: take max LME per (topic, partition)
     val aggregated = new util.HashMap[Uuid, util.Map[Integer, Integer]]()
