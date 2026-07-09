@@ -315,6 +315,14 @@ if (repo != null) {
         'inkless-sync/**',
         'core/src/main/scala/io/aiven/inkless/**',
         'core/src/test/scala/io/aiven/inkless/**',
+        // Inkless coding agent configurations
+        'AGENTS.md',
+        'CLAUDE.md',
+        '.ai-agents/**',
+        '.claude/**',
+        '.cursor/**',
+        '.opencode/**',
+        '.github/copilot-instructions.md',
         // end of inkless ignored files
         'licenses/*',
         '**/generated/**',

@@ -36,3 +36,12 @@ core/src/test/scala/kafka/server/metadata/Inkless*.scala
 
 # Inkless Makefile targets
 Makefile
+
+# Inkless coding agent configurations
+AGENTS.md
+CLAUDE.md
+.ai-agents/**
+.claude/**
+.cursor/**
+.opencode/**
+.github/copilot-instructions.md
