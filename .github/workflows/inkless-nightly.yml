@@ -53,11 +53,12 @@ jobs:
         env:
           TIMEOUT_MINUTES: 30
           GRADLE_ARGS: >-
-            --build-cache --no-scan 
-            -PtestLoggingEvents=started,passed,skipped,failed 
-            -PmaxParallelForks=2 
-            -PmaxTestRetries=1 -PmaxTestRetryFailures=3 
-            -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=0 
+            --build-cache --no-scan
+            -PtestLoggingEvents=started,passed,skipped,failed
+            -PmaxParallelForks=2
+            -PmaxTestRetries=1 -PmaxTestRetryFailures=3
+            -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=0
+            -Pkafka.test.xml.output.dir=${{ matrix.java }}
             -PcommitId=xxxxxxxxxxxxxxxx
         # Point to inkless tests
         run: |
@@ -100,13 +101,15 @@ jobs:
             thread-dumps/*
           compression-level: 9
           if-no-files-found: ignore
-      # - name: Parse JUnit tests
-      #   run: python .github/scripts/junit.py --export-test-catalog ./test-catalog >> $GITHUB_STEP_SUMMARY
-      #   env:
-      #     GITHUB_WORKSPACE: ${{ github.workspace }}
-      #     JUNIT_REPORT_URL: ${{ steps.junit-upload-artifact.outputs.artifact-url }}
-      #     THREAD_DUMP_URL: ${{ steps.thread-dump-upload-artifact.outputs.artifact-url }}
-      #     GRADLE_EXIT_CODE: ${{ steps.junit-test.outputs.exitcode }}
+      - name: Parse JUnit tests
+        if: always()
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          JUNIT_REPORT_URL: ${{ steps.junit-upload-artifact.outputs.artifact-url }}
+          THREAD_DUMP_URL: ${{ steps.thread-dump-upload-artifact.outputs.artifact-url }}
+          GRADLE_TEST_EXIT_CODE: ${{ steps.junit-test.outputs.exitcode }}
+        run: |
+          python .github/scripts/junit.py --path build/junit-xml/${{ matrix.java }} >> $GITHUB_STEP_SUMMARY
       - name: Archive Test Catalog
         if: ${{ always() && matrix.java == '21' }}
         uses: actions/upload-artifact@v4
@@ -123,6 +126,3 @@ jobs:
           path: ~/.gradle/build-scan-data
           compression-level: 9
           if-no-files-found: ignore
-      - name: Check test results
-        if: always() && ( steps.junit-test.outputs.exitcode != '0' )
-        run: exit 1
