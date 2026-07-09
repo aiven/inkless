@@ -164,8 +164,10 @@ jobs:
         run: |
           set +e
           ./.github/scripts/thread-dump.sh &
+          # Wrap the whole chain in a single timeout so a hang in any suite is
+          # killed and yields exit 124, which triggers the thread-dump upload.
+          timeout ${TIMEOUT_MINUTES}m bash -c '
           # Inkless-owned tests (no retries)
-          timeout ${TIMEOUT_MINUTES}m \
           ./gradlew ${GRADLE_ARGS} ${INKLESS_RETRY_ARGS} :storage:inkless:test :storage:inkless:integrationTest && \
           ./gradlew ${GRADLE_ARGS} ${INKLESS_RETRY_ARGS} :core:test \
             --tests "*Inkless*" --tests "*Diskless*" \
@@ -197,6 +199,7 @@ jobs:
             --tests "org.apache.kafka.storage.log.metrics.BrokerTopicStatsTest" && \
           ./gradlew ${GRADLE_ARGS} ${KAFKA_RETRY_ARGS} :server:test \
             --tests "org.apache.kafka.network.RequestConvertToJsonTest"
+          '
           exitcode="$?"
           echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
       - name: Archive JUnit HTML reports
