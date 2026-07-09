@@ -556,7 +556,9 @@ public class LogConfig extends AbstractConfig {
         }
 
         public boolean isDisklessConsolidationModeOnCreation() {
-            return isRemoteStorageConsolidationEnabled && isCreation() && isDisklessEnabled() && isRemoteStorageEnabled();
+            return (isRemoteStorageConsolidationEnabled || isDisklessAllowFromClassicEnabled)
+                && isCreation()
+                && isDisklessEnabled() && isRemoteStorageEnabled();
         }
 
         public boolean isValidConsolidationModeTransitionOnUpdate() {
@@ -663,7 +665,7 @@ public class LogConfig extends AbstractConfig {
         // by checking that diskless is (or will be) enabled and remote storage was and remains enabled.
         final boolean isSwitchedFromClassicWithRemoteStorage = logConfigHelper.isSwitchedFromClassicWithRemoteStorage();
         // Exception 2: when we're at creation we allow both properties to be set to true if remote storage
-        // consolidation is also enabled.
+        // consolidation OR allow-switch flag is enabled (tiered-storage-unification).
         final boolean isDisklessConsolidationOnCreation = logConfigHelper.isDisklessConsolidationModeOnCreation();
         // Exception 3: if remote log storage consolidation is enabled, and we're on an update, we allow
         // - diskless to stay enabled and remote storage to stay enabled (steady state)
