@@ -192,11 +192,12 @@ inkless-sync/
 ├── RELEASE-SYNC-ACTION-PLAN.md         # Action plan for release syncs
 ├── sessions/                           # Committed sync session logs
 │   └── SESSION-2025-11-21.md           # Example: main sync session
-├── lib/
-│   └── common.sh                 # Shared utility functions
-└── config/
-    └── protected-patterns.txt    # Files to protect during merge
+└── lib/
+    └── common.sh                 # Shared utility functions
 ```
+
+Merge protection is driven by the repo-root [`INKLESS_OWNERSHIP`](../INKLESS_OWNERSHIP)
+manifest (see below), not a file under `config/`.
 
 During sync, a `.inkless-sync/` working directory (gitignored) is created with:
 ```
@@ -222,24 +223,16 @@ mv .inkless-sync/SESSION-YYYY-MM-DD.md inkless-sync/sessions/
 
 ## Configuration
 
-### Protected Patterns (`config/protected-patterns.txt`)
+### Protected patterns (from `INKLESS_OWNERSHIP`)
 
-Files matching these patterns are auto-resolved with "ours" (inkless version) during conflicts.
-Only truly inkless-owned files should be listed here; version files and core Kafka files
-with inkless modifications are intentionally excluded so they fall into manual review:
+The auto-resolve set is derived from the repo-root [`INKLESS_OWNERSHIP`](../INKLESS_OWNERSHIP)
+manifest — there is no separate patterns file. The sync extracts the **OWNED** globs
+(entries whose sole owner is `@aiven/inkless`) via the `owned_patterns()` helper in
+[`lib/common.sh`](lib/common.sh) and auto-resolves those with "ours" during conflicts.
 
-```
-# Inkless-owned directories (safe to auto-resolve)
-storage/inkless/**
-docs/inkless/**
-docker/inkless/**
-config/inkless/**
-tests/kafkatest/tests/inkless/**
-.github/workflows/inkless*.yml
-
-# Inkless test files
-core/src/test/java/kafka/server/Inkless*.java
-```
+**INTERLEAVED** entries (dual-owner `@aiven/inkless @apache/kafka` — upstream files carrying
+inkless edits, e.g. `ReplicaManager.scala`) are intentionally excluded, so they fall into
+manual review. To change what is protected, edit `INKLESS_OWNERSHIP`.
 
 ### Adding Apache Remote
 
