@@ -93,7 +93,7 @@ jobs:
 
           # Ensure the version doesn't already exist
           if git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "::error::Tag $RELEASE_TAG already exists. Check the version or delete the existing tag first."
+            echo "::error::Tag $RELEASE_TAG already exists. If the release was never finalized (no GitHub Release published), delete the tag and retry. Otherwise use a higher version number."
             exit 1
           fi
 
