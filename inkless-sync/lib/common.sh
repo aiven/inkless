@@ -166,3 +166,19 @@ count_commits() {
     local to="$2"
     git rev-list --count "$from..$to" 2>/dev/null
 }
+
+# Emit the OWNED auto-resolve globs from the INKLESS_OWNERSHIP manifest: entries whose
+# sole owner is @aiven/inkless. Interleaved (dual-owner @aiven/inkless @apache/kafka)
+# and the upstream default are excluded so they fall into manual conflict review.
+# Parses CODEOWNERS fields: strips inline comments, then requires exactly one owner
+# token equal to @aiven/inkless (so an inline comment mentioning @apache/kafka on an
+# owned line does not misclassify it).
+owned_patterns() {
+    local manifest="$1"
+    awk '
+        { sub(/#.*/, "") }              # drop inline comment
+        { n = split($0, f); if (n == 0) next }
+        f[1] == "" { next }             # blank after trimming
+        n == 2 && f[2] == "@aiven/inkless" { print f[1] }
+    ' "$manifest"
+}
