@@ -605,6 +605,44 @@ class LogConfigTest {
   }
 
   @Test
+  def testAllowFromClassicAllowsDisklessAndRemoteStorageAtCreation(): Unit = {
+    val kafkaConfig = KafkaConfig.fromProps(TestUtils.createDummyBrokerConfig())
+    val noExisting: util.Map[String, String] = util.Map.of()
+    val mutualExclusionError = "It is not valid to set a value for both diskless.enable and remote.storage.enable unless it's for diskless switch or consolidation."
+
+    // Allowed: diskless.enable=true and remote.storage.enable=true at creation with only allowFromClassic (no consolidation)
+    assertValid(noExisting, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true"),
+      kafkaConfig,
+      disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = false)
+
+    // NOT allowed when both diskless=true and remote.storage=false (not a valid consolidation mode)
+    assertInvalid(noExisting, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "false"),
+      mutualExclusionError,
+      kafkaConfig,
+      disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = false)
+
+    // NOT allowed when diskless=false and remote.storage=true
+    assertInvalid(noExisting, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "false",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true"),
+      mutualExclusionError,
+      kafkaConfig,
+      disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = false)
+
+    // NOT allowed when both flags are off
+    assertInvalid(noExisting, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true"),
+      mutualExclusionError,
+      kafkaConfig,
+      disklessAllowFromClassic = false, remoteStorageConsolidationEnabled = false)
+  }
+
+  @Test
   def testRemoteStorageConsolidationAtUpdate(): Unit = {
     val kafkaConfig = KafkaConfig.fromProps(TestUtils.createDummyBrokerConfig())
     val mutualExclusionError = "It is not valid to set a value for both diskless.enable and remote.storage.enable unless it's for diskless switch or consolidation."
