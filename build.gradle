@@ -317,6 +317,7 @@ if (repo != null) {
         'core/src/main/scala/io/aiven/inkless/**',
         'core/src/test/scala/io/aiven/inkless/**',
         // Inkless coding agent configurations
+        'INKLESS_OWNERSHIP',
         'AGENTS.md',
         'CLAUDE.md',
         '.ai-agents/**',
