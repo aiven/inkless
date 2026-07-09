@@ -14,13 +14,20 @@ the importance of a given rule or guideline:
 ## Repository Structure
 
 `inkless` is a fork of Apache Kafka that adds Diskless Topics (KIP-1150). Most
-of the tree is upstream Kafka. Inkless-specific changes live in dedicated
-locations, which are listed in [`inkless-sync/config/protected-patterns.txt`](inkless-sync/config/protected-patterns.txt).
-When a task is Inkless-related, work in these first.
+of the tree is upstream Kafka. Which paths are inkless-owned — and which are
+upstream files carrying inkless edits — is recorded in
+[`INKLESS_OWNERSHIP`](INKLESS_OWNERSHIP). When a task is Inkless-related, work in the
+**OWNED** paths first (`@aiven/inkless`).
 
-Everything else (`clients/`, `metadata/`, `streams/`, `connect/`, `raft/`, etc.)
-is upstream Kafka. Follow upstream conventions when editing these and keep
-Inkless changes minimal and isolated.
+Note that some diskless logic is **interleaved** into upstream broker classes rather
+than confined to an inkless package — e.g. `DisklessFetchOffsetRouter.scala` and
+`InitDisklessLog*.scala` are net-new under `core/src/main/scala/kafka/server/`, and
+`ReplicaManager.scala`/`KafkaConfig.scala`/`BrokerServer.scala` carry heavy inkless
+edits (the dual-owner INTERLEAVED entries in the manifest). Don't assume all inkless
+Scala lives under `io/aiven/inkless/`.
+
+Everything else is upstream Kafka. Follow upstream conventions when editing those and
+keep Inkless changes minimal and isolated.
 
 ## Documentation (Load On-Demand)
 

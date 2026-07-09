@@ -25,8 +25,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
-CONFIG_DIR="${SCRIPT_DIR}/config"
-PROTECTED_PATTERNS="${CONFIG_DIR}/protected-patterns.txt"
+# Ownership manifest at the repo root (inkless-sync/ is one level down).
+OWNERSHIP_MANIFEST="${SCRIPT_DIR}/../INKLESS_OWNERSHIP"
 SYNC_DIR=".inkless-sync"
 
 # Use shared upstream remote detection from lib/common.sh
@@ -195,23 +195,25 @@ phase_prepare() {
     # Identify protected files that might conflict
     log_info "Identifying protected inkless files..."
     PROTECTED_COUNT=0
-    if [[ -f "$PROTECTED_PATTERNS" ]]; then
-        local temp_patterns
-        temp_patterns=$(grep -v "^#" "$PROTECTED_PATTERNS" | grep -v "^$" || true)
-        if [[ -n "$temp_patterns" ]]; then
-            # Disable globbing so patterns like "storage/inkless/**" are not
-            # expanded by the shell before being passed to `find`.
-            set -f
-            while IFS= read -r pattern; do
-                local count
-                count=$(find . -path "./.git" -prune -o -path "./${pattern}" -print 2>/dev/null | wc -l | tr -d ' ')
-                PROTECTED_COUNT=$((PROTECTED_COUNT + count))
-            done <<< "$temp_patterns"
-            # Re-enable globbing after processing patterns.
-            set +f
-        fi
-        log_info "Protected files identified: ${PROTECTED_COUNT}"
+    if [[ ! -f "$OWNERSHIP_MANIFEST" ]]; then
+        error "Ownership manifest not found: $OWNERSHIP_MANIFEST (required to protect inkless files during sync)"
+        return 1
     fi
+    local temp_patterns
+    temp_patterns=$(owned_patterns "$OWNERSHIP_MANIFEST")
+    if [[ -n "$temp_patterns" ]]; then
+        # Disable globbing so patterns like "storage/inkless/**" are not
+        # expanded by the shell before being passed to `find`.
+        set -f
+        while IFS= read -r pattern; do
+            local count
+            count=$(find . -path "./.git" -prune -o -path "./${pattern}" -print 2>/dev/null | wc -l | tr -d ' ')
+            PROTECTED_COUNT=$((PROTECTED_COUNT + count))
+        done <<< "$temp_patterns"
+        # Re-enable globbing after processing patterns.
+        set +f
+    fi
+    log_info "Protected files identified: ${PROTECTED_COUNT}"
 
     # Determine sync branch name
     SYNC_BRANCH="sync/upstream-$(date +%Y%m%d)"
@@ -243,18 +245,21 @@ phase_prepare() {
         git diff "$MERGE_BASE"..HEAD --name-only > "${SYNC_DIR}/manifest-files.txt"
         git diff "$MERGE_BASE"..HEAD --stat > "${SYNC_DIR}/manifest-stats.txt"
 
-        # Write protected patterns
-        if [[ -f "$PROTECTED_PATTERNS" ]]; then
-            grep -v "^#" "$PROTECTED_PATTERNS" | grep -v "^$" > "${SYNC_DIR}/protected-patterns-clean.txt" || true
-
-            > "${SYNC_DIR}/protected-files.txt"
-            # Disable globbing so patterns are passed to find, not expanded by shell
-            set -f
-            while IFS= read -r pattern; do
-                find . -path "./.git" -prune -o -path "./${pattern}" -print 2>/dev/null >> "${SYNC_DIR}/protected-files.txt" || true
-            done < "${SYNC_DIR}/protected-patterns-clean.txt"
-            set +f
+        # Derive the auto-resolve globs from the ownership manifest (see owned_patterns
+        # in lib/common.sh; INTERLEAVED dual-owner entries are excluded for manual review).
+        if [[ ! -f "$OWNERSHIP_MANIFEST" ]]; then
+            error "Ownership manifest not found: $OWNERSHIP_MANIFEST (required to derive auto-resolve patterns)"
+            return 1
         fi
+        owned_patterns "$OWNERSHIP_MANIFEST" > "${SYNC_DIR}/protected-patterns-clean.txt"
+
+        > "${SYNC_DIR}/protected-files.txt"
+        # Disable globbing so patterns are passed to find, not expanded by shell
+        set -f
+        while IFS= read -r pattern; do
+            find . -path "./.git" -prune -o -path "./${pattern}" -print 2>/dev/null >> "${SYNC_DIR}/protected-files.txt" || true
+        done < "${SYNC_DIR}/protected-patterns-clean.txt"
+        set +f
 
         # Save sync metadata
         cat > "${SYNC_DIR}/sync-info.txt" << EOF
