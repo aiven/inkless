@@ -153,24 +153,28 @@ jobs:
             -x generateJooqClasses
             -PtestLoggingEvents=started,passed,skipped,failed 
             -PmaxParallelForks=2 
-            -PmaxTestRetries=0
             -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=0 
             -Pkafka.test.xml.output.dir=${{ matrix.java }}
             -PcommitId=xxxxxxxxxxxxxxxx
+          # Inkless-owned tests run without retries so we catch our own flakiness.
+          INKLESS_RETRY_ARGS: -PmaxTestRetries=0
+          # Kafka-owned tests are retried to tolerate known upstream flakiness.
+          KAFKA_RETRY_ARGS: -PmaxTestRetries=1 -PmaxTestRetryFailures=3
         # Point to inkless tests
         run: |
           set +e
           ./.github/scripts/thread-dump.sh &
-          # inkless tests
+          # Inkless-owned tests (no retries)
           timeout ${TIMEOUT_MINUTES}m \
-          ./gradlew ${GRADLE_ARGS} :storage:inkless:test :storage:inkless:integrationTest && \
-          ./gradlew ${GRADLE_ARGS} :metadata:test \
+          ./gradlew ${GRADLE_ARGS} ${INKLESS_RETRY_ARGS} :storage:inkless:test :storage:inkless:integrationTest && \
+          ./gradlew ${GRADLE_ARGS} ${INKLESS_RETRY_ARGS} :core:test \
+            --tests "*Inkless*" --tests "*Diskless*" \
+            --tests "io.aiven.inkless.*" && \
+          ./gradlew ${GRADLE_ARGS} ${KAFKA_RETRY_ARGS} :metadata:test \
             --tests "org.apache.kafka.controller.*" \
             --tests "org.apache.kafka.metadata.PartitionRegistrationTest" \
             --tests "org.apache.kafka.image.TopicsImageTest" && \
-          ./gradlew ${GRADLE_ARGS} :core:test \
-            --tests "*Inkless*" --tests "*Diskless*" \
-            --tests "io.aiven.inkless.*" \
+          ./gradlew ${GRADLE_ARGS} ${KAFKA_RETRY_ARGS} :core:test \
             --tests "kafka.log.LogConfigTest" \
             --tests "kafka.server.KafkaConfigTest" \
             --tests "kafka.server.ReplicaManagerTest" \
@@ -183,14 +187,15 @@ jobs:
             --tests "kafka.server.metadata.BrokerMetadataPublisherTest" \
             --tests "kafka.server.ControllerApisTest" \
             --tests "kafka.server.ControllerConfigurationValidatorTest" \
-            --tests "kafka.server.DelayedFetchTest" && \
-          ./gradlew ${GRADLE_ARGS} :clients:test \
+            --tests "kafka.server.DelayedFetchTest" \
+            --tests "kafka.server.RequestQuotaTest" && \
+          ./gradlew ${GRADLE_ARGS} ${KAFKA_RETRY_ARGS} :clients:test \
             --tests "org.apache.kafka.common.requests.RequestResponseTest" \
             --tests "org.apache.kafka.common.utils.FlattenedIteratorTest" && \
-          ./gradlew ${GRADLE_ARGS} :storage:test \
+          ./gradlew ${GRADLE_ARGS} ${KAFKA_RETRY_ARGS} :storage:test \
             --tests "org.apache.kafka.storage.log.metrics.BrokerTopicMetricsTest" \
             --tests "org.apache.kafka.storage.log.metrics.BrokerTopicStatsTest" && \
-          ./gradlew ${GRADLE_ARGS} :server:test \
+          ./gradlew ${GRADLE_ARGS} ${KAFKA_RETRY_ARGS} :server:test \
             --tests "org.apache.kafka.network.RequestConvertToJsonTest"
           exitcode="$?"
           echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
