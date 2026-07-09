@@ -109,7 +109,7 @@ jobs:
           THREAD_DUMP_URL: ${{ steps.thread-dump-upload-artifact.outputs.artifact-url }}
           GRADLE_TEST_EXIT_CODE: ${{ steps.junit-test.outputs.exitcode }}
         run: |
-          python .github/scripts/junit.py --path build/junit-xml/${{ matrix.java }} >> $GITHUB_STEP_SUMMARY
+          python .github/scripts/junit.py --path build/junit-xml >> $GITHUB_STEP_SUMMARY
       - name: Archive Test Catalog
         if: ${{ always() && matrix.java == '21' }}
         uses: actions/upload-artifact@v4
