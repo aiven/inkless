@@ -91,22 +91,24 @@ gh release download inkless-release-0.33 --repo aiven/inkless --pattern "*.tgz"
 These branches receive new Inkless releases. When a release is cut, both are updated
 simultaneously with the same Inkless version number.
 
-| Branch        | Kafka version | Latest release        |
-|---------------|---------------|-----------------------|
-| `inkless-4.2` | 4.2.1         | `inkless-4.2.1-0.44`  |
-| `inkless-4.1` | 4.1.2         | `inkless-4.1.2-0.44`  |
+See [GitHub Releases](https://github.com/aiven/inkless/releases) for the latest version on each branch.
+
+| Branch        | Kafka version |
+|---------------|---------------|
+| `inkless-4.2` | 4.2.1         |
+| `inkless-4.1` | 4.1.2         |
 
 ### Inactive (no longer updated)
 
-| Branch        | Kafka version | Last release          |
-|---------------|---------------|-----------------------|
-| `inkless-4.0` | 4.0.2         | `inkless-4.0.2-0.37`  |
+| Branch        | Kafka version | Last release         |
+|---------------|---------------|----------------------|
+| `inkless-4.0` | 4.0.2         | `inkless-4.0.2-0.37` |
 
 ### Planned
 
-| Branch        | Kafka version | Status                |
-|---------------|---------------|-----------------------|
-| `inkless-4.3` | 4.3.x         | Not yet created       |
+| Branch        | Kafka version | Status          |
+|---------------|---------------|-----------------|
+| `inkless-4.3` | 4.3.x         | Not yet created |
 
 If a commit cannot be cleanly backported across active branches, they may diverge by one
 version increment (see [Versioning Strategy](VERSIONING-STRATEGY.md)).
