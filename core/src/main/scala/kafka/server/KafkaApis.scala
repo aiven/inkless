@@ -393,7 +393,9 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleListClusterMirrorsRequest(request: RequestChannel.Request): Unit = {
+    val listMirrorsRequest = request.body[ListClusterMirrorsRequest]
     val responseData = new ListClusterMirrorsResponseData()
+    val shouldIncludeTopicNames = listMirrorsRequest.data.includeTopicNames()
 
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring list mirrors request")
@@ -407,12 +409,16 @@ class KafkaApis(val requestChannel: RequestChannel,
       .filter(mirrorName => authHelper.authorize(request.context, DESCRIBE, CLUSTER_MIRROR, mirrorName, logIfDenied = false))
     authorizedMirrors.foreach(mirrorName => {
       val sourceClusterId = clusterMirrorCoordinator.getSourceClusterId(mirrorName)
-      mirrors.add(new ListClusterMirrorsResponseData.ListedMirror()
+      val listedMirror = new ListClusterMirrorsResponseData.ListedMirror()
         .setMirrorName(mirrorName)
         .setSourceBootstrap(if (clusterMirrorCoordinator.getSourceBootstrap(mirrorName) != null)
           clusterMirrorCoordinator.getSourceBootstrap(mirrorName) else "")
         .setSourceClusterId(if (sourceClusterId != null) sourceClusterId else "")
-        .setTopicCount(clusterMirrorCoordinator.getActiveTopicCount(mirrorName)))
+        .setTopicCount(clusterMirrorCoordinator.getActiveTopicCount(mirrorName))
+      if (shouldIncludeTopicNames) {
+        listedMirror.setTopicNames(new util.ArrayList[String](clusterMirrorCoordinator.getConfiguredTopics(mirrorName, true, false)))
+      }
+      mirrors.add(listedMirror)
     })
     responseData.setMirrors(mirrors)
     responseData.setErrorCode(Errors.NONE.code)

@@ -5184,7 +5184,7 @@ public class KafkaAdminClient extends AdminClient {
         runnable.call(new Call("listClusterMirrors", deadline, new LeastLoadedNodeProvider()) {
             @Override
             ListClusterMirrorsRequest.Builder createRequest(int timeoutMs) {
-                return new ListClusterMirrorsRequest.Builder(new ListClusterMirrorsRequestData());
+                return new ListClusterMirrorsRequest.Builder(new ListClusterMirrorsRequestData().setIncludeTopicNames(options.shouldIncludeTopicNames()));
             }
 
             @Override
@@ -5202,7 +5202,8 @@ public class KafkaAdminClient extends AdminClient {
                                 mirror.mirrorName(),
                                 mirror.sourceBootstrap(),
                                 mirror.sourceClusterId(),
-                                mirror.topicCount()
+                                mirror.topicCount(),
+                                mirror.topicNames()
                         ));
                     }
                     all.complete(listings);

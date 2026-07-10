@@ -84,9 +84,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @Timeout(value = 180, unit = TimeUnit.SECONDS)
 public class AsyncClusterMirrorIntegrationTest {
-    private static final String TOPIC_NAME = "my-topic-async";
     private static final long METADATA_REFRESH_INTERVAL_MS = 5_000L;
     private static final String MIRROR_NAME = "my-mirror";
+    private static final String OTHER_MIRROR_NAME = "new-mirror";
+    private static final String TOPIC_NAME = "my-topic";
 
     private KafkaClusterTestKit srcCluster;
     private KafkaClusterTestKit dstCluster;
@@ -94,6 +95,7 @@ public class AsyncClusterMirrorIntegrationTest {
     private Admin dstAdmin;
 
     private String singleSourceBootstrapServer;
+    private String singleDestinationBootstrapServer;
 
     @BeforeEach
     void beforeEach() throws Exception {
@@ -107,6 +109,7 @@ public class AsyncClusterMirrorIntegrationTest {
                 .setConfigProp(ClusterMirrorConfig.MIRROR_METADATA_REFRESH_INTERVAL_MS_CONFIG,
                         String.valueOf(METADATA_REFRESH_INTERVAL_MS))
                 .setConfigProp(ServerLogConfigs.AUTO_CREATE_TOPICS_ENABLE_CONFIG, "false")
+                .setConfigProp(ClusterMirrorConfig.MIRROR_STATE_TOPIC_NUM_PARTITIONS_CONFIG, "3")
                 .setConfigProp(ClusterMirrorConfig.MIRROR_STATE_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
                 .setConfigProp(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
                 .setConfigProp(ServerConfigs.REQUEST_TIMEOUT_MS_CONFIG, "5000")
@@ -133,6 +136,7 @@ public class AsyncClusterMirrorIntegrationTest {
                 .setConfigProp(ClusterMirrorConfig.MIRROR_METADATA_REFRESH_INTERVAL_MS_CONFIG,
                         String.valueOf(METADATA_REFRESH_INTERVAL_MS))
                 .setConfigProp(ServerLogConfigs.AUTO_CREATE_TOPICS_ENABLE_CONFIG, "false")
+                .setConfigProp(ClusterMirrorConfig.MIRROR_STATE_TOPIC_NUM_PARTITIONS_CONFIG, "3")
                 .setConfigProp(ClusterMirrorConfig.MIRROR_STATE_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
                 .setConfigProp(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
 
@@ -150,6 +154,7 @@ public class AsyncClusterMirrorIntegrationTest {
         dstCluster.format();
         dstCluster.startup();
         dstCluster.waitForReadyBrokers();
+        singleDestinationBootstrapServer = dstCluster.bootstrapServers().split(",")[0];
 
         srcAdmin = Admin.create(Map.of(
                 AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, srcCluster.bootstrapServers()
@@ -650,6 +655,40 @@ public class AsyncClusterMirrorIntegrationTest {
     }
 
     /**
+     * Mirror loop detection test.
+     * A -> B with mirror name "MIRROR_NAME" on TOPIC_NAME
+     * B -> A with mirror name "ANOTHER_MIRROR_NAME" on TOPIC_NAME
+     * The B should not enter MIRRORING state while the A is in MIRRORING state.
+     */
+    @Test
+    void testMirrorLoopDetection() throws Exception {
+        // Create topic
+        srcAdmin.createTopics(List.of(
+                new NewTopic(TOPIC_NAME, 1, (short) 1)
+        )).all().get(30, TimeUnit.SECONDS);
+
+        // Create mirror and add topic my-topic
+        dstAdmin.createClusterMirror(MIRROR_NAME, Map.of(
+                "bootstrap.servers", singleSourceBootstrapServer
+        ), new CreateClusterMirrorOptions()).all().get(30, TimeUnit.SECONDS);
+        dstAdmin.startMirrorTopics(MIRROR_NAME, Set.of(TOPIC_NAME), new StartMirrorTopicsOptions())
+                .all().get(30, TimeUnit.SECONDS);
+        waitForMirrorLagZero(dstAdmin, MIRROR_NAME, TOPIC_NAME);
+
+        // Create mirror and add topic my-topic with another mirror name
+        srcAdmin.createClusterMirror(OTHER_MIRROR_NAME, Map.of(
+                "bootstrap.servers", singleDestinationBootstrapServer
+        ), new CreateClusterMirrorOptions()).all().get(30, TimeUnit.SECONDS);
+        srcAdmin.startMirrorTopics(OTHER_MIRROR_NAME, Set.of(TOPIC_NAME), new StartMirrorTopicsOptions())
+                .all().get(30, TimeUnit.SECONDS);
+
+        // verify the dst <- src mirror is still MIRRORING
+        waitForMirrorState(dstAdmin, MIRROR_NAME, TOPIC_NAME, "MIRRORING");
+        // verify the src <- dst mirror is FAILED with the expected error message
+        waitForMirrorState(srcAdmin, OTHER_MIRROR_NAME, TOPIC_NAME, "FAILED", Optional.of("Detected mirror loop for mirror"));
+    }
+
+    /*
      * Tests that deleting a source topic moves mirror partitions to non-retryable FAILED
      * and that they remain in that state across metadata refresh cycles.
      */
@@ -762,6 +801,20 @@ public class AsyncClusterMirrorIntegrationTest {
         }
     }
 
+    private void waitForMirrorState(Admin admin, String mirrorName, String topicPattern, String state, Optional<String> errorMsg) throws Exception {
+        long deadline = System.currentTimeMillis() + 30_000;
+        while (System.currentTimeMillis() < deadline) {
+            // make sure the mirror is in the desired state and the error message is as expected if provided
+            if (allPartitionsSatisfy(admin, mirrorName, topicPattern,
+                    s -> state.equals(s.state())
+                            && (errorMsg.isEmpty()
+                            || s.errorMessage() != null && s.errorMessage().contains(errorMsg.get()))))
+                return;
+            TimeUnit.MILLISECONDS.sleep(1_000);
+        }
+        throw new AssertionError("Mirror partitions for " + topicPattern + " did not reach state " + state + " within timeout");
+    }
+
     private void appendToTopicsInclude(String mirrorName, String pattern) throws Exception {
         ConfigResource mirrorResource = new ConfigResource(ConfigResource.Type.CLUSTER_MIRROR, mirrorName);
         var configResult = dstAdmin.describeConfigs(List.of(mirrorResource)).all().get(30, TimeUnit.SECONDS);
@@ -787,6 +840,7 @@ public class AsyncClusterMirrorIntegrationTest {
                 List.of(mirrorName), new DescribeClusterMirrorsOptions());
         var descriptions = result.allDescriptions().get(5, TimeUnit.SECONDS);
         ClusterMirrorDesc desc = descriptions.get(mirrorName);
+        System.out.println("!!! Described mirror: " + desc);
         if (desc == null) return false;
         var pattern = java.util.regex.Pattern.compile(topicPattern);
         var matched = desc.topics().entrySet().stream()
@@ -797,12 +851,7 @@ public class AsyncClusterMirrorIntegrationTest {
     }
 
     private void waitForMirrorState(Admin admin, String mirrorName, String topicPattern, String state) throws Exception {
-        long deadline = System.currentTimeMillis() + 30_000;
-        while (System.currentTimeMillis() < deadline) {
-            if (allPartitionsSatisfy(admin, mirrorName, topicPattern, s -> state.equals(s.state()))) return;
-            TimeUnit.MILLISECONDS.sleep(1_000);
-        }
-        throw new AssertionError("Mirror " + mirrorName + " did not reach state " + state + " for " + topicPattern);
+        waitForMirrorState(admin, mirrorName, topicPattern, state, Optional.empty());
     }
 
     private void waitForMirrorLagZero(Admin admin, String mirrorName, String... topicPatterns) throws Exception {

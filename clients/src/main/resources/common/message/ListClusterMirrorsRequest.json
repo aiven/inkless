@@ -21,5 +21,8 @@
   // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",
-  "fields": []
+  "fields": [
+    { "name": "IncludeTopicNames", "type": "bool", "versions": "0+", "default": "false",
+      "about": "If true, the response will include mirror topic names for each mirror." }
+  ]
 }
