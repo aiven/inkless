@@ -86,11 +86,11 @@ public class ClusterMirrorDesc {
         private final long destinationOffset;
         private final long lag;
         private final String state;
-        private final short retryAttempt;
+        private final int retryAttempt;
         private final String errorMessage;
 
         public LeaderStateDesc(TopicPartition topicPartition, long sourceOffset, long destinationOffset,
-                               long lag, String state, short retryAttempt, String errorMessage) {
+                               long lag, String state, int retryAttempt, String errorMessage) {
             this.topicPartition = topicPartition;
             this.sourceOffset = sourceOffset;
             this.destinationOffset = destinationOffset;
@@ -120,7 +120,7 @@ public class ClusterMirrorDesc {
             return state;
         }
 
-        public short retryAttempt() {
+        public int retryAttempt() {
             return retryAttempt;
         }
 

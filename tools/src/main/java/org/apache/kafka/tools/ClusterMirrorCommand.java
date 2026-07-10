@@ -348,7 +348,8 @@ public abstract class ClusterMirrorCommand {
                 if (error.length() > maxError) {
                     error = error.substring(0, maxError - 3) + "...";
                 }
-                String retry = info.retryAttempt() + "/" + maxRetryAttempts;
+                String retry = info.retryAttempt() == -1
+                    ? "NonRetryable" : info.retryAttempt() + "/" + maxRetryAttempts;
                 System.out.printf("%-30s %-40s %-10d %-7s %s%n",
                     truncateLeft(info.mirror(), 30),
                     truncateLeft(info.topic(), 40),
@@ -402,7 +403,7 @@ public abstract class ClusterMirrorCommand {
 
         private record PartitionInfo(String mirror, String topic, int partition,
                                      long sourceOffset, long destinationOffset, long lag,
-                                     String state, short retryAttempt, String errorMessage) { }
+                                     String state, int retryAttempt, String errorMessage) { }
     }
 
     private static final class MirrorCommandOptions extends CommandDefaultOptions {

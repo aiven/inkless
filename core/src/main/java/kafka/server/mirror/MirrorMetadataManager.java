@@ -564,8 +564,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return failedPartitionInfo;
     }
 
+    public void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state) {
+        transitionTo(mirrorName, topicPartition, state, null, false);
+    }
+
     public void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state, String errorMessage) {
-        stateTransitioner.ifPresent(st -> st.transitionTo(mirrorName, topicPartition, state, errorMessage));
+        transitionTo(mirrorName, topicPartition, state, errorMessage, false);
+    }
+
+    public void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state, String errorMessage, boolean nonRetryable) {
+        stateTransitioner.ifPresent(st -> st.transitionTo(mirrorName, topicPartition, state, errorMessage, nonRetryable));
     }
 
     /**
@@ -585,33 +593,39 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      *      UNKNOWN/STOPPED happens on startMirrorTopics. FAILED happens on manual restart after retries are exhausted.
      *   3. else, keep the same state as is. This could happen like leadership change, and the new leader should
      *      continue to complete the process in previous leader
+     *
+     * If the current state is FAILED, we only allow it to enter FAILED state because if we move the FAILED state based on
+     * the "desired state", that means we ignore its previous state stored in FailedPartitionInfo.
+     * Ex: one partition failed when LOG_TRUNCATION. We should retry LOG_TRUNCATION until exhausted. But if we honor the
+     * desired state, we might move this failed state into PAUSING or STOPPING state due to user's update.
+     * This breaks the state machine diagram that a LOG_TRUNCATION state cannot move to PAUSING or STOPPING state.
      */
     private void applyStateTransition(String mirrorName, TopicPartition tp,
                                       MirrorPartitionState curState, MirrorPartitionState fetchedState,
                                       boolean stopRequested, boolean pauseRequested) {
-        stateTransitioner.ifPresent(t -> {
-            if (stopRequested) {
-                if (curState != MirrorPartitionState.STOPPED) {
-                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPING, null);
-                } else {
-                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPED, null);
-                }
-            } else if (pauseRequested) {
-                if (curState != MirrorPartitionState.PAUSED) {
-                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSING, null);
-                } else {
-                    t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED, null);
-                }
-            } else if (curState == MirrorPartitionState.PAUSED) {
-                t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.MIRRORING, null);
-            } else if (curState == MirrorPartitionState.UNKNOWN
-                    || curState == MirrorPartitionState.STOPPED
-                    || curState == MirrorPartitionState.FAILED) {
-                t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION, null);
+        // todo: come up with a better way to handle "manual" failure recovery way
+        if (curState == MirrorPartitionState.FAILED) {
+            transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.FAILED);
+        } else if (stopRequested) {
+            if (curState != MirrorPartitionState.STOPPED) {
+                transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPING);
             } else {
-                t.transitionTo(mirrorName, Set.of(tp), fetchedState != null ? fetchedState : curState, null);
+                transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPED);
             }
-        });
+        } else if (pauseRequested) {
+            if (curState != MirrorPartitionState.PAUSED) {
+                transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSING);
+            } else {
+                transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED);
+            }
+        } else if (curState == MirrorPartitionState.PAUSED) {
+            transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.MIRRORING);
+        } else if (curState == MirrorPartitionState.UNKNOWN
+                || curState == MirrorPartitionState.STOPPED) {
+            transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION);
+        } else {
+            transitionTo(mirrorName, Set.of(tp), fetchedState != null ? fetchedState : curState);
+        }
     }
 
     public void scheduleSourceMetadataSync(String mirrorName) {
@@ -670,9 +684,30 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             if (newClusterId != null && !newClusterId.isEmpty()) {
                 String previousClusterId = getSourceClusterId(mirrorName);
                 if (previousClusterId != null && !previousClusterId.equals(newClusterId)) {
-                    throw new IllegalStateException("Source cluster ID changed for mirror " + mirrorName
+                    String errMsg = "Source cluster ID changed for mirror " + mirrorName
                             + ": expected " + previousClusterId + ", got " + newClusterId
-                            + ". This may indicate a misconfiguration or that the source cluster has been replaced.");
+                            + ". This may indicate a misconfiguration or that the source cluster has been replaced. "
+                            + "Moving all partitions to non-retryable failed state.";
+                    log.error(errMsg);
+
+                    // Get mirrored leader partitions for this mirror in this node, and move them to non-retryable failed state
+                    Set<String> mirroredTopics = getConfiguredTopics(mirrorName, true);
+                    if (!mirroredTopics.isEmpty()) {
+                        Set<TopicPartition> mirroredLeaderPartitions = new HashSet<>();
+                        for (String topic : mirroredTopics) {
+                            TopicImage topicImage = metadataImage.topics().getTopic(topic);
+                            if (topicImage != null) {
+                                topicImage.partitions().forEach((partitionId, partition) -> {
+                                    if (partition.leader == nodeId) {
+                                        mirroredLeaderPartitions.add(new TopicPartition(topic, partitionId));
+                                    }
+                                });
+                            }
+                        }
+                        if (!mirroredLeaderPartitions.isEmpty()) {
+                            transitionTo(mirrorName, mirroredLeaderPartitions, MirrorPartitionState.FAILED, errMsg, true);
+                        }
+                    }
                 }
             }
         } catch (IllegalStateException e) {
@@ -855,13 +890,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         getConfiguredTopics(mirrorName, true).forEach(name -> {
             if (deletedSourceTopicNames.contains(name)) {
-                log.info("Detected topic {} deleted in remote cluster {}, stopping mirror partitions", name, mirrorName);
+                log.info("Detected topic {} deleted in remote cluster {}, marking mirror partitions as non-retryable", name, mirrorName);
                 // snapshot keyset to avoid skipping entries during concurrent modification
                 Set.copyOf(partitionStates.keySet()).stream()
                         .filter(key -> key.mirrorName().equals(mirrorName) && key.topic().equals(name))
-                        .forEach(key -> stateTransitioner.ifPresent(t ->
-                                t.transitionTo(mirrorName, Set.of(new TopicPartition(key.topic(), key.partition())),
-                                        MirrorPartitionState.FAILED, "The source topic is deleted.")));
+                        .forEach(key -> transitionTo(mirrorName, Set.of(new TopicPartition(key.topic(), key.partition())),
+                                        MirrorPartitionState.FAILED, "The source topic is deleted.", true));
             }
         });
     }
@@ -907,7 +941,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             var partition = topicImage.partitions().get(tp.partition());
             if (partition != null && partition.leader == nodeId) {
                 log.info("Source leader for {} discovered after initial onMetadataUpdate, transitioning to LOG_TRUNCATION", tp);
-                stateTransitioner.ifPresent(t -> t.transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION, null));
+                transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION);
             }
         });
     }
@@ -1610,7 +1644,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     FailedPartitionInfo fpi = failedPartitionInfo.get(new TopicPartition(tp, part));
                     partitionResult.setPreviousState(
                             fpi != null ? fpi.previousState().value() : MirrorPartitionState.UNKNOWN.value());
-                    partitionResult.setRetryAttempt(fpi != null ? fpi.retryAttempt() : 0);
+                    partitionResult.setRetryAttempt(fpi != null ? (short) fpi.retryAttempt() : (short) 0);
                     partitionResult.setErrorMessage(fpi != null ? fpi.errorMessage() : null);
                 }
                 partitionResults.add(partitionResult);
