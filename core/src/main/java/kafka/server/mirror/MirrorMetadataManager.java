@@ -136,7 +136,6 @@ import scala.Option;
 
 import static kafka.server.mirror.ClusterMirrorUtils.LEADER_EPOCH_BUMP_INCREMENT;
 import static kafka.server.mirror.ClusterMirrorUtils.LEADER_EPOCH_BUMP_THRESHOLD;
-import static kafka.server.mirror.ClusterMirrorUtils.NON_RETRYABLE_ATTEMPT;
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
 import static org.apache.kafka.common.internals.Topic.MIRROR_STATE_TOPIC_NAME;
 
@@ -594,11 +593,20 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      *      UNKNOWN/STOPPED happens on startMirrorTopics. FAILED happens on manual restart after retries are exhausted.
      *   3. else, keep the same state as is. This could happen like leadership change, and the new leader should
      *      continue to complete the process in previous leader
+     *
+     * If the current state is FAILED, we only allow it to enter FAILED state because if we move the FAILED state based on
+     * the "desired state", that means we ignore its previous state stored in FailedPartitionInfo.
+     * Ex: one partition failed when LOG_TRUNCATION. We should retry LOG_TRUNCATION until exhausted. But if we honor the
+     * desired state, we might move this failed state into PAUSING or STOPPING state due to user's update.
+     * This breaks the state machine diagram that a LOG_TRUNCATION state cannot move to PAUSING or STOPPING state.
      */
     private void applyStateTransition(String mirrorName, TopicPartition tp,
                                       MirrorPartitionState curState, MirrorPartitionState fetchedState,
                                       boolean stopRequested, boolean pauseRequested) {
-        if (stopRequested) {
+        // todo: come up with a better way to handle "manual" failure recovery way
+        if (curState == MirrorPartitionState.FAILED) {
+            transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.FAILED);
+        } else if (stopRequested) {
             if (curState != MirrorPartitionState.STOPPED) {
                 transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.STOPPING);
             } else {
@@ -613,13 +621,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         } else if (curState == MirrorPartitionState.PAUSED) {
             transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.MIRRORING);
         } else if (curState == MirrorPartitionState.UNKNOWN
-                || curState == MirrorPartitionState.STOPPED
-                || curState == MirrorPartitionState.FAILED) {
-            FailedPartitionInfo fpi = failedPartitionInfo.get(tp);
-            if (fpi != null && fpi.retryAttempt() == NON_RETRYABLE_ATTEMPT) {
-                log.debug("Skipping state transition for partition {} because it is in non-retryable failed state, requires manual intervention.", tp);
-                return;
-            }
+                || curState == MirrorPartitionState.STOPPED) {
             transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.LOG_TRUNCATION);
         } else {
             transitionTo(mirrorName, Set.of(tp), fetchedState != null ? fetchedState : curState);
