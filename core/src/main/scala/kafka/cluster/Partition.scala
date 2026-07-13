@@ -314,7 +314,11 @@ class Partition(val topicPartition: TopicPartition,
 
   /**
    * Seal this Partition so that no more records can be appended locally.
-   * @throws KafkaStorageException If transaction abortion fails due to an I/O error.
+   * After aborting in-flight transactions, the active segment is force-rolled so the
+   * boundary [base_active, LEO) becomes a closed tiering candidate. Without this roll,
+   * an idle switched topic never copies its classic tail to remote (KC-234) because
+   * RemoteLogManager only tiers closed segments.
+   * @throws KafkaStorageException If transaction abortion or segment rolling fails due to an I/O error.
    */
   def seal(): Unit = inWriteLock(leaderIsrUpdateLock) {
     if (!_sealed) {
@@ -323,6 +327,19 @@ class Partition(val topicPartition: TopicPartition,
         abortOngoingTransactions(leaderLog)
       }
       _sealed = true
+      // Force-roll the active segment so the boundary becomes a closed tiering candidate.
+      // The empty new segment [seal, seal) stays as the active segment (truncateTo(seal) is
+      // only called when LEO > seal, which is not the case here); it is harmless — no records,
+      // not tiered by RLM, and reused if the switch is aborted.
+      if (leaderLog.activeSegment().size() > 0) {
+        try {
+          leaderLog.roll()
+        } catch {
+          case e: java.io.IOException =>
+            throw new KafkaStorageException(s"Failed to roll active segment while sealing " +
+              s"partition $topicPartition for diskless switch", e)
+        }
+      }
       stateChangeLogger.info(s"Sealed partition $topicPartition for diskless switch with LEO ${leaderLog.logEndOffset}")
     }
   }
