@@ -531,29 +531,6 @@ class ConsolidationVerifier(object):
                             % (topic, partition, min_offset, timeout_sec)))
         return result["offset"]
 
-    def delete_records_before(self, topic, offset, partition=0):
-        """Issue a ``DeleteRecords`` that advances the partition's log-start to
-        ``offset`` via ``kafka-delete-records.sh``. Writes the required offset-JSON
-        file on a broker node, runs the tool against it, and asserts success.
-
-        On a consolidating topic the requested ``offset`` may sit inside the prefix
-        that already lives only in the remote tier (WAL pruned, local segments
-        evicted), so this exercises deletion *across* tiers, not just a local
-        truncation."""
-        node = self.kafka.nodes[0]
-        spec = {"partitions": [{"topic": topic, "partition": partition, "offset": offset}],
-                "version": 1}
-        json_path = "/tmp/delete-records-%s-%d.json" % (topic, partition)
-        node.account.create_file(json_path, json.dumps(spec))
-        cmd = "%s --bootstrap-server %s --offset-json-file %s" % (
-            self.kafka.path.script("kafka-delete-records.sh", node),
-            self.kafka.bootstrap_servers(),
-            json_path,
-        )
-        out = "".join(node.account.ssh_capture(cmd, allow_fail=False))
-        self.logger.info("DeleteRecords(%s-%d, before offset %d): %s"
-                         % (topic, partition, offset, out.strip()))
-
     def wait_for_earliest_stable(self, topic, partition=0, settle_samples=3,
                                  backoff_sec=5, timeout_sec=240):
         """Wait until the *topic's* earliest readable offset
