@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.metadata;
 
+import java.util.Set;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,6 +27,18 @@ class ClientAZExtractor {
 
     // Visible for testing
     static String getClientAZ(final String clientId) {
+        return getClientAZ(clientId, Set::of);
+    }
+
+    /**
+     * Extract the client AZ from the client ID, validating against known rack values if provided.
+     *
+     * @param clientId the client ID string, may be null
+     * @param racksSupplier supplier of valid rack/AZ identifiers, evaluated when needed.
+     *                      An empty set disables validation.
+     * @return the extracted AZ, or null if not found or not matchable
+     */
+    static String getClientAZ(final String clientId, final Supplier<Set<String>> racksSupplier) {
         if (clientId == null) {
             return null;
         }
@@ -33,6 +47,30 @@ class ClientAZExtractor {
         if (!matcher.find()) {
             return null;
         }
-        return matcher.group("az");
+
+        final String rawAZ = matcher.group("az");
+        if (rawAZ == null || rawAZ.isEmpty()) {
+            return rawAZ;
+        }
+
+        final Set<String> racks = racksSupplier.get();
+        if (racks == null || racks.isEmpty()) {
+            return rawAZ;
+        }
+
+        if (racks.contains(rawAZ)) {
+            return rawAZ;
+        }
+
+        String azCandidate = rawAZ;
+        int lastHyphen;
+        while ((lastHyphen = azCandidate.lastIndexOf('-')) > 0) {
+            azCandidate = azCandidate.substring(0, lastHyphen);
+            if (racks.contains(azCandidate)) {
+                return azCandidate;
+            }
+        }
+
+        return null;
     }
 }
