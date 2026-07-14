@@ -28,7 +28,7 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.AlterConfigOp;
-import org.apache.kafka.clients.admin.ClusterMirrorDesc;
+import org.apache.kafka.clients.admin.ClusterMirrorDescription;
 import org.apache.kafka.clients.admin.ClusterMirrorListing;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
@@ -2226,7 +2226,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @throws IllegalStateException if any partition is not STOPPED
      */
     private void validateSourcePartitionsAreStopped(
-            Map<String, ClusterMirrorDesc> sourceDescription,
+            Map<String, ClusterMirrorDescription> sourceDescription,
             Collection<ClusterMirrorListing> sourceMirrors,
             Set<TopicPartition> topicPartitionToBeMirrored) {
         Set<TopicPartition> partitionsNotStopped = new HashSet<>();
@@ -2237,13 +2237,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 .toList();
 
         for (String mirrorName : localClusterSourceMirrors) {
-            ClusterMirrorDesc desc = sourceDescription.get(mirrorName);
+            ClusterMirrorDescription desc = sourceDescription.get(mirrorName);
             if (desc == null) {
                 continue;
             }
             // validate each partition state is in STOPPED state
             for (TopicPartition tp : topicPartitionToBeMirrored) {
-                Set<ClusterMirrorDesc.LeaderStateDesc> leaderStates = desc.topics().get(tp.topic());
+                Set<ClusterMirrorDescription.LeaderStateDescription> leaderStates = desc.topics().get(tp.topic());
                 if (leaderStates == null) {
                     continue;
                 }

@@ -1758,7 +1758,8 @@ public interface Admin extends AutoCloseable {
     }
 
     /**
-     * List the cluster mirrors available in the cluster.
+     * List the cluster mirrors available in the cluster. The request is sent to a single
+     * broker because mirror configuration is available from the replicated metadata log.
      *
      * @param options The options to use when listing the mirrors.
      * @return The ListClusterMirrorsResult.
@@ -1780,8 +1781,10 @@ public interface Admin extends AutoCloseable {
 
     /**
      * Describe cluster mirrors on the destination cluster. Returns per-partition state,
-     * replication lag, and last mirror epoch. Optionally performs last mirror epoch lookups
-     * for failback truncation when cluster ID and lookup entries are provided in the options.
+     * replication lag, and last mirror epoch. The request is sent to all brokers because
+     * each broker only reports partitions for which it is the mirror leader. Optionally
+     * performs last mirror epoch lookups for failback truncation when cluster ID and lookup
+     * entries are provided in the options.
      *
      * @param mirrorNames The names of the mirrors to describe
      * @param options The options to use when describing mirrors

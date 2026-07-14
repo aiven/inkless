@@ -23,8 +23,6 @@ import java.util.Set;
 
 /**
  * The result of the {@link Admin#stopMirrorTopics(String, Set, StopMirrorTopicsOptions)} call.
- *
- * The API of this class is evolving, see {@link Admin} for details.
  */
 public class StopMirrorTopicsResult {
     private final KafkaFuture<Void> future;

@@ -19,7 +19,6 @@ package org.apache.kafka.clients.admin;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.acl.AclOperation;
-import org.apache.kafka.common.annotation.InterfaceStability;
 
 import java.util.Collections;
 import java.util.Map;
@@ -29,15 +28,14 @@ import java.util.Set;
 /**
  * A detailed description of a cluster mirror.
  */
-@InterfaceStability.Evolving
-public class ClusterMirrorDesc {
+public class ClusterMirrorDescription {
     private final String mirrorName;
-    private final Map<String, Set<LeaderStateDesc>> topics;
+    private final Map<String, Set<LeaderStateDescription>> topics;
     private final Set<AclOperation> authorizedOperations;
 
-    public ClusterMirrorDesc(String mirrorName,
-                             Map<String, Set<LeaderStateDesc>> topics,
-                             Set<AclOperation> authorizedOperations) {
+    public ClusterMirrorDescription(String mirrorName,
+                                    Map<String, Set<LeaderStateDescription>> topics,
+                                    Set<AclOperation> authorizedOperations) {
         this.mirrorName = mirrorName;
         this.topics = Collections.unmodifiableMap(topics);
         this.authorizedOperations = authorizedOperations;
@@ -47,7 +45,7 @@ public class ClusterMirrorDesc {
         return mirrorName;
     }
 
-    public Map<String, Set<LeaderStateDesc>> topics() {
+    public Map<String, Set<LeaderStateDescription>> topics() {
         return topics;
     }
 
@@ -59,7 +57,7 @@ public class ClusterMirrorDesc {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        ClusterMirrorDesc that = (ClusterMirrorDesc) o;
+        ClusterMirrorDescription that = (ClusterMirrorDescription) o;
         return Objects.equals(mirrorName, that.mirrorName) &&
                Objects.equals(topics, that.topics) &&
                Objects.equals(authorizedOperations, that.authorizedOperations);
@@ -72,7 +70,7 @@ public class ClusterMirrorDesc {
 
     @Override
     public String toString() {
-        return "ClusterMirrorDesc{" +
+        return "ClusterMirrorDescription{" +
                "mirrorName='" + mirrorName + '\'' +
                ", topics=" + topics +
                ", authorizedOperations=" + authorizedOperations +
@@ -80,7 +78,7 @@ public class ClusterMirrorDesc {
     }
 
     /** Represents the mirroring state of a leader partition. */
-    public static class LeaderStateDesc {
+    public static class LeaderStateDescription {
         private final TopicPartition topicPartition;
         private final long sourceOffset;
         private final long destinationOffset;
@@ -89,8 +87,8 @@ public class ClusterMirrorDesc {
         private final int retryAttempt;
         private final String errorMessage;
 
-        public LeaderStateDesc(TopicPartition topicPartition, long sourceOffset, long destinationOffset,
-                               long lag, String state, int retryAttempt, String errorMessage) {
+        public LeaderStateDescription(TopicPartition topicPartition, long sourceOffset, long destinationOffset,
+                                      long lag, String state, int retryAttempt, String errorMessage) {
             this.topicPartition = topicPartition;
             this.sourceOffset = sourceOffset;
             this.destinationOffset = destinationOffset;
@@ -132,7 +130,7 @@ public class ClusterMirrorDesc {
         public boolean equals(Object o) {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
-            LeaderStateDesc that = (LeaderStateDesc) o;
+            LeaderStateDescription that = (LeaderStateDescription) o;
             return sourceOffset == that.sourceOffset &&
                    destinationOffset == that.destinationOffset &&
                    lag == that.lag &&
@@ -149,7 +147,7 @@ public class ClusterMirrorDesc {
 
         @Override
         public String toString() {
-            return "LeaderStateDesc{" +
+            return "LeaderStateDescription{" +
                    "topicPartition=" + topicPartition +
                    ", sourceOffset=" + sourceOffset +
                    ", destinationOffset=" + destinationOffset +

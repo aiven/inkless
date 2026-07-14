@@ -26,7 +26,6 @@
       "about": "The cluster mirror name." },
     { "name": "Topics", "type": "[]TopicMetadata", "versions": "0+", "about": "The data for the topics.",
       "fields": [
-        { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
         { "name": "TopicName", "type": "string", "versions": "0+", "mapKey": true, "entityType": "topicName",
           "about": "The topic name." }
       ]},

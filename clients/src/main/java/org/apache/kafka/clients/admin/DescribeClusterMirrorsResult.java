@@ -19,26 +19,22 @@ package org.apache.kafka.clients.admin;
 
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.annotation.InterfaceStability;
 
 import java.util.Collections;
 import java.util.Map;
 
 /**
  * The result of the {@link Admin#describeClusterMirrors(java.util.Collection)} call.
- *
- * The API of this class is evolving, see {@link Admin} for details.
  */
-@InterfaceStability.Evolving
 public class DescribeClusterMirrorsResult {
-    private final KafkaFuture<Map<String, ClusterMirrorDesc>> future;
+    private final KafkaFuture<Map<String, ClusterMirrorDescription>> future;
     private final KafkaFuture<Map<Uuid, Map<Integer, Integer>>> lookupEpochsFuture;
 
-    DescribeClusterMirrorsResult(KafkaFuture<Map<String, ClusterMirrorDesc>> future) {
+    DescribeClusterMirrorsResult(KafkaFuture<Map<String, ClusterMirrorDescription>> future) {
         this(future, KafkaFuture.completedFuture(Collections.emptyMap()));
     }
 
-    DescribeClusterMirrorsResult(KafkaFuture<Map<String, ClusterMirrorDesc>> future,
+    DescribeClusterMirrorsResult(KafkaFuture<Map<String, ClusterMirrorDescription>> future,
                                  KafkaFuture<Map<Uuid, Map<Integer, Integer>>> lookupEpochsFuture) {
         this.future = future;
         this.lookupEpochsFuture = lookupEpochsFuture;
@@ -47,7 +43,7 @@ public class DescribeClusterMirrorsResult {
     /**
      * Return a future which succeeds only if all the mirror descriptions succeed.
      */
-    public KafkaFuture<Map<String, ClusterMirrorDesc>> allDescriptions() {
+    public KafkaFuture<Map<String, ClusterMirrorDescription>> allDescriptions() {
         return future;
     }
 

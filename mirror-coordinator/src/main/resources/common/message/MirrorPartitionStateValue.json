@@ -24,8 +24,8 @@
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "TopicName", "type": "string", "versions": "0+",
-      "about": "The topic name."},
+    { "name": "TopicId", "type": "uuid", "versions": "0+",
+      "about": "The topic id."},
     { "name": "Partition", "type": "int32", "versions": "0+",
       "about": "The partition index."},
     { "name": "State", "type": "int8", "versions": "0+",

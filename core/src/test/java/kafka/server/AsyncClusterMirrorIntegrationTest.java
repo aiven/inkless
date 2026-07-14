@@ -21,7 +21,7 @@ import kafka.utils.TestUtils;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.AlterConfigOp;
-import org.apache.kafka.clients.admin.ClusterMirrorDesc;
+import org.apache.kafka.clients.admin.ClusterMirrorDescription;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateClusterMirrorOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
@@ -835,11 +835,11 @@ public class AsyncClusterMirrorIntegrationTest {
     }
 
     private boolean allPartitionsSatisfy(Admin admin, String mirrorName,
-                                         String topicPattern, Predicate<ClusterMirrorDesc.LeaderStateDesc> condition) throws Exception {
+                                         String topicPattern, Predicate<ClusterMirrorDescription.LeaderStateDescription> condition) throws Exception {
         var result = admin.describeClusterMirrors(
                 List.of(mirrorName), new DescribeClusterMirrorsOptions());
         var descriptions = result.allDescriptions().get(5, TimeUnit.SECONDS);
-        ClusterMirrorDesc desc = descriptions.get(mirrorName);
+        ClusterMirrorDescription desc = descriptions.get(mirrorName);
         System.out.println("!!! Described mirror: " + desc);
         if (desc == null) return false;
         var pattern = java.util.regex.Pattern.compile(topicPattern);

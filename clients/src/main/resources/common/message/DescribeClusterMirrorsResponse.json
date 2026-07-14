@@ -62,7 +62,7 @@
       "taggedVersions": "0+", "tag": 0, "ignorable": true,
       "about": "Last mirror epoch lookup results incremental mirroring when failing back.", "fields": [
       { "name": "TopicId", "type": "uuid", "versions": "0+",
-        "about": "The topic ID." },
+        "about": "The topic id." },
       { "name": "Partitions", "type": "[]PartitionResult", "versions": "0+",
         "about": "Per-partition last mirror epoch results.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0+",

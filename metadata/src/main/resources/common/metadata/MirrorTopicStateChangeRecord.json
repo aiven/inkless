@@ -25,6 +25,6 @@
     { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName",
       "about": "The cluster mirror name." },
     { "name": "DesiredState", "type": "int8", "versions": "0+",
-      "about": "The desired state for each mirror partition." }
+      "about": "The desired state for all mirror partitions." }
   ]
 }

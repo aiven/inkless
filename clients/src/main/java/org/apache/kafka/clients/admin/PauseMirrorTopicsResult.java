@@ -19,6 +19,11 @@ package org.apache.kafka.clients.admin;
 
 import org.apache.kafka.common.KafkaFuture;
 
+import java.util.Set;
+
+/**
+ * The result of the {@link Admin#pauseMirrorTopics(String, Set, PauseMirrorTopicsOptions)} call.
+ */
 public class PauseMirrorTopicsResult {
     private final KafkaFuture<Void> future;
 

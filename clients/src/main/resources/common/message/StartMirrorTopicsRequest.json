@@ -33,8 +33,8 @@
           "about": "The number of partitions for the topic. Must match the source topic." }
       ]},
     { "name": "IncludePatterns", "type": "[]string", "versions": "0+",
-      "about": "Regex patterns to add to mirror.topics.include." },
+      "about": "Regex patterns to add to mirror.topics.include (mirror.topics.exclude takes precedence over this)." },
     { "name": "ExcludePatterns", "type": "[]string", "versions": "0+",
-      "about": "Regex patterns to add to mirror.topics.exclude." }
+      "about": "Regex patterns to add to mirror.topics.exclude (this takes precedence over mirror.topics.include)." }
   ]
 }

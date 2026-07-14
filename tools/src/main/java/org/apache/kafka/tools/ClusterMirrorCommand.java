@@ -18,7 +18,7 @@ package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.ClusterMirrorDesc;
+import org.apache.kafka.clients.admin.ClusterMirrorDescription;
 import org.apache.kafka.clients.admin.ClusterMirrorListing;
 import org.apache.kafka.clients.admin.CreateClusterMirrorOptions;
 import org.apache.kafka.clients.admin.CreateClusterMirrorResult;
@@ -258,7 +258,7 @@ public abstract class ClusterMirrorCommand {
                 ? List.of(opts.mirror().get())
                 : List.of();
 
-            Map<String, ClusterMirrorDesc> descriptions = adminClient.describeClusterMirrors(
+            Map<String, ClusterMirrorDescription> descriptions = adminClient.describeClusterMirrors(
                 mirrorNames, new DescribeClusterMirrorsOptions()).allDescriptions().get();
 
             if (descriptions.isEmpty()) {
@@ -303,13 +303,13 @@ public abstract class ClusterMirrorCommand {
             }
         }
 
-        private List<PartitionInfo> collectPartitionInfos(Map<String, ClusterMirrorDesc> descriptions) {
+        private List<PartitionInfo> collectPartitionInfos(Map<String, ClusterMirrorDescription> descriptions) {
             List<PartitionInfo> partitionInfos = new ArrayList<>();
-            for (Map.Entry<String, ClusterMirrorDesc> mirrorEntry : descriptions.entrySet()) {
+            for (Map.Entry<String, ClusterMirrorDescription> mirrorEntry : descriptions.entrySet()) {
                 String mirrorName = mirrorEntry.getKey();
-                for (Map.Entry<String, Set<ClusterMirrorDesc.LeaderStateDesc>> topicEntry : mirrorEntry.getValue().topics().entrySet()) {
+                for (Map.Entry<String, Set<ClusterMirrorDescription.LeaderStateDescription>> topicEntry : mirrorEntry.getValue().topics().entrySet()) {
                     String topic = topicEntry.getKey();
-                    for (ClusterMirrorDesc.LeaderStateDesc state : topicEntry.getValue()) {
+                    for (ClusterMirrorDescription.LeaderStateDescription state : topicEntry.getValue()) {
                         partitionInfos.add(new PartitionInfo(
                             mirrorName, topic,
                             state.topicPartition().partition(),

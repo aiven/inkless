@@ -165,24 +165,26 @@ public final class ClusterMirrorConfig {
     public static final String MIRROR_TOPICS_INCLUDE_CONFIG = "mirror.topics.include";
     public static final String MIRROR_TOPICS_INCLUDE_DEFAULT = "";
     public static final String MIRROR_TOPICS_INCLUDE_DOC = "A comma-separated list of regex patterns for topic names to include in mirroring. "
-            + "Topics on the source cluster whose names match at least one of the patterns will be automatically discovered and mirrored. "
+            + "Topics on the source cluster whose names match at least one of the patterns will be automatically discovered and mirrored "
+            + "(mirror.topics.exclude takes precedence over this). "
             + "When empty (default), only explicitly added topics are mirrored.";
 
     public static final String MIRROR_TOPICS_EXCLUDE_CONFIG = "mirror.topics.exclude";
     public static final String MIRROR_TOPICS_EXCLUDE_DEFAULT = "__.*";
-    public static final String MIRROR_TOPICS_EXCLUDE_DOC = "A comma-separated list of regex patterns for topic names to exclude from mirroring. "
-            + "Topics matching the exclude pattern are not mirrored even if they match mirror.topics.include. "
-            + "By default, internal topics (starting with '__') are excluded.";
+    public static final String MIRROR_TOPICS_EXCLUDE_DOC = "A comma-separated list of regex patterns for topic names to exclude from mirroring "
+            + "(this takes precedence over mirror.topics.include). "
+            + "Internal topics are excluded by default.";
 
     public static final String MIRROR_GROUPS_INCLUDE_CONFIG = "mirror.groups.include";
     public static final String MIRROR_GROUPS_INCLUDE_DEFAULT = ".*";
     public static final String MIRROR_GROUPS_INCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to include in offset synchronization. "
-            + "Only consumer groups whose IDs match at least one of the patterns will have their offsets replicated from the source cluster.";
+            + "Only consumer groups whose IDs match at least one of the patterns will have their offsets replicated from the source cluster "
+            + "(mirror.groups.exclude takes precedence over this).";
 
     public static final String MIRROR_GROUPS_EXCLUDE_CONFIG = "mirror.groups.exclude";
     public static final String MIRROR_GROUPS_EXCLUDE_DEFAULT = "";
-    public static final String MIRROR_GROUPS_EXCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to exclude from offset synchronization. "
-            + "Groups matching the exclude pattern are not replicated even if they match mirror.groups.include.";
+    public static final String MIRROR_GROUPS_EXCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to exclude from offset synchronization "
+            + "(this takes precedence over mirror.groups.include).";
 
     public static final String MIRROR_ACL_INCLUDE_CONFIG = "mirror.acls.include";
     public static final String MIRROR_ACL_INCLUDE_DEFAULT = "*";

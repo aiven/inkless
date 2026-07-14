@@ -23,8 +23,6 @@ import java.util.Map;
 
 /**
  * The result of the {@link Admin#createClusterMirror(String, Map, CreateClusterMirrorOptions)} call.
- *
- * The API of this class is evolving, see {@link Admin} for details.
  */
 public class CreateClusterMirrorResult {
     private final KafkaFuture<Void> future;

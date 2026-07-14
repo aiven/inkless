@@ -17,7 +17,6 @@
 
 package org.apache.kafka.clients.admin;
 
-import org.apache.kafka.common.annotation.InterfaceStability;
 import org.apache.kafka.common.message.DescribeClusterMirrorsRequestData;
 
 import java.util.Collections;
@@ -25,10 +24,7 @@ import java.util.List;
 
 /**
  * Options for {@link Admin#describeClusterMirrors(java.util.Collection, DescribeClusterMirrorsOptions)}.
- *
- * The API of this class is evolving, see {@link Admin} for details.
  */
-@InterfaceStability.Evolving
 public class DescribeClusterMirrorsOptions extends AbstractOptions<DescribeClusterMirrorsOptions> {
 
     private boolean includeAuthorizedOperations = false;

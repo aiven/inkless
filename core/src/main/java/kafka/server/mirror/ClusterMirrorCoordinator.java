@@ -25,6 +25,7 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.ClusterMirrorListing;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.internals.Topic;
@@ -259,10 +260,12 @@ public class ClusterMirrorCoordinator {
                                 String clusterName = readMirrorNameFromKey(record.key());
                                 if (record.hasValue()) {
                                     ClusterMirrorUtils.PartitionStateLogEntry value = readMirrorPartitionStateValue(record.value());
-                                    PartitionKey pk = new PartitionKey(clusterName, value.topic(), value.partition());
-                                    metadataManager.updatePartitionState(pk, value.state());
-                                    TopicPartition tp = new TopicPartition(value.topic(), value.partition());
-                                    restoreFailedState(tp, value.state(), value.retryAttempt(), value.errorMessage(), value.previousState());
+                                    if (value != null) {
+                                        PartitionKey pk = new PartitionKey(clusterName, value.topic(), value.partition());
+                                        metadataManager.updatePartitionState(pk, value.state());
+                                        TopicPartition tp = new TopicPartition(value.topic(), value.partition());
+                                        restoreFailedState(tp, value.state(), value.retryAttempt(), value.errorMessage(), value.previousState());
+                                    }
                                 } else {
                                     metadataManager.removeMirrorStates(clusterName);
                                 }
@@ -909,7 +912,7 @@ public class ClusterMirrorCoordinator {
         FailedPartitionInfo fpi = metadataManager.failedPartitionInfo().get(topicPartition);
         var key = new MirrorPartitionStateKey().setMirrorName(mirrorName);
         var val = new MirrorPartitionStateValue()
-                .setTopicName(topicPartition.topic())
+                .setTopicId(metadataCache.getTopicId(topicPartition.topic()))
                 .setPartition(topicPartition.partition())
                 .setState(state.value())
                 .setPreviousState(fpi != null ? fpi.previousState().value() : MirrorPartitionState.UNKNOWN.value())
@@ -919,15 +922,15 @@ public class ClusterMirrorCoordinator {
         return CoordinatorRecord.record(key, apiVersion);
     }
 
-    private static CoordinatorRecord buildLastMirrorEpochsRecord(String mirrorName, Map<PartitionKey, Integer> offsets) {
-        Map<String, Map<Integer, Integer>> grouped = new HashMap<>();
-        offsets.forEach((pk, value) -> grouped.computeIfAbsent(pk.topic(), k -> new HashMap<>()).put(pk.partition(), value));
+    private CoordinatorRecord buildLastMirrorEpochsRecord(String mirrorName, Map<PartitionKey, Integer> offsets) {
+        Map<Uuid, Map<Integer, Integer>> grouped = new HashMap<>();
+        offsets.forEach((pk, value) -> grouped.computeIfAbsent(metadataCache.getTopicId(pk.topic()), k -> new HashMap<>()).put(pk.partition(), value));
 
         var key = new LastMirrorEpochsKey().setMirrorName(mirrorName);
         var val = new LastMirrorEpochsValue();
         var topics = new ArrayList<LastMirrorEpochsValue.Topic>();
-        grouped.forEach((topic, partitionOffsets) -> {
-            var top = new LastMirrorEpochsValue.Topic().setName(topic);
+        grouped.forEach((topicId, partitionOffsets) -> {
+            var top = new LastMirrorEpochsValue.Topic().setTopicId(topicId);
             List<LastMirrorEpochsValue.Partition> partitions = new ArrayList<>();
             partitionOffsets.forEach((partition, offset) ->
                     partitions.add(new LastMirrorEpochsValue.Partition().setPartitionIndex(partition).setLastMirrorEpoch(offset)));
@@ -1022,9 +1025,11 @@ public class ClusterMirrorCoordinator {
         if (version <= LastMirrorEpochsValue.HIGHEST_SUPPORTED_VERSION && version >= LastMirrorEpochsValue.LOWEST_SUPPORTED_VERSION) {
             LastMirrorEpochsValue value = new LastMirrorEpochsValue(new ByteBufferAccessor(buffer), version);
             value.topics().forEach(t -> {
+                Optional<String> topicName = metadataCache.getTopicName(t.topicId());
+                if (topicName.isEmpty()) return;
                 Map<Integer, Integer> partitions = new HashMap<>();
                 t.partitions().forEach(p -> partitions.put(p.partitionIndex(), p.lastMirrorEpoch()));
-                offsets.put(t.name(), partitions);
+                offsets.put(topicName.get(), partitions);
             });
         } else {
             throw new IllegalStateException("Unsupported last mirrored epochs value version: " + version);
@@ -1036,7 +1041,9 @@ public class ClusterMirrorCoordinator {
         short version = buffer.getShort();
         if (version <= MirrorPartitionStateValue.HIGHEST_SUPPORTED_VERSION && version >= MirrorPartitionStateValue.LOWEST_SUPPORTED_VERSION) {
             MirrorPartitionStateValue value = new MirrorPartitionStateValue(new ByteBufferAccessor(buffer), version);
-            return new ClusterMirrorUtils.PartitionStateLogEntry(value.topicName(), value.partition(),
+            Optional<String> topicName = metadataCache.getTopicName(value.topicId());
+            if (topicName.isEmpty()) return null;
+            return new ClusterMirrorUtils.PartitionStateLogEntry(topicName.get(), value.partition(),
                     MirrorPartitionState.fromValue(value.state()),
                     MirrorPartitionState.fromValue(value.previousState()), value.retryAttempt(),
                     value.errorMessage());
