@@ -83,7 +83,8 @@ public class TopicImageNodeTest {
         assertEquals("PartitionRegistration(replicas=[2, 3, 4], " +
                 "directories=[AAAAAAAAAAAAAAAAAAAAAA, AAAAAAAAAAAAAAAAAAAAAA, AAAAAAAAAAAAAAAAAAAAAA], " +
                 "isr=[2, 3], removingReplicas=[], addingReplicas=[], elr=[], lastKnownElr=[], leader=2, " +
-                "leaderRecoveryState=RECOVERED, leaderEpoch=1, partitionEpoch=345)", stringifier.toString());
+                "leaderRecoveryState=RECOVERED, leaderEpoch=1, partitionEpoch=345, " +
+                "classicToDisklessStartOffset=-1, disklessProducerStates=[], disklessLeaderEpoch=-1)", stringifier.toString());
     }
 
     @Test
