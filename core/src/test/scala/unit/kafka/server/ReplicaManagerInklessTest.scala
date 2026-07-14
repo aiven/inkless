@@ -21,7 +21,7 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager}
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, DeleteRecordsResponse => CpDeleteRecordsResponse}
+import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse}
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.Partition
 import kafka.server.QuotaFactory.QuotaManagers
@@ -186,6 +186,125 @@ class ReplicaManagerInklessTest {
         .thenReturn(42L)
 
       assertEquals(42L, replicaManager.classicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  private def stubLeaderPartition(replicaManager: ReplicaManager, tp: TopicIdPartition): Unit = {
+    val mockPartition = mock(classOf[Partition])
+    when(mockPartition.isLeader).thenReturn(true)
+    doReturn(Some(mockPartition)).when(replicaManager).onlinePartition(tp.topicPartition())
+  }
+
+  @Test
+  def testRepairDisklessLogWritesSealToControlPlane(): Unit = {
+    val cp = mock(classOf[ControlPlane])
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()), controlPlane = Some(cp),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId())))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      when(cp.repairDisklessLog(any())).thenReturn(java.util.List.of(new RepairDisklessLogResponse(true)))
+      stubLeaderPartition(replicaManager, disklessTopicPartition)
+
+      assertEquals(Errors.NONE, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
+
+      val expected = new RepairDisklessLogRequest(
+        disklessTopicPartition.topicId(), disklessTopicPartition.topic(), disklessTopicPartition.partition(), 100L)
+      verify(cp).repairDisklessLog(java.util.List.of(expected))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testRepairDisklessLogReturnsUnknownTopicOrPartitionWhenNoEntry(): Unit = {
+    val cp = mock(classOf[ControlPlane])
+    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      // The control plane has no entry to repair (init never ran through the switch flow).
+      when(cp.repairDisklessLog(any())).thenReturn(java.util.List.of(new RepairDisklessLogResponse(false)))
+      stubLeaderPartition(replicaManager, disklessTopicPartition)
+
+      assertEquals(Errors.UNKNOWN_TOPIC_OR_PARTITION, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testRepairDisklessLogReturnsErrorWhenControlPlaneFails(): Unit = {
+    val cp = mock(classOf[ControlPlane])
+    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      when(cp.repairDisklessLog(any())).thenThrow(new ControlPlaneException("boom"))
+      stubLeaderPartition(replicaManager, disklessTopicPartition)
+
+      assertEquals(Errors.UNKNOWN_SERVER_ERROR, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testRepairDisklessLogRejectsNonDisklessTopic(): Unit = {
+    val cp = mock(classOf[ControlPlane])
+    val replicaManager = spy(createReplicaManager(List.empty, controlPlane = Some(cp)))
+    try {
+      assertEquals(Errors.INVALID_REQUEST, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
+      verify(cp, never()).repairDisklessLog(any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testRepairDisklessLogRejectsUnswitchedPartition(): Unit = {
+    val cp = mock(classOf[ControlPlane])
+    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
+    try {
+      assertEquals(Errors.INVALID_REQUEST, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
+      verify(cp, never()).repairDisklessLog(any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testRepairDisklessLogRejectsWhenNotLeader(): Unit = {
+    val cp = mock(classOf[ControlPlane])
+    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      val mockPartition = mock(classOf[Partition])
+      when(mockPartition.isLeader).thenReturn(false)
+      doReturn(Some(mockPartition)).when(replicaManager).onlinePartition(disklessTopicPartition.topicPartition())
+
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
+      verify(cp, never()).repairDisklessLog(any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testRepairDisklessLogRejectsWhenPartitionNotOnline(): Unit = {
+    val cp = mock(classOf[ControlPlane])
+    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      doReturn(None).when(replicaManager).onlinePartition(disklessTopicPartition.topicPartition())
+
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
+      verify(cp, never()).repairDisklessLog(any())
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }

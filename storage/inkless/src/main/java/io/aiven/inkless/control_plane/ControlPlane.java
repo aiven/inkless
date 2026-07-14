@@ -67,6 +67,14 @@ public interface ControlPlane extends Closeable, Configurable {
      */
     List<InitDisklessLogResponse> initDisklessLog(List<InitDisklessLogRequest> requests);
 
+    /**
+     * Reconcile the control-plane diskless log entry with the seal offset committed in KRaft.
+     *
+     * @param requests the list of repair requests
+     * @return list of responses, one per request, in the same order as the requests.
+     */
+    List<RepairDisklessLogResponse> repairDisklessLog(List<RepairDisklessLogRequest> requests);
+
     List<DeleteRecordsResponse> deleteRecords(List<DeleteRecordsRequest> requests);
 
     void deleteTopics(Set<Uuid> topicIds);

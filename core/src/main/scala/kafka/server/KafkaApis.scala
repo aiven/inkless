@@ -252,6 +252,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.STREAMS_GROUP_DESCRIBE => handleStreamsGroupDescribe(request).exceptionally(handleError)
         case ApiKeys.STREAMS_GROUP_HEARTBEAT => handleStreamsGroupHeartbeat(request).exceptionally(handleError)
         case ApiKeys.ALTER_DISKLESS_SWITCH => forwardToController(request)
+        case ApiKeys.REPAIR_DISKLESS_LOG => handleRepairDisklessLogRequest(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
     } catch {
@@ -3889,6 +3890,18 @@ class KafkaApis(val requestChannel: RequestChannel,
         requestHelper.sendMaybeThrottle(request, deleteShareGroupStateResponse)
       }
     }}
+  }
+
+  def handleRepairDisklessLogRequest(request: RequestChannel.Request): Unit = {
+    val repairRequest = request.body[RepairDisklessLogRequest]
+    authHelper.authorizeClusterOperation(request, ALTER)
+    val tp = new TopicPartition(repairRequest.data.topicName, repairRequest.data.partitionIndex)
+    val error = replicaManager.repairDisklessLog(tp)
+    requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
+      new RepairDisklessLogResponse(new RepairDisklessLogResponseData()
+        .setThrottleTimeMs(requestThrottleMs)
+        .setErrorCode(error.code)
+        .setErrorMessage(if (error == Errors.NONE) null else error.message)))
   }
 
   // Visible for Testing

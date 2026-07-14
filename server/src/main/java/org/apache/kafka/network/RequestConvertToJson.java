@@ -166,6 +166,8 @@ import org.apache.kafka.common.message.RemoveRaftVoterRequestDataJsonConverter;
 import org.apache.kafka.common.message.RemoveRaftVoterResponseDataJsonConverter;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestDataJsonConverter;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseDataJsonConverter;
+import org.apache.kafka.common.message.RepairDisklessLogRequestDataJsonConverter;
+import org.apache.kafka.common.message.RepairDisklessLogResponseDataJsonConverter;
 import org.apache.kafka.common.message.RequestHeaderDataJsonConverter;
 import org.apache.kafka.common.message.SaslAuthenticateRequestDataJsonConverter;
 import org.apache.kafka.common.message.SaslAuthenticateResponseDataJsonConverter;
@@ -352,6 +354,8 @@ import org.apache.kafka.common.requests.RemoveRaftVoterRequest;
 import org.apache.kafka.common.requests.RemoveRaftVoterResponse;
 import org.apache.kafka.common.requests.RenewDelegationTokenRequest;
 import org.apache.kafka.common.requests.RenewDelegationTokenResponse;
+import org.apache.kafka.common.requests.RepairDisklessLogRequest;
+import org.apache.kafka.common.requests.RepairDisklessLogResponse;
 import org.apache.kafka.common.requests.RequestContext;
 import org.apache.kafka.common.requests.RequestHeader;
 import org.apache.kafka.common.requests.SaslAuthenticateRequest;
@@ -583,6 +587,8 @@ public class RequestConvertToJson {
                 return InitDisklessLogRequestDataJsonConverter.write(((InitDisklessLogRequest) request).data(), request.version());
             case ALTER_DISKLESS_SWITCH:
                 return AlterDisklessSwitchRequestDataJsonConverter.write(((AlterDisklessSwitchRequest) request).data(), request.version());
+            case REPAIR_DISKLESS_LOG:
+                return RepairDisklessLogRequestDataJsonConverter.write(((RepairDisklessLogRequest) request).data(), request.version());
             default:
                 throw new IllegalStateException("ApiKey " + request.apiKey() + " is not currently handled in `request`, the " +
                     "code should be updated to do so.");
@@ -773,6 +779,8 @@ public class RequestConvertToJson {
                 return InitDisklessLogResponseDataJsonConverter.write(((InitDisklessLogResponse) response).data(), version);
             case ALTER_DISKLESS_SWITCH:
                 return AlterDisklessSwitchResponseDataJsonConverter.write(((AlterDisklessSwitchResponse) response).data(), version);
+            case REPAIR_DISKLESS_LOG:
+                return RepairDisklessLogResponseDataJsonConverter.write(((RepairDisklessLogResponse) response).data(), version);
             default:
                 throw new IllegalStateException("ApiKey " + response.apiKey() + " is not currently handled in `response`, the " +
                     "code should be updated to do so.");

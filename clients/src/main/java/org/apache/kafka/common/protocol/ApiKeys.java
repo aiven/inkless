@@ -136,7 +136,8 @@ public enum ApiKeys {
     ALTER_SHARE_GROUP_OFFSETS(ApiMessageType.ALTER_SHARE_GROUP_OFFSETS),
     DELETE_SHARE_GROUP_OFFSETS(ApiMessageType.DELETE_SHARE_GROUP_OFFSETS),
     INIT_DISKLESS_LOG(ApiMessageType.INIT_DISKLESS_LOG, true),
-    ALTER_DISKLESS_SWITCH(ApiMessageType.ALTER_DISKLESS_SWITCH, false, true);
+    ALTER_DISKLESS_SWITCH(ApiMessageType.ALTER_DISKLESS_SWITCH, false, true),
+    REPAIR_DISKLESS_LOG(ApiMessageType.REPAIR_DISKLESS_LOG, false, false);
     
 
     private static final Map<ApiMessageType.ListenerType, EnumSet<ApiKeys>> APIS_BY_LISTENER =

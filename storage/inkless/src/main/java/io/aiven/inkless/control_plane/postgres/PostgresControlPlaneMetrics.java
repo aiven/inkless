@@ -39,7 +39,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
         "DeleteRecords", "EnforceRetention", "GetFilesToDelete",
         "SafeDeleteFileCheck",
         "GetLogInfo", "InitDisklessLog", "GetProducerState",
-        "AdvanceCrossTierLogStart"
+        "AdvanceCrossTierLogStart", "RepairDisklessLog"
     );
 
     /**
@@ -73,6 +73,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
     private final QueryMetrics safeDeleteFileCheckMetrics = new QueryMetrics("SafeDeleteFileCheck");
     private final QueryMetrics getLogInfoMetrics = new QueryMetrics("GetLogInfo");
     private final QueryMetrics initDisklessLogMetrics = new QueryMetrics("InitDisklessLog");
+    private final QueryMetrics repairDisklessLogMetrics = new QueryMetrics("RepairDisklessLog");
     private final QueryMetrics getProducerStateMetrics = new QueryMetrics("GetProducerState");
     private final QueryMetrics pruneDisklessLogsMetrics = new QueryMetrics("PruneDisklessLogs");
     private final QueryMetrics advanceCrossTierLogStartMetrics = new QueryMetrics("AdvanceCrossTierLogStart");
@@ -131,6 +132,10 @@ public class PostgresControlPlaneMetrics implements Closeable {
 
     public void onInitDisklessLogCompleted(Long duration) {
         initDisklessLogMetrics.record(duration);
+    }
+
+    public void onRepairDisklessLogCompleted(Long duration) {
+        repairDisklessLogMetrics.record(duration);
     }
 
     public void onGetProducerStateCompleted(Long duration) {

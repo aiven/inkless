@@ -123,6 +123,24 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized List<RepairDisklessLogResponse> repairDisklessLog(final List<RepairDisklessLogRequest> requests) {
+        final List<RepairDisklessLogResponse> responses = new ArrayList<>();
+        for (final RepairDisklessLogRequest request : requests) {
+            final TopicIdPartition topicIdPartition = new TopicIdPartition(
+                request.topicId(), request.partition(), request.topicName());
+
+            final LogInfo existingLog = logs.get(topicIdPartition);
+            if (existingLog != null) {
+                existingLog.disklessStartOffset = request.disklessStartOffset();
+                responses.add(new RepairDisklessLogResponse(true));
+            } else {
+                responses.add(new RepairDisklessLogResponse(false));
+            }
+        }
+        return responses;
+    }
+
+    @Override
     protected synchronized Iterator<CommitBatchResponse> commitFileForValidRequests(
             final String objectKey,
             final ObjectFormat format,
