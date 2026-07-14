@@ -68,7 +68,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -197,9 +196,9 @@ public class InklessTopicTypeSwitcherClusterTest {
             createTopics.all().get(30, TimeUnit.SECONDS);
             log.warn("[stage=topics-created] Created all topics");
 
-            assertEquals("true", getTopicConfig(admin, disklessTopic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
-            assertEquals("false", getTopicConfig(admin, classicTopic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
-            assertEquals("false", getTopicConfig(admin, classicToDisklessTopic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+            TopicConfigTestUtils.waitForTopicConfigValue(admin, disklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
+            TopicConfigTestUtils.waitForTopicConfigValue(admin, classicTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "false");
+            TopicConfigTestUtils.waitForTopicConfigValue(admin, classicToDisklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "false");
 
             final AtomicBoolean keepProducing = new AtomicBoolean(true);
             final AtomicReference<Throwable> producerFailure = new AtomicReference<>(null);
@@ -229,7 +228,7 @@ public class InklessTopicTypeSwitcherClusterTest {
                 alterTopicConfig(admin, classicToDisklessTopic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"), alterConfigsMode);
 
                 log.warn("[stage=await-switch] Waiting for diskless.enable=true on topic={}", classicToDisklessTopic);
-                waitForTopicDisklessValue(admin, classicToDisklessTopic, "true");
+                TopicConfigTestUtils.waitForTopicConfigValue(admin, classicToDisklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
             } finally {
                 keepProducing.set(false);
                 producerThread.join(TimeUnit.SECONDS.toMillis(60));
@@ -245,9 +244,9 @@ public class InklessTopicTypeSwitcherClusterTest {
                 produceRounds(producer, topics, producedCounts, 1, true);
             }
 
-            assertEquals("true", getTopicConfig(admin, disklessTopic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
-            assertEquals("false", getTopicConfig(admin, classicTopic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
-            assertEquals("true", getTopicConfig(admin, classicToDisklessTopic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+            TopicConfigTestUtils.waitForTopicConfigValue(admin, disklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
+            TopicConfigTestUtils.waitForTopicConfigValue(admin, classicTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "false");
+            TopicConfigTestUtils.waitForTopicConfigValue(admin, classicToDisklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
             log.warn("[stage=post-switch-validated] Topic configurations and placement checks passed");
         }
 
@@ -369,20 +368,6 @@ public class InklessTopicTypeSwitcherClusterTest {
         return true;
     }
 
-    private void waitForTopicDisklessValue(final Admin admin,
-                                           final String topic,
-                                           final String expectedValue) throws Exception {
-        final long deadline = System.currentTimeMillis() + Duration.ofSeconds(60).toMillis();
-        while (System.currentTimeMillis() < deadline) {
-            final String disklessValue = getTopicConfig(admin, topic).get(TopicConfig.DISKLESS_ENABLE_CONFIG);
-            if (expectedValue.equals(disklessValue)) {
-                return;
-            }
-            Thread.sleep(500);
-        }
-        assertEquals(expectedValue, getTopicConfig(admin, topic).get(TopicConfig.DISKLESS_ENABLE_CONFIG));
-    }
-
     private void alterTopicConfig(final Admin admin,
                                   final String topic,
                                   final Map<String, String> newConfigs,
@@ -438,7 +423,7 @@ public class InklessTopicTypeSwitcherClusterTest {
 
             // Now the switch should succeed
             alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
-            waitForTopicDisklessValue(admin, topic, "true");
+            TopicConfigTestUtils.waitForTopicConfigValue(admin, topic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
         }
     }
 
@@ -521,6 +506,10 @@ public class InklessTopicTypeSwitcherClusterTest {
                 new NewTopic(topic, 1, (short) 3)
                     .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
             )).all().get(30, TimeUnit.SECONDS);
+            // createTopics returns once the controller commits the topic, but metadata propagation
+            // to brokers is asynchronous. Wait for the topic to be visible before polling the seal
+            // offset so readSealOffset doesn't mask a genuinely missing topic as a transient delay.
+            TopicConfigTestUtils.waitForTopicToExist(admin, topic);
             waitForSealOffset(admin, topic, 0,
                 offset -> offset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET);
 
@@ -647,26 +636,5 @@ public class InklessTopicTypeSwitcherClusterTest {
         }
         throw new AssertionError("ISR for " + topic + "-" + partition +
             " did not recover to " + expectedIsrSize + " within timeout");
-    }
-
-    private Map<String, String> getTopicConfig(final Admin admin, final String topic) throws Exception {
-        int maxRetries = 5;
-        long retryDelayMs = 1000;
-        for (int attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                final ConfigResource topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
-                final var configsResult = admin.describeConfigs(Collections.singletonList(topicResource));
-                final var allConfigs = configsResult.all().get(10, TimeUnit.SECONDS);
-                final Map<String, String> topicConfigs = new HashMap<>();
-                allConfigs.get(topicResource).entries().forEach(entry -> topicConfigs.put(entry.name(), entry.value()));
-                return topicConfigs;
-            } catch (ExecutionException e) {
-                if (attempt == maxRetries) {
-                    throw e;
-                }
-                Thread.sleep(retryDelayMs);
-            }
-        }
-        throw new IllegalStateException("Exited retry loop unexpectedly.");
     }
 }

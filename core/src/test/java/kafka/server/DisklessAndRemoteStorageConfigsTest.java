@@ -23,7 +23,6 @@ import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.common.config.ConfigResource;
-import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
@@ -42,9 +41,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlane;
@@ -277,7 +274,7 @@ public class DisklessAndRemoteStorageConfigsTest {
                                                String expectedDiskless,
                                                String expectedRemoteStorage) throws Exception {
         assertTrue(createTopic(admin, topic, configs).isEmpty());
-        var topicConfig = getTopicConfig(admin, topic);
+        var topicConfig = TopicConfigTestUtils.getTopicConfig(admin, topic);
         assertEquals(expectedDiskless, topicConfig.get(DISKLESS_ENABLE_CONFIG));
         assertEquals(expectedRemoteStorage, topicConfig.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
     }
@@ -331,10 +328,8 @@ public class DisklessAndRemoteStorageConfigsTest {
                 assertTrue(incrementalAlterTopicConfig(admin, "classic-to-diskless", Map.of(
                     DISKLESS_ENABLE_CONFIG, "true")).isEmpty(),
                     "classic-to-diskless switch should succeed and auto-enable remote storage");
-                var classicConfig = getTopicConfig(admin, "classic-to-diskless");
-                assertEquals("true", classicConfig.get(DISKLESS_ENABLE_CONFIG));
-                assertEquals("true", classicConfig.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG),
-                    "remote.storage.enable must be auto-enabled atomically on the switch");
+                TopicConfigTestUtils.waitForTopicConfigValue(admin, "classic-to-diskless", DISKLESS_ENABLE_CONFIG, "true");
+                TopicConfigTestUtils.waitForTopicConfigValue(admin, "classic-to-diskless", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
 
                 // Scenario 4b: classic-to-diskless switch setting both flags explicitly still works.
                 createTopicAndAssertEffective(admin, "classic-to-diskless-explicit", Map.of(), "false", "false");
@@ -342,9 +337,8 @@ public class DisklessAndRemoteStorageConfigsTest {
                     DISKLESS_ENABLE_CONFIG, "true",
                     REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")).isEmpty(),
                     "classic-to-diskless switch should succeed with both flags set explicitly");
-                var explicitConfig = getTopicConfig(admin, "classic-to-diskless-explicit");
-                assertEquals("true", explicitConfig.get(DISKLESS_ENABLE_CONFIG));
-                assertEquals("true", explicitConfig.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+                TopicConfigTestUtils.waitForTopicConfigValue(admin, "classic-to-diskless-explicit", DISKLESS_ENABLE_CONFIG, "true");
+                TopicConfigTestUtils.waitForTopicConfigValue(admin, "classic-to-diskless-explicit", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
 
                 // Scenario 4c: a COMPACTED classic topic cannot switch (fail-fast).
                 // A diskless topic requires remote storage, which requires cleanup.policy=delete,
@@ -357,7 +351,7 @@ public class DisklessAndRemoteStorageConfigsTest {
                 assertTrue(compactError.isPresent(), "Compacted topic switch to diskless should be rejected");
                 assertTrue(compactError.get().contains("cleanup.policy=delete"),
                     "Expected delete-policy rejection, got: " + compactError.get());
-                var stillClassic = getTopicConfig(admin, "compacted-classic");
+                var stillClassic = TopicConfigTestUtils.getTopicConfig(admin, "compacted-classic");
                 assertEquals("false", stillClassic.get(DISKLESS_ENABLE_CONFIG),
                     "Rejected switch must not have half-applied diskless.enable");
                 assertEquals("false", stillClassic.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG),
@@ -370,9 +364,8 @@ public class DisklessAndRemoteStorageConfigsTest {
                     DISKLESS_ENABLE_CONFIG, "true",
                     REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")).isEmpty(),
                     "TIERED→DISKLESS switch should succeed with allow-from-classic");
-                var tieredConfig = getTopicConfig(admin, "tiered-to-diskless");
-                assertEquals("true", tieredConfig.get(DISKLESS_ENABLE_CONFIG));
-                assertEquals("true", tieredConfig.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+                TopicConfigTestUtils.waitForTopicConfigValue(admin, "tiered-to-diskless", DISKLESS_ENABLE_CONFIG, "true");
+                TopicConfigTestUtils.waitForTopicConfigValue(admin, "tiered-to-diskless", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
 
                 // Scenario 8: DISKLESS cannot disable remote storage
                 createTopicAndAssertEffective(admin, "diskless-no-disable-rs", Map.of(
@@ -470,28 +463,4 @@ public class DisklessAndRemoteStorageConfigsTest {
         }
     }
 
-    private Map<String, String> getTopicConfig(Admin admin, String topic)
-        throws ExecutionException, InterruptedException, TimeoutException {
-        int maxRetries = 3;
-        long retryDelayMs = 1000;
-        for (int attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                var topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
-                var describeConfigsResult = admin.describeConfigs(Collections.singletonList(topicResource));
-                var allConfigs = describeConfigsResult.all().get(10, TimeUnit.SECONDS);
-                return allConfigs.get(topicResource).entries().stream().collect(
-                    HashMap::new,
-                    (map, entry) -> map.put(entry.name(), entry.value()),
-                    HashMap::putAll
-                );
-            } catch (ExecutionException e) {
-                if (e.getCause() instanceof UnknownTopicOrPartitionException && attempt < maxRetries) {
-                    Thread.sleep(retryDelayMs);
-                } else {
-                    throw e;
-                }
-            }
-        }
-        throw new IllegalStateException("Exited retry loop unexpectedly.");
-    }
 }
