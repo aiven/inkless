@@ -139,8 +139,15 @@ class MetricsTest extends KafkaServerTestHarness with Logging {
     createTopic(topic, 2)
 
     // The broker metrics for all topics should be greedily registered
-    assertTrue(topicMetrics(None).nonEmpty, "General topic metrics don't exist")
-    assertEquals(brokers.head.brokerTopicStats.allTopicsStats.metricMapKeySet().size, topicMetrics(None).size)
+    val allTopicsMetrics = topicMetrics(None)
+    assertTrue(allTopicsMetrics.nonEmpty, "General topic metrics don't exist")
+    // Inkless: all-topics BytesIn/BytesOut meters are registered for both topicType=classic and
+    // topicType=diskless. The diskless variants share the same metric name as their classic
+    // counterparts (they differ only by tag), so they are not tracked as extra keys in
+    // metricMapKeySet() but do appear as separate JMX MBeans. Account for those duplicates.
+    val disklessAllTopicsMetrics = allTopicsMetrics.count(_.contains("topicType=diskless"))
+    assertEquals(brokers.head.brokerTopicStats.allTopicsStats.metricMapKeySet().size + disklessAllTopicsMetrics,
+      allTopicsMetrics.size)
     assertEquals(0, brokers.head.brokerTopicStats.allTopicsStats.metricGaugeMap.size)
     // topic metrics should be lazily registered
     assertTrue(topicMetricGroups(topic).isEmpty, "Topic metrics aren't lazily registered")
