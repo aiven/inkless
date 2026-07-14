@@ -802,6 +802,7 @@ class ReplicaFetcherThreadTest {
 
     val partition: Partition = mock(classOf[Partition])
     when(partition.localLogOrException).thenReturn(log)
+    when(partition.inSyncReplicaIds).thenReturn(Set(config.brokerId))
     when(partition.appendRecordsToFollowerOrFutureReplica(any[MemoryRecords], any[Boolean], any[Int]))
       .thenReturn(Some(mock(classOf[LogAppendInfo])))
 
