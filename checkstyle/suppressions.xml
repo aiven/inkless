@@ -334,7 +334,7 @@
     <suppress checks="AvoidStarImport"
               files="MetadataVersionTest.java"/>
     <suppress checks="JavaNCSS"
-              files="ReplicationControlManagerTest.java"/>
+              files="(ReplicationControlManagerTest|ReplicationControlManagerInklessTest).java"/>
 
     <!-- group coordinator -->
     <suppress checks="CyclomaticComplexity"
