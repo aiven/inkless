@@ -959,8 +959,6 @@ class KafkaApis(val requestChannel: RequestChannel,
     val versionId = request.header.apiVersion
     val clientId = request.header.clientId
     val fetchRequest = request.body[FetchRequest]
-    debug("!!! Handling fetch request: " + fetchRequest)
-
     val topicNames =
       if (fetchRequest.version() >= 13)
         metadataCache.topicIdsToNames()
@@ -1698,8 +1696,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       val topicMetadata = metadataCache.getTopicMetadata(Set(internalTopicName).asJava, request.context.listenerName, false, false).asScala
 
       if (topicMetadata.headOption.isEmpty) {
-        logger.info("!!! The internal topic " + internalTopicName + " does not exist when finding coordinator for key " + key +
-          ". Attempting to create the topic.")
+        logger.warn(s"Coordinator lookup for key $key failed because internal topic $internalTopicName does not exist, attempting to create it")
         val controllerMutationQuota = quotas.controllerMutation.newPermissiveQuotaFor(request.session, request.header.clientId)
         autoTopicCreationManager.createTopics(Seq(internalTopicName).toSet, controllerMutationQuota, None)
         (Errors.COORDINATOR_NOT_AVAILABLE, Node.noNode)
@@ -1714,7 +1711,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             .findFirst()
 
           if (coordinatorEndpoint.isPresent) {
-            logger.info("!!! The coordinator for key " + key + " is " + coordinatorEndpoint.get())
+            logger.debug("The coordinator for key " + key + " is " + coordinatorEndpoint.get())
             (Errors.NONE, coordinatorEndpoint.get)
           } else {
             (Errors.COORDINATOR_NOT_AVAILABLE, Node.noNode)

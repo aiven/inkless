@@ -632,10 +632,6 @@ public class OffsetMetadataManager {
                         .setPartitionIndex(partition.partitionIndex())
                         .setErrorCode(Errors.OFFSET_METADATA_TOO_LARGE.code()));
                 } else {
-                    log.info("!!! [GroupId {}] Committing offsets {} for partition {}-{}-{} from member {} with leader epoch {}.",
-                        request.groupId(), partition.committedOffset(), topic.topicId(), topic.name(), partition.partitionIndex(),
-                        request.memberId(), partition.committedLeaderEpoch());
-
                     topicResponse.partitions().add(new OffsetCommitResponsePartition()
                         .setPartitionIndex(partition.partitionIndex())
                         .setErrorCode(Errors.NONE.code()));

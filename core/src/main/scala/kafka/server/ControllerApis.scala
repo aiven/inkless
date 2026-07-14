@@ -176,7 +176,6 @@ class ControllerApis(
     // luke
     authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
     val bumpLeaderEpochRequest = request.body[BumpLeaderEpochsRequest]
-    info("!!! bump leader epoch request: " + bumpLeaderEpochRequest)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
     val partitionLeaderEpochs: util.Map[Uuid, util.Map[Integer, Integer]] = new util.HashMap[Uuid, util.Map[Integer, Integer]]()
@@ -189,7 +188,7 @@ class ControllerApis(
     })
     controller.bumpLeaderEpoch(context, partitionLeaderEpochs)
       .handle[Unit] { (response, exception) =>
-        logger.info("!!! bump leader epoch response: " + response + " exception: " + exception)
+        logger.debug("Bump leader epoch response: " + response + " exception: " + exception)
         if (exception != null) {
           requestHelper.handleError(request, exception)
         } else {

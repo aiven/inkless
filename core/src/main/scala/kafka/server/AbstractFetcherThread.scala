@@ -348,7 +348,6 @@ abstract class AbstractFetcherThread(name: String,
           }
       }
     if (newStates.nonEmpty) {
-      info("!!! maybeCreateMirrorFetchers: " + newStates)
       removeFetcherForPartitions(newStates.keySet)
       addFetcherForPartitions(newStates)
     } else if (partitionToData.nonEmpty && leader.lastSeenEndpoints().isEmpty) {
@@ -461,7 +460,6 @@ abstract class AbstractFetcherThread(name: String,
     var fetchException: Option[Throwable] = None
 
     try {
-      debug(s"!!! Sending fetch request $fetchRequest")
       responseData = leader.fetch(fetchRequest).asScala
     } catch {
       case t: Throwable =>

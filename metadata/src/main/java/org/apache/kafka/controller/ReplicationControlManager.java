@@ -777,9 +777,9 @@ public class ReplicationControlManager {
                             .setDefaultDirProvider(clusterDescriber);
 
                     builder.build().ifPresent(records::add);
-                    log.info("!!! update partition {} for topic {} from {} to {}: {}", partitionId, topicName, partition.leaderEpoch, leaderEpoch, records);
+                    log.debug("Updating partition {} leader epoch for topic {} from {} to {}: {}", partitionId, topicName, partition.leaderEpoch, leaderEpoch, records);
                 } else {
-                    log.info("!!! do not update partition {} for topic {} from {} to {}", partitionId, topicName, partition.leaderEpoch, leaderEpoch);
+                    log.debug("Skipping partition {} leader epoch update for topic {} from {} to {}", partitionId, topicName, partition.leaderEpoch, leaderEpoch);
                 }
             });
         }

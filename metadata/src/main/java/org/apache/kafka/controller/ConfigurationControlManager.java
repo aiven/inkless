@@ -253,7 +253,7 @@ public class ConfigurationControlManager {
             false,
             outputRecords);
         // TODO: Should handle the error here
-        log.info("!!! addMirrorConfig apiError: {} for {} {}", apiError, configResource, configChanges);
+        log.debug("addMirrorConfig result: {} for {} {}", apiError, configResource, configChanges);
         outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));
 
         data.setErrorCode((short) 0);
