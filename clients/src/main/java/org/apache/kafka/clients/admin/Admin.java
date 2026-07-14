@@ -389,6 +389,36 @@ public interface Admin extends AutoCloseable {
     AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset, AlterDisklessSwitchOptions options);
 
     /**
+     * Reconcile the control-plane diskless log entry of a single partition with the seal committed in
+     * KRaft. This is an operator tool; the request must be sent to the partition leader, which owns the
+     * control-plane connection, so the caller supplies its broker id.
+     *
+     * This is a convenience method for {@link #repairDisklessLog(String, int, int, RepairDisklessLogOptions)}
+     * with default options.
+     *
+     * @param topic     The topic name.
+     * @param partition The partition index.
+     * @param brokerId  The id of the partition leader broker to send the request to.
+     * @return The RepairDisklessLogResult.
+     */
+    default RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId) {
+        return repairDisklessLog(topic, partition, brokerId, new RepairDisklessLogOptions());
+    }
+
+    /**
+     * Reconcile the control-plane diskless log entry of a single partition with the seal committed in
+     * KRaft. This is an operator tool; the request must be sent to the partition leader, which owns the
+     * control-plane connection, so the caller supplies its broker id.
+     *
+     * @param topic     The topic name.
+     * @param partition The partition index.
+     * @param brokerId  The id of the partition leader broker to send the request to.
+     * @param options   The options to use.
+     * @return The RepairDisklessLogResult.
+     */
+    RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId, RepairDisklessLogOptions options);
+
+    /**
      * Get information about the nodes in the cluster, using the default options.
      * <p>
      * This is a convenience method for {@link #describeCluster(DescribeClusterOptions)} with default options.
