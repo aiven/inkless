@@ -2218,6 +2218,24 @@ class ReplicaManager(val config: KafkaConfig,
         if (!partitionLookupFailed) {
           val disklessSwitchCompleted = !shouldReadFromUnifiedLog && classicToDisklessStartOffset >= 0
           if (params.isFromFollower && disklessSwitchCompleted) {
+            // A recovered follower for a switched partition may already be caught up to the
+            // seal offset but still be outside ISR. Record the seal-offset fetch so the normal
+            // ISR expansion path can observe that the follower is caught up without reading
+            // diskless data into the local log.
+            if (fetchPartitionData.fetchOffset == classicToDisklessStartOffset) {
+              getPartitionOrError(tp.topicPartition).foreach { partition =>
+                partition.getReplica(params.replicaId).foreach { replica =>
+                  partition.updateFollowerFetchState(
+                    replica,
+                    followerFetchOffsetMetadata = new LogOffsetMetadata(classicToDisklessStartOffset),
+                    followerStartOffset = fetchPartitionData.logStartOffset,
+                    followerFetchTimeMs = time.milliseconds,
+                    leaderEndOffset = partition.localLogOrException.logEndOffset,
+                    params.replicaEpoch
+                  )
+                }
+              }
+            }
             // The partition has fully switched to diskless and the follower is asking for an offset at or beyond it.
             // Followers must never replicate diskless records into their local log. Return
             // an empty response with HW clamped to the seal offset so the fetcher loop sees the
@@ -3746,11 +3764,14 @@ class ReplicaManager(val config: KafkaConfig,
               val isNewLeaderEpoch = partition.makeFollower(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
               partition.seal()
               changedPartitions.add(partition)
-              if (seal >= 0 && partition.localLogOrException.highWatermark < seal) {
+              val isOutOfIsr = !info.partition.isr.contains(config.brokerId)
+              if (seal >= 0 && (partition.localLogOrException.highWatermark < seal || isOutOfIsr)) {
                 // Schedule a catch-up fetch when the local HW is below the seal -- either
                 // because we restarted with a stale HW (unclean shutdown) or because we
                 // were just added as a replica and have an empty local log. The
                 // ReplicaFetcher self-evicts once the follower has read past the seal.
+                // Also schedule one fetch when this replica is already caught up but out
+                // of ISR, so the leader observes its fetch state and can expand ISR.
                 partitionsToStartFetching.put(tp, partition)
               } else if (seal == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING && isNewLeaderEpoch) {
                 // Switch is in flight: the leader has already sealed its log and

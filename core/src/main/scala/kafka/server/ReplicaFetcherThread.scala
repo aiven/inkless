@@ -163,12 +163,18 @@ class ReplicaFetcherThread(name: String,
     brokerTopicStats.updateReplicationBytesIn(records.sizeInBytes)
 
     // Stop fetching after the switch from classic to diskless is completed: once the controller
-    // has committed a classicToDisklessStartOffset for this partition AND our local LEO has reached it,
-    // the follower is fully caught up to the leader's frozen classic log and must not keep fetching.
-    val classicToDisklessStartOffset = replicaMgr.inklessMetadataView().getClassicToDisklessStartOffset(topicPartition)
+    // has committed a classicToDisklessStartOffset for this partition, our local LEO has reached it,
+    // and this replica is in ISR, the follower is fully caught up to the leader's frozen classic log
+    // and must not keep fetching.
+    val inklessMetadataView = replicaMgr.inklessMetadataView()
+    val classicToDisklessStartOffset = inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
+    val isConsolidatingPartition =
+      brokerConfig.disklessRemoteStorageConsolidationEnabled &&
+        inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
     if (shouldEvictFullySwitchedDisklessPartitions &&
         classicToDisklessStartOffset >= 0 &&
-        log.logEndOffset >= classicToDisklessStartOffset) {
+        log.logEndOffset >= classicToDisklessStartOffset &&
+        (isConsolidatingPartition || partition.inSyncReplicaIds.contains(brokerConfig.brokerId))) {
       partitionsToEvictAfterDisklessSwitch += topicPartition
     }
 

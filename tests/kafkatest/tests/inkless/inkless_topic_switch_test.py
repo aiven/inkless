@@ -121,9 +121,11 @@ class InklessClassicToDisklessSwitchTest(Test):
         ),
     }
     SEALED_LEADER_PARTITIONS_JMX_OBJECT = "kafka.server:type=ReplicaManager,name=SealedPartitionsCount"
+    UNDER_REPLICATED_PARTITIONS_JMX_OBJECT = "kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions"
     INIT_DISKLESS_IN_FLIGHT_PARTITIONS_JMX_OBJECT = _IDLM_OBJ % "InFlightPartitions"
     SWITCH_COMPLETION_JMX_OBJECT_NAMES = [
         SEALED_LEADER_PARTITIONS_JMX_OBJECT,
+        UNDER_REPLICATED_PARTITIONS_JMX_OBJECT,
         INIT_DISKLESS_IN_FLIGHT_PARTITIONS_JMX_OBJECT,
     ]
     SWITCH_STATE_JMX_OBJECT_NAMES = [obj for pair in SWITCH_STATE_GAUGES.values() for obj in pair]
@@ -375,6 +377,58 @@ class InklessClassicToDisklessSwitchTest(Test):
             err_msg=("Topic %s did not finish classic-to-diskless switch within %ds "
                      "(expected at least %d sealed leader partitions and zero in-flight init partitions)" %
                      (topic, timeout_sec, expected_sealed_leader_count))
+        )
+
+    def _live_cluster_jmx_sum(self, obj_name):
+        """Read and sum one JMX gauge across live broker nodes."""
+        key = "%s:Value" % obj_name
+        total = 0.0
+        for node in self.kafka.nodes:
+            if not self.kafka.pids(node):
+                continue
+            idx = self.kafka.idx(node)
+            try:
+                self.kafka.read_jmx_output(idx, node)
+            except Exception as e:
+                self.logger.debug("Failed to read JMX from live broker %s: %s",
+                                  node.account.hostname, e)
+                continue
+            if idx - 1 >= len(self.kafka.jmx_stats):
+                continue
+            time_to_stats = self.kafka.jmx_stats[idx - 1]
+            if time_to_stats:
+                latest = max(time_to_stats.keys())
+                total += time_to_stats[latest].get(key, 0)
+        return int(total)
+
+    def _wait_for_under_replicated_partitions(self, expected_count, timeout_sec=120):
+        def check():
+            count = self._live_cluster_jmx_sum(self.UNDER_REPLICATED_PARTITIONS_JMX_OBJECT)
+            self.logger.info("Cluster UnderReplicatedPartitions=%d, expected=%d",
+                             count, expected_count)
+            return count == expected_count
+
+        wait_until(
+            check,
+            timeout_sec=timeout_sec,
+            backoff_sec=2,
+            err_msg="UnderReplicatedPartitions did not become %d within %ds" %
+                    (expected_count, timeout_sec)
+        )
+
+    def _wait_for_under_replicated_partitions_at_least(self, min_count, timeout_sec=120):
+        def check():
+            count = self._live_cluster_jmx_sum(self.UNDER_REPLICATED_PARTITIONS_JMX_OBJECT)
+            self.logger.info("Cluster UnderReplicatedPartitions=%d, expected_at_least=%d",
+                             count, min_count)
+            return count >= min_count
+
+        wait_until(
+            check,
+            timeout_sec=timeout_sec,
+            backoff_sec=2,
+            err_msg="UnderReplicatedPartitions did not reach at least %d within %ds" %
+                    (min_count, timeout_sec)
         )
 
     # -----------------------------------------------------------------------
@@ -1230,6 +1284,35 @@ class InklessClassicToDisklessSwitchTest(Test):
         consumed = self._consume_all_from_beginning(expected_count=total, timeout_sec=self.CONSUME_TIMEOUT_SEC,
                                                     wait_for_completion=True)
         assert consumed == total, "Expected exactly %d messages after rolling restart but got %d" % (total, consumed)
+
+    @cluster(num_nodes=5)
+    @matrix(metadata_quorum=[quorum.isolated_kraft])
+    def test_switched_topic_urp_clears_after_replica_recovery(self, metadata_quorum) -> None:
+        """A switched hybrid partition should report URP only while ISR is short.
+
+        This guards the operational contract that the ReplicaManager aggregate
+        gauge is live state, not a sticky artifact of switching to diskless:
+        stopping one replica raises URP, and the same replica catching back up
+        clears it.
+        """
+        self.num_partitions = 1
+        self._create_kafka()
+        self.kafka.start()
+        self._create_classic_topic(num_partitions=1)
+
+        self._produce_messages(num_messages=5000)
+
+        self._switch_topic_to_diskless()
+        self._wait_for_switch_complete()
+        self._wait_for_under_replicated_partitions(0)
+
+        follower = self._get_follower_nodes(partition=0)[0]
+        self._stop_broker(follower, clean_shutdown=False)
+        self._wait_for_under_replicated_partitions_at_least(1)
+
+        self._start_broker(follower)
+        self._wait_for_all_partitions_isr_full(num_partitions=1)
+        self._wait_for_under_replicated_partitions(0)
 
     @cluster(num_nodes=5)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
