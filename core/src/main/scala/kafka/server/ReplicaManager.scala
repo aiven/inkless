@@ -20,7 +20,7 @@ import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, Reader}
 import io.aiven.inkless.storage_backend.common.ObjectFetcher
-import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState}
+import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, RepairDisklessLogRequest}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.produce.AppendHandler
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, ConsolidationMetrics, ConsolidationReconciler}
@@ -3567,6 +3567,47 @@ class ReplicaManager(val config: KafkaConfig,
           }
         }
       }
+    }
+  }
+
+  def repairDisklessLog(topicPartition: TopicPartition): Errors = {
+    val sharedState = inklessSharedState.getOrElse {
+      return Errors.INVALID_REQUEST
+    }
+    if (!_inklessMetadataView.isDisklessTopic(topicPartition.topic)) {
+      stateChangeLogger.info(s"Rejecting repair for $topicPartition: not a diskless topic.")
+      return Errors.INVALID_REQUEST
+    }
+    val seal = _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
+    if (seal < 0) {
+      stateChangeLogger.info(s"Rejecting repair for $topicPartition: no committed seal offset (got $seal).")
+      return Errors.INVALID_REQUEST
+    }
+    onlinePartition(topicPartition) match {
+      case Some(partition) if partition.isLeader =>
+        val topicId = _inklessMetadataView.getTopicId(topicPartition.topic)
+        val request = new RepairDisklessLogRequest(
+          topicId, topicPartition.topic, topicPartition.partition, seal)
+        try {
+          val response = sharedState.controlPlane.repairDisklessLog(java.util.List.of(request)).get(0)
+          if (response.found) {
+            stateChangeLogger.info(s"Repaired control-plane diskless log for $topicPartition at seal offset $seal.")
+            Errors.NONE
+          } else {
+            stateChangeLogger.info(s"Rejecting repair for $topicPartition: no control-plane diskless log entry to repair.")
+            Errors.UNKNOWN_TOPIC_OR_PARTITION
+          }
+        } catch {
+          case e: Throwable =>
+            stateChangeLogger.error(s"Failed to repair control-plane diskless log for $topicPartition at seal offset $seal.", e)
+            Errors.UNKNOWN_SERVER_ERROR
+        }
+      case Some(_) =>
+        stateChangeLogger.info(s"Rejecting repair for $topicPartition: not the partition leader.")
+        Errors.NOT_LEADER_OR_FOLLOWER
+      case None =>
+        stateChangeLogger.info(s"Rejecting repair for $topicPartition: partition not online locally.")
+        Errors.NOT_LEADER_OR_FOLLOWER
     }
   }
 

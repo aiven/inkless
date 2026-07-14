@@ -95,13 +95,17 @@ public abstract class TopicSwitchCommand {
                 }
                 break;
             case "repair":
-                throw new RuntimeException("Command \"" + command + "\" not implemented");
+                try (Admin adminClient = Admin.create(properties)) {
+                    repairCommand(System.out, adminClient, topic,
+                        Optional.ofNullable(namespace.getInt("partition")));
+                }
+                break;
             default:
                 throw new RuntimeException("Unknown command " + command);
         }
     }
 
-    private static ArgumentParser argumentParser() {
+    static ArgumentParser argumentParser() {
         ArgumentParser parser = ArgumentParsers
                 .newArgumentParser("kafka-topic-switch")
                 .defaultHelp(true)
@@ -115,7 +119,7 @@ public abstract class TopicSwitchCommand {
         Subparser repairParser = commandParsers.addParser("repair")
                 .help("Repair the control-plane diskless log entry.");
 
-        for (Subparser subparser : List.of(stateParser, sealParser, repairParser)) {
+        for (Subparser subparser : List.of(stateParser, sealParser)) {
             MutuallyExclusiveGroup connectionOptions = subparser.addMutuallyExclusiveGroup().required(true);
             connectionOptions.addArgument("--bootstrap-server", "-b")
                     .action(store())
@@ -123,6 +127,13 @@ public abstract class TopicSwitchCommand {
             connectionOptions.addArgument("--bootstrap-controller", "-C")
                     .action(store())
                     .help("A list of host/port pairs to use for establishing the connection to the KRaft controllers.");
+        }
+        repairParser.addArgument("--bootstrap-server", "-b")
+                .action(store())
+                .required(true)
+                .help("A list of host/port pairs to use for establishing the connection to the Kafka cluster.");
+
+        for (Subparser subparser : List.of(stateParser, sealParser, repairParser)) {
             subparser.addArgument("--command-config", "-c")
                     .action(store())
                     .help("Config properties file for the Admin client.");
@@ -152,6 +163,11 @@ public abstract class TopicSwitchCommand {
         sealParser.addArgument("--dry-run", "-d")
                 .action(storeTrue())
                 .help("Whether to only perform validation when adjusting the seal offset.");
+
+        repairParser.addArgument("--partition", "-p")
+                .action(store())
+                .type(Integer.class)
+                .help("The partition index to repair. If omitted, all switched partitions of the topic are repaired.");
 
         return parser;
     }
@@ -265,6 +281,48 @@ public abstract class TopicSwitchCommand {
         adminClient.alterDisklessSwitch(topic, partition, sealOffset, options).all().get();
         stream.printf("Set %s-%d classicToDisklessStartOffset to %s.%n",
             topic, partition, describeSealOffset(sealOffset));
+    }
+
+    static void repairCommand(PrintStream stream, Admin adminClient, String topic,
+                              Optional<Integer> partition) throws Exception {
+        DescribeTopicPartitionsResponseData responseData = adminClient
+            .describeTopicPartitions(List.of(topic), new DescribeTopicsOptions()).rawResponse().get();
+        DescribeTopicPartitionsResponseTopic topicData = responseData.topics().find(topic);
+        if (topicData == null) {
+            throw new RuntimeException("Topic not found: " + topic);
+        }
+        if (topicData.errorCode() != 0) {
+            throw new RuntimeException("Error describing topic " + topic + ": error code " + topicData.errorCode());
+        }
+
+        List<DescribeTopicPartitionsResponsePartition> partitions = topicData.partitions().stream()
+            .filter(p -> partition.isEmpty() || p.partitionIndex() == partition.get())
+            .toList();
+        if (partition.isPresent() && partitions.isEmpty()) {
+            throw new RuntimeException("Partition not found: " + topic + "-" + partition.get());
+        }
+
+        int repaired = 0;
+        for (DescribeTopicPartitionsResponsePartition p : partitions) {
+            long seal = InitDisklessLogFields.decodeClassicToDisklessStartOffset(p.unknownTaggedFields());
+            // Only committed partitions have a control-plane entry to reconcile.
+            if (seal < 0) {
+                stream.printf("Skipping %s-%d: not switched (classicToDisklessStartOffset=%s).%n",
+                    topic, p.partitionIndex(), formatStartOffset(seal));
+                continue;
+            }
+            if (p.leaderId() < 0) {
+                stream.printf("Skipping %s-%d: no current leader (leaderId=%d).%n",
+                    topic, p.partitionIndex(), p.leaderId());
+                continue;
+            }
+            // The control-plane write happens on the leader, so route the request there.
+            adminClient.repairDisklessLog(topic, p.partitionIndex(), p.leaderId()).all().get();
+            stream.printf("Repaired %s-%d control-plane diskless log at seal offset %d (leader %d).%n",
+                topic, p.partitionIndex(), seal, p.leaderId());
+            repaired++;
+        }
+        stream.printf("Repaired %d partition(s) of topic %s.%n", repaired, topic);
     }
 
     private static long startOffset(Admin adminClient, String topic, int partition) throws Exception {

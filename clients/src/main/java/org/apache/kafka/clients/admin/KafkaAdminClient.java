@@ -168,6 +168,7 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.MetadataRequestData;
 import org.apache.kafka.common.message.RemoveRaftVoterRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
+import org.apache.kafka.common.message.RepairDisklessLogRequestData;
 import org.apache.kafka.common.message.UnregisterBrokerRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData.UpdatableFeatureResult;
@@ -250,6 +251,8 @@ import org.apache.kafka.common.requests.RemoveRaftVoterRequest;
 import org.apache.kafka.common.requests.RemoveRaftVoterResponse;
 import org.apache.kafka.common.requests.RenewDelegationTokenRequest;
 import org.apache.kafka.common.requests.RenewDelegationTokenResponse;
+import org.apache.kafka.common.requests.RepairDisklessLogRequest;
+import org.apache.kafka.common.requests.RepairDisklessLogResponse;
 import org.apache.kafka.common.requests.UnregisterBrokerRequest;
 import org.apache.kafka.common.requests.UnregisterBrokerResponse;
 import org.apache.kafka.common.requests.UpdateFeaturesRequest;
@@ -4938,6 +4941,43 @@ public class KafkaAdminClient extends AdminClient {
         };
         runnable.call(call, now);
         return new AlterDisklessSwitchResult(future);
+    }
+
+    @Override
+    public RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId,
+                                                     RepairDisklessLogOptions options) {
+        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        // The control-plane write happens on the partition leader, so send directly to that broker.
+        final Call call = new Call("repairDisklessLog", calcDeadlineMs(now, options.timeoutMs()),
+            new ConstantNodeIdProvider(brokerId)) {
+
+            @Override
+            RepairDisklessLogRequest.Builder createRequest(int timeoutMs) {
+                RepairDisklessLogRequestData data = new RepairDisklessLogRequestData()
+                    .setTopicName(topic)
+                    .setPartitionIndex(partition);
+                return new RepairDisklessLogRequest.Builder(data);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final RepairDisklessLogResponse response = (RepairDisklessLogResponse) abstractResponse;
+                Errors error = Errors.forCode(response.data().errorCode());
+                if (error == Errors.NONE) {
+                    future.complete(null);
+                } else {
+                    future.completeExceptionally(error.exception(response.data().errorMessage()));
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return new RepairDisklessLogResult(future);
     }
 
     @Override

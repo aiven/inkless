@@ -89,6 +89,11 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
+    public RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId, RepairDisklessLogOptions options) {
+        return delegate.repairDisklessLog(topic, partition, brokerId, options);
+    }
+
+    @Override
     public DescribeClusterResult describeCluster(DescribeClusterOptions options) {
         return delegate.describeCluster(options);
     }
