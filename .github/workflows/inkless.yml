@@ -201,6 +201,14 @@ jobs:
             --tests "org.apache.kafka.network.RequestConvertToJsonTest"
           '
           exitcode="$?"
+          if [ "$exitcode" -eq 124 ]; then
+            echo "::error::Test step exceeded the ${TIMEOUT_MINUTES}-minute timeout and was killed; results are partial. A hung test is likely, check the thread-dumps artifact."
+            {
+              echo "## Tests killed by timeout"
+              echo ""
+              echo "The test step exceeded the **${TIMEOUT_MINUTES}-minute** timeout and was killed by the \`timeout\` wrapper. Results are partial and a hung test is likely; check the uploaded thread dumps."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
       - name: Archive JUnit HTML reports
         uses: actions/upload-artifact@v4
@@ -229,6 +237,25 @@ jobs:
             thread-dumps/*
           compression-level: 9
           if-no-files-found: ignore
+      - name: Prune incomplete JUnit reports
+        if: always()
+        run: |
+          # junit.py crashes on empty/truncated JUnit XML, left behind when a test class is killed
+          # mid-run (e.g. the timeout wrapper). Drop them so parsing still produces a summary; the
+          # real failure surfaces via GRADLE_TEST_EXIT_CODE.
+          python - <<'PY'
+          import glob, os, xml.etree.ElementTree as ET
+          root = os.path.realpath("build/junit-xml")
+          for f in glob.glob("build/junit-xml/**/*.xml", recursive=True):
+              # Only prune real files that resolve inside the reports dir (ignore symlinks/traversal).
+              if os.path.islink(f) or not os.path.isfile(f) or os.path.commonpath([root, os.path.realpath(f)]) != root:
+                  continue
+              try:
+                  ET.parse(f)
+              except ET.ParseError:
+                  print(f"::warning file={f}::Dropping unparseable JUnit report (test likely killed before finishing)")
+                  os.remove(f)
+          PY
       - name: Parse JUnit tests
         # Always run so the job summary lists failed tests (matching ci.yml/build.yml reporting).
         # junit.py exits non-zero when GRADLE_TEST_EXIT_CODE indicates a failure/timeout, which makes
