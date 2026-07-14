@@ -33,6 +33,8 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.InitDisklessLogFields.ProducerStateEntry;
 
+import net.sourceforge.argparse4j.inf.ArgumentParserException;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentMatchers;
@@ -333,6 +335,24 @@ public class TopicSwitchCommandTest {
 
         verify(adminClient, never()).repairDisklessLog(any(), anyInt(), anyInt());
         assertTrue(output.contains("Skipping test-topic-0: no current leader"));
+    }
+
+    @Test
+    public void testRepairRejectsBootstrapController() {
+        assertThrows(ArgumentParserException.class, () -> TopicSwitchCommand.argumentParser()
+            .parseArgs(new String[]{"repair", "--bootstrap-controller", "localhost:9093", "--topic", TOPIC}));
+    }
+
+    @Test
+    public void testRepairAcceptsBootstrapServer() throws Exception {
+        TopicSwitchCommand.argumentParser()
+            .parseArgs(new String[]{"repair", "--bootstrap-server", "localhost:9092", "--topic", TOPIC});
+    }
+
+    @Test
+    public void testSealAcceptsBootstrapController() throws Exception {
+        TopicSwitchCommand.argumentParser()
+            .parseArgs(new String[]{"seal", "--bootstrap-controller", "localhost:9093", "--topic", TOPIC, "--partition", "0"});
     }
 
     private void mockLogRange(int partition, long startOffset, long endOffset) {

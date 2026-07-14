@@ -105,7 +105,7 @@ public abstract class TopicSwitchCommand {
         }
     }
 
-    private static ArgumentParser argumentParser() {
+    static ArgumentParser argumentParser() {
         ArgumentParser parser = ArgumentParsers
                 .newArgumentParser("kafka-topic-switch")
                 .defaultHelp(true)
@@ -119,7 +119,7 @@ public abstract class TopicSwitchCommand {
         Subparser repairParser = commandParsers.addParser("repair")
                 .help("Repair the control-plane diskless log entry.");
 
-        for (Subparser subparser : List.of(stateParser, sealParser, repairParser)) {
+        for (Subparser subparser : List.of(stateParser, sealParser)) {
             MutuallyExclusiveGroup connectionOptions = subparser.addMutuallyExclusiveGroup().required(true);
             connectionOptions.addArgument("--bootstrap-server", "-b")
                     .action(store())
@@ -127,6 +127,13 @@ public abstract class TopicSwitchCommand {
             connectionOptions.addArgument("--bootstrap-controller", "-C")
                     .action(store())
                     .help("A list of host/port pairs to use for establishing the connection to the KRaft controllers.");
+        }
+        repairParser.addArgument("--bootstrap-server", "-b")
+                .action(store())
+                .required(true)
+                .help("A list of host/port pairs to use for establishing the connection to the Kafka cluster.");
+
+        for (Subparser subparser : List.of(stateParser, sealParser, repairParser)) {
             subparser.addArgument("--command-config", "-c")
                     .action(store())
                     .help("Config properties file for the Admin client.");
