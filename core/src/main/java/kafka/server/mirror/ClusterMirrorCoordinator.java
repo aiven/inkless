@@ -29,6 +29,7 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.internals.Topic;
+import org.apache.kafka.common.message.DeleteClusterMirrorRequestData;
 import org.apache.kafka.common.message.PauseMirrorTopicsRequestData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsRequestData;
 import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
@@ -103,6 +104,7 @@ import static org.apache.kafka.common.utils.Utils.require;
  * {@code __mirror_state} partition. Each broker coordinates the partitions it leads in that
  * topic; writes targeting a remote coordinator are forwarded via {@link MirrorMetadataManager}.
  */
+@SuppressWarnings("ClassFanOutComplexity")
 public class ClusterMirrorCoordinator {
     private final Logger log;
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
@@ -1077,19 +1079,19 @@ public class ClusterMirrorCoordinator {
     }
 
     public void startMirrorTopics(StartMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
-        metadataManager.validateAndForwardStartMirror(data, callback);
+        metadataManager.validateStartMirror(data, callback);
     }
 
     public void stopMirrorTopics(StopMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
-        metadataManager.validateAndForwardStopMirror(data, callback);
+        metadataManager.validateStopMirror(data, callback);
     }
 
     public void pauseMirrorTopics(PauseMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
-        metadataManager.validateAndForwardPauseMirror(data, callback);
+        metadataManager.validatePauseMirror(data, callback);
     }
 
     public void resumeMirrorTopics(ResumeMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
-        metadataManager.validateAndForwardResumeMirror(data, callback);
+        metadataManager.validateResumeMirror(data, callback);
     }
 
     public Set<String> getConfiguredTopics(String mirrorName, boolean includePaused, boolean includeStopped) {
@@ -1104,8 +1106,8 @@ public class ClusterMirrorCoordinator {
         return metadataManager.failedPartitionInfo();
     }
 
-    public void deleteClusterMirror(String mirrorName, Consumer<Optional<Errors>> callback) {
-        metadataManager.validateStoppedAndDelete(mirrorName, callback);
+    public void deleteClusterMirror(DeleteClusterMirrorRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validateStoppedAndDelete(data, callback);
     }
 
     /**

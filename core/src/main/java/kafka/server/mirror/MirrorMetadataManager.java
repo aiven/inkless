@@ -60,6 +60,7 @@ import org.apache.kafka.common.message.CreateAclsRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
+import org.apache.kafka.common.message.DeleteClusterMirrorRequestData;
 import org.apache.kafka.common.message.DescribeClusterMirrorsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
 import org.apache.kafka.common.message.MetadataResponseData;
@@ -80,22 +81,12 @@ import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.CreateTopicsRequest;
 import org.apache.kafka.common.requests.CreateTopicsResponse;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
-import org.apache.kafka.common.requests.AbstractRequest;
-import org.apache.kafka.common.requests.AbstractResponse;
-import org.apache.kafka.common.requests.DeleteClusterMirrorRequest;
-import org.apache.kafka.common.requests.DeleteClusterMirrorResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
-import org.apache.kafka.common.requests.PauseMirrorTopicsRequest;
-import org.apache.kafka.common.requests.PauseMirrorTopicsResponse;
 import org.apache.kafka.common.requests.ReadMirrorStatesRequest;
 import org.apache.kafka.common.requests.ReadMirrorStatesResponse;
-import org.apache.kafka.common.requests.ResumeMirrorTopicsRequest;
-import org.apache.kafka.common.requests.ResumeMirrorTopicsResponse;
 import org.apache.kafka.common.requests.StartMirrorTopicsRequest;
-import org.apache.kafka.common.requests.StartMirrorTopicsResponse;
 import org.apache.kafka.common.requests.StopMirrorTopicsRequest;
-import org.apache.kafka.common.requests.StopMirrorTopicsResponse;
 import org.apache.kafka.common.requests.WriteMirrorStatesRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesResponse;
 import org.apache.kafka.common.resource.ResourceType;
@@ -2094,17 +2085,18 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Validates that every partition of the given mirror is STOPPED, then sends a delete request
+     * Validates that every partition of the given mirror is STOPPED, then forward the delete request with StateValidationOffset
      * to the controller. Local partitions are checked against the in-memory cache; remote
      * partitions are verified via ReadMirrorStates RPCs to their coordinator brokers. Uses
      * optimistic locking: the broker validates partition states here, while the controller
      * validates that no concurrent metadata changes occurred before committing the delete.
      *
-     * @param mirrorName the mirror to validate and delete
-     * @param callback   receives {@code Optional.empty()} on success, or an error code if any
-     *                   partition is not STOPPED or a coordinator RPC fails
+     * @param data     the delete request data; mutated in place with {@code stateValidationOffset} on success
+     * @param callback receives {@code Optional.empty()} on success, or an error code if any
+     *                 partition is not STOPPED or a coordinator RPC fails
      */
-    void validateStoppedAndDelete(String mirrorName, Consumer<Optional<Errors>> callback) {
+    void validateStoppedAndDelete(DeleteClusterMirrorRequestData data, Consumer<Optional<Errors>> callback) {
+        String mirrorName = data.mirrorName();
         Set<String> mirroredTopics = getConfiguredTopics(mirrorName, true, true);
         Map<String, Set<Integer>> remotePartitions = new HashMap<>();
 
@@ -2134,7 +2126,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
 
         if (remotePartitions.isEmpty()) {
-            sendDeleteClusterMirror(mirrorName, brokerMetadataOffset, callback);
+            data.setStateValidationOffset(brokerMetadataOffset);
+            callback.accept(Optional.empty());
             return;
         }
 
@@ -2162,39 +2155,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     }
                 }
             }
-            sendDeleteClusterMirror(mirrorName, brokerMetadataOffset, callback);
+            data.setStateValidationOffset(brokerMetadataOffset);
+            callback.accept(Optional.empty());
         });
-    }
-
-    private void sendDeleteClusterMirror(String mirrorName, long brokerMetadataOffset, Consumer<Optional<Errors>> callback) {
-        channelManager.sendRequest(
-                new DeleteClusterMirrorRequest.Builder(mirrorName, brokerMetadataOffset),
-                new ControllerRequestCompletionHandler() {
-                    @Override
-                    public void onTimeout() {
-                        log.warn("DeleteClusterMirror request timed out");
-                        callback.accept(Optional.of(Errors.REQUEST_TIMED_OUT));
-                    }
-
-                    @Override
-                    public void onComplete(ClientResponse response) {
-                        if (response.responseBody() instanceof DeleteClusterMirrorResponse deleteClusterMirrorResponse) {
-                            if (deleteClusterMirrorResponse.data().errorCode() != Errors.NONE.code()) {
-                                log.error("Error returned from delete cluster mirror request. Error code: {} and message: {}",
-                                        deleteClusterMirrorResponse.data().errorCode(), deleteClusterMirrorResponse.data().errorMessage());
-                                callback.accept(Optional.of(Errors.forCode(deleteClusterMirrorResponse.data().errorCode())));
-                                return;
-                            }
-                            callback.accept(Optional.empty());
-                        }
-                    }
-                });
     }
 
     /**
      * Generic optimistic locking validation for mirror state operations.
      * Validates desired mirror states (from MetadataImage) and actual mirror states (from coordinator)
-     * against the allowed sets, captures the metadata offset, then forwarding the request to the controller.
+     * against the allowed sets, captures the metadata offset, then invokes {@code onValidated} with that
+     * offset so the caller can stamp it onto the request and report success/failure via its callback.
      */
     @SuppressWarnings({"NPathComplexity"})
     private void validateMirrorStatesAndForward(
@@ -2203,7 +2173,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             Set<Integer> allowedDesiredStates,
             Set<MirrorPartitionState> allowedCoordinatorStates,
             boolean allowMissingTopics,
-            BiConsumer<Long, Consumer<Optional<Errors>>> forwardRequest,
+            BiConsumer<Long, Consumer<Optional<Errors>>> onValidated,
             Consumer<Optional<Errors>> callback) {
         MetadataImage curImage = metadataImage;
         long brokerMetadataOffset = curImage.offset();
@@ -2247,7 +2217,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
 
         if (remotePartitions.isEmpty()) {
-            forwardRequest.accept(brokerMetadataOffset, callback);
+            onValidated.accept(brokerMetadataOffset, callback);
             return;
         }
 
@@ -2276,96 +2246,66 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     }
                 }
             }
-            forwardRequest.accept(brokerMetadataOffset, callback);
+            onValidated.accept(brokerMetadataOffset, callback);
         });
     }
 
-    /**
-     * Generic method for sending a mirror operation request to the controller via channelManager.
-     * Extracts the error code from the response and invokes the callback.
-     */
-    private void sendMirrorOperationRequest(
-            AbstractRequest.Builder<?> builder,
-            Function<AbstractResponse, Short> errorCodeExtractor,
-            Consumer<Optional<Errors>> callback) {
-        channelManager.sendRequest(builder, new ControllerRequestCompletionHandler() {
-            @Override
-            public void onTimeout() {
-                log.warn("{} request timed out", builder.apiKey());
-                callback.accept(Optional.of(Errors.REQUEST_TIMED_OUT));
-            }
-
-            @Override
-            public void onComplete(ClientResponse response) {
-                short errorCode = errorCodeExtractor.apply(response.responseBody());
-                if (errorCode != Errors.NONE.code()) {
-                    log.error("Error returned from {} request. Error code: {}",
-                            builder.apiKey(), Errors.forCode(errorCode));
-                    callback.accept(Optional.of(Errors.forCode(errorCode)));
-                } else {
-                    callback.accept(Optional.empty());
-                }
-            }
-        });
-    }
-
-    void validateAndForwardStartMirror(StartMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+    void validateStartMirror(StartMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
         Set<String> topics = data.topics().stream()
                 .map(StartMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
+        // start mirror topics only allow desired state and state as STOPPED or UNKNOWN
         validateMirrorStatesAndForward(data.mirrorName(), topics,
                 Set.of((int) MirrorPartitionState.STOPPED.value(), (int) MirrorPartitionState.UNKNOWN.value()),
                 Set.of(MirrorPartitionState.STOPPED, MirrorPartitionState.UNKNOWN),
                 true,
                 (offset, cb) -> {
                     data.setStateValidationOffset(offset);
-                    sendMirrorOperationRequest(new StartMirrorTopicsRequest.Builder(data),
-                            resp -> ((StartMirrorTopicsResponse) resp).data().errorCode(), cb);
+                    cb.accept(Optional.empty());
                 }, callback);
     }
 
-    void validateAndForwardStopMirror(StopMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+    void validateStopMirror(StopMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
         Set<String> topics = data.topics().stream()
                 .map(StopMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
-        validateMirrorStatesAndForward(data.mirrorName(), topics,
-                Set.of((int) MirrorPartitionState.MIRRORING.value(), (int) MirrorPartitionState.PAUSED.value()),
-                Set.of(MirrorPartitionState.MIRRORING, MirrorPartitionState.PAUSED),
-                false,
-                (offset, cb) -> {
-                    data.setStateValidationOffset(offset);
-                    sendMirrorOperationRequest(new StopMirrorTopicsRequest.Builder(data),
-                            resp -> ((StopMirrorTopicsResponse) resp).data().errorCode(), cb);
-                }, callback);
-    }
-
-    void validateAndForwardPauseMirror(PauseMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
-        Set<String> topics = data.topics().stream()
-                .map(PauseMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
+        // stop mirror topics only allow desired state and state as MIRRORING
         validateMirrorStatesAndForward(data.mirrorName(), topics,
                 Set.of((int) MirrorPartitionState.MIRRORING.value()),
                 Set.of(MirrorPartitionState.MIRRORING),
                 false,
                 (offset, cb) -> {
                     data.setStateValidationOffset(offset);
-                    sendMirrorOperationRequest(new PauseMirrorTopicsRequest.Builder(data),
-                            resp -> ((PauseMirrorTopicsResponse) resp).data().errorCode(), cb);
+                    cb.accept(Optional.empty());
                 }, callback);
     }
 
-    void validateAndForwardResumeMirror(ResumeMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+    void validatePauseMirror(PauseMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        Set<String> topics = data.topics().stream()
+                .map(PauseMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
+        // pause mirror topics only allow desired state and state as MIRRORING
+        validateMirrorStatesAndForward(data.mirrorName(), topics,
+                Set.of((int) MirrorPartitionState.MIRRORING.value()),
+                Set.of(MirrorPartitionState.MIRRORING),
+                false,
+                (offset, cb) -> {
+                    data.setStateValidationOffset(offset);
+                    cb.accept(Optional.empty());
+                }, callback);
+    }
+
+    void validateResumeMirror(ResumeMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
         Set<String> topics = data.topics().stream()
                 .map(ResumeMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
+        // resume mirror topics only allow desired state and state as PAUSED
         validateMirrorStatesAndForward(data.mirrorName(), topics,
                 Set.of((int) MirrorPartitionState.PAUSED.value()),
                 Set.of(MirrorPartitionState.PAUSED),
                 false,
                 (offset, cb) -> {
                     data.setStateValidationOffset(offset);
-                    sendMirrorOperationRequest(new ResumeMirrorTopicsRequest.Builder(data),
-                            resp -> ((ResumeMirrorTopicsResponse) resp).data().errorCode(), cb);
+                    cb.accept(Optional.empty());
                 }, callback);
     }
 
-    /** Groups loaded partition states by mirror and state, then invokes the callback for each group. */
     void applyLoadedPartitionStates(ClusterMirrorUtils.StateTransitionCallback callback) {
         Map<String, Map<MirrorPartitionState, Set<TopicPartition>>> statesToPartitionsToOperate = new HashMap<>();
         partitionStates.forEach((key, value) -> {

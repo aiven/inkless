@@ -343,7 +343,13 @@ class KafkaApis(val requestChannel: RequestChannel,
       if (errOpt.isPresent) {
         requestHelper.sendMaybeThrottle(request, new StartMirrorTopicsResponse(new StartMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
       } else {
-        requestHelper.sendMaybeThrottle(request, new StartMirrorTopicsResponse(new StartMirrorTopicsResponseData()))
+        // Broker-side validation succeeded and stamped `data` with stateValidationOffset.
+        // Forward the now-stamped request to the controller via the standard envelope mechanism
+        // so the controller can verify this request genuinely went through broker validation.
+        forwardingManager.forwardRequest(request, new StartMirrorTopicsRequest(data, request.header.apiVersion()), {
+          case Some(response) => requestHelper.sendForwardedResponse(request, response)
+          case None => handleInvalidVersionsDuringForwarding(request)
+        })
       }
     })
   }
@@ -359,7 +365,10 @@ class KafkaApis(val requestChannel: RequestChannel,
       if (errOpt.isPresent) {
         requestHelper.sendMaybeThrottle(request, new StopMirrorTopicsResponse(new StopMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
       } else {
-        requestHelper.sendMaybeThrottle(request, new StopMirrorTopicsResponse(new StopMirrorTopicsResponseData()))
+        forwardingManager.forwardRequest(request, new StopMirrorTopicsRequest(data, request.header.apiVersion()), {
+          case Some(response) => requestHelper.sendForwardedResponse(request, response)
+          case None => handleInvalidVersionsDuringForwarding(request)
+        })
       }
     })
   }
@@ -375,7 +384,10 @@ class KafkaApis(val requestChannel: RequestChannel,
       if (errOpt.isPresent) {
         requestHelper.sendMaybeThrottle(request, new PauseMirrorTopicsResponse(new PauseMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
       } else {
-        requestHelper.sendMaybeThrottle(request, new PauseMirrorTopicsResponse(new PauseMirrorTopicsResponseData()))
+        forwardingManager.forwardRequest(request, new PauseMirrorTopicsRequest(data, request.header.apiVersion()), {
+          case Some(response) => requestHelper.sendForwardedResponse(request, response)
+          case None => handleInvalidVersionsDuringForwarding(request)
+        })
       }
     })
   }
@@ -391,7 +403,10 @@ class KafkaApis(val requestChannel: RequestChannel,
       if (errOpt.isPresent) {
         requestHelper.sendMaybeThrottle(request, new ResumeMirrorTopicsResponse(new ResumeMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
       } else {
-        requestHelper.sendMaybeThrottle(request, new ResumeMirrorTopicsResponse(new ResumeMirrorTopicsResponseData()))
+        forwardingManager.forwardRequest(request, new ResumeMirrorTopicsRequest(data, request.header.apiVersion()), {
+          case Some(response) => requestHelper.sendForwardedResponse(request, response)
+          case None => handleInvalidVersionsDuringForwarding(request)
+        })
       }
     })
   }
@@ -402,18 +417,22 @@ class KafkaApis(val requestChannel: RequestChannel,
       requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
-    val mirrorName = request.body[DeleteClusterMirrorRequest].data().mirrorName()
+    val data = request.body[DeleteClusterMirrorRequest].data()
+    val mirrorName = data.mirrorName()
     if (!authHelper.authorize(request.context, DELETE, CLUSTER_MIRROR, mirrorName, logIfDenied = false)) {
       requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(
         new DeleteClusterMirrorResponseData()
           .setErrorCode(Errors.CLUSTER_MIRROR_AUTHORIZATION_FAILED.code)
           .setErrorMessage(Errors.CLUSTER_MIRROR_AUTHORIZATION_FAILED.message())))
     } else {
-      clusterMirrorCoordinator.deleteClusterMirror(mirrorName, errOpt => {
+      clusterMirrorCoordinator.deleteClusterMirror(data, errOpt => {
         if (errOpt.isPresent) {
           requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
         } else {
-          requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData()))
+          forwardingManager.forwardRequest(request, new DeleteClusterMirrorRequest(data, request.header.apiVersion()), {
+            case Some(response) => requestHelper.sendForwardedResponse(request, response)
+            case None => handleInvalidVersionsDuringForwarding(request)
+          })
         }
       })
     }

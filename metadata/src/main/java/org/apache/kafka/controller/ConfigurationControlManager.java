@@ -699,6 +699,7 @@ public class ConfigurationControlManager {
         if (stateValidationOffset >= 0) {
             for (String topicName : topicNamesToBeValidated) {
                 ReplicationControlManager.TopicControlInfo topicInfo = replicationControl.getTopicByName(topicName);
+                if (topicInfo == null) continue;
                 String curMirrorName = topicInfo.mirrorName();
                 if (curMirrorName == null || curMirrorName.isBlank()) continue;
                 if (curMirrorName.equals(mirrorName)
