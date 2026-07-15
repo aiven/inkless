@@ -18,6 +18,7 @@ package org.apache.kafka.connect.integration;
 
 import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.metrics.KafkaMetric;
+import org.apache.kafka.common.test.api.Flaky;
 import org.apache.kafka.connect.runtime.rest.entities.ConnectorStateInfo;
 import org.apache.kafka.connect.storage.StringConverter;
 import org.apache.kafka.connect.util.clusters.EmbeddedConnectStandalone;
@@ -80,6 +81,7 @@ public class MonitorableSinkIntegrationTest {
     }
 
     @Test
+    @Flaky(value = "KAFKA-18952", comment = "Flaky in CI; upstream ticket resolved but still recurs in the fork.")
     public void testMonitorableSinkConnectorAndTask() throws Exception {
         connect.kafka().createTopic("test-topic");
 
