@@ -2196,6 +2196,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * Validates desired mirror states (from MetadataImage) and actual mirror states (from coordinator)
      * against the allowed sets, captures the metadata offset, then forwarding the request to the controller.
      */
+    @SuppressWarnings({"NPathComplexity"})
     private void validateMirrorStatesAndForward(
             String mirrorName,
             Set<String> topics,
