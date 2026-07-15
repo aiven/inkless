@@ -39,12 +39,12 @@ import java.util.concurrent.TimeoutException;
  * throw {@link UnknownTopicOrPartitionException} (topic not yet visible) or return stale config
  * values. After {@code incrementalAlterConfigs} returns, the topic is already visible but the
  * broker's metadata cache may still serve the old config value. The helpers here retry on
- * {@link UnknownTopicOrPartitionException} and (for {@link #waitForTopicConfigValue}) poll until
+ * {@link UnknownTopicOrPartitionException} and (for {@link #awaitValue}) poll until
  * the value converges.
  */
-public final class TopicConfigTestUtils {
+public final class TopicMetadataProbe {
 
-    private TopicConfigTestUtils() {
+    private TopicMetadataProbe() {
     }
 
     /**
@@ -52,7 +52,7 @@ public final class TopicConfigTestUtils {
      * (1s delay) on {@link UnknownTopicOrPartitionException} to ride out metadata propagation
      * delays after topic creation.
      */
-    public static Map<String, String> getTopicConfig(Admin admin, String topic)
+    public static Map<String, String> configs(Admin admin, String topic)
             throws ExecutionException, InterruptedException, TimeoutException {
         final int maxRetries = 3;
         final long retryDelayMs = 1000;
@@ -81,14 +81,14 @@ public final class TopicConfigTestUtils {
 
     /**
      * Read a single topic config value via {@code describeConfigs}. Retries on transient
-     * {@link UnknownTopicOrPartitionException} (see {@link #getTopicConfig}).
+     * {@link UnknownTopicOrPartitionException} (see {@link #configs}).
      *
      * @throws IllegalStateException if the config {@code key} is absent for the topic (unlike
      *         {@code getTopicConfig(...).get(key)}, which returns {@code null} in that case)
      */
-    public static String getTopicConfigValue(Admin admin, String topic, String key)
+    public static String readValue(Admin admin, String topic, String key)
             throws ExecutionException, InterruptedException, TimeoutException {
-        final String value = getTopicConfig(admin, topic).get(key);
+        final String value = configs(admin, topic).get(key);
         if (value == null) {
             throw new IllegalStateException("Config '" + key + "' is missing for topic " + topic);
         }
@@ -104,11 +104,11 @@ public final class TopicConfigTestUtils {
      * serve the old config value. This method polls (60s deadline) until the value converges,
      * treating {@link UnknownTopicOrPartitionException} and {@link TimeoutException} as transient.
      */
-    public static void waitForTopicConfigValue(Admin admin, String topic, String key, String expectedValue)
+    public static void awaitValue(Admin admin, String topic, String key, String expectedValue)
             throws InterruptedException {
         TestUtils.waitForCondition(() -> {
             try {
-                return expectedValue.equals(getTopicConfigValue(admin, topic, key));
+                return expectedValue.equals(readValue(admin, topic, key));
             } catch (ExecutionException e) {
                 if (e.getCause() instanceof UnknownTopicOrPartitionException) {
                     return false;
@@ -131,7 +131,7 @@ public final class TopicConfigTestUtils {
      * topic is visible, treating {@link UnknownTopicOrPartitionException} and
      * {@link TimeoutException} as transient.
      */
-    public static void waitForTopicToExist(Admin admin, String topic) throws InterruptedException {
+    public static void awaitVisible(Admin admin, String topic) throws InterruptedException {
         TestUtils.waitForCondition(() -> {
             try {
                 final DescribeTopicPartitionsResponseData responseData =

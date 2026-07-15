@@ -274,7 +274,7 @@ public class DisklessAndRemoteStorageConfigsTest {
                                                String expectedDiskless,
                                                String expectedRemoteStorage) throws Exception {
         assertTrue(createTopic(admin, topic, configs).isEmpty());
-        var topicConfig = TopicConfigTestUtils.getTopicConfig(admin, topic);
+        var topicConfig = TopicMetadataProbe.configs(admin, topic);
         assertEquals(expectedDiskless, topicConfig.get(DISKLESS_ENABLE_CONFIG));
         assertEquals(expectedRemoteStorage, topicConfig.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
     }
@@ -328,8 +328,8 @@ public class DisklessAndRemoteStorageConfigsTest {
                 assertTrue(incrementalAlterTopicConfig(admin, "classic-to-diskless", Map.of(
                     DISKLESS_ENABLE_CONFIG, "true")).isEmpty(),
                     "classic-to-diskless switch should succeed and auto-enable remote storage");
-                TopicConfigTestUtils.waitForTopicConfigValue(admin, "classic-to-diskless", DISKLESS_ENABLE_CONFIG, "true");
-                TopicConfigTestUtils.waitForTopicConfigValue(admin, "classic-to-diskless", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+                TopicMetadataProbe.awaitValue(admin, "classic-to-diskless", DISKLESS_ENABLE_CONFIG, "true");
+                TopicMetadataProbe.awaitValue(admin, "classic-to-diskless", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
 
                 // Scenario 4b: classic-to-diskless switch setting both flags explicitly still works.
                 createTopicAndAssertEffective(admin, "classic-to-diskless-explicit", Map.of(), "false", "false");
@@ -337,8 +337,8 @@ public class DisklessAndRemoteStorageConfigsTest {
                     DISKLESS_ENABLE_CONFIG, "true",
                     REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")).isEmpty(),
                     "classic-to-diskless switch should succeed with both flags set explicitly");
-                TopicConfigTestUtils.waitForTopicConfigValue(admin, "classic-to-diskless-explicit", DISKLESS_ENABLE_CONFIG, "true");
-                TopicConfigTestUtils.waitForTopicConfigValue(admin, "classic-to-diskless-explicit", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+                TopicMetadataProbe.awaitValue(admin, "classic-to-diskless-explicit", DISKLESS_ENABLE_CONFIG, "true");
+                TopicMetadataProbe.awaitValue(admin, "classic-to-diskless-explicit", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
 
                 // Scenario 4c: a COMPACTED classic topic cannot switch (fail-fast).
                 // A diskless topic requires remote storage, which requires cleanup.policy=delete,
@@ -351,7 +351,7 @@ public class DisklessAndRemoteStorageConfigsTest {
                 assertTrue(compactError.isPresent(), "Compacted topic switch to diskless should be rejected");
                 assertTrue(compactError.get().contains("cleanup.policy=delete"),
                     "Expected delete-policy rejection, got: " + compactError.get());
-                var stillClassic = TopicConfigTestUtils.getTopicConfig(admin, "compacted-classic");
+                var stillClassic = TopicMetadataProbe.configs(admin, "compacted-classic");
                 assertEquals("false", stillClassic.get(DISKLESS_ENABLE_CONFIG),
                     "Rejected switch must not have half-applied diskless.enable");
                 assertEquals("false", stillClassic.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG),
@@ -364,8 +364,8 @@ public class DisklessAndRemoteStorageConfigsTest {
                     DISKLESS_ENABLE_CONFIG, "true",
                     REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")).isEmpty(),
                     "TIERED→DISKLESS switch should succeed with allow-from-classic");
-                TopicConfigTestUtils.waitForTopicConfigValue(admin, "tiered-to-diskless", DISKLESS_ENABLE_CONFIG, "true");
-                TopicConfigTestUtils.waitForTopicConfigValue(admin, "tiered-to-diskless", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+                TopicMetadataProbe.awaitValue(admin, "tiered-to-diskless", DISKLESS_ENABLE_CONFIG, "true");
+                TopicMetadataProbe.awaitValue(admin, "tiered-to-diskless", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
 
                 // Scenario 8: DISKLESS cannot disable remote storage
                 createTopicAndAssertEffective(admin, "diskless-no-disable-rs", Map.of(

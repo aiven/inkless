@@ -196,9 +196,9 @@ public class InklessTopicTypeSwitcherClusterTest {
             createTopics.all().get(30, TimeUnit.SECONDS);
             log.warn("[stage=topics-created] Created all topics");
 
-            TopicConfigTestUtils.waitForTopicConfigValue(admin, disklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
-            TopicConfigTestUtils.waitForTopicConfigValue(admin, classicTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "false");
-            TopicConfigTestUtils.waitForTopicConfigValue(admin, classicToDisklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "false");
+            TopicMetadataProbe.awaitValue(admin, disklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
+            TopicMetadataProbe.awaitValue(admin, classicTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "false");
+            TopicMetadataProbe.awaitValue(admin, classicToDisklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "false");
 
             final AtomicBoolean keepProducing = new AtomicBoolean(true);
             final AtomicReference<Throwable> producerFailure = new AtomicReference<>(null);
@@ -228,7 +228,7 @@ public class InklessTopicTypeSwitcherClusterTest {
                 alterTopicConfig(admin, classicToDisklessTopic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"), alterConfigsMode);
 
                 log.warn("[stage=await-switch] Waiting for diskless.enable=true on topic={}", classicToDisklessTopic);
-                TopicConfigTestUtils.waitForTopicConfigValue(admin, classicToDisklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
+                TopicMetadataProbe.awaitValue(admin, classicToDisklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
             } finally {
                 keepProducing.set(false);
                 producerThread.join(TimeUnit.SECONDS.toMillis(60));
@@ -244,9 +244,9 @@ public class InklessTopicTypeSwitcherClusterTest {
                 produceRounds(producer, topics, producedCounts, 1, true);
             }
 
-            TopicConfigTestUtils.waitForTopicConfigValue(admin, disklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
-            TopicConfigTestUtils.waitForTopicConfigValue(admin, classicTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "false");
-            TopicConfigTestUtils.waitForTopicConfigValue(admin, classicToDisklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
+            TopicMetadataProbe.awaitValue(admin, disklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
+            TopicMetadataProbe.awaitValue(admin, classicTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "false");
+            TopicMetadataProbe.awaitValue(admin, classicToDisklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
             log.warn("[stage=post-switch-validated] Topic configurations and placement checks passed");
         }
 
@@ -423,7 +423,7 @@ public class InklessTopicTypeSwitcherClusterTest {
 
             // Now the switch should succeed
             alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
-            TopicConfigTestUtils.waitForTopicConfigValue(admin, topic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
+            TopicMetadataProbe.awaitValue(admin, topic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
         }
     }
 
@@ -509,7 +509,7 @@ public class InklessTopicTypeSwitcherClusterTest {
             // createTopics returns once the controller commits the topic, but metadata propagation
             // to brokers is asynchronous. Wait for the topic to be visible before polling the seal
             // offset so readSealOffset doesn't mask a genuinely missing topic as a transient delay.
-            TopicConfigTestUtils.waitForTopicToExist(admin, topic);
+            TopicMetadataProbe.awaitVisible(admin, topic);
             waitForSealOffset(admin, topic, 0,
                 offset -> offset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET);
 

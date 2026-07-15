@@ -163,7 +163,7 @@ public class InklessConfigsTest {
         final String disklessTopic = "disklessTopic";
         createTopic(admin, disklessTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
         // Then diskless.enable is set to true in the topic config
-        var disklessTopicConfig = TopicConfigTestUtils.getTopicConfig(admin, disklessTopic);
+        var disklessTopicConfig = TopicMetadataProbe.configs(admin, disklessTopic);
         assertEquals("true", disklessTopicConfig.get(DISKLESS_ENABLE_CONFIG));
         // Then it's not possible turn off diskless after the topic is created
         assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")));
@@ -190,7 +190,7 @@ public class InklessConfigsTest {
         final String classicTopic = "classicTopic";
         createTopic(admin, classicTopic, Map.of());
         // Then diskless.enable is set to false in the topic config
-        var classicTopicConfig = TopicConfigTestUtils.getTopicConfig(admin, classicTopic);
+        var classicTopicConfig = TopicMetadataProbe.configs(admin, classicTopic);
         assertEquals("false", classicTopicConfig.get(DISKLESS_ENABLE_CONFIG));
         // Then it's not possible turn on diskless after the topic is created
         assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
@@ -203,7 +203,7 @@ public class InklessConfigsTest {
         final String disklessDisabledTopic = "disklessDisabledTopic";
         createTopic(admin, disklessDisabledTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false"));
         // Then diskless.enable is set to false in the topic config
-        var disklessDisabledTopicConfig = TopicConfigTestUtils.getTopicConfig(admin, disklessDisabledTopic);
+        var disklessDisabledTopicConfig = TopicMetadataProbe.configs(admin, disklessDisabledTopic);
         assertEquals("false", disklessDisabledTopicConfig.get(DISKLESS_ENABLE_CONFIG));
         // Then it's not possible turn on diskless after the topic is created
         assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessDisabledTopic, Map.of(
@@ -230,7 +230,7 @@ public class InklessConfigsTest {
             final String disklessDisabledTopic = "disklessDisabledTopic";
             createTopic(admin, disklessDisabledTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false"));
             // Then diskless.enable is set to false in the topic config
-            var disklessDisabledTopicConfig = TopicConfigTestUtils.getTopicConfig(admin, disklessDisabledTopic);
+            var disklessDisabledTopicConfig = TopicMetadataProbe.configs(admin, disklessDisabledTopic);
             assertEquals("false", disklessDisabledTopicConfig.get(DISKLESS_ENABLE_CONFIG));
             // Then it's not possible turn on diskless after the topic is created
             assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessDisabledTopic, Map.of(
@@ -262,17 +262,17 @@ public class InklessConfigsTest {
             try (final Admin admin = AdminClient.create(clientConfigs)) {
                 final String noRemoteConfigTopic = "classic-no-remote-config";
                 assertEquals("true", createTopicAndGetRemoteStorageFromCreateResponse(admin, noRemoteConfigTopic, Map.of()));
-                assertEquals("true", TopicConfigTestUtils.getTopicConfig(admin, noRemoteConfigTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+                assertEquals("true", TopicMetadataProbe.configs(admin, noRemoteConfigTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
 
                 final String remoteFalseTopic = "classic-remote-false";
                 assertEquals("true", createTopicAndGetRemoteStorageFromCreateResponse(
                     admin, remoteFalseTopic, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false")));
-                assertEquals("true", TopicConfigTestUtils.getTopicConfig(admin, remoteFalseTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+                assertEquals("true", TopicMetadataProbe.configs(admin, remoteFalseTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
 
                 final String remoteTrueTopic = "classic-remote-true";
                 assertEquals("true", createTopicAndGetRemoteStorageFromCreateResponse(
                     admin, remoteTrueTopic, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")));
-                assertEquals("true", TopicConfigTestUtils.getTopicConfig(admin, remoteTrueTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+                assertEquals("true", TopicMetadataProbe.configs(admin, remoteTrueTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
             } finally {
                 cluster.close();
             }
@@ -289,7 +289,7 @@ public class InklessConfigsTest {
                 final String compactedNoRemoteTopic = "compacted-no-remote";
                 assertEquals("false", createTopicAndGetRemoteStorageFromCreateResponse(
                     admin, compactedNoRemoteTopic, Map.of(CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_COMPACT)));
-                assertEquals("false", TopicConfigTestUtils.getTopicConfig(admin, compactedNoRemoteTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+                assertEquals("false", TopicMetadataProbe.configs(admin, compactedNoRemoteTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
 
                 // Setting remote.storage.enable=false is allowed for a compacted topic
                 final String compactedRemoteFalseTopic = "compacted-remote-false";
@@ -300,7 +300,7 @@ public class InklessConfigsTest {
                         CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_COMPACT,
                         REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"
                     )));
-                assertEquals("false", TopicConfigTestUtils.getTopicConfig(admin, compactedRemoteFalseTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+                assertEquals("false", TopicMetadataProbe.configs(admin, compactedRemoteFalseTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
 
                 // Compacted tiered topics are not supported by Kafka
                 final String compactedRemoteTrueTopic = "compacted-remote-true";
@@ -334,19 +334,19 @@ public class InklessConfigsTest {
                 // Excluded topic gets remote.storage.enable=false when not setting it
                 final String schemasTopic = "_schemas";
                 assertEquals("false", createTopicAndGetRemoteStorageFromCreateResponse(admin, schemasTopic, Map.of()));
-                assertEquals("false", TopicConfigTestUtils.getTopicConfig(admin, schemasTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+                assertEquals("false", TopicMetadataProbe.configs(admin, schemasTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
 
                 // Setting remote.storage.enable=false is allowed for an excluded topic
                 final String mm2TopicRemoteFalse = "mm2-heartbeats";
                 assertEquals("false", createTopicAndGetRemoteStorageFromCreateResponse(
                     admin, mm2TopicRemoteFalse, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false")));
-                assertEquals("false", TopicConfigTestUtils.getTopicConfig(admin, mm2TopicRemoteFalse).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+                assertEquals("false", TopicMetadataProbe.configs(admin, mm2TopicRemoteFalse).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
 
                 // Excluded topic can still have remote.storage.enable=true if explicitly set
                 final String mm2TopicRemoteTrue = "mm2-checkpoints";
                 assertEquals("true", createTopicAndGetRemoteStorageFromCreateResponse(
                     admin, mm2TopicRemoteTrue, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")));
-                assertEquals("true", TopicConfigTestUtils.getTopicConfig(admin, mm2TopicRemoteTrue).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+                assertEquals("true", TopicMetadataProbe.configs(admin, mm2TopicRemoteTrue).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
             } finally {
                 cluster.close();
             }
@@ -365,7 +365,7 @@ public class InklessConfigsTest {
                     compactedSchemasTopic,
                     Map.of(CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_COMPACT)
                 ));
-                assertEquals("false", TopicConfigTestUtils.getTopicConfig(admin, compactedSchemasTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+                assertEquals("false", TopicMetadataProbe.configs(admin, compactedSchemasTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
             } finally {
                 cluster.close();
             }
@@ -384,13 +384,13 @@ public class InklessConfigsTest {
             try (final Admin admin = AdminClient.create(clientConfigs)) {
                 final String topicWithoutDisklessSet = "classic-topic-no-diskless";
                 createTopic(admin, topicWithoutDisklessSet, Map.of());
-                assertEquals("false", TopicConfigTestUtils.getTopicConfig(admin, topicWithoutDisklessSet).get(DISKLESS_ENABLE_CONFIG));
+                assertEquals("false", TopicMetadataProbe.configs(admin, topicWithoutDisklessSet).get(DISKLESS_ENABLE_CONFIG));
                 assertThrows(ExecutionException.class,
                     () -> alterTopicConfig(admin, topicWithoutDisklessSet, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
 
                 final String topicWithDisklessFalse = "classic-topic-diskless-false";
                 createTopic(admin, topicWithDisklessFalse, Map.of(DISKLESS_ENABLE_CONFIG, "false"));
-                assertEquals("false", TopicConfigTestUtils.getTopicConfig(admin, topicWithDisklessFalse).get(DISKLESS_ENABLE_CONFIG));
+                assertEquals("false", TopicMetadataProbe.configs(admin, topicWithDisklessFalse).get(DISKLESS_ENABLE_CONFIG));
                 assertThrows(ExecutionException.class,
                     () -> alterTopicConfig(admin, topicWithDisklessFalse, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
             } finally {
@@ -407,10 +407,10 @@ public class InklessConfigsTest {
             try (final Admin admin = AdminClient.create(clientConfigs)) {
                 final String topic = "classic-topic-to-diskless";
                 createTopic(admin, topic, Map.of());
-                assertEquals("false", TopicConfigTestUtils.getTopicConfig(admin, topic).get(DISKLESS_ENABLE_CONFIG));
+                assertEquals("false", TopicMetadataProbe.configs(admin, topic).get(DISKLESS_ENABLE_CONFIG));
 
                 alterTopicConfig(admin, topic, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
-                TopicConfigTestUtils.waitForTopicConfigValue(admin, topic, DISKLESS_ENABLE_CONFIG, "true");
+                TopicMetadataProbe.awaitValue(admin, topic, DISKLESS_ENABLE_CONFIG, "true");
             } finally {
                 cluster.close();
             }

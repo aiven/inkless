@@ -290,9 +290,9 @@ public class InklessConsolidatedDisklessTopicsTest {
         try (Admin admin = AdminClient.create(commonConfigs)) {
             // Phase 1: create a CLASSIC topic (diskless.enable=false, remote.storage.enable=false).
             topicUuid = createClassicTopic(admin);
-            assertEquals("false", TopicConfigTestUtils.getTopicConfigValue(admin, topicName, DISKLESS_ENABLE_CONFIG),
+            assertEquals("false", TopicMetadataProbe.readValue(admin, topicName, DISKLESS_ENABLE_CONFIG),
                 "Topic should start as a classic (non-diskless) topic");
-            assertEquals("false", TopicConfigTestUtils.getTopicConfigValue(admin, topicName, REMOTE_LOG_STORAGE_ENABLE_CONFIG),
+            assertEquals("false", TopicMetadataProbe.readValue(admin, topicName, REMOTE_LOG_STORAGE_ENABLE_CONFIG),
                 "Classic topic should not have remote storage enabled");
 
             // Produce a baseline of records into the classic topic. These offsets form the classic
@@ -318,8 +318,8 @@ public class InklessConsolidatedDisklessTopicsTest {
             try {
                 log.info("Migrating classic topic {} to diskless (remote storage auto-enabled atomically)", topicName);
                 incrementalAlterTopicConfigs(admin, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
-                TopicConfigTestUtils.waitForTopicConfigValue(admin, topicName, DISKLESS_ENABLE_CONFIG, "true");
-                TopicConfigTestUtils.waitForTopicConfigValue(admin, topicName, REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+                TopicMetadataProbe.awaitValue(admin, topicName, DISKLESS_ENABLE_CONFIG, "true");
+                TopicMetadataProbe.awaitValue(admin, topicName, REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
             } finally {
                 producerThread.join(TimeUnit.SECONDS.toMillis(120));
                 // If the producer is still running (e.g. a send blocked), interrupt it so it unwinds
@@ -334,9 +334,9 @@ public class InklessConsolidatedDisklessTopicsTest {
                 throw new RuntimeException("Producer failed while the topic was being consolidated", producerFailure.get());
             }
 
-            assertEquals("true", TopicConfigTestUtils.getTopicConfigValue(admin, topicName, DISKLESS_ENABLE_CONFIG),
+            assertEquals("true", TopicMetadataProbe.readValue(admin, topicName, DISKLESS_ENABLE_CONFIG),
                 "Topic should be diskless after the switch");
-            assertEquals("true", TopicConfigTestUtils.getTopicConfigValue(admin, topicName, REMOTE_LOG_STORAGE_ENABLE_CONFIG),
+            assertEquals("true", TopicMetadataProbe.readValue(admin, topicName, REMOTE_LOG_STORAGE_ENABLE_CONFIG),
                 "Switch should auto-enable remote storage atomically (consolidated diskless topic)");
         }
 
