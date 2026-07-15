@@ -34,6 +34,11 @@ See [Releases](RELEASES.md) for active versions and release history.
 - [Architecture](ARCHITECTURE.md) - Design and system architecture overview
 - [Features](FEATURES.md) - Currently supported features, API compatibility, and [managed replicas](FEATURES.md#managed-replicas)
 
+### Feature Deep-Dives
+- [Tiered Storage Consolidation](DISKLESS_CONSOLIDATION.md) - Consolidating diskless WAL segments into tiered Kafka log segments
+- [Classic to Diskless Switch](CLASSIC_TO_DISKLESS_SWITCH.md) - Migrating classic topics to diskless (and consolidated) topics
+- [CREATE_TOPIC interceptors](CREATE-TOPICS-INTERCEPTORS.md) - Intercepting topic creation (e.g. forced diskless/classic)
+
 ### Operations & Configuration
 - [Performance](PERFORMANCE.md) - Performance tuning guide for producers and consumers
 - [Configs](configs.rst) - Complete configuration reference (auto-generated)
