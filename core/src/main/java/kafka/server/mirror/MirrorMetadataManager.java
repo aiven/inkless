@@ -2202,7 +2202,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             Set<Integer> allowedDesiredStates,
             Set<MirrorPartitionState> allowedCoordinatorStates,
             boolean allowMissingTopics,
-            BiConsumer<Long, Consumer<Optional<Errors>>> sendAction,
+            BiConsumer<Long, Consumer<Optional<Errors>>> forwardRequest,
             Consumer<Optional<Errors>> callback) {
         MetadataImage curImage = metadataImage;
         long brokerMetadataOffset = curImage.offset();
@@ -2246,7 +2246,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
 
         if (remotePartitions.isEmpty()) {
-            sendAction.accept(brokerMetadataOffset, callback);
+            forwardRequest.accept(brokerMetadataOffset, callback);
             return;
         }
 
@@ -2275,7 +2275,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     }
                 }
             }
-            sendAction.accept(brokerMetadataOffset, callback);
+            forwardRequest.accept(brokerMetadataOffset, callback);
         });
     }
 

@@ -690,6 +690,7 @@ public class ConfigurationControlManager {
         return ControllerResult.atomicOf(records, data);
     }
 
+    // validate the stateValidationOffset and return the validation failed topic info when found
     private Optional<ReplicationControlManager.TopicControlInfo> validateStateValidationOffset(
             long stateValidationOffset,
             ReplicationControlManager replicationControl,
