@@ -34,10 +34,12 @@ import java.util.concurrent.TimeoutException;
 /**
  * Shared helpers for reading and polling topic configuration via {@link Admin} in integration tests.
  *
- * <p>After {@code createTopics} or {@code incrementalAlterConfigs} returns, the controller has
- * committed the change, but the broker's metadata cache may still serve the stale value (or
- * {@link UnknownTopicOrPartitionException}) to a subsequent {@code describeConfigs} call. The
- * helpers here retry on that transient case and (for {@link #waitForTopicConfigValue}) poll until
+ * <p>After {@code createTopics} returns, the controller has committed the topic, but the
+ * metadata propagates to brokers asynchronously — a subsequent {@code describeConfigs} call may
+ * throw {@link UnknownTopicOrPartitionException} (topic not yet visible) or return stale config
+ * values. After {@code incrementalAlterConfigs} returns, the topic is already visible but the
+ * broker's metadata cache may still serve the old config value. The helpers here retry on
+ * {@link UnknownTopicOrPartitionException} and (for {@link #waitForTopicConfigValue}) poll until
  * the value converges.
  */
 public final class TopicConfigTestUtils {
@@ -48,7 +50,7 @@ public final class TopicConfigTestUtils {
     /**
      * Read all config entries for a topic via {@code describeConfigs}. Retries up to 3 times
      * (1s delay) on {@link UnknownTopicOrPartitionException} to ride out metadata propagation
-     * delays after topic creation or config alteration.
+     * delays after topic creation.
      */
     public static Map<String, String> getTopicConfig(Admin admin, String topic)
             throws ExecutionException, InterruptedException, TimeoutException {
@@ -96,10 +98,11 @@ public final class TopicConfigTestUtils {
     /**
      * Poll until the given topic config {@code key} reaches {@code expectedValue}.
      *
-     * <p>After {@code createTopics} or {@code incrementalAlterConfigs} returns, the controller has
-     * committed the change but the broker's metadata cache may still serve the old value. This
-     * method polls (60s deadline) until the value converges, treating
-     * {@link UnknownTopicOrPartitionException} and {@link TimeoutException} as transient.
+     * <p>After {@code createTopics} returns, the topic may not yet be visible to the broker
+     * serving the request ({@link UnknownTopicOrPartitionException}); after
+     * {@code incrementalAlterConfigs} returns, the topic is visible but the broker may still
+     * serve the old config value. This method polls (60s deadline) until the value converges,
+     * treating {@link UnknownTopicOrPartitionException} and {@link TimeoutException} as transient.
      */
     public static void waitForTopicConfigValue(Admin admin, String topic, String key, String expectedValue)
             throws InterruptedException {
