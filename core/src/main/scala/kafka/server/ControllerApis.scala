@@ -292,6 +292,8 @@ class ControllerApis(
       throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
+    if (!request.isForwarded)
+      throw new InvalidRequestException("StartMirrorTopicsRequest must be forwarded from the broker node for validation.")
 
     val wireTopics = startRequest.data().topics()
     val unauthorizedTopics = wireTopics.asScala.map(_.topicName()).filterNot(topic =>
@@ -326,6 +328,8 @@ class ControllerApis(
       throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
+    if (!request.isForwarded)
+      throw new InvalidRequestException("StopMirrorTopicsRequest must be forwarded from the broker node for validation.")
 
     val topics: util.Set[String] = new util.HashSet[String]()
     stopRequest.data().topics().forEach( topic => {
@@ -359,6 +363,8 @@ class ControllerApis(
       throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
+    if (!request.isForwarded)
+      throw new InvalidRequestException("PauseMirrorTopicsRequest must be forwarded from the broker node for validation.")
 
     val topics: util.Set[String] = new util.HashSet[String]()
     pauseRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
@@ -388,6 +394,8 @@ class ControllerApis(
       throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
+    if (!request.isForwarded)
+      throw new InvalidRequestException("ResumeMirrorTopicsRequest must be forwarded from the broker node for validation.")
 
     val topics: util.Set[String] = new util.HashSet[String]()
     resumeRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
@@ -417,6 +425,8 @@ class ControllerApis(
       throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
+    if (!request.isForwarded)
+      throw new InvalidRequestException("DeleteClusterMirrorRequest must be forwarded from the broker node for validation.")
 
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())

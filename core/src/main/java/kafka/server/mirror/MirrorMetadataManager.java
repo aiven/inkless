@@ -272,6 +272,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private boolean isLocalCoordinator(String mirrorName, String topic, int partition) {
+        // if __mirror_state topic is not created yet, we directly return as false.
         if (coordPartitionFinderByKey.isPresent() && metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME) != null) {
             int activeCoordinator = metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME)
                     .partitions().get(coordPartitionFinderByKey.get().apply(
@@ -2192,9 +2193,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     /**
      * Generic optimistic locking validation for mirror state operations.
-     * Validates desired mirror states (from MetadataImage) and coordinator partition states
-     * (local + remote) against the allowed sets, captures the metadata offset, then delegates
-     * to {@code sendAction} for forwarding the request to the controller.
+     * Validates desired mirror states (from MetadataImage) and actual mirror states (from coordinator)
+     * against the allowed sets, captures the metadata offset, then forwarding the request to the controller.
      */
     private void validateMirrorStatesAndForward(
             String mirrorName,

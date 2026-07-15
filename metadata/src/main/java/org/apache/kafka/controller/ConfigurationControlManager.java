@@ -273,21 +273,16 @@ public class ConfigurationControlManager {
 
         Set<String> topicNames = topics.stream().map(Controller.MirrorTopicMetadata::name).collect(Collectors.toSet());
 
-        if (stateValidationOffset >= 0) {
-            for (ReplicationControlManager.TopicControlInfo topicInfo : replicationControl.getMirrorTopics()) {
-                String curMirrorName = topicInfo.mirrorName();
-                if (curMirrorName == null || curMirrorName.isBlank()) continue;
-                if (curMirrorName.equals(mirrorName) && topicNames.contains(topicInfo.name())
-                        && topicInfo.lastMirrorStateChangeOffset() > stateValidationOffset) {
-                    data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_STATES.code());
-                    data.setErrorMessage("Mirror state for topic '" + topicInfo.name()
-                            + "' changed after broker validated partition states (broker offset: "
-                            + stateValidationOffset + ", last change offset: "
-                            + topicInfo.lastMirrorStateChangeOffset() + ")");
-                    return ControllerResult.of(records, data);
-                }
-            }
+        var errorTopicInfo = validateStateValidationOffset(stateValidationOffset, replicationControl, mirrorName, topicNames);
+        if (errorTopicInfo.isPresent()) {
+            data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_STATES.code());
+            data.setErrorMessage("Mirror state for topic '" + errorTopicInfo.get().name()
+                    + "' changed after broker validated partition states (broker offset: "
+                    + stateValidationOffset + ", last change offset: "
+                    + errorTopicInfo.get().lastMirrorStateChangeOffset() + ")");
+            return ControllerResult.of(records, data);
         }
+
         ApiError patternError = updatePatternsAndStopExcluded(mirrorName, records, topicNames, replicationControl, (includeSet, excludeSet) -> {
             for (String topicName : topicNames) {
                 includeSet.add(topicName);
@@ -411,20 +406,14 @@ public class ConfigurationControlManager {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         StopMirrorTopicsResponseData data = new StopMirrorTopicsResponseData();
 
-        if (stateValidationOffset >= 0) {
-            for (ReplicationControlManager.TopicControlInfo topicInfo : replicationControl.getMirrorTopics()) {
-                String curMirrorName = topicInfo.mirrorName();
-                if (curMirrorName == null || curMirrorName.isBlank()) continue;
-                if (curMirrorName.equals(mirrorName)
-                        && topicInfo.lastMirrorStateChangeOffset() > stateValidationOffset) {
-                    data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_STATES.code());
-                    data.setErrorMessage("Mirror state for topic '" + topicInfo.name()
-                            + "' changed after broker validated partition states (broker offset: "
-                            + stateValidationOffset + ", last change offset: "
-                            + topicInfo.lastMirrorStateChangeOffset() + ")");
-                    return ControllerResult.of(records, data);
-                }
-            }
+        var errorTopicInfo = validateStateValidationOffset(stateValidationOffset, replicationControl, mirrorName, topics);
+        if (errorTopicInfo.isPresent()) {
+            data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_STATES.code());
+            data.setErrorMessage("Mirror state for topic '" + errorTopicInfo.get().name()
+                    + "' changed after broker validated partition states (broker offset: "
+                    + stateValidationOffset + ", last change offset: "
+                    + errorTopicInfo.get().lastMirrorStateChangeOffset() + ")");
+            return ControllerResult.of(records, data);
         }
 
         if (!patterns.isEmpty()) {
@@ -497,20 +486,14 @@ public class ConfigurationControlManager {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         PauseMirrorTopicsResponseData data = new PauseMirrorTopicsResponseData();
 
-        if (stateValidationOffset >= 0) {
-            for (ReplicationControlManager.TopicControlInfo topicInfo : replicationControl.getMirrorTopics()) {
-                String curMirrorName = topicInfo.mirrorName();
-                if (curMirrorName == null || curMirrorName.isBlank()) continue;
-                if (curMirrorName.equals(mirrorName)
-                        && topicInfo.lastMirrorStateChangeOffset() > stateValidationOffset) {
-                    data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_STATES.code());
-                    data.setErrorMessage("Mirror state for topic '" + topicInfo.name()
-                            + "' changed after broker validated partition states (broker offset: "
-                            + stateValidationOffset + ", last change offset: "
-                            + topicInfo.lastMirrorStateChangeOffset() + ")");
-                    return ControllerResult.of(records, data);
-                }
-            }
+        var errorTopicInfo = validateStateValidationOffset(stateValidationOffset, replicationControl, mirrorName, topics);
+        if (errorTopicInfo.isPresent()) {
+            data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_STATES.code());
+            data.setErrorMessage("Mirror state for topic '" + errorTopicInfo.get().name()
+                    + "' changed after broker validated partition states (broker offset: "
+                    + stateValidationOffset + ", last change offset: "
+                    + errorTopicInfo.get().lastMirrorStateChangeOffset() + ")");
+            return ControllerResult.of(records, data);
         }
 
         List<PauseMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
@@ -568,20 +551,14 @@ public class ConfigurationControlManager {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         ResumeMirrorTopicsResponseData data = new ResumeMirrorTopicsResponseData();
 
-        if (stateValidationOffset >= 0) {
-            for (ReplicationControlManager.TopicControlInfo topicInfo : replicationControl.getMirrorTopics()) {
-                String curMirrorName = topicInfo.mirrorName();
-                if (curMirrorName == null || curMirrorName.isBlank()) continue;
-                if (curMirrorName.equals(mirrorName)
-                        && topicInfo.lastMirrorStateChangeOffset() > stateValidationOffset) {
-                    data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_STATES.code());
-                    data.setErrorMessage("Mirror state for topic '" + topicInfo.name()
-                            + "' changed after broker validated partition states (broker offset: "
-                            + stateValidationOffset + ", last change offset: "
-                            + topicInfo.lastMirrorStateChangeOffset() + ")");
-                    return ControllerResult.of(records, data);
-                }
-            }
+        var errorTopicInfo = validateStateValidationOffset(stateValidationOffset, replicationControl, mirrorName, topics);
+        if (errorTopicInfo.isPresent()) {
+            data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_STATES.code());
+            data.setErrorMessage("Mirror state for topic '" + errorTopicInfo.get().name()
+                    + "' changed after broker validated partition states (broker offset: "
+                    + stateValidationOffset + ", last change offset: "
+                    + errorTopicInfo.get().lastMirrorStateChangeOffset() + ")");
+            return ControllerResult.of(records, data);
         }
 
         List<ResumeMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
@@ -711,6 +688,25 @@ public class ConfigurationControlManager {
         // Topic disassociations and mirror config tombstones are applied as a single atomic batch
         data.setErrorCode((short) 0);
         return ControllerResult.atomicOf(records, data);
+    }
+
+    private Optional<ReplicationControlManager.TopicControlInfo> validateStateValidationOffset(
+            long stateValidationOffset,
+            ReplicationControlManager replicationControl,
+            String mirrorName,
+            Set<String> topicNamesToBeValidated) {
+        if (stateValidationOffset >= 0) {
+            for (String topicName : topicNamesToBeValidated) {
+                ReplicationControlManager.TopicControlInfo topicInfo = replicationControl.getTopicByName(topicName);
+                String curMirrorName = topicInfo.mirrorName();
+                if (curMirrorName == null || curMirrorName.isBlank()) continue;
+                if (curMirrorName.equals(mirrorName)
+                        && topicInfo.lastMirrorStateChangeOffset() > stateValidationOffset) {
+                    return Optional.of(topicInfo);
+                }
+            }
+        }
+        return Optional.empty();
     }
 
     private static Set<String> parseCsvToSet(String csv) {
