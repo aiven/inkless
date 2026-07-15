@@ -273,6 +273,9 @@ jobs:
           JUNIT_REPORT_URL: ${{ steps.archive-junit-html.outputs.artifact-url }}
           THREAD_DUMP_URL: ${{ steps.archive-thread-dump.outputs.artifact-url }}
           GRADLE_TEST_EXIT_CODE: ${{ steps.junit-test.outputs.gradle-exitcode }}
+          # Inkless: flaky-test failures in the flaky job are expected and must not fail the job,
+          # so the workflow only goes red when something at the Kafka coverage level actually breaks.
+          RUN_FLAKY: ${{ matrix.run-flaky }}
         run: |
           python .github/scripts/junit.py \
            --path build/junit-xml >> $GITHUB_STEP_SUMMARY
