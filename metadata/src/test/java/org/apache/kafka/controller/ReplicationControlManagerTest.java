@@ -1904,6 +1904,7 @@ public class ReplicationControlManagerTest {
                         Uuid.fromString("TESTBROKER00003DIRAAAA")
                 )).
                 setLeader(3).
+                setLeaderEpoch(1).
                 setRemovingReplicas(List.of()).
                 setAddingReplicas(List.of()), MetadataVersion.latestTesting().partitionChangeRecordVersion())),
             new AlterPartitionReassignmentsResponseData().setErrorMessage(null).setResponses(List.of(
@@ -2407,6 +2408,7 @@ public class ReplicationControlManagerTest {
                 new PartitionChangeRecord().setTopicId(barId).
                     setPartitionId(0).
                     setLeader(4).
+                    setLeaderEpoch(1).
                     setReplicas(List.of(2, 3, 4)).
                     setDirectories(List.of(
                             Uuid.fromString("TESTBROKER00002DIRAAAA"),
@@ -2756,13 +2758,15 @@ public class ReplicationControlManagerTest {
                     new PartitionChangeRecord().
                         setPartitionId(0).
                         setTopicId(fooId).
-                        setLeader(1),
+                        setLeader(1).
+                        setLeaderEpoch(1),
                     MetadataVersion.latestTesting().partitionChangeRecordVersion()),
                 new ApiMessageAndVersion(
                     new PartitionChangeRecord().
                         setPartitionId(2).
                         setTopicId(fooId).
-                        setLeader(0),
+                        setLeader(0).
+                        setLeaderEpoch(1),
                     MetadataVersion.latestTesting().partitionChangeRecordVersion())),
             election2Result.records());
     }
@@ -2805,7 +2809,8 @@ public class ReplicationControlManagerTest {
         PartitionChangeRecord expectedChangeRecord = new PartitionChangeRecord()
             .setPartitionId(0)
             .setTopicId(fooId)
-            .setLeader(1);
+            .setLeader(1)
+            .setLeaderEpoch(1);
         assertEquals(List.of(new ApiMessageAndVersion(expectedChangeRecord, MetadataVersion.latestTesting().partitionChangeRecordVersion())), balanceResult.records());
         assertTrue(replication.arePartitionLeadersImbalanced());
         assertFalse(balanceResult.response());
@@ -2837,7 +2842,8 @@ public class ReplicationControlManagerTest {
         expectedChangeRecord = new PartitionChangeRecord()
             .setPartitionId(2)
             .setTopicId(fooId)
-            .setLeader(0);
+            .setLeader(0)
+            .setLeaderEpoch(1);
         assertEquals(List.of(new ApiMessageAndVersion(expectedChangeRecord, MetadataVersion.latestTesting().partitionChangeRecordVersion())), balanceResult.records());
         assertFalse(replication.arePartitionLeadersImbalanced());
         assertFalse(balanceResult.response());
@@ -3324,10 +3330,10 @@ public class ReplicationControlManagerTest {
                 //   - b-1 which has been assigned to an offline directory.
                 new ApiMessageAndVersion(
                         new PartitionChangeRecord().setTopicId(topicA).setPartitionId(2).
-                                setIsr(List.of(2)).setLeader(2), recordVersion),
+                                setIsr(List.of(2)).setLeader(2).setLeaderEpoch(1), recordVersion),
                 new ApiMessageAndVersion(
                         new PartitionChangeRecord().setTopicId(topicB).setPartitionId(1).
-                                setIsr(List.of(2)).setLeader(2), recordVersion)
+                                setIsr(List.of(2)).setLeader(2).setLeaderEpoch(1), recordVersion)
         )), sortPartitionChangeRecords(controllerResult.records()));
 
         ctx.replay(controllerResult.records());
@@ -3383,9 +3389,9 @@ public class ReplicationControlManagerTest {
         assertEquals(
             sortPartitionChangeRecords(List.of(
                 new ApiMessageAndVersion(new PartitionChangeRecord().setTopicId(topicA).setPartitionId(0)
-                        .setLeader(b2).setIsr(List.of(b2)), partitionChangeRecordVersion),
+                        .setLeader(b2).setLeaderEpoch(1).setIsr(List.of(b2)), partitionChangeRecordVersion),
                 new ApiMessageAndVersion(new PartitionChangeRecord().setTopicId(topicB).setPartitionId(0)
-                        .setLeader(b2).setIsr(List.of(b2)), partitionChangeRecordVersion)
+                        .setLeader(b2).setLeaderEpoch(1).setIsr(List.of(b2)), partitionChangeRecordVersion)
             )),
             sortPartitionChangeRecords(filter(records, PartitionChangeRecord.class))
         );

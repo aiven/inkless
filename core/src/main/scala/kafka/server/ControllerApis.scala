@@ -173,7 +173,6 @@ class ControllerApis(
   }
 
   def handleBumpLeaderEpoch(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    // luke
     authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
     val bumpLeaderEpochRequest = request.body[BumpLeaderEpochsRequest]
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,

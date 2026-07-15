@@ -430,8 +430,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 }
                 pendingPartitionStates.remove(tp);
                 pendingLeaderEpochBumps.removeIf(bump -> {
-                    if (bump.partitionToEpoch().containsKey(tp)) {
-                        bump.future().completeExceptionally(new IllegalStateException("Not leader anymore for " + tp));
+                    bump.partitionToEpoch().remove(tp);
+                    if (bump.partitionToEpoch().isEmpty()) {
+                        bump.future().complete(null);
                         return true;
                     }
                     return false;

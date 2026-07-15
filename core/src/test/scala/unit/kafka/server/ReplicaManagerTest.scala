@@ -5030,6 +5030,7 @@ class ReplicaManagerTest {
         .setReplicas(util.Arrays.asList(localId, localId + 1, localId + 2))
         .setIsr(util.Arrays.asList(localId, localId + 1, localId + 2))
         .setLeader(localId + 2)
+        .setLeaderEpoch(1)
       )
 
       followerMetadataImage = imageFromTopics(followerTopicsDelta.apply())
@@ -5163,6 +5164,7 @@ class ReplicaManagerTest {
         .setReplicas(util.Arrays.asList(localId, localId + 1))
         .setIsr(util.Arrays.asList(localId + 1))
         .setLeader(localId + 1)
+        .setLeaderEpoch(1)
       )
       topicsDelta.replay(new PartitionChangeRecord()
         .setPartitionId(1)
@@ -5170,6 +5172,7 @@ class ReplicaManagerTest {
         .setReplicas(util.Arrays.asList(localId, localId + 1))
         .setIsr(util.Arrays.asList(localId))
         .setLeader(NO_LEADER)
+        .setLeaderEpoch(1)
       )
       metadataImage = imageFromTopics(topicsDelta.apply())
       replicaManager.applyDelta(topicsDelta, metadataImage)
@@ -5319,13 +5322,14 @@ class ReplicaManagerTest {
     delta
   }
 
-  private def partitionChangeRecord(startId: Int, leader: Int) = {
+  private def partitionChangeRecord(startId: Int, leader: Int, leaderEpoch: Int = 1) = {
     new PartitionChangeRecord()
       .setPartitionId(0)
       .setTopicId(FOO_UUID)
       .setReplicas(util.Arrays.asList(startId, startId + 1))
       .setIsr(util.Arrays.asList(startId, startId + 1))
       .setLeader(leader)
+      .setLeaderEpoch(leaderEpoch)
   }
 
   private def topicsDeleteDelta(topicsImage: TopicsImage): TopicsDelta = {

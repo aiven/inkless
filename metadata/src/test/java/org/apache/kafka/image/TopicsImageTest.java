@@ -134,7 +134,7 @@ public class TopicsImageTest {
         // change topic
         DELTA1_RECORDS.add(new ApiMessageAndVersion(new PartitionChangeRecord().
             setTopicId(BAR_UUID).
-            setPartitionId(0).setLeader(1),
+            setPartitionId(0).setLeader(1).setLeaderEpoch(2),
             PARTITION_CHANGE_RECORD.highestSupportedVersion()));
         // add topic
         DELTA1_RECORDS.add(new ApiMessageAndVersion(new TopicRecord().
@@ -727,14 +727,14 @@ public class TopicsImageTest {
         // zoo-0 - follower to leader
         topicRecords.add(
             new ApiMessageAndVersion(
-                new PartitionChangeRecord().setTopicId(zooId).setPartitionId(0).setLeader(localId),
+                new PartitionChangeRecord().setTopicId(zooId).setPartitionId(0).setLeader(localId).setLeaderEpoch(2),
                 PARTITION_CHANGE_RECORD.highestSupportedVersion()
             )
         );
         // zoo-1 - leader to follower
         topicRecords.add(
             new ApiMessageAndVersion(
-                new PartitionChangeRecord().setTopicId(zooId).setPartitionId(1).setLeader(1),
+                new PartitionChangeRecord().setTopicId(zooId).setPartitionId(1).setLeader(1).setLeaderEpoch(2),
                 PARTITION_CHANGE_RECORD.highestSupportedVersion()
             )
         );
@@ -756,6 +756,7 @@ public class TopicsImageTest {
                   .setTopicId(zooId)
                   .setPartitionId(3)
                   .setLeader(0)
+                  .setLeaderEpoch(2)
                   .setIsr(List.of(0, 1, 2))
                   .setReplicas(List.of(0, 1, 2)),
                 PARTITION_CHANGE_RECORD.highestSupportedVersion()
@@ -768,6 +769,7 @@ public class TopicsImageTest {
                   .setTopicId(zooId)
                   .setPartitionId(4)
                   .setLeader(localId)
+                  .setLeaderEpoch(2)
                   .setIsr(List.of(localId, 1, 2))
                   .setReplicas(List.of(localId, 1, 2)),
                 PARTITION_CHANGE_RECORD.highestSupportedVersion()
