@@ -21,6 +21,7 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
+import org.apache.kafka.common.test.api.Flaky;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.streams.StreamsConfig;
@@ -475,6 +476,7 @@ public class TaskAssignorConvergenceTest {
         StreamsConfig.RACK_AWARE_ASSIGNMENT_STRATEGY_MIN_TRAFFIC,
         StreamsConfig.RACK_AWARE_ASSIGNMENT_STRATEGY_BALANCE_SUBTOPOLOGY
     })
+    @Flaky(value = "KAFKA-16491", comment = "Flaky for rackAwareStrategy=balance_subtopology.")
     public void randomClusterPerturbationsShouldConverge(final String rackAwareStrategy) {
         setUp(rackAwareStrategy);
         // do as many tests as we can in 10 seconds

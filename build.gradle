@@ -3027,6 +3027,7 @@ project(':streams') {
     testCompileOnly libs.bndlib
 
     testImplementation project(':clients').sourceSets.test.output
+    testImplementation project(':test-common:test-common-util')
     testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.bcpkix
@@ -4192,6 +4193,7 @@ project(':connect:mirror') {
     testImplementation project(':connect:runtime').sourceSets.test.output
     testImplementation project(':core')
     testImplementation project(':test-common:test-common-runtime')
+    testImplementation project(':test-common:test-common-util')
     testImplementation project(':server')
     testImplementation project(':server-common')
 

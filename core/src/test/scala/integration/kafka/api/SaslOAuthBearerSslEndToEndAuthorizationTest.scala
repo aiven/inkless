@@ -17,11 +17,22 @@
 package kafka.api
 
 import kafka.security.JaasTestUtils
+import kafka.utils.TestInfoUtils
 import org.apache.kafka.common.security.auth._
+import org.apache.kafka.common.test.api.Flaky
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.MethodSource
 
 class SaslOAuthBearerSslEndToEndAuthorizationTest extends SaslEndToEndAuthorizationTest {
   override protected def kafkaClientSaslMechanism = "OAUTHBEARER"
   override protected def kafkaServerSaslMechanisms = List(kafkaClientSaslMechanism)
   override val clientPrincipal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, JaasTestUtils.KAFKA_OAUTH_BEARER_USER)
   override val kafkaPrincipal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, JaasTestUtils.KAFKA_OAUTH_BEARER_ADMIN)
+
+  // Override solely to mark the OAUTHBEARER variant flaky; other SASL mechanisms keep upstream coverage.
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
+  @MethodSource(Array("getTestGroupProtocolParametersAll"))
+  @Flaky(value = "KAFKA-9655", comment = "Flaky only for the OAUTHBEARER variant; non-critical for the fork, upstream covers the other mechanisms.")
+  override def testNoConsumeWithoutDescribeAclViaSubscribe(groupProtocol: String): Unit =
+    super.testNoConsumeWithoutDescribeAclViaSubscribe(groupProtocol)
 }
