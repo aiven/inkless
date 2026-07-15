@@ -20,7 +20,6 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AlterConfigOp;
-import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
@@ -49,7 +48,6 @@ import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerConfig;
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
-import org.apache.kafka.test.NoRetryException;
 import org.apache.kafka.test.TestUtils;
 
 import org.junit.jupiter.api.AfterEach;
@@ -292,9 +290,9 @@ public class InklessConsolidatedDisklessTopicsTest {
         try (Admin admin = AdminClient.create(commonConfigs)) {
             // Phase 1: create a CLASSIC topic (diskless.enable=false, remote.storage.enable=false).
             topicUuid = createClassicTopic(admin);
-            assertEquals("false", getTopicConfigValue(admin, DISKLESS_ENABLE_CONFIG),
+            assertEquals("false", TopicMetadataProbe.readValue(admin, topicName, DISKLESS_ENABLE_CONFIG),
                 "Topic should start as a classic (non-diskless) topic");
-            assertEquals("false", getTopicConfigValue(admin, REMOTE_LOG_STORAGE_ENABLE_CONFIG),
+            assertEquals("false", TopicMetadataProbe.readValue(admin, topicName, REMOTE_LOG_STORAGE_ENABLE_CONFIG),
                 "Classic topic should not have remote storage enabled");
 
             // Produce a baseline of records into the classic topic. These offsets form the classic
@@ -320,8 +318,8 @@ public class InklessConsolidatedDisklessTopicsTest {
             try {
                 log.info("Migrating classic topic {} to diskless (remote storage auto-enabled atomically)", topicName);
                 incrementalAlterTopicConfigs(admin, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
-                waitForTopicConfigValue(admin, DISKLESS_ENABLE_CONFIG, "true");
-                waitForTopicConfigValue(admin, REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+                TopicMetadataProbe.awaitValue(admin, topicName, DISKLESS_ENABLE_CONFIG, "true");
+                TopicMetadataProbe.awaitValue(admin, topicName, REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
             } finally {
                 producerThread.join(TimeUnit.SECONDS.toMillis(120));
                 // If the producer is still running (e.g. a send blocked), interrupt it so it unwinds
@@ -336,9 +334,9 @@ public class InklessConsolidatedDisklessTopicsTest {
                 throw new RuntimeException("Producer failed while the topic was being consolidated", producerFailure.get());
             }
 
-            assertEquals("true", getTopicConfigValue(admin, DISKLESS_ENABLE_CONFIG),
+            assertEquals("true", TopicMetadataProbe.readValue(admin, topicName, DISKLESS_ENABLE_CONFIG),
                 "Topic should be diskless after the switch");
-            assertEquals("true", getTopicConfigValue(admin, REMOTE_LOG_STORAGE_ENABLE_CONFIG),
+            assertEquals("true", TopicMetadataProbe.readValue(admin, topicName, REMOTE_LOG_STORAGE_ENABLE_CONFIG),
                 "Switch should auto-enable remote storage atomically (consolidated diskless topic)");
         }
 
@@ -405,43 +403,6 @@ public class InklessConsolidatedDisklessTopicsTest {
         admin.incrementalAlterConfigs(Map.of(resource, ops)).all().get(30, TimeUnit.SECONDS);
     }
 
-    private String getTopicConfigValue(Admin admin, String key)
-        throws ExecutionException, InterruptedException, TimeoutException {
-        final ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
-        // Shorter timeout because this is invoked from polling loops (waitForTopicConfigValue).
-        final Config config = admin.describeConfigs(Collections.singletonList(resource))
-            .all().get(10, TimeUnit.SECONDS)
-            .get(resource);
-        if (config == null) {
-            throw new IllegalStateException("describeConfigs returned no config for topic " + topicName);
-        }
-        final ConfigEntry entry = config.get(key);
-        if (entry == null) {
-            throw new IllegalStateException("Config '" + key + "' is missing for topic " + topicName);
-        }
-        return entry.value();
-    }
-
-    private void waitForTopicConfigValue(Admin admin, String key, String expectedValue) throws InterruptedException {
-        TestUtils.waitForCondition(() -> {
-            try {
-                return expectedValue.equals(getTopicConfigValue(admin, key));
-            } catch (ExecutionException e) {
-                // Right after create/alter the topic metadata may not have propagated to the broker serving
-                // the describeConfigs request yet; that is the only case worth retrying.
-                if (e.getCause() instanceof UnknownTopicOrPartitionException) {
-                    return false;
-                }
-                throw new NoRetryException(e.getCause() != null ? e.getCause() : e);
-            } catch (TimeoutException e) {
-                // A describeConfigs request timing out is transient under load; keep polling.
-                return false;
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new NoRetryException(e);
-            }
-        }, 60_000, () -> "Topic config " + key + " should become " + expectedValue);
-    }
 
     /**
      * Queries {@link OffsetSpec#earliest()} via the admin client (same basis as consumer
