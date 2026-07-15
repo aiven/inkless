@@ -21,9 +21,20 @@ import org.apache.kafka.common.annotation.InterfaceStability;
 
 /**
  * Options for {@link Admin#listClusterMirrors()}.
- * <p>
- * The API of this class is evolving, see {@link Admin} for details.
  */
 @InterfaceStability.Evolving
 public class ListClusterMirrorsOptions extends AbstractOptions<ListClusterMirrorsOptions> {
+    private boolean shouldIncludeTopicNames = false;
+
+    /**
+     * Set whether the response should include mirror topic names for each mirror.
+     */
+    public ListClusterMirrorsOptions shouldIncludeTopicNames(boolean shouldIncludeTopicNames) {
+        this.shouldIncludeTopicNames = shouldIncludeTopicNames;
+        return this;
+    }
+
+    public boolean shouldIncludeTopicNames() {
+        return shouldIncludeTopicNames;
+    }
 }

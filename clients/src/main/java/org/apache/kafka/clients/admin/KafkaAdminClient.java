@@ -5179,12 +5179,11 @@ public class KafkaAdminClient extends AdminClient {
         final long now = time.milliseconds();
         final long deadline = calcDeadlineMs(now, options.timeoutMs());
 
-        // We query one broker for static metadata (mirror names, topic counts, bootstrap servers)
-        // Data comes from metadata cache
+        // We query one broker
         runnable.call(new Call("listClusterMirrors", deadline, new LeastLoadedNodeProvider()) {
             @Override
             ListClusterMirrorsRequest.Builder createRequest(int timeoutMs) {
-                return new ListClusterMirrorsRequest.Builder(new ListClusterMirrorsRequestData());
+                return new ListClusterMirrorsRequest.Builder(new ListClusterMirrorsRequestData().setIncludeTopicNames(options.shouldIncludeTopicNames()));
             }
 
             @Override
@@ -5202,7 +5201,8 @@ public class KafkaAdminClient extends AdminClient {
                                 mirror.mirrorName(),
                                 mirror.sourceBootstrap(),
                                 mirror.sourceClusterId(),
-                                mirror.topicCount()
+                                mirror.topicCount(),
+                                mirror.topicNames()
                         ));
                     }
                     all.complete(listings);
@@ -5220,11 +5220,12 @@ public class KafkaAdminClient extends AdminClient {
 
     @Override
     public DescribeClusterMirrorsResult describeClusterMirrors(Collection<String> mirrorNames, DescribeClusterMirrorsOptions options) {
-        final KafkaFutureImpl<Map<String, ClusterMirrorDesc>> all = new KafkaFutureImpl<>();
+        final KafkaFutureImpl<Map<String, ClusterMirrorDescription>> all = new KafkaFutureImpl<>();
+        final KafkaFutureImpl<Map<Uuid, Map<Integer, Integer>>> lineageAll = new KafkaFutureImpl<>();
         final long nowMetadata = time.milliseconds();
         final long deadline = calcDeadlineMs(nowMetadata, options.timeoutMs());
-        // We query all brokers to get up-to-date lag AND state
-        // Each broker that's actively fetching partitions already has state in its local cache
+
+        // We fan-out to all brokers
         runnable.call(new Call("findAllBrokers", deadline, new LeastLoadedNodeProvider()) {
             @Override
             MetadataRequest.Builder createRequest(int timeoutMs) {
@@ -5241,7 +5242,7 @@ public class KafkaAdminClient extends AdminClient {
                     throw new StaleMetadataException("Metadata fetch failed due to missing broker list");
 
                 HashSet<Node> allNodes = new HashSet<>(nodes);
-                final DescribeClusterMirrorsResults results = new DescribeClusterMirrorsResults(allNodes, mirrorNames, all);
+                final DescribeClusterMirrorsResults results = new DescribeClusterMirrorsResults(allNodes, mirrorNames, all, lineageAll);
 
                 for (final Node node : allNodes) {
                     final long nowDescribe = time.milliseconds();
@@ -5251,6 +5252,10 @@ public class KafkaAdminClient extends AdminClient {
                             DescribeClusterMirrorsRequestData data = new DescribeClusterMirrorsRequestData()
                                 .setMirrorNames(new ArrayList<>(mirrorNames))
                                 .setIncludeAuthorizedOperations(options.includeAuthorizedOperations());
+                            if (options.clusterId() != null && !options.lastMirrorEpochLookups().isEmpty()) {
+                                data.setClusterId(options.clusterId());
+                                data.setLastMirrorEpochLookups(new ArrayList<>(options.lastMirrorEpochLookups()));
+                            }
                             return new DescribeClusterMirrorsRequest.Builder(data);
                         }
 
@@ -5261,6 +5266,7 @@ public class KafkaAdminClient extends AdminClient {
                                 for (DescribeClusterMirrorsResponseData.DescribedMirror mirror : response.data().mirrors()) {
                                     results.handleMirror(mirror);
                                 }
+                                results.handleLookupResults(response.data().lookupResults());
                                 results.tryComplete(node);
                             }
                         }
@@ -5280,10 +5286,11 @@ public class KafkaAdminClient extends AdminClient {
             void handleFailure(Throwable throwable) {
                 KafkaException exception = new KafkaException("Failed to find brokers to send DescribeMirrors", throwable);
                 all.completeExceptionally(exception);
+                lineageAll.completeExceptionally(exception);
             }
         }, nowMetadata);
 
-        return new DescribeClusterMirrorsResult(all);
+        return new DescribeClusterMirrorsResult(all, lineageAll);
     }
 
     private static final class DescribeClusterMirrorsResults {
@@ -5291,16 +5298,21 @@ public class KafkaAdminClient extends AdminClient {
         private final Set<String> requestedMirrors;
         private final boolean describeAll;
         private final HashSet<Node> remaining;
-        private final KafkaFutureImpl<Map<String, ClusterMirrorDesc>> allFuture;
+        private final KafkaFutureImpl<Map<String, ClusterMirrorDescription>> allFuture;
+        private final KafkaFutureImpl<Map<Uuid, Map<Integer, Integer>>> lookupFuture;
+        private final Map<Uuid, Map<Integer, Integer>> lookupEpochs;
 
         DescribeClusterMirrorsResults(Collection<Node> brokers,
                                Collection<String> mirrorNames,
-                               KafkaFutureImpl<Map<String, ClusterMirrorDesc>> allFuture) {
+                               KafkaFutureImpl<Map<String, ClusterMirrorDescription>> allFuture,
+                               KafkaFutureImpl<Map<Uuid, Map<Integer, Integer>>> lookupFuture) {
             this.partialDescriptions = new HashMap<>();
             this.requestedMirrors = new HashSet<>(mirrorNames);
             this.describeAll = mirrorNames.isEmpty();
             this.remaining = new HashSet<>(brokers);
             this.allFuture = allFuture;
+            this.lookupFuture = lookupFuture;
+            this.lookupEpochs = new HashMap<>();
 
             // Pre-populate partial descriptions only if specific mirrors are requested
             if (!describeAll) {
@@ -5324,8 +5336,18 @@ public class KafkaAdminClient extends AdminClient {
                 partialDescriptions.put(mirror.mirrorName(), partial);
             }
 
-            // Merge this broker's data
+            // Merge across all brokers
             partial.merge(mirror);
+        }
+
+        synchronized void handleLookupResults(List<DescribeClusterMirrorsResponseData.LookupResult> results) {
+            for (DescribeClusterMirrorsResponseData.LookupResult result : results) {
+                Map<Integer, Integer> partitionEpochs = lookupEpochs.computeIfAbsent(result.topicId(), k -> new HashMap<>());
+                // Merge across all brokers
+                for (DescribeClusterMirrorsResponseData.PartitionResult partition : result.partitions()) {
+                    partitionEpochs.merge(partition.partitionIndex(), partition.lastMirrorEpoch(), Math::max);
+                }
+            }
         }
 
         synchronized void tryComplete(Node broker) {
@@ -5335,7 +5357,7 @@ public class KafkaAdminClient extends AdminClient {
 
         private synchronized void tryComplete() {
             if (remaining.isEmpty()) {
-                Map<String, ClusterMirrorDesc> descriptions = new HashMap<>(partialDescriptions.size());
+                Map<String, ClusterMirrorDescription> descriptions = new HashMap<>(partialDescriptions.size());
                 Throwable firstError = null;
                 for (Map.Entry<String, PartialMirrorDescription> entry : partialDescriptions.entrySet()) {
                     PartialMirrorDescription partial = entry.getValue();
@@ -5349,8 +5371,10 @@ public class KafkaAdminClient extends AdminClient {
                 }
                 if (descriptions.isEmpty() && firstError != null) {
                     allFuture.completeExceptionally(firstError);
+                    lookupFuture.completeExceptionally(firstError);
                 } else {
                     allFuture.complete(descriptions);
+                    lookupFuture.complete(lookupEpochs);
                 }
             }
         }
@@ -5359,12 +5383,15 @@ public class KafkaAdminClient extends AdminClient {
             if (!allFuture.isDone()) {
                 allFuture.completeExceptionally(throwable);
             }
+            if (!lookupFuture.isDone()) {
+                lookupFuture.completeExceptionally(throwable);
+            }
         }
 
         // Accumulated ClusterMirrorDesc data from all brokers
         private static class PartialMirrorDescription {
             final String mirrorName;
-            final Map<String, Set<ClusterMirrorDesc.LeaderStateDesc>> topicPartitions;
+            final Map<String, Set<ClusterMirrorDescription.LeaderStateDescription>> topicPartitions;
             int authorizedOperations;
             boolean hasSuccess;
             Throwable error;
@@ -5396,23 +5423,21 @@ public class KafkaAdminClient extends AdminClient {
                     this.authorizedOperations = mirror.authorizedOperations();
                 }
 
-                // Merge topic partitions
                 for (DescribeClusterMirrorsResponseData.TopicPartitions topic : mirror.topics()) {
-                    Set<ClusterMirrorDesc.LeaderStateDesc> partitions =
+                    Set<ClusterMirrorDescription.LeaderStateDescription> partitions =
                             topicPartitions.computeIfAbsent(topic.topicName(), k -> new HashSet<>());
 
                     for (DescribeClusterMirrorsResponseData.PartitionDetail partition : topic.partitions()) {
                         TopicPartition tp = new TopicPartition(topic.topicName(), partition.partitionIndex());
-                        ClusterMirrorDesc.LeaderStateDesc leaderState =
-                                new ClusterMirrorDesc.LeaderStateDesc(
+                        ClusterMirrorDescription.LeaderStateDescription leaderState =
+                                new ClusterMirrorDescription.LeaderStateDescription(
                                         tp,
                                         partition.sourceOffset(),
                                         partition.destinationOffset(),
                                         partition.lag(),
                                         partition.stateValue(),
                                         partition.retryAttempt(),
-                                        partition.errorMessage(),
-                                        partition.lastMirrorEpoch()
+                                        partition.errorMessage()
                                 );
                         partitions.add(leaderState);
                     }
@@ -5420,8 +5445,8 @@ public class KafkaAdminClient extends AdminClient {
 
             }
 
-            ClusterMirrorDesc toMirrorDescription() {
-                return new ClusterMirrorDesc(
+            ClusterMirrorDescription toMirrorDescription() {
+                return new ClusterMirrorDescription(
                         mirrorName,
                         topicPartitions,
                         validAclOperations(authorizedOperations)

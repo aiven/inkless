@@ -52,6 +52,7 @@ class ClusterMirroringCompSaslSslTest(MirrorUtils, Test):
         ["mirror.metadata.refresh.interval.ms", "5000"],
         ["mirror.num.replica.fetchers", "2"],
         ["mirror.socket.timeout.ms", "5000"],
+        ["mirror.failed.retry.max.backoff.ms", "5000"],
     ]
 
     SOURCE_SERVER_PROPS = [
@@ -275,7 +276,7 @@ class ClusterMirroringCompSaslSslTest(MirrorUtils, Test):
 
         self.logger.info("Creating and starting cluster mirror with ACL include filter")
         mirror_cfg = ClusterMirroringCompSaslSslTest.create_mirror_config(self.source_kafka)
-        mirror_cfg.properties["mirror.acl.include"] = "TOPIC;my-topic-.*,GROUP;my-group"
+        mirror_cfg.properties["mirror.acls.include"] = "TOPIC;my-topic-.*,GROUP;my-group"
         wait_until(
             lambda: self.dest_kafka.create_cluster_mirror(
                 self.dest_client_node, "my-mirror", mirror_cfg),

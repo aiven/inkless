@@ -304,7 +304,7 @@ abstract class AbstractFetcherThread(name: String,
             val newCurrentLeaderEpoch = partitionData.currentLeader().leaderEpoch()
 
             if (newCurrentLeaderEpoch > -1) {
-              info(s"Discovered new fetch epoch for mirrored partition $topicPartition, " +
+              info(s"Discovered new fetch epoch for mirror partition $topicPartition, " +
                 s"currentLeaderEpoch: ${currentFetchState.currentLeaderEpoch} -> $newCurrentLeaderEpoch")
               newStates.put(topicPartition, new PartitionFetchState(currentFetchState.topicId, currentFetchState.fetchOffset(), currentFetchState.lag,
                 newCurrentLeaderEpoch, currentFetchState.delay, currentFetchState.state(), currentFetchState.lastFetchedEpoch(),
@@ -348,7 +348,6 @@ abstract class AbstractFetcherThread(name: String,
           }
       }
     if (newStates.nonEmpty) {
-      info("!!! maybeCreateMirrorFetchers: " + newStates)
       removeFetcherForPartitions(newStates.keySet)
       addFetcherForPartitions(newStates)
     } else if (partitionToData.nonEmpty && leader.lastSeenEndpoints().isEmpty) {
@@ -461,7 +460,6 @@ abstract class AbstractFetcherThread(name: String,
     var fetchException: Option[Throwable] = None
 
     try {
-      debug(s"!!! Sending fetch request $fetchRequest")
       responseData = leader.fetch(fetchRequest).asScala
     } catch {
       case t: Throwable =>

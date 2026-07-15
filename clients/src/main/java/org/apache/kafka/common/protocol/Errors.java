@@ -64,7 +64,6 @@ import org.apache.kafka.common.errors.InvalidConfigurationException;
 import org.apache.kafka.common.errors.InvalidFetchSessionEpochException;
 import org.apache.kafka.common.errors.InvalidFetchSizeException;
 import org.apache.kafka.common.errors.InvalidGroupIdException;
-import org.apache.kafka.common.errors.InvalidMirrorNameException;
 import org.apache.kafka.common.errors.InvalidMirrorStateException;
 import org.apache.kafka.common.errors.InvalidPartitionsException;
 import org.apache.kafka.common.errors.InvalidPidMappingException;
@@ -93,6 +92,7 @@ import org.apache.kafka.common.errors.MemberIdRequiredException;
 import org.apache.kafka.common.errors.MirrorTopicAlreadyPausedException;
 import org.apache.kafka.common.errors.MirrorTopicBeingStoppedException;
 import org.apache.kafka.common.errors.MirrorTopicNotPausedException;
+import org.apache.kafka.common.errors.MirrorTopicNotStoppedException;
 import org.apache.kafka.common.errors.MismatchedEndpointTypeException;
 import org.apache.kafka.common.errors.NetworkException;
 import org.apache.kafka.common.errors.NewLeaderElectedException;
@@ -432,7 +432,6 @@ public enum Errors {
     STREAMS_TOPOLOGY_FENCED(132, "The supplied topology epoch is outdated.", StreamsTopologyFencedException::new),
     SHARE_SESSION_LIMIT_REACHED(133, "The limit of share sessions has been reached.", ShareSessionLimitReachedException::new),
     READ_ONLY_TOPIC(134, "The topic is read-only.", ReadOnlyTopicException::new),
-    INVALID_CLUSTER_MIRROR_NAME(135, "The cluster mirror name does not meet the naming rules.", InvalidMirrorNameException::new),
     CLUSTER_MIRROR_ALREADY_EXISTS(136, "The cluster mirror already exists.", ClusterMirrorAlreadyExistsException::new),
     UNKNOWN_CLUSTER_MIRROR(137, "The cluster mirror does not exist.", UnknownClusterMirrorException::new),
     TOPIC_ALREADY_IN_CLUSTER_MIRROR(138, "The topic is already assigned to a cluster mirror.", TopicAlreadyInClusterMirrorException::new),
@@ -442,7 +441,8 @@ public enum Errors {
     MIRROR_TOPIC_BEING_STOPPED(142, "The mirror topic is being stopped.", MirrorTopicBeingStoppedException::new),
     CLUSTER_MIRROR_NOT_EMPTY(143, "The cluster mirror still has active or non-stopped topics.", ClusterMirrorNotEmptyException::new),
     CLUSTER_MIRROR_AUTHORIZATION_FAILED(144, "Cluster mirror authorization failed.", ClusterMirrorAuthorizationException::new),
-    INVALID_CLUSTER_MIRROR_STATES(145, "Cluster mirror partition states are not in the expected states.", InvalidMirrorStateException::new);
+    INVALID_CLUSTER_MIRROR_STATES(145, "Cluster mirror partition states are not in the expected states.", InvalidMirrorStateException::new),
+    MIRROR_TOPIC_NOT_STOPPED(146, "The mirror topic is not in stopped state.", MirrorTopicNotStoppedException::new);
 
     private static final Logger log = LoggerFactory.getLogger(Errors.class);
 

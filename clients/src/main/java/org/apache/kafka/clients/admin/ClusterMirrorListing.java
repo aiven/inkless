@@ -17,19 +17,36 @@
 
 package org.apache.kafka.clients.admin;
 
-import org.apache.kafka.common.annotation.InterfaceStability;
-
+import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 
 /**
  * A listing of a cluster mirror.
  */
-@InterfaceStability.Evolving
 public class ClusterMirrorListing {
     private final String mirrorName;
     private final String sourceBootstrap;
     private final String sourceClusterId;
     private final int topicCount;
+    private final List<String> topics;
+
+    /**
+     * Create an instance with the specified parameters.
+     *
+     * @param mirrorName Mirror name
+     * @param sourceBootstrap Source cluster bootstrap servers
+     * @param sourceClusterId Source cluster ID
+     * @param topicCount Number of topics configured for this mirror
+     * @param topics List of topic names configured for this mirror
+     */
+    public ClusterMirrorListing(String mirrorName, String sourceBootstrap, String sourceClusterId, int topicCount, List<String> topics) {
+        this.mirrorName = mirrorName;
+        this.sourceBootstrap = sourceBootstrap;
+        this.sourceClusterId = sourceClusterId;
+        this.topicCount = topicCount;
+        this.topics = topics;
+    }
 
     /**
      * Create an instance with the specified parameters.
@@ -40,10 +57,7 @@ public class ClusterMirrorListing {
      * @param topicCount Number of topics configured for this mirror
      */
     public ClusterMirrorListing(String mirrorName, String sourceBootstrap, String sourceClusterId, int topicCount) {
-        this.mirrorName = mirrorName;
-        this.sourceBootstrap = sourceBootstrap;
-        this.sourceClusterId = sourceClusterId;
-        this.topicCount = topicCount;
+        this(mirrorName, sourceBootstrap, sourceClusterId, topicCount, Collections.emptyList());
     }
 
     /**
@@ -54,7 +68,7 @@ public class ClusterMirrorListing {
      * @param topicCount Number of topics configured for this mirror
      */
     public ClusterMirrorListing(String mirrorName, String sourceBootstrap, int topicCount) {
-        this(mirrorName, sourceBootstrap, "", topicCount);
+        this(mirrorName, sourceBootstrap, "", topicCount, Collections.emptyList());
     }
 
     /**
@@ -64,7 +78,7 @@ public class ClusterMirrorListing {
      * @param sourceBootstrap Source cluster bootstrap servers
      */
     public ClusterMirrorListing(String mirrorName, String sourceBootstrap) {
-        this(mirrorName, sourceBootstrap, "", 0);
+        this(mirrorName, sourceBootstrap, "", 0, Collections.emptyList());
     }
 
     /**
@@ -103,14 +117,25 @@ public class ClusterMirrorListing {
         return topicCount;
     }
 
+    /**
+     * The topic names configured for this mirror.
+     *
+     * @return List of topic names, or empty list if not requested or not available
+     */
+    public List<String> topics() {
+        return topics;
+    }
+
     @Override
     public String toString() {
-        return "ClusterMirrorListing(mirrorName='" + mirrorName + "', sourceBootstrap='" + sourceBootstrap + "', sourceClusterId='" + sourceClusterId + "', topicCount=" + topicCount + ")";
+        return "ClusterMirrorListing(mirrorName='" + mirrorName + "', sourceBootstrap='" + sourceBootstrap
+                + "', sourceClusterId='" + sourceClusterId + "', topicCount=" + topicCount
+                + ", topics=" + topics + ")";
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(mirrorName, sourceBootstrap, sourceClusterId, topicCount);
+        return Objects.hash(mirrorName, sourceBootstrap, sourceClusterId, topicCount, topics);
     }
 
     @Override
@@ -121,6 +146,7 @@ public class ClusterMirrorListing {
         return topicCount == that.topicCount &&
                Objects.equals(mirrorName, that.mirrorName) &&
                Objects.equals(sourceBootstrap, that.sourceBootstrap) &&
-               Objects.equals(sourceClusterId, that.sourceClusterId);
+               Objects.equals(sourceClusterId, that.sourceClusterId) &&
+               Objects.equals(topics, that.topics);
     }
 }

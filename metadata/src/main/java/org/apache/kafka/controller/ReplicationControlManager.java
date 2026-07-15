@@ -762,7 +762,7 @@ public class ReplicationControlManager {
             String topicName = info.name;
             leaderEpochs.forEach((partitionId, leaderEpoch) -> {
                 PartitionRegistration partition = info.parts.get(partitionId);
-                // only bump the leader epoch when local leader epoch is <= required min leader epoch
+                // Skip if the current epoch already exceeds the requested value
                 if (partition.leaderEpoch <= leaderEpoch) {
                     PartitionChangeBuilder builder = new PartitionChangeBuilder(
                             partition,
@@ -772,14 +772,12 @@ public class ReplicationControlManager {
                             featureControl.metadataVersionOrThrow(),
                             getTopicEffectiveMinIsr(topicName)
                     )
-                            // set the min leader epoch for each partition
-                            .setMinLeaderEpoch(leaderEpochs.getOrDefault(partitionId, NO_PARTITION_LEADER_EPOCH))
+                            .setTargetLeaderEpoch(leaderEpochs.getOrDefault(partitionId, NO_PARTITION_LEADER_EPOCH))
                             .setDefaultDirProvider(clusterDescriber);
-
                     builder.build().ifPresent(records::add);
-                    log.info("!!! update partition {} for topic {} from {} to {}: {}", partitionId, topicName, partition.leaderEpoch, leaderEpoch, records);
+                    log.debug("Updating partition {} leader epoch for topic {} from {} to {}: {}", partitionId, topicName, partition.leaderEpoch, leaderEpoch, records);
                 } else {
-                    log.info("!!! do not update partition {} for topic {} from {} to {}", partitionId, topicName, partition.leaderEpoch, leaderEpoch);
+                    log.debug("Skipping partition {} leader epoch update for topic {} from {} to {}", partitionId, topicName, partition.leaderEpoch, leaderEpoch);
                 }
             });
         }
@@ -1218,6 +1216,11 @@ public class ReplicationControlManager {
     // VisibleForTesting
     TopicControlInfo getTopic(Uuid topicId) {
         return topics.get(topicId);
+    }
+
+    TopicControlInfo getTopicByName(String topicName) {
+        Uuid id = topicsByName.get(topicName);
+        return id != null ? topics.get(id) : null;
     }
 
     Set<TopicControlInfo> getMirrorTopics() {

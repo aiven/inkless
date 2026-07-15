@@ -57,6 +57,7 @@ class LocalLeaderEndPointTest extends Logging {
   var endPoint: LeaderEndPoint = _
   var quotaManager: QuotaManagers = _
   var image: MetadataImage = _
+  var currentLeaderEpoch: Int = 0
 
   @BeforeEach
   def setUp(): Unit = {
@@ -254,11 +255,13 @@ class LocalLeaderEndPointTest extends Logging {
   }
 
   private def bumpLeaderEpoch(): Unit = {
+    currentLeaderEpoch += 1
     val delta = new MetadataDelta(image)
     delta.replay(new PartitionChangeRecord()
       .setTopicId(topicId)
       .setPartitionId(partition)
       .setLeader(sourceBroker.id)
+      .setLeaderEpoch(currentLeaderEpoch)
     )
 
     image = delta.apply(MetadataProvenance.EMPTY)

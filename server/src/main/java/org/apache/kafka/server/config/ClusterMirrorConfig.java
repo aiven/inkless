@@ -37,6 +37,7 @@ import static org.apache.kafka.common.config.ConfigDef.Importance.HIGH;
 import static org.apache.kafka.common.config.ConfigDef.Importance.LOW;
 import static org.apache.kafka.common.config.ConfigDef.Importance.MEDIUM;
 import static org.apache.kafka.common.config.ConfigDef.Range.atLeast;
+import static org.apache.kafka.common.config.ConfigDef.Range.between;
 import static org.apache.kafka.common.config.ConfigDef.Type.INT;
 import static org.apache.kafka.common.config.ConfigDef.Type.LIST;
 import static org.apache.kafka.common.config.ConfigDef.Type.LONG;
@@ -83,7 +84,7 @@ public final class ClusterMirrorConfig {
     public static final String MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_DOC = "The maximum backoff time in milliseconds for retrying a mirror partition in FAILED state.";
 
     public static final String MIRROR_FAILED_RETRY_MAX_ATTEMPTS_CONFIG = "mirror.failed.retry.max.attempts";
-    public static final int MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DEFAULT = 10;
+    public static final int MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DEFAULT = 100;
     public static final String MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DOC = "The maximum number of automatic retry attempts for a mirror partition in FAILED state. " +
             "After this limit is reached, manual intervention is required via the start-mirror-topics command. " +
             "Set to 0 to disable automatic retries.";
@@ -156,8 +157,7 @@ public final class ClusterMirrorConfig {
                     + "log.message.timestamp.after.max.ms,"
                     + "message.timestamp.type,"
                     + "unclean.leader.election.enable,"
-                    + "min.insync.replicas,"
-                    + "mirror.name";
+                    + "min.insync.replicas";
     public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_DOC = "A comma-separated list of topic config property names to exclude from synchronization. "
             + "Properties in this list will not be replicated from the source cluster. "
             + "The mirror.name property is always excluded regardless of this setting.";
@@ -165,26 +165,28 @@ public final class ClusterMirrorConfig {
     public static final String MIRROR_TOPICS_INCLUDE_CONFIG = "mirror.topics.include";
     public static final String MIRROR_TOPICS_INCLUDE_DEFAULT = "";
     public static final String MIRROR_TOPICS_INCLUDE_DOC = "A comma-separated list of regex patterns for topic names to include in mirroring. "
-            + "Topics on the source cluster whose names match at least one of the patterns will be automatically discovered and mirrored. "
+            + "Topics on the source cluster whose names match at least one of the patterns will be automatically discovered and mirrored "
+            + "(mirror.topics.exclude takes precedence over this). "
             + "When empty (default), only explicitly added topics are mirrored.";
 
     public static final String MIRROR_TOPICS_EXCLUDE_CONFIG = "mirror.topics.exclude";
     public static final String MIRROR_TOPICS_EXCLUDE_DEFAULT = "__.*";
-    public static final String MIRROR_TOPICS_EXCLUDE_DOC = "A comma-separated list of regex patterns for topic names to exclude from mirroring. "
-            + "Topics matching the exclude pattern are not mirrored even if they match mirror.topics.include. "
-            + "By default, internal topics (starting with '__') are excluded.";
+    public static final String MIRROR_TOPICS_EXCLUDE_DOC = "A comma-separated list of regex patterns for topic names to exclude from mirroring "
+            + "(this takes precedence over mirror.topics.include). "
+            + "Internal topics are excluded by default.";
 
     public static final String MIRROR_GROUPS_INCLUDE_CONFIG = "mirror.groups.include";
     public static final String MIRROR_GROUPS_INCLUDE_DEFAULT = ".*";
     public static final String MIRROR_GROUPS_INCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to include in offset synchronization. "
-            + "Only consumer groups whose IDs match at least one of the patterns will have their offsets replicated from the source cluster.";
+            + "Only consumer groups whose IDs match at least one of the patterns will have their offsets replicated from the source cluster "
+            + "(mirror.groups.exclude takes precedence over this).";
 
     public static final String MIRROR_GROUPS_EXCLUDE_CONFIG = "mirror.groups.exclude";
     public static final String MIRROR_GROUPS_EXCLUDE_DEFAULT = "";
-    public static final String MIRROR_GROUPS_EXCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to exclude from offset synchronization. "
-            + "Groups matching the exclude pattern are not replicated even if they match mirror.groups.include.";
+    public static final String MIRROR_GROUPS_EXCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to exclude from offset synchronization "
+            + "(this takes precedence over mirror.groups.include).";
 
-    public static final String MIRROR_ACL_INCLUDE_CONFIG = "mirror.acl.include";
+    public static final String MIRROR_ACL_INCLUDE_CONFIG = "mirror.acls.include";
     public static final String MIRROR_ACL_INCLUDE_DEFAULT = "*";
     public static final String MIRROR_ACL_INCLUDE_DOC = "A comma-separated list of ACL include rules. Each rule uses semicolon-separated fields: "
             + "resourceType;resourceName;operation;permissionType;principal. Use '*' as wildcard for any field. The resourceName field supports "
@@ -525,7 +527,7 @@ public final class ClusterMirrorConfig {
                 .define(MIRROR_METADATA_REFRESH_INTERVAL_MS_CONFIG, LONG, MIRROR_METADATA_REFRESH_INTERVAL_MS_DEFAULT, atLeast(0L), MEDIUM, MIRROR_METADATA_REFRESH_INTERVAL_MS_DOC)
                 .define(MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_CONFIG, LONG, MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_DEFAULT, atLeast(1L), MEDIUM, MIRROR_FAILED_RETRY_INITIAL_BACKOFF_MS_DOC)
                 .define(MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_CONFIG, LONG, MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_DEFAULT, atLeast(1L), MEDIUM, MIRROR_FAILED_RETRY_MAX_BACKOFF_MS_DOC)
-                .define(MIRROR_FAILED_RETRY_MAX_ATTEMPTS_CONFIG, INT, MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DEFAULT, atLeast(0), MEDIUM, MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DOC)
+                .define(MIRROR_FAILED_RETRY_MAX_ATTEMPTS_CONFIG, INT, MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DEFAULT, between(0, Short.MAX_VALUE), MEDIUM, MIRROR_FAILED_RETRY_MAX_ATTEMPTS_DOC)
                 .define(MIRROR_FETCH_BACKOFF_MS_CONFIG, LONG, MIRROR_FETCH_BACKOFF_MS_DEFAULT, atLeast(0L), MEDIUM, MIRROR_FETCH_BACKOFF_MS_DOC)
                 .define(MIRROR_FETCH_WAIT_MAX_MS_CONFIG, INT, MIRROR_FETCH_WAIT_MAX_MS_DEFAULT, atLeast(0), MEDIUM, MIRROR_FETCH_WAIT_MAX_MS_DOC)
                 .define(MIRROR_FETCH_MIN_BYTES_CONFIG, INT, MIRROR_FETCH_MIN_BYTES_DEFAULT, atLeast(0), MEDIUM, MIRROR_FETCH_MIN_BYTES_DOC)

@@ -17,5 +17,8 @@
 
 package org.apache.kafka.clients.admin;
 
+/**
+ * Options for {@link Admin#deleteClusterMirror(String, DeleteClusterMirrorOptions)} .
+ */
 public class DeleteClusterMirrorOptions extends AbstractOptions<DeleteClusterMirrorOptions> {
 }

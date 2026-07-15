@@ -341,8 +341,13 @@ class BrokerServer(
        */
       val defaultActionQueue = new DelayedActionQueue
 
-      val mirrorScheduler = new KafkaScheduler(1, true, "ClusterMirror-")
+      // Two threads: one for metadata refresh (can block on RPC timeouts against
+      // unreachable sources) and one for state transitions (truncation, retries).
+      val mirrorScheduler = new KafkaScheduler(2, true, "ClusterMirror-")
+      mirrorScheduler.startup();
+
       mirrorMetadataManager = new MirrorMetadataManager(
+        clusterId,
         config,
         clientToControllerChannelManager,
         () => replicaManager,

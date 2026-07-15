@@ -19,7 +19,6 @@ package org.apache.kafka.clients.admin;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.acl.AclOperation;
-import org.apache.kafka.common.annotation.InterfaceStability;
 
 import java.util.Collections;
 import java.util.Map;
@@ -27,17 +26,16 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * A detailed description of a single cluster mirror.
+ * A detailed description of a cluster mirror.
  */
-@InterfaceStability.Evolving
-public class ClusterMirrorDesc {
+public class ClusterMirrorDescription {
     private final String mirrorName;
-    private final Map<String, Set<LeaderStateDesc>> topics;
+    private final Map<String, Set<LeaderStateDescription>> topics;
     private final Set<AclOperation> authorizedOperations;
 
-    public ClusterMirrorDesc(String mirrorName,
-                             Map<String, Set<LeaderStateDesc>> topics,
-                             Set<AclOperation> authorizedOperations) {
+    public ClusterMirrorDescription(String mirrorName,
+                                    Map<String, Set<LeaderStateDescription>> topics,
+                                    Set<AclOperation> authorizedOperations) {
         this.mirrorName = mirrorName;
         this.topics = Collections.unmodifiableMap(topics);
         this.authorizedOperations = authorizedOperations;
@@ -47,7 +45,7 @@ public class ClusterMirrorDesc {
         return mirrorName;
     }
 
-    public Map<String, Set<LeaderStateDesc>> topics() {
+    public Map<String, Set<LeaderStateDescription>> topics() {
         return topics;
     }
 
@@ -59,7 +57,7 @@ public class ClusterMirrorDesc {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        ClusterMirrorDesc that = (ClusterMirrorDesc) o;
+        ClusterMirrorDescription that = (ClusterMirrorDescription) o;
         return Objects.equals(mirrorName, that.mirrorName) &&
                Objects.equals(topics, that.topics) &&
                Objects.equals(authorizedOperations, that.authorizedOperations);
@@ -72,7 +70,7 @@ public class ClusterMirrorDesc {
 
     @Override
     public String toString() {
-        return "ClusterMirrorDesc{" +
+        return "ClusterMirrorDescription{" +
                "mirrorName='" + mirrorName + '\'' +
                ", topics=" + topics +
                ", authorizedOperations=" + authorizedOperations +
@@ -80,18 +78,17 @@ public class ClusterMirrorDesc {
     }
 
     /** Represents the mirroring state of a leader partition. */
-    public static class LeaderStateDesc {
+    public static class LeaderStateDescription {
         private final TopicPartition topicPartition;
         private final long sourceOffset;
         private final long destinationOffset;
         private final long lag;
         private final String state;
-        private final short retryAttempt;
+        private final int retryAttempt;
         private final String errorMessage;
-        private final int lastMirrorEpoch;
 
-        public LeaderStateDesc(TopicPartition topicPartition, long sourceOffset, long destinationOffset,
-                               long lag, String state, short retryAttempt, String errorMessage, int lastMirrorEpoch) {
+        public LeaderStateDescription(TopicPartition topicPartition, long sourceOffset, long destinationOffset,
+                                      long lag, String state, int retryAttempt, String errorMessage) {
             this.topicPartition = topicPartition;
             this.sourceOffset = sourceOffset;
             this.destinationOffset = destinationOffset;
@@ -99,7 +96,6 @@ public class ClusterMirrorDesc {
             this.state = state;
             this.retryAttempt = retryAttempt;
             this.errorMessage = errorMessage;
-            this.lastMirrorEpoch = lastMirrorEpoch;
         }
 
         public TopicPartition topicPartition() {
@@ -122,7 +118,7 @@ public class ClusterMirrorDesc {
             return state;
         }
 
-        public short retryAttempt() {
+        public int retryAttempt() {
             return retryAttempt;
         }
 
@@ -130,20 +126,15 @@ public class ClusterMirrorDesc {
             return errorMessage;
         }
 
-        public int lastMirrorEpoch() {
-            return lastMirrorEpoch;
-        }
-
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
-            LeaderStateDesc that = (LeaderStateDesc) o;
+            LeaderStateDescription that = (LeaderStateDescription) o;
             return sourceOffset == that.sourceOffset &&
                    destinationOffset == that.destinationOffset &&
                    lag == that.lag &&
                    retryAttempt == that.retryAttempt &&
-                   lastMirrorEpoch == that.lastMirrorEpoch &&
                    Objects.equals(topicPartition, that.topicPartition) &&
                    Objects.equals(state, that.state) &&
                    Objects.equals(errorMessage, that.errorMessage);
@@ -151,12 +142,12 @@ public class ClusterMirrorDesc {
 
         @Override
         public int hashCode() {
-            return Objects.hash(topicPartition, sourceOffset, destinationOffset, lag, state, retryAttempt, errorMessage, lastMirrorEpoch);
+            return Objects.hash(topicPartition, sourceOffset, destinationOffset, lag, state, retryAttempt, errorMessage);
         }
 
         @Override
         public String toString() {
-            return "LeaderStateDesc{" +
+            return "LeaderStateDescription{" +
                    "topicPartition=" + topicPartition +
                    ", sourceOffset=" + sourceOffset +
                    ", destinationOffset=" + destinationOffset +
@@ -164,7 +155,6 @@ public class ClusterMirrorDesc {
                    ", state='" + state + '\'' +
                    ", retryAttempt=" + retryAttempt +
                    ", errorMessage='" + errorMessage + '\'' +
-                   ", lastMirrorEpoch=" + lastMirrorEpoch +
                    '}';
         }
     }

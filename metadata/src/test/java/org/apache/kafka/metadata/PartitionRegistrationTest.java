@@ -72,7 +72,7 @@ public class PartitionRegistrationTest {
             setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
             setIsr(new int[]{1}).setLastKnownElr(new int[]{3}).setElr(new int[]{2}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(0).setPartitionEpoch(1).build();
         assertEquals(b, a.merge(new PartitionChangeRecord().
-            setLeader(3).setIsr(List.of(3))));
+            setLeader(3).setLeaderEpoch(1).setIsr(List.of(3))));
         assertEquals("isr: [1, 2] -> [3], leader: 1 -> 3, leaderEpoch: 0 -> 1, partitionEpoch: 0 -> 1",
             b.diff(a));
         assertEquals("isr: [1, 2] -> [1], elr: [] -> [2], lastKnownElr: [] -> [3], partitionEpoch: 0 -> 1",

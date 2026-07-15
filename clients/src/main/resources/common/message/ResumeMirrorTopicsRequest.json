@@ -26,11 +26,10 @@
       "about": "The cluster mirror name." },
     { "name": "Topics", "type": "[]TopicMetadata", "versions": "0+", "about": "The data for the topics.",
       "fields": [
-        { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
         { "name": "TopicName", "type": "string", "versions": "0+", "mapKey": true, "entityType": "topicName",
           "about": "The topic name." }
       ]},
     { "name": "StateValidationOffset", "type": "int64", "versions": "0+", "default": "-1",
-      "about": "Metadata log offset at which partition states were validated. -1 to skip fencing."}
+      "about": "Cluster metadata offset at which the broker validated preconditions. -1 to skip validation."}
   ]
 }

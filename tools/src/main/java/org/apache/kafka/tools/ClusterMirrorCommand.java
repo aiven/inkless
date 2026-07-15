@@ -18,7 +18,7 @@ package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.ClusterMirrorDesc;
+import org.apache.kafka.clients.admin.ClusterMirrorDescription;
 import org.apache.kafka.clients.admin.ClusterMirrorListing;
 import org.apache.kafka.clients.admin.CreateClusterMirrorOptions;
 import org.apache.kafka.clients.admin.CreateClusterMirrorResult;
@@ -235,7 +235,7 @@ public abstract class ClusterMirrorCommand {
             listings.sort(Comparator.comparing(ClusterMirrorListing::mirrorName));
 
             // Print header
-            System.out.printf("%-30s %-10s %-26s %-50s%n", "MIRROR", "TOPICS", "SOURCE-CLUSTER-ID", "SOURCE-BOOTSTRAP");
+            System.out.printf("%-30s %-10s %-26s %-50s%n", "MIRROR", "TOPICS", "SOURCE-CLUSTER-ID", "SOURCE-BOOTSTRAP-SERVER");
 
             // Print each mirror
             for (ClusterMirrorListing listing : listings) {
@@ -258,7 +258,7 @@ public abstract class ClusterMirrorCommand {
                 ? List.of(opts.mirror().get())
                 : List.of();
 
-            Map<String, ClusterMirrorDesc> descriptions = adminClient.describeClusterMirrors(
+            Map<String, ClusterMirrorDescription> descriptions = adminClient.describeClusterMirrors(
                 mirrorNames, new DescribeClusterMirrorsOptions()).allDescriptions().get();
 
             if (descriptions.isEmpty()) {
@@ -303,19 +303,18 @@ public abstract class ClusterMirrorCommand {
             }
         }
 
-        private List<PartitionInfo> collectPartitionInfos(Map<String, ClusterMirrorDesc> descriptions) {
+        private List<PartitionInfo> collectPartitionInfos(Map<String, ClusterMirrorDescription> descriptions) {
             List<PartitionInfo> partitionInfos = new ArrayList<>();
-            for (Map.Entry<String, ClusterMirrorDesc> mirrorEntry : descriptions.entrySet()) {
+            for (Map.Entry<String, ClusterMirrorDescription> mirrorEntry : descriptions.entrySet()) {
                 String mirrorName = mirrorEntry.getKey();
-                for (Map.Entry<String, Set<ClusterMirrorDesc.LeaderStateDesc>> topicEntry : mirrorEntry.getValue().topics().entrySet()) {
+                for (Map.Entry<String, Set<ClusterMirrorDescription.LeaderStateDescription>> topicEntry : mirrorEntry.getValue().topics().entrySet()) {
                     String topic = topicEntry.getKey();
-                    for (ClusterMirrorDesc.LeaderStateDesc state : topicEntry.getValue()) {
+                    for (ClusterMirrorDescription.LeaderStateDescription state : topicEntry.getValue()) {
                         partitionInfos.add(new PartitionInfo(
                             mirrorName, topic,
                             state.topicPartition().partition(),
                             state.sourceOffset(), state.destinationOffset(), state.lag(),
-                            state.state(), state.retryAttempt(), state.errorMessage(),
-                            state.lastMirrorEpoch()));
+                            state.state(), state.retryAttempt(), state.errorMessage()));
                     }
                 }
             }
@@ -349,7 +348,8 @@ public abstract class ClusterMirrorCommand {
                 if (error.length() > maxError) {
                     error = error.substring(0, maxError - 3) + "...";
                 }
-                String retry = info.retryAttempt() + "/" + maxRetryAttempts;
+                String retry = info.retryAttempt() == -1
+                    ? "NonRetryable" : info.retryAttempt() + "/" + maxRetryAttempts;
                 System.out.printf("%-30s %-40s %-10d %-7s %s%n",
                     truncateLeft(info.mirror(), 30),
                     truncateLeft(info.topic(), 40),
@@ -403,8 +403,7 @@ public abstract class ClusterMirrorCommand {
 
         private record PartitionInfo(String mirror, String topic, int partition,
                                      long sourceOffset, long destinationOffset, long lag,
-                                     String state, short retryAttempt, String errorMessage,
-                                     int lastMirrorEpoch) { }
+                                     String state, int retryAttempt, String errorMessage) { }
     }
 
     private static final class MirrorCommandOptions extends CommandDefaultOptions {

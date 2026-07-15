@@ -14,27 +14,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.kafka.common.errors;
 
-package org.apache.kafka.clients.admin;
+public class MirrorTopicNotStoppedException extends ApiException {
 
-import org.apache.kafka.common.KafkaFuture;
+    private static final long serialVersionUID = 1L;
 
-import java.util.Set;
-
-/**
- * The result of the {@link Admin#stopMirrorTopics(String, Set, StopMirrorTopicsOptions)} call.
- */
-public class StopMirrorTopicsResult {
-    private final KafkaFuture<Void> future;
-
-    StopMirrorTopicsResult(KafkaFuture<Void> future) {
-        this.future = future;
+    public MirrorTopicNotStoppedException(String message) {
+        super(message);
     }
 
-    /**
-     * Return a future which succeeds if the operation is successful.
-     */
-    public KafkaFuture<Void> all() {
-        return future;
+    public MirrorTopicNotStoppedException(String message, Throwable cause) {
+        super(message, cause);
     }
 }

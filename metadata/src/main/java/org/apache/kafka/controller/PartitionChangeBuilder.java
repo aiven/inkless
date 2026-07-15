@@ -60,7 +60,7 @@ public class PartitionChangeBuilder {
         if (record.removingReplicas() != null) return false;
         if (record.addingReplicas() != null) return false;
         if (record.leaderRecoveryState() != LeaderRecoveryState.NO_CHANGE) return false;
-        if (record.minLeaderEpoch() != -1) return false;
+        if (record.leaderEpoch() != -1) return false;
         return record.directories() == null;
     }
 
@@ -100,7 +100,7 @@ public class PartitionChangeBuilder {
     private LeaderRecoveryState targetLeaderRecoveryState;
     private boolean eligibleLeaderReplicasEnabled;
     private DefaultDirProvider defaultDirProvider;
-    private int minLeaderEpoch = -1;
+    private int targetLeaderEpoch = -1;
 
     // Whether allow electing last known leader in a Balanced recovery. Note, the last known leader will be stored in the
     // lastKnownElr field if enabled.
@@ -199,8 +199,8 @@ public class PartitionChangeBuilder {
         return this;
     }
 
-    public PartitionChangeBuilder setMinLeaderEpoch(int leaderEpoch) {
-        this.minLeaderEpoch = leaderEpoch;
+    public PartitionChangeBuilder setTargetLeaderEpoch(int leaderEpoch) {
+        this.targetLeaderEpoch = leaderEpoch;
         return this;
     }
 
@@ -438,8 +438,7 @@ public class PartitionChangeBuilder {
     public Optional<ApiMessageAndVersion> build() {
         PartitionChangeRecord record = new PartitionChangeRecord().
             setTopicId(topicId).
-            setPartitionId(partitionId).
-            setMinLeaderEpoch(minLeaderEpoch);
+            setPartitionId(partitionId);
         completeReassignmentIfNeeded();
 
         maybePopulateTargetElr();
@@ -462,6 +461,8 @@ public class PartitionChangeBuilder {
 
         triggerLeaderEpochBumpForIsrShrinkIfNeeded(record);
 
+        computeLeaderEpoch(record);
+
         maybeUpdateLastKnownLeader(record);
 
         setAssignmentChanges(record);
@@ -474,6 +475,31 @@ public class PartitionChangeBuilder {
             return Optional.empty();
         } else {
             return Optional.of(new ApiMessageAndVersion(record, metadataVersion.partitionChangeRecordVersion()));
+        }
+    }
+
+    /**
+     * Compute the final leader epoch and set it on the record. Called after all other
+     * mutations (election, reassignment, ISR shrink) so that record.leader() reflects
+     * whether a leader change was triggered.
+     *
+     * Only sets the explicit LeaderEpoch field on v3+ records. Older metadata versions
+     * rely on implicit derivation in PartitionRegistration.merge() (leader change = +1).
+     *
+     * If targetLeaderEpoch is set (bump leader epoch request), the caller already
+     * verified that currentLeaderEpoch <= targetLeaderEpoch, so the new epoch is
+     * targetLeaderEpoch + 1. If a leader change was triggered by election, reassignment,
+     * or ISR shrink, the epoch increments by 1. Otherwise, the epoch is left unchanged
+     * (default -1).
+     */
+    private void computeLeaderEpoch(PartitionChangeRecord record) {
+        if (metadataVersion.partitionChangeRecordVersion() < 3) {
+            return;
+        }
+        if (targetLeaderEpoch >= 0) {
+            record.setLeaderEpoch(Math.max(targetLeaderEpoch + 1, partition.leaderEpoch));
+        } else if (record.leader() != NO_LEADER_CHANGE) {
+            record.setLeaderEpoch(partition.leaderEpoch + 1);
         }
     }
 

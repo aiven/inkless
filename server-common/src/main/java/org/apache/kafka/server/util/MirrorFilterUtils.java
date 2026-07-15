@@ -81,7 +81,7 @@ public final class MirrorFilterUtils {
      *
      * Config usage example:
      * <pre>
-     * mirror.acl.include=TOPIC;orders.*, *;*;*;*;User:alice
+     * mirror.acls.include=TOPIC;orders.*, *;*;*;*;User:alice
      * </pre>
      *
      * @param resourceType the resource type to match, or null for wildcard

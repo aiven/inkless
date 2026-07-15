@@ -1166,7 +1166,7 @@ class DynamicClusterMirrorConfig(replicaManager: ReplicaManager,
     }
 
     if (newMirrorConfig.metadataRefreshIntervalMs != oldMirrorConfig.metadataRefreshIntervalMs) {
-      coordinator.rescheduleMetadataRefresh(newMirrorConfig.metadataRefreshIntervalMs)
+      coordinator.scheduleMetadataRefresh(newMirrorConfig.metadataRefreshIntervalMs)
       info(s"Updated ${ClusterMirrorConfig.MIRROR_METADATA_REFRESH_INTERVAL_MS_CONFIG} " +
         s"from ${oldMirrorConfig.metadataRefreshIntervalMs} to ${newMirrorConfig.metadataRefreshIntervalMs}")
     }

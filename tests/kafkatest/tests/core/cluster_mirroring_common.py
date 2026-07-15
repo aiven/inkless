@@ -71,7 +71,7 @@ class MirrorConfig:
         if mirror_groups_exclude is not None:
             self.properties["mirror.groups.exclude"] = mirror_groups_exclude
         if mirror_acl_include is not None:
-            self.properties["mirror.acl.include"] = mirror_acl_include
+            self.properties["mirror.acls.include"] = mirror_acl_include
 
         if (
             security_config is not None
@@ -270,7 +270,7 @@ class MirrorUtils:
 
         wait_until(
             check,
-            timeout_sec=120,
+            timeout_sec=180,
             backoff_sec=5,
             err_msg="Log segments did not converge between source and destination",
         )

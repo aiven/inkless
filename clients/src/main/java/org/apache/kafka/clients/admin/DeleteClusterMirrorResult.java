@@ -19,6 +19,9 @@ package org.apache.kafka.clients.admin;
 
 import org.apache.kafka.common.KafkaFuture;
 
+/**
+ * The result of the {@link Admin#deleteClusterMirror(String, DeleteClusterMirrorOptions)}  call.
+ */
 public class DeleteClusterMirrorResult {
     private final KafkaFuture<Void> future;
 
