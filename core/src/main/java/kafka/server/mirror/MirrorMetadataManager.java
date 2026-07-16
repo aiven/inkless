@@ -1478,17 +1478,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         log.info("Discovered {} new topic(s) matching mirror.topics.include pattern for mirror {}: {}",
                 newTopics.size(), mirrorName, newTopics.stream().map(StartMirrorTopicsRequestData.TopicMetadata::topicName).toList());
 
-        StartMirrorTopicsRequestData data = new StartMirrorTopicsRequestData();
-        data.setMirrorName(mirrorName);
-        newTopics.forEach(topic -> data.topics().add(topic));
-
-
         // TODO: creation failures from auto-discovery are silently lost here (fire-and-forget).
         //  Add per-topic status tracking so describeMirror can surface failed topics to users.
         try {
             getOrCreateDestAdmin().startMirrorTopics(
                     mirrorName,
-                    newTopics.stream().map(t -> t.topicName()).collect(Collectors.toSet()),
+                    newTopics.stream().map(StartMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet()),
                     new StartMirrorTopicsOptions()).all().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             throw new RuntimeException(e);
