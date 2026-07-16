@@ -339,13 +339,10 @@ class KafkaApis(val requestChannel: RequestChannel,
       return
     }
     val data = request.body[StartMirrorTopicsRequest].data()
-    clusterMirrorCoordinator.startMirrorTopics(data, errOpt => {
+    clusterMirrorCoordinator.validateStartMirrorStates(data, errOpt => {
       if (errOpt.isPresent) {
         requestHelper.sendMaybeThrottle(request, new StartMirrorTopicsResponse(new StartMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
       } else {
-        // Broker-side validation succeeded and stamped `data` with stateValidationOffset.
-        // Forward the now-stamped request to the controller via the standard envelope mechanism
-        // so the controller can verify this request genuinely went through broker validation.
         forwardingManager.forwardRequest(request, new StartMirrorTopicsRequest(data, request.header.apiVersion()), {
           case Some(response) => requestHelper.sendForwardedResponse(request, response)
           case None => handleInvalidVersionsDuringForwarding(request)
@@ -361,7 +358,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       return
     }
     val data = request.body[StopMirrorTopicsRequest].data()
-    clusterMirrorCoordinator.stopMirrorTopics(data, errOpt => {
+    clusterMirrorCoordinator.validateStopMirrorStates(data, errOpt => {
       if (errOpt.isPresent) {
         requestHelper.sendMaybeThrottle(request, new StopMirrorTopicsResponse(new StopMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
       } else {
@@ -380,7 +377,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       return
     }
     val data = request.body[PauseMirrorTopicsRequest].data()
-    clusterMirrorCoordinator.pauseMirrorTopics(data, errOpt => {
+    clusterMirrorCoordinator.validatePauseMirrorStates(data, errOpt => {
       if (errOpt.isPresent) {
         requestHelper.sendMaybeThrottle(request, new PauseMirrorTopicsResponse(new PauseMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
       } else {
@@ -399,7 +396,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       return
     }
     val data = request.body[ResumeMirrorTopicsRequest].data()
-    clusterMirrorCoordinator.resumeMirrorTopics(data, errOpt => {
+    clusterMirrorCoordinator.validateResumeMirrorStates(data, errOpt => {
       if (errOpt.isPresent) {
         requestHelper.sendMaybeThrottle(request, new ResumeMirrorTopicsResponse(new ResumeMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
       } else {
@@ -425,7 +422,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setErrorCode(Errors.CLUSTER_MIRROR_AUTHORIZATION_FAILED.code)
           .setErrorMessage(Errors.CLUSTER_MIRROR_AUTHORIZATION_FAILED.message())))
     } else {
-      clusterMirrorCoordinator.deleteClusterMirror(data, errOpt => {
+      clusterMirrorCoordinator.validateDeleteMirrorStates(data, errOpt => {
         if (errOpt.isPresent) {
           requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
         } else {

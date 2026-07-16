@@ -1078,20 +1078,20 @@ public class ClusterMirrorCoordinator {
         return metadataManager.getMirrorStates(mirrorName);
     }
 
-    public void startMirrorTopics(StartMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
-        metadataManager.validateStartMirror(data, callback);
+    public void validateStartMirrorStates(StartMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validateStartMirrorStates(data, callback);
     }
 
-    public void stopMirrorTopics(StopMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
-        metadataManager.validateStopMirror(data, callback);
+    public void validateStopMirrorStates(StopMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validateStopMirrorStates(data, callback);
     }
 
-    public void pauseMirrorTopics(PauseMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
-        metadataManager.validatePauseMirror(data, callback);
+    public void validatePauseMirrorStates(PauseMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validatePauseMirrorStates(data, callback);
     }
 
-    public void resumeMirrorTopics(ResumeMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
-        metadataManager.validateResumeMirror(data, callback);
+    public void validateResumeMirrorStates(ResumeMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validateResumeMirrorStates(data, callback);
     }
 
     public Set<String> getConfiguredTopics(String mirrorName, boolean includePaused, boolean includeStopped) {
@@ -1106,8 +1106,8 @@ public class ClusterMirrorCoordinator {
         return metadataManager.failedPartitionInfo();
     }
 
-    public void deleteClusterMirror(DeleteClusterMirrorRequestData data, Consumer<Optional<Errors>> callback) {
-        metadataManager.validateStoppedAndDelete(data, callback);
+    public void validateDeleteMirrorStates(DeleteClusterMirrorRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validateDeleteMirrorStates(data, callback);
     }
 
     /**

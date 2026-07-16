@@ -263,7 +263,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private boolean isLocalCoordinator(String mirrorName, String topic, int partition) {
-        // if __mirror_state topic is not created yet, we directly return as false.
         if (coordPartitionFinderByKey.isPresent() && metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME) != null) {
             int activeCoordinator = metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME)
                     .partitions().get(coordPartitionFinderByKey.get().apply(
@@ -2095,8 +2094,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Validates that every partition of the given mirror is STOPPED, then forward the delete request with StateValidationOffset
-     * to the controller. Local partitions are checked against the in-memory cache; remote
+     * Validates that every partition of the given mirror is STOPPED, then add the stateValidationOffset
+     * and invoke the callback. Local partitions are checked against the in-memory cache; remote
      * partitions are verified via ReadMirrorStates RPCs to their coordinator brokers. Uses
      * optimistic locking: the broker validates partition states here, while the controller
      * validates that no concurrent metadata changes occurred before committing the delete.
@@ -2105,7 +2104,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @param callback receives {@code Optional.empty()} on success, or an error code if any
      *                 partition is not STOPPED or a coordinator RPC fails
      */
-    void validateStoppedAndDelete(DeleteClusterMirrorRequestData data, Consumer<Optional<Errors>> callback) {
+    void validateDeleteMirrorStates(DeleteClusterMirrorRequestData data, Consumer<Optional<Errors>> callback) {
         String mirrorName = data.mirrorName();
         Set<String> mirroredTopics = getConfiguredTopics(mirrorName, true, true);
         Map<String, Set<Integer>> remotePartitions = new HashMap<>();
@@ -2177,7 +2176,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * offset so the caller can stamp it onto the request and report success/failure via its callback.
      */
     @SuppressWarnings({"NPathComplexity"})
-    private void validateMirrorStatesAndForward(
+    private void validateMirrorStates(
             String mirrorName,
             Set<String> topics,
             Set<Integer> allowedDesiredStates,
@@ -2260,12 +2259,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-    void validateStartMirror(StartMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
-        log.info("!!! Validating start mirror request: {}", data);
+    void validateStartMirrorStates(StartMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
         Set<String> topics = data.topics().stream()
                 .map(StartMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
         // start mirror topics only allow desired state and state as STOPPED or UNKNOWN
-        validateMirrorStatesAndForward(data.mirrorName(), topics,
+        validateMirrorStates(data.mirrorName(), topics,
                 Set.of((int) MirrorPartitionState.STOPPED.value(), (int) MirrorPartitionState.UNKNOWN.value()),
                 Set.of(MirrorPartitionState.STOPPED, MirrorPartitionState.UNKNOWN),
                 true,
@@ -2275,11 +2273,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 }, callback);
     }
 
-    void validateStopMirror(StopMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+    void validateStopMirrorStates(StopMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
         Set<String> topics = data.topics().stream()
                 .map(StopMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
         // stop mirror topics only allow desired state and state as MIRRORING
-        validateMirrorStatesAndForward(data.mirrorName(), topics,
+        validateMirrorStates(data.mirrorName(), topics,
                 Set.of((int) MirrorPartitionState.MIRRORING.value(), (int) MirrorPartitionState.PAUSED.value()),
                 Set.of(MirrorPartitionState.MIRRORING, MirrorPartitionState.PAUSED),
                 false,
@@ -2289,11 +2287,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 }, callback);
     }
 
-    void validatePauseMirror(PauseMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+    void validatePauseMirrorStates(PauseMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
         Set<String> topics = data.topics().stream()
                 .map(PauseMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
         // pause mirror topics only allow desired state and state as MIRRORING
-        validateMirrorStatesAndForward(data.mirrorName(), topics,
+        validateMirrorStates(data.mirrorName(), topics,
                 Set.of((int) MirrorPartitionState.MIRRORING.value()),
                 Set.of(MirrorPartitionState.MIRRORING),
                 false,
@@ -2303,11 +2301,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 }, callback);
     }
 
-    void validateResumeMirror(ResumeMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+    void validateResumeMirrorStates(ResumeMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
         Set<String> topics = data.topics().stream()
                 .map(ResumeMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
         // resume mirror topics only allow desired state and state as PAUSED
-        validateMirrorStatesAndForward(data.mirrorName(), topics,
+        validateMirrorStates(data.mirrorName(), topics,
                 Set.of((int) MirrorPartitionState.PAUSED.value()),
                 Set.of(MirrorPartitionState.PAUSED),
                 false,

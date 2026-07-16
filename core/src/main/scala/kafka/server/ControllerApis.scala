@@ -293,7 +293,7 @@ class ControllerApis(
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
     if (!request.isForwarded)
-      throw new InvalidRequestException("StartMirrorTopicsRequest must be forwarded from the broker node for validation.")
+      throw new InvalidRequestException("This request must be sent to a broker, not directly to the controller")
 
     val wireTopics = startRequest.data().topics()
     val unauthorizedTopics = wireTopics.asScala.map(_.topicName()).filterNot(topic =>
@@ -329,7 +329,7 @@ class ControllerApis(
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
     if (!request.isForwarded)
-      throw new InvalidRequestException("StopMirrorTopicsRequest must be forwarded from the broker node for validation.")
+      throw new InvalidRequestException("This request must be sent to a broker, not directly to the controller")
 
     val topics: util.Set[String] = new util.HashSet[String]()
     stopRequest.data().topics().forEach( topic => {
@@ -364,7 +364,7 @@ class ControllerApis(
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
     if (!request.isForwarded)
-      throw new InvalidRequestException("PauseMirrorTopicsRequest must be forwarded from the broker node for validation.")
+      throw new InvalidRequestException("This request must be sent to a broker, not directly to the controller")
 
     val topics: util.Set[String] = new util.HashSet[String]()
     pauseRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
@@ -395,7 +395,7 @@ class ControllerApis(
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
     if (!request.isForwarded)
-      throw new InvalidRequestException("ResumeMirrorTopicsRequest must be forwarded from the broker node for validation.")
+      throw new InvalidRequestException("This request must be sent to a broker, not directly to the controller")
 
     val topics: util.Set[String] = new util.HashSet[String]()
     resumeRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
@@ -426,7 +426,7 @@ class ControllerApis(
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
     if (!request.isForwarded)
-      throw new InvalidRequestException("DeleteClusterMirrorRequest must be forwarded from the broker node for validation.")
+      throw new InvalidRequestException("This request must be sent to a broker, not directly to the controller")
 
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
