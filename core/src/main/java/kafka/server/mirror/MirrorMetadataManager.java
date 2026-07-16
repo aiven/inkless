@@ -951,7 +951,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             log.debug("Source topic name list: {}", allTopics);
             deletedSourceTopicNames.removeAll(allTopics);
         } catch (Exception e) {
-            log.warn("Failed to describe topic for mirror {}: {}", mirrorName, e.getMessage());
+            log.warn("Failed to list topics for mirror {}, skipping deleted topic detection: {}", mirrorName, e.getMessage());
+            return;
         }
 
         getConfiguredTopics(mirrorName, true).forEach(name -> {
