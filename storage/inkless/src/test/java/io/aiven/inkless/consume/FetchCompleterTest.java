@@ -1120,4 +1120,76 @@ public class FetchCompleterTest {
                 });
         });
     }
+
+    /**
+     * With the coalesced per-partition buffer, multiple batches share one underlying byte[].
+     * Each batch wraps a slice over a distinct region. setLastOffset / setMaxTimestamp mutate
+     * each slice in place - this test pins that the per-batch lastOffset patches end up in
+     * the correct slice and don't bleed into adjacent batches.
+     */
+    @Test
+    public void testCoalescedBufferSliceIsolationOnLastOffsetPatch() {
+        byte[] firstValue = {1};
+        byte[] secondValue = {2};
+        MemoryRecords recordsA = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(firstValue));
+        MemoryRecords recordsB = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(secondValue));
+
+        int totalSize = recordsA.sizeInBytes() + recordsB.sizeInBytes();
+        ByteBuffer concatenatedBuffer = ByteBuffer.allocate(totalSize);
+        concatenatedBuffer.put(recordsA.buffer());
+        concatenatedBuffer.put(recordsB.buffer());
+
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        int logStartOffset = 0;
+        long logAppendTimestamp = 10L;
+        long maxBatchTimestamp = 10L;
+        int highWatermark = 200;
+
+        // Distinct, non-zero lastOffsets force setLastOffset to write a non-default value
+        // into each batch's slice. If the writes leak across slices, the second batch's
+        // lastOffset (101) would overwrite the first batch's lastOffset (100).
+        final long firstLastOffset = 100L;
+        final long secondLastOffset = 101L;
+
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(),
+                    BatchMetadata.of(partition0, 0, recordsA.sizeInBytes(), 0, firstLastOffset,
+                        logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)),
+                new BatchInfo(2L, OBJECT_KEY_A.value(),
+                    BatchMetadata.of(partition0, recordsA.sizeInBytes(), recordsB.sizeInBytes(), 0, secondLastOffset,
+                        logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
+            ), logStartOffset, highWatermark)
+        );
+
+        final ByteRange range = new ByteRange(0, totalSize);
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, concatenatedBuffer))
+        );
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(),
+            OBJECT_KEY_CREATOR,
+            fetchInfos,
+            coordinates,
+            files,
+            durationMs -> {}
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+        FetchPartitionData data = result.get(partition0);
+        assertThat(data.error).isEqualTo(Errors.NONE);
+
+        Iterator<? extends org.apache.kafka.common.record.RecordBatch> batchIterator =
+            data.records.batches().iterator();
+        assertThat(batchIterator.hasNext()).isTrue();
+        assertThat(batchIterator.next().lastOffset())
+            .as("first batch lastOffset must match its metadata, not the second batch's")
+            .isEqualTo(firstLastOffset);
+        assertThat(batchIterator.hasNext()).isTrue();
+        assertThat(batchIterator.next().lastOffset())
+            .as("second batch lastOffset must match its own metadata")
+            .isEqualTo(secondLastOffset);
+        assertThat(batchIterator.hasNext()).isFalse();
+    }
 }

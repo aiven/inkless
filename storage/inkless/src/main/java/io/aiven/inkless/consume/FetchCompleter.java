@@ -213,39 +213,90 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
      */
     private List<MemoryRecords> extractRecords(FindBatchResponse metadata, Map<String, List<FileExtent>> allFiles) {
         List<MemoryRecords> foundRecords = new ArrayList<>();
-        for (BatchInfo batch : metadata.batches()) {
-            List<FileExtent> files = allFiles.get(objectKeyCreator.from(batch.objectKey()).value());
+        final List<BatchInfo> batches = metadata.batches();
+        if (batches.isEmpty()) {
+            return foundRecords;
+        }
+
+        // Allocate one partition-level buffer and hand each batch a slice of it,
+        // instead of allocating per batch. Median fetch returns <=1 batch/partition so
+        // this is allocation-equivalent in steady state, but tail fetches with many
+        // batches/partition (p999 ~15-19) drop from N allocations to 1.
+        final long totalSize = computeTotalBufferSize(batches);
+        if (totalSize < 0 || totalSize > Integer.MAX_VALUE) {
+            // Fallback: allocate per-batch when the partition total would overflow Integer.
+            // Practically unreachable under fetch.max.bytes caps; defensive.
+            return extractRecordsPerBatch(batches, allFiles);
+        }
+        final byte[] partitionBuffer = new byte[(int) totalSize];
+        int writeOffset = 0;
+        for (BatchInfo batch : batches) {
+            final int batchSize = Math.toIntExact(batch.metadata().range().bufferSize());
+            final List<FileExtent> files = allFiles.get(objectKeyCreator.from(batch.objectKey()).value());
             if (files == null || files.isEmpty()) {
-                // Missing file extent for this batch - incomplete batch, fail it and return successful batches so far
+                // Missing file extent for this batch - incomplete batch, return successful batches so far
                 return foundRecords;
             }
-            MemoryRecords fileRecords = constructRecordsFromFile(batch, files);
+            final MemoryRecords fileRecords =
+                constructRecordsIntoSlice(batch, files, partitionBuffer, writeOffset, batchSize);
             if (fileRecords == null) {
-                // Failed to construct records (incomplete batch - missing extents or validation failed)
-                // Incomplete batches are useless to consumers, so fail this batch and return successful batches so far
+                // Incomplete batch (missing extents or validation failed): return successful batches so far
                 return foundRecords;
             }
             foundRecords.add(fileRecords);
+            writeOffset += batchSize;
+        }
+        return foundRecords;
+    }
+
+    private static long computeTotalBufferSize(final List<BatchInfo> batches) {
+        long total = 0;
+        for (BatchInfo b : batches) {
+            total += b.metadata().byteSize();
+            if (total < 0) return -1; // overflow guard
+        }
+        return total;
+    }
+
+    private List<MemoryRecords> extractRecordsPerBatch(
+        final List<BatchInfo> batches,
+        final Map<String, List<FileExtent>> allFiles
+    ) {
+        final List<MemoryRecords> foundRecords = new ArrayList<>();
+        for (BatchInfo batch : batches) {
+            final List<FileExtent> files = allFiles.get(objectKeyCreator.from(batch.objectKey()).value());
+            if (files == null || files.isEmpty()) {
+                return foundRecords;
+            }
+            final int batchSize = Math.toIntExact(batch.metadata().range().bufferSize());
+            final byte[] buffer = new byte[batchSize];
+            final MemoryRecords records = constructRecordsIntoSlice(batch, files, buffer, 0, batchSize);
+            if (records == null) {
+                return foundRecords;
+            }
+            foundRecords.add(records);
         }
         return foundRecords;
     }
 
     /**
-     * Constructs MemoryRecords from file extents for a batch.
+     * Writes a complete batch into {@code dest[destOffset, destOffset+batchSize)} and returns
+     * MemoryRecords over that slice, or {@code null} if the extents don't fully cover the batch
+     * range (an incomplete batch is unusable and must be failed).
      *
-     * <p><b>Batch Completeness Requirement:</b>
-     * A batch must be complete (all required file extents present and contiguous) to be useful.
-     * Partial batches are corrupted and cannot be parsed correctly by consumers. This method
-     * validates completeness before allocating the buffer to avoid memory waste and returns
-     * null for incomplete batches, causing the batch to be failed.
-     *
-     * @param batch the batch metadata
-     * @param files the list of file extents (should be contiguous from groupFileData)
-     * @return MemoryRecords if batch is complete, null if incomplete (missing extents or gaps)
+     * @param batch        the batch metadata
+     * @param files        the list of file extents (should be contiguous from groupFileData)
+     * @param dest         the destination byte array (typically a partition-level buffer)
+     * @param destOffset   start position within {@code dest} to write this batch's bytes
+     * @param batchSize    expected size of the batch (must equal {@code batch.metadata().byteSize()})
+     * @return MemoryRecords (over a slice of {@code dest}) if the batch is complete, null otherwise
      */
-    private static MemoryRecords constructRecordsFromFile(
+    private static MemoryRecords constructRecordsIntoSlice(
         final BatchInfo batch,
-        final List<FileExtent> files
+        final List<FileExtent> files,
+        final byte[] dest,
+        final int destOffset,
+        final int batchSize
     ) {
         if (files == null || files.isEmpty()) {
             return null;
@@ -253,10 +304,7 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
 
         final ByteRange batchRange = batch.metadata().range();
 
-        // Validate that extents fully cover the batch range before allocating buffer.
-        // Incomplete batches are useless to consumers (corrupted data), so we fail early.
-        // This also prevents allocating large buffers for incomplete batches (saves memory).
-        // Collect intersections and check they're contiguous and cover the entire batch range.
+        // Validate that extents fully cover the batch range before writing.
         List<ByteRange> intersections = new ArrayList<>();
         for (FileExtent file : files) {
             final ByteRange fileRange = new ByteRange(file.range().offset(), file.range().length());
@@ -286,22 +334,30 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
             return null; // Doesn't cover entire batch range - incomplete batch
         }
 
-        // All extents cover the batch range, safe to allocate full buffer
-        final byte[] buffer = new byte[Math.toIntExact(batchRange.bufferSize())];
-
+        // All extents cover the batch range, write into dest[destOffset .. destOffset+batchSize].
         for (FileExtent file : files) {
             final ByteRange fileRange = new ByteRange(file.range().offset(), file.range().length());
             ByteRange intersection = ByteRange.intersect(batchRange, fileRange);
             if (intersection.size() > 0) {
-                final int position = intersection.bufferOffset() - batchRange.bufferOffset();
+                final int positionInBatch = intersection.bufferOffset() - batchRange.bufferOffset();
                 final int from = intersection.bufferOffset() - fileRange.bufferOffset();
                 final int to = intersection.bufferOffset() - fileRange.bufferOffset() + intersection.bufferSize();
                 final byte[] fileData = file.data();
-                System.arraycopy(fileData, from, buffer, position, Math.min(fileData.length - from, to - from));
+                final int copyLen = Math.min(fileData.length - from, to - from);
+                // Keep every write inside this batch's [0, batchSize) slot. A runtime check (not an
+                // assert, which is off in production) turns a future miscalc or short extent into a
+                // failed batch rather than silent corruption of an adjacent slot.
+                if (positionInBatch < 0 || copyLen < 0 || positionInBatch + copyLen > batchSize) {
+                    throw new IllegalStateException("batch write out of slot: pos=" + positionInBatch
+                        + " len=" + copyLen + " batchSize=" + batchSize);
+                }
+                System.arraycopy(fileData, from, dest, destOffset + positionInBatch, copyLen);
             }
         }
 
-        return createMemoryRecords(ByteBuffer.wrap(buffer), batch);
+        // slice() bounds the buffer to batchSize, so createMemoryRecords's in-place header mutations
+        // stay within this batch's slot (an out-of-slot write throws rather than corrupting a neighbor).
+        return createMemoryRecords(ByteBuffer.wrap(dest, destOffset, batchSize).slice(), batch);
     }
 
     /**
