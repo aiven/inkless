@@ -1193,7 +1193,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                             if (finalOffset == sourceGroupOffsetAndMetadata.offset()) {
                                 filtered.put(topicPartition, sourceGroupOffsetAndMetadata);
                             } else if (finalOffset == logEndOffset.get()) {
-                                int logEndEpoch = replicaManagerSupplier.get().getLog(topicPartition).map(l -> l.leaderEpochCache().epochForOffset(logEndOffset.get())).getOrElse(() -> -1);
+                                int logEndEpoch = replicaManagerSupplier.get().getLog(topicPartition).map(l -> l.leaderEpochCache().epochForOffset(logEndOffset.get()).orElse(-1)).getOrElse(() -> -1);
                                 if (logEndEpoch < 0) {
                                     log.debug("Cannot get the log end epoch for partition {}, skip consumer group sync for it.", topicPartition);
                                 } else {
@@ -1201,7 +1201,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                 }
                             } else {
                                 // finalOffset == logStartOffset
-                                int logStartEpoch = replicaManagerSupplier.get().getLog(topicPartition).map(l -> l.leaderEpochCache().epochForOffset(logStartOffset.get())).getOrElse(() -> -1);
+                                int logStartEpoch = replicaManagerSupplier.get().getLog(topicPartition).map(l -> l.leaderEpochCache().epochForOffset(logStartOffset.get()).orElse(-1)).getOrElse(() -> -1);
                                 if (logStartEpoch < 0) {
                                     log.debug("Cannot get the log start epoch for partition {}, skip consumer group sync for it.", topicPartition);
                                 } else {
