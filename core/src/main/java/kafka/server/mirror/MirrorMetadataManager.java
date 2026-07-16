@@ -309,14 +309,15 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Admin getOrCreateDestAdmin() {
         if (dstAdmin == null) {
             Properties props = buildDestAdminClientProps(brokerConfig);
+            // Fall back to metadataCache when the advertised port is unresolved (e.g. ephemeral port 0 in tests)
+            if (props.getProperty(BOOTSTRAP_SERVERS_CONFIG).endsWith(":0")) {
+                ListenerName listenerName = brokerConfig.mirrorAdminListenerName();
+                metadataCache.getAliveBrokerNode(nodeId, listenerName).ifPresent(node ->
+                        props.put(BOOTSTRAP_SERVERS_CONFIG, node.host() + ":" + node.port()));
+            }
             dstAdmin = Admin.create(props);
         }
         return dstAdmin;
-    }
-
-    // visible and used for testing only
-    public void setDestAdmin(Admin destAdmin) {
-        dstAdmin = destAdmin;
     }
 
     @Override
