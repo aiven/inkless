@@ -382,11 +382,17 @@ public class ClusterMirrorCoordinator {
                 } else {
                     attempt = 1;
                 }
-                MirrorPartitionState previousState = existing != null ? existing.previousState() : currentState;
+                // Use the actual current state unless this is a FAILED -> FAILED self-transition,
+                // where we preserve the original pre-failure state for retry targeting
+                MirrorPartitionState previousState;
+                if (currentState == MirrorPartitionState.FAILED && existing != null) {
+                    previousState = existing.previousState();
+                } else {
+                    previousState = currentState;
+                }
                 return new FailedPartitionInfo(attempt, errorMessage, previousState);
             });
         } else if (newState == MirrorPartitionState.LOG_TRUNCATION
-                || newState == MirrorPartitionState.MIRRORING
                 || newState == MirrorPartitionState.STOPPED
                 || newState == MirrorPartitionState.PAUSED) {
             metadataManager.failedPartitionInfo().remove(tp);
