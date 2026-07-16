@@ -386,6 +386,7 @@ public class ClusterMirrorCoordinator {
                 return new FailedPartitionInfo(attempt, errorMessage, previousState);
             });
         } else if (newState == MirrorPartitionState.LOG_TRUNCATION
+                || newState == MirrorPartitionState.MIRRORING
                 || newState == MirrorPartitionState.STOPPED
                 || newState == MirrorPartitionState.PAUSED) {
             metadataManager.failedPartitionInfo().remove(tp);
@@ -415,7 +416,15 @@ public class ClusterMirrorCoordinator {
                     brokerConfig.mirrorConfig().failedRetryMaxBackoffMs(),
                     CommonClientConfigs.RETRY_BACKOFF_JITTER);
             long delay = failedRetryBackoff.backoff(attempt);
-            MirrorPartitionState targetState = fpi != null ? fpi.previousState() : MirrorPartitionState.MIRRORING;
+            MirrorPartitionState targetState;
+            if (fpi == null) {
+                targetState = MirrorPartitionState.MIRRORING;
+            } else if (fpi.previousState() == MirrorPartitionState.UNKNOWN) {
+                // FAILED -> UNKNOWN is not a valid transition, so re-bootstrap via LOG_TRUNCATION instead
+                targetState = MirrorPartitionState.LOG_TRUNCATION;
+            } else {
+                targetState = fpi.previousState();
+            }
             log.info("Scheduling retry attempt #{} for partition {} in {} ms with target state {}.", attempt, tp, delay, targetState);
             scheduler.scheduleOnce("MirrorFailedRetry-" + tp, () -> transitionTo(mirrorName, Set.of(tp), targetState), delay);
         });
