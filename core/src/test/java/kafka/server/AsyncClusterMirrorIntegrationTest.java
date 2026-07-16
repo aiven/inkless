@@ -162,6 +162,9 @@ public class AsyncClusterMirrorIntegrationTest {
         dstAdmin = Admin.create(Map.of(
                 AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, dstCluster.bootstrapServers()
         ));
+        // Set the adminClient to the destination cluster's brokers because the listener is set to "localhost:0" in brokers for IT.
+        // We can't connect to it with Error connecting to node localhost:0: java.net.BindException: Can't assign requested address
+        dstCluster.brokers().values().forEach(b -> b.mirrorMetadataManager().setDestAdmin(dstAdmin));
     }
 
     @AfterEach
@@ -840,6 +843,7 @@ public class AsyncClusterMirrorIntegrationTest {
                 List.of(mirrorName), new DescribeClusterMirrorsOptions());
         var descriptions = result.allDescriptions().get(5, TimeUnit.SECONDS);
         ClusterMirrorDescription desc = descriptions.get(mirrorName);
+        System.out.println("!!! MIRROR DESC: " + desc);
         if (desc == null) return false;
         var pattern = java.util.regex.Pattern.compile(topicPattern);
         var matched = desc.topics().entrySet().stream()

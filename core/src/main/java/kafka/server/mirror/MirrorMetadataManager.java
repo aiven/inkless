@@ -39,6 +39,7 @@ import org.apache.kafka.clients.admin.ListClusterMirrorsOptions;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsSpec;
 import org.apache.kafka.clients.admin.ListGroupsOptions;
 import org.apache.kafka.clients.admin.ListShareGroupOffsetsSpec;
+import org.apache.kafka.clients.admin.StartMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.Endpoint;
@@ -85,7 +86,6 @@ import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
 import org.apache.kafka.common.requests.ReadMirrorStatesRequest;
 import org.apache.kafka.common.requests.ReadMirrorStatesResponse;
-import org.apache.kafka.common.requests.StartMirrorTopicsRequest;
 import org.apache.kafka.common.requests.StopMirrorTopicsRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesResponse;
@@ -313,6 +313,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             dstAdmin = Admin.create(props);
         }
         return dstAdmin;
+    }
+
+    // visible and used for testing only
+    public void setDestAdmin(Admin destAdmin) {
+        dstAdmin = destAdmin;
     }
 
     @Override
@@ -1478,12 +1483,17 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         data.setMirrorName(mirrorName);
         newTopics.forEach(topic -> data.topics().add(topic));
 
+
         // TODO: creation failures from auto-discovery are silently lost here (fire-and-forget).
         //  Add per-topic status tracking so describeMirror can surface failed topics to users.
-        channelManager.sendRequest(
-                new StartMirrorTopicsRequest.Builder(data),
-                new TimeoutHandler(log)
-        );
+        try {
+            getOrCreateDestAdmin().startMirrorTopics(
+                    mirrorName,
+                    newTopics.stream().map(t -> t.topicName()).collect(Collectors.toSet()),
+                    new StartMirrorTopicsOptions()).all().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /**
@@ -2251,6 +2261,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     void validateStartMirror(StartMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        log.info("!!! Validating start mirror request: {}", data);
         Set<String> topics = data.topics().stream()
                 .map(StartMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
         // start mirror topics only allow desired state and state as STOPPED or UNKNOWN
@@ -2269,8 +2280,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 .map(StopMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
         // stop mirror topics only allow desired state and state as MIRRORING
         validateMirrorStatesAndForward(data.mirrorName(), topics,
-                Set.of((int) MirrorPartitionState.MIRRORING.value()),
-                Set.of(MirrorPartitionState.MIRRORING),
+                Set.of((int) MirrorPartitionState.MIRRORING.value(), (int) MirrorPartitionState.PAUSED.value()),
+                Set.of(MirrorPartitionState.MIRRORING, MirrorPartitionState.PAUSED),
                 false,
                 (offset, cb) -> {
                     data.setStateValidationOffset(offset);
