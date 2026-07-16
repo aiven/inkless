@@ -32,6 +32,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
@@ -54,26 +55,38 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
     private final Map<TopicIdPartition, FindBatchResponse> coordinates;
     private final List<FileExtentResult> backingData;
     private final Consumer<Long> durationCallback;
+    private final InklessFetchMetrics metrics;
 
     public FetchCompleter(Time time,
                           ObjectKeyCreator objectKeyCreator,
                           Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
                           Map<TopicIdPartition, FindBatchResponse> coordinates,
                           List<FileExtentResult> backingData,
-                          Consumer<Long> durationCallback) {
+                          Consumer<Long> durationCallback,
+                          InklessFetchMetrics metrics) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
         this.fetchInfos = fetchInfos;
         this.coordinates = coordinates;
         this.backingData = backingData;
         this.durationCallback = durationCallback;
+        this.metrics = Objects.requireNonNull(metrics, "metrics cannot be null");
     }
 
     @Override
     public Map<TopicIdPartition, FetchPartitionData> get() {
         try {
             final Map<String, List<FileExtent>> files = groupFileData();
-            return TimeUtils.measureDurationMs(time, () -> serveFetch(coordinates, files), durationCallback);
+            final Map<TopicIdPartition, FetchPartitionData> result =
+                TimeUtils.measureDurationMs(time, () -> serveFetch(coordinates, files), durationCallback);
+            long totalBytes = 0;
+            for (FetchPartitionData d : result.values()) {
+                totalBytes += d.records.sizeInBytes();
+            }
+            // Record every fetch, including 0-byte responses: empty-fetch frequency is signal, and
+            // this stays consistent with the other (unguarded) fetch-shape histograms.
+            metrics.recordFetchResponseSize(totalBytes);
+            return result;
         } catch (Exception e) {
             throw new FetchException("Failed to complete fetch for partitions " + fetchInfos.keySet(), e);
         }
@@ -138,6 +151,7 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
     ) {
         FindBatchResponse metadata = allMetadata.get(key);
         if (metadata == null) {
+            metrics.recordPartitionStorageError();
             return new FetchPartitionData(
                 Errors.KAFKA_STORAGE_ERROR,
                 -1,
@@ -166,6 +180,7 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
         List<MemoryRecords> foundRecords = extractRecords(metadata, allFiles);
         if (foundRecords.isEmpty()) {
             // If there is no FetchedFile to serve this topic id partition, the earlier steps which prepared the metadata + data have an error.
+            metrics.recordPartitionStorageError();
             return new FetchPartitionData(
                 Errors.KAFKA_STORAGE_ERROR,
                 -1,
@@ -177,6 +192,10 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
                 OptionalInt.empty(),
                 false
             );
+        }
+        // Partial: extracted some batches but fewer than the metadata listed (trailing batch dropped).
+        if (foundRecords.size() < metadata.batches().size()) {
+            metrics.recordPartitionPartialFetch();
         }
 
         return new FetchPartitionData(
