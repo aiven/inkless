@@ -40,6 +40,7 @@ import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsSpec;
 import org.apache.kafka.clients.admin.ListGroupsOptions;
 import org.apache.kafka.clients.admin.ListShareGroupOffsetsSpec;
 import org.apache.kafka.clients.admin.StartMirrorTopicsOptions;
+import org.apache.kafka.clients.admin.StopMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.Endpoint;
@@ -86,7 +87,6 @@ import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
 import org.apache.kafka.common.requests.ReadMirrorStatesRequest;
 import org.apache.kafka.common.requests.ReadMirrorStatesResponse;
-import org.apache.kafka.common.requests.StopMirrorTopicsRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesRequest;
 import org.apache.kafka.common.requests.WriteMirrorStatesResponse;
 import org.apache.kafka.common.resource.ResourceType;
@@ -131,7 +131,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.BiConsumer;
+import java.util.function.LongConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -1487,7 +1487,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     newTopics.stream().map(StartMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet()),
                     new StartMirrorTopicsOptions()).all().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            log.warn("Failed to start discovered topics for mirror {}: {}", mirrorName, e.getMessage());
         }
     }
 
@@ -1510,10 +1510,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         log.info("Stopping {} topic(s) matching mirror.topics.exclude for mirror {}: {}",
                 excludedTopics.size(), mirrorName, excludedTopics);
 
-        channelManager.sendRequest(
-                new StopMirrorTopicsRequest.Builder(mirrorName, excludedTopics),
-                new TimeoutHandler(log)
-        );
+        try {
+            getOrCreateDestAdmin().stopMirrorTopics(mirrorName, excludedTopics, new StopMirrorTopicsOptions())
+                    .all().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            log.warn("Failed to stop excluded topics for mirror {}: {}", mirrorName, e.getMessage());
+        }
     }
 
     /** Finds the coordinator node (leader of the __mirror_state partition) for a mirror record key */
@@ -2089,226 +2091,162 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return pendingPartitionStates;
     }
 
-    /**
-     * Validates that every partition of the given mirror is STOPPED, then add the stateValidationOffset
-     * and invoke the callback. Local partitions are checked against the in-memory cache; remote
-     * partitions are verified via ReadMirrorStates RPCs to their coordinator brokers. Uses
-     * optimistic locking: the broker validates partition states here, while the controller
-     * validates that no concurrent metadata changes occurred before committing the delete.
-     *
-     * @param data     the delete request data; mutated in place with {@code stateValidationOffset} on success
-     * @param callback receives {@code Optional.empty()} on success, or an error code if any
-     *                 partition is not STOPPED or a coordinator RPC fails
-     */
     void validateDeleteMirrorStates(DeleteClusterMirrorRequestData data, Consumer<Optional<Errors>> callback) {
-        String mirrorName = data.mirrorName();
-        Set<String> mirroredTopics = getConfiguredTopics(mirrorName, true, true);
-        Map<String, Set<Integer>> remotePartitions = new HashMap<>();
-
-        MetadataImage curImage = metadataImage;
-        long brokerMetadataOffset = curImage.offset();
-        for (String topic : mirroredTopics) {
-            TopicImage topicImage = curImage.topics().getTopic(topic);
-            if (topicImage == null || topicImage.desiredMirrorState() != MirrorPartitionState.STOPPED.value()) {
-                log.error("The desired mirror state of topic {} is not in STOPPED state.", topic);
-                callback.accept(Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES));
-                return;
-            }
-            int partitionSize = topicImage.partitions().size();
-
-            for (int i = 0; i < partitionSize; i++) {
-                if (isLocalCoordinator(mirrorName, topic, i)) {
-                    MirrorPartitionState state = partitionStates.getOrDefault(new PartitionKey(mirrorName, topic, i), MirrorPartitionState.UNKNOWN);
-                    if (state != MirrorPartitionState.STOPPED) {
-                        log.error("Partition {}-{} is not in STOPPED state. Current state: {}.", topic, i, state);
-                        callback.accept(Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES));
-                        return;
-                    }
-                } else {
-                    remotePartitions.computeIfAbsent(topic, k -> new HashSet<>()).add(i);
-                }
-            }
-        }
-
-        if (remotePartitions.isEmpty()) {
-            data.setStateValidationOffset(brokerMetadataOffset);
-            callback.accept(Optional.empty());
-            return;
-        }
-
-        readStatesFromRemoteCoordinator(mirrorName, remotePartitions, response -> {
-            if (response.data().errorCode() != Errors.NONE.code()) {
-                log.error("Error returned from read states from remote coordinator. Error code: {} and message: {}",
-                        response.data().errorCode(), response.data().errorMessage());
-                callback.accept(Optional.of(Errors.forCode(response.data().errorCode())));
-                return;
-            }
-
-            for (var topicResult : response.data().topics()) {
-                for (var partitionResult : topicResult.partitions()) {
-                    if (partitionResult.errorCode() != Errors.NONE.code()) {
-                        log.error("Error returned from read states from remote coordinator for partition {}-{}. Error code: {}",
-                                topicResult.name(), partitionResult.partitionIndex(), partitionResult.errorCode());
-                        callback.accept(Optional.of(Errors.forCode(partitionResult.errorCode())));
-                        return;
-                    }
-                    if (partitionResult.state() != MirrorPartitionState.STOPPED.value()) {
-                        log.error("Partition {}-{} is not in STOPPED state. Current state: {}.",
-                                topicResult.name(), partitionResult.partitionIndex(), MirrorPartitionState.fromValue(partitionResult.state()));
-                        callback.accept(Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES));
-                        return;
-                    }
-                }
-            }
-            data.setStateValidationOffset(brokerMetadataOffset);
-            callback.accept(Optional.empty());
-        });
-    }
-
-    /**
-     * Generic optimistic locking validation for mirror state operations.
-     * Validates desired mirror states (from MetadataImage) and actual mirror states (from coordinator)
-     * against the allowed sets, captures the metadata offset, then invokes {@code onValidated} with that
-     * offset so the caller can stamp it onto the request and report success/failure via its callback.
-     */
-    @SuppressWarnings({"NPathComplexity"})
-    private void validateMirrorStates(
-            String mirrorName,
-            Set<String> topics,
-            Set<Integer> allowedDesiredStates,
-            Set<MirrorPartitionState> allowedCoordinatorStates,
-            boolean allowMissingTopics,
-            BiConsumer<Long, Consumer<Optional<Errors>>> onValidated,
-            Consumer<Optional<Errors>> callback) {
-        MetadataImage curImage = metadataImage;
-        long brokerMetadataOffset = curImage.offset();
-        Map<String, Set<Integer>> remotePartitions = new HashMap<>();
-
-        for (String topic : topics) {
-            TopicImage topicImage = curImage.topics().getTopic(topic);
-            if (topicImage == null) {
-                if (!allowMissingTopics) {
-                    log.error("Topic {} not found in metadata image.", topic);
-                    callback.accept(Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES));
-                    return;
-                }
-                continue;
-            }
-            if (!allowedDesiredStates.contains(topicImage.desiredMirrorState())) {
-                log.error("Topic {} desired mirror state is {}, expected one of {}.",
-                        topic, MirrorPartitionState.fromValue((byte) topicImage.desiredMirrorState()), allowedDesiredStates);
-                callback.accept(Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES));
-                return;
-            }
-            int partitionSize = topicImage.partitions().size();
-            for (int i = 0; i < partitionSize; i++) {
-                if (isLocalCoordinator(mirrorName, topic, i)) {
-                    MirrorPartitionState state = partitionStates.getOrDefault(
-                            new ClusterMirrorUtils.PartitionKey(mirrorName, topic, i), MirrorPartitionState.UNKNOWN);
-                    if (!allowedCoordinatorStates.contains(state)) {
-                        log.error("Partition {}-{} is in {} state, expected one of {}.", topic, i, state, allowedCoordinatorStates);
-                        callback.accept(Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES));
-                        return;
-                    }
-                } else {
-                    if (metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME) != null) {
-                        remotePartitions.computeIfAbsent(topic, k -> new HashSet<>()).add(i);
-                    } else {
-                        log.info("Topic {} is not created completely. This means the mirror state is empty (UNKNOWN), so pass the validation.",
-                                MIRROR_STATE_TOPIC_NAME);
-                    }
-                }
-            }
-        }
-
-        if (remotePartitions.isEmpty()) {
-            onValidated.accept(brokerMetadataOffset, callback);
-            return;
-        }
-
-        readStatesFromRemoteCoordinator(mirrorName, remotePartitions, response -> {
-            if (response.data().errorCode() != Errors.NONE.code()) {
-                log.error("Error reading states from remote coordinator. Error code: {} and message: {}",
-                        response.data().errorCode(), response.data().errorMessage());
-                callback.accept(Optional.of(Errors.forCode(response.data().errorCode())));
-                return;
-            }
-
-            for (var topicResult : response.data().topics()) {
-                for (var partitionResult : topicResult.partitions()) {
-                    if (partitionResult.errorCode() != Errors.NONE.code()) {
-                        log.error("Error reading state from remote coordinator for partition {}-{}. Error code: {}",
-                                topicResult.name(), partitionResult.partitionIndex(), partitionResult.errorCode());
-                        callback.accept(Optional.of(Errors.forCode(partitionResult.errorCode())));
-                        return;
-                    }
-                    MirrorPartitionState remoteState = MirrorPartitionState.fromValue(partitionResult.state());
-                    if (!allowedCoordinatorStates.contains(remoteState)) {
-                        log.error("Remote partition {}-{} is in {} state, expected one of {}.",
-                                topicResult.name(), partitionResult.partitionIndex(), remoteState, allowedCoordinatorStates);
-                        callback.accept(Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES));
-                        return;
-                    }
-                }
-            }
-            onValidated.accept(brokerMetadataOffset, callback);
-        });
+        Set<String> topics = getConfiguredTopics(data.mirrorName(), true, true);
+        validateMirrorStates(data.mirrorName(), topics,
+                Set.of(MirrorPartitionState.STOPPED), false,
+                offset -> data.setStateValidationOffset(offset), callback);
     }
 
     void validateStartMirrorStates(StartMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
         Set<String> topics = data.topics().stream()
                 .map(StartMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
-        // start mirror topics only allow desired state and state as STOPPED or UNKNOWN
         validateMirrorStates(data.mirrorName(), topics,
-                Set.of((int) MirrorPartitionState.STOPPED.value(), (int) MirrorPartitionState.UNKNOWN.value()),
-                Set.of(MirrorPartitionState.STOPPED, MirrorPartitionState.UNKNOWN),
-                true,
-                (offset, cb) -> {
-                    data.setStateValidationOffset(offset);
-                    cb.accept(Optional.empty());
-                }, callback);
+                Set.of(MirrorPartitionState.STOPPED, MirrorPartitionState.UNKNOWN), true,
+                offset -> data.setStateValidationOffset(offset), callback);
     }
 
     void validateStopMirrorStates(StopMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
         Set<String> topics = data.topics().stream()
                 .map(StopMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
-        // stop mirror topics only allow desired state and state as MIRRORING
         validateMirrorStates(data.mirrorName(), topics,
-                Set.of((int) MirrorPartitionState.MIRRORING.value(), (int) MirrorPartitionState.PAUSED.value()),
-                Set.of(MirrorPartitionState.MIRRORING, MirrorPartitionState.PAUSED),
-                false,
-                (offset, cb) -> {
-                    data.setStateValidationOffset(offset);
-                    cb.accept(Optional.empty());
-                }, callback);
+                Set.of(MirrorPartitionState.MIRRORING, MirrorPartitionState.PAUSED), false,
+                offset -> data.setStateValidationOffset(offset), callback);
     }
 
     void validatePauseMirrorStates(PauseMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
         Set<String> topics = data.topics().stream()
                 .map(PauseMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
-        // pause mirror topics only allow desired state and state as MIRRORING
         validateMirrorStates(data.mirrorName(), topics,
-                Set.of((int) MirrorPartitionState.MIRRORING.value()),
-                Set.of(MirrorPartitionState.MIRRORING),
-                false,
-                (offset, cb) -> {
-                    data.setStateValidationOffset(offset);
-                    cb.accept(Optional.empty());
-                }, callback);
+                Set.of(MirrorPartitionState.MIRRORING), false,
+                offset -> data.setStateValidationOffset(offset), callback);
     }
 
     void validateResumeMirrorStates(ResumeMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
         Set<String> topics = data.topics().stream()
                 .map(ResumeMirrorTopicsRequestData.TopicMetadata::topicName).collect(Collectors.toSet());
-        // resume mirror topics only allow desired state and state as PAUSED
         validateMirrorStates(data.mirrorName(), topics,
-                Set.of((int) MirrorPartitionState.PAUSED.value()),
-                Set.of(MirrorPartitionState.PAUSED),
-                false,
-                (offset, cb) -> {
-                    data.setStateValidationOffset(offset);
-                    cb.accept(Optional.empty());
-                }, callback);
+                Set.of(MirrorPartitionState.PAUSED), false,
+                offset -> data.setStateValidationOffset(offset), callback);
+    }
+
+    /**
+     * Validates partition states on the broker before forwarding a mirror operation to the controller.
+     * Checks that both the desired state (from MetadataImage) and the actual coordinator state
+     * (local cache + remote RPCs) are within {@code validStates}. On success, passes the metadata
+     * offset at validation time to {@code offsetConsumer} so the caller can set it on the request
+     * data. The controller uses this offset for optimistic locking, rejecting the request if any
+     * mirror state changed after the broker's validation.
+     *
+     * @param mirrorName        the mirror being validated
+     * @param topicNames        topic names whose partitions must be checked
+     * @param validStates       the set of states that desired and actual partition states must belong to
+     * @param skipMissingTopics if true, topics not yet in the metadata image are skipped (used by start)
+     * @param offsetConsumer    receives the metadata offset on success so the caller can set it on the request
+     * @param resultHandler     receives {@code Optional.empty()} on success, or an error on validation failure
+     */
+    private void validateMirrorStates(
+            String mirrorName,
+            Set<String> topicNames,
+            Set<MirrorPartitionState> validStates,
+            boolean skipMissingTopics,
+            LongConsumer offsetConsumer,
+            Consumer<Optional<Errors>> resultHandler) {
+        MetadataImage currentImage = metadataImage;
+        long validationOffset = currentImage.offset();
+        Map<String, Set<Integer>> remotePartitions = new HashMap<>();
+
+        Optional<Errors> localError = validateLocalPartitions(
+                mirrorName, topicNames, validStates, skipMissingTopics, currentImage, remotePartitions);
+        if (localError.isPresent()) {
+            resultHandler.accept(localError);
+            return;
+        }
+
+        if (remotePartitions.isEmpty()) {
+            offsetConsumer.accept(validationOffset);
+            resultHandler.accept(Optional.empty());
+            return;
+        }
+
+        readStatesFromRemoteCoordinator(mirrorName, remotePartitions, response -> {
+            Optional<Errors> remoteError = validateRemotePartitions(response, validStates);
+            if (remoteError.isPresent()) {
+                resultHandler.accept(remoteError);
+            } else {
+                offsetConsumer.accept(validationOffset);
+                resultHandler.accept(Optional.empty());
+            }
+        });
+    }
+
+    private Optional<Errors> validateLocalPartitions(
+            String mirrorName,
+            Set<String> topicNames,
+            Set<MirrorPartitionState> validStates,
+            boolean skipMissingTopics,
+            MetadataImage currentImage,
+            Map<String, Set<Integer>> remotePartitions) {
+        Set<Integer> validDesiredStateValues = validStates.stream()
+                .map(s -> (int) s.value()).collect(Collectors.toSet());
+
+        for (String topic : topicNames) {
+            TopicImage topicImage = currentImage.topics().getTopic(topic);
+            if (topicImage == null) {
+                if (!skipMissingTopics) {
+                    log.error("Topic {} not found in metadata image.", topic);
+                    return Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES);
+                }
+                continue;
+            }
+            if (!validDesiredStateValues.contains(topicImage.desiredMirrorState())) {
+                log.error("Topic {} desired mirror state is {}, expected one of {}.",
+                        topic, MirrorPartitionState.fromValue((byte) topicImage.desiredMirrorState()), validStates);
+                return Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES);
+            }
+            for (int i = 0; i < topicImage.partitions().size(); i++) {
+                if (isLocalCoordinator(mirrorName, topic, i)) {
+                    MirrorPartitionState state = partitionStates.getOrDefault(
+                            new ClusterMirrorUtils.PartitionKey(mirrorName, topic, i), MirrorPartitionState.UNKNOWN);
+                    if (!validStates.contains(state)) {
+                        log.error("Partition {}-{} is in {} state, expected one of {}.", topic, i, state, validStates);
+                        return Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES);
+                    }
+                } else if (metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME) != null) {
+                    remotePartitions.computeIfAbsent(topic, k -> new HashSet<>()).add(i);
+                } else {
+                    log.info("Topic {} is not created completely. Mirror state is empty (UNKNOWN), passing validation.",
+                            MIRROR_STATE_TOPIC_NAME);
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<Errors> validateRemotePartitions(
+            ReadMirrorStatesResponse response,
+            Set<MirrorPartitionState> validStates) {
+        if (response.data().errorCode() != Errors.NONE.code()) {
+            log.error("Error reading states from remote coordinator. Error code: {} and message: {}",
+                    response.data().errorCode(), response.data().errorMessage());
+            return Optional.of(Errors.forCode(response.data().errorCode()));
+        }
+        for (var topicResult : response.data().topics()) {
+            for (var partitionResult : topicResult.partitions()) {
+                if (partitionResult.errorCode() != Errors.NONE.code()) {
+                    log.error("Error reading state from remote coordinator for partition {}-{}. Error code: {}",
+                            topicResult.name(), partitionResult.partitionIndex(), partitionResult.errorCode());
+                    return Optional.of(Errors.forCode(partitionResult.errorCode()));
+                }
+                MirrorPartitionState remoteState = MirrorPartitionState.fromValue(partitionResult.state());
+                if (!validStates.contains(remoteState)) {
+                    log.error("Remote partition {}-{} is in {} state, expected one of {}.",
+                            topicResult.name(), partitionResult.partitionIndex(), remoteState, validStates);
+                    return Optional.of(Errors.INVALID_CLUSTER_MIRROR_STATES);
+                }
+            }
+        }
+        return Optional.empty();
     }
 
     void applyLoadedPartitionStates(ClusterMirrorUtils.StateTransitionCallback callback) {
@@ -2316,7 +2254,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         partitionStates.forEach((key, value) -> {
             log.debug("Applying loaded partition state: {} {}", key, value);
             metadataCache.getLeaderAndIsr(key.topic(), key.partition()).ifPresent(metadata -> {
-                // only operate when this node is the leader of the partition
+                // Only operate when this node is the leader of the partition
                 if (metadata.leader() == nodeId) {
                     statesToPartitionsToOperate.compute(key.mirrorName(), (k, v) -> {
                         if (v == null) {
@@ -2363,7 +2301,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             Collection<ClusterMirrorListing> sourceMirrors,
             Set<TopicPartition> topicPartitionToBeMirrored) {
         Set<TopicPartition> partitionsNotStopped = new HashSet<>();
-        // get all source cluster mirror names that the source cluster id is local cluster id
+        // Get all source cluster mirror names that the source cluster id is local cluster id
         List<String> localClusterSourceMirrors = sourceMirrors.stream()
                 .filter(sm -> sm.sourceClusterId().equals(clusterId))
                 .map(ClusterMirrorListing::mirrorName)
@@ -2374,7 +2312,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             if (desc == null) {
                 continue;
             }
-            // validate each partition state is in STOPPED state
+            // Validate each partition state is in STOPPED state
             for (TopicPartition tp : topicPartitionToBeMirrored) {
                 Set<ClusterMirrorDescription.LeaderStateDescription> leaderStates = desc.topics().get(tp.topic());
                 if (leaderStates == null) {
@@ -2407,7 +2345,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         DescribeClusterMirrorsOptions options = new DescribeClusterMirrorsOptions()
                 .clusterId(clusterId)
                 .lastMirrorEpochLookups(lookups);
-        // describe for all mirrors and last mirror epoch lookups
+        // Describe for all mirrors and last mirror epoch lookups
         DescribeClusterMirrorsResult result = admin.describeClusterMirrors(List.of(), options);
 
         var describeFuture = result.allDescriptions().toCompletionStage().toCompletableFuture();

@@ -273,7 +273,7 @@ public class ConfigurationControlManager {
 
         Set<String> topicNames = topics.stream().map(Controller.MirrorTopicMetadata::name).collect(Collectors.toSet());
 
-        var errorTopicInfo = validateStateValidationOffset(stateValidationOffset, replicationControl, mirrorName, topicNames);
+        var errorTopicInfo = checkForConcurrentStateChange(stateValidationOffset, replicationControl, mirrorName, topicNames);
         if (errorTopicInfo.isPresent()) {
             data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_STATES.code());
             data.setErrorMessage("Mirror state for topic '" + errorTopicInfo.get().name()
@@ -406,7 +406,7 @@ public class ConfigurationControlManager {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         StopMirrorTopicsResponseData data = new StopMirrorTopicsResponseData();
 
-        var errorTopicInfo = validateStateValidationOffset(stateValidationOffset, replicationControl, mirrorName, topics);
+        var errorTopicInfo = checkForConcurrentStateChange(stateValidationOffset, replicationControl, mirrorName, topics);
         if (errorTopicInfo.isPresent()) {
             data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_STATES.code());
             data.setErrorMessage("Mirror state for topic '" + errorTopicInfo.get().name()
@@ -486,7 +486,7 @@ public class ConfigurationControlManager {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         PauseMirrorTopicsResponseData data = new PauseMirrorTopicsResponseData();
 
-        var errorTopicInfo = validateStateValidationOffset(stateValidationOffset, replicationControl, mirrorName, topics);
+        var errorTopicInfo = checkForConcurrentStateChange(stateValidationOffset, replicationControl, mirrorName, topics);
         if (errorTopicInfo.isPresent()) {
             data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_STATES.code());
             data.setErrorMessage("Mirror state for topic '" + errorTopicInfo.get().name()
@@ -551,7 +551,7 @@ public class ConfigurationControlManager {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         ResumeMirrorTopicsResponseData data = new ResumeMirrorTopicsResponseData();
 
-        var errorTopicInfo = validateStateValidationOffset(stateValidationOffset, replicationControl, mirrorName, topics);
+        var errorTopicInfo = checkForConcurrentStateChange(stateValidationOffset, replicationControl, mirrorName, topics);
         if (errorTopicInfo.isPresent()) {
             data.setErrorCode(Errors.INVALID_CLUSTER_MIRROR_STATES.code());
             data.setErrorMessage("Mirror state for topic '" + errorTopicInfo.get().name()
@@ -690,8 +690,13 @@ public class ConfigurationControlManager {
         return ControllerResult.atomicOf(records, data);
     }
 
-    // validate the stateValidationOffset and return the validation failed topic info when found
-    private Optional<ReplicationControlManager.TopicControlInfo> validateStateValidationOffset(
+    /**
+     * Optimistic locking check: detects whether any mirror topic state changed after the broker
+     * validated preconditions. Returns the first topic whose last state change offset exceeds the
+     * broker's snapshot offset, indicating a concurrent modification that should cause the
+     * controller to reject the request.
+     */
+    private Optional<ReplicationControlManager.TopicControlInfo> checkForConcurrentStateChange(
             long stateValidationOffset,
             ReplicationControlManager replicationControl,
             String mirrorName,
