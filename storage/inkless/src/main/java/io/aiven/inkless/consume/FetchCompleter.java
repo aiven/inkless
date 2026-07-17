@@ -17,7 +17,9 @@
  */
 package io.aiven.inkless.consume;
 
+import org.apache.kafka.common.InvalidRecordException;
 import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.errors.CorruptRecordException;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
@@ -26,12 +28,16 @@ import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
@@ -48,32 +54,46 @@ import io.aiven.inkless.generated.FileExtent;
 
 public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchPartitionData>> {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(FetchCompleter.class);
+
     private final Time time;
     private final ObjectKeyCreator objectKeyCreator;
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
     private final Map<TopicIdPartition, FindBatchResponse> coordinates;
     private final List<FileExtentResult> backingData;
     private final Consumer<Long> durationCallback;
+    private final InklessFetchMetrics metrics;
 
     public FetchCompleter(Time time,
                           ObjectKeyCreator objectKeyCreator,
                           Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
                           Map<TopicIdPartition, FindBatchResponse> coordinates,
                           List<FileExtentResult> backingData,
-                          Consumer<Long> durationCallback) {
+                          Consumer<Long> durationCallback,
+                          InklessFetchMetrics metrics) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
         this.fetchInfos = fetchInfos;
         this.coordinates = coordinates;
         this.backingData = backingData;
         this.durationCallback = durationCallback;
+        this.metrics = Objects.requireNonNull(metrics, "metrics cannot be null");
     }
 
     @Override
     public Map<TopicIdPartition, FetchPartitionData> get() {
         try {
             final Map<String, List<FileExtent>> files = groupFileData();
-            return TimeUtils.measureDurationMs(time, () -> serveFetch(coordinates, files), durationCallback);
+            final Map<TopicIdPartition, FetchPartitionData> result =
+                TimeUtils.measureDurationMs(time, () -> serveFetch(coordinates, files), durationCallback);
+            long totalBytes = 0;
+            for (FetchPartitionData d : result.values()) {
+                totalBytes += d.records.sizeInBytes();
+            }
+            // Record every fetch, including 0-byte responses: empty-fetch frequency is signal, and
+            // this stays consistent with the other (unguarded) fetch-shape histograms.
+            metrics.recordFetchResponseSize(totalBytes);
+            return result;
         } catch (Exception e) {
             throw new FetchException("Failed to complete fetch for partitions " + fetchInfos.keySet(), e);
         }
@@ -138,17 +158,8 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
     ) {
         FindBatchResponse metadata = allMetadata.get(key);
         if (metadata == null) {
-            return new FetchPartitionData(
-                Errors.KAFKA_STORAGE_ERROR,
-                -1,
-                -1,
-                MemoryRecords.EMPTY,
-                Optional.empty(),
-                OptionalLong.empty(),
-                Optional.empty(),
-                OptionalInt.empty(),
-                false
-            );
+            metrics.recordPartitionStorageError();
+            return errorResponse(Errors.KAFKA_STORAGE_ERROR);
         }
         if (metadata.errors() != Errors.NONE || metadata.batches().isEmpty()) {
             return new FetchPartitionData(
@@ -163,20 +174,34 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
                 false
             );
         }
-        List<MemoryRecords> foundRecords = extractRecords(metadata, allFiles);
+        final ExtractionResult extraction;
+        try {
+            extraction = extractRecords(metadata, allFiles);
+        } catch (RuntimeException e) {
+            // Safety net for the unexpected: constructBatch already classifies expected failures, so a
+            // throw here (oversized/negative coordinate, truncated extent, or a bug) is scoped to this
+            // partition rather than aborting the whole fetch. KAFKA_STORAGE_ERROR is deliberate -
+            // retriable on every client, unlike UNKNOWN_SERVER_ERROR from Errors.forException. Logged
+            // without a trace so a wedged consumer's re-fetch loop cannot flood the log.
+            LOGGER.warn("Unexpected error extracting diskless records for partition {}; returning storage error: {}", key, e.toString());
+            metrics.recordPartitionStorageError();
+            return errorResponse(Errors.KAFKA_STORAGE_ERROR);
+        }
+        final List<MemoryRecords> foundRecords = extraction.records();
         if (foundRecords.isEmpty()) {
-            // If there is no FetchedFile to serve this topic id partition, the earlier steps which prepared the metadata + data have an error.
-            return new FetchPartitionData(
-                Errors.KAFKA_STORAGE_ERROR,
-                -1,
-                -1,
-                MemoryRecords.EMPTY,
-                Optional.empty(),
-                OptionalLong.empty(),
-                Optional.empty(),
-                OptionalInt.empty(),
-                false
-            );
+            // Nothing extractable: map to the classic per-partition code (CORRUPT_MESSAGE /
+            // INVALID_RECORD for integrity failures, KAFKA_STORAGE_ERROR for missing/incomplete data).
+            final Errors error = extraction.errorIfEmpty();
+            if (error == Errors.CORRUPT_MESSAGE || error == Errors.INVALID_RECORD) {
+                metrics.recordPartitionCorruptRecord();
+            } else {
+                metrics.recordPartitionStorageError();
+            }
+            return errorResponse(error);
+        }
+        // Partial: extracted some batches but fewer than the metadata listed (trailing batch dropped).
+        if (foundRecords.size() < metadata.batches().size()) {
+            metrics.recordPartitionPartialFetch();
         }
 
         return new FetchPartitionData(
@@ -192,60 +217,137 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
         );
     }
 
-    /**
-     * Extracts memory records from file extents for a partition's batches.
-     *
-     * <p><b>Batch Completeness:</b>
-     * A batch must be complete (all required file extents present) to be useful to consumers.
-     * Partial batches are corrupted and cannot be parsed correctly, so we fail incomplete batches
-     * rather than returning corrupted data. This method returns partial results (successful batches
-     * so far) when a batch fails, allowing other complete batches to be returned when possible.
-     *
-     * <p><b>Partial Failure Handling:</b>
-     * If a batch is incomplete (missing extents or failed to construct), that batch is skipped
-     * and we return only the successfully constructed batches up to that point. The calling code
-     * (servePartition) will check if foundRecords is empty and return KAFKA_STORAGE_ERROR if no
-     * records were found, allowing successful batches to be returned when possible.
-     *
-     * @param metadata the batch metadata for the partition
-     * @param allFiles the map of object keys to fetched file extents
-     * @return list of memory records (may be partial if some batches failed - only complete batches are included)
-     */
-    private List<MemoryRecords> extractRecords(FindBatchResponse metadata, Map<String, List<FileExtent>> allFiles) {
-        List<MemoryRecords> foundRecords = new ArrayList<>();
-        for (BatchInfo batch : metadata.batches()) {
-            List<FileExtent> files = allFiles.get(objectKeyCreator.from(batch.objectKey()).value());
-            if (files == null || files.isEmpty()) {
-                // Missing file extent for this batch - incomplete batch, fail it and return successful batches so far
-                return foundRecords;
-            }
-            MemoryRecords fileRecords = constructRecordsFromFile(batch, files);
-            if (fileRecords == null) {
-                // Failed to construct records (incomplete batch - missing extents or validation failed)
-                // Incomplete batches are useless to consumers, so fail this batch and return successful batches so far
-                return foundRecords;
-            }
-            foundRecords.add(fileRecords);
-        }
-        return foundRecords;
+    private static FetchPartitionData errorResponse(final Errors error) {
+        return new FetchPartitionData(
+            error, -1, -1, MemoryRecords.EMPTY,
+            Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false);
     }
 
     /**
-     * Constructs MemoryRecords from file extents for a batch.
-     *
-     * <p><b>Batch Completeness Requirement:</b>
-     * A batch must be complete (all required file extents present and contiguous) to be useful.
-     * Partial batches are corrupted and cannot be parsed correctly by consumers. This method
-     * validates completeness before allocating the buffer to avoid memory waste and returns
-     * null for incomplete batches, causing the batch to be failed.
-     *
-     * @param batch the batch metadata
-     * @param files the list of file extents (should be contiguous from groupFileData)
-     * @return MemoryRecords if batch is complete, null if incomplete (missing extents or gaps)
+     * Result of extracting a partition's batches: the (possibly partial) prefix of successfully
+     * constructed records, plus the error to surface if that prefix is empty ({@link Errors#NONE}
+     * when everything was extracted).
      */
-    private static MemoryRecords constructRecordsFromFile(
+    private record ExtractionResult(List<MemoryRecords> records, Errors errorIfEmpty) {}
+
+    /** Result of constructing a single batch: the records, or {@code null} with the classifying error. */
+    private record BatchResult(MemoryRecords records, Errors error) {}
+
+    /**
+     * Extracts records for a partition's batches into a coalesced buffer, stopping at the first batch
+     * that is incomplete or fails integrity validation. Returns the successfully constructed prefix
+     * plus the error to surface if that prefix is empty (KAFKA_STORAGE_ERROR for missing/incomplete
+     * data, CORRUPT_MESSAGE / INVALID_RECORD for integrity failures).
+     *
+     * @param metadata the batch metadata for the partition
+     * @param allFiles the map of object keys to fetched file extents
+     * @return the extracted prefix and the error to use if the prefix is empty
+     */
+    private ExtractionResult extractRecords(FindBatchResponse metadata, Map<String, List<FileExtent>> allFiles) {
+        final List<BatchInfo> batches = metadata.batches();
+        final List<MemoryRecords> foundRecords = new ArrayList<>();
+
+        // One partition-level buffer sliced per batch instead of one allocation per batch: the
+        // multi-batch tail drops from N allocations to 1. Fall back to per-batch buffers if the total
+        // would overflow an int-sized array (practically unreachable under fetch.max.bytes).
+        final long totalSize = computeTotalBufferSize(batches);
+        final boolean coalesce = totalSize >= 0 && totalSize <= Integer.MAX_VALUE;
+        final byte[] sharedBuffer = coalesce ? new byte[(int) totalSize] : null;
+        int writeOffset = 0;
+        for (BatchInfo batch : batches) {
+            final long rawSize = batch.metadata().byteSize();
+            if (rawSize < 0 || rawSize > Integer.MAX_VALUE) {
+                // Corrupt coordinate (nonsensical size) -> CORRUPT_MESSAGE ("exceeds the valid size"),
+                // keep the prefix. PartitionCorruptRecordRate is the signal; classic Kafka likewise
+                // returns known read errors without per-fetch broker logging.
+                LOGGER.debug("Dropping diskless batch with invalid size {} for {} in object {}",
+                    rawSize, batch.metadata().topicIdPartition(), batch.objectKey());
+                return new ExtractionResult(foundRecords, Errors.CORRUPT_MESSAGE);
+            }
+            final int batchSize = (int) rawSize;
+            final List<FileExtent> files = allFiles.get(objectKeyCreator.from(batch.objectKey()).value());
+            if (files == null || files.isEmpty()) {
+                // Missing file extent for this batch: storage error. Return successful prefix so far.
+                return new ExtractionResult(foundRecords, Errors.KAFKA_STORAGE_ERROR);
+            }
+            final byte[] dest = coalesce ? sharedBuffer : new byte[batchSize];
+            final int destOffset = coalesce ? writeOffset : 0;
+            final BatchResult batchResult = constructBatch(batch, files, dest, destOffset, batchSize);
+            if (batchResult.records() == null) {
+                return new ExtractionResult(foundRecords, batchResult.error());
+            }
+            foundRecords.add(batchResult.records());
+            writeOffset += batchSize;
+        }
+        return new ExtractionResult(foundRecords, Errors.NONE);
+    }
+
+    /**
+     * Constructs one batch, classifying any failure instead of throwing so a bad batch fails only its
+     * partition. Missing/non-covering extents -> KAFKA_STORAGE_ERROR; integrity failures -> the classic
+     * code (CorruptRecordException -> CORRUPT_MESSAGE, InvalidRecordException -> INVALID_RECORD), as
+     * ReplicaManager.readFromLocalLog does via Errors.forException. Other RuntimeExceptions propagate
+     * to the per-partition safety net.
+     *
+     * <p>Only CorruptRecordException is thrown on this path today; the InvalidRecordException arm is
+     * defensive for a future record-iterating validation.
+     */
+    private static BatchResult constructBatch(
         final BatchInfo batch,
-        final List<FileExtent> files
+        final List<FileExtent> files,
+        final byte[] dest,
+        final int destOffset,
+        final int batchSize
+    ) {
+        try {
+            final MemoryRecords records = constructRecordsIntoSlice(batch, files, dest, destOffset, batchSize);
+            return records == null
+                ? new BatchResult(null, Errors.KAFKA_STORAGE_ERROR)
+                : new BatchResult(records, Errors.NONE);
+        } catch (CorruptRecordException | InvalidRecordException e) {
+            // Data corruption (bad CRC / size, or a coalesced-run offset mismatch); object + offsets
+            // aid locating it. PartitionCorruptRecordRate is the operator signal (a re-fetching
+            // consumer would flood a per-fetch log); classic Kafka returns the error code without
+            // broker logging.
+            LOGGER.debug("Dropping corrupt diskless batch for {} in object {} offsets [{}, {}]: {}",
+                batch.metadata().topicIdPartition(), batch.objectKey(),
+                batch.metadata().baseOffset(), batch.metadata().lastOffset(), e.getMessage());
+            return new BatchResult(null,
+                e instanceof InvalidRecordException ? Errors.INVALID_RECORD : Errors.CORRUPT_MESSAGE);
+        }
+    }
+
+    private static long computeTotalBufferSize(final List<BatchInfo> batches) {
+        long total = 0;
+        for (BatchInfo b : batches) {
+            final long size = b.metadata().byteSize();
+            // A nonsensical size forces the per-batch path so it can't mis-size the shared buffer;
+            // the extraction loop then classifies that batch and keeps the prefix.
+            if (size < 0 || size > Integer.MAX_VALUE) return -1;
+            total += size;
+            if (total < 0) return -1; // overflow guard
+        }
+        return total;
+    }
+
+    /**
+     * Writes a complete batch into {@code dest[destOffset, destOffset+batchSize)} and returns
+     * MemoryRecords over that slice, or {@code null} if the extents don't fully cover the batch
+     * range (an incomplete batch is unusable and must be failed).
+     *
+     * @param batch        the batch metadata
+     * @param files        the list of file extents (should be contiguous from groupFileData)
+     * @param dest         the destination byte array (typically a partition-level buffer)
+     * @param destOffset   start position within {@code dest} to write this batch's bytes
+     * @param batchSize    expected size of the batch (must equal {@code batch.metadata().byteSize()})
+     * @return MemoryRecords (over a slice of {@code dest}) if the batch is complete, null otherwise
+     */
+    private static MemoryRecords constructRecordsIntoSlice(
+        final BatchInfo batch,
+        final List<FileExtent> files,
+        final byte[] dest,
+        final int destOffset,
+        final int batchSize
     ) {
         if (files == null || files.isEmpty()) {
             return null;
@@ -253,10 +355,7 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
 
         final ByteRange batchRange = batch.metadata().range();
 
-        // Validate that extents fully cover the batch range before allocating buffer.
-        // Incomplete batches are useless to consumers (corrupted data), so we fail early.
-        // This also prevents allocating large buffers for incomplete batches (saves memory).
-        // Collect intersections and check they're contiguous and cover the entire batch range.
+        // Validate that extents fully cover the batch range before writing.
         List<ByteRange> intersections = new ArrayList<>();
         for (FileExtent file : files) {
             final ByteRange fileRange = new ByteRange(file.range().offset(), file.range().length());
@@ -286,22 +385,30 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
             return null; // Doesn't cover entire batch range - incomplete batch
         }
 
-        // All extents cover the batch range, safe to allocate full buffer
-        final byte[] buffer = new byte[Math.toIntExact(batchRange.bufferSize())];
-
+        // All extents cover the batch range, write into dest[destOffset .. destOffset+batchSize].
         for (FileExtent file : files) {
             final ByteRange fileRange = new ByteRange(file.range().offset(), file.range().length());
             ByteRange intersection = ByteRange.intersect(batchRange, fileRange);
             if (intersection.size() > 0) {
-                final int position = intersection.bufferOffset() - batchRange.bufferOffset();
+                final int positionInBatch = intersection.bufferOffset() - batchRange.bufferOffset();
                 final int from = intersection.bufferOffset() - fileRange.bufferOffset();
                 final int to = intersection.bufferOffset() - fileRange.bufferOffset() + intersection.bufferSize();
                 final byte[] fileData = file.data();
-                System.arraycopy(fileData, from, buffer, position, Math.min(fileData.length - from, to - from));
+                final int copyLen = Math.min(fileData.length - from, to - from);
+                // Keep every write inside this batch's [0, batchSize) slot. A runtime check (not an
+                // assert, which is off in production) turns a future miscalc or short extent into a
+                // failed batch rather than silent corruption of an adjacent slot.
+                if (positionInBatch < 0 || copyLen < 0 || positionInBatch + copyLen > batchSize) {
+                    throw new IllegalStateException("batch write out of slot: pos=" + positionInBatch
+                        + " len=" + copyLen + " batchSize=" + batchSize);
+                }
+                System.arraycopy(fileData, from, dest, destOffset + positionInBatch, copyLen);
             }
         }
 
-        return createMemoryRecords(ByteBuffer.wrap(buffer), batch);
+        // slice() bounds the buffer to batchSize, so createMemoryRecords's in-place header mutations
+        // stay within this batch's slot (an out-of-slot write throws rather than corrupting a neighbor).
+        return createMemoryRecords(ByteBuffer.wrap(dest, destOffset, batchSize).slice(), batch);
     }
 
     /**
@@ -318,7 +425,7 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
             physicalBatches.add(b);
         }
         if (physicalBatches.isEmpty()) {
-            throw new IllegalStateException("Backing file should have at least one batch");
+            throw new CorruptRecordException("Backing file should have at least one batch");
         }
 
         if (physicalBatches.size() == 1) {
@@ -360,10 +467,11 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
 
         // The relocated offsets must exactly fill the coordinate's [baseOffset, lastOffset] span. A
         // mismatch means the stored bytes and the coordinate disagree (corruption or a wrong coordinate),
-        // so we fail loudly rather than serve incorrectly-offset data.
+        // so we reject the batch as corrupt rather than serve incorrectly-offset data. constructBatch
+        // maps this to CORRUPT_MESSAGE, scoped to the partition.
         final long expectedLastOffset = batch.metadata().lastOffset();
         if (running - 1 != expectedLastOffset) {
-            throw new IllegalStateException(
+            throw new CorruptRecordException(
                 "Coalesced batch offsets do not match metadata: computed last offset " + (running - 1)
                     + " but expected " + expectedLastOffset + " for " + batch.metadata().topicIdPartition());
         }

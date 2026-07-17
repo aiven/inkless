@@ -20,11 +20,11 @@ package io.aiven.inkless.consume;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
-import org.apache.kafka.common.errors.CorruptRecordException;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.DefaultRecordBatch;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.Record;
+import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.FetchRequest;
@@ -33,6 +33,7 @@ import org.apache.kafka.server.storage.log.FetchPartitionData;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -55,7 +56,12 @@ import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
@@ -70,6 +76,9 @@ public class FetchCompleterTest {
     Uuid topicId = Uuid.randomUuid();
     TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "diskless-topic");
 
+    @Mock
+    InklessFetchMetrics metrics;
+
     @Test
     public void testEmptyFetch() {
         FetchCompleter job = new FetchCompleter(
@@ -78,7 +87,7 @@ public class FetchCompleterTest {
             Collections.emptyMap(),
             Collections.emptyMap(),
             Collections.emptyList(),
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         assertThat(result).isEmpty();
@@ -95,7 +104,7 @@ public class FetchCompleterTest {
             fetchInfos,
             Collections.emptyMap(),
             Collections.emptyList(),
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
@@ -118,7 +127,7 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             Collections.emptyList(),
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
@@ -148,11 +157,12 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             Collections.emptyList(),
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
         assertThat(data.error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+        verify(metrics, times(1)).recordPartitionStorageError();
     }
 
     @Test
@@ -182,7 +192,7 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             files,
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
@@ -220,7 +230,7 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             files,
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
@@ -268,7 +278,7 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             fileExtents,
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
@@ -322,7 +332,7 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             files,
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
@@ -387,7 +397,7 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             fileExtents,
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
@@ -444,7 +454,7 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             files,
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
 
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -493,7 +503,7 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             files,
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
 
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -544,7 +554,7 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             files,
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
 
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -601,7 +611,7 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             fileExtents,
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
 
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -671,7 +681,7 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             fileExtents,
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
 
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -739,7 +749,7 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             fileExtents,
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
 
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -803,7 +813,7 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             files,
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
 
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -864,7 +874,7 @@ public class FetchCompleterTest {
             new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, concatenated))
         );
         FetchCompleter job = new FetchCompleter(
-            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files, durationMs -> {}
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files, durationMs -> {}, metrics
         );
 
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -927,7 +937,7 @@ public class FetchCompleterTest {
             new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, concatenated))
         );
         FetchCompleter job = new FetchCompleter(
-            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files, durationMs -> {}
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files, durationMs -> {}, metrics
         );
 
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -987,7 +997,7 @@ public class FetchCompleterTest {
         }
 
         FetchCompleter job = new FetchCompleter(
-            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, fileExtents, durationMs -> {}
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, fileExtents, durationMs -> {}, metrics
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
@@ -1004,9 +1014,10 @@ public class FetchCompleterTest {
     }
 
     @Test
-    public void testFetchCoalescedRunWithMismatchedMetadataThrows() {
-        // If the metadata's last offset disagrees with the record count in the bytes, we must fail loudly
-        // rather than serve incorrectly-offset data.
+    public void testFetchCoalescedRunWithMismatchedMetadataReturnsCorruptMessage() {
+        // If the metadata's last offset disagrees with the record count in the bytes, we must not
+        // serve incorrectly-offset data. The batch is dropped and the partition returns
+        // CORRUPT_MESSAGE, isolated to this partition rather than aborting the whole fetch.
         MemoryRecords batchA = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(new byte[]{0}));
         MemoryRecords batchB = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(new byte[]{1}));
         final int totalSize = batchA.sizeInBytes() + batchB.sizeInBytes();
@@ -1029,19 +1040,21 @@ public class FetchCompleterTest {
             new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, concatenated))
         );
         FetchCompleter job = new FetchCompleter(
-            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files, durationMs -> {}
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files, durationMs -> {}, metrics
         );
-        assertThatThrownBy(job::get).isInstanceOf(FetchException.class);
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+        assertThat(result.get(partition0).error).isEqualTo(Errors.CORRUPT_MESSAGE);
+        verify(metrics, times(1)).recordPartitionCorruptRecord();
+        verify(metrics, never()).recordPartitionStorageError();
+        verify(metrics, never()).recordPartitionPartialFetch();
     }
 
     @Test
-    public void testCorruptedBatchWithInvalidCrcThrowsFetchException() {
-        // Test that ensureValid() catches corrupted batches with invalid CRC checksums.
-        // This validates data integrity even when size validation passes.
-        // 
-        // Scenario: Data passes size validation (extents cover batch range) but has corrupted
-        // CRC checksum. ensureValid() should detect this and throw CorruptRecordException,
-        // which gets wrapped in FetchException.
+    public void testCorruptedBatchReturnsCorruptMessageForPartition() {
+        // A batch that passes size/range validation but fails CRC (ensureValid) must be isolated to
+        // its own partition: the partition returns CORRUPT_MESSAGE (matching classic Kafka's
+        // Errors.forException mapping) and the fetch as a whole does NOT throw (which would take down
+        // every other partition in the same fetch).
         byte[] value = {1, 2, 3};
         MemoryRecords records = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(value));
 
@@ -1059,13 +1072,9 @@ public class FetchCompleterTest {
             ), logStartOffset, highWatermark)
         );
 
-        // Create corrupted data: valid structure but invalid CRC checksum
-        // Corrupt a field that's covered by CRC (LAST_OFFSET_DELTA) to invalidate the checksum
-        // This will pass size validation but fail ensureValid() CRC check
+        // Corrupt LAST_OFFSET_DELTA (covered by CRC): passes size validation, fails ensureValid CRC.
         ByteBuffer corruptedBuffer = records.buffer().duplicate();
-        // Modify LAST_OFFSET_DELTA which is covered by CRC, causing CRC mismatch
-        int lastOffsetDeltaOffset = DefaultRecordBatch.LAST_OFFSET_DELTA_OFFSET;
-        corruptedBuffer.putInt(lastOffsetDeltaOffset, 999); // Corrupt the value
+        corruptedBuffer.putInt(DefaultRecordBatch.LAST_OFFSET_DELTA_OFFSET, 999);
 
         final ByteRange range = new ByteRange(0, records.sizeInBytes());
         List<FileExtentResult> files = List.of(
@@ -1078,46 +1087,327 @@ public class FetchCompleterTest {
             fetchInfos,
             coordinates,
             files,
-            durationMs -> {}
+            durationMs -> {}, metrics
         );
 
-        // Should throw FetchException because ensureValid() detects corrupted CRC
-        // Exception chain: CorruptRecordException -> FetchException
-        // 
-        // ensureValid() validates:
-        // 1. Batch size >= minimum overhead
-        // 2. CRC checksum matches computed value
-        // When CRC is invalid, it throws CorruptRecordException which gets wrapped in FetchException
-        assertThatThrownBy(() -> {
-            Map<TopicIdPartition, FetchPartitionData> result = job.get();
-            FetchPartitionData data = result.get(partition0);
-            // If we get here without exception, the error should indicate corruption
-            if (data.error == Errors.NONE) {
-                throw new AssertionError("Expected exception for corrupted batch, but got Errors.NONE");
-            }
-        })
-        .isInstanceOf(FetchException.class)
-        .satisfies(exception -> {
-            FetchException fetchException = (FetchException) exception;
-            Throwable cause = fetchException.getCause();
-            
-            assertThat(cause)
-                .as("Cause should be CorruptRecordException from ensureValid() CRC validation")
-                .isNotNull()
-                .isInstanceOf(CorruptRecordException.class);
-            
-            CorruptRecordException corruptException = (CorruptRecordException) cause;
-            
-            // Validate the error message indicates CRC corruption
-            // Example message: "Record is corrupt (stored crc = X, computed crc = Y)"
-            String errorMessage = corruptException.getMessage();
-            assertThat(errorMessage)
-                .as("Error message should indicate corruption/CRC issue")
-                .isNotNull()
-                .satisfies(msg -> {
-                    assertThat(msg.toLowerCase())
-                        .contains("record is corrupt", "crc");
-                });
-        });
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+        assertThat(result.get(partition0).error).isEqualTo(Errors.CORRUPT_MESSAGE);
+        verify(metrics, times(1)).recordPartitionCorruptRecord();
+        verify(metrics, never()).recordPartitionStorageError();
+        verify(metrics, never()).recordPartitionPartialFetch();
+    }
+
+    @Test
+    public void testCorruptBatchInOnePartitionDoesNotAbortOthers() {
+        // partition0 is valid; partition1's only batch fails CRC. The corrupt partition must not
+        // abort the whole fetch: partition0 is served normally, partition1 gets CORRUPT_MESSAGE.
+        TopicIdPartition partition1 = new TopicIdPartition(topicId, 1, "diskless-topic");
+
+        MemoryRecords goodRecords = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(new byte[]{1, 2, 3}));
+        MemoryRecords badRecords = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(new byte[]{4, 5, 6}));
+        ByteBuffer corruptedBuffer = badRecords.buffer().duplicate();
+        corruptedBuffer.putInt(DefaultRecordBatch.LAST_OFFSET_DELTA_OFFSET, 999);
+
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty()),
+            partition1, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, goodRecords.sizeInBytes(), 0, 0, 10L, 20L, TimestampType.CREATE_TIME))
+            ), 0, 1),
+            partition1, FindBatchResponse.success(List.of(
+                new BatchInfo(2L, OBJECT_KEY_B.value(), BatchMetadata.of(partition1, 0, badRecords.sizeInBytes(), 0, 0, 10L, 20L, TimestampType.CREATE_TIME))
+            ), 0, 1)
+        );
+        final ByteRange rangeA = new ByteRange(0, goodRecords.sizeInBytes());
+        final ByteRange rangeB = new ByteRange(0, badRecords.sizeInBytes());
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(OBJECT_KEY_A, rangeA, FileFetchJob.createFileExtent(OBJECT_KEY_A, rangeA, goodRecords.buffer())),
+            new FileExtentResult.Success(OBJECT_KEY_B, rangeB, FileFetchJob.createFileExtent(OBJECT_KEY_B, rangeB, corruptedBuffer))
+        );
+
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files,
+            durationMs -> {}, metrics
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+
+        assertThat(result.get(partition0).error).isEqualTo(Errors.NONE);
+        assertThat(result.get(partition0).records.sizeInBytes()).isEqualTo(goodRecords.sizeInBytes());
+        assertThat(result.get(partition1).error).isEqualTo(Errors.CORRUPT_MESSAGE);
+        verify(metrics, times(1)).recordPartitionCorruptRecord();
+        verify(metrics, never()).recordPartitionStorageError();
+    }
+
+    @Test
+    public void testInvalidBatchSizeReturnsCorruptMessageForPartition() {
+        // A coordinate whose byteSize exceeds Integer.MAX_VALUE is a corrupt coordinate. It must be
+        // classified in the extraction loop (CORRUPT_MESSAGE - "exceeds the valid size") and scoped
+        // to this partition, keeping any valid prefix, while a sibling partition still serves.
+        TopicIdPartition partition1 = new TopicIdPartition(topicId, 1, "diskless-topic");
+        MemoryRecords goodRecords = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(new byte[]{1, 2, 3}));
+
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty()),
+            partition1, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        final long oversized = (long) Integer.MAX_VALUE + 1;
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, oversized, 0, 0, 10L, 20L, TimestampType.CREATE_TIME))
+            ), 0, 1),
+            partition1, FindBatchResponse.success(List.of(
+                new BatchInfo(2L, OBJECT_KEY_B.value(), BatchMetadata.of(partition1, 0, goodRecords.sizeInBytes(), 0, 0, 10L, 20L, TimestampType.CREATE_TIME))
+            ), 0, 1)
+        );
+        final ByteRange rangeB = new ByteRange(0, goodRecords.sizeInBytes());
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(OBJECT_KEY_B, rangeB, FileFetchJob.createFileExtent(OBJECT_KEY_B, rangeB, goodRecords.buffer()))
+        );
+
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files,
+            durationMs -> {}, metrics
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+
+        assertThat(result.get(partition0).error).isEqualTo(Errors.CORRUPT_MESSAGE);
+        assertThat(result.get(partition1).error).isEqualTo(Errors.NONE);
+        assertThat(result.get(partition1).records.sizeInBytes()).isEqualTo(goodRecords.sizeInBytes());
+        verify(metrics, times(1)).recordPartitionCorruptRecord();
+        verify(metrics, never()).recordPartitionStorageError();
+    }
+
+    @Test
+    public void testUnexpectedExtractionErrorIsolatedBySafetyNet() {
+        // An unclassified RuntimeException thrown mid-extraction (here: the ObjectKeyCreator blows up)
+        // must be scoped to its partition by servePartition's safety net (KAFKA_STORAGE_ERROR),
+        // never propagated to abort the whole fetch. get() must return normally.
+        ObjectKeyCreator throwingCreator = mock(ObjectKeyCreator.class);
+        when(throwingCreator.from(anyString())).thenThrow(new RuntimeException("boom"));
+
+        MemoryRecords records = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(new byte[]{1}));
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, records.sizeInBytes(), 0, 0, 10L, 20L, TimestampType.CREATE_TIME))
+            ), 0, 1)
+        );
+        final ByteRange range = new ByteRange(0, records.sizeInBytes());
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, records.buffer()))
+        );
+
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(), throwingCreator, fetchInfos, coordinates, files,
+            durationMs -> {}, metrics
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+
+        assertThat(result.get(partition0).error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+        verify(metrics, times(1)).recordPartitionStorageError();
+        verify(metrics, never()).recordPartitionCorruptRecord();
+    }
+
+    @Test
+    public void testCorruptTrailingBatchServesValidPrefix() {
+        // Two batches in one partition; the trailing batch fails CRC. The valid leading batch is
+        // still served (partial response), and the partition is not failed wholesale.
+        MemoryRecords recordsA = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(new byte[]{1}));
+        MemoryRecords recordsB = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(new byte[]{2}));
+
+        int totalSize = recordsA.sizeInBytes() + recordsB.sizeInBytes();
+        ByteBuffer concatenated = ByteBuffer.allocate(totalSize);
+        concatenated.put(recordsA.buffer());
+        concatenated.put(recordsB.buffer());
+        // Corrupt the trailing batch's CRC-covered LAST_OFFSET_DELTA (offset within batch B's region).
+        concatenated.putInt(recordsA.sizeInBytes() + DefaultRecordBatch.LAST_OFFSET_DELTA_OFFSET, 999);
+
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(),
+                    BatchMetadata.of(partition0, 0, recordsA.sizeInBytes(), 0, 0, 10L, 20L, TimestampType.CREATE_TIME)),
+                new BatchInfo(2L, OBJECT_KEY_A.value(),
+                    BatchMetadata.of(partition0, recordsA.sizeInBytes(), recordsB.sizeInBytes(), 0, 1, 10L, 20L, TimestampType.CREATE_TIME))
+            ), 0, 2)
+        );
+        final ByteRange range = new ByteRange(0, totalSize);
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, concatenated))
+        );
+
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files,
+            durationMs -> {}, metrics
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+
+        assertThat(result.get(partition0).error).isEqualTo(Errors.NONE);
+        assertThat(result.get(partition0).records.sizeInBytes()).isEqualTo(recordsA.sizeInBytes());
+        verify(metrics, times(1)).recordPartitionPartialFetch();
+        verify(metrics, never()).recordPartitionStorageError();
+        verify(metrics, never()).recordPartitionCorruptRecord();
+    }
+
+    /**
+     * With the coalesced per-partition buffer, multiple batches share one underlying byte[].
+     * Each batch wraps a slice over a distinct region. setLastOffset / setMaxTimestamp mutate
+     * each slice in place - this test pins that the per-batch lastOffset patches end up in
+     * the correct slice and don't bleed into adjacent batches.
+     */
+    @Test
+    public void testCoalescedBufferSliceIsolationOnLastOffsetPatch() {
+        byte[] firstValue = {1};
+        byte[] secondValue = {2};
+        MemoryRecords recordsA = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(firstValue));
+        MemoryRecords recordsB = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(secondValue));
+
+        int totalSize = recordsA.sizeInBytes() + recordsB.sizeInBytes();
+        ByteBuffer concatenatedBuffer = ByteBuffer.allocate(totalSize);
+        concatenatedBuffer.put(recordsA.buffer());
+        concatenatedBuffer.put(recordsB.buffer());
+
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        int logStartOffset = 0;
+        long logAppendTimestamp = 10L;
+        long maxBatchTimestamp = 10L;
+        int highWatermark = 200;
+
+        // Distinct, non-zero lastOffsets force setLastOffset to write a non-default value
+        // into each batch's slice. If the writes leak across slices, the second batch's
+        // lastOffset (101) would overwrite the first batch's lastOffset (100).
+        final long firstLastOffset = 100L;
+        final long secondLastOffset = 101L;
+
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(),
+                    BatchMetadata.of(partition0, 0, recordsA.sizeInBytes(), 0, firstLastOffset,
+                        logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)),
+                new BatchInfo(2L, OBJECT_KEY_A.value(),
+                    BatchMetadata.of(partition0, recordsA.sizeInBytes(), recordsB.sizeInBytes(), 0, secondLastOffset,
+                        logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
+            ), logStartOffset, highWatermark)
+        );
+
+        final ByteRange range = new ByteRange(0, totalSize);
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, concatenatedBuffer))
+        );
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(),
+            OBJECT_KEY_CREATOR,
+            fetchInfos,
+            coordinates,
+            files,
+            durationMs -> {}, metrics
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+        FetchPartitionData data = result.get(partition0);
+        assertThat(data.error).isEqualTo(Errors.NONE);
+
+        Iterator<? extends RecordBatch> batchIterator =
+            data.records.batches().iterator();
+        assertThat(batchIterator.hasNext()).isTrue();
+        assertThat(batchIterator.next().lastOffset())
+            .as("first batch lastOffset must match its metadata, not the second batch's")
+            .isEqualTo(firstLastOffset);
+        assertThat(batchIterator.hasNext()).isTrue();
+        assertThat(batchIterator.next().lastOffset())
+            .as("second batch lastOffset must match its own metadata")
+            .isEqualTo(secondLastOffset);
+        assertThat(batchIterator.hasNext()).isFalse();
+    }
+
+    @Test
+    public void testRecordsFetchResponseSize() {
+        MemoryRecords records = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord((byte[]) null));
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, records.sizeInBytes(), 0, 0, 10L, 20L, TimestampType.CREATE_TIME))
+            ), 0, 1)
+        );
+        final ByteRange range = new ByteRange(0, records.sizeInBytes());
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, records.buffer()))
+        );
+
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files,
+            durationMs -> {}, metrics
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+
+        assertThat(result.get(partition0).records.sizeInBytes()).isEqualTo(records.sizeInBytes());
+        verify(metrics, times(1)).recordFetchResponseSize(records.sizeInBytes());
+        verify(metrics, never()).recordPartitionPartialFetch();
+        verify(metrics, never()).recordPartitionStorageError();
+    }
+
+    @Test
+    public void testRecordsPartitionStorageErrorWhenMetadataMissing() {
+        // No coordinates for partition0 -> servePartition returns KAFKA_STORAGE_ERROR
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, Collections.emptyMap(), Collections.emptyList(),
+            durationMs -> {}, metrics
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+
+        assertThat(result.get(partition0).error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+        verify(metrics, times(1)).recordPartitionStorageError();
+        verify(metrics, never()).recordPartitionPartialFetch();
+        // An all-error fetch returns 0 bytes and is still recorded (empty-fetch frequency is signal).
+        verify(metrics, times(1)).recordFetchResponseSize(0L);
+    }
+
+    @Test
+    public void testRecordsPartialPartitionFetchWhenTrailingBatchMissingExtent() {
+        // First batch from OBJECT_KEY_A has its extent; second batch from OBJECT_KEY_B has none.
+        // extractRecords returns the first batch, drops the trailing one. Partition response is
+        // partial: foundRecords.size() < metadata.batches().size().
+        byte[] firstValue = {1};
+        MemoryRecords recordsA = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(firstValue));
+
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(),
+                    BatchMetadata.of(partition0, 0, recordsA.sizeInBytes(), 0, 0, 10L, 20L, TimestampType.CREATE_TIME)),
+                new BatchInfo(2L, OBJECT_KEY_B.value(),
+                    BatchMetadata.of(partition0, 0, 50, 1, 1, 10L, 20L, TimestampType.CREATE_TIME))
+            ), 0, 2)
+        );
+        final ByteRange rangeA = new ByteRange(0, recordsA.sizeInBytes());
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(OBJECT_KEY_A, rangeA, FileFetchJob.createFileExtent(OBJECT_KEY_A, rangeA, recordsA.buffer()))
+        );
+
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(), OBJECT_KEY_CREATOR, fetchInfos, coordinates, files,
+            durationMs -> {}, metrics
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+
+        assertThat(result.get(partition0).error).isEqualTo(Errors.NONE);
+        assertThat(result.get(partition0).records.sizeInBytes()).isEqualTo(recordsA.sizeInBytes());
+        verify(metrics, times(1)).recordPartitionPartialFetch();
+        verify(metrics, never()).recordPartitionStorageError();
+        verify(metrics, times(1)).recordFetchResponseSize(recordsA.sizeInBytes());
     }
 }

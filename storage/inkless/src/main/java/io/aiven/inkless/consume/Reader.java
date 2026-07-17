@@ -512,7 +512,8 @@ public class Reader implements AutoCloseable {
                     fetchInfos,
                     coordinates,
                     fileExtents,
-                    fetchMetrics::fetchCompletionFinished
+                    fetchMetrics::fetchCompletionFinished,
+                    fetchMetrics
                 ).get()
             )
             .whenComplete((topicIdPartitionFetchPartitionDataMap, throwable) -> {
