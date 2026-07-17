@@ -57,7 +57,6 @@ import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -213,9 +212,14 @@ public class InklessConsolidatedDisklessReassignmentTest {
     }
 
     private KafkaClusterTestKit createCluster() throws Exception {
+        String rsmPrefix = RemoteLogManagerConfig.DEFAULT_REMOTE_STORAGE_MANAGER_CONFIG_PREFIX;
         Map<Integer, Map<String, String>> perServerProps = new HashMap<>();
+        // Per-broker cache dir: DiskChunkCache wipes its path on startup, so a shared dir races.
         for (int i = 0; i < NUM_BROKERS; i++) {
-            perServerProps.put(i, Map.of(ServerConfigs.BROKER_RACK_CONFIG, "az" + (i + 1)));
+            Path brokerFetchChunkCachePath = Files.createDirectories(tempCacheDir.resolve("ts-fetch-chunk-cache-" + i));
+            perServerProps.put(i, Map.of(
+                ServerConfigs.BROKER_RACK_CONFIG, "az" + (i + 1),
+                rsmPrefix + "fetch.chunk.cache.path", brokerFetchChunkCachePath.toAbsolutePath().toString()));
         }
         final TestKitNodes nodes = new TestKitNodes.Builder()
             .setCombined(true)
@@ -264,8 +268,8 @@ public class InklessConsolidatedDisklessReassignmentTest {
             .setConfigProp(prefix + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, s3Container.getSecretKey());
     }
 
-    private void configureTieredStorage(KafkaClusterTestKit.Builder builder) throws IOException {
-        Path fetchChunkCachePath = Files.createDirectories(tempCacheDir.resolve("ts-fetch-chunk-cache"));
+    private void configureTieredStorage(KafkaClusterTestKit.Builder builder) {
+        // fetch.chunk.cache.path is set per broker in createCluster (must be broker-exclusive).
         String rsmPrefix = RemoteLogManagerConfig.DEFAULT_REMOTE_STORAGE_MANAGER_CONFIG_PREFIX;
         builder
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
@@ -278,7 +282,6 @@ public class InklessConsolidatedDisklessReassignmentTest {
             .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, "io.aiven.kafka.tieredstorage.RemoteStorageManager")
             .setConfigProp(rsmPrefix + "chunk.size", 1048576)
             .setConfigProp(rsmPrefix + "fetch.chunk.cache.class", "io.aiven.kafka.tieredstorage.fetch.cache.DiskChunkCache")
-            .setConfigProp(rsmPrefix + "fetch.chunk.cache.path", fetchChunkCachePath.toAbsolutePath().toString())
             .setConfigProp(rsmPrefix + "fetch.chunk.cache.size", "10737418")
             .setConfigProp(rsmPrefix + "fetch.chunk.cache.prefetch.max.size", "16777216")
             .setConfigProp(rsmPrefix + "fetch.chunk.cache.retention.ms", "16777216")
