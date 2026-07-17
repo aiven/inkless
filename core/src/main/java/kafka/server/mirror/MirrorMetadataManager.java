@@ -1519,46 +1519,35 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    /** Finds the coordinator node (leader of the __mirror_state partition) for a mirror record key */
+    /**
+     * Resolves the coordinator node for a mirror record key by hashing the key to a
+     * {@code __mirror_state} partition and returning that partition's leader from the
+     * local metadata cache. Returns {@link Node#noNode()} if the coordinator is unavailable.
+     */
     private Node findCoordinatorNode(ClusterMirrorRecordKey key) {
         try {
-            if (metadataCache.contains(MIRROR_STATE_TOPIC_NAME)) {
-                Set<String> topicSet = new HashSet<>();
-                topicSet.add(MIRROR_STATE_TOPIC_NAME);
-
-                var interBrokerListenerName = brokerConfig.interBrokerListenerName();
-
-                List<MetadataResponseData.MetadataResponseTopic> topicMetadata = metadataCache.getTopicMetadata(
-                        topicSet,
-                        interBrokerListenerName,
-                        false,
-                        false
-                );
-
-                if (topicMetadata == null || topicMetadata.isEmpty() || topicMetadata.get(0).errorCode() != Errors.NONE.code()) {
-                    return Node.noNode();
-                } else {
-                    if (coordPartitionFinderByKey.isEmpty()) {
-                        return Node.noNode();
-                    }
-                    int partition = coordPartitionFinderByKey.get().apply(key);
-                    Optional<MetadataResponseData.MetadataResponsePartition> response = topicMetadata.get(0).partitions().stream()
-                            .filter(responsePart -> responsePart.partitionIndex() == partition
-                                    && responsePart.leaderId() != MetadataResponse.NO_LEADER_ID)
-                            .findFirst();
-
-                    if (response.isPresent()) {
-                        return metadataCache.getAliveBrokerNode(response.get().leaderId(), interBrokerListenerName)
-                                .orElse(Node.noNode());
-                    } else {
-                        return Node.noNode();
-                    }
-                }
+            if (coordPartitionFinderByKey.isEmpty() || !metadataCache.contains(MIRROR_STATE_TOPIC_NAME)) {
+                return Node.noNode();
             }
+
+            var listenerName = brokerConfig.interBrokerListenerName();
+            List<MetadataResponseData.MetadataResponseTopic> topicMetadata = metadataCache.getTopicMetadata(
+                    Set.of(MIRROR_STATE_TOPIC_NAME), listenerName, false, false);
+
+            if (topicMetadata == null || topicMetadata.isEmpty() || topicMetadata.get(0).errorCode() != Errors.NONE.code()) {
+                return Node.noNode();
+            }
+
+            int partition = coordPartitionFinderByKey.get().apply(key);
+            return topicMetadata.get(0).partitions().stream()
+                    .filter(p -> p.partitionIndex() == partition && p.leaderId() != MetadataResponse.NO_LEADER_ID)
+                    .findFirst()
+                    .flatMap(p -> metadataCache.getAliveBrokerNode(p.leaderId(), listenerName))
+                    .orElse(Node.noNode());
         } catch (Exception e) {
             log.warn("Exception while getting mirror coordinator", e);
+            return Node.noNode();
         }
-        return Node.noNode();
     }
 
     /** Writes partition states to remote coordinators, batching requests per coordinator node. */
