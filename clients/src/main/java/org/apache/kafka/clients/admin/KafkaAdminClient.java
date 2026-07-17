@@ -2518,10 +2518,9 @@ public class KafkaAdminClient extends AdminClient {
         Map<Integer, Optional<Integer>> partitionEpochs = new HashMap<>();
         if (metadataResponse != null) {
             for (MetadataResponse.TopicMetadata tm : metadataResponse.topicMetadata()) {
-                if (tm.topic().equals(topicName)) {
+                if (tm.topic() != null && tm.topic().equals(topicName)) {
                     for (MetadataResponse.PartitionMetadata pm : tm.partitionMetadata()) {
-                        partitionEpochs.put(pm.topicPartition.partition(),
-                                pm.leaderEpoch.isPresent() ? Optional.of(pm.leaderEpoch.get()) : Optional.empty());
+                        partitionEpochs.put(pm.topicPartition.partition(), pm.leaderEpoch);
                     }
                     break;
                 }
