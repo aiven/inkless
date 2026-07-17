@@ -17,11 +17,12 @@
 
 package kafka.server
 
+import io.aiven.inkless.cache.CrossTierLogStartCache
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager}
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse}
+import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, ListOffsetsResponse => CpListOffsetsResponse, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse}
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.Partition
 import kafka.server.QuotaFactory.QuotaManagers
@@ -870,6 +871,307 @@ class ReplicaManagerInklessTest {
       assertEquals(150L, responseData(disklessTopicPartition.topicPartition()).lowWatermark)
       assertEquals(101L, partition.localLogOrException.logStartOffset)
       verify(controlPlane, timeout(5000)).deleteRecords(anyList())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDeleteRecordsConsolidatingClassicPrefixReportsCrossTierLowWatermarkWithoutDisklessLeg(): Unit = {
+    // A delete entirely within the classic/remote prefix of a switched consolidating topic
+    // (before classicToDisklessStartOffset) routes only to the local leg -- no diskless (WAL) leg --
+    // and its low watermark must come from the control-plane cross-tier earliest, not the ISR.
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.advanceCrossTierLogStartOffset(anyList()))
+      .thenReturn(util.List.of(AdvanceCrossTierLogStartOffsetResponse.success(50L)))
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    )
+    try {
+      val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 200L)
+      // switched topic: the classic prefix ends at 100, and we delete before 50 (inside that prefix).
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      @volatile var responseData: Map[TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult] = Map.empty
+      replicaManager.deleteRecords(
+        timeout = 0L,
+        offsetPerPartition = Map(disklessTopicPartition.topicPartition() -> 50L),
+        responseCallback = response => responseData = response,
+      )
+
+      waitUntilTrue(() => responseData.nonEmpty, "Cross-tier delete records response was not completed")
+      assertEquals(Errors.NONE.code, responseData(disklessTopicPartition.topicPartition()).errorCode)
+      // Low watermark comes from the control-plane cross-tier earliest (advance), not the ISR.
+      assertEquals(50L, responseData(disklessTopicPartition.topicPartition()).lowWatermark)
+      // Local leg still ran (drives RLM remote deletion): local log start advanced to 50.
+      assertEquals(50L, partition.localLogOrException.logStartOffset)
+      verify(controlPlane, timeout(5000)).advanceCrossTierLogStartOffset(anyList())
+      // No WAL data below the classic prefix, so the diskless leg must not run.
+      verify(controlPlane, never()).deleteRecords(anyList())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDeleteRecordsConsolidatingOverridesLowWatermarkWithCrossTierEarliest(): Unit = {
+    // For a hybrid consolidating delete (into the WAL) both legs run, but the reported low watermark
+    // is the control-plane cross-tier earliest (advance), which may differ from the WAL log start.
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.deleteRecords(anyList())).thenReturn(util.List.of(CpDeleteRecordsResponse.success(150L)))
+    when(controlPlane.advanceCrossTierLogStartOffset(anyList()))
+      .thenReturn(util.List.of(AdvanceCrossTierLogStartOffsetResponse.success(150L)))
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    )
+    try {
+      val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+
+      @volatile var responseData: Map[TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult] = Map.empty
+      replicaManager.deleteRecords(
+        timeout = 0L,
+        offsetPerPartition = Map(disklessTopicPartition.topicPartition() -> 150L),
+        responseCallback = response => responseData = response,
+      )
+
+      waitUntilTrue(() => responseData.nonEmpty, "Hybrid consolidating delete records response was not completed")
+      assertEquals(Errors.NONE.code, responseData(disklessTopicPartition.topicPartition()).errorCode)
+      assertEquals(150L, responseData(disklessTopicPartition.topicPartition()).lowWatermark)
+      assertEquals(101L, partition.localLogOrException.logStartOffset)
+      verify(controlPlane, timeout(5000)).deleteRecords(anyList())
+      verify(controlPlane, timeout(5000)).advanceCrossTierLogStartOffset(anyList())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDeleteRecordsPureDisklessDoesNotAdvanceCrossTierEarliest(): Unit = {
+    // A pure (non-consolidating) diskless topic has no remote tier; its delete must go through the
+    // diskless leg only and must not touch the cross-tier earliest.
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.deleteRecords(anyList())).thenReturn(util.List.of(CpDeleteRecordsResponse.success(150L)))
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+    )
+    try {
+      @volatile var responseData: Map[TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult] = Map.empty
+      replicaManager.deleteRecords(
+        timeout = 0L,
+        offsetPerPartition = Map(disklessTopicPartition.topicPartition() -> 150L),
+        responseCallback = response => responseData = response,
+      )
+
+      waitUntilTrue(() => responseData.nonEmpty, "Pure diskless delete records response was not completed")
+      assertEquals(Errors.NONE.code, responseData(disklessTopicPartition.topicPartition()).errorCode)
+      assertEquals(150L, responseData(disklessTopicPartition.topicPartition()).lowWatermark)
+      verify(controlPlane, timeout(5000)).deleteRecords(anyList())
+      verify(controlPlane, never()).advanceCrossTierLogStartOffset(anyList())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testCrossTierEarliestOffsetReturnsCachedValueOnHitWithoutControlPlane(): Unit = {
+    // Steady state: a cache hit is served verbatim and the control plane is never consulted -- even
+    // for a stale-low value. The cache is monotonic (put only advances), so a stale entry can only ever
+    // be too low, which is the safe direction for both reclaim (under-delete) and reads (over-serve).
+    // This documents that the accessor deliberately trusts the cache and does not second-guess it.
+    val controlPlane = mock(classOf[ControlPlane])
+    val cache = mock(classOf[CrossTierLogStartCache])
+    when(cache.get(any())).thenReturn(java.lang.Long.valueOf(120L))
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      crossTierLogStartCache = Some(cache),
+    )
+    try {
+      assertEquals(OptionalLong.of(120L),
+        replicaManager.crossTierEarliestOffset(disklessTopicPartition.topicPartition()))
+      verify(controlPlane, never()).listOffsets(anyList())
+      verify(cache, never()).put(any(), anyLong())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testCrossTierEarliestOffsetFallsBackToControlPlaneOnMissAndPopulatesCache(): Unit = {
+    // On a cache miss (cold cache -- e.g. this broker is the RLM leader but never served the delete, or
+    // the entry TTL-expired) the accessor queries the control-plane cross-tier earliest and writes it
+    // through so the next read is a hit.
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.listOffsets(anyList()))
+      .thenReturn(util.List.of(CpListOffsetsResponse.success(disklessTopicPartition, 0L, 200L)))
+    val cache = mock(classOf[CrossTierLogStartCache])
+    when(cache.get(any())).thenReturn(null.asInstanceOf[java.lang.Long])
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      crossTierLogStartCache = Some(cache),
+    )
+    try {
+      assertEquals(OptionalLong.of(200L),
+        replicaManager.crossTierEarliestOffset(disklessTopicPartition.topicPartition()))
+      verify(controlPlane).listOffsets(anyList())
+      verify(cache).put(any(), ArgumentMatchers.eq(200L))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testCrossTierEarliestOffsetReturnsEmptyWhenControlPlaneThrows(): Unit = {
+    // Failure-mode characterization: if the control-plane query fails on a cache miss the accessor
+    // returns empty rather than propagating the exception. Callers (DisklessLeaderEndPoint whole-log
+    // start, RemoteLogManager reclaim floor + become-leader report) then fall back to the broker-local
+    // UnifiedLog.logStartOffset -- which on a freshly-rebuilt consolidating leader is the seal. So a
+    // control-plane outage in that window transiently reverts to the pre-fix (Problem B) behavior; it
+    // does not fail the fetch/cleanup. This test pins that contract so the fallback is a conscious
+    // choice, not an accident.
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.listOffsets(anyList())).thenThrow(new ControlPlaneException("boom"))
+    val cache = mock(classOf[CrossTierLogStartCache])
+    when(cache.get(any())).thenReturn(null.asInstanceOf[java.lang.Long])
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      crossTierLogStartCache = Some(cache),
+    )
+    try {
+      assertEquals(OptionalLong.empty(),
+        replicaManager.crossTierEarliestOffset(disklessTopicPartition.topicPartition()))
+      verify(cache, never()).put(any(), anyLong())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testCrossTierEarliestOffsetReturnsEmptyWhenControlPlaneReturnsError(): Unit = {
+    // An error/negative control-plane response is treated as "unknown" (empty), not as offset -1, and
+    // must not poison the cache.
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.listOffsets(anyList()))
+      .thenReturn(util.List.of(CpListOffsetsResponse.unknownServerError(disklessTopicPartition)))
+    val cache = mock(classOf[CrossTierLogStartCache])
+    when(cache.get(any())).thenReturn(null.asInstanceOf[java.lang.Long])
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      crossTierLogStartCache = Some(cache),
+    )
+    try {
+      assertEquals(OptionalLong.empty(),
+        replicaManager.crossTierEarliestOffset(disklessTopicPartition.topicPartition()))
+      verify(cache, never()).put(any(), anyLong())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testCrossTierEarliestOffsetReturnsEmptyForNonConsolidatingTopic(): Unit = {
+    // Metadata-propagation timing: if this broker's metadata view does not (yet) see the topic as
+    // consolidating, the accessor short-circuits to empty WITHOUT consulting the cache or the control
+    // plane, so callers keep the plain upstream behavior (local log start). This is also what keeps the
+    // accessor a no-op for classic / pure-diskless topics.
+    val controlPlane = mock(classOf[ControlPlane])
+    val cache = mock(classOf[CrossTierLogStartCache])
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      consolidatingDisklessTopics = Set.empty, // not seen as consolidating on this broker
+      crossTierLogStartCache = Some(cache),
+    )
+    try {
+      assertEquals(OptionalLong.empty(),
+        replicaManager.crossTierEarliestOffset(disklessTopicPartition.topicPartition()))
+      verify(cache, never()).get(any())
+      verify(controlPlane, never()).listOffsets(anyList())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testCrossTierEarliestOffsetReturnsEmptyWhenTopicIdUnknown(): Unit = {
+    // Another metadata-not-yet-propagated flavor: the topic is flagged consolidating but its id is not
+    // resolvable yet (ZERO_UUID). Without a topic id the control-plane key cannot be formed, so the
+    // accessor returns empty rather than querying with a bogus id.
+    val controlPlane = mock(classOf[ControlPlane])
+    val cache = mock(classOf[CrossTierLogStartCache])
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map.empty, // getTopicId -> ZERO_UUID
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      crossTierLogStartCache = Some(cache),
+    )
+    try {
+      assertEquals(OptionalLong.empty(),
+        replicaManager.crossTierEarliestOffset(disklessTopicPartition.topicPartition()))
+      verify(cache, never()).get(any())
+      verify(controlPlane, never()).listOffsets(anyList())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testIsConsolidatingDisklessPartitionReflectsMetadataView(): Unit = {
+    // The RLM reclaim-floor fail-safe keys off this accessor; it must be true exactly for consolidating
+    // diskless topics (so they never fall back to the local seal) and false for classic/pure-diskless.
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    )
+    try {
+      assertTrue(replicaManager.isConsolidatingDisklessPartition(disklessTopicPartition.topicPartition()))
+      assertFalse(replicaManager.isConsolidatingDisklessPartition(new TopicPartition("classic", 0)))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testIsConsolidatingDisklessPartitionFalseWithoutSharedState(): Unit = {
+    // Without inkless shared state (non-inkless broker) the accessor must be false so the RLM keeps the
+    // plain upstream local-log-start reclaim floor.
+    val replicaManager = createReplicaManager(
+      List.empty,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      inklessSharedStateEnabled = false,
+    )
+    try {
+      assertFalse(replicaManager.isConsolidatingDisklessPartition(disklessTopicPartition.topicPartition()))
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
@@ -6486,7 +6788,8 @@ class ReplicaManagerInklessTest {
     inklessSharedStateEnabled: Boolean = true,
     initDisklessLogManager: Option[InitDisklessLogManager] = None,
     delayedFetchPurgatory: Option[DelayedOperationPurgatory[DelayedFetch]] = None,
-    defaultLogConfig: Option[LogConfig] = None
+    defaultLogConfig: Option[LogConfig] = None,
+    crossTierLogStartCache: Option[CrossTierLogStartCache] = None
   ): ReplicaManager = {
     val props = TestUtils.createBrokerConfig(1, logDirCount = 2)
     if (disklessManagedReplicasEnabled || disklessRemoteStorageConsolidationEnabled) {
@@ -6516,6 +6819,7 @@ class ReplicaManagerInklessTest {
     when(sharedState.config()).thenReturn(new InklessConfig(inklessConfigMap))
     when(sharedState.controlPlane()).thenReturn(controlPlane.getOrElse(mock(classOf[ControlPlane])))
     when(sharedState.maybeLaggingFetchStorage()).thenReturn(Optional.empty())
+    crossTierLogStartCache.foreach(cache => when(sharedState.crossTierLogStartCache()).thenReturn(cache))
     val inklessMetadata = mock(classOf[InklessMetadataView])
     when(inklessMetadata.isDisklessTopic(any())).thenReturn(false)
     when(inklessMetadata.getClassicToDisklessStartOffset(any()))

@@ -213,10 +213,29 @@ truth**, with a short-TTL cache:
   has advanced above it.
 - **Read path (any broker).** `FetchOffsetHandler` serves `EARLIEST` on a consolidating
   diskless topic read-through the `CrossTierLogStartCache` first; on a miss it queries the
-  control plane and populates the cache. `DisklessFetchOffsetRouter` returns
-  `max(classic-leader leg, control-plane leg)` for consolidating partitions, so the freshest
-  authoritative value wins regardless of which broker serves the request (the classic leg is
-  authoritative on the leader, the control-plane leg on followers).
+  control plane and populates the cache. `DisklessFetchOffsetRouter` routes `EARLIEST` for
+  **every** consolidating partition (born-consolidated and switched alike) to this
+  control-plane leg — never to the broker-local classic log. This is required for
+  correctness under managed replicas: `InklessTopicMetadataTransformer` advertises a
+  hash-selected replica (usually a *follower*) as the partition leader, and a follower's
+  local classic log start is frozen at the switch, so serving `EARLIEST` from it would pin
+  the client-visible earliest at a stale value (e.g. `0` after a `DeleteRecords` the follower
+  never applied). The control-plane value is broker-agnostic, so every broker returns the
+  same cross-tier earliest. (Non-consolidating switched partitions keep serving `EARLIEST`
+  from the classic leg while it still owns the pre-switch prefix.)
+- **Whole-log start & reclaim floor (leader).** The same control-plane value is the
+  authoritative whole-log start / remote-retention reclaim floor for a consolidating
+  partition, *not* the broker-local `UnifiedLog.logStartOffset`. On a freshly-elected leader
+  whose classic prefix was already evicted, the leadership rebuild pins the local log start at
+  the seal (and it can only ever increment), so using it would over-reclaim the remote classic
+  prefix `[earliest, seal)` and reject reads of it as out-of-range. Instead
+  `DisklessLeaderEndPoint` reports `min(X, localLogStart)` as the whole-log start (so a read of
+  the surviving prefix redirects to the remote tier and the tier-state rebuild restarts at `X`),
+  and `RemoteLogManager` uses `X` as the log-start-breach reclaim floor and the become-leader
+  report — both via `ReplicaManager.crossTierEarliestOffset` (`X` =
+  `COALESCE(remote_log_start_offset, log_start_offset)`). This runs on the RLM leader, which
+  under managed replicas differs from the broker that served a `DeleteRecords`, so a
+  broker-agnostic source is mandatory.
 - **Cache.** Caffeine-backed with a TTL and a monotonic `put` (a `Null` implementation
   disables it); owned by `SharedState`. A stale entry can only ever be *too low* (the safe direction), so it only delays when a retention advance becomes visible off-leader.
 - **Storage.** The value is kept in `logs.remote_log_start_offset` (migration `V16`),
@@ -229,14 +248,39 @@ updates are coalesced per partition and flushed once a second, and only strictly
 values are sent.
 
 The configuration and JMX metrics for this feature are listed in
-[Configuration](#configuration) and [Metrics](#metrics). The system test is
-`consolidation_retention_across_tiers_test.py` (`RetentionReclaimsAcrossTiersTest`), which
-verifies the earliest offset advances past zero (and no further than a surviving cohort)
-after retention reclaims data across tiers.
+[Configuration](#configuration) and [Metrics](#metrics). Several system tests exercise
+the earliest offset on a consolidating topic. The two retention tests follow the same
+pattern (drain the born-consolidated pipeline until the early prefix is remote-only and
+the topic earliest is still `0`, then reclaim and assert the earliest advances while a
+contiguous tail survives and the reclaimed remote objects are physically deleted); the
+`DeleteRecords` test targets a switched (hybrid) topic (see below):
 
-> **Not yet covered.** Time-based reclaim (`retention.ms`) drives the earliest offset in
-> tests; `retention.bytes`-driven reclaim of the earliest offset is not yet exercised.
-> `DeleteRecords` across tiers on a consolidating topic is also not yet covered.
+- `consolidation_retention_across_tiers_test.py` (`RetentionReclaimsAcrossTiersTest`):
+  time-based reclaim via `retention.ms`.
+- `consolidation_retention_bytes_across_tiers_test.py`
+  (`RetentionBytesReclaimsAcrossTiersTest`): size-based reclaim via `retention.bytes`,
+  driven by the `RemoteLogManager` (not the WAL-only Inkless enforcer). The limit is set
+  to half of the bytes this topic actually shipped to remote, so the boundary lands
+  deterministically inside the produced range regardless of record size.
+- `consolidation_delete_records_across_tiers_test.py` (`DeleteRecordsAcrossTiersTest`):
+  an explicit `DeleteRecords` on a **switched (hybrid)** topic, before an offset inside
+  the tiered classic prefix `[0, seal)`. The receiving broker forwards the local leg to
+  the real KRaft leader (`DisklessDeleteRecordsForwarder`), which advances the log start
+  and the control-plane cross-tier earliest. It guards both **Problem A** and **Problem
+  B** in one run (retention held unset throughout, so only the `DeleteRecords` can move
+  the earliest):
+  - *Problem A* — the client-visible earliest advances off `0` to a single, stable value
+    that is the *same on every broker*, proving `EARLIEST` is served from the
+    broker-agnostic control plane and not from a hash-selected follower's frozen local
+    classic log.
+  - *Problem B* — that value settles at *exactly* the delete boundary (not the seal), and
+    the surviving prefix `[delete_before, seal)` reads back contiguous with the correct
+    content, proving the consolidation cleanup did not over-reclaim the classic prefix.
+    Previously a freshly-elected leader's local `logStartOffset` was pinned at the seal
+    (and only ever increments), so the RLM reclaim floor / become-leader report used the
+    seal; the fix drives both the whole-log start (`DisklessLeaderEndPoint`) and the RLM
+    reclaim floor / become-leader report (`RemoteLogManager`) from the control-plane
+    cross-tier earliest via `ReplicaManager.crossTierEarliestOffset`.
 
 ## Implementation
 
@@ -610,7 +654,14 @@ no loss), `InklessTopicTypeSwitcherClusterTest`.
 wiping all local copies), `consolidation_switched_read_from_remote_after_prune_test.py`
 (switched topic durability), `consolidation_dependency_outage_test.py` (object-store /
 control-plane outage during produce), `consolidation_retention_across_tiers_test.py`
-(cross-tier earliest offset after retention reclaim).
+(cross-tier earliest offset after time-based retention reclaim),
+`consolidation_retention_bytes_across_tiers_test.py` (cross-tier earliest offset after
+size-based `retention.bytes` reclaim), and
+`consolidation_delete_records_across_tiers_test.py` (after a `DeleteRecords` into the
+tiered classic prefix of a switched topic: **Problem A** — the client-visible earliest
+advances and is the same on every broker; **Problem B** — it settles at exactly the delete
+boundary and the surviving prefix stays readable, i.e. the classic prefix is not
+over-reclaimed to the seal; both driven by the control-plane cross-tier earliest).
 
 
 
