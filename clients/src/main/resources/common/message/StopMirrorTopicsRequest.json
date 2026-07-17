@@ -30,6 +30,7 @@
           "about": "The topic name." }
       ]},
     { "name": "Patterns", "type": "[]string", "versions": "0+",
+      "taggedVersions": "0+", "tag": 0,
       "about": "Topic patterns to remove from mirror.topics.include or add to mirror.topics.exclude." },
     { "name": "StateValidationOffset", "type": "int64", "versions": "0+", "default": "-1",
       "about": "Cluster metadata offset at which the broker validated preconditions. -1 to skip validation."}
