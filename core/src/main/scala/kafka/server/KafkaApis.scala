@@ -33,7 +33,7 @@ import org.apache.kafka.common.acl.AclOperation
 import org.apache.kafka.common.acl.AclOperation._
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.errors._
-import org.apache.kafka.common.internals.Topic.{GROUP_METADATA_TOPIC_NAME, MIRROR_STATE_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
+import org.apache.kafka.common.internals.Topic.{GROUP_METADATA_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
 import org.apache.kafka.common.internals.{FatalExitError, Plugin, Topic}
 import org.apache.kafka.common.message.AddPartitionsToTxnResponseData.{AddPartitionsToTxnResult, AddPartitionsToTxnResultCollection}
 import org.apache.kafka.common.message.DeleteRecordsResponseData.{DeleteRecordsPartitionResult, DeleteRecordsTopicResult}
@@ -62,7 +62,6 @@ import org.apache.kafka.common.security.token.delegation.{DelegationToken, Token
 import org.apache.kafka.common.utils.{ProducerIdAndEpoch, Time}
 import org.apache.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.coordinator.group.{Group, GroupConfig, GroupConfigManager, GroupCoordinator}
-import org.apache.kafka.coordinator.mirror.ClusterMirrorRecordKey
 import org.apache.kafka.coordinator.share.ShareCoordinator
 import org.apache.kafka.metadata.{ConfigRepository, MetadataCache}
 import org.apache.kafka.server.{ApiVersionManager, ClientMetricsManager, DelegationTokenManager, ProcessRole}
@@ -1697,11 +1696,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       (Errors.TRANSACTIONAL_ID_AUTHORIZATION_FAILED, Node.noNode)
     else if (keyType == CoordinatorType.SHARE.id && request.context.apiVersion < 6)
       (Errors.INVALID_REQUEST, Node.noNode)
-    else if (keyType == CoordinatorType.CLUSTER_MIRROR.id && request.context.apiVersion < 7) {
-      logger.warn("Mirror coordinator type is not supported for " +
-        s"FindCoordinatorRequest version ${request.context.apiVersion}")
-      (Errors.INVALID_REQUEST, Node.noNode)
-    } else {
+    else {
       if (keyType == CoordinatorType.SHARE.id) {
         authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
         try {
@@ -1709,15 +1704,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         } catch {
           case e: IllegalArgumentException =>
             error(s"Share coordinator key is invalid", e)
-            return (Errors.INVALID_REQUEST, Node.noNode)
-        }
-      } else if (keyType == CoordinatorType.CLUSTER_MIRROR.id) {
-        authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
-        try {
-          ClusterMirrorRecordKey.validate(key)
-        } catch {
-          case e: IllegalArgumentException =>
-            error(s"Mirror coordinator key is invalid", e)
             return (Errors.INVALID_REQUEST, Node.noNode)
         }
       }
@@ -1731,9 +1717,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         case CoordinatorType.SHARE =>
           // We know that shareCoordinator is defined at this stage.
           (shareCoordinator.partitionFor(SharePartitionKey.getInstance(key)), SHARE_GROUP_STATE_TOPIC_NAME)
-
-        case CoordinatorType.CLUSTER_MIRROR =>
-          (clusterMirrorCoordinator.getCoordinatorPartitionByKey(ClusterMirrorRecordKey.getInstance(key)), MIRROR_STATE_TOPIC_NAME)
       }
 
       val topicMetadata = metadataCache.getTopicMetadata(Set(internalTopicName).asJava, request.context.listenerName, false, false).asScala

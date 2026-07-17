@@ -423,11 +423,6 @@ public class MockAdminClient extends AdminClient {
         return new CreateTopicsResult(createTopicResult);
     }
 
-    @Override
-    public FindCoordinatorResult findCoordinator(String key) {
-        return null;
-    }
-
     private static Config config(NewTopic newTopic) {
         Collection<ConfigEntry> configEntries = new ArrayList<>();
         if (newTopic.configs() != null) {

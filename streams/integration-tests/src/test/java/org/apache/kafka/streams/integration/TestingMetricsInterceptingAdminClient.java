@@ -114,7 +114,6 @@ import org.apache.kafka.clients.admin.ExpireDelegationTokenResult;
 import org.apache.kafka.clients.admin.FeatureUpdate;
 import org.apache.kafka.clients.admin.FenceProducersOptions;
 import org.apache.kafka.clients.admin.FenceProducersResult;
-import org.apache.kafka.clients.admin.FindCoordinatorResult;
 import org.apache.kafka.clients.admin.ListClientMetricsResourcesOptions;
 import org.apache.kafka.clients.admin.ListClientMetricsResourcesResult;
 import org.apache.kafka.clients.admin.ListClusterMirrorsOptions;
@@ -211,11 +210,6 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     @Override
     public CreateTopicsResult createTopics(final Collection<NewTopic> newTopics, final CreateTopicsOptions options) {
         return adminDelegate.createTopics(newTopics, options);
-    }
-
-    @Override
-    public FindCoordinatorResult findCoordinator(final String key) {
-        return null;
     }
 
     @Override
