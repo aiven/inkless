@@ -257,9 +257,10 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
         for (BatchInfo batch : batches) {
             final long rawSize = batch.metadata().byteSize();
             if (rawSize < 0 || rawSize > Integer.MAX_VALUE) {
-                // Corrupt coordinate (nonsensical size). Classify as CORRUPT_MESSAGE ("exceeds the
-                // valid size") and keep the valid prefix, rather than throwing into the safety net.
-                LOGGER.warn("Dropping diskless batch with invalid size {} for {} in object {}",
+                // Corrupt coordinate (nonsensical size) -> CORRUPT_MESSAGE ("exceeds the valid size"),
+                // keep the prefix. PartitionCorruptRecordRate is the signal; classic Kafka likewise
+                // returns known read errors without per-fetch broker logging.
+                LOGGER.debug("Dropping diskless batch with invalid size {} for {} in object {}",
                     rawSize, batch.metadata().topicIdPartition(), batch.objectKey());
                 return new ExtractionResult(foundRecords, Errors.CORRUPT_MESSAGE);
             }
@@ -304,9 +305,11 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
                 ? new BatchResult(null, Errors.KAFKA_STORAGE_ERROR)
                 : new BatchResult(records, Errors.NONE);
         } catch (CorruptRecordException | InvalidRecordException e) {
-            // Data corruption (bad CRC / size, or a coalesced-run offset mismatch): log object +
-            // offsets so operators can locate it, drop the batch, serve the prefix or an error.
-            LOGGER.warn("Dropping corrupt diskless batch for {} in object {} offsets [{}, {}]: {}",
+            // Data corruption (bad CRC / size, or a coalesced-run offset mismatch); object + offsets
+            // aid locating it. PartitionCorruptRecordRate is the operator signal (a re-fetching
+            // consumer would flood a per-fetch log); classic Kafka returns the error code without
+            // broker logging.
+            LOGGER.debug("Dropping corrupt diskless batch for {} in object {} offsets [{}, {}]: {}",
                 batch.metadata().topicIdPartition(), batch.objectKey(),
                 batch.metadata().baseOffset(), batch.metadata().lastOffset(), e.getMessage());
             return new BatchResult(null,
