@@ -451,16 +451,22 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             }
 
             logInfo.byteSize -= bytesDeleted;
-            if (coordinates.isEmpty()) {
-                logInfo.logStartOffset = logInfo.highWatermark;
-                if (logInfo.byteSize != 0) {
-                    throw new RuntimeException(String.format("Log size expected to be 0, but it's %d", logInfo.byteSize));
-                }
-            } else {
-                logInfo.logStartOffset = coordinates.firstEntry().getValue().batchInfo().metadata().baseOffset();
-            }
-            // Deletion advances log_start, so recompute when something was removed (null when emptied).
+            // Only a deletion can change log_start or the oldest batch. When nothing was deleted, leave both
+            // untouched: recomputing log_start from the oldest batch's base offset would move it BACKWARD if a
+            // prior deleteRecords advanced it into the middle of the still-retained oldest batch, diverging
+            // from delete_records_v1 and wrongly serving reads below the log start.
             if (batchesDeleted > 0) {
+                if (coordinates.isEmpty()) {
+                    logInfo.logStartOffset = logInfo.highWatermark;
+                    if (logInfo.byteSize != 0) {
+                        throw new RuntimeException(String.format("Log size expected to be 0, but it's %d", logInfo.byteSize));
+                    }
+                } else {
+                    // Forward-only for the same reason.
+                    logInfo.logStartOffset = Math.max(
+                        logInfo.logStartOffset,
+                        coordinates.firstEntry().getValue().batchInfo().metadata().baseOffset());
+                }
                 logInfo.earliestBatchTimestamp = earliestBatchTimestamp(coordinates);
             }
             responses.add(EnforceRetentionResponse.success(batchesDeleted, bytesDeleted, logInfo.logStartOffset));
