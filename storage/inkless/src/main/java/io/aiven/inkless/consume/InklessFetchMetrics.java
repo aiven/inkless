@@ -85,7 +85,9 @@ public class InklessFetchMetrics {
     private static final String PARTITION_PARTIAL_FETCH_RATE = "PartitionPartialFetchRate";
     private static final String PARTITION_PARTIAL_FETCH_RATE_DOC = "Rate of partition responses that were truncated mid-batch-list due to a missing extent or validation failure on a trailing batch. Successful prefix is returned to the consumer; the trailing batches are dropped.";
     private static final String PARTITION_STORAGE_ERROR_RATE = "PartitionStorageErrorRate";
-    private static final String PARTITION_STORAGE_ERROR_RATE_DOC = "Rate of partition responses returning KAFKA_STORAGE_ERROR from FetchCompleter (missing batch metadata or no records constructable from fetched extents).";
+    private static final String PARTITION_STORAGE_ERROR_RATE_DOC = "Rate of partition responses returning KAFKA_STORAGE_ERROR from FetchCompleter (missing batch metadata, or missing/incomplete extents so no records were constructable). Data-integrity failures are counted separately under PartitionCorruptRecordRate.";
+    private static final String PARTITION_CORRUPT_RECORD_RATE = "PartitionCorruptRecordRate";
+    private static final String PARTITION_CORRUPT_RECORD_RATE_DOC = "Rate of partition responses returning CORRUPT_MESSAGE or INVALID_RECORD from FetchCompleter because a batch failed integrity validation (CRC / declared size, or a coalesced-run offset mismatch), with no valid prefix to serve.";
     private static final String RECENT_DATA_REQUEST_RATE = "RecentDataRequestRate";
     private static final String RECENT_DATA_REQUEST_RATE_DOC = "Rate of requests served via the hot path (recent data with cache) per second. "
         + "Under the consolidation metrics group (ConsolidationFetchMetrics) this counts cache-hit peeks that reuse consumer-cached data.";
@@ -140,6 +142,7 @@ public class InklessFetchMetrics {
             new MetricNameTemplate(FETCH_RESPONSE_SIZE, GROUP, FETCH_RESPONSE_SIZE_DOC),
             new MetricNameTemplate(PARTITION_PARTIAL_FETCH_RATE, GROUP, PARTITION_PARTIAL_FETCH_RATE_DOC),
             new MetricNameTemplate(PARTITION_STORAGE_ERROR_RATE, GROUP, PARTITION_STORAGE_ERROR_RATE_DOC),
+            new MetricNameTemplate(PARTITION_CORRUPT_RECORD_RATE, GROUP, PARTITION_CORRUPT_RECORD_RATE_DOC),
             new MetricNameTemplate(RECENT_DATA_REQUEST_RATE, GROUP, RECENT_DATA_REQUEST_RATE_DOC),
             new MetricNameTemplate(LAGGING_CONSUMER_REQUEST_RATE, GROUP, LAGGING_CONSUMER_REQUEST_RATE_DOC),
             new MetricNameTemplate(LAGGING_CONSUMER_REQUEST_REJECTED_RATE, GROUP, LAGGING_CONSUMER_REQUEST_REJECTED_RATE_DOC),
@@ -177,6 +180,7 @@ public class InklessFetchMetrics {
     private final Histogram fetchResponseSizeHistogram;
     private final Meter partitionPartialFetchRate;
     private final Meter partitionStorageErrorRate;
+    private final Meter partitionCorruptRecordRate;
     private final Meter recentDataRequestRate;
     private final Meter laggingConsumerRequestRate;
     private final Meter laggingConsumerRejectedRate;
@@ -214,6 +218,7 @@ public class InklessFetchMetrics {
         fetchResponseSizeHistogram = metricsGroup.newHistogram(FETCH_RESPONSE_SIZE, true, Map.of());
         partitionPartialFetchRate = metricsGroup.newMeter(PARTITION_PARTIAL_FETCH_RATE, "partitions", TimeUnit.SECONDS, Map.of());
         partitionStorageErrorRate = metricsGroup.newMeter(PARTITION_STORAGE_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
+        partitionCorruptRecordRate = metricsGroup.newMeter(PARTITION_CORRUPT_RECORD_RATE, "errors", TimeUnit.SECONDS, Map.of());
         cacheEntrySize = metricsGroup.newHistogram(CACHE_ENTRY_SIZE, true, Map.of());
         cacheSize = metricsGroup.newGauge(CACHE_SIZE, () -> cache.size());
         recentDataRequestRate = metricsGroup.newMeter(RECENT_DATA_REQUEST_RATE, "requests", TimeUnit.SECONDS, Map.of());
@@ -311,6 +316,7 @@ public class InklessFetchMetrics {
         metricsGroup.removeMetric(FETCH_RESPONSE_SIZE);
         metricsGroup.removeMetric(PARTITION_PARTIAL_FETCH_RATE);
         metricsGroup.removeMetric(PARTITION_STORAGE_ERROR_RATE);
+        metricsGroup.removeMetric(PARTITION_CORRUPT_RECORD_RATE);
         metricsGroup.removeMetric(RECENT_DATA_REQUEST_RATE);
         metricsGroup.removeMetric(LAGGING_CONSUMER_REQUEST_RATE);
         metricsGroup.removeMetric(LAGGING_CONSUMER_REQUEST_REJECTED_RATE);
@@ -350,10 +356,20 @@ public class InklessFetchMetrics {
 
     /**
      * Increments the partition-storage-error counter. Call once per partition whose response
-     * surfaced KAFKA_STORAGE_ERROR from FetchCompleter (missing metadata or unconstructable records).
+     * surfaced KAFKA_STORAGE_ERROR from FetchCompleter (missing metadata, or missing/incomplete
+     * extents leaving no constructable records).
      */
     public void recordPartitionStorageError() {
         partitionStorageErrorRate.mark();
+    }
+
+    /**
+     * Increments the partition-corrupt-record counter. Call once per partition whose response
+     * surfaced CORRUPT_MESSAGE / INVALID_RECORD from FetchCompleter because a batch failed integrity
+     * validation and there was no valid prefix to serve.
+     */
+    public void recordPartitionCorruptRecord() {
+        partitionCorruptRecordRate.mark();
     }
 
     /**
