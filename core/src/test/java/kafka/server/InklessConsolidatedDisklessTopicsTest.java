@@ -54,12 +54,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
+import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -120,17 +122,24 @@ public class InklessConsolidatedDisklessTopicsTest {
     private String topicName = "consolidated-diskless-topic";
     private int numPartitions = 2;
 
+    @TempDir
+    private Path tempCacheDir;
+
     @BeforeEach
     public void setup(final TestInfo testInfo) throws Exception {
         s3Container.createBucket(testInfo);
         pgContainer.createDatabase(testInfo);
 
         // Create 2-broker cluster with rack assignments (matching docker compose setup)
-        // Node 0: combined broker+controller, Node 1: broker-only
-        Map<Integer, Map<String, String>> perServerProps = Map.of(
-            0, Map.of(ServerConfigs.BROKER_RACK_CONFIG, "az1"),
-            1, Map.of(ServerConfigs.BROKER_RACK_CONFIG, "az2")
-        );
+        // Node 0: combined broker+controller, Node 1: broker-only.
+        Map<Integer, Map<String, String>> perServerProps = new HashMap<>();
+        // Per-broker cache dir: DiskChunkCache wipes its path on startup, so a shared dir races.
+        for (int brokerId = 0; brokerId < 2; brokerId++) {
+            perServerProps.put(brokerId, Map.of(
+                ServerConfigs.BROKER_RACK_CONFIG, "az" + (brokerId + 1),
+                RSM_CONFIG_PREFIX + "fetch.chunk.cache.path",
+                Files.createDirectories(tempCacheDir.resolve("ts-fetch-chunk-cache-" + brokerId)).toAbsolutePath().toString()));
+        }
         final TestKitNodes nodes = new TestKitNodes.Builder()
             .setCombined(true)
             .setNumBrokerNodes(2)
@@ -172,8 +181,7 @@ public class InklessConsolidatedDisklessTopicsTest {
             .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, "io.aiven.kafka.tieredstorage.RemoteStorageManager")
             .setConfigProp(RSM_CONFIG_PREFIX + "chunk.size", 1048576)
             .setConfigProp(RSM_CONFIG_PREFIX + "fetch.chunk.cache.class", "io.aiven.kafka.tieredstorage.fetch.cache.DiskChunkCache")
-            .setConfigProp(RSM_CONFIG_PREFIX + "fetch.chunk.cache.path",
-                Files.createTempDirectory("ts-fetch-chunk-cache").toAbsolutePath().toString())
+            // fetch.chunk.cache.path is set per broker in perServerProps (must be broker-exclusive).
             .setConfigProp(RSM_CONFIG_PREFIX + "fetch.chunk.cache.size", "10737418")
             .setConfigProp(RSM_CONFIG_PREFIX + "fetch.chunk.cache.prefetch.max.size", "16777216")
             .setConfigProp(RSM_CONFIG_PREFIX + "fetch.chunk.cache.retention.ms", "16777216")
