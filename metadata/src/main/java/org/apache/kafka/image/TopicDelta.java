@@ -201,7 +201,7 @@ public final class TopicDelta {
         Map<TopicIdPartition, Uuid> directoryIds = new HashMap<>();
         Map<Uuid, LocalReplicaChanges.MirrorTopicState> mirrorTopicChanges = new HashMap<>();
 
-        boolean mirrorNameChanged = mirrorName != null && !mirrorName.isBlank()
+        boolean mirrorNameChanged = mirrorName != null
                 && !mirrorName.equals(image.mirrorName());
         boolean mirrorStateChanged = desiredMirrorState != null
                 && desiredMirrorState != MirrorPartitionState.UNKNOWN.value()

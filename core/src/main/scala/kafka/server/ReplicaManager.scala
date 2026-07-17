@@ -2648,7 +2648,7 @@ class ReplicaManager(val config: KafkaConfig,
       getPartition(tp) match {
         case HostedPartition.Online(partition) =>
           try {
-            if (mirrorName != null && !mirrorName.isEmpty) {
+            if (mirrorName != null) {
               // Get the source partition leader
               val sourceLeader = mirrorMetadataManager.get.resolveSourceLeader(mirrorName, tp)
               val sourceLeaderNode = sourceLeader.node()

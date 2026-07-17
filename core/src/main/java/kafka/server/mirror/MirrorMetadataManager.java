@@ -416,7 +416,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             // Phase 1: collect partitions where this broker gained mirror leadership
             localReplicaChanges.leaders().keySet().forEach(tp -> {
                 String mirrorName = image.topics().getTopic(tp.topic()).mirrorName();
-                if (mirrorName != null && !mirrorName.isBlank()) {
+                if (mirrorName != null) {
                     mirrorLeaderPartitions.add(tp);
                 }
             });
@@ -434,7 +434,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             // Phase 2: clean up state for partitions where this broker lost leadership
             localReplicaChanges.followers().keySet().forEach(tp -> {
                 String mirrorName = image.topics().getTopic(tp.topic()).mirrorName();
-                if (mirrorName == null || mirrorName.isBlank()) {
+                if (mirrorName == null) {
                     return;
                 }
                 pendingPartitionStates.remove(tp);
