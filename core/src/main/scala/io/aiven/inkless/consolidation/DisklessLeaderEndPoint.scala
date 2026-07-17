@@ -27,7 +27,7 @@ import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEnd
 import org.apache.kafka.common.message.{FetchResponseData, OffsetForLeaderEpochRequestData}
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
-import org.apache.kafka.common.record.MemoryRecords
+import org.apache.kafka.common.record.{MemoryRecords, MutableRecordBatch, Records}
 import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, ListOffsetsRequest, OffsetsForLeaderEpochResponse}
 import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.metadata.{LeaderAndIsr, PartitionRegistration}
@@ -40,6 +40,7 @@ import org.apache.kafka.storage.internals.log.OffsetResultHolder.FileRecordsOrEr
 import org.apache.kafka.storage.internals.log.UnifiedLog
 
 import java.util
+import java.nio.ByteBuffer
 import java.util.Optional
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
@@ -104,13 +105,20 @@ class DisklessLeaderEndPoint(
     response.asScala.map { case (tp, data) =>
       val abortedTransactions = data.abortedTransactions.orElse(null)
       val lastStableOffset: Long = data.lastStableOffset.orElse(FetchResponse.INVALID_LAST_STABLE_OFFSET)
+      // Enforce the segment-safe budget reserved in buildFetch, at physical-batch granularity.
+      val partitionData = fetchInfos.get(tp)
+      val records =
+        if (data.error == Errors.NONE && partitionData != null)
+          clampRecordsToSegment(data.records, partitionData.fetchOffset, partitionData.maxBytes)
+        else
+          data.records
       val fetchResponseData = new FetchResponseData.PartitionData()
         .setPartitionIndex(tp.topicPartition.partition)
         .setErrorCode(data.error.code)
         .setHighWatermark(data.highWatermark)
         .setLastStableOffset(lastStableOffset)
         .setAbortedTransactions(abortedTransactions)
-        .setRecords(data.records)
+        .setRecords(records)
       // set local LSO if possible instead of the diskless start offset that is data.logStartOffset
       replicaManager.getPartitionOrError(tp.topicPartition) match {
         case Left(error) =>
@@ -163,6 +171,57 @@ class DisklessLeaderEndPoint(
       }
       tp.topicPartition -> fetchResponseData
     }.toMap.asJava
+  }
+
+  /**
+   * Trim a fetched block so the follower's single append fits `segment.bytes`, restoring the classic
+   * invariant `returned <= maxBytes + one physical batch (<= max.message.bytes) <= segment.bytes`.
+   *
+   * `buildFetch` only reserves the headroom (`maxBytes = segment.bytes - max.message.bytes`); it is not
+   * enough alone because `find_batches` limits at *coordinate* granularity and always admits the
+   * coordinate that crosses `maxBytes`, and a `commit_file_v2` coordinate coalesces many physical batches
+   * into one row whose `byte_size` can far exceed `max.message.bytes` (up to `produce.buffer.max.bytes`).
+   * That crossing coordinate, or even the first always-admitted one, can then overflow a small
+   * `segment.bytes` (a supported tuning, e.g. for eager tiering) and fail the append.
+   *
+   * Re-applying the limit per physical batch keeps the overshoot to one batch. Do not let the serve path
+   * emit a larger unit beyond `maxBytes` or this breaks again. Batches with `lastOffset < fetchOffset` are
+   * dropped: a prior fetch may have truncated a coalesced coordinate mid-run and the follower re-fetches
+   * into the same coordinate, so its already-appended prefix must not be re-served. At least one batch is
+   * always emitted for progress (a single batch is bounded by `max.message.bytes`, assumed
+   * `<= segment.bytes`; the degenerate case is warned about in `buildFetch` and left to fail).
+   */
+  private def clampRecordsToSegment(records: Records, fetchOffset: Long, maxBytes: Int): Records = {
+    val selected = new util.ArrayList[MutableRecordBatch]()
+    var accumulated = 0
+    var skippedPrefix = false
+    var stoppedEarly = false
+    val it = records.batches().iterator()
+    while (it.hasNext && !stoppedEarly) {
+      it.next() match {
+        case batch: MutableRecordBatch =>
+          if (batch.lastOffset() < fetchOffset) {
+            skippedPrefix = true
+          } else if (selected.isEmpty || accumulated < maxBytes) {
+            // First eligible batch always taken; further batches only while bytes *before* them are
+            // under budget, so overshoot is one batch at most.
+            selected.add(batch)
+            accumulated += batch.sizeInBytes()
+          } else {
+            stoppedEarly = true
+          }
+        case _ =>
+          // Non-MutableRecordBatch is not expected for diskless; serve untrimmed rather than drop data.
+          return records
+      }
+    }
+    // Nothing trimmed: keep the original to preserve the ConcatenatedRecords zero-copy path.
+    if (!skippedPrefix && !stoppedEarly) return records
+    if (selected.isEmpty) return records
+    val buffer = ByteBuffer.allocate(accumulated)
+    selected.forEach(batch => batch.writeTo(buffer))
+    buffer.flip()
+    MemoryRecords.readableRecords(buffer)
   }
 
   /**
@@ -354,8 +413,9 @@ class DisklessLeaderEndPoint(
             val localLog = replicaManager.localLogOrException(topicPartition)
             val logStartOffset = localLog.logStartOffset
             val logConfig = localLog.config
-            // findBatches may include one whole batch beyond maxBytes; leave room so follower append
-            // does not reject the fetched records block as larger than the destination segment.
+            // Reserve headroom for the follower append; clampRecordsToSegment enforces it per batch in
+            // fetch() (find_batches limits at coordinate granularity and a coalesced coordinate can
+            // overshoot by more than one batch). See clampRecordsToSegment.
             val maxOvershootBytes = math.min(logConfig.maxMessageSize, logConfig.segmentSize - 1)
             val segmentSafeFetchSize = math.max(1, logConfig.segmentSize - maxOvershootBytes)
             val partitionFetchSize = math.min(fetchSize, segmentSafeFetchSize)

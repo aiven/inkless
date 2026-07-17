@@ -18,7 +18,7 @@
 
 package io.aiven.inkless.consolidation
 
-import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
+import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
 import kafka.cluster.Partition
 import kafka.server.{KafkaConfig, QuotaFactory, ReplicaManager, ReplicaQuota}
 import kafka.utils.TestUtils
@@ -27,9 +27,10 @@ import org.apache.kafka.server.config.ServerConfigs
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.OffsetForLeaderPartition
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
+import org.apache.kafka.common.compress.Compression
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
-import org.apache.kafka.common.record.MemoryRecords
+import org.apache.kafka.common.record.{MemoryRecords, Records, SimpleRecord}
 import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, ListOffsetsRequest, OffsetsForLeaderEpochResponse}
 import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.metadata.LeaderAndIsr
@@ -47,6 +48,7 @@ import org.mockito.ArgumentMatchers.{any, eq => eqTo}
 import org.mockito.Mockito.{doNothing, mock, verify, when}
 
 import java.util
+import java.nio.ByteBuffer
 import java.util.Optional
 import java.util.OptionalInt
 import java.util.OptionalLong
@@ -1277,5 +1279,184 @@ class DisklessLeaderEndPointTest {
     assertEquals(0, config.disklessConsolidationFindBatchesMaxPerPartition)
     assertEquals(4, config.disklessConsolidationFetchMetadataThreadPoolSize)
     assertEquals(8, config.disklessConsolidationFetchDataThreadPoolSize)
+  }
+
+  /** Single-batch MemoryRecords starting at `baseOffset` with `numRecords` records of `valueSize` bytes each. */
+  private def singleBatch(baseOffset: Long, numRecords: Int, valueSize: Int): MemoryRecords = {
+    val value = new Array[Byte](valueSize)
+    val records = (0 until numRecords).map(_ => new SimpleRecord(value)).toArray
+    MemoryRecords.withRecords(baseOffset, Compression.NONE, records: _*)
+  }
+
+  /**
+   * One coordinate holding `batchCount` byte-contiguous single-record physical batches (offsets
+   * `baseOffset .. baseOffset + batchCount - 1`), modelling a `commit_file_v2` coalesced run: multiple
+   * physical batches materialized into a single MemoryRecords.
+   */
+  private def coalescedCoordinate(baseOffset: Long, batchCount: Int, valueSize: Int): MemoryRecords = {
+    val batches = (0 until batchCount).map(i => singleBatch(baseOffset + i, 1, valueSize))
+    val buffer = ByteBuffer.allocate(batches.map(_.sizeInBytes()).sum)
+    batches.foreach(b => buffer.put(b.buffer().duplicate()))
+    buffer.flip()
+    MemoryRecords.readableRecords(buffer)
+  }
+
+  private def baseOffsets(records: Records): Seq[Long] =
+    records.batches().iterator().asScala.map(_.baseOffset()).toSeq
+
+  /**
+   * Runs [[DisklessLeaderEndPoint.fetch]] with the fetch handler returning `records`, a per-partition
+   * request carrying `fetchOffset`/`maxBytes`, and a healthy local log (so no tiered redirect fires and
+   * the records survive to the response).
+   */
+  private def fetchClampedRecords(records: Records, fetchOffset: Long, maxBytes: Int): Records = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = replicaManagerMock()
+    val partition = mock(classOf[Partition])
+    val localLog = mock(classOf[UnifiedLog])
+    when(partition.localLogOrException).thenReturn(localLog)
+    when(localLog.logStartOffset).thenReturn(0L)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+
+    val fetchData = new FetchPartitionData(
+      Errors.NONE,
+      1000L,
+      0L,
+      records,
+      Optional.empty(),
+      OptionalLong.empty(),
+      Optional.empty(),
+      OptionalInt.empty(),
+      false
+    )
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    val partitionData = new util.HashMap[TopicPartition, FetchRequest.PartitionData]()
+    partitionData.put(topicPartition, new FetchRequest.PartitionData(topicId, fetchOffset, 0L, maxBytes, Optional.of(Int.box(0))))
+    val fetchBuilder = FetchRequest.Builder.forReplica(12, 1, 1L, 100, 1, partitionData).setMaxBytes(100_000_000)
+    endPoint.fetch(fetchBuilder).get(topicPartition).records.asInstanceOf[Records]
+  }
+
+  @Test
+  def testFetchClampStopsAtBatchBoundaryOnceOverBudget(): Unit = {
+    // Three equal-sized physical batches at offsets 0,1,2. With maxBytes just under the size of the
+    // first two batches, the first is taken (progress), the second is the one that crosses the budget
+    // and is still included (bounded overshoot), and the third is dropped.
+    val batch0 = singleBatch(baseOffset = 0L, numRecords = 1, valueSize = 256)
+    val size = batch0.sizeInBytes()
+    val records = new ConcatenatedRecords(util.List.of(
+      batch0,
+      singleBatch(baseOffset = 1L, numRecords = 1, valueSize = 256),
+      singleBatch(baseOffset = 2L, numRecords = 1, valueSize = 256)
+    ))
+
+    val clamped = fetchClampedRecords(records, fetchOffset = 0L, maxBytes = 2 * size - 1)
+
+    assertEquals(Seq(0L, 1L), baseOffsets(clamped))
+    assertEquals(2 * size, clamped.sizeInBytes())
+  }
+
+  @Test
+  def testFetchClampSkipsBatchesBelowFetchOffset(): Unit = {
+    // A prior fetch truncated a coalesced coordinate, so this re-fetch starts mid-run at offset 1.
+    // Batches ending before the fetch offset must be dropped so the follower does not re-append them.
+    val records = new ConcatenatedRecords(util.List.of(
+      singleBatch(baseOffset = 0L, numRecords = 1, valueSize = 64),
+      singleBatch(baseOffset = 1L, numRecords = 1, valueSize = 64),
+      singleBatch(baseOffset = 2L, numRecords = 1, valueSize = 64)
+    ))
+
+    val clamped = fetchClampedRecords(records, fetchOffset = 1L, maxBytes = 10 * 1024 * 1024)
+
+    assertEquals(Seq(1L, 2L), baseOffsets(clamped))
+  }
+
+  @Test
+  def testFetchClampAlwaysEmitsOneBatchForProgress(): Unit = {
+    // maxBytes smaller than a single batch: the first batch is still emitted (progress) and the next
+    // batch is dropped, so a small budget cannot stall the fetcher.
+    val batch0 = singleBatch(baseOffset = 0L, numRecords = 1, valueSize = 512)
+    val records = new ConcatenatedRecords(util.List.of(
+      batch0,
+      singleBatch(baseOffset = 1L, numRecords = 1, valueSize = 512)
+    ))
+
+    val clamped = fetchClampedRecords(records, fetchOffset = 0L, maxBytes = 1)
+
+    assertEquals(Seq(0L), baseOffsets(clamped))
+    assertEquals(batch0.sizeInBytes(), clamped.sizeInBytes())
+  }
+
+  @Test
+  def testFetchClampIsNoOpWhenBlockFitsBudget(): Unit = {
+    // Everything fits under maxBytes and starts at the fetch offset: the original records instance is
+    // returned unchanged to preserve the ConcatenatedRecords zero-copy send path.
+    val records = new ConcatenatedRecords(util.List.of(
+      singleBatch(baseOffset = 0L, numRecords = 1, valueSize = 64),
+      singleBatch(baseOffset = 1L, numRecords = 1, valueSize = 64)
+    ))
+
+    val clamped = fetchClampedRecords(records, fetchOffset = 0L, maxBytes = 10 * 1024 * 1024)
+
+    assertSame(records, clamped)
+  }
+
+  @Test
+  def testFetchClampKeepsCoalescedBlockWithinSegmentEndToEnd(): Unit = {
+    // With segment.bytes tuned small (supported, e.g. for eager tiering), the control plane can admit two
+    // coalesced coordinates (each a multi-batch commit_file_v2 run) because its per-partition byte limit
+    // is applied at coordinate granularity and always includes the coordinate that crosses the limit.
+    // Their combined size then exceeds segment.bytes, which would make the follower's single append fail
+    // with RecordBatchTooLargeException. buildFetch reserves maxBytes = segment.bytes - max.message.bytes;
+    // the per-batch clamp in fetch() must trim the block back within the segment, splitting a coalesced
+    // coordinate mid-run if needed.
+    val segmentBytes = 4096
+    val maxMessageBytes = 1024
+
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = replicaManagerMock()
+    val log = unifiedLogMock(logStartOffset = 0L, segmentSize = segmentBytes, maxMessageSize = maxMessageBytes)
+    when(replicaManager.localLogOrException(topicPartition)).thenReturn(log)
+    val partition = mock(classOf[Partition])
+    when(partition.localLogOrException).thenReturn(log)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+
+    // Coordinate A (offsets 0..4) and B (offsets 5..8), each physical batch < max.message.bytes.
+    val coordA = coalescedCoordinate(baseOffset = 0L, batchCount = 5, valueSize = 500)
+    val coordB = coalescedCoordinate(baseOffset = 5L, batchCount = 4, valueSize = 500)
+    val combined = new ConcatenatedRecords(util.List.of(coordA, coordB))
+    assertTrue(combined.sizeInBytes() > segmentBytes,
+      s"precondition: the unclamped block (${combined.sizeInBytes()}) must overflow the segment ($segmentBytes)")
+
+    val fetchData = new FetchPartitionData(
+      Errors.NONE, 1000L, 0L, combined,
+      Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false
+    )
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    val fetchState = new PartitionFetchState(
+      Optional.of(topicId), 0L, Optional.empty(), 4, ReplicaState.FETCHING, Optional.empty()
+    )
+
+    // buildFetch reserves the segment-safe budget, then fetch() enforces it per batch on the same request.
+    val replicaFetch = endPoint.buildFetch(util.Map.of(topicPartition, fetchState))
+    assertTrue(replicaFetch.result.isPresent)
+    val requestedMaxBytes = replicaFetch.result.get.partitionData.get(topicPartition).maxBytes
+    assertEquals(segmentBytes - maxMessageBytes, requestedMaxBytes)
+
+    val clamped = endPoint.fetch(replicaFetch.result.get.fetchRequest).get(topicPartition).records.asInstanceOf[Records]
+
+    // Solved: the block the follower appends now fits the segment (no RecordBatchTooLargeException)...
+    assertTrue(clamped.sizeInBytes() <= segmentBytes,
+      s"clamped block (${clamped.sizeInBytes()}) must fit the segment ($segmentBytes)")
+    // ...within the classic one-batch overshoot bound...
+    assertTrue(clamped.sizeInBytes() <= requestedMaxBytes + maxMessageBytes)
+    // ...and it was actually trimmed (a coalesced coordinate split mid-run), starting at the fetch offset.
+    assertTrue(clamped.sizeInBytes() < combined.sizeInBytes())
+    assertEquals(0L, baseOffsets(clamped).head)
   }
 }
