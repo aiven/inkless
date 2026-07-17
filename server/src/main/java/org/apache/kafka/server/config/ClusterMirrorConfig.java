@@ -197,6 +197,9 @@ public final class ClusterMirrorConfig {
     public static final String SECURITY_PROTOCOL_DEFAULT = SecurityProtocol.PLAINTEXT.name;
     public static final String SECURITY_PROTOCOL_DOC = CommonClientConfigs.SECURITY_PROTOCOL_DOC;
 
+    public static final String SECURITY_PROVIDERS_CONFIG = SecurityConfig.SECURITY_PROVIDERS_CONFIG;
+    public static final String SECURITY_PROVIDERS_DOC = SecurityConfig.SECURITY_PROVIDERS_DOC;
+
     public static final String SASL_MECHANISM_CONFIG = SaslConfigs.SASL_MECHANISM;
     public static final String SASL_MECHANISM_DEFAULT = "PLAIN";
     public static final String SASL_MECHANISM_DOC = SaslConfigs.SASL_MECHANISM_DOC;
@@ -279,9 +282,6 @@ public final class ClusterMirrorConfig {
     public static final String SSL_ENGINE_FACTORY_CLASS_CONFIG = SslConfigs.SSL_ENGINE_FACTORY_CLASS_CONFIG;
     public static final String SSL_ENGINE_FACTORY_CLASS_DOC = SslConfigs.SSL_ENGINE_FACTORY_CLASS_DOC;
 
-    public static final String SECURITY_PROVIDERS_CONFIG = SecurityConfig.SECURITY_PROVIDERS_CONFIG;
-    public static final String SECURITY_PROVIDERS_DOC = SecurityConfig.SECURITY_PROVIDERS_DOC;
-
     /**
      * Configuration definition for Cluster Mirroring feature.
      * This includes all supported configurations with proper validation, defaults, and documentation.
@@ -312,6 +312,7 @@ public final class ClusterMirrorConfig {
             // Security
             .define(SECURITY_PROTOCOL_CONFIG, STRING, SECURITY_PROTOCOL_DEFAULT, ConfigDef.ValidString.in(SecurityProtocol.PLAINTEXT.name, SecurityProtocol.SSL.name,
                     SecurityProtocol.SASL_PLAINTEXT.name, SecurityProtocol.SASL_SSL.name), MEDIUM, SECURITY_PROTOCOL_DOC)
+            .define(SECURITY_PROVIDERS_CONFIG, STRING, null, LOW, SECURITY_PROVIDERS_DOC)
             .define(SASL_MECHANISM_CONFIG, STRING, SASL_MECHANISM_DEFAULT, MEDIUM, SASL_MECHANISM_DOC)
             .define(SASL_JAAS_CONFIG, PASSWORD, null, MEDIUM, SASL_JAAS_CONFIG_DOC)
             .define(SASL_CLIENT_CALLBACK_HANDLER_CLASS, STRING, null, LOW, SASL_CLIENT_CALLBACK_HANDLER_CLASS_DOC)
@@ -336,8 +337,7 @@ public final class ClusterMirrorConfig {
             .define(SSL_TRUSTMANAGER_ALGORITHM_CONFIG, STRING, SSL_TRUSTMANAGER_ALGORITHM_DEFAULT, LOW, SSL_TRUSTMANAGER_ALGORITHM_DOC)
             .define(SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG, STRING, SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_DEFAULT, LOW, SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_DOC)
             .define(SSL_SECURE_RANDOM_IMPLEMENTATION_CONFIG, STRING, null, LOW, SSL_SECURE_RANDOM_IMPLEMENTATION_DOC)
-            .define(SSL_ENGINE_FACTORY_CLASS_CONFIG, STRING, null, LOW, SSL_ENGINE_FACTORY_CLASS_DOC)
-            .define(SECURITY_PROVIDERS_CONFIG, STRING, null, LOW, SECURITY_PROVIDERS_DOC);
+            .define(SSL_ENGINE_FACTORY_CLASS_CONFIG, STRING, null, LOW, SSL_ENGINE_FACTORY_CLASS_DOC);
 
     private final AbstractConfig config;
     private final Pattern topicPropertiesExcludePattern;
