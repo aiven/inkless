@@ -333,13 +333,22 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleStartMirrorTopics(request: RequestChannel.Request): Unit = {
-    // TODO: do the mirror partition state validation before forwarding to controller
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures)) {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring start mirror topics request")
       requestHelper.sendMaybeThrottle(request, new StartMirrorTopicsResponse(new StartMirrorTopicsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
-    forwardToController(request)
+    val data = request.body[StartMirrorTopicsRequest].data()
+    clusterMirrorCoordinator.validateStartMirrorStates(data, errOpt => {
+      if (errOpt.isPresent) {
+        requestHelper.sendMaybeThrottle(request, new StartMirrorTopicsResponse(new StartMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
+      } else {
+        forwardingManager.forwardRequest(request, new StartMirrorTopicsRequest(data, request.header.apiVersion()), {
+          case Some(response) => requestHelper.sendForwardedResponse(request, response)
+          case None => handleInvalidVersionsDuringForwarding(request)
+        })
+      }
+    })
   }
 
   def handleStopMirrorTopics(request: RequestChannel.Request): Unit = {
@@ -348,7 +357,17 @@ class KafkaApis(val requestChannel: RequestChannel,
       requestHelper.sendMaybeThrottle(request, new StopMirrorTopicsResponse(new StopMirrorTopicsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
-    forwardToController(request)
+    val data = request.body[StopMirrorTopicsRequest].data()
+    clusterMirrorCoordinator.validateStopMirrorStates(data, errOpt => {
+      if (errOpt.isPresent) {
+        requestHelper.sendMaybeThrottle(request, new StopMirrorTopicsResponse(new StopMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
+      } else {
+        forwardingManager.forwardRequest(request, new StopMirrorTopicsRequest(data, request.header.apiVersion()), {
+          case Some(response) => requestHelper.sendForwardedResponse(request, response)
+          case None => handleInvalidVersionsDuringForwarding(request)
+        })
+      }
+    })
   }
 
   def handlePauseMirrorTopics(request: RequestChannel.Request): Unit = {
@@ -357,7 +376,17 @@ class KafkaApis(val requestChannel: RequestChannel,
       requestHelper.sendMaybeThrottle(request, new PauseMirrorTopicsResponse(new PauseMirrorTopicsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
-    forwardToController(request)
+    val data = request.body[PauseMirrorTopicsRequest].data()
+    clusterMirrorCoordinator.validatePauseMirrorStates(data, errOpt => {
+      if (errOpt.isPresent) {
+        requestHelper.sendMaybeThrottle(request, new PauseMirrorTopicsResponse(new PauseMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
+      } else {
+        forwardingManager.forwardRequest(request, new PauseMirrorTopicsRequest(data, request.header.apiVersion()), {
+          case Some(response) => requestHelper.sendForwardedResponse(request, response)
+          case None => handleInvalidVersionsDuringForwarding(request)
+        })
+      }
+    })
   }
 
   def handleResumeMirrorTopics(request: RequestChannel.Request): Unit = {
@@ -366,7 +395,17 @@ class KafkaApis(val requestChannel: RequestChannel,
       requestHelper.sendMaybeThrottle(request, new ResumeMirrorTopicsResponse(new ResumeMirrorTopicsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
-    forwardToController(request)
+    val data = request.body[ResumeMirrorTopicsRequest].data()
+    clusterMirrorCoordinator.validateResumeMirrorStates(data, errOpt => {
+      if (errOpt.isPresent) {
+        requestHelper.sendMaybeThrottle(request, new ResumeMirrorTopicsResponse(new ResumeMirrorTopicsResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
+      } else {
+        forwardingManager.forwardRequest(request, new ResumeMirrorTopicsRequest(data, request.header.apiVersion()), {
+          case Some(response) => requestHelper.sendForwardedResponse(request, response)
+          case None => handleInvalidVersionsDuringForwarding(request)
+        })
+      }
+    })
   }
 
   def handleDeleteClusterMirror(request: RequestChannel.Request): Unit = {
@@ -375,18 +414,22 @@ class KafkaApis(val requestChannel: RequestChannel,
       requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
       return
     }
-    val mirrorName = request.body[DeleteClusterMirrorRequest].data().mirrorName()
+    val data = request.body[DeleteClusterMirrorRequest].data()
+    val mirrorName = data.mirrorName()
     if (!authHelper.authorize(request.context, DELETE, CLUSTER_MIRROR, mirrorName, logIfDenied = false)) {
       requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(
         new DeleteClusterMirrorResponseData()
           .setErrorCode(Errors.CLUSTER_MIRROR_AUTHORIZATION_FAILED.code)
           .setErrorMessage(Errors.CLUSTER_MIRROR_AUTHORIZATION_FAILED.message())))
     } else {
-      clusterMirrorCoordinator.deleteClusterMirror(mirrorName, errOpt => {
+      clusterMirrorCoordinator.validateDeleteMirrorStates(data, errOpt => {
         if (errOpt.isPresent) {
           requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData().setErrorCode(errOpt.get().code()).setErrorMessage(errOpt.get().message())))
         } else {
-          requestHelper.sendMaybeThrottle(request, new DeleteClusterMirrorResponse(new DeleteClusterMirrorResponseData()))
+          forwardingManager.forwardRequest(request, new DeleteClusterMirrorRequest(data, request.header.apiVersion()), {
+            case Some(response) => requestHelper.sendForwardedResponse(request, response)
+            case None => handleInvalidVersionsDuringForwarding(request)
+          })
         }
       })
     }

@@ -125,7 +125,8 @@ public class MockController implements Controller {
             ControllerRequestContext context,
             String mirrorName,
             Set<String> topics,
-            List<String> patterns) {
+            List<String> patterns,
+            long stateValidationOffset) {
         throw new UnsupportedOperationException();
     }
 
@@ -135,7 +136,8 @@ public class MockController implements Controller {
             String mirrorName,
             List<Controller.MirrorTopicMetadata> topics,
             List<String> includePatterns,
-            List<String> excludePatterns
+            List<String> excludePatterns,
+            long stateValidationOffset
     ) {
         throw new UnsupportedOperationException();
     }
@@ -150,7 +152,8 @@ public class MockController implements Controller {
     public CompletableFuture<PauseMirrorTopicsResponseData> pauseMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
-            Set<String> topics) {
+            Set<String> topics,
+            long stateValidationOffset) {
         throw new UnsupportedOperationException();
     }
 
@@ -158,7 +161,8 @@ public class MockController implements Controller {
     public CompletableFuture<ResumeMirrorTopicsResponseData> resumeMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
-            Set<String> topics) {
+            Set<String> topics,
+            long stateValidationOffset) {
         throw new UnsupportedOperationException();
     }
 

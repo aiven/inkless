@@ -176,26 +176,30 @@ public interface Controller extends AclMutator, AutoCloseable {
             String mirrorName,
             List<MirrorTopicMetadata> topics,
             List<String> includePatterns,
-            List<String> excludePatterns
+            List<String> excludePatterns,
+            long stateValidationOffset
     );
 
     CompletableFuture<StopMirrorTopicsResponseData> stopMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
             Set<String> topics,
-            List<String> patterns
+            List<String> patterns,
+            long stateValidationOffset
     );
 
     CompletableFuture<PauseMirrorTopicsResponseData> pauseMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
-            Set<String> topics
+            Set<String> topics,
+            long stateValidationOffset
     );
 
     CompletableFuture<ResumeMirrorTopicsResponseData> resumeMirrorTopics(
             ControllerRequestContext context,
             String mirrorName,
-            Set<String> topics
+            Set<String> topics,
+            long stateValidationOffset
     );
 
     CompletableFuture<DeleteClusterMirrorResponseData> deleteClusterMirror(

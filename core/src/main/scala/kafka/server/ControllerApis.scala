@@ -292,6 +292,8 @@ class ControllerApis(
       throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
+    if (!request.isForwarded)
+      throw new InvalidRequestException("This request must be sent to a broker, not directly to the controller")
 
     val wireTopics = startRequest.data().topics()
     val unauthorizedTopics = wireTopics.asScala.map(_.topicName()).filterNot(topic =>
@@ -304,8 +306,9 @@ class ControllerApis(
     val excludePatterns = startRequest.data().excludePatterns()
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
+    val stateValidationOffset = startRequest.data().stateValidationOffset()
     controller.startMirrorTopics(context, mirrorName, topics,
-        includePatterns, excludePatterns)
+        includePatterns, excludePatterns, stateValidationOffset)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
@@ -325,6 +328,8 @@ class ControllerApis(
       throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
+    if (!request.isForwarded)
+      throw new InvalidRequestException("This request must be sent to a broker, not directly to the controller")
 
     val topics: util.Set[String] = new util.HashSet[String]()
     stopRequest.data().topics().forEach( topic => {
@@ -335,9 +340,10 @@ class ControllerApis(
     if (unauthorizedTopics.nonEmpty)
       throw new TopicAuthorizationException(unauthorizedTopics.asJava)
     val patterns = stopRequest.data().patterns()
+    val stateValidationOffset = stopRequest.data().stateValidationOffset()
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    controller.stopMirrorTopics(context, mirrorName, topics, patterns)
+    controller.stopMirrorTopics(context, mirrorName, topics, patterns, stateValidationOffset)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
@@ -357,6 +363,8 @@ class ControllerApis(
       throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
+    if (!request.isForwarded)
+      throw new InvalidRequestException("This request must be sent to a broker, not directly to the controller")
 
     val topics: util.Set[String] = new util.HashSet[String]()
     pauseRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
@@ -364,9 +372,10 @@ class ControllerApis(
       authHelper.authorize(request.context, ALTER_CONFIGS, TOPIC, topic, logIfDenied = false))
     if (unauthorizedTopics.nonEmpty)
       throw new TopicAuthorizationException(unauthorizedTopics.asJava)
+    val stateValidationOffset = pauseRequest.data().stateValidationOffset()
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    controller.pauseMirrorTopics(context, mirrorName, topics)
+    controller.pauseMirrorTopics(context, mirrorName, topics, stateValidationOffset)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
@@ -385,6 +394,8 @@ class ControllerApis(
       throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
+    if (!request.isForwarded)
+      throw new InvalidRequestException("This request must be sent to a broker, not directly to the controller")
 
     val topics: util.Set[String] = new util.HashSet[String]()
     resumeRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
@@ -392,9 +403,10 @@ class ControllerApis(
       authHelper.authorize(request.context, ALTER_CONFIGS, TOPIC, topic, logIfDenied = false))
     if (unauthorizedTopics.nonEmpty)
       throw new TopicAuthorizationException(unauthorizedTopics.asJava)
+    val stateValidationOffset = resumeRequest.data().stateValidationOffset()
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    controller.resumeMirrorTopics(context, mirrorName, topics)
+    controller.resumeMirrorTopics(context, mirrorName, topics, stateValidationOffset)
       .handle[Unit] { (response, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
@@ -413,6 +425,8 @@ class ControllerApis(
       throw new ClusterMirrorAuthorizationException(s"Request $request needs ALTER permission on ClusterMirror:$mirrorName.")
     if (!ClusterMirrorUtils.isClusterMirroringEnabled(apiVersionManager.features.finalizedFeatures))
       throw new UnsupportedVersionException("Cluster mirroring requires mirror.version >= 1.")
+    if (!request.isForwarded)
+      throw new InvalidRequestException("This request must be sent to a broker, not directly to the controller")
 
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())

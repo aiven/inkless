@@ -29,7 +29,12 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.internals.Topic;
+import org.apache.kafka.common.message.DeleteClusterMirrorRequestData;
 import org.apache.kafka.common.message.MirrorPidResetRecord;
+import org.apache.kafka.common.message.PauseMirrorTopicsRequestData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StopMirrorTopicsRequestData;
 import org.apache.kafka.common.message.WriteMirrorStatesResponseData;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.protocol.ByteBufferAccessor;
@@ -99,6 +104,7 @@ import static org.apache.kafka.common.utils.Utils.require;
  * {@code __mirror_state} partition. Each broker coordinates the partitions it leads in that
  * topic; writes targeting a remote coordinator are forwarded via {@link MirrorMetadataManager}.
  */
+@SuppressWarnings("ClassFanOutComplexity")
 public class ClusterMirrorCoordinator {
     private final Logger log;
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
@@ -376,7 +382,14 @@ public class ClusterMirrorCoordinator {
                 } else {
                     attempt = 1;
                 }
-                MirrorPartitionState previousState = existing != null ? existing.previousState() : currentState;
+                // Use the actual current state unless this is a FAILED -> FAILED self-transition,
+                // where we preserve the original pre-failure state for retry targeting
+                MirrorPartitionState previousState;
+                if (currentState == MirrorPartitionState.FAILED && existing != null) {
+                    previousState = existing.previousState();
+                } else {
+                    previousState = currentState;
+                }
                 return new FailedPartitionInfo(attempt, errorMessage, previousState);
             });
         } else if (newState == MirrorPartitionState.LOG_TRUNCATION
@@ -409,7 +422,15 @@ public class ClusterMirrorCoordinator {
                     brokerConfig.mirrorConfig().failedRetryMaxBackoffMs(),
                     CommonClientConfigs.RETRY_BACKOFF_JITTER);
             long delay = failedRetryBackoff.backoff(attempt);
-            MirrorPartitionState targetState = fpi != null ? fpi.previousState() : MirrorPartitionState.MIRRORING;
+            MirrorPartitionState targetState;
+            if (fpi == null) {
+                targetState = MirrorPartitionState.MIRRORING;
+            } else if (fpi.previousState() == MirrorPartitionState.UNKNOWN) {
+                // FAILED -> UNKNOWN is not a valid transition, so re-bootstrap via LOG_TRUNCATION instead
+                targetState = MirrorPartitionState.LOG_TRUNCATION;
+            } else {
+                targetState = fpi.previousState();
+            }
             log.info("Scheduling retry attempt #{} for partition {} in {} ms with target state {}.", attempt, tp, delay, targetState);
             scheduler.scheduleOnce("MirrorFailedRetry-" + tp, () -> transitionTo(mirrorName, Set.of(tp), targetState), delay);
         });
@@ -1072,6 +1093,22 @@ public class ClusterMirrorCoordinator {
         return metadataManager.getMirrorStates(mirrorName);
     }
 
+    public void validateStartMirrorStates(StartMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validateStartMirrorStates(data, callback);
+    }
+
+    public void validateStopMirrorStates(StopMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validateStopMirrorStates(data, callback);
+    }
+
+    public void validatePauseMirrorStates(PauseMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validatePauseMirrorStates(data, callback);
+    }
+
+    public void validateResumeMirrorStates(ResumeMirrorTopicsRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validateResumeMirrorStates(data, callback);
+    }
+
     public Set<String> getConfiguredTopics(String mirrorName, boolean includePaused, boolean includeStopped) {
         return metadataManager.getConfiguredTopics(mirrorName, includePaused, includeStopped);
     }
@@ -1084,8 +1121,8 @@ public class ClusterMirrorCoordinator {
         return metadataManager.failedPartitionInfo();
     }
 
-    public void deleteClusterMirror(String mirrorName, Consumer<Optional<Errors>> callback) {
-        metadataManager.validateStoppedAndDelete(mirrorName, callback);
+    public void validateDeleteMirrorStates(DeleteClusterMirrorRequestData data, Consumer<Optional<Errors>> callback) {
+        metadataManager.validateDeleteMirrorStates(data, callback);
     }
 
     /**

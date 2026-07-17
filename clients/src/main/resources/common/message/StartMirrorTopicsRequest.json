@@ -35,6 +35,8 @@
     { "name": "IncludePatterns", "type": "[]string", "versions": "0+",
       "about": "Regex patterns to add to mirror.topics.include (mirror.topics.exclude takes precedence over this)." },
     { "name": "ExcludePatterns", "type": "[]string", "versions": "0+",
-      "about": "Regex patterns to add to mirror.topics.exclude (this takes precedence over mirror.topics.include)." }
+      "about": "Regex patterns to add to mirror.topics.exclude (this takes precedence over mirror.topics.include)." },
+    { "name": "StateValidationOffset", "type": "int64", "versions": "0+", "default": "-1",
+      "about": "Cluster metadata offset at which the broker validated preconditions. -1 to skip validation."}
   ]
 }
