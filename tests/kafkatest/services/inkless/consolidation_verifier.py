@@ -209,15 +209,16 @@ class ConsolidationVerifier(object):
             "connectivity/credentials for the inkless system-test dependencies."
             % (self.MINIO_ALIAS, self.MINIO_ENDPOINT, rc))
 
-    def object_keys(self, prefix=""):
-        # Object keys under the given bucket prefix, via mc ls --recursive --json.
+    def _object_entries(self, prefix=""):
+        # (key, size) tuples under the given bucket prefix, via mc ls --recursive
+        # --json. mc emits one JSON object per line with a "size" field in bytes.
         node = self._storage_node()
         self._ensure_mc_alias(node)
         target = "%s/%s" % (self.MINIO_ALIAS, self.MINIO_BUCKET)
         if prefix:
             target += "/" + prefix
         cmd = "mc ls --recursive --json %s" % target
-        keys = []
+        entries = []
         for line in node.account.ssh_capture(cmd, allow_fail=False):
             line = line.strip()
             if not line:
@@ -236,8 +237,12 @@ class ConsolidationVerifier(object):
                 continue
             key = obj.get("key")
             if key:
-                keys.append(key)
-        return keys
+                entries.append((key, int(obj.get("size") or 0)))
+        return entries
+
+    def object_keys(self, prefix=""):
+        # Object keys under the given bucket prefix, via mc ls --recursive --json.
+        return [key for key, _ in self._object_entries(prefix)]
 
     def tiered_object_count(self):
         # Count under the tiered-storage prefix only (scanning the whole bucket
@@ -247,11 +252,47 @@ class ConsolidationVerifier(object):
         # absolute `== N` flaps with test order.
         return len(self.object_keys(self.TIERED_PREFIX))
 
+    def tiered_object_bytes(self):
+        # Total bytes under the tiered-storage prefix. Like tiered_object_count,
+        # this is not topic-scoped and accumulates across tests in one
+        # `ducker-ak test` run, so use it as a baseline + delta, never absolute.
+        # A retention.bytes test uses it to pick a whole-log size limit relative
+        # to the data that actually reached remote, instead of guessing at the
+        # per-record on-disk size. Scoping the listing to the prefix already limits
+        # the entries to tiered storage (mc returns keys relative to the prefix, so
+        # no further key filtering is possible here anyway).
+        return sum(size for _, size in self._object_entries(self.TIERED_PREFIX))
+
     def wal_object_count(self):
         # Bucket-root count (outside tiered-storage/), i.e. diskless WAL files.
         # Same accumulation caveats as tiered_object_count: baseline + delta
         # only, never absolute.
         return len([k for k in self.object_keys() if not k.startswith(self.TIERED_PREFIX)])
+
+    def wait_for_tiered_count_stable(self, settle_samples=3, backoff_sec=5, timeout_sec=300):
+        """Wait until the tiered-storage object count stops growing (held steady across
+        ``settle_samples`` consecutive samples) and return that stable count.
+
+        Consolidation/RLM keeps copying closed segments to remote after the WAL has
+        drained locally, so a count snapshot taken right after ``wait_for_tiered_offset_at_least``
+        can still be climbing. Tests that later assert the count *dropped* after a
+        reclaim need a settled pre-reclaim peak, otherwise late tiering can mask the
+        deletion. Under a long retention nothing removes tiered objects, so the count
+        only grows and then plateaus."""
+        state = {"last": -1, "stable": 0, "value": 0}
+
+        def check():
+            cur = self.tiered_object_count()
+            state["stable"] = state["stable"] + 1 if cur == state["last"] else 0
+            state["last"] = cur
+            state["value"] = cur
+            self.logger.info("Tiered-storage object count: %d (stable for %d samples)"
+                             % (cur, state["stable"]))
+            return state["stable"] >= settle_samples
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=backoff_sec,
+                   err_msg="Tiered-storage object count did not stabilize within %ds." % timeout_sec)
+        return state["value"]
 
     # --------------------- Control plane ---------------------
 
@@ -445,14 +486,26 @@ class ConsolidationVerifier(object):
             self.logger.debug("Leader lookup for %s-%d not ready yet: %s" % (topic, partition, e))
             return False
 
-    def offset_at(self, topic, time_spec, partition=0):
+    def _broker_bootstrap(self, node):
+        """``hostname:port`` for a single broker's client listener, so a query can be
+        pinned to one broker instead of the whole ``bootstrap_servers()`` list."""
+        protocol = self.kafka.security_protocol
+        port = self.kafka.port_mappings[protocol].port_number
+        return "%s:%s" % (node.account.hostname, port)
+
+    def offset_at(self, topic, time_spec, partition=0, bootstrap_server=None):
         """Offset for the partition at a ``kafka-get-offsets.sh --time`` spec
         (-1 latest, -2 earliest, -4 earliest-local, -5 latest-tiered). Returns -1 if
-        not parseable yet."""
+        not parseable yet.
+
+        ``bootstrap_server`` pins the query to a single broker (see
+        ``_broker_bootstrap``); by default the whole cluster is used. Pinning lets a
+        test detect a per-broker divergence in the answer (e.g. ListOffsets(EARLIEST)
+        served inconsistently across brokers)."""
         node = self.kafka.nodes[0]
         cmd = "%s --bootstrap-server %s --topic %s --partitions %d --time %s" % (
             self.kafka.path.script("kafka-get-offsets.sh", node),
-            self.kafka.bootstrap_servers(),
+            bootstrap_server or self.kafka.bootstrap_servers(),
             topic,
             partition,
             time_spec,
@@ -566,6 +619,53 @@ class ConsolidationVerifier(object):
                             % (topic, partition, timeout_sec)))
         return state["value"]
 
+    def earliest_on_each_broker(self, topic, partition=0):
+        """Query ListOffsets(EARLIEST) once against each broker individually and return
+        a ``{hostname: offset}`` map. Before the ``DisklessFetchOffsetRouter`` fix a
+        follower served ListOffsets(EARLIEST) from its frozen-at-switch local classic
+        log while the leader served the advanced value, so the answer diverged per
+        broker (Problem A). After the fix every broker routes to the control plane and
+        returns the same cross-tier earliest."""
+        result = {}
+        for node in self.kafka.nodes:
+            result[node.account.hostname] = self.offset_at(
+                topic, time_spec=-2, partition=partition,
+                bootstrap_server=self._broker_bootstrap(node))
+        return result
+
+    def wait_for_consistent_earliest_across_brokers(self, topic, partition=0,
+                                                    settle_samples=3, backoff_sec=5,
+                                                    timeout_sec=240):
+        """Wait until ListOffsets(EARLIEST) is (a) > 0, (b) identical on every broker,
+        and (c) held steady across ``settle_samples`` consecutive rounds; return that
+        agreed value.
+
+        This is the end-to-end Problem A assertion: the earliest must be one
+        broker-agnostic value (the control-plane cross-tier earliest), not a per-broker
+        answer that depends on which replica the metadata transformer routed the client
+        to. A single positive value on every broker, stable over time, means the router
+        no longer serves it from a replica's local classic log."""
+        state = {"last": None, "stable": 0, "value": 0}
+
+        def check():
+            per_broker = self.earliest_on_each_broker(topic, partition=partition)
+            values = set(per_broker.values())
+            agreed = len(values) == 1 and all(v > 0 for v in values)
+            cur = next(iter(values)) if agreed else None
+            state["stable"] = state["stable"] + 1 if (agreed and cur == state["last"]) else 0
+            state["last"] = cur
+            if agreed:
+                state["value"] = cur
+            self.logger.info("Per-broker earliest for %s-%d: %s (agreed=%s, stable for %d samples)"
+                             % (topic, partition, per_broker, agreed, state["stable"]))
+            return state["stable"] >= settle_samples
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=backoff_sec,
+                   err_msg=("ListOffsets(EARLIEST) for %s-%d did not converge to a single "
+                            "positive value across all brokers within %ds (Problem A: "
+                            "per-broker earliest divergence)" % (topic, partition, timeout_sec)))
+        return state["value"]
+
     def read_contiguous_from(self, topic, from_offset=0, max_messages=1, partition=0,
                              timeout_ms=120000):
         """Fetch up to ``max_messages`` records from ``from_offset`` and return
@@ -612,6 +712,57 @@ class ConsolidationVerifier(object):
                                              max_messages=1, partition=partition,
                                              timeout_ms=timeout_ms)
         return first
+
+    def delete_records(self, topic, before_offset, partition=0):
+        """Run ``kafka-delete-records.sh`` to delete every record before
+        ``before_offset`` on ``topic``-``partition`` and return the resulting
+        ``low_watermark`` (the new log start) for that partition.
+
+        ``DeleteRecords`` takes a *beforeOffset*: the given offset becomes the new
+        log start, so records ``[0, before_offset)`` are removed. On a consolidating
+        topic the broker splits the request across tiers -- local ``UnifiedLog`` (which
+        drives ``RemoteLogManager`` deletion of the remote segments below the new start)
+        and, past the local log end, the diskless WAL in the control plane. The offset
+        JSON file is written on the broker node and passed with ``--offset-json-file``.
+
+        ``DeleteRecordsCommand`` prints *per-partition* failures on stdout (``partition:
+        <tp>\\terror: <msg>``) and now exits non-zero when any partition fails, so a genuine
+        failure surfaces as a ``RemoteCommandError`` from ``ssh_capture``. On success the output is
+        parsed for the per-partition ``low_watermark``."""
+        node = self.kafka.nodes[0]
+        offset_json = ('{"partitions":[{"topic":"%s","partition":%d,"offset":%d}],"version":1}'
+                       % (topic, partition, before_offset))
+        json_path = "/tmp/delete-records-%s-%d.json" % (topic, partition)
+        node.account.create_file(json_path, offset_json)
+        cmd = "%s --bootstrap-server %s --offset-json-file %s" % (
+            self.kafka.path.script("kafka-delete-records.sh", node),
+            self.kafka.bootstrap_servers(),
+            json_path,
+        )
+        self.logger.info("Deleting records before offset %d on %s-%d: %s"
+                         % (before_offset, topic, partition, cmd))
+        output = ""
+        for line in node.account.ssh_capture(cmd, allow_fail=False):
+            output += line.decode("utf-8") if isinstance(line, bytes) else line
+        self.logger.info("kafka-delete-records.sh output:\n%s" % output)
+
+        target = "%s-%d" % (topic, partition)
+        low_watermark = None
+        for line in output.splitlines():
+            line = line.strip()
+            err = re.search(r"partition:\s*(\S+)\s+error:\s*(.+)$", line)
+            if err and err.group(1) == target:
+                raise AssertionError(
+                    "DeleteRecords before offset %d on %s failed: %s"
+                    % (before_offset, target, err.group(2)))
+            lw = re.search(r"partition:\s*(\S+)\s+low_watermark:\s*(-?\d+)$", line)
+            if lw and lw.group(1) == target:
+                low_watermark = int(lw.group(2))
+        assert low_watermark is not None, (
+            "DeleteRecords before offset %d on %s returned no low_watermark; output was:\n%s"
+            % (before_offset, target, output))
+        self.logger.info("DeleteRecords on %s returned low_watermark=%d" % (target, low_watermark))
+        return low_watermark
 
     # --------------------- Dependency outage (iptables) ---------------------
     #

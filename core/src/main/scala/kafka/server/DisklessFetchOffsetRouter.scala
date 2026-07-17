@@ -136,15 +136,22 @@ class DisklessFetchOffsetRouter(
           classicLookup()
 
         case ListOffsetsRequest.EARLIEST_TIMESTAMP =>
-          // Classic owns the earliest offset only while the local log still holds the pre-switch
-          // prefix (classicLogStartOffset < classicToDisklessStartOffset). A born-consolidated
-          // partition has no committed switch offset (NO_CLASSIC_TO_DISKLESS_START_OFFSET == -1),
-          // so its classic log never owns the earliest: the RLM-pinned local log start does not
-          // track cross-tier retention in time, whereas the control-plane leg does. Route those
-          // to diskless, whose list_offsets_v1 returns COALESCE(remote_log_start_offset,
-          // log_start_offset) and therefore reflects retention that advanced the remote/diskless
-          // start above 0 on a born-consolidated topic.
-          if (classicLogStartOffsetProvider(topicPartition).exists(_ < classicToDisklessStartOffset)) {
+          // The control plane is the authoritative, broker-agnostic cross-tier earliest for
+          // *consolidating* topics: its list_offsets_v1 returns COALESCE(remote_log_start_offset,
+          // log_start_offset), which the partition's classic leader keeps current (reporting 0 on
+          // becoming leader, then advancing it via remote retention and DeleteRecords). The local
+          // classic log start is NOT a safe source here: a follower's is frozen at the switch, so a
+          // client the metadata transformer routes to a follower would get a stale earliest, and
+          // DeleteRecords / retention advance the control plane rather than every replica's local
+          // log. So route every consolidating partition -- born-consolidated (no committed switch
+          // offset) and switched alike -- to the control plane, giving one consistent answer on
+          // every broker.
+          //
+          // Non-consolidating switched partitions keep the classic leg while it still owns the
+          // pre-switch prefix (classicLogStartOffset < classicToDisklessStartOffset); there is no
+          // control-plane cross-tier tracking for them.
+          if (!isConsolidatingPartition &&
+              classicLogStartOffsetProvider(topicPartition).exists(_ < classicToDisklessStartOffset)) {
             classicLookup()
           } else {
             asStatus(topicPartition, disklessLookup)

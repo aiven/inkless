@@ -112,7 +112,8 @@ class KafkaApis(val requestChannel: RequestChannel,
                 val apiVersionManager: ApiVersionManager,
                 val clientMetricsManager: ClientMetricsManager,
                 val groupConfigManager: GroupConfigManager,
-                inklessSharedState: Option[SharedState] = None
+                inklessSharedState: Option[SharedState] = None,
+                disklessDeleteRecordsForwarder: Option[DisklessDeleteRecordsForwarder] = None
 ) extends ApiRequestHandler with Logging {
 
   type ProduceResponseStats = Map[TopicIdPartition, RecordValidationStats]
@@ -1599,14 +1600,56 @@ class KafkaApis(val requestChannel: RequestChannel,
           }.toList.asJava.iterator()))))
     }
 
-    if (authorizedForDeleteTopicOffsets.isEmpty)
+    if (authorizedForDeleteTopicOffsets.isEmpty) {
       sendResponseCallback(Map.empty)
-    else {
-      // call the replica manager to append messages to the replicas
-      replicaManager.deleteRecords(
-        deleteRecordsRequest.data.timeoutMs.toLong,
-        authorizedForDeleteTopicOffsets,
-        sendResponseCallback)
+    } else {
+      val timeoutMs = deleteRecordsRequest.data.timeoutMs
+      // Split the diskless partitions whose local-log leg must run on another broker's real KRaft
+      // leader (the metadata transformer advertised a follower to the client). A forwarded request
+      // lands on its real leader, where routeByLeader resolves leader == self and handles it
+      // locally, so the chain terminates without an explicit loop guard.
+      val routed = disklessDeleteRecordsForwarder
+        .map(forwarder => (forwarder, forwarder.routeByLeader(authorizedForDeleteTopicOffsets.toMap)))
+
+      routed match {
+        case Some((forwarder, (localOffsets, forwardByLeader))) if forwardByLeader.nonEmpty =>
+          // Some partitions must be applied by another broker's real KRaft leader (the diskless
+          // metadata transformer advertised a follower as the client-facing leader). Fan out the
+          // local and forwarded legs and merge their results into a single response.
+          val expected = forwardByLeader.size + (if (localOffsets.nonEmpty) 1 else 0)
+          val remaining = new AtomicInteger(expected)
+          val collected = new ConcurrentHashMap[TopicPartition, DeleteRecordsPartitionResult]()
+
+          def onBucketComplete(results: Map[TopicPartition, DeleteRecordsPartitionResult]): Unit = {
+            results.foreach { case (topicPartition, result) => collected.put(topicPartition, result) }
+            if (remaining.decrementAndGet() == 0)
+              sendResponseCallback(collected.asScala.toMap)
+          }
+
+          if (localOffsets.nonEmpty)
+            replicaManager.deleteRecords(timeoutMs.toLong, localOffsets, onBucketComplete)
+
+          forwardByLeader.foreach { case (leader, offsets) =>
+            forwarder.forward(leader, offsets, timeoutMs).whenComplete { (results, exception) =>
+              if (exception != null) {
+                warn(s"Failed to forward DeleteRecords for $offsets to leader $leader", exception)
+                onBucketComplete(offsets.keys.map { topicPartition =>
+                  topicPartition -> new DeleteRecordsPartitionResult()
+                    .setPartitionIndex(topicPartition.partition)
+                    .setLowWatermark(DeleteRecordsResponse.INVALID_LOW_WATERMARK)
+                    .setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
+                }.toMap)
+              } else {
+                onBucketComplete(results)
+              }
+            }
+          }
+
+        case _ =>
+          // No forwarding needed (inkless disabled, forwarded request, or all partitions handled
+          // locally): keep the existing single-call path.
+          replicaManager.deleteRecords(timeoutMs.toLong, authorizedForDeleteTopicOffsets, sendResponseCallback)
+      }
     }
   }
 

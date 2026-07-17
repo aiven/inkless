@@ -169,6 +169,7 @@ class BrokerServer(
   private var maybeInklessSharedState: Option[SharedState] = None
   private var maybeInitDisklessLogManager: Option[InitDisklessLogManager] = None
   private var initDisklessLogChannelManager: NodeToControllerChannelManager = _
+  private var maybeDisklessDeleteRecordsForwarder: Option[DisklessDeleteRecordsForwarder] = None
 
   private def maybeChangeStatus(from: ProcessStatus, to: ProcessStatus): Boolean = {
     lock.lock()
@@ -401,6 +402,17 @@ class BrokerServer(
         initDisklessLogManager = maybeInitDisklessLogManager
       )
 
+      // Forwards the leader-only leg of DeleteRecords for diskless topics with a local-log
+      // component to the partition's real KRaft leader, since the metadata transformer advertises
+      // an AZ-selected replica (a follower) as the client-facing leader.
+      maybeDisklessDeleteRecordsForwarder = inklessSharedState.map { _ =>
+        val forwarderLogContext = new LogContext(s"[DisklessDeleteRecordsForwarder broker=${config.brokerId}]")
+        val forwarderNetworkClient = NetworkUtils.buildNetworkClient("DisklessDeleteRecordsForwarder", config, metrics, time, forwarderLogContext)
+        val forwarder = new DisklessDeleteRecordsForwarder(config, forwarderNetworkClient, metadataCache, inklessMetadataView, time)
+        forwarder.start()
+        forwarder
+      }
+
       /* start token manager */
       tokenManager = new DelegationTokenManager(new DelegationTokenManagerConfigs(config), tokenCache)
 
@@ -512,7 +524,8 @@ class BrokerServer(
         apiVersionManager = apiVersionManager,
         clientMetricsManager = clientMetricsManager,
         groupConfigManager = groupConfigManager,
-        inklessSharedState = inklessSharedState)
+        inklessSharedState = inklessSharedState,
+        disklessDeleteRecordsForwarder = maybeDisklessDeleteRecordsForwarder)
 
       dataPlaneRequestHandlerPool = sharedServer.requestHandlerPoolFactory.createPool(
         config.nodeId,
@@ -802,7 +815,19 @@ class BrokerServer(
           // control plane so any broker can serve it for ListOffsets(EARLIEST). No-op for classic topics.
           maybeInklessSharedState.foreach(_.crossTierLogStartReporter().enqueue(tp, remoteLogStartOffset))
         },
-        brokerTopicStats, metrics, endpoint.toJava)
+        brokerTopicStats, metrics, endpoint.toJava,
+        // For a consolidating diskless partition, drive the RLM's remote-retention reclaim floor and
+        // become-leader log-start report from the broker-agnostic control-plane cross-tier earliest
+        // instead of the broker-local log start (which on a freshly-rebuilt leader is pinned at the
+        // seal). Resolved lazily via ReplicaManager, which is constructed after the RLM; the override is
+        // only ever invoked at RLM runtime, well after startup. Empty for classic / non-inkless topics.
+        (tp: TopicPartition) =>
+          if (_replicaManager != null) _replicaManager.crossTierEarliestOffset(tp) else util.OptionalLong.empty(),
+        // Tells the RLM whether the partition is consolidating diskless, so that when the cross-tier
+        // earliest above is unavailable it fails safe (skips log-start reclaim) instead of falling back
+        // to the broker-local seal and over-reclaiming the remote classic prefix. False for classic topics.
+        (tp: TopicPartition) =>
+          if (_replicaManager != null) _replicaManager.isConsolidatingDisklessPartition(tp) else false)
       Some(rlm)
     } else {
       None
@@ -892,6 +917,8 @@ class BrokerServer(
         maybeInklessSharedState.foreach(s => CoreUtils.swallow(s.close(), this))
 
       maybeInitDisklessLogManager.foreach(m => CoreUtils.swallow(m.shutdown(), this))
+
+      maybeDisklessDeleteRecordsForwarder.foreach(f => CoreUtils.swallow(f.shutdown(), this))
 
       if (initDisklessLogChannelManager != null)
         CoreUtils.swallow(initDisklessLogChannelManager.shutdown(), this)
