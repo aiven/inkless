@@ -45,7 +45,10 @@ public record ClusterMirrorRecordKey(String mirrorName, Uuid topicId, int partit
         this.partition = Objects.requireNonNull(partition, "partition cannot be null");
     }
 
-    // TODO these are the same rules used for topic names, so it may be better to extract into some shared utils class
+    public static ClusterMirrorRecordKey of(String mirrorName, Uuid topicId, int partition) {
+        return new ClusterMirrorRecordKey(mirrorName, topicId, partition);
+    }
+
     private static void validateMirrorName(String name) {
         if (name.isEmpty()) {
             throw new IllegalArgumentException("Mirror name is invalid: the empty string is not allowed");

@@ -19,7 +19,6 @@ package kafka.server.mirror;
 import kafka.server.KafkaConfig;
 import kafka.server.ReplicaManager;
 import kafka.server.mirror.ClusterMirrorUtils.FailedPartitionInfo;
-import kafka.server.mirror.ClusterMirrorUtils.PartitionKey;
 
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.ClusterMirrorListing;
@@ -140,7 +139,7 @@ public class ClusterMirrorCoordinator {
 
     private boolean isLocalCoordinator(String mirrorName, String topic, int partition) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME,
-                getCoordinatorPartitionByKey(new ClusterMirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), partition)));
+                getCoordinatorPartitionByKey(ClusterMirrorRecordKey.of(mirrorName, metadataCache.getTopicId(topic), partition)));
         var optLeaderAndIsr = metadataCache.getLeaderAndIsr(mirrorTopicPartition.topic(), mirrorTopicPartition.partition());
         return optLeaderAndIsr.isPresent() && optLeaderAndIsr.get().leader() == brokerConfig.nodeId();
     }
@@ -194,7 +193,7 @@ public class ClusterMirrorCoordinator {
             int partitionIndex,
             int partitionLeaderEpoch
     ) {
-        loadMirrorMetadata(new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndex));
+        replayMirrorStateLog(new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndex));
     }
 
     /** Clears cached metadata on leadership resignation. */
@@ -205,43 +204,35 @@ public class ClusterMirrorCoordinator {
         metadataManager.clearCache();
     }
 
-    // Replays the mirror state log to rebuild in-memory partition states, epochs, and retry metadata.
-    private void loadMirrorMetadata(TopicPartition topicPartition) {
-        log.info("Loading mirror metadata from {}.", topicPartition);
+    /**
+     * Replays the {@code __mirror_state} log to rebuild in-memory partition states,
+     * last mirror epochs, and retry metadata after a coordinator leadership election.
+     */
+    private void replayMirrorStateLog(TopicPartition topicPartition) {
         long logEndOffset = replicaManager.getLogEndOffset(topicPartition).getOrElse(() -> -1L);
 
         replicaManager.getLog(topicPartition).foreach(partitionLog -> {
+            long startOffset = partitionLog.logStartOffset();
+            long currOffset = startOffset;
+            int maxLength = 5 * 1024 * 1024;
+            int recordCount = 0;
             ByteBuffer buffer = ByteBuffer.allocate(0);
 
-            // loop breaks if leader changes at any time during the load, since logEndOffset is -1
-            long currOffset = partitionLog.logStartOffset();
-
-            // loop breaks if no records have been read, since the end of the log has been reached
-            boolean readAtLeastOneRecord = true;
-            int maxLength = 5 * 1024 * 1024;
+            log.info("Replaying mirror state log {} offsets [{}, {}).", topicPartition, startOffset, logEndOffset);
 
             try {
-                // might need a lock
-                while (currOffset < logEndOffset && readAtLeastOneRecord && isRunning.get()) {
-                    log.debug("Reading mirror data from {} at offset {}.", topicPartition, currOffset);
+                while (currOffset < logEndOffset && isRunning.get()) {
                     FetchDataInfo fetchDataInfo = partitionLog.read(currOffset, maxLength, FetchIsolation.LOG_END, true);
-
-                    readAtLeastOneRecord = fetchDataInfo.records.sizeInBytes() > 0;
+                    if (fetchDataInfo.records.sizeInBytes() == 0) {
+                        break;
+                    }
 
                     MemoryRecords memRecords;
-
-                    if (fetchDataInfo.records instanceof MemoryRecords) {
-                        memRecords = (MemoryRecords) fetchDataInfo.records;
+                    if (fetchDataInfo.records instanceof MemoryRecords mr) {
+                        memRecords = mr;
                     } else if (fetchDataInfo.records instanceof FileRecords fileRecords) {
-                        int sizeInBytes = fileRecords.sizeInBytes();
-                        int bytesNeeded = Math.max(maxLength, sizeInBytes);
-
-                        // minOneMessage = true in the above read means that the buffer may need to be grown to ensure progress can be made
+                        int bytesNeeded = Math.max(maxLength, fileRecords.sizeInBytes());
                         if (buffer.capacity() < bytesNeeded) {
-                            if (maxLength < bytesNeeded)
-                                log.warn("Loaded mirror data from {} with buffer larger ({} bytes) than " +
-                                        "{} bytes)", topicPartition, bytesNeeded, maxLength);
-
                             buffer = ByteBuffer.allocate(bytesNeeded);
                         }
                         buffer.clear();
@@ -250,63 +241,69 @@ public class ClusterMirrorCoordinator {
                     } else {
                         return null;
                     }
-                    for (MutableRecordBatch batch : memRecords.batches()) {
-                        batch.iterator().forEachRemaining(record -> {
-                            require(record.hasKey(), "Mirror log's key should not be null");
-                            short version = record.key().getShort();
-                            if (version == CoordinatorRecordType.LAST_MIRROR_EPOCHS.id()) {
-                                String clusterName = readMirrorNameFromKey(record.key());
-                                if (record.hasValue()) {
-                                    Map<String, Map<Integer, Integer>> offsets = readLastMirrorEpochsValue(record.value());
-                                    metadataManager.updateLastMirrorEpochs(clusterName, offsets);
-                                } else {
-                                    metadataManager.removeLastMirrorEpochs(clusterName);
-                                }
-                            } else if (version == CoordinatorRecordType.MIRROR_PARTITION_STATE.id()) {
-                                String clusterName = readMirrorNameFromKey(record.key());
-                                if (record.hasValue()) {
-                                    ClusterMirrorUtils.PartitionStateLogEntry value = readMirrorPartitionStateValue(record.value());
-                                    if (value != null) {
-                                        PartitionKey pk = new PartitionKey(clusterName, value.topic(), value.partition());
-                                        metadataManager.updatePartitionState(pk, value.state());
-                                        TopicPartition tp = new TopicPartition(value.topic(), value.partition());
-                                        restoreFailedState(tp, value.state(), value.retryAttempt(), value.errorMessage(), value.previousState());
-                                    }
-                                } else {
-                                    metadataManager.removeMirrorStates(clusterName);
-                                }
-                            } else {
-                                throw new IllegalArgumentException("Unknown cluster mirror log key version " + version);
-                            }
 
-                        });
+                    for (MutableRecordBatch batch : memRecords.batches()) {
+                        for (var record : batch) {
+                            require(record.hasKey(), "Mirror state log record key must not be null");
+                            replayRecord(record);
+                            recordCount++;
+                        }
                         currOffset = batch.nextOffset();
                     }
                 }
             } catch (Throwable t) {
-                log.error("Error loading mirrors from mirror state log {}", topicPartition, t);
+                log.error("Failed to replay mirror state log {} at offset {}.", topicPartition, currOffset, t);
             }
 
-            // we've read all the mirrored records, transition the state for each topic partitions
-            metadataManager.applyLoadedPartitionStates(this::handleStateTransition);
+            log.info("Replayed {} record(s) from mirror state log {}, now applying state transitions.",
+                    recordCount, topicPartition);
+            metadataManager.applyReplayedStates(this::handleStateTransition);
 
             return null;
         });
+    }
+
+    private void replayRecord(org.apache.kafka.common.record.Record record) {
+        short version = record.key().getShort();
+        String mirrorName = readMirrorNameFromKey(record.key());
+
+        if (version == CoordinatorRecordType.LAST_MIRROR_EPOCHS.id()) {
+            if (record.hasValue()) {
+                metadataManager.updateLastMirrorEpochs(mirrorName, readLastMirrorEpochsValue(record.value()));
+            } else {
+                metadataManager.removeLastMirrorEpochs(mirrorName);
+            }
+        } else if (version == CoordinatorRecordType.MIRROR_PARTITION_STATE.id()) {
+            if (record.hasValue()) {
+                MirrorPartitionStateValue psv = readMirrorPartitionStateValue(record.value());
+                metadataCache.getTopicName(psv.topicId()).ifPresent(topicName -> {
+                    ClusterMirrorRecordKey pk = ClusterMirrorRecordKey.of(mirrorName, psv.topicId(), psv.partition());
+                    MirrorPartitionState state = MirrorPartitionState.fromValue(psv.state());
+                    MirrorPartitionState previousState = MirrorPartitionState.fromValue(psv.previousState());
+                    metadataManager.updatePartitionState(pk, state);
+                    restoreFailedState(mirrorName, pk, state, psv.retryAttempt(), psv.errorMessage(), previousState);
+                });
+            } else {
+                metadataManager.removeMirrorStates(mirrorName);
+            }
+        } else {
+            throw new IllegalArgumentException("Unknown mirror state log key version " + version);
+        }
     }
 
     /** Executes the appropriate actions for a state transition. */
     private void handleStateTransition(String mirrorName, Set<TopicPartition> topicPartitions, MirrorPartitionState newState) {
         switch (newState) {
             case LOG_TRUNCATION:
-                log.info("LOG_TRUNCATION for topics {}.", topicPartitions);
+                log.info("Mirror '{}' transitioning {} to LOG_TRUNCATION.", mirrorName, topicPartitions);
                 scheduleTruncation(mirrorName, topicPartitions);
                 break;
             case EPOCH_FENCING:
-                log.info("EPOCH_FENCING for topics {}.", topicPartitions);
+                log.info("Mirror '{}' transitioning {} to EPOCH_FENCING.", mirrorName, topicPartitions);
                 metadataManager.scheduleBumpLeaderEpochs(mirrorName, topicPartitions)
                     .whenComplete((v, ex) -> {
                         if (ex != null) {
-                            log.error("Failed to bump leader epoch for {}", topicPartitions, ex);
+                            log.error("Mirror '{}' failed to bump leader epoch for {}.", mirrorName, topicPartitions, ex);
                             transitionTo(mirrorName, topicPartitions, MirrorPartitionState.FAILED, ex.getMessage());
                         } else {
                             transitionTo(mirrorName, topicPartitions, MirrorPartitionState.MIRRORING);
@@ -314,20 +311,20 @@ public class ClusterMirrorCoordinator {
                     });
                 break;
             case MIRRORING:
-                log.info("MIRRORING topics {}.", topicPartitions);
+                log.info("Mirror '{}' transitioning {} to MIRRORING.", mirrorName, topicPartitions);
                 replicaManager.maybeCreateMirrorFetchers(mirrorName, topicPartitions);
                 break;
             case PAUSING:
-                log.info("PAUSING mirroring for topics {}.", topicPartitions);
+                log.info("Mirror '{}' transitioning {} to PAUSING.", mirrorName, topicPartitions);
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
                 topicPartitions.forEach(tp -> transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED));
                 break;
             case PAUSED:
-                log.info("PAUSED mirroring for topics {}.", topicPartitions);
+                log.info("Mirror '{}' transitioning {} to PAUSED.", mirrorName, topicPartitions);
                 // topic is still read-only
                 break;
             case STOPPING:
-                log.info("STOPPING for topics {}.", topicPartitions);
+                log.info("Mirror '{}' transitioning {} to STOPPING.", mirrorName, topicPartitions);
                 // The order of STOPPING process:
                 // 1. remove fetcher for mirror fetcher
                 // 2. store LME because that's the last mirrored epoch before bumping leader epoch
@@ -342,38 +339,37 @@ public class ClusterMirrorCoordinator {
                     .thenCompose(v -> abortOngoingTransactions(topicPartitions))
                     .thenAccept(v -> writeMirrorPidResetAndStop(mirrorName, topicPartitions))
                     .exceptionally(ex -> {
-                        log.error("Failed STOPPING transition for {}", topicPartitions, ex);
+                        log.error("Mirror '{}' STOPPING transition failed for {}.", mirrorName, topicPartitions, ex);
                         return null;
                     });
                 break;
             case STOPPED:
-                log.info("STOPPED for topics {}.", topicPartitions);
+                log.info("Mirror '{}' transitioning {} to STOPPED.", mirrorName, topicPartitions);
                 // Topic is writable.
                 break;
             case FAILED:
-                log.info("FAILED for topics {}.", topicPartitions);
+                log.info("Mirror '{}' transitioning {} to FAILED.", mirrorName, topicPartitions);
                 scheduleFailedRetries(mirrorName, topicPartitions);
                 break;
             default:
-                log.error("Illegal state transition to {}", newState);
                 throw new IllegalArgumentException("Illegal state transition to " + newState);
         }
     }
 
-    private void restoreFailedState(TopicPartition tp, MirrorPartitionState state, int retryAttempt,
-                                    String errorMessage, MirrorPartitionState previousState) {
+    private void restoreFailedState(String mirrorName, ClusterMirrorRecordKey pk, MirrorPartitionState state,
+                                    int retryAttempt, String errorMessage, MirrorPartitionState previousState) {
         if (state == MirrorPartitionState.FAILED) {
-            metadataManager.failedPartitionInfo().put(tp,
-                    new FailedPartitionInfo(retryAttempt, errorMessage, previousState));
+            metadataManager.setFailedInfo(pk, new FailedPartitionInfo(retryAttempt, errorMessage, previousState));
         } else {
-            metadataManager.failedPartitionInfo().remove(tp);
+            metadataManager.clearFailedInfo(pk);
         }
     }
 
-    private void updateFailedState(TopicPartition tp, MirrorPartitionState currentState,
+    private void updateFailedState(String mirrorName, TopicPartition tp, MirrorPartitionState currentState,
                                    MirrorPartitionState newState, String errorMessage, boolean nonRetryable) {
+        ClusterMirrorRecordKey pk = ClusterMirrorRecordKey.of(mirrorName, metadataCache.getTopicId(tp.topic()), tp.partition());
         if (newState == MirrorPartitionState.FAILED) {
-            metadataManager.failedPartitionInfo().compute(tp, (key, existing) -> {
+            metadataManager.computeFailedInfo(pk, (key, existing) -> {
                 int attempt;
                 if (nonRetryable) {
                     attempt = NON_RETRYABLE_ATTEMPT;
@@ -395,7 +391,7 @@ public class ClusterMirrorCoordinator {
         } else if (newState == MirrorPartitionState.LOG_TRUNCATION
                 || newState == MirrorPartitionState.STOPPED
                 || newState == MirrorPartitionState.PAUSED) {
-            metadataManager.failedPartitionInfo().remove(tp);
+            metadataManager.clearFailedInfo(pk);
         }
     }
 
@@ -403,7 +399,7 @@ public class ClusterMirrorCoordinator {
     private void scheduleFailedRetries(String mirrorName, Set<TopicPartition> topicPartitions) {
         int maxAttempts = brokerConfig.mirrorConfig().failedRetryMaxAttempts();
         topicPartitions.forEach(tp -> {
-            FailedPartitionInfo fpi = metadataManager.failedPartitionInfo().get(tp);
+            FailedPartitionInfo fpi = metadataManager.getFailedInfo(ClusterMirrorRecordKey.of(mirrorName, metadataCache.getTopicId(tp.topic()), tp.partition()));
             int attempt = fpi != null ? fpi.retryAttempt() : 1;
             if (attempt == NON_RETRYABLE_ATTEMPT) {
                 log.debug("Skipping retry for partition {} because it is in non-retryable failed state, requires manual intervention.", tp);
@@ -453,7 +449,7 @@ public class ClusterMirrorCoordinator {
             MirrorPartitionState currentState = metadataManager.getPartitionState(mirrorName, tp);
             if (MirrorPartitionState.isValidTransition(currentState, newState)) {
                 log.debug("Transitioning partition {} from {} to {}.", tp, currentState, newState);
-                updateFailedState(tp, currentState, newState, errorMessage, nonRetryable);
+                updateFailedState(mirrorName, tp, currentState, newState, errorMessage, nonRetryable);
                 updateMirrorPartitionState(mirrorName, tp, newState)
                         .whenComplete((optTp, ex) -> {
                             if (ex != null) {
@@ -613,7 +609,7 @@ public class ClusterMirrorCoordinator {
     private CompletableFuture<Void> collectAndUpdateLastMirrorEpochs(String mirrorName, Set<TopicPartition> topicPartitions) {
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         Map<String, Map<Integer, Integer>> partitionOffsets = new HashMap<>();
-        ClusterMirrorUtils.groupPartitionsByTopic(topicPartitions).forEach((topic, parts) -> {
+        groupPartitionsByTopic(topicPartitions).forEach((topic, parts) -> {
             Map<Integer, Integer> offsets = new HashMap<>();
             parts.forEach(i -> replicaManager.getPartitionOrException(
                     new TopicPartition(topic, i)).log().foreach(log -> {
@@ -628,6 +624,21 @@ public class ClusterMirrorCoordinator {
         return CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new));
     }
 
+    private static Map<String, Set<Integer>> groupPartitionsByTopic(Set<TopicPartition> topicPartitions) {
+        Map<String, Set<Integer>> topicToPartitions = new HashMap<>();
+        topicPartitions.forEach(tp -> {
+            topicToPartitions.compute(tp.topic(), (k, preV) -> {
+                if (preV == null) {
+                    return Set.of(tp.partition());
+                }
+                Set<Integer> results = new HashSet<>(preV);
+                results.add(tp.partition());
+                return results;
+            });
+        });
+        return topicToPartitions;
+    }
+
     /** Persists last mirror epochs to local or remote coordinators. */
     public CompletableFuture<Void> updateLastMirrorEpochs(String mirrorName, Map<String, Map<Integer, Integer>> partitionOffsets) {
         CompletableFuture<Void> future = new CompletableFuture<>();
@@ -639,7 +650,7 @@ public class ClusterMirrorCoordinator {
             offsetMap.forEach((par, off) -> {
                 if (isLocalCoordinator(mirrorName, topic, par)) {
                     int coordPartition = getCoordinatorPartitionByKey(
-                            new ClusterMirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), par));
+                            ClusterMirrorRecordKey.of(mirrorName, metadataCache.getTopicId(topic), par));
                     localByCoordPartition
                             .computeIfAbsent(coordPartition, k -> new HashSet<>())
                             .add(new TopicPartition(topic, par));
@@ -732,7 +743,7 @@ public class ClusterMirrorCoordinator {
         if (isLocalCoordinator(mirrorName, topicPartition.topic(), topicPartition.partition())) {
             // this is the leader of the coordinator (async disk I/O operation)
             var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME,
-                    getCoordinatorPartitionByKey(new ClusterMirrorRecordKey(
+                    getCoordinatorPartitionByKey(ClusterMirrorRecordKey.of(
                             mirrorName, metadataCache.getTopicId(topicPartition.topic()), topicPartition.partition())));
             var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
             var record = buildPartitionStateRecord(mirrorName, topicPartition, newState);
@@ -755,7 +766,7 @@ public class ClusterMirrorCoordinator {
                                 log.error("Failed to write partition state to coordinator: {}", pr.error.message());
                                 future.completeExceptionally(pr.error.exception());
                             } else {
-                                metadataManager.updatePartitionState(new PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()), newState);
+                                metadataManager.updatePartitionState(ClusterMirrorRecordKey.of(mirrorName, metadataCache.getTopicId(topicPartition.topic()), topicPartition.partition()), newState);
                                 future.complete(Optional.of(topicPartition));
                             }
                             return null;
@@ -773,7 +784,7 @@ public class ClusterMirrorCoordinator {
             metadataManager.writeStatesToRemoteCoordinator(mirrorName, topicMetadata, Set.of(),
                     res -> res.data().topics().forEach(topic -> topic.partitions().forEach(par -> {
                         if (par.errorCode() == Errors.NONE.code()) {
-                            metadataManager.updatePartitionState(new PartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()), newState);
+                            metadataManager.updatePartitionState(ClusterMirrorRecordKey.of(mirrorName, metadataCache.getTopicId(topicPartition.topic()), topicPartition.partition()), newState);
                             future.complete(Optional.of(topicPartition));
                         } else {
                             log.error("Failed to write partition state to remote coordinator: {}", par.errorCode());
@@ -930,7 +941,7 @@ public class ClusterMirrorCoordinator {
     }
 
     private CoordinatorRecord buildPartitionStateRecord(String mirrorName, TopicPartition topicPartition, MirrorPartitionState state) {
-        FailedPartitionInfo fpi = metadataManager.failedPartitionInfo().get(topicPartition);
+        FailedPartitionInfo fpi = metadataManager.getFailedInfo(ClusterMirrorRecordKey.of(mirrorName, metadataCache.getTopicId(topicPartition.topic()), topicPartition.partition()));
         var key = new MirrorPartitionStateKey().setMirrorName(mirrorName);
         var val = new MirrorPartitionStateValue()
                 .setTopicId(metadataCache.getTopicId(topicPartition.topic()))
@@ -943,9 +954,9 @@ public class ClusterMirrorCoordinator {
         return CoordinatorRecord.record(key, apiVersion);
     }
 
-    private CoordinatorRecord buildLastMirrorEpochsRecord(String mirrorName, Map<PartitionKey, Integer> offsets) {
+    private CoordinatorRecord buildLastMirrorEpochsRecord(String mirrorName, Map<ClusterMirrorRecordKey, Integer> offsets) {
         Map<Uuid, Map<Integer, Integer>> grouped = new HashMap<>();
-        offsets.forEach((pk, value) -> grouped.computeIfAbsent(metadataCache.getTopicId(pk.topic()), k -> new HashMap<>()).put(pk.partition(), value));
+        offsets.forEach((pk, value) -> grouped.computeIfAbsent(pk.topicId(), k -> new HashMap<>()).put(pk.partition(), value));
 
         var key = new LastMirrorEpochsKey().setMirrorName(mirrorName);
         var val = new LastMirrorEpochsValue();
@@ -970,7 +981,7 @@ public class ClusterMirrorCoordinator {
         states.forEach((tp, state) -> {
             if (isLocalCoordinator(mirrorName, tp.topic(), tp.partition())) {
                 coordPartitionToMirrorPartitions.computeIfAbsent(getCoordinatorPartitionByKey(
-                    new ClusterMirrorRecordKey(mirrorName, metadataCache.getTopicId(tp.topic()), tp.partition())),
+                    ClusterMirrorRecordKey.of(mirrorName, metadataCache.getTopicId(tp.topic()), tp.partition())),
                         v -> new HashSet<>()).add(tp);
             }
         });
@@ -984,7 +995,7 @@ public class ClusterMirrorCoordinator {
             // No local coordinator partitions — clear cached entries
             states.keySet().forEach(tp ->
                 metadataManager.removePartitionState(
-                    new PartitionKey(mirrorName, tp.topic(), tp.partition())));
+                    ClusterMirrorRecordKey.of(mirrorName, metadataCache.getTopicId(tp.topic()), tp.partition())));
             return;
         }
 
@@ -1016,7 +1027,7 @@ public class ClusterMirrorCoordinator {
                                 mirrorTopicPartition, partitionRes.error.message());
                         } else {
                             tps.forEach(tp -> metadataManager.removePartitionState(
-                                new PartitionKey(mirrorName, tp.topic(), tp.partition())));
+                                ClusterMirrorRecordKey.of(mirrorName, metadataCache.getTopicId(tp.topic()), tp.partition())));
                         }
                         return null;
                     });
@@ -1058,16 +1069,10 @@ public class ClusterMirrorCoordinator {
         return offsets;
     }
 
-    private ClusterMirrorUtils.PartitionStateLogEntry readMirrorPartitionStateValue(ByteBuffer buffer) {
+    private MirrorPartitionStateValue readMirrorPartitionStateValue(ByteBuffer buffer) {
         short version = buffer.getShort();
         if (version <= MirrorPartitionStateValue.HIGHEST_SUPPORTED_VERSION && version >= MirrorPartitionStateValue.LOWEST_SUPPORTED_VERSION) {
-            MirrorPartitionStateValue value = new MirrorPartitionStateValue(new ByteBufferAccessor(buffer), version);
-            Optional<String> topicName = metadataCache.getTopicName(value.topicId());
-            if (topicName.isEmpty()) return null;
-            return new ClusterMirrorUtils.PartitionStateLogEntry(topicName.get(), value.partition(),
-                    MirrorPartitionState.fromValue(value.state()),
-                    MirrorPartitionState.fromValue(value.previousState()), value.retryAttempt(),
-                    value.errorMessage());
+            return new MirrorPartitionStateValue(new ByteBufferAccessor(buffer), version);
         } else {
             throw new IllegalStateException("Unsupported partition state value version: " + version);
         }
@@ -1117,8 +1122,8 @@ public class ClusterMirrorCoordinator {
         return metadataManager.getActiveTopicCount(mirrorName);
     }
 
-    public Map<TopicPartition, FailedPartitionInfo> getFailedPartitionInfo() {
-        return metadataManager.failedPartitionInfo();
+    public FailedPartitionInfo getFailedInfo(String mirrorName, TopicPartition tp) {
+        return metadataManager.getFailedInfo(ClusterMirrorRecordKey.of(mirrorName, metadataCache.getTopicId(tp.topic()), tp.partition()));
     }
 
     public void validateDeleteMirrorStates(DeleteClusterMirrorRequestData data, Consumer<Optional<Errors>> callback) {

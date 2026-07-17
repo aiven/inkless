@@ -505,8 +505,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         // Each broker reports partitions it's responsible for to avoid duplicates
         val lagInfoMap = replicaManager.getMirrorLagInfo(mirrorName)
         val partitionStates = clusterMirrorCoordinator.getMirrorStates(mirrorName).asScala
-        val failedInfo = clusterMirrorCoordinator.getFailedPartitionInfo()
-
         // Report partition if: (1) we have lag info, OR (2) we're the partition leader and have no lag info
         val partitionsToReport = (lagInfoMap.keySet ++ partitionStates.keySet.filter { tp =>
           !lagInfoMap.contains(tp) && replicaManager.onlinePartition(tp).exists(_.isLeader)
@@ -526,14 +524,15 @@ class KafkaApis(val requestChannel: RequestChannel,
 
             val state = partitionStates.getOrElse(topicPartition, MirrorPartitionState.UNKNOWN)
             val isMirroring = state == MirrorPartitionState.MIRRORING
+            val fpi = clusterMirrorCoordinator.getFailedInfo(mirrorName, topicPartition)
             val partitionDetail = new DescribeClusterMirrorsResponseData.PartitionDetail()
               .setPartitionIndex(topicPartition.partition())
               .setSourceOffset(if (isMirroring) lagInfoMap.get(topicPartition).map(_.sourceOffset).getOrElse(-1L) else -1L)
               .setDestinationOffset(if (isMirroring) lagInfoMap.get(topicPartition).map(_.destinationOffset).getOrElse(-1L) else -1L)
               .setLag(if (isMirroring) lagInfoMap.get(topicPartition).map(_.lag).getOrElse(-1L) else -1L)
               .setStateValue(state.name())
-              .setRetryAttempt(Option(failedInfo.get(topicPartition)).map(_.retryAttempt().toShort).getOrElse(0.toShort))
-              .setErrorMessage(Option(failedInfo.get(topicPartition)).map(_.errorMessage()).orNull)
+              .setRetryAttempt(if (fpi != null) fpi.retryAttempt().toShort else 0.toShort)
+              .setErrorMessage(if (fpi != null) fpi.errorMessage() else null)
 
             topicPartitions.partitions().add(partitionDetail)
           }

@@ -18,20 +18,12 @@ package kafka.server.mirror;
 
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.metrics.Metrics;
-import org.apache.kafka.common.utils.LogContext;
-import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.common.ClusterMirrorVersion;
 import org.apache.kafka.server.common.MirrorPartitionState;
-import org.apache.kafka.server.config.ClusterMirrorConfig;
-import org.apache.kafka.server.network.BrokerEndPoint;
 
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-
 
 /**
  * Shared data types and utility methods for cluster mirroring components.
@@ -43,55 +35,34 @@ public final class ClusterMirrorUtils {
 
     private ClusterMirrorUtils() {}
 
+    /** Returns true if the finalized feature level supports cluster mirroring. */
     public static boolean isClusterMirroringEnabled(Map<String, Short> finalizedFeatures) {
         short featureLevel = finalizedFeatures.getOrDefault(ClusterMirrorVersion.FEATURE_NAME, (short) 0);
         return ClusterMirrorVersion.fromFeatureLevel(featureLevel).isClusterMirroringSupported();
     }
 
-    public static MirrorSourceSender createSender(BrokerEndPoint brokerEndpoint,
-                                                  ClusterMirrorConfig mirrorConfig,
-                                                  Metrics metrics,
-                                                  Time time,
-                                                  String clientId,
-                                                  LogContext logContext) {
-        return new MirrorSourceSender(brokerEndpoint, mirrorConfig,
-                metrics, time, brokerEndpoint.id(), clientId, logContext);
-    }
-
-    public static Map<String, Set<Integer>> groupPartitionsByTopic(Set<TopicPartition> topicPartitions) {
-        Map<String, Set<Integer>> topicToPartitions = new HashMap<>();
-        topicPartitions.forEach(tp -> {
-            topicToPartitions.compute(tp.topic(), (k, preV) -> {
-                if (preV == null) {
-                    return Set.of(tp.partition());
-                }
-                Set<Integer> results = new HashSet<>(preV);
-                results.add(tp.partition());
-                return results;
-            });
-        });
-        return topicToPartitions;
-    }
-
-    public record PartitionStateInfo(int partition, MirrorPartitionState state, Integer leaderEpoch) { }
-
-    public record PartitionStateLogEntry(String topic, int partition, MirrorPartitionState state,
-                                         MirrorPartitionState previousState, int retryAttempt,
-                                         String errorMessage) { }
-
-    public record PartitionKey(String mirrorName, String topic, int partition) { }
-
-    public record LeaderEpochBump(CompletableFuture<Void> future, Map<TopicPartition, Integer> partitionToEpoch) { }
-
+    /** Cached source cluster leader node and epoch for a mirror partition. */
     public record LeaderInfo(Node node, int leaderEpoch) { }
 
+    /** Combined cache entry holding partition state, last mirror epoch, and failure metadata. */
+    public record PartitionCacheEntry(MirrorPartitionState state, int lastMirrorEpoch, FailedPartitionInfo failedInfo) { }
+
+    /** Tracks retry state for a partition in FAILED state. */
     public record FailedPartitionInfo(int retryAttempt, String errorMessage, MirrorPartitionState previousState) { }
 
+    /** Partition state and leader epoch carried in WriteMirrorStates / ReadMirrorStates RPCs. */
+    public record PartitionStateInfo(int partition, MirrorPartitionState state, Integer leaderEpoch) { }
+
+    /** Pending leader epoch bump request with the future that completes when the bump is observed in metadata. */
+    public record LeaderEpochBump(CompletableFuture<Void> future, Map<TopicPartition, Integer> partitionToEpoch) { }
+
+    /** Callback for partition state transitions triggered by the coordinator. */
     interface StateTransitioner {
         void transitionTo(String mirrorName, Set<TopicPartition> topicPartition, MirrorPartitionState state, String errorMessage, boolean nonRetryable);
     }
 
+    /** Callback invoked after replaying partition states from the coordinator log. */
     interface StateTransitionCallback {
-        void onStateLoaded(String mirrorName, Set<TopicPartition> topicPartitions, MirrorPartitionState state);
+        void onStateReplayed(String mirrorName, Set<TopicPartition> topicPartitions, MirrorPartitionState state);
     }
 }
