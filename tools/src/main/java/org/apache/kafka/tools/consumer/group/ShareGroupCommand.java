@@ -36,6 +36,7 @@ import org.apache.kafka.common.GroupType;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.GroupIdNotFoundException;
 import org.apache.kafka.common.errors.GroupNotEmptyException;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Utils;
@@ -385,10 +386,25 @@ public class ShareGroupCommand {
                 if (!(GroupState.EMPTY.equals(shareGroupDescription.groupState()) || GroupState.DEAD.equals(shareGroupDescription.groupState()))) {
                     CommandLineUtils.printErrorAndExit(String.format("Share group '%s' is not empty.", groupId));
                 }
-                Map<TopicPartition, OffsetAndMetadata> offsetsToReset = prepareOffsetsToReset(groupId);
-                if (offsetsToReset == null) {
-                    return;
+                resetOffsetsForInactiveGroup(groupId);
+            } catch (InterruptedException ie) {
+                throw new RuntimeException(ie);
+            } catch (ExecutionException ee) {
+                Throwable cause = ee.getCause();
+                if (cause instanceof GroupIdNotFoundException) {
+                    resetOffsetsForInactiveGroup(groupId);
+                } else if (cause instanceof KafkaException) {
+                    CommandLineUtils.printErrorAndExit(cause.getMessage());
+                } else {
+                    throw new RuntimeException(cause);
                 }
+            }
+        }
+
+        private void resetOffsetsForInactiveGroup(String groupId) {
+            try {
+                Collection<TopicPartition> partitionsToReset = getPartitionsToReset(groupId);
+                Map<TopicPartition, OffsetAndMetadata> offsetsToReset = prepareOffsetsToReset(partitionsToReset);
                 boolean dryRun = opts.options.has(opts.dryRunOpt) || !opts.options.has(opts.executeOpt);
                 if (!dryRun) {
                     adminClient.alterShareGroupOffsets(groupId,
@@ -404,36 +420,28 @@ public class ShareGroupCommand {
             } catch (ExecutionException ee) {
                 Throwable cause = ee.getCause();
                 if (cause instanceof KafkaException) {
-                    CommandLineUtils.printErrorAndExit(cause.getMessage());
+                    throw (KafkaException) cause;
                 } else {
                     throw new RuntimeException(cause);
                 }
             }
         }
 
-        protected Map<TopicPartition, OffsetAndMetadata> prepareOffsetsToReset(String groupId) throws ExecutionException, InterruptedException {
-            Map<String, ListShareGroupOffsetsSpec> groupSpecs = Map.of(groupId, new ListShareGroupOffsetsSpec());
-            Map<TopicPartition, OffsetAndMetadata> offsetsByTopicPartitions = adminClient.listShareGroupOffsets(groupSpecs).all().get().get(groupId);
+        private Collection<TopicPartition> getPartitionsToReset(String groupId) throws ExecutionException, InterruptedException {
             Collection<TopicPartition> partitionsToReset;
 
             if (opts.options.has(opts.topicOpt)) {
                 partitionsToReset = offsetsUtils.parseTopicPartitionsToReset(opts.options.valuesOf(opts.topicOpt));
-                Set<String> subscribedTopics = offsetsByTopicPartitions.keySet().stream()
-                    .map(TopicPartition::topic)
-                    .collect(Collectors.toSet());
-                Set<String> resetTopics = partitionsToReset.stream()
-                    .map(TopicPartition::topic)
-                    .collect(Collectors.toSet());
-                if (!subscribedTopics.containsAll(resetTopics)) {
-                    CommandLineUtils
-                        .printErrorAndExit(String.format("Share group '%s' is not subscribed to topic '%s'.",
-                            groupId, resetTopics.stream().filter(topic -> !subscribedTopics.contains(topic)).collect(Collectors.joining(", "))));
-                    return null;
-                }
             } else {
+                Map<String, ListShareGroupOffsetsSpec> groupSpecs = Map.of(groupId, new ListShareGroupOffsetsSpec());
+                Map<TopicPartition, OffsetAndMetadata> offsetsByTopicPartitions = adminClient.listShareGroupOffsets(groupSpecs).all().get().get(groupId);
                 partitionsToReset = offsetsByTopicPartitions.keySet();
             }
 
+            return partitionsToReset;
+        }
+
+        private Map<TopicPartition, OffsetAndMetadata> prepareOffsetsToReset(Collection<TopicPartition> partitionsToReset) {
             offsetsUtils.checkAllTopicPartitionsValid(partitionsToReset);
             if (opts.options.has(opts.resetToEarliestOpt)) {
                 return offsetsUtils.resetToEarliest(partitionsToReset);
@@ -656,25 +664,7 @@ public class ShareGroupCommand {
         }
     }
 
-    static class SharePartitionOffsetInformation {
-        final String group;
-        final String topic;
-        final int partition;
-        final Optional<Long> offset;
-        final Optional<Integer> leaderEpoch;
-
-        SharePartitionOffsetInformation(
-            String group,
-            String topic,
-            int partition,
-            Optional<Long> offset,
-            Optional<Integer> leaderEpoch
-        ) {
-            this.group = group;
-            this.topic = topic;
-            this.partition = partition;
-            this.offset = offset;
-            this.leaderEpoch = leaderEpoch;
-        }
+    record SharePartitionOffsetInformation(String group, String topic, int partition, Optional<Long> offset,
+                                           Optional<Integer> leaderEpoch) {
     }
 }
