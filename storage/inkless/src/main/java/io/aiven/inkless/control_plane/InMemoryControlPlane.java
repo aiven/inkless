@@ -250,6 +250,12 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         );
         coordinates.put(lastOffset, new BatchInfoInternal(batchInfo, fileInfo));
 
+        // Populate only when unset: appends add newer batches at the head, so a populated log's oldest
+        // batch is unchanged. Covers empty->non-empty and lazily backfills a still-null log.
+        if (logInfo.earliestBatchTimestamp == null) {
+            logInfo.earliestBatchTimestamp = earliestBatchTimestamp(coordinates);
+        }
+
         fileInfo.addBatch(batchInfo);
 
         return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset, fileInfo.objectKey, request);
@@ -329,7 +335,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         if (convertedOffset < 0 || convertedOffset > logInfo.highWatermark) {
             return DeleteRecordsResponse.offsetOutOfRange();
         }
-        if (convertedOffset > logInfo.logStartOffset) {
+        final boolean advanced = convertedOffset > logInfo.logStartOffset;
+        if (advanced) {
             logInfo.logStartOffset = convertedOffset;
         }
 
@@ -339,6 +346,10 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             batchInfoInternal.fileInfo().deleteBatch(batchInfoInternal.batchInfo, TimeUtils.now(time));
             logInfo.byteSize -= batchInfoInternal.batchInfo().metadata().byteSize();
             assert logInfo.byteSize >= 0;
+        }
+        // Recompute only on advance (null when the log emptied); a no-op delete leaves it untouched.
+        if (advanced) {
+            logInfo.earliestBatchTimestamp = earliestBatchTimestamp(coordinates);
         }
         return (DeleteRecordsResponse.success(logInfo.logStartOffset));
     }
@@ -387,8 +398,21 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             int batchesDeleted = 0;
             long bytesDeleted = 0;
 
+            // Short-circuit (mirrors enforce_retention_v2): if the oldest retained batch survives every
+            // enabled policy, nothing is deletable, so skip the O(depth) selection scans below. This is a
+            // pure optimization - both scans would select nothing in this case (the size scan starts only
+            // when byteSize exceeds the limit; the time takeWhile stops at the first non-breaching batch),
+            // so we still fall through to the unchanged tail that reports log_start_offset. A null
+            // earliestBatchTimestamp means "unknown", so we cannot prove time-safety and run the scans.
+            final boolean sizeSafe = request.retentionBytes() < 0 || logInfo.byteSize <= request.retentionBytes();
+            final boolean timeSafe = request.retentionMs() < 0
+                || (logInfo.earliestBatchTimestamp != null
+                    && logInfo.earliestBatchTimestamp >= now.toEpochMilli() - request.retentionMs());
+            final boolean nothingDeletable = sizeSafe && timeSafe;
+
             // Enforce the size retention.
-            if (request.retentionBytes() >= 0
+            if (!nothingDeletable
+                && request.retentionBytes() >= 0
                 // Does it even make sense to start iterating?
                 && logInfo.byteSize > request.retentionBytes()) {
                 long accumulatedSize = 0;
@@ -402,7 +426,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             }
 
             // Enforce the time retention.
-            if (request.retentionMs() >= 0) {
+            if (!nothingDeletable && request.retentionMs() >= 0) {
                 final long lastRetainedTimestamp = now.toEpochMilli() - request.retentionMs();
                 // Select batches for deletion only while we see them breaching the retention threshold, but no further.
                 coordinates.values().stream()
@@ -427,13 +451,23 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             }
 
             logInfo.byteSize -= bytesDeleted;
-            if (coordinates.isEmpty()) {
-                logInfo.logStartOffset = logInfo.highWatermark;
-                if (logInfo.byteSize != 0) {
-                    throw new RuntimeException(String.format("Log size expected to be 0, but it's %d", logInfo.byteSize));
+            // Only a deletion can change log_start or the oldest batch. When nothing was deleted, leave both
+            // untouched: recomputing log_start from the oldest batch's base offset would move it BACKWARD if a
+            // prior deleteRecords advanced it into the middle of the still-retained oldest batch, diverging
+            // from delete_records_v1 and wrongly serving reads below the log start.
+            if (batchesDeleted > 0) {
+                if (coordinates.isEmpty()) {
+                    logInfo.logStartOffset = logInfo.highWatermark;
+                    if (logInfo.byteSize != 0) {
+                        throw new RuntimeException(String.format("Log size expected to be 0, but it's %d", logInfo.byteSize));
+                    }
+                } else {
+                    // Forward-only for the same reason.
+                    logInfo.logStartOffset = Math.max(
+                        logInfo.logStartOffset,
+                        coordinates.firstEntry().getValue().batchInfo().metadata().baseOffset());
                 }
-            } else {
-                logInfo.logStartOffset = coordinates.firstEntry().getValue().batchInfo().metadata().baseOffset();
+                logInfo.earliestBatchTimestamp = earliestBatchTimestamp(coordinates);
             }
             responses.add(EnforceRetentionResponse.success(batchesDeleted, bytesDeleted, logInfo.logStartOffset));
         }
@@ -643,6 +677,12 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         }
         logInfo.logStartOffset = newLogStart;
 
+        // Cross-tier prune removes the oldest batches, so recompute when it deleted something
+        // (null when the log emptied); no removal leaves it untouched.
+        if (!keysToRemove.isEmpty()) {
+            logInfo.earliestBatchTimestamp = earliestBatchTimestamp(coordinates);
+        }
+
         return new PruneDisklessLogsResponse(requestTip, newLogStart, PruneDisklessLogsError.NONE);
     }
 
@@ -658,6 +698,15 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             .orElse(null);
     }
 
+    // Effective timestamp of the oldest retained batch (smallest last-offset key == batch at logStartOffset),
+    // or null when the log is empty. Matches batch_timestamp() / logs.earliest_batch_timestamp semantics.
+    private static Long earliestBatchTimestamp(final TreeMap<Long, BatchInfoInternal> coordinates) {
+        if (coordinates.isEmpty()) {
+            return null;
+        }
+        return coordinates.firstEntry().getValue().batchInfo().metadata().timestamp();
+    }
+
     private static class LogInfo {
         long logStartOffset = 0;
         long highWatermark = 0;
@@ -665,6 +714,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         long disklessStartOffset = 0;
         // -1 means "no remote tier tracked yet"; mirrors the NULL sentinel of logs.remote_log_start_offset.
         long remoteLogStartOffset = -1;
+        // Effective timestamp of the oldest retained batch (the one at logStartOffset), mirroring
+        // logs.earliest_batch_timestamp. null means "unknown, must scan" (same as the NULL sentinel in SQL).
+        // Maintained purely for parity with the Postgres control plane so the enforceRetention short-circuit
+        // behaves identically across backends.
+        Long earliestBatchTimestamp = null;
     }
 
     private static class FileInfo {
