@@ -96,10 +96,14 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
   }
 
   def getClassicToDisklessStartOffset(topicPartition: TopicPartition): Long = {
-    Option(metadataCache.currentImage().topics().getTopic(topicPartition.topic()))
-      .flatMap(topicImage => Option(topicImage.partitions().get(topicPartition.partition())))
-      .map(_.classicToDisklessStartOffset)
-      .getOrElse(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    // Hot path: called for every fetch request, every replica fetch response and every
+    // ListOffsets request. Avoid Option/Some allocations by going through nullable
+    // intermediates and inlining the lookup chain.
+    val topic = metadataCache.currentImage().topics().getTopic(topicPartition.topic())
+    if (topic == null) return PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
+    val partReg = topic.partitions().get(topicPartition.partition())
+    if (partReg == null) PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
+    else partReg.classicToDisklessStartOffset
   }
 
   /**

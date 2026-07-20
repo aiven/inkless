@@ -316,14 +316,21 @@ class Partition(val topicPartition: TopicPartition,
    * Seal this Partition so that no more records can be appended locally.
    * @throws KafkaStorageException If transaction abortion fails due to an I/O error.
    */
-  def seal(): Unit = inWriteLock(leaderIsrUpdateLock) {
-    if (!_sealed) {
-      val leaderLog = localLogOrException
-      if (leaderLog.producerStateManager().firstUndecidedOffset().isPresent) {
-        abortOngoingTransactions(leaderLog)
+  def seal(): Unit = {
+    // Fast path: `_sealed` is @volatile, so a relaxed read is sufficient to avoid taking
+    // the write lock on idempotent calls (sealTopicPartitions, applyLocalLeadersDelta and
+    // applyLocalFollowersDelta all call seal() and the write lock contends with
+    // appendRecordsToLeader / appendRecordsToFollowerOrFutureReplica).
+    if (_sealed) return
+    inWriteLock(leaderIsrUpdateLock) {
+      if (!_sealed) {
+        val leaderLog = localLogOrException
+        if (leaderLog.producerStateManager().firstUndecidedOffset().isPresent) {
+          abortOngoingTransactions(leaderLog)
+        }
+        _sealed = true
+        stateChangeLogger.info(s"Sealed partition $topicPartition for diskless switch with LEO ${leaderLog.logEndOffset}")
       }
-      _sealed = true
-      stateChangeLogger.info(s"Sealed partition $topicPartition for diskless switch with LEO ${leaderLog.logEndOffset}")
     }
   }
 
