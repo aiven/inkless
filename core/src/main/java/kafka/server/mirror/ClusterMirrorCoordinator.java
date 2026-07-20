@@ -271,7 +271,7 @@ public class ClusterMirrorCoordinator {
             if (record.hasValue()) {
                 metadataManager.updateLastMirrorEpochs(mirrorName, readLastMirrorEpochsValue(record.value()));
             } else {
-                metadataManager.removeLastMirrorEpochs(mirrorName);
+                metadataManager.removeCachedMirror(mirrorName);
             }
         } else if (version == CoordinatorRecordType.MIRROR_PARTITION_STATE.id()) {
             if (record.hasValue()) {
@@ -284,7 +284,7 @@ public class ClusterMirrorCoordinator {
                     restoreFailedState(mirrorName, pk, state, psv.retryAttempt(), psv.errorMessage(), previousState);
                 });
             } else {
-                metadataManager.removeMirrorStates(mirrorName);
+                metadataManager.removeCachedMirror(mirrorName);
             }
         } else {
             throw new IllegalArgumentException("Unknown mirror state log key version " + version);
@@ -988,7 +988,7 @@ public class ClusterMirrorCoordinator {
 
         // We can safely remove these caches here and only keep partitionStates for failed write below
         // so cleanupDeletedMirrorStates can pick up and retry.
-        metadataManager.removeLastMirrorEpochs(mirrorName);
+        metadataManager.removeCachedMirror(mirrorName);
         metadataManager.removeStateForPartitions(states.keySet());
 
         if (coordPartitionToMirrorPartitions.isEmpty()) {

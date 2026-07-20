@@ -1801,11 +1801,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         partitionCache.remove(key);
     }
 
-    void removeMirrorStates(String mirrorName) {
-        partitionCache.keySet().removeIf(key -> key.mirrorName().equals(mirrorName));
-    }
-
-    void removeLastMirrorEpochs(String mirrorName) {
+    void removeCachedMirror(String mirrorName) {
         partitionCache.keySet().removeIf(key -> key.mirrorName().equals(mirrorName));
     }
 
@@ -2431,13 +2427,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     /** Upserts added partitions, returning the full epoch map for record serialization. */
     Map<ClusterMirrorRecordKey, Integer> updateLastMirrorEpochs(
             String clusterName, Map<String, Map<Integer, Integer>> addedEpochs) {
-        addedEpochs.forEach((topic, partitionOffsets) -> {
-            partitionOffsets.forEach((partition, offset) -> {
+        addedEpochs.forEach((topic, partitionEpochs) -> {
+            partitionEpochs.forEach((partition, epoch) -> {
                 ClusterMirrorRecordKey key = ClusterMirrorRecordKey.of(clusterName, metadataCache.getTopicId(topic), partition);
                 partitionCache.compute(key, (k, existing) -> {
                     MirrorPartitionState state = existing != null ? existing.state() : null;
                     FailedPartitionInfo fpi = existing != null ? existing.failedInfo() : null;
-                    return new PartitionCacheEntry(state, offset, fpi);
+                    return new PartitionCacheEntry(state, epoch, fpi);
                 });
             });
         });
