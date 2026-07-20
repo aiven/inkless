@@ -105,28 +105,28 @@ public class FileCleaner implements Runnable, Closeable {
                 final Duration sleepDuration = Duration.ofMillis(sleepMillis);
                 LOGGER.info("No files to delete, sleeping for {}", sleepDuration);
                 time.sleep(sleepMillis);
-            } else {
-                LOGGER.info("Running file cleaner: deleting {} of {} marked files", objectKeyPaths.size(), filesToDelete.size());
-                metrics.recordFileCleanerStart();
-                // 1-element holder to carry the duration out of the (synchronous, same-thread) callback
-                // for the log line below; a plain local cannot be assigned from the lambda.
-                final long[] durationMs = {0};
-                TimeUtils.measureDurationMs(time, () -> {
-                    try {
-                        cleanFiles(objectKeyPaths);
-                    } catch (StorageBackendException e) {
-                        LOGGER.error("Error while cleaning files", e);
-                        throw new RuntimeException(e);
-                    }
-                }, duration -> {
-                    durationMs[0] = duration;
-                    metrics.recordFileCleanerTotalTime(duration);
-                });
-                metrics.recordFileCleanerCompleted(objectKeyPaths.size());
-                LOGGER.info("File cleaner deleted {} files in {} ms", objectKeyPaths.size(), durationMs[0]);
+                attempts.set(0);
+                return;
             }
 
-            attempts.set(0);
+            LOGGER.info("Running file cleaner: deleting {} of {} marked files", objectKeyPaths.size(), filesToDelete.size());
+            metrics.recordFileCleanerStart();
+            final int deletedCount = TimeUtils.measureDurationMs(time,
+                () -> cleanFiles(objectKeyPaths),
+                metrics::recordFileCleanerTotalTime);
+
+            if (deletedCount == 0) {
+                // There was work but nothing drained: the backend is likely throttling (S3.delete does
+                // not throw for that) or hitting hard errors. Back off before the next cycle so we do
+                // not keep retrying at a fixed cadence while under pressure. Request-rate backoff within
+                // a cycle is handled by the S3 client's adaptive retry strategy.
+                final long backoff = errorBackoff.backoff(attempts.incrementAndGet());
+                LOGGER.warn("File cleaner drained no files this cycle, backing off for {}",
+                    Duration.ofMillis(backoff));
+                time.sleep(backoff);
+            } else {
+                attempts.set(0);
+            }
         } catch (final Exception e) {
             metrics.recordFileCleanerError();
             final long backoff = errorBackoff.backoff(attempts.incrementAndGet());
@@ -135,15 +135,30 @@ public class FileCleaner implements Runnable, Closeable {
         }
     }
 
-    private void cleanFiles(Set<String> objectKeyPaths) throws StorageBackendException {
+    private int cleanFiles(Set<String> objectKeyPaths) throws StorageBackendException {
         final Set<ObjectKey> objectKeys = objectKeyPaths.stream()
             .map(objectKeyCreator::from)
             .collect(Collectors.toSet());
-        // delete files from storage backend
-        storage.delete(objectKeys);
+        // Delete files from the storage backend. Deletion may be partial (e.g. under S3 throttling):
+        // only the keys the backend confirmed deleted are dereferenced in the control plane, so the
+        // remaining keys stay marked for deletion and are retried on the next cycle instead of being
+        // re-attempted after already being deleted.
+        final Set<ObjectKey> deletedKeys = storage.delete(objectKeys);
+        if (deletedKeys.isEmpty()) {
+            LOGGER.warn("No files deleted from storage out of {} candidates; retrying next cycle",
+                objectKeyPaths.size());
+            return 0;
+        }
+        final Set<String> deletedPaths = deletedKeys.stream()
+            .map(ObjectKey::value)
+            .collect(Collectors.toSet());
         // update control plane
-        final DeleteFilesRequest request = new DeleteFilesRequest(objectKeyPaths);
+        final DeleteFilesRequest request = new DeleteFilesRequest(deletedPaths);
         controlPlane.deleteFiles(request);
+
+        metrics.recordFileCleanerCompleted(deletedPaths.size());
+        LOGGER.info("Deleted {} of {} files", deletedPaths.size(), objectKeyPaths.size());
+        return deletedPaths.size();
     }
 
     @Override
