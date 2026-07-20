@@ -34,6 +34,13 @@ public interface ObjectDeleter extends Closeable {
      * Delete objects from a set of keys.
      *
      * <p>If the object doesn't exist, the operation still succeeds as it is idempotent.
+     *
+     * <p>Deletion may be partial: implementations return the subset of {@code keys} that were
+     * confirmed deleted (which includes keys that were already absent). Keys omitted from the
+     * returned set were not deleted this round (e.g. throttled) and are safe to retry, since
+     * deletion is idempotent. Implementations may still throw for a total/unexpected failure.
+     *
+     * @return the subset of {@code keys} confirmed deleted.
      */
-    void delete(Set<ObjectKey> keys) throws StorageBackendException;
+    Set<ObjectKey> delete(Set<ObjectKey> keys) throws StorageBackendException;
 }

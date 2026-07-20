@@ -22,11 +22,15 @@ import org.apache.kafka.common.utils.ByteBufferInputStream;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -54,11 +58,20 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Error;
 
 @CoverageIgnore  // tested on integration level
 public final class S3Storage extends StorageBackend {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(S3Storage.class);
+
     public static final int MAX_DELETE_KEYS_LIMIT = 1000;
+
+    // Per-key S3 error codes that indicate throttling rather than a hard, non-transient failure. Used
+    // only to log throttling distinctly; both kinds are left for the next FileCleaner cycle to retry.
+    private static final Set<String> THROTTLE_ERROR_CODES =
+        Set.of("SlowDown", "ServiceUnavailable", "RequestLimitExceeded");
+
     private S3Client s3Client;
     private String bucketName;
 
@@ -155,37 +168,70 @@ public final class S3Storage extends StorageBackend {
     }
 
     @Override
-    public void delete(final Set<ObjectKey> keys) throws StorageBackendException {
+    public Set<ObjectKey> delete(final Set<ObjectKey> keys) throws StorageBackendException {
         final List<ObjectKey> objectKeys = new ArrayList<>(keys);
-        try {
-            for (int i = 0; i < objectKeys.size(); i += MAX_DELETE_KEYS_LIMIT) {
-                final var batch = objectKeys.subList(
-                    i,
-                    Math.min(i + MAX_DELETE_KEYS_LIMIT, objectKeys.size())
-                );
+        final Set<ObjectKey> deleted = new HashSet<>();
+        for (int i = 0; i < objectKeys.size(); i += MAX_DELETE_KEYS_LIMIT) {
+            final Set<ObjectKey> batch = new HashSet<>(objectKeys.subList(
+                i,
+                Math.min(i + MAX_DELETE_KEYS_LIMIT, objectKeys.size())
+            ));
+            final Map<String, ObjectKey> byValue = batch.stream()
+                .collect(Collectors.toMap(ObjectKey::value, k -> k, (a, b) -> a));
+            final DeleteObjectsResponse response;
+            try {
+                response = deleteObjectsOnce(batch);
+            } catch (final SdkException e) {
+                // Whole-request failure, including a 503 the SDK's adaptive retry already exhausted and
+                // timeouts. Stop this pass and leave the remaining keys for the next cleanup cycle;
+                // deletion is idempotent, so re-attempting them later is safe.
+                LOGGER.warn("DeleteObjects request failed; leaving {} keys for the next cycle",
+                    objectKeys.size() - deleted.size(), e);
+                break;
+            }
 
-                final Set<ObjectIdentifier> ids = batch.stream()
-                    .map(k -> ObjectIdentifier.builder().key(k.value()).build())
-                    .collect(Collectors.toSet());
-                final Delete delete = Delete.builder().objects(ids).build();
-                final DeleteObjectsRequest deleteObjectsRequest = DeleteObjectsRequest.builder()
-                    .bucket(bucketName)
-                    .delete(delete)
-                    .build();
-                final DeleteObjectsResponse response = s3Client.deleteObjects(deleteObjectsRequest);
-
-                if (!response.errors().isEmpty()) {
-                    final var errors = response.errors().stream()
-                        .map(e -> String.format("Error %s: %s (%s)", e.key(), e.message(), e.code()))
-                        .collect(Collectors.joining(", "));
-                    throw new StorageBackendException("Failed to delete keys " + keys + ": " + errors);
+            for (final var deletedObject : response.deleted()) {
+                final ObjectKey key = byValue.get(deletedObject.key());
+                if (key != null) {
+                    deleted.add(key);
                 }
             }
-        } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
-            throw new StorageBackendTimeoutException("Failed to delete keys " + keys, e);
-        } catch (final SdkException e) {
-            throw new StorageBackendException("Failed to delete keys " + keys, e);
+            logDeleteErrors(response.errors());
         }
+        return deleted;
+    }
+
+    /**
+     * Logs per-key delete errors, distinguishing throttling (expected under load, aggregated) from
+     * hard errors (logged individually). No retry happens here: keys that were not deleted stay marked
+     * for deletion and are retried on the next FileCleaner cycle, while request-rate backoff is left to
+     * the S3 client's adaptive retry strategy.
+     */
+    private void logDeleteErrors(final List<S3Error> errors) {
+        int throttled = 0;
+        for (final var error : errors) {
+            if (THROTTLE_ERROR_CODES.contains(error.code())) {
+                throttled++;
+            } else {
+                LOGGER.warn("Failed to delete {}: {} ({}); leaving it for the next cycle",
+                    error.key(), error.message(), error.code());
+            }
+        }
+        if (throttled > 0) {
+            LOGGER.info("{} keys throttled by S3; leaving them for the next cycle", throttled);
+        }
+    }
+
+    private DeleteObjectsResponse deleteObjectsOnce(final Set<ObjectKey> keys) {
+        final Set<ObjectIdentifier> ids = keys.stream()
+            .map(k -> ObjectIdentifier.builder().key(k.value()).build())
+            .collect(Collectors.toSet());
+        final Delete delete = Delete.builder().objects(ids).build();
+        final DeleteObjectsRequest deleteObjectsRequest = DeleteObjectsRequest.builder()
+            .bucket(bucketName)
+            .delete(delete)
+            .build();
+        return s3Client.deleteObjects(deleteObjectsRequest);
     }
 
     @Override

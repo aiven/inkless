@@ -52,7 +52,8 @@ public final class ConfigTestStorageBackend extends StorageBackend {
     }
 
     @Override
-    public void delete(Set<ObjectKey> keys) throws StorageBackendException {
+    public Set<ObjectKey> delete(Set<ObjectKey> keys) throws StorageBackendException {
+        return Set.copyOf(keys);
     }
 
     @Override
