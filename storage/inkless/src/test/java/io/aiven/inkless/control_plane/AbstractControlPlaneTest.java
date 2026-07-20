@@ -751,6 +751,27 @@ public abstract class AbstractControlPlaneTest {
                 .containsExactly(Errors.UNKNOWN_TOPIC_OR_PARTITION);
         }
 
+        @Test
+        void deletingNothingDoesNotMoveLogStartBackward() {
+            // deleteRecords can advance log_start into the middle of a still-retained batch (offset 5 is inside
+            // batch 1 [0,9]). A subsequent enforce that deletes nothing must leave log_start there, not reset it
+            // to the oldest batch's base offset (0), which would wrongly serve reads below the log start.
+            addBatches();
+            assertThat(controlPlane.deleteRecords(List.of(
+                new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 5))))
+                .containsExactly(DeleteRecordsResponse.success(5));
+            assertThat(getLogStartOffset()).isEqualTo(5);
+
+            // Retention large enough that nothing is deletable.
+            final var responses = controlPlane.enforceRetention(
+                List.of(new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE, -1)),
+                0
+            );
+
+            assertThat(responses).containsExactly(EnforceRetentionResponse.success(0, 0, 5));
+            assertThat(getLogStartOffset()).isEqualTo(5);
+        }
+
         @Nested
         class BySize {
             @Test

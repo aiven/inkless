@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.utils.Time;
 
 import org.jooq.Configuration;
@@ -27,6 +26,7 @@ import org.jooq.generated.udt.records.EnforceRetentionRequestV1Record;
 import org.jooq.generated.udt.records.EnforceRetentionResponseV1Record;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
@@ -66,16 +66,24 @@ public class EnforceRetentionJob implements Callable<List<EnforceRetentionRespon
     }
 
     private List<EnforceRetentionResponse> runOnce() {
-        return jooqCtx.transactionResult((final Configuration conf) -> {
-            final Instant now = TimeUtils.now(time);
+        final Instant now = TimeUtils.now(time);
+        final List<EnforceRetentionResponse> responses = new ArrayList<>(requests.size());
+        for (final EnforceRetentionRequest request : requests) {
+            responses.add(enforceOne(now, request));
+        }
+        return responses;
+    }
 
-            final EnforceRetentionRequestV1Record[] jooqRequests = requests.stream().map(r ->
+    private EnforceRetentionResponse enforceOne(final Instant now, final EnforceRetentionRequest request) {
+        return jooqCtx.transactionResult((final Configuration conf) -> {
+            final EnforceRetentionRequestV1Record[] jooqRequests = {
                 new EnforceRetentionRequestV1Record(
-                    r.topicId(),
-                    r.partition(),
-                    r.retentionBytes(),
-                    r.retentionMs()
-                )).toArray(EnforceRetentionRequestV1Record[]::new);
+                    request.topicId(),
+                    request.partition(),
+                    request.retentionBytes(),
+                    request.retentionMs()
+                )
+            };
 
             try {
                 final List<EnforceRetentionResponseV1Record> functionResult = conf.dsl().select(
@@ -88,31 +96,30 @@ public class EnforceRetentionJob implements Callable<List<EnforceRetentionRespon
                 ).from(ENFORCE_RETENTION_V2.call(
                     now, jooqRequests, maxBatchesPerRequest
                 )).fetchInto(EnforceRetentionResponseV1Record.class);
-                return FunctionResultProcessor.processWithMappingOrder(
-                    requests,
-                    functionResult,
-                    // We don't care about the topic name for the key.
-                    r -> new TopicIdPartition(r.topicId(), r.partition(), null),
-                    r -> new TopicIdPartition(r.getTopicId(), r.getPartition(), null),
-                    this::responseMapper
-                );
+
+                if (functionResult.size() != 1) {
+                    throw new RuntimeException("Expected 1 response for " + request + ", got " + functionResult.size());
+                }
+                final EnforceRetentionResponseV1Record record = functionResult.get(0);
+                if (!record.getTopicId().equals(request.topicId()) || record.getPartition() != request.partition()) {
+                    throw new RuntimeException("enforce_retention_v2 returned a response for "
+                        + record.getTopicId() + "-" + record.getPartition()
+                        + ", expected " + request.topicId() + "-" + request.partition());
+                }
+                return responseMapper(record);
             } catch (RuntimeException e) {
                 throw new ControlPlaneException("Error enforcing retention", e);
             }
         });
     }
 
-    private EnforceRetentionResponse responseMapper(final EnforceRetentionRequest request,
-                                                    final EnforceRetentionResponseV1Record record) {
+    private EnforceRetentionResponse responseMapper(final EnforceRetentionResponseV1Record record) {
         if (record.getError() == null) {
             return EnforceRetentionResponse.success(record.getBatchesDeleted(), record.getBytesDeleted(), record.getLogStartOffset());
         } else {
             return switch (record.getError()) {
                 case unknown_topic_or_partition ->
                     EnforceRetentionResponse.unknownTopicOrPartition();
-                default ->
-                    throw new RuntimeException(String.format("Unknown error '%s' returned for %s-%d",
-                        record.getError(), record.getTopicId(), record.getPartition()));
             };
         }
     }
