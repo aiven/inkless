@@ -40,7 +40,9 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -75,6 +77,7 @@ class FileCleanerMockedTest {
         final var now = TimeUtils.now(time);
         when(controlPlane.getFilesToDelete())
             .thenReturn(List.of(new FileToDelete(objectKey.value(), now.minus(Duration.ofMinutes(15)))));
+        when(storageBackend.delete(Set.of(objectKey))).thenReturn(Set.of(objectKey));
 
         cleaner.run();
 
@@ -105,10 +108,62 @@ class FileCleanerMockedTest {
                 new FileToDelete(OBJECT_KEY_CREATOR.create("key2").value(), TimeUtils.now(time).minus(Duration.ofMinutes(5))),
                 new FileToDelete(objectKeys.get(1).value(), TimeUtils.now(time).minus(Duration.ofMinutes(15)))
             ));
+        when(storageBackend.delete(new HashSet<>(objectKeys))).thenReturn(new HashSet<>(objectKeys));
 
         cleaner.run();
 
         verify(storageBackend, times(1)).delete(new HashSet<>(objectKeys));
         verify(controlPlane, times(1)).deleteFiles(new DeleteFilesRequest(objectKeys.stream().map(ObjectKey::value).collect(Collectors.toSet())));
+    }
+
+    @Test
+    void dereferencesOnlyKeysConfirmedDeleted() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
+        final var deleted = OBJECT_KEY_CREATOR.from("deleted");
+        final var throttled = OBJECT_KEY_CREATOR.from("throttled");
+        final var now = TimeUtils.now(time);
+        when(controlPlane.getFilesToDelete())
+            .thenReturn(List.of(
+                new FileToDelete(deleted.value(), now.minus(Duration.ofMinutes(15))),
+                new FileToDelete(throttled.value(), now.minus(Duration.ofMinutes(15)))
+            ));
+        // Storage confirms only one key; the other was not deleted (e.g. throttled).
+        when(storageBackend.delete(Set.of(deleted, throttled))).thenReturn(Set.of(deleted));
+
+        cleaner.run();
+
+        // Only the confirmed key is dereferenced; the throttled one stays for the next cycle.
+        verify(controlPlane, times(1)).deleteFiles(new DeleteFilesRequest(Set.of(deleted.value())));
+    }
+
+    @Test
+    void skipsControlPlaneWhenNothingDeleted() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
+        final var objectKey = OBJECT_KEY_CREATOR.from("key");
+        final var now = TimeUtils.now(time);
+        when(controlPlane.getFilesToDelete())
+            .thenReturn(List.of(new FileToDelete(objectKey.value(), now.minus(Duration.ofMinutes(15)))));
+        when(storageBackend.delete(Set.of(objectKey))).thenReturn(Set.of());
+
+        cleaner.run();
+
+        // Nothing drained (e.g. throttled): the control plane is left untouched so the keys stay marked
+        // for the next cycle. Cadence between cycles is set by the scheduler, not an in-run sleep.
+        verify(controlPlane, times(0)).deleteFiles(any());
+    }
+
+    @Test
+    void swallowsStorageFailureWithoutTouchingControlPlane() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
+        final var objectKey = OBJECT_KEY_CREATOR.from("key");
+        final var now = TimeUtils.now(time);
+        when(controlPlane.getFilesToDelete())
+            .thenReturn(List.of(new FileToDelete(objectKey.value(), now.minus(Duration.ofMinutes(15)))));
+        when(storageBackend.delete(Set.of(objectKey))).thenThrow(new StorageBackendException("boom"));
+
+        // run() catches the failure, records an error, and neither propagates nor touches the control plane.
+        cleaner.run();
+
+        verify(controlPlane, times(0)).deleteFiles(any());
     }
 }

@@ -108,22 +108,10 @@ public class FileCleaner implements Runnable, Closeable {
             } else {
                 LOGGER.info("Running file cleaner: deleting {} of {} marked files", objectKeyPaths.size(), filesToDelete.size());
                 metrics.recordFileCleanerStart();
-                // 1-element holder to carry the duration out of the (synchronous, same-thread) callback
-                // for the log line below; a plain local cannot be assigned from the lambda.
-                final long[] durationMs = {0};
-                TimeUtils.measureDurationMs(time, () -> {
-                    try {
-                        cleanFiles(objectKeyPaths);
-                    } catch (StorageBackendException e) {
-                        LOGGER.error("Error while cleaning files", e);
-                        throw new RuntimeException(e);
-                    }
-                }, duration -> {
-                    durationMs[0] = duration;
-                    metrics.recordFileCleanerTotalTime(duration);
-                });
-                metrics.recordFileCleanerCompleted(objectKeyPaths.size());
-                LOGGER.info("File cleaner deleted {} files in {} ms", objectKeyPaths.size(), durationMs[0]);
+                final int deletedCount = TimeUtils.measureDurationMs(time,
+                    () -> cleanFiles(objectKeyPaths),
+                    metrics::recordFileCleanerTotalTime);
+                LOGGER.info("File cleaner deleted {} of {} files", deletedCount, objectKeyPaths.size());
             }
 
             attempts.set(0);
@@ -135,15 +123,29 @@ public class FileCleaner implements Runnable, Closeable {
         }
     }
 
-    private void cleanFiles(Set<String> objectKeyPaths) throws StorageBackendException {
+    private int cleanFiles(Set<String> objectKeyPaths) throws StorageBackendException {
         final Set<ObjectKey> objectKeys = objectKeyPaths.stream()
             .map(objectKeyCreator::from)
             .collect(Collectors.toSet());
-        // delete files from storage backend
-        storage.delete(objectKeys);
+        // Delete files from the storage backend. Deletion may be partial (e.g. under S3 throttling):
+        // only the keys the backend confirmed deleted are dereferenced in the control plane, so the
+        // remaining keys stay marked for deletion and are retried on the next cycle instead of being
+        // re-attempted after already being deleted.
+        final Set<ObjectKey> deletedKeys = storage.delete(objectKeys);
+        if (deletedKeys.isEmpty()) {
+            LOGGER.warn("No files deleted from storage out of {} candidates; retrying next cycle",
+                objectKeyPaths.size());
+            return 0;
+        }
+        final Set<String> deletedPaths = deletedKeys.stream()
+            .map(ObjectKey::value)
+            .collect(Collectors.toSet());
         // update control plane
-        final DeleteFilesRequest request = new DeleteFilesRequest(objectKeyPaths);
+        final DeleteFilesRequest request = new DeleteFilesRequest(deletedPaths);
         controlPlane.deleteFiles(request);
+
+        metrics.recordFileCleanerCompleted(deletedPaths.size());
+        return deletedPaths.size();
     }
 
     @Override
