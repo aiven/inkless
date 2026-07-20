@@ -849,12 +849,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         var createPartitionsTopics = new CreatePartitionsRequestData.CreatePartitionsTopicCollection();
 
         sourceTopicStates.forEach(ti -> {
-            // use ConcurrentHashMap for thread-safe access from scheduler and fetcher threads
+            // Use ConcurrentHashMap for thread-safe access from scheduler and fetcher threads
             var partitionLeaders = sourceLeaders.computeIfAbsent(mirrorName, k -> new ConcurrentHashMap<>());
 
             int sourcePartitionCount = ti.partitions().size();
 
-            // skip partitions with no leader (source broker may be restarting)
+            // Skip partitions with no leader (source broker may be restarting)
             ti.partitions().forEach(pi -> {
                 if (pi.leader() != null) {
                     partitionLeaders.put(pi.topicPartition(),
@@ -893,6 +893,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             }
         });
 
+        // Only the coordinator creates topics and scales partitions to avoid
+        // multiple brokers racing with identical controller requests.
         if (isLocalCoordinator(mirrorName)) {
             if (!creatableTopics.isEmpty()) {
                 createMirrorTopics(creatableTopics);
