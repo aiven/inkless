@@ -71,7 +71,7 @@ class MirrorFetcherThread(name: String,
   }
 
   override protected def refreshSourceClusterMetadata(mirrorPartitions: Set[TopicPartition], reason: String): Unit = {
-    replicaMgr.mirrorMetadataManager.foreach(_.scheduleSourceMetadataSync(mirrorName))
+    replicaMgr.mirrorMetadataManager.foreach(_.scheduleSourceTopicStateSync(mirrorName))
     replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, mirrorPartitions.asJava,
       MirrorPartitionState.FAILED, reason))
   }
