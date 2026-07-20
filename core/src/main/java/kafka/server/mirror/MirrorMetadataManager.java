@@ -156,10 +156,10 @@ import static org.apache.kafka.common.internals.Topic.MIRROR_STATE_TOPIC_NAME;
  * and ACLs from source clusters. Routes state reads and writes to the appropriate coordinator
  * broker via {@link MirrorStateSender}.
  *
- * <p>Periodic source metadata sync (topic metadata, configs, offsets, ACLs, pattern discovery)
- * runs only on the coordinator broker that leads the {@code __mirror_state} partition for a
- * given mirror name. Non-coordinator brokers obtain source leader info reactively when creating
- * fetchers, and fetchers self-maintain it from fetch responses.
+ * <p>Source topic state sync (leader caches, deletion detection, missed partition recovery)
+ * runs on every broker. Topic creation and partition scaling run only on the coordinator.
+ * Coordinator-level sync (configs, offsets, ACLs, pattern discovery) runs only on the broker
+ * that leads the {@code __mirror_state} partition for a given mirror name.
  */
 @SuppressWarnings({"ClassDataAbstractionCoupling", "ClassFanOutComplexity"})
 public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
@@ -640,8 +640,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Periodic source sync callback. Every broker validates the source cluster ID.
-     * Only the coordinator syncs topic state, configs, group offsets, and ACLs.
+     * Periodic source sync callback. Every broker syncs topic state from the source
+     * (needed for source leader caches, deletion detection, and missed partition recovery).
+     * Only the coordinator syncs configs, group offsets, and ACLs.
      */
     void runMetadataRefresh() {
         // Retry the pending tombstone writes first to make
@@ -658,10 +659,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         for (String mirrorName : mirrors) {
             try {
                 validateSourceClusterId(mirrorName);
-                if (isLocalCoordinator(mirrorName)) {
-                    var topicState = syncSourceTopicState(mirrorName);
-                    syncSourceConfigsAndOffsets(mirrorName, topicState);
-                }
+                var topicState = syncSourceTopicState(mirrorName);
+                syncSourceConfigsAndOffsets(mirrorName, topicState);
             } catch (Exception e) {
                 log.error("Failed to refresh metadata for mirror {}", mirrorName, e);
             }
@@ -894,11 +893,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             }
         });
 
-        if (!creatableTopics.isEmpty()) {
-            createMirrorTopics(creatableTopics);
+        if (isLocalCoordinator(mirrorName)) {
+            if (!creatableTopics.isEmpty()) {
+                createMirrorTopics(creatableTopics);
+            }
+            maybeScalePartitions(createPartitionsTopics);
         }
 
-        maybeScalePartitions(createPartitionsTopics);
         maybeFailDeletedTopics(mirrorName, sourceTopicStates);
         maybeStartMissedPartitions(mirrorName);
     }
@@ -1035,9 +1036,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     /**
      * Syncs topic configurations, consumer/share group offsets, ACLs, and topic patterns
-     * from the source cluster. Called only on the coordinator broker for each mirror.
+     * from the source cluster. Runs only on the coordinator broker for each mirror.
      */
     private void syncSourceConfigsAndOffsets(String mirrorName, Optional<List<SourceTopicState>> sourceTopicStates) {
+        if (!isLocalCoordinator(mirrorName)) {
+            return;
+        }
+
         log.info("Syncing source configs and offsets for mirror {}", mirrorName);
 
         try {
