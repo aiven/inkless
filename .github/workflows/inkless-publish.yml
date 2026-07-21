@@ -369,37 +369,45 @@ jobs:
           KAFKA_BASE_MATRIX:   ${{ needs.prepare.outputs.kafka_base_matrix }}
           GITHUB_REPOSITORY:   ${{ github.repository }}
         run: |
+          set -eo pipefail
           RELEASE_TAG="inkless-release-${INKLESS_VERSION}"
 
-          RELEASE_NOTES="Inkless version ${INKLESS_VERSION}
+          # Build the notes in a file to avoid the YAML block-scalar indentation
+          # leaking into the markdown (leading spaces would render headings and
+          # bullets as an indented code block).
+          NOTES_FILE="$(mktemp)"
+          trap 'rm -f "$NOTES_FILE"' EXIT
+          {
+            printf 'Inkless version %s\n\n' "$INKLESS_VERSION"
+            printf '## Docker Images\n\n'
+            printf '```bash\n'
+            printf 'docker pull ghcr.io/aiven/inkless:%s\n' "$INKLESS_VERSION"
+            printf 'docker pull ghcr.io/aiven/inkless:latest\n'
+            printf '```\n\n'
+            printf '## Kafka Versions\n'
 
-          ## Docker Images
-
-          \`\`\`bash
-          docker pull ghcr.io/aiven/inkless:${INKLESS_VERSION}
-          docker pull ghcr.io/aiven/inkless:latest
-          \`\`\`
-
-          ## Kafka Versions"
-
-          TAGS=$(echo "$KAFKA_BASE_MATRIX" | jq -r '.include[].tag // empty' 2>/dev/null | sort -V | uniq)
-          while IFS= read -r tag; do
-            if [[ "$tag" =~ ^inkless-([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
-              KAFKA_VER="${BASH_REMATCH[1]}"
-              RELEASE_NOTES="${RELEASE_NOTES}
-          - Kafka ${KAFKA_VER}: [\`${tag}\`](https://github.com/${GITHUB_REPOSITORY}/tree/${tag})"
+            if ! TAGS=$(echo "$KAFKA_BASE_MATRIX" | jq -r '.include[].tag // empty' | sort -V | uniq); then
+              echo "::error::Could not parse kafka_base_matrix as JSON: $KAFKA_BASE_MATRIX" >&2
+              exit 1
             fi
-          done <<< "$TAGS"
+            while IFS= read -r tag; do
+              if [[ "$tag" =~ ^inkless-([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
+                KAFKA_VER="${BASH_REMATCH[1]}"
+                printf -- '- Kafka %s: [`%s`](https://github.com/%s/tree/%s)\n' \
+                  "$KAFKA_VER" "$tag" "$GITHUB_REPOSITORY" "$tag"
+              fi
+            done <<< "$TAGS"
+          } > "$NOTES_FILE"
 
           if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Inkless ${INKLESS_VERSION}" \
-              --notes "$RELEASE_NOTES"
+              --notes-file "$NOTES_FILE"
           else
             gh release edit "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
-              --notes "$RELEASE_NOTES"
+              --notes-file "$NOTES_FILE"
           fi
 
           if [ -d distributions ] && [ "$(ls -A distributions/ 2>/dev/null)" ]; then
