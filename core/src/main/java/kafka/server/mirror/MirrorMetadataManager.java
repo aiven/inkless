@@ -2440,10 +2440,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /** Updates the partition cache with the given epochs, preserving existing state and failure info. */
-    void updateLastMirrorEpochs(String clusterName, Map<String, Map<Integer, Integer>> addedEpochs) {
+    void updateLastMirrorEpochs(String mirrorName, Map<String, Map<Integer, Integer>> addedEpochs) {
         addedEpochs.forEach((topic, partitionEpochs) -> {
             partitionEpochs.forEach((partition, epoch) -> {
-                ClusterMirrorRecordKey key = ClusterMirrorRecordKey.of(clusterName, metadataCache.getTopicId(topic), partition);
+                ClusterMirrorRecordKey key = ClusterMirrorRecordKey.of(mirrorName, metadataCache.getTopicId(topic), partition);
                 partitionCache.compute(key, (k, existing) -> {
                     MirrorPartitionState state = existing != null ? existing.state() : null;
                     FailedPartitionInfo fpi = existing != null ? existing.failedInfo() : null;
