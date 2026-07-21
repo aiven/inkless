@@ -209,15 +209,16 @@ class ConsolidationVerifier(object):
             "connectivity/credentials for the inkless system-test dependencies."
             % (self.MINIO_ALIAS, self.MINIO_ENDPOINT, rc))
 
-    def object_keys(self, prefix=""):
-        # Object keys under the given bucket prefix, via mc ls --recursive --json.
+    def _object_entries(self, prefix=""):
+        # (key, size) tuples under the given bucket prefix, via mc ls --recursive
+        # --json. mc emits one JSON object per line with a "size" field in bytes.
         node = self._storage_node()
         self._ensure_mc_alias(node)
         target = "%s/%s" % (self.MINIO_ALIAS, self.MINIO_BUCKET)
         if prefix:
             target += "/" + prefix
         cmd = "mc ls --recursive --json %s" % target
-        keys = []
+        entries = []
         for line in node.account.ssh_capture(cmd, allow_fail=False):
             line = line.strip()
             if not line:
@@ -236,8 +237,12 @@ class ConsolidationVerifier(object):
                 continue
             key = obj.get("key")
             if key:
-                keys.append(key)
-        return keys
+                entries.append((key, int(obj.get("size") or 0)))
+        return entries
+
+    def object_keys(self, prefix=""):
+        # Object keys under the given bucket prefix, via mc ls --recursive --json.
+        return [key for key, _ in self._object_entries(prefix)]
 
     def tiered_object_count(self):
         # Count under the tiered-storage prefix only (scanning the whole bucket
@@ -246,6 +251,17 @@ class ConsolidationVerifier(object):
         # suite is one invocation). Use baseline + delta (`> baseline`);
         # absolute `== N` flaps with test order.
         return len(self.object_keys(self.TIERED_PREFIX))
+
+    def tiered_object_bytes(self):
+        # Total bytes under the tiered-storage prefix. Like tiered_object_count,
+        # this is not topic-scoped and accumulates across tests in one
+        # `ducker-ak test` run, so use it as a baseline + delta, never absolute.
+        # A retention.bytes test uses it to pick a whole-log size limit relative
+        # to the data that actually reached remote, instead of guessing at the
+        # per-record on-disk size. Scoping the listing to the prefix already limits
+        # the entries to tiered storage (mc returns keys relative to the prefix, so
+        # no further key filtering is possible here anyway).
+        return sum(size for _, size in self._object_entries(self.TIERED_PREFIX))
 
     def wal_object_count(self):
         # Bucket-root count (outside tiered-storage/), i.e. diskless WAL files.
