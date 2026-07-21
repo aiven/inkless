@@ -47,6 +47,7 @@ See [Releases](RELEASES.md) for active versions and release history.
 ### Reference
 - [Versioning Strategy](VERSIONING-STRATEGY.md) - Version format and release workflow
 - [Releases](RELEASES.md) - Artifacts released (binaries and docker images)
+- [Changelog](CHANGELOG.md) - Per-increment changes (features, fixes, config and metric changes)
 - [Glossary](GLOSSARY.md) - Definitions of Inkless-specific terms and concepts
 
 ### Development & Maintenance
