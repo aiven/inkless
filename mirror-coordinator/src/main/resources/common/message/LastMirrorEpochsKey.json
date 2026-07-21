@@ -13,10 +13,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Cluster Mirror is in development. This schema is subject to non-backwards-compatible changes.
-//
-// LastMirrorEpochs record tracks the latest successfully mirrored epoch for each partition.
-// The key identifies the source cluster by mirror name, while the value stores per-partition epochs for failback support.
+// Written during the STOPPING transition to record the last mirror leader epoch for each
+// partition before the destination becomes writable. The key identifies the cluster mirror
+// name, topic id, and partition. The value holds a single epoch.
 {
   "apiKey": 1,
   "type": "coordinator-key",
@@ -25,6 +24,10 @@
   "flexibleVersions": "none",
   "fields": [
     { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName",
-      "about": "The cluster mirror name."}
+      "about": "The cluster mirror name."},
+    { "name": "TopicId", "type": "uuid", "versions": "0+",
+      "about": "The topic id."},
+    { "name": "Partition", "type": "int32", "versions": "0+",
+      "about": "The partition index."}
   ]
 }

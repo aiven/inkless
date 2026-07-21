@@ -13,10 +13,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Cluster Mirror is in development. This schema is subject to non-backwards-compatible changes.
-//
-// MirrorTopics record stores the list of topics being mirrored from a source cluster.
-// The key identifies the source cluster by mirror name, while the value contains topic names to replicate.
+// Written on every mirror partition state transition. The key identifies the cluster mirror
+// name, topic id, and partition. The value holds the current state (one of the values in the
+// mirror partition states table), the previous state for automatic retry handling, and
+// optional error metadata.
 {
   "apiKey": 2,
   "type": "coordinator-value",
@@ -24,10 +24,6 @@
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "TopicId", "type": "uuid", "versions": "0+",
-      "about": "The topic id."},
-    { "name": "Partition", "type": "int32", "versions": "0+",
-      "about": "The partition index."},
     { "name": "State", "type": "int8", "versions": "0+",
       "about": "The mirror partition state." },
     { "name": "PreviousState", "type": "int8",  "versions": "0+", "default": 16,

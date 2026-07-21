@@ -2449,9 +2449,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return result;
     }
 
-    /** Upserts added partitions, returning the full epoch map for record serialization. */
-    Map<ClusterMirrorRecordKey, Integer> updateLastMirrorEpochs(
-            String clusterName, Map<String, Map<Integer, Integer>> addedEpochs) {
+    /** Updates the partition cache with the given epochs, preserving existing state and failure info. */
+    void updateLastMirrorEpochs(String clusterName, Map<String, Map<Integer, Integer>> addedEpochs) {
         addedEpochs.forEach((topic, partitionEpochs) -> {
             partitionEpochs.forEach((partition, epoch) -> {
                 ClusterMirrorRecordKey key = ClusterMirrorRecordKey.of(clusterName, metadataCache.getTopicId(topic), partition);
@@ -2462,13 +2461,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 });
             });
         });
-        Map<ClusterMirrorRecordKey, Integer> epochMap = new HashMap<>();
-        partitionCache.forEach((key, entry) -> {
-            if (entry.lastMirrorEpoch() != -1) {
-                epochMap.put(key, entry.lastMirrorEpoch());
-            }
-        });
-        return epochMap;
     }
 
     private record TimeoutHandler(Logger log) implements ControllerRequestCompletionHandler {
