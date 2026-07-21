@@ -120,7 +120,19 @@ class DisklessLeaderEndPoint(
         case Right(partition) =>
           val localLogOpt = Try(partition.localLogOrException).toOption
           val logStartOffset = localLogOpt match {
-            case Some(localLog) => localLog.logStartOffset
+            case Some(localLog) =>
+              // Prefer the control-plane cross-tier earliest as the whole-log start for a consolidating
+              // partition. On a freshly-elected leader whose classic prefix was already evicted, the
+              // leadership rebuild pins localLog.logStartOffset at the seal (classicToDisklessStartOffset)
+              // and it can only ever increment; the classic prefix [earliest, seal) then lives only in the
+              // remote tier. Reporting the local seal would (a) reject reads of that prefix as
+              // out-of-range -- the OFFSET_MOVED_TO_TIERED_STORAGE gate below requires
+              // requestedOffset >= logStartOffset -- and (b) make the tier-state rebuild restart the log
+              // at the seal, over-reclaiming the prefix. The cross-tier earliest is broker-agnostic and
+              // monotonic, so min() with the local start is always safe.
+              val crossTier = replicaManager.crossTierEarliestOffset(tp.topicPartition)
+              if (crossTier.isPresent) Math.min(crossTier.getAsLong, localLog.logStartOffset)
+              else localLog.logStartOffset
             case None =>
                     logger.warn("Local log unavailable for topic-partition {}, returning unknown log start offset", tp.topicPartition)
                     UnifiedLog.UNKNOWN_OFFSET

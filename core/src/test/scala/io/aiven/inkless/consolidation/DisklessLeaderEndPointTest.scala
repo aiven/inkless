@@ -1042,6 +1042,120 @@ class DisklessLeaderEndPointTest {
   }
 
   @Test
+  def testFetchUsesCrossTierEarliestAsWholeLogStartForConsolidatingLeader(): Unit = {
+    // Problem B: on a freshly-rebuilt consolidating leader the local log start is pinned at the seal
+    // (400) even though DeleteRecords / retention left the true earliest at 200 (tracked in the control
+    // plane). The endpoint must report the cross-tier earliest (200) as the whole-log start so that (a) a
+    // read of the surviving remote prefix [200, 400) redirects to tiered storage instead of being
+    // rejected as out-of-range, and (b) the tier-state rebuild restarts the log at 200, not the seal.
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val partition = mock(classOf[Partition])
+    val localLog = mock(classOf[UnifiedLog])
+    when(partition.localLogOrException).thenReturn(localLog)
+    when(localLog.logStartOffset).thenReturn(400L) // local log start pinned at the seal
+    when(localLog.remoteLogEnabled()).thenReturn(true)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+    when(replicaManager.crossTierEarliestOffset(topicPartition)).thenReturn(OptionalLong.of(200L))
+
+    val fetchData = new FetchPartitionData(
+      Errors.NONE,
+      800L,
+      700L, // diskless WAL start
+      MemoryRecords.EMPTY,
+      Optional.empty(),
+      OptionalLong.empty(),
+      Optional.empty(),
+      OptionalInt.empty(),
+      false
+    )
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 200L)).get(topicPartition)
+
+    assertEquals(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code, pd.errorCode)
+    assertEquals(200L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchKeepsLocalLogStartWhenCrossTierEarliestIsHigher(): Unit = {
+    // Safety of the min(): if the control-plane cross-tier earliest (500) is somehow above the local
+    // log start (400), keep the lower local value so we never advance the whole-log start past data the
+    // local log still holds (the safe, over-serve direction).
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val partition = mock(classOf[Partition])
+    val localLog = mock(classOf[UnifiedLog])
+    when(partition.localLogOrException).thenReturn(localLog)
+    when(localLog.logStartOffset).thenReturn(400L)
+    when(localLog.remoteLogEnabled()).thenReturn(true)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+    when(replicaManager.crossTierEarliestOffset(topicPartition)).thenReturn(OptionalLong.of(500L))
+
+    val fetchData = new FetchPartitionData(
+      Errors.NONE,
+      800L,
+      700L,
+      MemoryRecords.EMPTY,
+      Optional.empty(),
+      OptionalLong.empty(),
+      Optional.empty(),
+      OptionalInt.empty(),
+      false
+    )
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 450L)).get(topicPartition)
+
+    assertEquals(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code, pd.errorCode)
+    assertEquals(400L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchRevertsToLocalSealWhenCrossTierEarliestUnavailable(): Unit = {
+    // Failure-mode characterization (control-plane outage / not-yet-propagated metadata): when
+    // replicaManager.crossTierEarliestOffset returns empty, the endpoint falls back to the local log
+    // start -- which on a freshly-rebuilt consolidating leader is the seal (400). A read of the
+    // surviving remote prefix [200, 400) then sees requestedOffset (200) < reported logStartOffset (400),
+    // so it is treated as below the whole-log start (a genuine out-of-range) and is NOT redirected to
+    // tiered storage: the surviving prefix is effectively invisible. This pins the transient Problem B
+    // reversion that the empty fallback implies, so the risk is visible rather than silent.
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val partition = mock(classOf[Partition])
+    val localLog = mock(classOf[UnifiedLog])
+    when(partition.localLogOrException).thenReturn(localLog)
+    when(localLog.logStartOffset).thenReturn(400L) // local log start pinned at the seal
+    when(localLog.remoteLogEnabled()).thenReturn(true)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+    when(replicaManager.crossTierEarliestOffset(topicPartition)).thenReturn(OptionalLong.empty())
+
+    val fetchData = new FetchPartitionData(
+      Errors.NONE,
+      800L,
+      700L,
+      MemoryRecords.EMPTY,
+      Optional.empty(),
+      OptionalLong.empty(),
+      Optional.empty(),
+      OptionalInt.empty(),
+      false
+    )
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 200L)).get(topicPartition)
+
+    assertEquals(Errors.NONE.code, pd.errorCode)
+    assertEquals(400L, pd.logStartOffset)
+  }
+
+  @Test
   def testFetchDoesNotSignalWhenRequestOmitsOffset(): Unit = {
     // A request that does not include this partition leaves requestedOffset unresolved (-1): no signal.
     val endPoint = consolidatedPrefixEndPoint(localLogStartOffset = 0L, disklessStart = 100L, highWatermark = 200L, remoteLogEnabled = true)
