@@ -37,7 +37,8 @@ class PrintVersionAndExitAction implements ArgumentAction {
     ) {
         String version = AppInfoParser.getVersion();
         String commitId = AppInfoParser.getCommitId();
-        System.out.println(version + " (Commit:" + commitId + ")");
+        // INKLESS: also print the inkless tag/increment (e.g. "inkless-4.2.1-0.45") when baked in.
+        System.out.println(version + " (Commit:" + commitId + ")" + AppInfoParser.getInklessVersionSuffix());
         Exit.exit(0);
     }
 

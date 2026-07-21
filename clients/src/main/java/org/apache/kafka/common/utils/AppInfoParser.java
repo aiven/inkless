@@ -36,6 +36,8 @@ public class AppInfoParser {
     private static final Logger log = LoggerFactory.getLogger(AppInfoParser.class);
     private static final String VERSION;
     private static final String COMMIT_ID;
+    // INKLESS: git-describe of the nearest inkless-* tag (tag + increment), baked in by build.gradle.
+    private static final String INKLESS_VERSION;
 
     protected static final String DEFAULT_VALUE = "unknown";
 
@@ -48,6 +50,7 @@ public class AppInfoParser {
         }
         VERSION = props.getProperty("version", DEFAULT_VALUE).trim();
         COMMIT_ID = props.getProperty("commitId", DEFAULT_VALUE).trim();
+        INKLESS_VERSION = props.getProperty("inklessVersion", DEFAULT_VALUE).trim();
     }
 
     public static String getVersion() {
@@ -56,6 +59,17 @@ public class AppInfoParser {
 
     public static String getCommitId() {
         return COMMIT_ID;
+    }
+
+    // INKLESS: the inkless release increment / tag description (e.g. "inkless-4.2.1-0.45").
+    public static String getInklessVersion() {
+        return INKLESS_VERSION;
+    }
+
+    // INKLESS: " (Inkless:<version>)" suffix for --version output, or "" when the inkless
+    // version was not baked in (keeps upstream output/tests intact off a release build).
+    public static String getInklessVersionSuffix() {
+        return DEFAULT_VALUE.equals(INKLESS_VERSION) ? "" : " (Inkless:" + INKLESS_VERSION + ")";
     }
 
     public static synchronized void registerAppInfo(String prefix, String id, Metrics metrics, long nowMs) {
@@ -137,6 +151,10 @@ public class AppInfoParser {
             this.startTimeMs = startTimeMs;
             log.info("Kafka version: {}", AppInfoParser.getVersion());
             log.info("Kafka commitId: {}", AppInfoParser.getCommitId());
+            // INKLESS: log the inkless tag/increment at startup when baked in (see build.gradle).
+            if (!DEFAULT_VALUE.equals(INKLESS_VERSION)) {
+                log.info("Inkless version: {}", INKLESS_VERSION);
+            }
             log.info("Kafka startTimeMs: {}", startTimeMs);
         }
 

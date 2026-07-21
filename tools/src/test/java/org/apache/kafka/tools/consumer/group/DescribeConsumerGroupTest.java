@@ -1164,7 +1164,7 @@ public class DescribeConsumerGroupTest {
         try {
             String out = ToolsTestUtils.captureStandardOut(() -> ConsumerGroupCommandOptions.fromArgs(new String[]{"--version"}));
             assertEquals(0, exitProcedure.statusCode());
-            assertEquals(AppInfoParser.getVersion(), out);
+            assertEquals(AppInfoParser.getVersion() + AppInfoParser.getInklessVersionSuffix(), out);
         } finally {
             Exit.resetExitProcedure();
         }

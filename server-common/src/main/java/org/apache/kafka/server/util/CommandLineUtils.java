@@ -171,7 +171,8 @@ public class CommandLineUtils {
     }
 
     public static void printVersionAndExit() {
-        System.out.println(AppInfoParser.getVersion());
+        // INKLESS: append the inkless tag/increment (e.g. "inkless-4.2.1-0.45") when baked in.
+        System.out.println(AppInfoParser.getVersion() + AppInfoParser.getInklessVersionSuffix());
         Exit.exit(0);
     }
 
