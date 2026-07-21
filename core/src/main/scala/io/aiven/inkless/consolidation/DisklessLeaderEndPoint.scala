@@ -307,7 +307,7 @@ class DisklessLeaderEndPoint(
 
   override def buildFetch(partitions: util.Map[TopicPartition, PartitionFetchState]): ResultWithPartitions[Optional[ReplicaFetch]] = {
     if (quota.isQuotaExceeded) {
-      new ResultWithPartitions(Optional.empty(), util.Set.of())
+      new ResultWithPartitions(Optional.empty(), util.Set.of(), util.Set.of())
     } else {
       val partitionsWithError = mutable.Set[TopicPartition]()
       val requestMap = new util.LinkedHashMap[TopicPartition, FetchRequest.PartitionData]()
@@ -352,7 +352,7 @@ class DisklessLeaderEndPoint(
         Optional.of(new ReplicaFetch(requestMap, requestBuilder))
       }
 
-      new ResultWithPartitions(fetchRequestOpt, partitionsWithError.asJava)
+      new ResultWithPartitions(fetchRequestOpt, partitionsWithError.asJava, util.Set.of())
     }
   }
 

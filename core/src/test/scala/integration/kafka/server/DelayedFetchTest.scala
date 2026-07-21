@@ -308,8 +308,8 @@ class DelayedFetchTest {
       val minBytes = 100
 
       val fetchStatus = new FetchPartitionStatus(
-        startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
-        fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
+        new LogOffsetMetadata(fetchOffset),
+        new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
       val fetchParams = new FetchParams(
         -1, // consumer replica id
@@ -399,8 +399,8 @@ class DelayedFetchTest {
       val estimatedBatchSize = 150L // This would exceed minBytes if counted, but won't be since fetchOffset == endOffset
 
       val fetchStatus = new FetchPartitionStatus(
-        startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
-        fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
+        new LogOffsetMetadata(fetchOffset),
+        new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
       val fetchParams = new FetchParams(
         -1, // not a replica
@@ -486,8 +486,8 @@ class DelayedFetchTest {
       val estimatedBatchSize = 50L // This will NOT exceed minBytes
 
       val fetchStatus = new FetchPartitionStatus(
-        startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
-        fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
+        new LogOffsetMetadata(fetchOffset),
+        new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
       val fetchParams = new FetchParams(
         -1, // consumer replica id
@@ -570,8 +570,8 @@ class DelayedFetchTest {
       val estimatedBatchSize = 150L // This will exceed minBytes
 
       val fetchStatus = new FetchPartitionStatus(
-        startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
-        fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
+        new LogOffsetMetadata(fetchOffset),
+        new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
       val fetchParams = new FetchParams(
         -1, // consumer replica id
@@ -718,12 +718,12 @@ class DelayedFetchTest {
       val supplementRecords = mock(classOf[MemoryRecords])
       when(supplementRecords.sizeInBytes).thenReturn(512)
       val supplementData = new FetchPartitionData(Errors.NONE, logEndOffset + 100, logEndOffset,
-        supplementRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        supplementRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
 
       val disklessRecords = mock(classOf[MemoryRecords])
       when(disklessRecords.sizeInBytes).thenReturn(256)
       val disklessData = new FetchPartitionData(Errors.NONE, 200L, 0L,
-        disklessRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        disklessRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
 
       // Stub fetchDisklessMessages: first call returns supplement, second call returns diskless
       when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
@@ -737,7 +737,7 @@ class DelayedFetchTest {
       val mergedRecords = mock(classOf[MemoryRecords])
       when(mergedRecords.sizeInBytes).thenReturn(768)
       val mergedData = new FetchPartitionData(Errors.NONE, logEndOffset + 100, logEndOffset,
-        mergedRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        mergedRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
       when(replicaManager.mergeConsolidationSupplement(any[TopicIdPartition], any[FetchPartitionData], any[FetchPartitionData]))
         .thenReturn(mergedData)
 
@@ -846,7 +846,7 @@ class DelayedFetchTest {
       val supplementRecords = mock(classOf[MemoryRecords])
       when(supplementRecords.sizeInBytes).thenReturn(512)
       val supplementData = new FetchPartitionData(Errors.NONE, logEndOffset + 100, logEndOffset,
-        supplementRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        supplementRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
       when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
         .thenReturn(CompletableFuture.completedFuture(Seq((consolidatingTp, supplementData))))
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
@@ -872,8 +872,8 @@ class DelayedFetchTest {
       val minBytes = 100
 
       val fetchStatus = new FetchPartitionStatus(
-        startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
-        fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
+        new LogOffsetMetadata(fetchOffset),
+        new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
       val fetchParams = new FetchParams(
         -1, // consumer replica id

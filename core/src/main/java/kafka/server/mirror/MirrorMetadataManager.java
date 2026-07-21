@@ -41,6 +41,7 @@ import org.apache.kafka.clients.admin.ListClusterMirrorsOptions;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsSpec;
 import org.apache.kafka.clients.admin.ListGroupsOptions;
 import org.apache.kafka.clients.admin.ListShareGroupOffsetsSpec;
+import org.apache.kafka.clients.admin.SharePartitionOffsetInfo;
 import org.apache.kafka.clients.admin.StartMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.StopMirrorTopicsOptions;
 import org.apache.kafka.clients.admin.TopicDescription;
@@ -233,7 +234,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.metrics = metrics;
         this.time = time;
 
-        KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(this.getClass());
+        KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(this.getClass().getPackageName(), this.getClass().getSimpleName());
         this.metadataRefreshError = new AtomicLong();
         this.topicConfigSyncError = new AtomicLong();
         this.consumerGroupOffsetSyncError = new AtomicLong();
@@ -1265,7 +1266,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
             Map<String, ListShareGroupOffsetsSpec> groupSpecs = sourceGroupIds.stream()
                     .collect(Collectors.toMap(id -> id, id -> new ListShareGroupOffsetsSpec()));
-            Map<String, Map<TopicPartition, OffsetAndMetadata>> allOffsets = srcAdmin
+            Map<String, Map<TopicPartition, SharePartitionOffsetInfo>> allOffsets = srcAdmin
                     .listShareGroupOffsets(groupSpecs).all().get(brokerConfig.requestTimeoutMs(), TimeUnit.MILLISECONDS);
 
             Optional<Set<String>> activeDestGroups = getActiveDestinationGroupIds(ListGroupsOptions.forShareGroups());
@@ -1291,9 +1292,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                 log.debug("Cannot get the log start offset or log end offset for partition {}, skip share group offset sync for it.", topicPartition);
                                 return;
                             }
-                            OffsetAndMetadata sourceGroupOffsetAndMetadata = ent.getValue();
+                            SharePartitionOffsetInfo sourceGroupOffsetAndMetadata = ent.getValue();
                             // Committing to the range [local logStartOffset ~ local logEndOffset]
-                            long finalOffset = Math.max(logStartOffset.get(), Math.min(sourceGroupOffsetAndMetadata.offset(), logEndOffset.get()));
+                            long finalOffset = Math.max(logStartOffset.get(), Math.min(sourceGroupOffsetAndMetadata.startOffset(), logEndOffset.get()));
                             filtered.put(topicPartition, finalOffset);
                         });
                 if (filtered.isEmpty()) {

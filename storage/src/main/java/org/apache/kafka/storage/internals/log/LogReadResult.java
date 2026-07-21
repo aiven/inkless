@@ -64,7 +64,7 @@ public record LogReadResult(
             long fetchTimeMs,
             OptionalLong lastStableOffset) {
         this(info, divergingEpoch, highWatermark, leaderLogStartOffset, leaderLogEndOffset, followerLogStartOffset,
-                fetchTimeMs, lastStableOffset, OptionalInt.empty(), Optional.empty(), Optional.empty());
+                fetchTimeMs, lastStableOffset, OptionalInt.empty(), Errors.NONE, Optional.empty());
     }
 
     public LogReadResult(

@@ -2078,7 +2078,7 @@ class ReplicaManager(val config: KafkaConfig,
   def fetchParamsWithNewMaxBytes(originalParams: FetchParams, percentage: Float): FetchParams = {
     new FetchParams(originalParams.replicaId, originalParams.replicaEpoch, originalParams.maxWaitMs, originalParams.minBytes,
       Math.max((originalParams.maxBytes * percentage).toInt, originalParams.maxBytes),
-      originalParams.isolation, originalParams.clientMetadata, originalParams.shareFetchRequest)
+      originalParams.isolation, originalParams.clientMetadata, originalParams.shareFetchRequest, originalParams.readOnly)
   }
 
   /**
@@ -2172,7 +2172,8 @@ class ReplicaManager(val config: KafkaConfig,
       supplementData.lastStableOffset,
       localData.abortedTransactions,
       localData.preferredReadReplica,
-      false
+      false,
+      Optional.empty()
     )
   }
 
@@ -2272,7 +2273,8 @@ class ReplicaManager(val config: KafkaConfig,
                     OptionalLong.empty(),
                     Optional.empty(),
                     OptionalInt.empty(),
-                    false
+                    false,
+                    Optional.empty()
                   )
               partitionLookupFailed = true
           }
@@ -2301,7 +2303,8 @@ class ReplicaManager(val config: KafkaConfig,
                 OptionalLong.empty(),
                 Optional.empty(),
                 OptionalInt.empty(),
-                false
+                false,
+                Optional.empty()
               )
           } else {
             (shouldReadFromUnifiedLog, config.disklessManagedReplicasEnabled) match {
@@ -2321,7 +2324,8 @@ class ReplicaManager(val config: KafkaConfig,
                       OptionalLong.empty(),
                       Optional.empty(),
                       OptionalInt.empty(),
-                      false
+                      false,
+                      Optional.empty()
                     )
                 }
               // Local log has data, managed replicas enabled — serve from local log
@@ -2341,7 +2345,8 @@ class ReplicaManager(val config: KafkaConfig,
                   OptionalLong.empty(),
                   Optional.empty(),
                   OptionalInt.empty(),
-                  false
+                  false,
+                  Optional.empty()
                 )
             }
           }
@@ -2552,7 +2557,8 @@ class ReplicaManager(val config: KafkaConfig,
               data.divergingEpoch, data.highWatermark, data.logStartOffset, data.highWatermark, data.logStartOffset,
               0L, // fetchTimeMs is ignored
               data.lastStableOffset, data.preferredReadReplica,
-              data.error
+              data.error,
+              data.currentMirrorLeaderEpoch
             ))
           }
         } catch {
@@ -2563,7 +2569,8 @@ class ReplicaManager(val config: KafkaConfig,
               disklessFetchResults.put(tp, new LogReadResult(
                 FetchDataInfo.empty(-1L),
                 Optional.empty(), -1L, -1L, -1L, -1L, 0L, OptionalLong.empty(), OptionalInt.empty(),
-                Errors.forException(e)
+                Errors.forException(e),
+                Optional.empty()
               ))
             }
         }

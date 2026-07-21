@@ -629,28 +629,28 @@ public class RequestConvertToJson {
                 WriteShareGroupStateRequestDataJsonConverter.write(((WriteShareGroupStateRequest) request).data(), request.version());
             case WRITE_TXN_MARKERS ->
                 WriteTxnMarkersRequestDataJsonConverter.write(((WriteTxnMarkersRequest) request).data(), request.version());
-            case CREATE_CLUSTER_MIRROR:
-                return CreateClusterMirrorRequestDataJsonConverter.write(((CreateClusterMirrorRequest) request).data(), request.version());
-            case START_MIRROR_TOPICS:
-                return StartMirrorTopicsRequestDataJsonConverter.write(((StartMirrorTopicsRequest) request).data(), request.version());
-            case STOP_MIRROR_TOPICS:
-                return StopMirrorTopicsRequestDataJsonConverter.write(((StopMirrorTopicsRequest) request).data(), request.version());
-            case WRITE_MIRROR_STATES:
-                return WriteMirrorStatesRequestDataJsonConverter.write(((WriteMirrorStatesRequest) request).data(), request.version());
-            case READ_MIRROR_STATES:
-                return ReadMirrorStatesRequestDataJsonConverter.write(((ReadMirrorStatesRequest) request).data(), request.version());
-            case BUMP_LEADER_EPOCHS:
-                return BumpLeaderEpochsRequestDataJsonConverter.write(((BumpLeaderEpochsRequest) request).data(), request.version());
-            case DESCRIBE_CLUSTER_MIRRORS:
-                return DescribeClusterMirrorsRequestDataJsonConverter.write(((DescribeClusterMirrorsRequest) request).data(), request.version());
-            case LIST_CLUSTER_MIRRORS:
-                return ListClusterMirrorsRequestDataJsonConverter.write(((ListClusterMirrorsRequest) request).data(), request.version());
-            case PAUSE_MIRROR_TOPICS:
-                return PauseMirrorTopicsRequestDataJsonConverter.write(((PauseMirrorTopicsRequest) request).data(), request.version());
-            case RESUME_MIRROR_TOPICS:
-                return ResumeMirrorTopicsRequestDataJsonConverter.write(((ResumeMirrorTopicsRequest) request).data(), request.version());
-            case DELETE_CLUSTER_MIRROR:
-                return DeleteClusterMirrorRequestDataJsonConverter.write(((DeleteClusterMirrorRequest) request).data(), request.version());
+            case CREATE_CLUSTER_MIRROR ->
+                    CreateClusterMirrorRequestDataJsonConverter.write(((CreateClusterMirrorRequest) request).data(), request.version());
+            case START_MIRROR_TOPICS ->
+                    StartMirrorTopicsRequestDataJsonConverter.write(((StartMirrorTopicsRequest) request).data(), request.version());
+            case STOP_MIRROR_TOPICS ->
+                    StopMirrorTopicsRequestDataJsonConverter.write(((StopMirrorTopicsRequest) request).data(), request.version());
+            case WRITE_MIRROR_STATES ->
+                    WriteMirrorStatesRequestDataJsonConverter.write(((WriteMirrorStatesRequest) request).data(), request.version());
+            case READ_MIRROR_STATES ->
+                    ReadMirrorStatesRequestDataJsonConverter.write(((ReadMirrorStatesRequest) request).data(), request.version());
+            case BUMP_LEADER_EPOCHS ->
+                    BumpLeaderEpochsRequestDataJsonConverter.write(((BumpLeaderEpochsRequest) request).data(), request.version());
+            case DESCRIBE_CLUSTER_MIRRORS ->
+                    DescribeClusterMirrorsRequestDataJsonConverter.write(((DescribeClusterMirrorsRequest) request).data(), request.version());
+            case LIST_CLUSTER_MIRRORS ->
+                    ListClusterMirrorsRequestDataJsonConverter.write(((ListClusterMirrorsRequest) request).data(), request.version());
+            case PAUSE_MIRROR_TOPICS ->
+                    PauseMirrorTopicsRequestDataJsonConverter.write(((PauseMirrorTopicsRequest) request).data(), request.version());
+            case RESUME_MIRROR_TOPICS ->
+                    ResumeMirrorTopicsRequestDataJsonConverter.write(((ResumeMirrorTopicsRequest) request).data(), request.version());
+            case DELETE_CLUSTER_MIRROR ->
+                    DeleteClusterMirrorRequestDataJsonConverter.write(((DeleteClusterMirrorRequest) request).data(), request.version());
             default ->
                 throw new IllegalStateException("ApiKey " + request.apiKey() + " is not currently handled in `request`, the " +
                     "code should be updated to do so.");
@@ -834,28 +834,28 @@ public class RequestConvertToJson {
                 WriteShareGroupStateResponseDataJsonConverter.write(((WriteShareGroupStateResponse) response).data(), version);
             case WRITE_TXN_MARKERS ->
                 WriteTxnMarkersResponseDataJsonConverter.write(((WriteTxnMarkersResponse) response).data(), version);
-            case CREATE_CLUSTER_MIRROR:
-                return CreateClusterMirrorResponseDataJsonConverter.write(((CreateClusterMirrorResponse) response).data(), version);
-            case START_MIRROR_TOPICS:
-                return StartMirrorTopicsResponseDataJsonConverter.write(((StartMirrorTopicsResponse) response).data(), version);
-            case STOP_MIRROR_TOPICS:
-                return StopMirrorTopicsResponseDataJsonConverter.write(((StopMirrorTopicsResponse) response).data(), version);
-            case WRITE_MIRROR_STATES:
-                return WriteMirrorStatesResponseDataJsonConverter.write(((WriteMirrorStatesResponse) response).data(), version);
-            case READ_MIRROR_STATES:
-                return ReadMirrorStatesResponseDataJsonConverter.write(((ReadMirrorStatesResponse) response).data(), version);
-            case BUMP_LEADER_EPOCHS:
-                return BumpLeaderEpochsResponseDataJsonConverter.write(((BumpLeaderEpochsResponse) response).data(), version);
-            case DESCRIBE_CLUSTER_MIRRORS:
-                return DescribeClusterMirrorsResponseDataJsonConverter.write(((DescribeClusterMirrorsResponse) response).data(), version);
-            case LIST_CLUSTER_MIRRORS:
-                return ListClusterMirrorsResponseDataJsonConverter.write(((ListClusterMirrorsResponse) response).data(), version);
-            case PAUSE_MIRROR_TOPICS:
-                return PauseMirrorTopicsResponseDataJsonConverter.write(((PauseMirrorTopicsResponse) response).data(), version);
-            case RESUME_MIRROR_TOPICS:
-                return ResumeMirrorTopicsResponseDataJsonConverter.write(((ResumeMirrorTopicsResponse) response).data(), version);
-            case DELETE_CLUSTER_MIRROR:
-                return DeleteClusterMirrorResponseDataJsonConverter.write(((DeleteClusterMirrorResponse) response).data(), version);
+            case CREATE_CLUSTER_MIRROR ->
+                CreateClusterMirrorResponseDataJsonConverter.write(((CreateClusterMirrorResponse) response).data(), version);
+            case START_MIRROR_TOPICS ->
+                StartMirrorTopicsResponseDataJsonConverter.write(((StartMirrorTopicsResponse) response).data(), version);
+            case STOP_MIRROR_TOPICS ->
+                StopMirrorTopicsResponseDataJsonConverter.write(((StopMirrorTopicsResponse) response).data(), version);
+            case WRITE_MIRROR_STATES ->
+                WriteMirrorStatesResponseDataJsonConverter.write(((WriteMirrorStatesResponse) response).data(), version);
+            case READ_MIRROR_STATES ->
+                ReadMirrorStatesResponseDataJsonConverter.write(((ReadMirrorStatesResponse) response).data(), version);
+            case BUMP_LEADER_EPOCHS ->
+                BumpLeaderEpochsResponseDataJsonConverter.write(((BumpLeaderEpochsResponse) response).data(), version);
+            case DESCRIBE_CLUSTER_MIRRORS ->
+                DescribeClusterMirrorsResponseDataJsonConverter.write(((DescribeClusterMirrorsResponse) response).data(), version);
+            case LIST_CLUSTER_MIRRORS ->
+                ListClusterMirrorsResponseDataJsonConverter.write(((ListClusterMirrorsResponse) response).data(), version);
+            case PAUSE_MIRROR_TOPICS ->
+                PauseMirrorTopicsResponseDataJsonConverter.write(((PauseMirrorTopicsResponse) response).data(), version);
+            case RESUME_MIRROR_TOPICS ->
+                ResumeMirrorTopicsResponseDataJsonConverter.write(((ResumeMirrorTopicsResponse) response).data(), version);
+            case DELETE_CLUSTER_MIRROR ->
+                DeleteClusterMirrorResponseDataJsonConverter.write(((DeleteClusterMirrorResponse) response).data(), version);
             default ->
                 throw new IllegalStateException("ApiKey " + response.apiKey() + " is not currently handled in `response`, the " +
                     "code should be updated to do so.");

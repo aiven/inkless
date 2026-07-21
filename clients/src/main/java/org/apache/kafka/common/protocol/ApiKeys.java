@@ -138,7 +138,6 @@ public enum ApiKeys {
     INIT_DISKLESS_LOG(ApiMessageType.INIT_DISKLESS_LOG, true),
     ALTER_DISKLESS_SWITCH(ApiMessageType.ALTER_DISKLESS_SWITCH, false, true),
     REPAIR_DISKLESS_LOG(ApiMessageType.REPAIR_DISKLESS_LOG, false, false),
-    GET_REPLICA_LOG_INFO(ApiMessageType.GET_REPLICA_LOG_INFO),
     CREATE_CLUSTER_MIRROR(ApiMessageType.CREATE_CLUSTER_MIRROR, false, true),
     START_MIRROR_TOPICS(ApiMessageType.START_MIRROR_TOPICS, false, true),
     STOP_MIRROR_TOPICS(ApiMessageType.STOP_MIRROR_TOPICS, false, true),

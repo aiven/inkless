@@ -43,8 +43,8 @@ import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.metadata.KafkaConfigSchema;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
-import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.common.MirrorPartitionState;
+import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.mutable.BoundedList;
 import org.apache.kafka.server.policy.AlterConfigPolicy;
 import org.apache.kafka.server.policy.AlterConfigPolicy.RequestMetadata;
@@ -263,7 +263,8 @@ public class ConfigurationControlManager {
         ApiError apiError = incrementalAlterConfigResource(configResource,
             configChanges,
             false,
-            outputRecords);
+            outputRecords,
+            null);
         // TODO: Should handle the error here
         log.debug("addMirrorConfig result: {} for {} {}", apiError, configResource, configChanges);
         outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));

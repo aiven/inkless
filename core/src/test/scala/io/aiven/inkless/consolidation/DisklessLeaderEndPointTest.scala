@@ -130,7 +130,8 @@ class DisklessLeaderEndPointTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false
+      false,
+      Optional.empty()
     )
     when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
     newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
@@ -185,7 +186,8 @@ class DisklessLeaderEndPointTest {
       OptionalLong.of(88L),
       Optional.of(aborted),
       OptionalInt.empty(),
-      false
+      false,
+      Optional.empty()
     )
     val responseMap = Map(topicIdPartition -> fetchData).asJava
     when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(responseMap))
@@ -226,7 +228,8 @@ class DisklessLeaderEndPointTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false
+      false,
+      Optional.empty()
     )
     when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
 
@@ -760,7 +763,8 @@ class DisklessLeaderEndPointTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false
+      false,
+      Optional.empty()
     )
     when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
 
@@ -799,7 +803,8 @@ class DisklessLeaderEndPointTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false
+      false,
+      Optional.empty()
     )
     when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
 
@@ -828,7 +833,8 @@ class DisklessLeaderEndPointTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false
+      false,
+      Optional.empty()
     )
     when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
 
@@ -857,7 +863,8 @@ class DisklessLeaderEndPointTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false
+      false,
+      Optional.empty()
     )
     when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
 
@@ -890,7 +897,8 @@ class DisklessLeaderEndPointTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false
+      false,
+      Optional.empty()
     )
     when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
 
@@ -921,7 +929,8 @@ class DisklessLeaderEndPointTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false
+      false,
+      Optional.empty()
     )
     when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
 
@@ -1083,7 +1092,8 @@ class DisklessLeaderEndPointTest {
       OptionalLong.empty(),
       Optional.empty(),
       OptionalInt.empty(),
-      false
+      false,
+      Optional.empty()
     )
     when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
 

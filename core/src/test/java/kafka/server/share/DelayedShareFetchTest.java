@@ -1040,7 +1040,7 @@ public class DelayedShareFetchTest {
 
         ShareFetch shareFetch = new ShareFetch(new FetchParams(
             FetchRequest.ORDINARY_CONSUMER_ID, -1, MAX_WAIT_MS, 1, 1024 * 1020,
-            FetchIsolation.HIGH_WATERMARK, Optional.empty(), true), groupId,
+            FetchIsolation.HIGH_WATERMARK, Optional.empty(), true, false), groupId,
             Uuid.randomUuid().toString(), new CompletableFuture<>(), List.of(tp0, tp1, tp2, tp3, tp4), BATCH_OPTIMIZED, BATCH_SIZE,
             MAX_FETCH_RECORDS, BROKER_TOPIC_STATS);
 
@@ -2215,8 +2215,9 @@ public class DelayedShareFetchTest {
             -1L,
             -1L,
             OptionalLong.empty(),
-            OptionalInt rors.NONE,
- Optional.empty()
+            OptionalInt.empty(),
+            Errors.NONE,
+            Optional.empty()
         ))));
         return CollectionConverters.asScala(logReadResults).toSeq();
     }

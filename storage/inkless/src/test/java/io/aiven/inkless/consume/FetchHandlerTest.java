@@ -97,7 +97,8 @@ public class FetchHandlerTest {
                         OptionalLong.empty(),
                         Optional.empty(),
                         OptionalInt.empty(),
-                        false
+                        false,
+                        Optional.empty()
                 )
         );
         when(reader.fetch(any(), any())).thenReturn(CompletableFuture.completedFuture(value));
@@ -135,7 +136,8 @@ public class FetchHandlerTest {
                 OptionalLong.empty(),
                 Optional.empty(),
                 OptionalInt.empty(),
-                false
+                false,
+                Optional.empty()
             )
         );
         when(reader.fetch(any(), any())).thenReturn(CompletableFuture.completedFuture(value));

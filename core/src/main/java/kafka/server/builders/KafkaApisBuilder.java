@@ -189,11 +189,6 @@ public class KafkaApisBuilder {
         return this;
     }
 
-    public KafkaApisBuilder setBrokerEpochSupplier(Supplier<Long> brokerEpochSupplier) {
-        this.brokerEpochSupplier = brokerEpochSupplier;
-        return this;
-    }
-
     public KafkaApisBuilder setTopicMirrorCoordinator(ClusterMirrorCoordinator mirrorCoordinator) {
         this.mirrorCoordinator = mirrorCoordinator;
         return this;

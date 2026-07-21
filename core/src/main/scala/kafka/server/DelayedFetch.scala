@@ -296,7 +296,8 @@ class DelayedFetch(
                 util.OptionalLong.empty(),
                 util.Optional.empty(),
                 util.OptionalInt.empty(),
-                false
+                false,
+                util.Optional.empty()
               )
             }.toSeq
           })

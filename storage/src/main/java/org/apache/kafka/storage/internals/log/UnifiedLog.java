@@ -1056,7 +1056,7 @@ public class UnifiedLog implements AutoCloseable {
                                         short transactionVersion) {
         boolean validateAndAssignOffsets = origin != AppendOrigin.RAFT_LEADER;
         return append(records, origin, validateAndAssignOffsets, leaderEpoch, Optional.of(requestLocal),
-            verificationGuard, false, RecordBatch.CURRENT_MAGIC_VALUE, transactionVersion);
+            verificationGuard, false, RecordBatch.CURRENT_MAGIC_VALUE, transactionVersion, false);
     }
 
     /**
@@ -1068,7 +1068,7 @@ public class UnifiedLog implements AutoCloseable {
      */
     public LogAppendInfo appendAsLeaderWithRecordVersion(MemoryRecords records, int leaderEpoch, RecordVersion recordVersion) {
         return append(records, AppendOrigin.CLIENT, true, leaderEpoch, Optional.of(RequestLocal.noCaching()),
-                VerificationGuard.SENTINEL, false, recordVersion.value, TransactionVersion.TV_UNKNOWN);
+                VerificationGuard.SENTINEL, false, recordVersion.value, TransactionVersion.TV_UNKNOWN, false);
     }
 
     public LogAppendInfo appendAsFollower(MemoryRecords records, int leaderEpoch) {
@@ -1094,15 +1094,8 @@ public class UnifiedLog implements AutoCloseable {
                       true,
                       RecordBatch.CURRENT_MAGIC_VALUE,
                       TransactionVersion.TV_UNKNOWN,
-                isM                   private LogAppendInfo append(MemoryRecords records,
-                                 AppendOrigin origin,
-                                 boolean validateAndAssignOffsets,
-                                 int leaderEpoch,
-                                 Optional<RequestLocal> requestLocal,
-                                 VerificationGuard verificationGuard,
-                                 boolean ignoreRecordSize,
-                                 byte toMagic) {
-        return append(records, origin, validateAndAssignOffsets, leaderEpoch, requestLocal, verificationGuard, ignoreRecordSize, toMagic, TransactionVersion.TV_UNKNOWN, false);
+                      isMirrorLeader
+        );
     }
 
     /**

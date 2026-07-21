@@ -175,7 +175,8 @@ public class DelayedRemoteFetch extends DelayedOperation {
                             result.lastStableOffset(),
                             info.abortedTransactions,
                             result.preferredReadReplica(),
-                            false));
+                            false,
+                            Optional.empty()));
                 }
             } else {
                 fetchPartitionData.put(tpId, result.toFetchPartitionData(false));

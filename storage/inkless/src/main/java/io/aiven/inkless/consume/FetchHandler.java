@@ -85,7 +85,7 @@ public class FetchHandler implements Closeable {
                 LOGGER.error("Read future failed", e);
                 final var error = new FetchPartitionData(Errors.UNKNOWN_SERVER_ERROR, -1, -1,
                     MemoryRecords.EMPTY, Optional.empty(), OptionalLong.empty(),
-                    Optional.empty(), OptionalInt.empty(), false);
+                    Optional.empty(), OptionalInt.empty(), false, Optional.empty());
                 result = fetchInfos.entrySet().stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, ignore -> error));
                 return result;

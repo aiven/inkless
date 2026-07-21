@@ -63,6 +63,7 @@ import org.apache.kafka.metadata.MetadataCache;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.MirrorPartitionState;
 import org.apache.kafka.server.common.RequestLocal;
+import org.apache.kafka.server.common.TransactionVersion;
 import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.server.util.Scheduler;
 import org.apache.kafka.storage.internals.log.AppendOrigin;
@@ -550,7 +551,8 @@ public class ClusterMirrorCoordinator {
                 },
                 ignored -> null,
                 RequestLocal.noCaching(),
-                CollectionConverters.asScala(Map.of())
+                CollectionConverters.asScala(Map.of()),
+                TransactionVersion.TV_UNKNOWN
             );
             futures.add(future);
         }
@@ -750,7 +752,8 @@ public class ClusterMirrorCoordinator {
                 },
                 ignored -> null,
                 RequestLocal.noCaching(),
-                CollectionConverters.asScala(Map.of())
+                CollectionConverters.asScala(Map.of()),
+                TransactionVersion.TV_UNKNOWN
         );
     }
 
@@ -855,7 +858,8 @@ public class ClusterMirrorCoordinator {
                 },
                 ignored -> null,
                 RequestLocal.noCaching(),
-                CollectionConverters.asScala(Map.of())
+                CollectionConverters.asScala(Map.of()),
+                TransactionVersion.TV_UNKNOWN
         );
     }
 
@@ -1006,7 +1010,8 @@ public class ClusterMirrorCoordinator {
                     },
                     ignored -> null,
                     RequestLocal.noCaching(),
-                    CollectionConverters.asScala(Map.of())
+                    CollectionConverters.asScala(Map.of()),
+                    TransactionVersion.TV_UNKNOWN
                 );
             } catch (Exception e) {
                 log.error("Failed to write PID reset barrier for partition {} in mirror {}", tp, mirrorName, e);
@@ -1113,7 +1118,8 @@ public class ClusterMirrorCoordinator {
                 },
                 ignored -> null,
                 RequestLocal.noCaching(),
-                CollectionConverters.asScala(Map.of())
+                CollectionConverters.asScala(Map.of()),
+                TransactionVersion.TV_UNKNOWN
             );
         }
     }

@@ -22,30 +22,32 @@ import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogResponse => 
 import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.{AwaitingMetadata, HostedPartition, InitDisklessLogManager, InitDisklessLogState, MockInitDisklessLogChannelManager, ReplicaManager, SendingToController}
+import kafka.server.mirror.ClusterMirrorCoordinator
+import kafka.server.mirror.MirrorMetadataManager
+import kafka.server.{InitDisklessLogManager, SendingToController, AwaitingMetadata, MockInitDisklessLogChannelManager, HostedPartition, InitDisklessLogState, ReplicaManager}
 import kafka.server.share.SharePartitionManager
 import kafka.utils.TestUtils
-import org.apache.kafka.common.{Node, TopicPartition, Uuid}
-import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
+import org.apache.kafka.common.{Uuid, TopicPartition, Node}
+import org.apache.kafka.common.config.{TopicConfig, ConfigResource}
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.message.InitDisklessLogResponseData
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE
 import org.apache.kafka.metadata.PartitionRegistration
-import org.apache.kafka.common.metadata.{ConfigRecord, PartitionChangeRecord, PartitionRecord, TopicRecord}
-import org.apache.kafka.image.{AclsImage, ClientQuotasImage, ClusterImageTest, ConfigurationsImage, DelegationTokenImage, FeaturesImage, MetadataDelta, MetadataImage, MetadataProvenance, ProducerIdsImage, ScramImage, TopicsDelta, TopicsImage}
+import org.apache.kafka.common.metadata.{ConfigRecord, TopicRecord, PartitionChangeRecord, PartitionRecord}
+import org.apache.kafka.image.{ClusterImageTest, TopicsImage, MetadataImage, DelegationTokenImage, ConfigurationsImage, FeaturesImage, ProducerIdsImage, ScramImage, MetadataProvenance, MetadataDelta, ClientQuotasImage, TopicsDelta, AclsImage}
 import org.apache.kafka.image.loader.LogDeltaManifest
 import org.apache.kafka.metadata.InitDisklessLogFields
-import org.apache.kafka.metadata.publisher.{AclPublisher, DelegationTokenPublisher, DynamicClientQuotaPublisher, ScramPublisher}
+import org.apache.kafka.metadata.publisher.{DelegationTokenPublisher, DynamicClientQuotaPublisher, ScramPublisher, AclPublisher}
 import org.apache.kafka.raft.LeaderAndEpoch
 import org.apache.kafka.server.common.MetadataVersion
 import org.apache.kafka.server.fault.FaultHandler
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.server.util.{MockScheduler, MockTime}
-import org.apache.kafka.storage.internals.log.{LogConfig, LogDirFailureChannel}
-import org.junit.jupiter.api.Assertions.{assertEquals, assertFalse, assertTrue}
+import org.apache.kafka.storage.internals.log.{LogDirFailureChannel, LogConfig}
+import org.junit.jupiter.api.Assertions.{assertTrue, assertFalse, assertEquals}
 import org.junit.jupiter.api.Test
-import org.mockito.ArgumentMatchers.{any, anyString}
-import org.mockito.Mockito.{mock, times, verify, when}
+import org.mockito.ArgumentMatchers.{anyString, any}
+import org.mockito.Mockito.{times, verify, mock, when}
 
 import java.util
 import scala.jdk.CollectionConverters._
@@ -979,7 +981,9 @@ class DisklessSwitchFlowTest {
       mock(classOf[DelegationTokenPublisher]),
       mock(classOf[AclPublisher]),
       faultHandler,
-      faultHandler
+      faultHandler,
+      mock(classOf[ClusterMirrorCoordinator]),
+      mock(classOf[MirrorMetadataManager])
     )
 
     TestContext(config, metadataCache, logManager, replicaManager, initDisklessLogManager, metadataPublisher, controlPlane, channelManager, time, scheduler)

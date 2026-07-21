@@ -360,8 +360,6 @@ public abstract class AbstractRequest implements AbstractRequestResponse {
                 return AlterDisklessSwitchRequest.parse(readable, apiVersion);
             case REPAIR_DISKLESS_LOG:
                 return RepairDisklessLogRequest.parse(readable, apiVersion);
-            case GET_REPLICA_LOG_INFO:
-                return GetReplicaLogInfoRequest.parse(readable, apiVersion);
             case CREATE_CLUSTER_MIRROR:
                 return CreateClusterMirrorRequest.parse(readable, apiVersion);
             case START_MIRROR_TOPICS:

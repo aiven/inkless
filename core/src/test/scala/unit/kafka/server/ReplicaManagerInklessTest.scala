@@ -1118,7 +1118,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         110L, 100L,
         RECORDS,
-        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor = mockFetchHandler(disklessResponse)
     val batchMetadata = mock(classOf[BatchMetadata])
@@ -1210,7 +1210,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         110L, 100L,
         RECORDS,
-        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor = mockFetchHandler(disklessResponse)
     val batchMetadata = mock(classOf[BatchMetadata])
@@ -1353,7 +1353,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         500L, 0L,
         supplementRecords,
-        Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor = mockFetchHandler(disklessResponse)
     val cp = mock(classOf[ControlPlane])
@@ -1443,7 +1443,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         100L, 0L,
         MemoryRecords.EMPTY,
-        Optional.empty(), OptionalLong.of(100L), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.of(100L), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor = mockFetchHandler(disklessResponse)
     val cp = mock(classOf[ControlPlane])
@@ -1531,7 +1531,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         500L, 0L,
         supplementRecords,
-        Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor = mockFetchHandler(disklessResponse)
     val cp = mock(classOf[ControlPlane])
@@ -1610,7 +1610,7 @@ class ReplicaManagerInklessTest {
         Errors.KAFKA_STORAGE_ERROR,
         500L, 0L,
         supplementRecords,
-        Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor = mockFetchHandler(disklessResponse)
     val cp = mock(classOf[ControlPlane])
@@ -1859,7 +1859,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         localLeo, 0L,
         supplementRecords,
-        Optional.empty(), OptionalLong.of(localLeo), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.of(localLeo), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
 
     val fetchHandlerCtor = mockFetchHandler(disklessResponse)
@@ -1963,12 +1963,12 @@ class ReplicaManagerInklessTest {
           .thenReturn(CompletableFuture.completedFuture(
             Map(disklessTopicPartition -> new FetchPartitionData(
               Errors.NONE, 500L, 0L, supplementRecords,
-              Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false)
+              Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
             ).asJava))
           .thenReturn(CompletableFuture.completedFuture(
             Map(pureDisklessTp -> new FetchPartitionData(
               Errors.NONE, 300L, 0L, disklessRecords,
-              Optional.empty(), OptionalLong.of(300L), Optional.empty(), OptionalInt.empty(), false)
+              Optional.empty(), OptionalLong.of(300L), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
             ).asJava))
     }
     val fetchHandlerCtor = mockConstruction(classOf[FetchHandler], fetchHandlerCtorMockInitializer)
@@ -2292,9 +2292,9 @@ class ReplicaManagerInklessTest {
       2.toByte, 100L, Compression.NONE, TimestampType.CREATE_TIME, 456L, 0.toShort, 0, 0, false, new SimpleRecord(0, "supplement".getBytes())
     )
     val localData = new FetchPartitionData(Errors.NONE, 100L, 0L, localRecords,
-      Optional.empty(), OptionalLong.of(80L), Optional.empty(), OptionalInt.empty(), false)
+      Optional.empty(), OptionalLong.of(80L), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     val supplementData = new FetchPartitionData(Errors.NONE, 500L, 0L, supplementRecords,
-      Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false)
+      Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
 
     val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
     try {
@@ -2319,9 +2319,9 @@ class ReplicaManagerInklessTest {
       2.toByte, 100L, Compression.NONE, TimestampType.CREATE_TIME, 456L, 0.toShort, 0, 0, false, new SimpleRecord(0, "supplement".getBytes())
     )
     val localData = new FetchPartitionData(Errors.NONE, 100L, 0L, localFileRecords,
-      Optional.empty(), OptionalLong.of(80L), Optional.empty(), OptionalInt.empty(), false)
+      Optional.empty(), OptionalLong.of(80L), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     val supplementData = new FetchPartitionData(Errors.NONE, 500L, 0L, supplementRecords,
-      Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false)
+      Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
 
     val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
     try {
@@ -2339,12 +2339,12 @@ class ReplicaManagerInklessTest {
   @Test
   def testMergeConsolidationSupplementReturnsLocalDataOnUnknownLocalRecordsType(): Unit = {
     val localData = new FetchPartitionData(Errors.NONE, 100L, 0L, mock(classOf[org.apache.kafka.common.record.Records]),
-      Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     val supplementRecords = MemoryRecords.withRecords(
       2.toByte, 100L, Compression.NONE, TimestampType.CREATE_TIME, 456L, 0.toShort, 0, 0, false, new SimpleRecord(0, "s".getBytes())
     )
     val supplementData = new FetchPartitionData(Errors.NONE, 500L, 0L, supplementRecords,
-      Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false)
+      Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
 
     val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
     try {
@@ -2361,9 +2361,9 @@ class ReplicaManagerInklessTest {
       2.toByte, 0L, Compression.NONE, TimestampType.CREATE_TIME, 123L, 0.toShort, 0, 0, false, new SimpleRecord(0, "local".getBytes())
     )
     val localData = new FetchPartitionData(Errors.NONE, 100L, 0L, localRecords,
-      Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     val supplementData = new FetchPartitionData(Errors.NONE, 500L, 0L, mock(classOf[org.apache.kafka.common.record.Records]),
-      Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false)
+      Optional.empty(), OptionalLong.of(500L), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
 
     val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
     try {
@@ -2381,7 +2381,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         110L, 100L,
         RECORDS,
-        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor = mockFetchHandler(disklessResponse)
     val batchMetadata = mock(classOf[BatchMetadata])
@@ -2439,7 +2439,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         110L, 100L,
         RECORDS,
-        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor = mockFetchHandler(disklessResponse)
     val replicaManager = spy(createReplicaManager(
@@ -2484,7 +2484,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         110L, 100L,
         RECORDS,
-        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor = mockFetchHandler(disklessResponse)
     val replicaManager = spy(createReplicaManager(
@@ -2636,7 +2636,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         110L, 100L,
         RECORDS,
-        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor = mockFetchHandler(disklessResponse)
     val batchMetadata = mock(classOf[BatchMetadata])
@@ -2695,7 +2695,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         110L, 100L,
         RECORDS,
-        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor = mockFetchHandler(disklessResponse)
     val batchMetadata = mock(classOf[BatchMetadata])
@@ -2864,10 +2864,10 @@ class ReplicaManagerInklessTest {
     // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
     val disklessResponse = Map(
       disklessTopicPartition -> new FetchPartitionData(
-        Errors.NONE, hwm, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false
+        Errors.NONE, hwm, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty()
       ),
       disklessTopicPartition2 -> new FetchPartitionData(
-        Errors.NONE, hwm, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false
+        Errors.NONE, hwm, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty()
       )
     )
     val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(disklessResponse)
@@ -2936,7 +2936,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         hwm, 0L,  // log offset range
         RECORDS,
-        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(disklessResponse)
 
@@ -2998,7 +2998,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         hwm, 0L,  // log offset range
         RECORDS,
-        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(disklessResponse)
 
@@ -3082,7 +3082,7 @@ class ReplicaManagerInklessTest {
         Errors.NONE,
         hwm, 0L,  // log offset range
         RECORDS,
-        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty())
     )
     val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(disklessResponse)
 
@@ -3162,7 +3162,7 @@ class ReplicaManagerInklessTest {
 
     // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
     val disklessResponse = Map(disklessTopicPartition ->
-      new FetchPartitionData(Errors.NONE, fetchOffset - 10L, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false))
+      new FetchPartitionData(Errors.NONE, fetchOffset - 10L, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty()))
     val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(disklessResponse)
 
     val replicaManager = try {
@@ -3229,7 +3229,7 @@ class ReplicaManagerInklessTest {
 
     // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
     val disklessResponse = Map(disklessTopicPartition ->
-      new FetchPartitionData(Errors.NONE, 10L, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false))
+      new FetchPartitionData(Errors.NONE, 10L, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty()))
     val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(disklessResponse)
 
     val replicaManager = try {
@@ -3308,7 +3308,7 @@ class ReplicaManagerInklessTest {
 
     // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
     val disklessResponse = Map(disklessTopicPartition ->
-      new FetchPartitionData(Errors.KAFKA_STORAGE_ERROR, -1, -1, MemoryRecords.EMPTY, Optional.empty, OptionalLong.empty, Optional.empty, OptionalInt.empty, false))
+      new FetchPartitionData(Errors.KAFKA_STORAGE_ERROR, -1, -1, MemoryRecords.EMPTY, Optional.empty, OptionalLong.empty, Optional.empty, OptionalInt.empty, false, Optional.empty()))
     val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(disklessResponse)
 
     val replicaManager = try {

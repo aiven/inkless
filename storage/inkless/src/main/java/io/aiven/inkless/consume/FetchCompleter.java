@@ -171,7 +171,8 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
                 OptionalLong.empty(),
                 Optional.empty(),
                 OptionalInt.empty(),
-                false
+                false,
+                Optional.empty()
             );
         }
         final ExtractionResult extraction;
@@ -213,14 +214,15 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
             OptionalLong.of(metadata.highWatermark()),
             Optional.empty(),
             OptionalInt.empty(),
-            false
+            false,
+            Optional.empty()
         );
     }
 
     private static FetchPartitionData errorResponse(final Errors error) {
         return new FetchPartitionData(
             error, -1, -1, MemoryRecords.EMPTY,
-            Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false);
+            Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false, Optional.empty());
     }
 
     /**

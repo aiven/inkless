@@ -1413,20 +1413,6 @@ public class RequestResponseTest {
         return new BumpLeaderEpochsResponse(data);
     }
 
-    private GetReplicaLogInfoRequest createGetReplicaLogInfoRequest(short version) {
-        GetReplicaLogInfoRequestData data = new GetReplicaLogInfoRequestData()
-                .setTopicPartitions(singletonList(new GetReplicaLogInfoRequestData.TopicPartitions()
-                .setPartitions(singletonList(0))));
-        return new GetReplicaLogInfoRequest.Builder(data).build(version);
-    }
-
-    private GetReplicaLogInfoResponse createGetReplicaLogInfoResponse() {
-        GetReplicaLogInfoResponseData data = new GetReplicaLogInfoResponseData();
-        data.setBrokerEpoch(0);
-        data.setTopicPartitionLogInfoList(singletonList(new GetReplicaLogInfoResponseData.TopicPartitionLogInfo()));
-        return new GetReplicaLogInfoResponse(data);
-    }
-
     private ConsumerGroupDescribeRequest createConsumerGroupDescribeRequest(short version) {
         ConsumerGroupDescribeRequestData data = new ConsumerGroupDescribeRequestData()
             .setGroupIds(Collections.singletonList("group"))
