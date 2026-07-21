@@ -20,7 +20,7 @@ import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, Reader}
 import io.aiven.inkless.storage_backend.common.ObjectFetcher
-import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetRequest, AdvanceCrossTierLogStartOffsetResponse, BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, RepairDisklessLogRequest}
+import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetRequest, AdvanceCrossTierLogStartOffsetResponse, BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, RepairDisklessLogRequest, ListOffsetsRequest => CpListOffsetsRequest}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.produce.AppendHandler
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, ConsolidationMetrics, ConsolidationReconciler}
@@ -1783,6 +1783,58 @@ class ReplicaManager(val config: KafkaConfig,
         // low watermark in place and let the RLM's own report reconcile the control plane later.
         error(s"Failed to advance cross-tier log start offset for ${partitionsInOrder.mkString(", ")}", e)
         Map.empty
+    }
+  }
+
+  /**
+   * Whether `topicPartition` is a consolidating diskless topic on this broker. Used by the
+   * [[org.apache.kafka.server.log.remote.storage.RemoteLogManager]] to pick its reclaim-floor fallback
+   * when [[crossTierEarliestOffset]] is unavailable: such a partition must not fall back to the
+   * broker-local log start (pinned at the seal on a rebuilt leader). Mirrors the guard in
+   * [[crossTierEarliestOffset]] so the two agree.
+   */
+  def isConsolidatingDisklessPartition(topicPartition: TopicPartition): Boolean =
+    inklessSharedState.isDefined && _inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
+
+  /**
+   * The authoritative, broker-agnostic cross-tier earliest offset for a consolidating diskless
+   * partition, as tracked by the control plane (`COALESCE(remote_log_start_offset, log_start_offset)`,
+   * what `ListOffsets(EARLIEST)` returns); empty for non-consolidating/non-inkless partitions or when
+   * unresolved. Preferred over the broker-local `UnifiedLog.logStartOffset`, which on a rebuilt leader
+   * is pinned at the seal and never pulled back down (monotonic), so using it would over-reclaim and
+   * reject reads of the classic prefix `[earliest, seal)`. Reads the write-through
+   * [[io.aiven.inkless.cache.CrossTierLogStartCache]] first, else queries the control plane and caches
+   * the hit; a stale entry can only be too low (safe: under-reclaims/over-serves).
+   */
+  def crossTierEarliestOffset(topicPartition: TopicPartition): OptionalLong = {
+    val sharedState = inklessSharedState.orNull
+    if (sharedState == null || !_inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)) {
+      return OptionalLong.empty()
+    }
+    val topicId = _inklessMetadataView.getTopicId(topicPartition.topic)
+    if (topicId == null || topicId.equals(Uuid.ZERO_UUID)) {
+      return OptionalLong.empty()
+    }
+    val tidp = new TopicIdPartition(topicId, topicPartition.partition, topicPartition.topic)
+    val cached = sharedState.crossTierLogStartCache().get(tidp)
+    if (cached != null) {
+      return OptionalLong.of(cached)
+    }
+    try {
+      val responses = sharedState.controlPlane().listOffsets(
+        util.List.of(new CpListOffsetsRequest(tidp, CpListOffsetsRequest.EARLIEST_TIMESTAMP)))
+      if (responses != null && !responses.isEmpty) {
+        val response = responses.get(0)
+        if (response.errors() == Errors.NONE && response.offset() >= 0) {
+          sharedState.crossTierLogStartCache().put(tidp, response.offset())
+          return OptionalLong.of(response.offset())
+        }
+      }
+      OptionalLong.empty()
+    } catch {
+      case e: Throwable =>
+        warn(s"Failed to resolve cross-tier earliest offset for $topicPartition from the control plane", e)
+        OptionalLong.empty()
     }
   }
 
