@@ -28,9 +28,7 @@
   // Version 5 adds support for new error code TRANSACTION_ABORTABLE (KIP-890).
   //
   // Version 6 adds support for share groups (KIP-932).
-  //
-  // Version 7 adds support for cluster mirror (KIP-next)
-  "validVersions": "0-7",
+  "validVersions": "0-6",
   "flexibleVersions": "3+",
   "fields": [
     { "name": "ThrottleTimeMs", "type": "int32", "versions": "1+", "ignorable": true,

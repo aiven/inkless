@@ -317,7 +317,6 @@ public class ConfigurationControlManager {
             boolean topicNameMismatch = existingIdTopic != null && hasRequestTopicId
                     && !existingIdTopic.name().equals(topicName);
             boolean activeInOtherMirror = existingTopic != null && existingTopic.mirrorName() != null
-                    && !existingTopic.mirrorName().isBlank()
                     && !existingTopic.mirrorName().equals(mirrorName)
                     && existingTopic.mirrorState() != MirrorPartitionState.STOPPED.value();
             boolean startedState = existingTopic != null && existingTopic.mirrorName() != null
@@ -666,7 +665,7 @@ public class ConfigurationControlManager {
                 records.add(new ApiMessageAndVersion(
                     new MirrorTopicStateChangeRecord()
                         .setTopicId(topicInfo.topicId())
-                        .setMirrorName("")
+                        .setMirrorName(null)
                         .setDesiredState(MirrorPartitionState.UNKNOWN.value()),
                     (short) 0));
             }

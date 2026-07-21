@@ -71,7 +71,7 @@ class MirrorFetcherThread(name: String,
   }
 
   override protected def refreshSourceClusterMetadata(mirrorPartitions: Set[TopicPartition], reason: String): Unit = {
-    replicaMgr.mirrorMetadataManager.foreach(_.scheduleSourceMetadataSync(mirrorName))
+    replicaMgr.mirrorMetadataManager.foreach(_.scheduleSourceTopicStateSync(mirrorName))
     replicaMgr.mirrorMetadataManager.foreach(_.transitionTo(mirrorName, mirrorPartitions.asJava,
       MirrorPartitionState.FAILED, reason))
   }
@@ -101,7 +101,7 @@ class MirrorFetcherThread(name: String,
         s"epoch $highestBatchLeaderEpoch is higher than local leader epoch $localLeaderEpoch")
     } else {
       replicaMgr.mirrorMetadataManager.foreach { mmm =>
-        mmm.failedPartitionInfo().remove(topicPartition)
+        mmm.clearFailedInfo(mirrorName, topicPartition)
 
         if (highestBatchLeaderEpoch > localLeaderEpoch - LEADER_EPOCH_BUMP_THRESHOLD) {
           // When source batch is close to the local epoch (within LEADER_EPOCH_BUMP_THRESHOLD),

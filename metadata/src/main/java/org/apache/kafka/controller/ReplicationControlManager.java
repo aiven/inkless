@@ -1226,7 +1226,7 @@ public class ReplicationControlManager {
     Set<TopicControlInfo> getMirrorTopics() {
         return topics.values().stream()
             .filter(topicControlInfo ->
-                topicControlInfo.mirrorName != null && !topicControlInfo.mirrorName.isBlank()).collect(Collectors.toSet());
+                topicControlInfo.mirrorName != null).collect(Collectors.toSet());
     }
 
     Uuid getTopicId(String name) {

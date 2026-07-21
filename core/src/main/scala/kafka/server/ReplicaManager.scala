@@ -2648,7 +2648,7 @@ class ReplicaManager(val config: KafkaConfig,
       getPartition(tp) match {
         case HostedPartition.Online(partition) =>
           try {
-            if (mirrorName != null && !mirrorName.isEmpty) {
+            if (mirrorName != null) {
               // Get the source partition leader
               val sourceLeader = mirrorMetadataManager.get.resolveSourceLeader(mirrorName, tp)
               val sourceLeaderNode = sourceLeader.node()
@@ -2701,13 +2701,13 @@ class ReplicaManager(val config: KafkaConfig,
     }
 
     if (pendingMetadataPartitions.nonEmpty) {
-      mirrorMetadataManager.foreach(_.scheduleSourceMetadataSync(mirrorName))
+      mirrorMetadataManager.foreach(_.scheduleSourceTopicStateSync(mirrorName))
       mirrorMetadataManager.foreach(_.transitionTo(mirrorName, pendingMetadataPartitions.asJava,
         MirrorPartitionState.FAILED, "Failed to get source metadata"))
     }
 
     if (errorPartitionAndOffsets.nonEmpty) {
-      mirrorMetadataManager.foreach(_.scheduleSourceMetadataSync(mirrorName))
+      mirrorMetadataManager.foreach(_.scheduleSourceTopicStateSync(mirrorName))
       mirrorMetadataManager.foreach(_.transitionTo(mirrorName, errorPartitionAndOffsets.asJava,
         MirrorPartitionState.FAILED, "Failed to add mirror fetcher"))
     }

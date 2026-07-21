@@ -64,11 +64,6 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
-    public FindCoordinatorResult findCoordinator(String key) {
-        return null;
-    }
-
-    @Override
     public DeleteTopicsResult deleteTopics(TopicCollection topics, DeleteTopicsOptions options) {
         return delegate.deleteTopics(topics, options);
     }

@@ -22,8 +22,8 @@
   "fields": [
     { "name": "TopicId", "type": "uuid", "versions": "0+",
       "about": "The unique topic ID." },
-    { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName",
-      "about": "The cluster mirror name." },
+    { "name": "MirrorName", "type": "string", "versions": "0+", "nullableVersions": "0+", "entityType": "mirrorName",
+      "about": "The cluster mirror name. Null when disassociating a topic from a mirror." },
     { "name": "DesiredState", "type": "int8", "versions": "0+",
       "about": "The desired state for all mirror partitions." }
   ]

@@ -144,7 +144,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     info(s"Using mirror properties for $mirrorName: ${mirrorProperties.keySet()}")
     val mirrorConfig = ClusterMirrorConfig.fromProperties(mirrorProperties)
     val clientId = s"fetcherId-$fetcherId-mirrorName-$mirrorName"
-    val sender = ClusterMirrorUtils.createSender(srcEndpoint, mirrorConfig, metrics, time, clientId, logContext)
+    val sender = new MirrorSourceSender(srcEndpoint, mirrorConfig, metrics, time, srcEndpoint.id, clientId, logContext)
     val fetchSessionHandler = new FetchSessionHandler(logContext, srcEndpoint.id)
     val endpoint: LeaderEndPoint = new RemoteLeaderEndPoint(logContext.logPrefix, sender, fetchSessionHandler, brokerConfig,
       replicaManager, quotaManager, metadataVersionSupplier, brokerEpochSupplier, isClusterMirror = true,

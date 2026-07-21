@@ -160,8 +160,6 @@ import org.apache.kafka.common.message.DescribeUserScramCredentialsRequestData;
 import org.apache.kafka.common.message.DescribeUserScramCredentialsRequestData.UserName;
 import org.apache.kafka.common.message.DescribeUserScramCredentialsResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
-import org.apache.kafka.common.message.FindCoordinatorRequestData;
-import org.apache.kafka.common.message.FindCoordinatorResponseData;
 import org.apache.kafka.common.message.LeaveGroupRequestData.MemberIdentity;
 import org.apache.kafka.common.message.ListClusterMirrorsRequestData;
 import org.apache.kafka.common.message.ListClusterMirrorsResponseData;
@@ -244,8 +242,6 @@ import org.apache.kafka.common.requests.ElectLeadersRequest;
 import org.apache.kafka.common.requests.ElectLeadersResponse;
 import org.apache.kafka.common.requests.ExpireDelegationTokenRequest;
 import org.apache.kafka.common.requests.ExpireDelegationTokenResponse;
-import org.apache.kafka.common.requests.FindCoordinatorRequest;
-import org.apache.kafka.common.requests.FindCoordinatorResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsResponse;
 import org.apache.kafka.common.requests.JoinGroupRequest;
@@ -1818,57 +1814,6 @@ public class KafkaAdminClient extends AdminClient {
             runnable.call(call, now);
         }
         return new CreateTopicsResult(new HashMap<>(topicFutures));
-    }
-
-    @Override
-    public FindCoordinatorResult findCoordinator(String key) {
-        KafkaFutureImpl<FindCoordinatorResult.CoordinatorInfo> future = new KafkaFutureImpl<>();
-        if (key == null) {
-            future.completeExceptionally(new IllegalArgumentException("The given key cannot be null."));
-        } else {
-            final long now = time.milliseconds();
-            final Call call = getFindCoordinatorCall(future, key);
-            runnable.call(call, now);
-        }
-        return new FindCoordinatorResult(future);
-    }
-
-    private Call getFindCoordinatorCall(KafkaFutureImpl<FindCoordinatorResult.CoordinatorInfo> future, String key) {
-        final long now = time.milliseconds();
-        final long deadline = calcDeadlineMs(now, 10000);
-
-        return new Call("findCoordinator", deadline, new LeastLoadedNodeProvider()) {
-            @Override
-            AbstractRequest.Builder<?> createRequest(int timeoutMs) {
-                return new FindCoordinatorRequest.Builder(
-                    new FindCoordinatorRequestData()
-                        .setKeyType(FindCoordinatorRequest.CoordinatorType.CLUSTER_MIRROR.id())
-                        .setKey(key)
-                        .setCoordinatorKeys(List.of())
-                );
-            }
-
-            @Override
-            void handleResponse(AbstractResponse abstractResponse) {
-                final FindCoordinatorResponse response = (FindCoordinatorResponse) abstractResponse;
-                ApiError error = new ApiError(response.data().errorCode(), response.data().errorMessage());
-                if (error.isFailure()) {
-                    future.completeExceptionally(error.exception());
-                } else {
-                    FindCoordinatorResponseData.Coordinator coordinator = response.coordinators()
-                            .stream().findFirst().orElseThrow();
-                    Node node = new Node(coordinator.nodeId(), coordinator.host(),
-                            coordinator.port());
-                    future.complete(new FindCoordinatorResult.CoordinatorInfo(node, key));
-                }
-            }
-
-            @Override
-            void handleFailure(Throwable throwable) {
-                // Fail all the other remaining futures
-                completeAllExceptionally(List.of(future), throwable);
-            }
-        };
     }
 
     private Call getCreateTopicsCall(final CreateTopicsOptions options,

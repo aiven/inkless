@@ -33,7 +33,7 @@ import org.apache.kafka.common.acl.AclOperation
 import org.apache.kafka.common.acl.AclOperation._
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.errors._
-import org.apache.kafka.common.internals.Topic.{GROUP_METADATA_TOPIC_NAME, MIRROR_STATE_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
+import org.apache.kafka.common.internals.Topic.{GROUP_METADATA_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
 import org.apache.kafka.common.internals.{FatalExitError, Plugin, Topic}
 import org.apache.kafka.common.message.AddPartitionsToTxnResponseData.{AddPartitionsToTxnResult, AddPartitionsToTxnResultCollection}
 import org.apache.kafka.common.message.DeleteRecordsResponseData.{DeleteRecordsPartitionResult, DeleteRecordsTopicResult}
@@ -62,7 +62,6 @@ import org.apache.kafka.common.security.token.delegation.{DelegationToken, Token
 import org.apache.kafka.common.utils.{ProducerIdAndEpoch, Time}
 import org.apache.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.coordinator.group.{Group, GroupConfig, GroupConfigManager, GroupCoordinator}
-import org.apache.kafka.coordinator.mirror.ClusterMirrorRecordKey
 import org.apache.kafka.coordinator.share.ShareCoordinator
 import org.apache.kafka.metadata.{ConfigRepository, MetadataCache}
 import org.apache.kafka.server.{ApiVersionManager, ClientMetricsManager, DelegationTokenManager, ProcessRole}
@@ -506,8 +505,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         // Each broker reports partitions it's responsible for to avoid duplicates
         val lagInfoMap = replicaManager.getMirrorLagInfo(mirrorName)
         val partitionStates = clusterMirrorCoordinator.getMirrorStates(mirrorName).asScala
-        val failedInfo = clusterMirrorCoordinator.getFailedPartitionInfo()
-
         // Report partition if: (1) we have lag info, OR (2) we're the partition leader and have no lag info
         val partitionsToReport = (lagInfoMap.keySet ++ partitionStates.keySet.filter { tp =>
           !lagInfoMap.contains(tp) && replicaManager.onlinePartition(tp).exists(_.isLeader)
@@ -527,14 +524,15 @@ class KafkaApis(val requestChannel: RequestChannel,
 
             val state = partitionStates.getOrElse(topicPartition, MirrorPartitionState.UNKNOWN)
             val isMirroring = state == MirrorPartitionState.MIRRORING
+            val fpi = clusterMirrorCoordinator.getFailedInfo(mirrorName, topicPartition)
             val partitionDetail = new DescribeClusterMirrorsResponseData.PartitionDetail()
               .setPartitionIndex(topicPartition.partition())
               .setSourceOffset(if (isMirroring) lagInfoMap.get(topicPartition).map(_.sourceOffset).getOrElse(-1L) else -1L)
               .setDestinationOffset(if (isMirroring) lagInfoMap.get(topicPartition).map(_.destinationOffset).getOrElse(-1L) else -1L)
               .setLag(if (isMirroring) lagInfoMap.get(topicPartition).map(_.lag).getOrElse(-1L) else -1L)
               .setStateValue(state.name())
-              .setRetryAttempt(Option(failedInfo.get(topicPartition)).map(_.retryAttempt().toShort).getOrElse(0.toShort))
-              .setErrorMessage(Option(failedInfo.get(topicPartition)).map(_.errorMessage()).orNull)
+              .setRetryAttempt(if (fpi != null) fpi.retryAttempt().toShort else 0.toShort)
+              .setErrorMessage(if (fpi != null) fpi.errorMessage() else null)
 
             topicPartitions.partitions().add(partitionDetail)
           }
@@ -1697,11 +1695,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       (Errors.TRANSACTIONAL_ID_AUTHORIZATION_FAILED, Node.noNode)
     else if (keyType == CoordinatorType.SHARE.id && request.context.apiVersion < 6)
       (Errors.INVALID_REQUEST, Node.noNode)
-    else if (keyType == CoordinatorType.CLUSTER_MIRROR.id && request.context.apiVersion < 7) {
-      logger.warn("Mirror coordinator type is not supported for " +
-        s"FindCoordinatorRequest version ${request.context.apiVersion}")
-      (Errors.INVALID_REQUEST, Node.noNode)
-    } else {
+    else {
       if (keyType == CoordinatorType.SHARE.id) {
         authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
         try {
@@ -1709,15 +1703,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         } catch {
           case e: IllegalArgumentException =>
             error(s"Share coordinator key is invalid", e)
-            return (Errors.INVALID_REQUEST, Node.noNode)
-        }
-      } else if (keyType == CoordinatorType.CLUSTER_MIRROR.id) {
-        authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
-        try {
-          ClusterMirrorRecordKey.validate(key)
-        } catch {
-          case e: IllegalArgumentException =>
-            error(s"Mirror coordinator key is invalid", e)
             return (Errors.INVALID_REQUEST, Node.noNode)
         }
       }
@@ -1731,9 +1716,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         case CoordinatorType.SHARE =>
           // We know that shareCoordinator is defined at this stage.
           (shareCoordinator.partitionFor(SharePartitionKey.getInstance(key)), SHARE_GROUP_STATE_TOPIC_NAME)
-
-        case CoordinatorType.CLUSTER_MIRROR =>
-          (clusterMirrorCoordinator.getCoordinatorPartitionByKey(ClusterMirrorRecordKey.getInstance(key)), MIRROR_STATE_TOPIC_NAME)
       }
 
       val topicMetadata = metadataCache.getTopicMetadata(Set(internalTopicName).asJava, request.context.listenerName, false, false).asScala
