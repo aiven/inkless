@@ -32,6 +32,7 @@ import time
 from ducktape.utils.util import wait_until
 
 from kafkatest.services.verifiable_producer import VerifiableProducer
+from kafkatest.version import V_2_2_2
 
 
 class ConsolidationVerifier(object):
@@ -77,6 +78,13 @@ class ConsolidationVerifier(object):
     # ducknet aliases of the external inkless dependencies, keyed by the logical
     # name a test uses to fault them (see block_dependency / heal_dependency).
     DEP_ALIASES = {"object_storage": "storage", "control_plane": "postgres"}
+
+    # Oldest consumer the ducker image ships (tests/docker/Dockerfile installs 2.2.2).
+    # Its Fetch predates KIP-392 / Fetch v11, so it carries no clientMetadata -- the
+    # isOlderConsumer branch the follower cross-tier-earliest read guard protects. A
+    # modern (>= 2.3) client always sends clientMetadata and takes a different branch,
+    # so it cannot exercise that guard.
+    OLD_CONSUMER_VERSION = V_2_2_2
 
     def __init__(self, kafka):
         self.kafka = kafka
@@ -253,6 +261,31 @@ class ConsolidationVerifier(object):
         # only, never absolute.
         return len([k for k in self.object_keys() if not k.startswith(self.TIERED_PREFIX)])
 
+    def wait_for_tiered_count_stable(self, settle_samples=3, backoff_sec=5, timeout_sec=300):
+        """Wait until the tiered-storage object count stops growing (held steady across
+        ``settle_samples`` consecutive samples) and return that stable count.
+
+        Consolidation/RLM keeps copying closed segments to remote after the WAL has
+        drained locally, so a count snapshot taken right after ``wait_for_tiered_offset_at_least``
+        can still be climbing. Tests that later assert the count *dropped* after a
+        reclaim need a settled pre-reclaim peak, otherwise late tiering can mask the
+        deletion. Under a long retention nothing removes tiered objects, so the count
+        only grows and then plateaus."""
+        state = {"last": -1, "stable": 0, "value": 0}
+
+        def check():
+            cur = self.tiered_object_count()
+            state["stable"] = state["stable"] + 1 if cur == state["last"] else 0
+            state["last"] = cur
+            state["value"] = cur
+            self.logger.info("Tiered-storage object count: %d (stable for %d samples)"
+                             % (cur, state["stable"]))
+            return state["stable"] >= settle_samples
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=backoff_sec,
+                   err_msg="Tiered-storage object count did not stabilize within %ds." % timeout_sec)
+        return state["value"]
+
     # --------------------- Control plane ---------------------
 
     def _psql(self, sql):
@@ -326,6 +359,28 @@ class ConsolidationVerifier(object):
                 "min.insync.replicas": min_isr,
                 "segment.bytes": segment_bytes,
                 "segment.ms": segment_ms,
+            },
+        })
+
+    def create_consolidated_topic(self, topic, num_partitions, replication_factor,
+                                  min_isr=2, segment_bytes=2 * 1024 * 1024, segment_ms=5000):
+        """Create a *born-consolidated* diskless topic: diskless + remote storage are
+        enabled at creation (no classic phase, no switch, so no seal). This is accepted
+        because the cluster runs with ``diskless.allow.from.classic.enable=true``, which
+        also opens diskless+remote at create time. ``segment.bytes`` defaults to 2 MiB
+        (> the 1 MiB batch ceiling so a consolidation append does not trip
+        ``RecordBatchTooLargeException``) and ``segment.ms`` to 5s, so a produced stream
+        rolls closed, tierable segments."""
+        self.kafka.create_topic({
+            "topic": topic,
+            "partitions": num_partitions,
+            "replication-factor": replication_factor,
+            "configs": {
+                "min.insync.replicas": min_isr,
+                "segment.bytes": segment_bytes,
+                "segment.ms": segment_ms,
+                "diskless.enable": "true",
+                "remote.storage.enable": "true",
             },
         })
 
@@ -445,14 +500,26 @@ class ConsolidationVerifier(object):
             self.logger.debug("Leader lookup for %s-%d not ready yet: %s" % (topic, partition, e))
             return False
 
-    def offset_at(self, topic, time_spec, partition=0):
+    def _broker_bootstrap(self, node):
+        """``hostname:port`` for a single broker's client listener, so a query can be
+        pinned to one broker instead of the whole ``bootstrap_servers()`` list."""
+        protocol = self.kafka.security_protocol
+        port = self.kafka.port_mappings[protocol].port_number
+        return "%s:%s" % (node.account.hostname, port)
+
+    def offset_at(self, topic, time_spec, partition=0, bootstrap_server=None):
         """Offset for the partition at a ``kafka-get-offsets.sh --time`` spec
         (-1 latest, -2 earliest, -4 earliest-local, -5 latest-tiered). Returns -1 if
-        not parseable yet."""
+        not parseable yet.
+
+        ``bootstrap_server`` pins the query to a single broker (see
+        ``_broker_bootstrap``); by default the whole cluster is used. Pinning lets a
+        test detect a per-broker divergence in the answer (e.g. ListOffsets(EARLIEST)
+        served inconsistently across brokers)."""
         node = self.kafka.nodes[0]
         cmd = "%s --bootstrap-server %s --topic %s --partitions %d --time %s" % (
             self.kafka.path.script("kafka-get-offsets.sh", node),
-            self.kafka.bootstrap_servers(),
+            bootstrap_server or self.kafka.bootstrap_servers(),
             topic,
             partition,
             time_spec,
@@ -566,6 +633,53 @@ class ConsolidationVerifier(object):
                             % (topic, partition, timeout_sec)))
         return state["value"]
 
+    def earliest_on_each_broker(self, topic, partition=0):
+        """Query ListOffsets(EARLIEST) once against each broker individually and return
+        a ``{hostname: offset}`` map. Before the ``DisklessFetchOffsetRouter`` fix a
+        follower served ListOffsets(EARLIEST) from its frozen-at-switch local classic
+        log while the leader served the advanced value, so the answer diverged per
+        broker (Problem A). After the fix every broker routes to the control plane and
+        returns the same cross-tier earliest."""
+        result = {}
+        for node in self.kafka.nodes:
+            result[node.account.hostname] = self.offset_at(
+                topic, time_spec=-2, partition=partition,
+                bootstrap_server=self._broker_bootstrap(node))
+        return result
+
+    def wait_for_consistent_earliest_across_brokers(self, topic, partition=0,
+                                                    settle_samples=3, backoff_sec=5,
+                                                    timeout_sec=240):
+        """Wait until ListOffsets(EARLIEST) is (a) > 0, (b) identical on every broker,
+        and (c) held steady across ``settle_samples`` consecutive rounds; return that
+        agreed value.
+
+        This is the end-to-end Problem A assertion: the earliest must be one
+        broker-agnostic value (the control-plane cross-tier earliest), not a per-broker
+        answer that depends on which replica the metadata transformer routed the client
+        to. A single positive value on every broker, stable over time, means the router
+        no longer serves it from a replica's local classic log."""
+        state = {"last": None, "stable": 0, "value": 0}
+
+        def check():
+            per_broker = self.earliest_on_each_broker(topic, partition=partition)
+            values = set(per_broker.values())
+            agreed = len(values) == 1 and all(v > 0 for v in values)
+            cur = next(iter(values)) if agreed else None
+            state["stable"] = state["stable"] + 1 if (agreed and cur == state["last"]) else 0
+            state["last"] = cur
+            if agreed:
+                state["value"] = cur
+            self.logger.info("Per-broker earliest for %s-%d: %s (agreed=%s, stable for %d samples)"
+                             % (topic, partition, per_broker, agreed, state["stable"]))
+            return state["stable"] >= settle_samples
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=backoff_sec,
+                   err_msg=("ListOffsets(EARLIEST) for %s-%d did not converge to a single "
+                            "positive value across all brokers within %ds (Problem A: "
+                            "per-broker earliest divergence)" % (topic, partition, timeout_sec)))
+        return state["value"]
+
     def read_contiguous_from(self, topic, from_offset=0, max_messages=1, partition=0,
                              timeout_ms=120000):
         """Fetch up to ``max_messages`` records from ``from_offset`` and return
@@ -612,6 +726,62 @@ class ConsolidationVerifier(object):
                                              max_messages=1, partition=partition,
                                              timeout_ms=timeout_ms)
         return first
+
+    def delete_records(self, topic, before_offset, partition=0):
+        """Run ``kafka-delete-records.sh`` to delete every record before
+        ``before_offset`` on ``topic``-``partition`` and return the resulting
+        ``low_watermark`` (the new log start) for that partition.
+
+        ``DeleteRecords`` takes a *beforeOffset*: the given offset becomes the new
+        log start, so records ``[0, before_offset)`` are removed. On a consolidating
+        topic the broker splits the request across tiers -- local ``UnifiedLog`` (which
+        drives ``RemoteLogManager`` deletion of the remote segments below the new start)
+        and, past the local log end, the diskless WAL in the control plane. The offset
+        JSON file is written on the broker node and passed with ``--offset-json-file``.
+
+        ``DeleteRecordsCommand`` prints the per-partition outcome on stdout as either
+        ``partition: <tp>\\terror: <msg>`` or ``partition: <tp>\\tlow_watermark: <off>``.
+        Success/failure is decided purely from that output, NOT from the process exit
+        code: older ``kafka-delete-records.sh`` exits 0 even when a partition failed, so
+        ``ssh_capture`` runs with ``allow_fail=True`` and we treat an ``error`` line for
+        the target partition (or a missing ``low_watermark``) as failure. This keeps the
+        test independent of whether the exit-code fix is present."""
+        node = self.kafka.nodes[0]
+        offset_json = ('{"partitions":[{"topic":"%s","partition":%d,"offset":%d}],"version":1}'
+                       % (topic, partition, before_offset))
+        json_path = "/tmp/delete-records-%s-%d.json" % (topic, partition)
+        node.account.create_file(json_path, offset_json)
+        cmd = "%s --bootstrap-server %s --offset-json-file %s" % (
+            self.kafka.path.script("kafka-delete-records.sh", node),
+            self.kafka.bootstrap_servers(),
+            json_path,
+        )
+        self.logger.info("Deleting records before offset %d on %s-%d: %s"
+                         % (before_offset, topic, partition, cmd))
+        # allow_fail=True: don't rely on the exit code (older CLIs exit 0 on per-partition
+        # failure); the per-partition result is parsed from stdout below instead.
+        output = ""
+        for line in node.account.ssh_capture(cmd, allow_fail=True):
+            output += line.decode("utf-8") if isinstance(line, bytes) else line
+        self.logger.info("kafka-delete-records.sh output:\n%s" % output)
+
+        target = "%s-%d" % (topic, partition)
+        low_watermark = None
+        for line in output.splitlines():
+            line = line.strip()
+            err = re.search(r"partition:\s*(\S+)\s+error:\s*(.+)$", line)
+            if err and err.group(1) == target:
+                raise AssertionError(
+                    "DeleteRecords before offset %d on %s failed: %s"
+                    % (before_offset, target, err.group(2)))
+            lw = re.search(r"partition:\s*(\S+)\s+low_watermark:\s*(-?\d+)$", line)
+            if lw and lw.group(1) == target:
+                low_watermark = int(lw.group(2))
+        assert low_watermark is not None, (
+            "DeleteRecords before offset %d on %s returned no low_watermark; output was:\n%s"
+            % (before_offset, target, output))
+        self.logger.info("DeleteRecords on %s returned low_watermark=%d" % (target, low_watermark))
+        return low_watermark
 
     # --------------------- Dependency outage (iptables) ---------------------
     #
@@ -677,19 +847,26 @@ class ConsolidationVerifier(object):
             "sudo iptables -D OUTPUT -d %s -j DROP; done" % (ip, ip), allow_fail=True)
 
     def read_records_with_values_from(self, topic, from_offset, max_messages, partition=0,
-                                      timeout_ms=120000):
-        """Fetch up to ``max_messages`` records from ``from_offset`` and return them as a
-        list of ``(offset, value)`` tuples in returned order.
+                                      timeout_ms=120000, consumer_properties=None):
+        """Fetch up to ``max_messages`` records from ``from_offset`` with the current
+        (modern) console consumer and return them as a list of ``(offset, value)`` tuples
+        in returned order.
 
         The VerifiableProducer default (``is_int``) writes each record's per-producer
         sequence number as the value, so callers can assert payload content -- not just
         offsets -- and detect gaps, duplicates, or reordering across the
         classic->diskless boundary. Each output line is ``Offset:<n>\\t<value>``:
         DefaultMessageFormatter prints the offset prefix, then key.separator '\\t', then
-        the value."""
+        the value.
+
+        ``consumer_properties`` is an optional ``{k: v}`` of ``--consumer-property``
+        settings (e.g. ``{"auto.offset.reset": "earliest"}`` so an out-of-range seek
+        resets to the earliest readable offset instead of the log end)."""
         node = self.kafka.nodes[0]
+        props = "".join(" --consumer-property %s=%s" % (k, v)
+                        for k, v in (consumer_properties or {}).items())
         cmd = ("%s --bootstrap-server %s --topic %s --partition %d --offset %d "
-               "--max-messages %d --timeout-ms %d "
+               "--max-messages %d --timeout-ms %d%s "
                "--property print.offset=true --property print.key=false "
                "--property print.value=true" % (
                    self.kafka.path.script("kafka-console-consumer.sh", node),
@@ -699,6 +876,7 @@ class ConsolidationVerifier(object):
                    from_offset,
                    max_messages,
                    timeout_ms,
+                   props,
                ))
         records = []
         try:
@@ -711,3 +889,53 @@ class ConsolidationVerifier(object):
             self.logger.warn("Failed to read records from %s-%d at offset %d: %s"
                              % (topic, partition, from_offset, str(e)))
         return records
+
+    def read_values_with_old_client(self, topic, from_offset, max_messages, partition=0,
+                                    timeout_ms=120000, bootstrap_server=None):
+        """Run the pre-KIP-392 console consumer (Kafka 2.2, Fetch < v11) so the read carries no
+        ``clientMetadata`` -- the ``isOlderConsumer`` fetch path the follower
+        cross-tier-earliest read guard protects. Returns the list of record *values* read, in
+        order.
+
+        Values, not offsets: the 2.2 ``DefaultMessageFormatter`` predates KIP-431, so it has no
+        ``print.offset``/``print.partition`` -- only the value can be printed (value prints by
+        default). That is enough here because ``VerifiableProducer``'s default (``is_int``) writes
+        each record's per-producer sequence as the value, and the classic producer wrote
+        ``[0, seal)`` so in the surviving classic prefix ``value == offset``. Callers therefore
+        treat the returned values as offsets (only valid below the seal).
+
+        Assign mode (``--partition``/``--offset``) is deliberate: no consumer group or coordinator
+        is involved, so the exchange is only Metadata + ListOffsets + Fetch, all
+        backward-compatible with a modern broker. ``auto.offset.reset=earliest`` makes an
+        out-of-range seek (below the cross-tier earliest) reset to the earliest readable offset
+        rather than jump to the log end, so the test can tell "reset to the delete boundary" apart
+        from "served a logically-deleted record".
+
+        ``bootstrap_server`` pins the initial metadata lookup to one broker; the metadata
+        transformer still redirects the fetch to its hash-selected replica regardless."""
+        node = self.kafka.nodes[0]
+        script = self.kafka.path.script("kafka-console-consumer.sh", self.OLD_CONSUMER_VERSION)
+        cmd = ("%s --bootstrap-server %s --topic %s --partition %d --offset %d "
+               "--max-messages %d --timeout-ms %d "
+               "--consumer-property auto.offset.reset=earliest "
+               "--property print.key=false --property print.value=true" % (
+                   script,
+                   bootstrap_server or self.kafka.bootstrap_servers(),
+                   topic,
+                   partition,
+                   from_offset,
+                   max_messages,
+                   timeout_ms,
+               ))
+        values = []
+        try:
+            for line in node.account.ssh_capture(cmd, allow_fail=True):
+                line = line.decode("utf-8") if isinstance(line, bytes) else line
+                stripped = line.strip()
+                # 2.2 prints just the value per line (no offset prefix); records are integers.
+                if re.match(r"-?\d+$", stripped):
+                    values.append(int(stripped))
+        except Exception as e:  # noqa: BLE001 - best effort; tool may time out
+            self.logger.warn("Old-client read from %s-%d at offset %d failed: %s"
+                             % (topic, partition, from_offset, str(e)))
+        return values
