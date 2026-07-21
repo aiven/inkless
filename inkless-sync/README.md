@@ -11,9 +11,14 @@ The sync process follows the [Versioning Strategy](../docs/inkless/VERSIONING-ST
 
 ## AI-Assisted Sync (Recommended)
 
-Start a sync session with Claude Code using the appropriate prompt:
-- **Main Sync** → [MAIN-SYNC-PROMPT.md](MAIN-SYNC-PROMPT.md) — weekly/biweekly sync with Apache Kafka trunk
-- **Release Sync** → [RELEASE-SYNC-PROMPT.md](RELEASE-SYNC-PROMPT.md) — sync release branches with upstream patches
+These scripts are driven by two agent skills (in `.ai-agents/skills/`), which route
+the workflows and reference the guides here:
+- **[`inkless-upstream-sync`](../.ai-agents/skills/inkless-upstream-sync/SKILL.md)** — main sync (apache/kafka trunk → `main`) and release sync (upstream patch → `inkless-4.x`).
+- **[`inkless-release-prep`](../.ai-agents/skills/inkless-release-prep/SKILL.md)** — build a new inkless increment: cherry-pick to release branches, create release branches.
+
+Reference guides in this directory:
+- **Main Sync** → [MAIN-SYNC-ACTION-PLAN.md](MAIN-SYNC-ACTION-PLAN.md) — weekly/biweekly sync with Apache Kafka trunk
+- **Release Sync** → [RELEASE-SYNC-GUIDE.md](RELEASE-SYNC-GUIDE.md) — sync release branches with upstream patches
 - **Cherry-pick Sync** → [CHERRY-PICK-SYNC-GUIDE.md](CHERRY-PICK-SYNC-GUIDE.md) — backport inkless features from main to release branches
 
 Context for the agent:
@@ -32,6 +37,12 @@ Context for the agent:
 | `branch-consistency.sh` | Check if inkless commits from main are in release branches |
 | `create-release-branch.sh` | Create new inkless release branches |
 | `cherry-pick-to-release.sh` | Cherry-pick inkless commits to release branches |
+
+Aligning a release branch back to its own expectations (e.g. a main commit that
+should not take effect there) is done in history, not via a skip list: cherry-pick
+the commit so the branch stays in sync, then add a `sync(revert):` / `sync(align):`
+follow-up commit to roll it back. `sync(...)` commits are excluded by
+`branch-consistency.sh`, so the branch reads as in sync and the rollback is explicit.
 
 ## Three Types of Sync
 
@@ -181,11 +192,9 @@ inkless-sync/
 ├── cherry-pick-to-release.sh     # Cherry-pick commits to releases
 ├── README.md                     # This file
 ├── RELEASE-SYNC-GUIDE.md         # Release sync documentation
-├── RELEASE-SYNC-PROMPT.md        # AI prompt for release syncs
 ├── CHERRY-PICK-SYNC-GUIDE.md    # Cherry-pick sync documentation
 ├── CHERRY-PICK-SESSION-TEMPLATE.md  # Session template for cherry-pick syncs
 ├── CONFLICT-RESOLUTION-STRATEGY.md     # Conflict resolution guidance
-├── MAIN-SYNC-PROMPT.md                 # AI prompt for main branch syncs
 ├── MAIN-SYNC-SESSION-TEMPLATE.md       # Session template for main syncs
 ├── MAIN-SYNC-ACTION-PLAN.md            # Action plan for main syncs
 ├── RELEASE-SYNC-SESSION-TEMPLATE.md    # Session template for release syncs
@@ -307,4 +316,5 @@ The structured commit approach makes it easy to:
 - [Release Sync Guide](RELEASE-SYNC-GUIDE.md)
 - [Cherry-pick Sync Guide](CHERRY-PICK-SYNC-GUIDE.md)
 - [Conflict Resolution Strategy](CONFLICT-RESOLUTION-STRATEGY.md)
-- [Main Sync Prompt](MAIN-SYNC-PROMPT.md)
+- [inkless-upstream-sync skill](../.ai-agents/skills/inkless-upstream-sync/SKILL.md)
+- [inkless-release-prep skill](../.ai-agents/skills/inkless-release-prep/SKILL.md)

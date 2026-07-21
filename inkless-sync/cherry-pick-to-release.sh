@@ -137,6 +137,93 @@ is_applicable_commit() {
     return 0
 }
 
+# Version-carrying files whose content is OWNED by the release branch (set by
+# release-sync.sh), never by a cherry-pick from main. A version-bump commit from
+# main must still land on the branch (so it is "present" for branch-consistency),
+# but it must NOT change the branch's output version.
+#
+# Note: a bump can apply either WITH a conflict (branch version differs from the
+# commit's expected "from" line) or cleanly (they happen to match) -- in the clean
+# case there is no conflict to resolve, yet the version is silently changed. So we
+# do not rely on conflict resolution; instead we RESTORE these files to the
+# branch's pre-pick content after the pick, covering both cases.
+#
+# Keep this list in sync with what release-sync.sh's update_version_files touches.
+VERSION_OWNED_FILES=(
+    "gradle.properties"
+    "Makefile"
+    "docker/examples/docker-compose-files/inkless/.env"
+)
+
+# Print the version-owned files (if any) that a commit modifies. Used by --dry-run
+# to report which picks would trigger version restoration, and is purely
+# informational (a static diff inspection, no working-tree changes).
+commit_touches_version_owned_files() {
+    local commit="$1"
+    local changed
+    changed=$(git show --name-only --format="" "$commit" 2>/dev/null)
+    local vf
+    for vf in "${VERSION_OWNED_FILES[@]}"; do
+        grep -qxF "$vf" <<< "$changed" && echo "$vf"
+    done
+}
+
+# Restore version-owned files to their pre-pick (HEAD-before-pick) content and, if
+# that changed the tree, amend the just-created cherry-pick commit. Args: the
+# pre-pick commit SHA (HEAD before the pick). Emits a note when it restores.
+restore_version_owned_files() {
+    local prepick="$1"
+    local restored=false
+    local f
+    for f in "${VERSION_OWNED_FILES[@]}"; do
+        # Only touch files that exist at the pre-pick HEAD.
+        git cat-file -e "${prepick}:${f}" 2>/dev/null || continue
+        # If the current file differs from the pre-pick version, restore it.
+        if ! git diff --quiet "${prepick}" -- "$f" 2>/dev/null; then
+            git checkout "$prepick" -- "$f"
+            git add -- "$f"
+            echo "  ↳ kept branch version (restored $f)"
+            restored=true
+        fi
+    done
+    if [[ "$restored" == "true" ]]; then
+        # Fold the restore into the cherry-pick commit; keep its message.
+        GIT_EDITOR=true git commit --amend --no-edit >/dev/null 2>&1
+    fi
+}
+
+# If the in-progress cherry-pick's ONLY conflicts are version-owned files, resolve
+# them to "ours", stage, and continue. Returns 0 if fully resolved, 1 otherwise
+# (leaving the conflict in place for manual handling).
+try_autoresolve_version_conflict() {
+    local conflicted
+    conflicted=$(git diff --name-only --diff-filter=U)
+
+    # No conflicts recorded -> nothing to auto-resolve here.
+    [[ -z "$conflicted" ]] && return 1
+
+    # Every conflicted path must be version-owned; otherwise there is a real
+    # conflict and we must not mask it.
+    local f vf owned
+    while IFS= read -r f; do
+        owned=false
+        for vf in "${VERSION_OWNED_FILES[@]}"; do
+            [[ "$f" == "$vf" ]] && { owned=true; break; }
+        done
+        [[ "$owned" != "true" ]] && return 1
+    done <<< "$conflicted"
+
+    # All conflicts are version-owned: keep the branch's version (ours).
+    while IFS= read -r f; do
+        git checkout --ours -- "$f"
+        git add -- "$f"
+        echo "  ↳ kept branch version for version-owned file: $f"
+    done <<< "$conflicted"
+
+    # Continue the cherry-pick with the resolved tree (keep the original message).
+    GIT_EDITOR=true git cherry-pick --continue >/dev/null 2>&1
+}
+
 # Cherry-pick a single commit with error handling
 cherry_pick_commit() {
     local commit="$1"
@@ -178,31 +265,44 @@ cherry_pick_commit() {
         esac
     fi
 
+    local prepick
+    prepick=$(git rev-parse HEAD)
+
     if git cherry-pick "$commit"; then
+        # Versions are branch-owned (set only by upstream sync / release-sync.sh).
+        # A pick may change a version-owned file with NO conflict, so restore
+        # unconditionally after a clean apply too.
+        restore_version_owned_files "$prepick"
         echo "  ✅ Successfully cherry-picked"
         return 0
     else
+        # Version-owned files (gradle.properties/Makefile/.env) are set by
+        # release-sync, not by picks. If they are the ONLY conflict, keep the
+        # branch's version and continue so the commit still lands.
+        if try_autoresolve_version_conflict; then
+            restore_version_owned_files "$prepick"
+            echo "  ✅ Cherry-picked (version kept at branch value)"
+            return 0
+        fi
+
         echo "  ⚠️  Cherry-pick failed (conflict or other issue)"
         echo ""
-        echo "  Options:"
-        echo "    1. Resolve conflicts, then: git cherry-pick --continue"
-        echo "    2. Abort this cherry-pick (you can re-run this script to continue): git cherry-pick --abort"
+        echo "  The conflicted state has been left in place so you can resolve it in"
+        echo "  dependency order. Do NOT skip ahead: applying later commits before this"
+        echo "  one is resolved can silently break ordering."
         echo ""
-
-        if [[ "$INTERACTIVE" == "true" ]]; then
-            read -p "  Abort and continue with next? [Y/n] " -n 1 -r
-            echo ""
-            if [[ ! "$REPLY" =~ ^[Nn]$ ]]; then
-                git cherry-pick --abort 2>/dev/null || true
-                return 1
-            else
-                echo "  Leaving in conflicted state for manual resolution"
-                exit 1
-            fi
-        else
-            git cherry-pick --abort 2>/dev/null || true
-            return 1
-        fi
+        echo "  To continue:"
+        echo "    1. Resolve conflicts, then: git cherry-pick --continue"
+        echo "    2. Re-run this script to cherry-pick the remaining commits."
+        echo "       (auto-detect mode skips the resolved commit automatically; with"
+        echo "        explicit hashes, pass only the ones not yet applied.)"
+        echo ""
+        echo "  Or, to bail out entirely: git cherry-pick --abort"
+        echo ""
+        # Signal the caller to STOP the run (return code 2), leaving the conflict
+        # in place. Never auto-abort-and-continue: that reorders the remaining
+        # picks relative to their dependencies.
+        return 2
     fi
 }
 
@@ -211,7 +311,11 @@ main() {
     parse_args "$@"
 
     require_git_repo
-    require_clean_worktree
+    # Dry-run is read-only: it inspects commits and prints a plan but never
+    # touches the working tree, so it does not require a clean worktree.
+    if [[ "$DRY_RUN" != "true" ]]; then
+        require_clean_worktree
+    fi
     fetch_upstream
     git fetch origin --prune
 
@@ -276,6 +380,13 @@ main() {
             applicable="⚠ (merge resolution - may not apply)"
         fi
         echo "- $commit $msg $applicable"
+        # Flag commits that touch version-owned files: on a real run their version
+        # changes are restored to the branch value after the pick.
+        local touched
+        touched=$(commit_touches_version_owned_files "$commit")
+        if [[ -n "$touched" ]]; then
+            echo "    ↳ touches version-owned file(s); branch version will be kept: $(echo "$touched" | tr '\n' ' ')"
+        fi
     done
 
     if [[ "$DRY_RUN" == "true" ]]; then
@@ -303,9 +414,15 @@ main() {
     # Cherry-pick each commit
     local success_count=0
     local skip_count=0
-    local fail_count=0
+    local stopped_on=""
+    local remaining=0
 
     for commit in "${ordered[@]}"; do
+        if [[ -n "$stopped_on" ]]; then
+            remaining=$((remaining + 1))
+            continue
+        fi
+
         if ! is_applicable_commit "$commit"; then
             echo ""
             echo "Skipping merge resolution commit: $commit"
@@ -313,10 +430,13 @@ main() {
             continue
         fi
 
-        if cherry_pick_commit "$commit"; then
+        cherry_pick_commit "$commit" && rc=0 || rc=$?
+        if [[ $rc -eq 0 ]]; then
             success_count=$((success_count + 1))
         else
-            fail_count=$((fail_count + 1))
+            # rc 2 (conflict) or any other failure: stop immediately, leaving the
+            # conflict in place, so the remaining picks keep their dependency order.
+            stopped_on="$commit"
         fi
     done
 
@@ -327,11 +447,14 @@ main() {
     echo "|--------|-------|"
     echo "| Successfully cherry-picked | $success_count |"
     echo "| Skipped (merge resolution) | $skip_count |"
-    echo "| Failed (conflicts) | $fail_count |"
+    echo "| Stopped at (conflict) | ${stopped_on:-none} |"
+    echo "| Remaining (not attempted) | $remaining |"
     echo ""
 
-    if [[ $fail_count -gt 0 ]]; then
-        echo "⚠️  Some commits failed to cherry-pick. Manual resolution may be needed."
+    if [[ -n "$stopped_on" ]]; then
+        echo "⛔ Stopped at $stopped_on due to a conflict. Resolve it (git cherry-pick"
+        echo "   --continue), then re-run this script to apply the $remaining remaining commit(s)."
+        return 1
     elif [[ $success_count -gt 0 ]]; then
         echo "✅ Cherry-pick complete"
         echo ""
