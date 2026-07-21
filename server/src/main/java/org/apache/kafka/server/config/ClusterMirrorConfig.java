@@ -70,7 +70,7 @@ public final class ClusterMirrorConfig {
             "A higher value increases I/O parallelism for cross cluster replication at the cost of higher CPU and memory utilization.";
 
     public static final String MIRROR_METADATA_REFRESH_INTERVAL_MS_CONFIG = "mirror.metadata.refresh.interval.ms";
-    public static final long MIRROR_METADATA_REFRESH_INTERVAL_MS_DEFAULT = 30000L;
+    public static final long MIRROR_METADATA_REFRESH_INTERVAL_MS_DEFAULT = 60000L;
     public static final String MIRROR_METADATA_REFRESH_INTERVAL_MS_DOC = "The interval in milliseconds at which the coordinator refreshes metadata from source clusters. " +
             "This controls how frequently the coordinator polls source clusters to detect new topics and metadata changes.";
 

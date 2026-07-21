@@ -341,7 +341,7 @@ public class ConfigurationControlManager {
             if (activeInOtherMirror) {
                 topicRes.setErrorCode(Errors.TOPIC_ALREADY_IN_CLUSTER_MIRROR.code())
                         .setErrorMessage("Topic '" + topicName + "' is already in mirror '" + existingTopic.mirrorName()
-                                + "' in " + MirrorPartitionState.fromValue((byte) existingTopic.mirrorState()) + " state");
+                                + "' in " + MirrorPartitionState.fromValue(existingTopic.mirrorState()) + " state");
                 topicResList.add(topicRes);
                 continue;
             }
@@ -374,7 +374,7 @@ public class ConfigurationControlManager {
             } else if (nonStoppedState) {
                 topicRes.setErrorCode(Errors.MIRROR_TOPIC_NOT_STOPPED.code())
                         .setErrorMessage("Topic '" + topicName + "' is in "
-                                + MirrorPartitionState.fromValue((byte) existingTopic.mirrorState()) + " state");
+                                + MirrorPartitionState.fromValue(existingTopic.mirrorState()) + " state");
                 topicResList.add(topicRes);
                 continue;
             }
@@ -441,7 +441,7 @@ public class ConfigurationControlManager {
             }
 
             String currMirrorName = topicInfo.mirrorName();
-            int currMirrorStateChange = topicInfo.mirrorState();
+            byte currMirrorStateChange = topicInfo.mirrorState();
             if (currMirrorName == null || currMirrorName.isBlank()) {
                 topicRes.setErrorCode(Errors.UNKNOWN_CLUSTER_MIRROR.code()).setName(topic);
                 topicResList.add(topicRes);
@@ -507,7 +507,7 @@ public class ConfigurationControlManager {
             }
 
             String currMirrorName = topicInfo.mirrorName();
-            int currMirrorStateChange = topicInfo.mirrorState();
+            byte currMirrorStateChange = topicInfo.mirrorState();
             if (currMirrorName == null || currMirrorName.isBlank()) {
                 topicRes.setErrorCode(Errors.UNKNOWN_CLUSTER_MIRROR.code()).setName(topic);
                 topicResList.add(topicRes);
@@ -523,7 +523,7 @@ public class ConfigurationControlManager {
             if (currMirrorStateChange == MirrorPartitionState.STOPPED.value()) {
                 topicRes.setErrorCode(Errors.MIRROR_TOPIC_BEING_STOPPED.code()).setName(topic)
                         .setErrorMessage("Topic '" + topic + "' is in "
-                                + MirrorPartitionState.fromValue((byte) currMirrorStateChange) + " state");
+                                + MirrorPartitionState.fromValue(currMirrorStateChange) + " state");
                 topicResList.add(topicRes);
                 continue;
             }
@@ -572,7 +572,7 @@ public class ConfigurationControlManager {
             }
 
             String currMirrorName = topicInfo.mirrorName();
-            int currMirrorStateChange = topicInfo.mirrorState();
+            byte currMirrorStateChange = topicInfo.mirrorState();
             if (currMirrorName == null || currMirrorName.isBlank()) {
                 topicRes.setErrorCode(Errors.UNKNOWN_CLUSTER_MIRROR.code()).setName(topic);
                 topicResList.add(topicRes);
@@ -592,7 +592,7 @@ public class ConfigurationControlManager {
             } else if (currMirrorStateChange != MirrorPartitionState.PAUSED.value()) {
                 topicRes.setErrorCode(Errors.MIRROR_TOPIC_NOT_PAUSED.code()).setName(topic)
                         .setErrorMessage("Topic '" + topic + "' is in "
-                                + MirrorPartitionState.fromValue((byte) currMirrorStateChange) + " state");
+                                + MirrorPartitionState.fromValue(currMirrorStateChange) + " state");
                 topicResList.add(topicRes);
                 continue;
             }
@@ -647,7 +647,7 @@ public class ConfigurationControlManager {
         for (ReplicationControlManager.TopicControlInfo topicInfo: topicControlInfos) {
             String curMirrorName = topicInfo.mirrorName();
             if (curMirrorName == null || curMirrorName.isBlank()) continue;
-            int desiredMirrorState = topicInfo.mirrorState();
+            byte desiredMirrorState = topicInfo.mirrorState();
             if (curMirrorName.equals(mirrorName) && (desiredMirrorState == MirrorPartitionState.PAUSED.value() || desiredMirrorState == MirrorPartitionState.MIRRORING.value())) {
                 data.setErrorCode(Errors.CLUSTER_MIRROR_NOT_EMPTY.code());
                 data.setErrorMessage("Mirror '" + mirrorName + "' still has active or paused topic '"
@@ -660,7 +660,7 @@ public class ConfigurationControlManager {
         for (ReplicationControlManager.TopicControlInfo topicInfo: topicControlInfos) {
             String curMirrorName = topicInfo.mirrorName();
             if (curMirrorName == null || curMirrorName.isBlank()) continue;
-            int desiredMirrorState = topicInfo.mirrorState();
+            byte desiredMirrorState = topicInfo.mirrorState();
             if (curMirrorName.equals(mirrorName) && desiredMirrorState == MirrorPartitionState.STOPPED.value()) {
                 records.add(new ApiMessageAndVersion(
                     new MirrorTopicStateChangeRecord()

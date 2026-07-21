@@ -257,7 +257,7 @@ public class ReplicationControlManager {
         private final Uuid id;
         private final TimelineHashMap<Integer, PartitionRegistration> parts;
         private final String mirrorName;
-        private final int mirrorState;
+        private final byte mirrorState;
         private final long lastMirrorStateChangeOffset;
         private final SnapshotRegistry snapshotRegistry;
 
@@ -271,7 +271,7 @@ public class ReplicationControlManager {
             this.lastMirrorStateChangeOffset = -1;
         }
 
-        TopicControlInfo(TopicControlInfo copyTopicInfo, String mirrorName, int mirrorState, long lastMirrorStateChangeOffset) {
+        TopicControlInfo(TopicControlInfo copyTopicInfo, String mirrorName, byte mirrorState, long lastMirrorStateChangeOffset) {
             this.name = copyTopicInfo.name;
             this.id = copyTopicInfo.id;
             this.snapshotRegistry = copyTopicInfo.snapshotRegistry;
@@ -297,7 +297,7 @@ public class ReplicationControlManager {
             return mirrorName;
         }
 
-        public int mirrorState() {
+        public byte mirrorState() {
             return mirrorState;
         }
 

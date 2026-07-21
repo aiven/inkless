@@ -1471,7 +1471,7 @@ class Partition(val topicPartition: TopicPartition,
     metadataCache match {
       case kraftMetadataCache: KRaftMetadataCache if (kraftMetadataCache.currentImage() != null && kraftMetadataCache.currentImage().topics() != null) =>
         val topicImage = kraftMetadataCache.currentImage().topics().getTopic(topic)
-        if (topicImage != null) topicImage.desiredMirrorState().toByte else MirrorPartitionState.UNKNOWN.value()
+        if (topicImage != null) topicImage.desiredMirrorState() else MirrorPartitionState.UNKNOWN.value()
       case _ => MirrorPartitionState.UNKNOWN.value()
     }
   }

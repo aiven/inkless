@@ -43,7 +43,7 @@ public final class TopicDelta {
     private final Map<Integer, PartitionRegistration> partitionChanges = new HashMap<>();
     private final Map<Integer, Integer> partitionToUncleanLeaderElectionCount = new HashMap<>();
     private final Map<Integer, Integer> partitionToElrElectionCount = new HashMap<>();
-    private Integer desiredMirrorState;
+    private Byte desiredMirrorState;
     private String mirrorName;
 
     public TopicDelta(TopicImage image) {
@@ -109,7 +109,7 @@ public final class TopicDelta {
 
     public void replay(MirrorTopicStateChangeRecord record) {
         mirrorName = record.mirrorName();
-        desiredMirrorState = (int) record.desiredState();
+        desiredMirrorState = record.desiredState();
     }
 
     private void updateElectionStats(int partitionId, PartitionRegistration prevPartition, int newLeader, byte newLeaderRecoveryState) {
@@ -161,7 +161,7 @@ public final class TopicDelta {
             }
         }
 
-        int newMirrorState = desiredMirrorState == null ? image.desiredMirrorState() : desiredMirrorState;
+        byte newMirrorState = desiredMirrorState == null ? image.desiredMirrorState() : desiredMirrorState;
         String newMirrorName =  mirrorName == null ? image.mirrorName() : mirrorName;
 
         return new TopicImage(
