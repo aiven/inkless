@@ -1,7 +1,13 @@
 .PHONY: all
 all: clean fmt test pitest build_release
 
-VERSION := 4.2.0-inkless-SNAPSHOT
+# Kafka distribution version. Source of truth is gradle.properties (project.version),
+# so build_release/docker targets are correct on any checkout (main, a release
+# branch, or a release tag) without manual overrides. Override with `make VERSION=...`
+# if needed.
+ifndef VERSION
+VERSION := $(shell sed -n 's/^version=//p' gradle.properties)
+endif
 
 # Docker image settings (aligned with .github/workflows/inkless-release.yml)
 REGISTRY := ghcr.io
