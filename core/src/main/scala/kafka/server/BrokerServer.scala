@@ -815,7 +815,20 @@ class BrokerServer(
           // control plane so any broker can serve it for ListOffsets(EARLIEST). No-op for classic topics.
           maybeInklessSharedState.foreach(_.crossTierLogStartReporter().enqueue(tp, remoteLogStartOffset))
         },
-        brokerTopicStats, metrics, endpoint.toJava)
+        brokerTopicStats, metrics, endpoint.toJava,
+        // Reclaim-floor / become-leader log-start override: for a consolidating diskless partition use the
+        // broker-agnostic control-plane cross-tier earliest instead of the local log start (pinned at the
+        // seal on a freshly-rebuilt leader). Empty for classic / non-inkless topics. Resolved lazily via
+        // ReplicaManager (constructed after the RLM but only ever invoked at RLM runtime).
+        (tp: TopicPartition) =>
+          if (_replicaManager != null) _replicaManager.crossTierEarliestOffset(tp) else util.OptionalLong.empty(),
+        // Whether the partition is consolidating diskless: when the override above is unavailable, this
+        // makes the RLM fail safe (skip log-start reclaim) rather than reclaim to the local seal. False for
+        // classic topics. The `_replicaManager == null` branch is unreachable (these lambdas run only from
+        // leadership-scheduled RLM tasks, applied by ReplicaManager); we still default to the fail-safe
+        // `true` there so an impossible early call can never over-reclaim.
+        (tp: TopicPartition) =>
+          if (_replicaManager != null) _replicaManager.isConsolidatingDisklessPartition(tp) else true)
       Some(rlm)
     } else {
       None
