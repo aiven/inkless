@@ -37,15 +37,14 @@ import org.apache.kafka.coordinator.group.GroupCoordinator;
 import org.apache.kafka.coordinator.share.ShareCoordinator;
 import org.apache.kafka.metadata.ConfigRepository;
 import org.apache.kafka.metadata.MetadataCache;
+import org.apache.kafka.security.DelegationTokenManager;
 import org.apache.kafka.server.ApiVersionManager;
 import org.apache.kafka.server.ClientMetricsManager;
-import org.apache.kafka.server.DelegationTokenManager;
 import org.apache.kafka.server.authorizer.Authorizer;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Supplier;
 
 import scala.jdk.javaapi.OptionConverters;
 
@@ -74,7 +73,6 @@ public class KafkaApisBuilder {
     private ShareCoordinator shareCoordinator = null;
     private ClusterMirrorCoordinator mirrorCoordinator = null;
     private GroupConfigManager groupConfigManager = null;
-    private Supplier<Long> brokerEpochSupplier = () -> -1L;
 
     public KafkaApisBuilder setRequestChannel(RequestChannel requestChannel) {
         this.requestChannel = requestChannel;
@@ -247,6 +245,6 @@ public class KafkaApisBuilder {
                              apiVersionManager,
                              clientMetricsManager,
                              groupConfigManager,
-                             brokerEpochSupplier);
+                             OptionConverters.toScala(Optional.empty()));
     }
 }

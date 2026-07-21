@@ -17,6 +17,7 @@
 
 package kafka.server
 
+import io.aiven.inkless.config.InklessConfig
 import java.util
 import java.util.concurrent.TimeUnit
 import java.util.Properties
@@ -43,7 +44,6 @@ import org.apache.kafka.raft.{MetadataLogConfig, QuorumConfig}
 import org.apache.kafka.security.authorizer.AuthorizerUtils
 import org.apache.kafka.server.ProcessRole
 import org.apache.kafka.server.authorizer.Authorizer
-import org.apache.kafka.server.common.MetadataVersion
 import org.apache.kafka.server.config.AbstractKafkaConfig.getMap
 import org.apache.kafka.server.config.{AbstractKafkaConfig, ClusterMirrorConfig, KRaftConfigs, QuotaConfig, ReplicationConfigs, ServerConfigs, ServerLogConfigs}
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
@@ -210,6 +210,9 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   private val _quotaConfig = new QuotaConfig(this)
   def quotaConfig: QuotaConfig = _quotaConfig
 
+  private val _inklessConfig = new InklessConfig(this)
+  def inklessConfig = _inklessConfig
+
   /** ********* General Configuration ***********/
   val nodeId: Int = getInt(KRaftConfigs.NODE_ID_CONFIG)
   val initialRegistrationTimeoutMs: Int = getInt(KRaftConfigs.INITIAL_BROKER_REGISTRATION_TIMEOUT_MS_CONFIG)
@@ -225,14 +228,7 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
       case role => throw new ConfigException(s"Unknown process role '$role'" +
         " (only 'broker' and 'controller' are allowed roles)")
     }
-
-    val distinctRoles: Set[ProcessRole] = roles.toSet
-
-    if (distinctRoles.size != roles.size) {
-      throw new ConfigException(s"Duplicate role names found in `${KRaftConfigs.PROCESS_ROLES_CONFIG}`: $roles")
-    }
-
-    distinctRoles
+    roles.toSet
   }
 
   def isKRaftCombinedMode: Boolean = {
@@ -278,10 +274,10 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   val earlyStartListeners: Set[ListenerName] = {
     val listenersSet = listeners.map(l => ListenerName.normalised(l.listener)).toSet
     val controllerListenersSet = controllerListeners.map(l => ListenerName.normalised(l.listener)).toSet
-    Option(getString(ServerConfigs.EARLY_START_LISTENERS_CONFIG)) match {
+    Option(getList(ServerConfigs.EARLY_START_LISTENERS_CONFIG)) match {
       case None => controllerListenersSet
-      case Some(str) =>
-        str.split(",").map(_.trim()).filterNot(_.isEmpty).map { str =>
+      case Some(list) =>
+        list.asScala.map(_.trim()).filterNot(_.isEmpty).map { str =>
           val listenerName = new ListenerName(str)
           if (!listenersSet.contains(listenerName) && !controllerListenersSet.contains(listenerName))
             throw new ConfigException(s"${ServerConfigs.EARLY_START_LISTENERS_CONFIG} contains " +
@@ -347,6 +343,7 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   def logMessageTimestampAfterMaxMs: Long = getLong(ServerLogConfigs.LOG_MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG)
 
   def logDirFailureTimeoutMs: Long = getLong(ServerLogConfigs.LOG_DIR_FAILURE_TIMEOUT_MS_CONFIG)
+  def logDisklessEnable = getBoolean(ServerLogConfigs.DISKLESS_ENABLE_CONFIG)
 
   /** ********* Replication configuration ***********/
   val controllerSocketTimeoutMs: Int = getInt(ReplicationConfigs.CONTROLLER_SOCKET_TIMEOUT_MS_CONFIG)
@@ -377,6 +374,10 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
       .asScala.map(_.toUpperCase).map(GroupType.valueOf).toSet
     if (!protocols.contains(GroupType.CLASSIC)) {
       throw new ConfigException(s"Disabling the '${GroupType.CLASSIC}' protocol is not supported.")
+    }
+    if (protocols.contains(GroupType.SHARE)) {
+      warn(s"'${GroupType.SHARE}' in ${GroupCoordinatorConfig.GROUP_COORDINATOR_REBALANCE_PROTOCOLS_CONFIG} is deprecated. " +
+        s"Share groups are controlled by the 'share.version' feature; this broker config will be ignored in a future release.")
     }
     protocols
   }
@@ -412,6 +413,9 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   val maxIncrementalFetchSessionCacheSlots = getInt(ServerConfigs.MAX_INCREMENTAL_FETCH_SESSION_CACHE_SLOTS_CONFIG)
   val fetchMaxBytes = getInt(ServerConfigs.FETCH_MAX_BYTES_CONFIG)
 
+  val disklessFetchMinBytes = getInt(ServerConfigs.DISKLESS_FETCH_MIN_BYTES_CONFIG)
+  val disklessFetchMaxWaitMs = getInt(ServerConfigs.DISKLESS_FETCH_MAX_WAIT_MS_CONFIG)
+
   /** ********* Request Limit Configuration ***********/
   val maxRequestPartitionSizeLimit = getInt(ServerConfigs.MAX_REQUEST_PARTITION_SIZE_LIMIT_CONFIG)
 
@@ -425,6 +429,29 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   /** Internal Configurations **/
   val unstableApiVersionsEnabled = getBoolean(ServerConfigs.UNSTABLE_API_VERSIONS_ENABLE_CONFIG)
   val unstableFeatureVersionsEnabled = getBoolean(ServerConfigs.UNSTABLE_FEATURE_VERSIONS_ENABLE_CONFIG)
+
+  /** Diskless Configuration */
+  val disklessStorageSystemEnabled: Boolean = getBoolean(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG)
+  val disklessAllowFromClassicEnabled: Boolean = getBoolean(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG)
+  val disklessManagedReplicasEnabled: Boolean = getBoolean(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG)
+  val disklessRemoteStorageConsolidationEnabled: Boolean = getBoolean(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG)
+  val disklessConsolidationFetchMaxBytes: Int = getInt(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_CONFIG)
+  val disklessConsolidationFetchResponseMaxBytes: Int = getInt(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_RESPONSE_MAX_BYTES_CONFIG)
+  val disklessConsolidationFetchMinBytes: Int = getInt(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_MIN_BYTES_CONFIG)
+  val disklessConsolidationFetchMetadataThreadPoolSize: Int = getInt(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_METADATA_THREAD_POOL_SIZE_CONFIG)
+  val disklessConsolidationFetchDataThreadPoolSize: Int = getInt(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_DATA_THREAD_POOL_SIZE_CONFIG)
+  val disklessConsolidationNumFetchers: Int = getInt(ServerConfigs.DISKLESS_CONSOLIDATION_NUM_FETCHERS_CONFIG)
+  val disklessConsolidationFetchMaxWaitMs: Int = getInt(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_MAX_WAIT_MS_CONFIG)
+  val disklessConsolidationFindBatchesMaxPerPartition: Int = getInt(ServerConfigs.DISKLESS_CONSOLIDATION_FIND_BATCHES_MAX_PER_PARTITION_CONFIG)
+  val disklessConsolidationFetchRateLimitBytesPerSecond: Long = getLong(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_CONFIG)
+  val disklessConsolidationFetchLaggingRequestRateLimit: Int = getInt(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_CONFIG)
+  val classicRemoteStorageForceEnabled: Boolean = getBoolean(ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG)
+  val classicRemoteStorageForceExcludeTopicRegexes: java.util.List[String] =
+    getList(ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG)
+
+  val disklessForceEnabled: Boolean = getBoolean(ServerConfigs.DISKLESS_FORCE_ENABLE_CONFIG)
+  val disklessForceIncludeTopicRegexes: java.util.List[String] =
+    getList(ServerConfigs.DISKLESS_FORCE_INCLUDE_TOPIC_REGEXES_CONFIG)
 
   def addReconfigurable(reconfigurable: Reconfigurable): Unit = {
     dynamicConfig.addReconfigurable(reconfigurable)
@@ -450,7 +477,7 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   }
 
   def listeners: Seq[Endpoint] =
-    CoreUtils.listenerListToEndPoints(getString(SocketServerConfigs.LISTENERS_CONFIG), effectiveListenerSecurityProtocolMap)
+    CoreUtils.listenerListToEndPoints(getList(SocketServerConfigs.LISTENERS_CONFIG), effectiveListenerSecurityProtocolMap)
 
   def controllerListeners: Seq[Endpoint] =
     listeners.filter(l => controllerListenerNames.contains(l.listener))
@@ -465,7 +492,7 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   }
 
   def effectiveAdvertisedControllerListeners: Seq[Endpoint] = {
-    val advertisedListenersProp = getString(SocketServerConfigs.ADVERTISED_LISTENERS_CONFIG)
+    val advertisedListenersProp = getList(SocketServerConfigs.ADVERTISED_LISTENERS_CONFIG)
     val controllerAdvertisedListeners = if (advertisedListenersProp != null) {
       CoreUtils.listenerListToEndPoints(advertisedListenersProp, effectiveListenerSecurityProtocolMap, requireDistinctPorts=false)
         .filter(l => controllerListenerNames.contains(l.listener))
@@ -495,7 +522,7 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
 
   def effectiveAdvertisedBrokerListeners: Seq[Endpoint] = {
     // Use advertised listeners if defined, fallback to listeners otherwise
-    val advertisedListenersProp = getString(SocketServerConfigs.ADVERTISED_LISTENERS_CONFIG)
+    val advertisedListenersProp = getList(SocketServerConfigs.ADVERTISED_LISTENERS_CONFIG)
     val advertisedListeners = if (advertisedListenersProp != null) {
       CoreUtils.listenerListToEndPoints(advertisedListenersProp, effectiveListenerSecurityProtocolMap, requireDistinctPorts=false)
     } else {
@@ -511,6 +538,31 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
     if (nodeId != brokerId) {
       throw new ConfigException(s"You must set `${KRaftConfigs.NODE_ID_CONFIG}` to the same value as `${ServerConfigs.BROKER_ID_CONFIG}`.")
     }
+    // Diskless feature flag dependency chain:
+    //   diskless.storage.system.enable
+    //     → diskless.managed.rf.enable
+    //       → diskless.allow.from.classic.enable (also requires remote.log.storage.system.enable)
+    //       → diskless.remote.storage.consolidation.enable (also requires remote.log.storage.system.enable)
+    if (disklessManagedReplicasEnabled) {
+      require(disklessStorageSystemEnabled,
+        s"${ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG} requires ${ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG}=true")
+    }
+    if (disklessAllowFromClassicEnabled) {
+      require(disklessManagedReplicasEnabled,
+        s"${ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG} requires ${ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG}=true")
+      require(remoteLogManagerConfig.isRemoteStorageSystemEnabled,
+        s"${ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG} requires ${RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP}=true")
+    }
+
+    if (disklessRemoteStorageConsolidationEnabled) {
+      require(disklessManagedReplicasEnabled,
+        s"${ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG} requires ${ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG}=true")
+      require(remoteLogManagerConfig.isRemoteStorageSystemEnabled,
+        s"${ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG} requires ${RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP}=true")
+      require(disklessAllowFromClassicEnabled,
+        s"${ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG} requires ${ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG}=true")
+    }
+
     require(logRollTimeMillis >= 1, "log.roll.ms must be greater than or equal to 1")
     require(logRollTimeJitterMillis >= 0, "log.roll.jitter.ms must be greater than or equal to 0")
     require(logRetentionTimeMillis >= 1 || logRetentionTimeMillis == -1, "log.retention.ms must be unlimited (-1) or, greater than or equal to 1")
@@ -520,6 +572,13 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
       " to prevent unnecessary socket timeouts")
     require(replicaFetchWaitMaxMs <= replicaLagTimeMaxMs, "replica.fetch.wait.max.ms should always be less than or equal to replica.lag.time.max.ms" +
       " to prevent frequent changes in ISR")
+
+    if (brokerHeartbeatIntervalMs * 2 > brokerSessionTimeoutMs) {
+      error(s"${KRaftConfigs.BROKER_HEARTBEAT_INTERVAL_MS_CONFIG} ($brokerHeartbeatIntervalMs ms) must be less than or equal to half of the ${KRaftConfigs.BROKER_SESSION_TIMEOUT_MS_CONFIG} ($brokerSessionTimeoutMs ms). " +
+        s"The ${KRaftConfigs.BROKER_SESSION_TIMEOUT_MS_CONFIG} is configured on controller. The ${KRaftConfigs.BROKER_HEARTBEAT_INTERVAL_MS_CONFIG} is configured on broker. " +
+        s"If a broker doesn't send heartbeat request within ${KRaftConfigs.BROKER_SESSION_TIMEOUT_MS_CONFIG}, it loses broker lease. " +
+        s"Please increase ${KRaftConfigs.BROKER_SESSION_TIMEOUT_MS_CONFIG} or decrease ${KRaftConfigs.BROKER_HEARTBEAT_INTERVAL_MS_CONFIG}.")
+    }
 
     val advertisedBrokerListenerNames = effectiveAdvertisedBrokerListeners.map(l => ListenerName.normalised(l.listener)).toSet
 
@@ -578,6 +637,9 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
             s"${KRaftConfigs.CONTROLLER_LISTENER_NAMES_CONFIG} not found in ${SocketServerConfigs.LISTENER_SECURITY_PROTOCOL_MAP_CONFIG}  (an explicit security mapping for each controller listener is required if ${SocketServerConfigs.LISTENER_SECURITY_PROTOCOL_MAP_CONFIG} is non-empty, or if there are security protocols other than PLAINTEXT in use)")
         }
       }
+      // controller.quorum.auto.join.enable must be false for KRaft broker-only
+      require(!quorumConfig.autoJoin,
+        s"${QuorumConfig.QUORUM_AUTO_JOIN_ENABLE_CONFIG} is only supported when ${KRaftConfigs.PROCESS_ROLES_CONFIG} contains the 'controller' role.")
       // warn that only the first controller listener is used if there is more than one
       if (controllerListenerNames.size > 1) {
         warn(s"${KRaftConfigs.CONTROLLER_LISTENER_NAMES_CONFIG} has multiple entries; only the first will be used since ${KRaftConfigs.PROCESS_ROLES_CONFIG}=broker: ${controllerListenerNames}")
@@ -662,18 +724,6 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   }
 
   /**
-   * Validate some configurations for new MetadataVersion. A new MetadataVersion can take place when
-   * a FeatureLevelRecord for "metadata.version" is read from the cluster metadata.
-   */
-  def validateWithMetadataVersion(metadataVersion: MetadataVersion): Unit = {
-    if (processRoles.contains(ProcessRole.BrokerRole) && logDirs.size > 1) {
-      require(metadataVersion.isDirectoryAssignmentSupported,
-        s"Multiple log directories (aka JBOD) are not supported in the current MetadataVersion ${metadataVersion}. " +
-          s"Need ${MetadataVersion.IBP_3_7_IV2} or higher")
-    }
-  }
-
-  /**
    * Copy the subset of properties that are relevant to Logs. The individual properties
    * are listed here since the names are slightly different in each Config class...
    */
@@ -707,6 +757,7 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
     logProps.put(TopicConfig.MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG, logMessageTimestampAfterMaxMs: java.lang.Long)
     logProps.put(TopicConfig.LOCAL_LOG_RETENTION_MS_CONFIG, remoteLogManagerConfig.logLocalRetentionMs: java.lang.Long)
     logProps.put(TopicConfig.LOCAL_LOG_RETENTION_BYTES_CONFIG, remoteLogManagerConfig.logLocalRetentionBytes: java.lang.Long)
+    logProps.put(TopicConfig.DISKLESS_ENABLE_CONFIG, logDisklessEnable)
     logProps
   }
 }

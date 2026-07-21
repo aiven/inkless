@@ -746,10 +746,10 @@ class RequestQuotaTest extends BaseRequestTest {
           new ReadShareGroupStateSummaryRequest.Builder(new ReadShareGroupStateSummaryRequestData())
           
         case ApiKeys.STREAMS_GROUP_HEARTBEAT =>
-          new StreamsGroupHeartbeatRequest.Builder(new StreamsGroupHeartbeatRequestData(), true)
+          new StreamsGroupHeartbeatRequest.Builder(new StreamsGroupHeartbeatRequestData())
 
         case ApiKeys.STREAMS_GROUP_DESCRIBE =>
-          new StreamsGroupDescribeRequest.Builder(new StreamsGroupDescribeRequestData(), true)
+          new StreamsGroupDescribeRequest.Builder(new StreamsGroupDescribeRequestData())
 
         case ApiKeys.DESCRIBE_SHARE_GROUP_OFFSETS =>
           new DescribeShareGroupOffsetsRequest.Builder(new DescribeShareGroupOffsetsRequestData())
@@ -760,8 +760,11 @@ class RequestQuotaTest extends BaseRequestTest {
         case ApiKeys.DELETE_SHARE_GROUP_OFFSETS =>
           new DeleteShareGroupOffsetsRequest.Builder(new DeleteShareGroupOffsetsRequestData())
 
-        case ApiKeys.GET_REPLICA_LOG_INFO =>
-          new GetReplicaLogInfoRequest.Builder(new GetReplicaLogInfoRequestData())
+        case ApiKeys.ALTER_DISKLESS_SWITCH =>
+          new AlterDisklessSwitchRequest.Builder(new AlterDisklessSwitchRequestData())
+
+        case ApiKeys.REPAIR_DISKLESS_LOG =>
+          new RepairDisklessLogRequest.Builder(new RepairDisklessLogRequestData())
 
         case ApiKeys.LIST_CLUSTER_MIRRORS =>
           new ListClusterMirrorsRequest.Builder(new ListClusterMirrorsRequestData())

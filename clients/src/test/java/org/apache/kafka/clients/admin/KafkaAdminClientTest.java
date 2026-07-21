@@ -169,6 +169,7 @@ import org.apache.kafka.common.message.UnregisterBrokerResponseData;
 import org.apache.kafka.common.message.WriteTxnMarkersResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.protocol.types.RawTaggedField;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaEntity;
 import org.apache.kafka.common.quota.ClientQuotaFilter;
@@ -551,7 +552,8 @@ public class KafkaAdminClientTest {
      * Test if admin client can be closed in the callback invoked when
      * an api call completes. If calling {@link Admin#close()} in callback, AdminClient thread hangs
      */
-    @Test @Timeout(10)
+    @Test
+    @Timeout(10)
     public void testCloseAdminClientInCallback() throws InterruptedException {
         MockTime time = new MockTime();
         AdminClientUnitTestEnv env = new AdminClientUnitTestEnv(time, mockCluster(3, 0));
@@ -1790,6 +1792,114 @@ public class KafkaAdminClientTest {
 
             TestUtils.assertFutureThrows(TopicAuthorizationException.class, result.allTopicNames());
 
+        }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsRawResponse() throws ExecutionException, InterruptedException {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            String topicName = "test-topic";
+            Uuid topicId = Uuid.randomUuid();
+
+            DescribeTopicPartitionsResponseData responseData = new DescribeTopicPartitionsResponseData();
+            addPartitionToDescribeTopicPartitionsResponse(responseData, topicName, topicId, asList(0, 1));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(responseData));
+
+            DescribeTopicPartitionsResult result = env.adminClient().describeTopicPartitions(
+                singletonList(topicName), new DescribeTopicsOptions());
+            DescribeTopicPartitionsResponseData data = result.rawResponse().get();
+
+            assertEquals(1, data.topics().size());
+            DescribeTopicPartitionsResponseTopic topic = data.topics().find(topicName);
+            assertEquals(topicName, topic.name());
+            assertEquals(topicId, topic.topicId());
+            assertEquals(2, topic.partitions().size());
+            assertEquals(0, topic.partitions().get(0).partitionIndex());
+            assertEquals(1, topic.partitions().get(1).partitionIndex());
+        }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsPreservesUnknownTaggedFields() throws Exception {
+        int classicToDisklessStartOffsetTag = 100;
+        byte[] encodedOffset = ByteBuffer.allocate(Long.BYTES).putLong(42L).array();
+
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            String topicName = "test-topic";
+            Uuid topicId = Uuid.randomUuid();
+
+            DescribeTopicPartitionsResponseData responseData = new DescribeTopicPartitionsResponseData();
+            addPartitionToDescribeTopicPartitionsResponse(responseData, topicName, topicId, singletonList(0));
+            responseData.topics().find(topicName).partitions().get(0).unknownTaggedFields()
+                .add(new RawTaggedField(classicToDisklessStartOffsetTag, encodedOffset));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(responseData));
+
+            DescribeTopicPartitionsResult result = env.adminClient().describeTopicPartitions(
+                singletonList(topicName), new DescribeTopicsOptions());
+            DescribeTopicPartitionsResponseData data = result.rawResponse().get();
+
+            List<RawTaggedField> taggedFields = data.topics().find(topicName)
+                .partitions().get(0).unknownTaggedFields();
+            assertEquals(1, taggedFields.size());
+            RawTaggedField preserved = taggedFields.get(0);
+            assertEquals(classicToDisklessStartOffsetTag, preserved.tag());
+            assertEquals(42L, ByteBuffer.wrap(preserved.data()).getLong());
+        }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsEmptyTopicsThrows() {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            assertThrows(IllegalArgumentException.class,
+                () -> env.adminClient().describeTopicPartitions(List.of(), new DescribeTopicsOptions()));
+        }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsTopicIdChangedDuringPagination() {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            String topicName = "test-topic";
+            Uuid originalId = Uuid.randomUuid();
+            Uuid newId = Uuid.randomUuid();
+
+            DescribeTopicPartitionsResponseData firstPage = new DescribeTopicPartitionsResponseData();
+            addPartitionToDescribeTopicPartitionsResponse(firstPage, topicName, originalId, singletonList(0));
+            firstPage.setNextCursor(new DescribeTopicPartitionsResponseData.Cursor()
+                .setTopicName(topicName)
+                .setPartitionIndex(1));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(firstPage));
+
+            DescribeTopicPartitionsResponseData secondPage = new DescribeTopicPartitionsResponseData();
+            addPartitionToDescribeTopicPartitionsResponse(secondPage, topicName, newId, singletonList(1));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(secondPage));
+
+            DescribeTopicPartitionsResult result = env.adminClient().describeTopicPartitions(
+                singletonList(topicName), new DescribeTopicsOptions());
+
+            TestUtils.assertFutureThrows(UnknownTopicOrPartitionException.class, result.rawResponse());
+        }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsTopicError() {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            String topicName = "unauthorized-topic";
+
+            DescribeTopicPartitionsResponseData responseData = new DescribeTopicPartitionsResponseData();
+            responseData.topics().add(new DescribeTopicPartitionsResponseTopic()
+                .setErrorCode(Errors.TOPIC_AUTHORIZATION_FAILED.code())
+                .setTopicId(Uuid.ZERO_UUID)
+                .setName(topicName));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(responseData));
+
+            DescribeTopicPartitionsResult result = env.adminClient().describeTopicPartitions(
+                singletonList(topicName), new DescribeTopicsOptions());
+
+            TestUtils.assertFutureThrows(TopicAuthorizationException.class, result.rawResponse());
         }
     }
 
@@ -4693,7 +4803,7 @@ public class KafkaAdminClientTest {
                                     .setClientHost("host")
                                     .setClientId("clientId")
                                     .setMemberEpoch(10)
-                                    .setRackId("rackid")
+                                    .setRackId("rackId")
                                     .setSubscribedTopicNames(singletonList("foo"))
                                     .setSubscribedTopicRegex("regex")
                                     .setAssignment(new ConsumerGroupDescribeResponseData.Assignment()
@@ -4757,6 +4867,7 @@ public class KafkaAdminClientTest {
                     new MemberDescription(
                         "memberId",
                         Optional.of("instanceId"),
+                        Optional.of("rackId"),
                         "clientId",
                         "host",
                         new MemberAssignment(
@@ -4783,6 +4894,7 @@ public class KafkaAdminClientTest {
                 Collections.singletonList(
                     new MemberDescription(
                         "0",
+                        Optional.empty(),
                         Optional.empty(),
                         "clientId0",
                         "clientHost",
@@ -8729,6 +8841,34 @@ public class KafkaAdminClientTest {
         }
     }
 
+    @Test
+    public void testListOffsetsEarliestPendingUploadSpecSpecMinVersion() throws Exception {
+        Node node = new Node(0, "localhost", 8120);
+        List<Node> nodes = Collections.singletonList(node);
+        List<PartitionInfo> pInfos = new ArrayList<>();
+        pInfos.add(new PartitionInfo("foo", 0, node, new Node[]{node}, new Node[]{node}));
+        final Cluster cluster = new Cluster(
+            "mockClusterId",
+            nodes,
+            pInfos,
+            Collections.emptySet(),
+            Collections.emptySet(),
+            node);
+        final TopicPartition tp0 = new TopicPartition("foo", 0);
+        try (AdminClientUnitTestEnv env = new AdminClientUnitTestEnv(cluster,
+            AdminClientConfig.RETRIES_CONFIG, "2")) {
+
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            env.kafkaClient().prepareResponse(prepareMetadataResponse(env.cluster(), Errors.NONE));
+
+            env.adminClient().listOffsets(Collections.singletonMap(tp0, OffsetSpec.earliestPendingUpload()));
+
+            TestUtils.waitForCondition(() -> env.kafkaClient().requests().stream().anyMatch(request ->
+                request.requestBuilder().apiKey().messageType == ApiMessageType.LIST_OFFSETS && request.requestBuilder().oldestAllowedVersion() == 11
+            ), "no listOffsets request has the expected oldestAllowedVersion");
+        }
+    }
+
     private Map<String, FeatureUpdate> makeTestFeatureUpdates() {
         return Utils.mkMap(
             Utils.mkEntry("test_feature_1", new FeatureUpdate((short) 2,  FeatureUpdate.UpgradeType.UPGRADE)),
@@ -9923,9 +10063,7 @@ public class KafkaAdminClientTest {
             env.kafkaClient().setNodeApiVersions(
                     NodeApiVersions.create(ApiKeys.UNREGISTER_BROKER.id, (short) 0, (short) 0));
 
-            UnregisterBrokerOptions options = new UnregisterBrokerOptions();
-            options.timeoutMs = 10;
-            UnregisterBrokerResult result = env.adminClient().unregisterBroker(nodeId, options);
+            UnregisterBrokerResult result = env.adminClient().unregisterBroker(nodeId, new UnregisterBrokerOptions().timeoutMs(10));
 
             // Validate response
             assertNotNull(result.all());
@@ -10646,6 +10784,7 @@ public class KafkaAdminClientTest {
                                                                  MemberAssignment assignment) {
         return new MemberDescription(member.memberId(),
                                      Optional.ofNullable(member.groupInstanceId()),
+                                     Optional.empty(),
                                      member.clientId(),
                                      member.clientHost(),
                                      assignment,
@@ -10657,6 +10796,7 @@ public class KafkaAdminClientTest {
     private static ShareMemberDescription convertToShareMemberDescriptions(ShareGroupDescribeResponseData.Member member,
                                                                            ShareMemberAssignment assignment) {
         return new ShareMemberDescription(member.memberId(),
+                                          Optional.ofNullable(member.rackId()),
                                           member.clientId(),
                                           member.clientHost(),
                                           assignment,
@@ -11155,15 +11295,15 @@ public class KafkaAdminClientTest {
             env.kafkaClient().prepareResponse(new DescribeShareGroupOffsetsResponse(data));
 
             final ListShareGroupOffsetsResult result = env.adminClient().listShareGroupOffsets(groupSpecs);
-            final Map<TopicPartition, OffsetAndMetadata> partitionToOffsetAndMetadata = result.partitionsToOffsetAndMetadata(GROUP_ID).get();
+            final Map<TopicPartition, SharePartitionOffsetInfo> partitionToOffsetInfo = result.partitionsToOffsetInfo(GROUP_ID).get();
 
-            assertEquals(6, partitionToOffsetAndMetadata.size());
-            assertEquals(new OffsetAndMetadata(10, Optional.of(0), ""), partitionToOffsetAndMetadata.get(myTopicPartition0));
-            assertEquals(new OffsetAndMetadata(11, Optional.of(0), ""), partitionToOffsetAndMetadata.get(myTopicPartition1));
-            assertEquals(new OffsetAndMetadata(40, Optional.of(0), ""), partitionToOffsetAndMetadata.get(myTopicPartition2));
-            assertEquals(new OffsetAndMetadata(50, Optional.of(1), ""), partitionToOffsetAndMetadata.get(myTopicPartition3));
-            assertEquals(new OffsetAndMetadata(100, Optional.of(2), ""), partitionToOffsetAndMetadata.get(myTopicPartition4));
-            assertEquals(new OffsetAndMetadata(500, Optional.of(3), ""), partitionToOffsetAndMetadata.get(myTopicPartition5));
+            assertEquals(6, partitionToOffsetInfo.size());
+            assertEquals(new SharePartitionOffsetInfo(10, Optional.of(0), Optional.empty()), partitionToOffsetInfo.get(myTopicPartition0));
+            assertEquals(new SharePartitionOffsetInfo(11, Optional.of(0), Optional.empty()), partitionToOffsetInfo.get(myTopicPartition1));
+            assertEquals(new SharePartitionOffsetInfo(40, Optional.of(0), Optional.empty()), partitionToOffsetInfo.get(myTopicPartition2));
+            assertEquals(new SharePartitionOffsetInfo(50, Optional.of(1), Optional.empty()), partitionToOffsetInfo.get(myTopicPartition3));
+            assertEquals(new SharePartitionOffsetInfo(100, Optional.of(2), Optional.empty()), partitionToOffsetInfo.get(myTopicPartition4));
+            assertEquals(new SharePartitionOffsetInfo(500, Optional.of(3), Optional.empty()), partitionToOffsetInfo.get(myTopicPartition5));
         }
     }
 
@@ -11226,17 +11366,17 @@ public class KafkaAdminClientTest {
             final ListShareGroupOffsetsResult result = env.adminClient().listShareGroupOffsets(groupSpecs);
             assertEquals(2, result.all().get().size());
 
-            final Map<TopicPartition, OffsetAndMetadata> partitionToOffsetAndMetadataGroup0 = result.partitionsToOffsetAndMetadata(GROUP_ID).get();
-            assertEquals(4, partitionToOffsetAndMetadataGroup0.size());
-            assertEquals(new OffsetAndMetadata(10, Optional.of(0), ""), partitionToOffsetAndMetadataGroup0.get(myTopicPartition0));
-            assertEquals(new OffsetAndMetadata(11, Optional.of(0), ""), partitionToOffsetAndMetadataGroup0.get(myTopicPartition1));
-            assertEquals(new OffsetAndMetadata(40, Optional.of(0), ""), partitionToOffsetAndMetadataGroup0.get(myTopicPartition2));
-            assertEquals(new OffsetAndMetadata(50, Optional.of(1), ""), partitionToOffsetAndMetadataGroup0.get(myTopicPartition3));
+            final Map<TopicPartition, SharePartitionOffsetInfo> partitionToOffsetInfoGroup0 = result.partitionsToOffsetInfo(GROUP_ID).get();
+            assertEquals(4, partitionToOffsetInfoGroup0.size());
+            assertEquals(new SharePartitionOffsetInfo(10, Optional.of(0), Optional.empty()), partitionToOffsetInfoGroup0.get(myTopicPartition0));
+            assertEquals(new SharePartitionOffsetInfo(11, Optional.of(0), Optional.empty()), partitionToOffsetInfoGroup0.get(myTopicPartition1));
+            assertEquals(new SharePartitionOffsetInfo(40, Optional.of(0), Optional.empty()), partitionToOffsetInfoGroup0.get(myTopicPartition2));
+            assertEquals(new SharePartitionOffsetInfo(50, Optional.of(1), Optional.empty()), partitionToOffsetInfoGroup0.get(myTopicPartition3));
 
-            final Map<TopicPartition, OffsetAndMetadata> partitionToOffsetAndMetadataGroup1 = result.partitionsToOffsetAndMetadata("group-1").get();
-            assertEquals(2, partitionToOffsetAndMetadataGroup1.size());
-            assertEquals(new OffsetAndMetadata(100, Optional.of(2), ""), partitionToOffsetAndMetadataGroup1.get(myTopicPartition4));
-            assertEquals(new OffsetAndMetadata(500, Optional.of(2), ""), partitionToOffsetAndMetadataGroup1.get(myTopicPartition5));
+            final Map<TopicPartition, SharePartitionOffsetInfo> partitionToOffsetInfoGroup1 = result.partitionsToOffsetInfo("group-1").get();
+            assertEquals(2, partitionToOffsetInfoGroup1.size());
+            assertEquals(new SharePartitionOffsetInfo(100, Optional.of(2), Optional.empty()), partitionToOffsetInfoGroup1.get(myTopicPartition4));
+            assertEquals(new SharePartitionOffsetInfo(500, Optional.of(2), Optional.empty()), partitionToOffsetInfoGroup1.get(myTopicPartition5));
         }
     }
 
@@ -11259,9 +11399,9 @@ public class KafkaAdminClientTest {
             env.kafkaClient().prepareResponse(new DescribeShareGroupOffsetsResponse(data));
 
             final ListShareGroupOffsetsResult result = env.adminClient().listShareGroupOffsets(groupSpecs);
-            final Map<TopicPartition, OffsetAndMetadata> partitionToOffsetAndMetadata = result.partitionsToOffsetAndMetadata(GROUP_ID).get();
+            final Map<TopicPartition, SharePartitionOffsetInfo> partitionToOffsetInfo = result.partitionsToOffsetInfo(GROUP_ID).get();
 
-            assertEquals(0, partitionToOffsetAndMetadata.size());
+            assertEquals(0, partitionToOffsetInfo.size());
         }
     }
 
@@ -11311,13 +11451,13 @@ public class KafkaAdminClientTest {
             env.kafkaClient().prepareResponse(new DescribeShareGroupOffsetsResponse(data));
 
             final ListShareGroupOffsetsResult result = env.adminClient().listShareGroupOffsets(groupSpecs);
-            final Map<TopicPartition, OffsetAndMetadata> partitionToOffsetAndMetadata = result.partitionsToOffsetAndMetadata(GROUP_ID).get();
+            final Map<TopicPartition, SharePartitionOffsetInfo> partitionToOffsetInfo = result.partitionsToOffsetInfo(GROUP_ID).get();
 
             // For myTopicPartition2 we have set an error as the response. Thus, it should be skipped from the final result
-            assertEquals(3, partitionToOffsetAndMetadata.size());
-            assertEquals(new OffsetAndMetadata(10, Optional.of(0), ""), partitionToOffsetAndMetadata.get(myTopicPartition0));
-            assertEquals(new OffsetAndMetadata(11, Optional.of(1), ""), partitionToOffsetAndMetadata.get(myTopicPartition1));
-            assertEquals(new OffsetAndMetadata(500, Optional.of(2), ""), partitionToOffsetAndMetadata.get(myTopicPartition3));
+            assertEquals(3, partitionToOffsetInfo.size());
+            assertEquals(new SharePartitionOffsetInfo(10, Optional.of(0), Optional.empty()), partitionToOffsetInfo.get(myTopicPartition0));
+            assertEquals(new SharePartitionOffsetInfo(11, Optional.of(1), Optional.empty()), partitionToOffsetInfo.get(myTopicPartition1));
+            assertEquals(new SharePartitionOffsetInfo(500, Optional.of(2), Optional.empty()), partitionToOffsetInfo.get(myTopicPartition3));
         }
     }
 
@@ -11667,5 +11807,28 @@ public class KafkaAdminClientTest {
             .setGroupEpoch(2)
             .setAssignmentEpoch(1));
         return data;
+    }
+
+    @Test
+    @Timeout(30)
+    public void testDescribeTopicsTimeoutWhenNoBrokerResponds() throws Exception {
+        try (AdminClientUnitTestEnv env = new AdminClientUnitTestEnv(
+            mockCluster(1, 0),
+            AdminClientConfig.RETRIES_CONFIG, "0",
+            AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "30000")) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+
+            // Not using prepareResponse is equivalent to "no brokers respond".
+            long start = System.currentTimeMillis();
+            DescribeTopicsResult result = env.adminClient().describeTopics(List.of("test-topic"), new DescribeTopicsOptions().timeoutMs(200));
+            Map<String, KafkaFuture<TopicDescription>> topicDescriptionMap = result.topicNameValues();
+            KafkaFuture<TopicDescription> topicDescription = topicDescriptionMap.get("test-topic");
+            ExecutionException exception = assertThrows(ExecutionException.class, topicDescription::get);
+            // Duration should be greater than or equal to 200 ms but less than 30000 ms.
+            long duration = System.currentTimeMillis() - start;
+
+            assertInstanceOf(TimeoutException.class, exception.getCause());
+            assertTrue(duration >= 150L && duration < 30000);
+        }
     }
 }

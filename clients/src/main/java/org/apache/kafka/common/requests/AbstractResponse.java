@@ -291,8 +291,12 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
                 return AlterShareGroupOffsetsResponse.parse(readable, version);
             case DELETE_SHARE_GROUP_OFFSETS:
                 return DeleteShareGroupOffsetsResponse.parse(readable, version);
-            case GET_REPLICA_LOG_INFO:
-                return GetReplicaLogInfoResponse.parse(readable, version);
+            case INIT_DISKLESS_LOG:
+                return InitDisklessLogResponse.parse(readable, version);
+            case ALTER_DISKLESS_SWITCH:
+                return AlterDisklessSwitchResponse.parse(readable, version);
+            case REPAIR_DISKLESS_LOG:
+                return RepairDisklessLogResponse.parse(readable, version);
             case CREATE_CLUSTER_MIRROR:
                 return CreateClusterMirrorResponse.parse(readable, version);
             case START_MIRROR_TOPICS:

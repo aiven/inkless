@@ -139,7 +139,8 @@ abstract class AbstractCreateTopicsRequestTest extends BaseRequestTest {
 
       if (!request.data.validateOnly) {
         // Wait until metadata is propagated and validate non-controller broker has the correct metadata
-        TestUtils.waitForPartitionMetadata(brokers, topic.name(), 0)
+        // INKLESS: Increase timeout to 60s to avoid flakiness
+        TestUtils.waitForPartitionMetadata(brokers, topic.name(), 0, timeout = 60000L)
       }
       verifyMetadata(notControllerSocketServer)
     }

@@ -1,0 +1,683 @@
+=================
+Diskless Configs
+=================
+.. Generated from *Config.java classes by io.aiven.inkless.doc.ConfigsDocs
+
+-----------------
+InklessConfig
+-----------------
+Under ``inkless.``
+
+``control.plane.class``
+  The control plane implementation class
+
+  * Type: class
+  * Default: io.aiven.inkless.control_plane.InMemoryControlPlane
+  * Valid Values: Any implementation of io.aiven.inkless.control_plane.ControlPlane
+  * Importance: high
+
+``produce.buffer.max.bytes``
+  The max size of the buffer to accumulate produce requests. This is a best effort limit that cannot always be strictly enforced.
+
+  * Type: int
+  * Default: 8388608 (8 mebibytes)
+  * Valid Values: [1,...]
+  * Importance: high
+
+``produce.commit.interval.ms``
+  The interval with which produced data are committed.
+
+  * Type: int
+  * Default: 250
+  * Valid Values: [1,...]
+  * Importance: high
+
+``storage.backend.class``
+  The storage backend implementation class
+
+  * Type: class
+  * Default: io.aiven.inkless.storage_backend.in_memory.InMemoryStorage
+  * Importance: high
+
+``client.az.listener.map``
+  Cluster-wide mapping from AZ-specific listener aliases to physical availability zone (rack) IDs, used for listener-based AZ routing of diskless topic metadata. Format is a comma-separated list of LISTENER=az pairs, for example SASL_SSL_US_EAST_1_AZ_1=use1-az1,SASL_SSL_US_EAST_1_AZ_2=use1-az2. Every broker should use the same mapping. Listener names are matched case-insensitively (normalized to upper case). Defaults to empty (feature disabled).
+
+  * Type: list
+  * Default: ""
+  * Importance: medium
+
+``control.plane.batch.coalescing.enabled``
+  When true, contiguous same-partition batch runs within a single commit are collapsed into a single row in the batches table via commit_file_v2, reducing control-plane metadata growth for low-throughput producers. Set to true only after all brokers in the cluster have been upgraded to a version that supports reading coalesced rows. Defaults to false for safe rolling upgrades.
+
+  * Type: boolean
+  * Default: false
+  * Importance: medium
+
+``fetch.lagging.consumer.request.rate.limit``
+  Maximum requests per second for lagging consumer data fetches. Set to 0 to disable rate limiting. The upper bound of 10000 req/s is a safety limit to prevent misconfiguration. For high-throughput systems, consider the relationship between this rate limit, thread pool size, and storage backend capacity. At the default rate of 200 req/s with ~50ms per request latency, this allows ~10 concurrent requests. Note: hedge requests triggered by slow fetches are exempt from this limit. In the worst case, effective storage GET rate can reach up to 2x this value.
+
+  * Type: int
+  * Default: 200
+  * Valid Values: [0,...,10000]
+  * Importance: medium
+
+``fetch.lagging.consumer.threshold.ms``
+  The time threshold in milliseconds to distinguish between recent and lagging consumers. Fetch requests for data strictly older than this threshold (dataAge > threshold, based on batch timestamp) will use the lagging consumer path. Set to -1 to use the default heuristic: the cache expiration lifespan. This provides a grace period ensuring data remains in cache before being considered 'lagging', accounting for cache warm-up and typical consumer lag variations. Must be >= cache expiration lifespan (see consume.cache.expiration.lifespan.sec). This is a startup-only configuration (no dynamic reconfiguration support). Both threshold and cache lifespan must be set together at startup to maintain the constraint.
+
+  * Type: long
+  * Default: -1
+  * Valid Values: [-1,...]
+  * Importance: medium
+
+``object.key.prefix``
+  The object storage key prefix. It cannot start of finish with a slash.
+
+  * Type: string
+  * Default: ""
+  * Valid Values: non-null string
+  * Importance: medium
+
+``produce.max.upload.attempts``
+  The max number of attempts to upload a file to the object storage.
+
+  * Type: int
+  * Default: 3
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``produce.upload.backoff.ms``
+  The number of millisecond to back off for before the next upload attempt.
+
+  * Type: int
+  * Default: 10
+  * Valid Values: [0,...]
+  * Importance: medium
+
+``consolidation.cleanup.interval.ms``
+  The interval with which to run consolidated diskless WAL pruning on each broker.
+
+  * Type: int
+  * Default: 300000 (5 minutes)
+  * Valid Values: [1,...]
+  * Importance: low
+
+``consume.batch.coordinate.cache.enabled``
+  If true, the Batch Coordinate cache is enabled.
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``consume.batch.coordinate.cache.ttl.ms``
+  Time to live in milliseconds for an entry in the Batch Coordinate cache. The time to live must be <= than half of the value of of file.cleaner.interval.ms.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
+  * Valid Values: [1,...]
+  * Importance: low
+
+``consume.cache.block.bytes``
+  The number of bytes to fetch as a single block from object storage when serving fetch requests.
+
+  * Type: int
+  * Default: 16777216 (16 mebibytes)
+  * Importance: low
+
+``consume.cache.expiration.lifespan.sec``
+  The lifespan in seconds of a cache entry before it will be removed from all storages.
+
+  * Type: int
+  * Default: 60
+  * Valid Values: [10,...]
+  * Importance: low
+
+``consume.cache.expiration.max.idle.sec``
+  The maximum idle time in seconds before a cache entry will be removed from all storages. -1 means disabled, and entries will not be removed based on idle time.
+
+  * Type: int
+  * Default: -1
+  * Valid Values: [-1,...]
+  * Importance: low
+
+``consume.cache.max.bytes``
+  Best-effort limit on cached data based on the sum of cached payload byte lengths. When set to a value greater than 0, byte-based eviction is used instead of count-based (consume.cache.max.count). Set to 0 (default) to use count-based eviction.
+
+  * Type: long
+  * Default: 0
+  * Valid Values: [0,...]
+  * Importance: low
+
+``consume.cache.max.count``
+  The maximum number of objects to cache in memory.
+
+  * Type: long
+  * Default: 1000
+  * Valid Values: [1,...]
+  * Importance: low
+
+``consume.cross.tier.log.start.cache.enabled``
+  If true, the cross-tier log start offset cache is enabled. It caches the EARLIEST offset of consolidating diskless topics to avoid querying the control plane on every request.
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``consume.cross.tier.log.start.cache.ttl.ms``
+  Time to live in milliseconds for an entry in the cross-tier log start offset cache. A stale entry can only ever be too low (the safe direction), so this only bounds how quickly a retention advance becomes visible from non-leader brokers.
+
+  * Type: int
+  * Default: 10000 (10 seconds)
+  * Valid Values: [1,...]
+  * Importance: low
+
+``cross.tier.log.start.report.interval.ms``
+  The interval with which the leader reports the cross-tier (remote) log start offset of consolidating diskless partitions to the control plane. This is dwarfed by remote.log.manager.task.interval.ms (default 30s), which governs how often the underlying remote-retention observation is even produced, so raising this mainly trades off control-plane call frequency, not the effective staleness window.
+
+  * Type: int
+  * Default: 1000 (1 second)
+  * Valid Values: [1,...]
+  * Importance: low
+
+``fetch.data.thread.pool.size``
+  Thread pool size to concurrently fetch data files from remote storage
+
+  * Type: int
+  * Default: 32
+  * Valid Values: [1,...]
+  * Importance: low
+
+``fetch.find.batches.max.per.partition``
+  The maximum number of batches to find per partition when processing a fetch request. A value of 0 means all available batches are fetched. This is primarily intended for environments where the batches fan-out on fetch requests can overload the control plane back-end.
+
+  * Type: int
+  * Default: 0
+  * Valid Values: [0,...]
+  * Importance: low
+
+``fetch.hedge.total.time.threshold.ms``
+  Total time threshold in milliseconds to trigger a hedge request. When a storage fetch has not completed within this threshold, a competing hedge request is submitted. The first request to complete wins; the other continues in the background and its result is ignored. Set to 0 to disable total-time-based hedging. When both hedging thresholds are enabled, this value must be strictly greater than fetch.hedge.ttfb.threshold.ms. Capacity impact: hedges submit to the same executor as primaries (fetch.data.thread.pool.size for hot path, fetch.lagging.consumer.thread.pool.size for cold path). Normal case: only tail-latency requests (exceeding threshold) trigger hedges -- typically <5% of traffic. Worst case: if all in-flight requests exceed the threshold, effective storage GET rate doubles (one primary + one hedge per request), bounded by executor thread pool + queue capacity. Monitor HedgeRequestRate to detect excessive hedging. If hedge rate is too high, increase this threshold.
+
+  * Type: long
+  * Default: 0
+  * Valid Values: [0,...]
+  * Importance: low
+
+``fetch.hedge.ttfb.threshold.ms``
+  Time-to-first-byte threshold in milliseconds to trigger a hedge request. When a storage fetch has not received its first byte within this threshold, a competing hedge request is submitted. This catches stuck connections early, before the total-time threshold. Set to 0 to disable TTFB-based hedging. When both hedging thresholds are enabled, fetch.hedge.total.time.threshold.ms must be strictly greater than this value.
+
+  * Type: long
+  * Default: 0
+  * Valid Values: [0,...]
+  * Importance: low
+
+``fetch.lagging.consumer.thread.pool.size``
+  Thread pool size for lagging consumer fetch requests (consumers reading old data). Set to 0 to disable the lagging consumer feature (all requests will use the recent data path). The default value of 16 is designed as approximately half of the default fetch.data.thread.pool.size (32), providing sufficient capacity for typical cold storage access patterns while leaving headroom for the hot path. The queue capacity is automatically set to thread.pool.size * 100, providing burst buffering (e.g., 16 threads = 1600 queue capacity ~= 8 seconds buffer at 200 req/s). Tune based on lagging consumer SLA and expected load patterns.
+
+  * Type: int
+  * Default: 16
+  * Valid Values: [0,...]
+  * Importance: low
+
+``fetch.metadata.thread.pool.size``
+  Thread pool size to concurrently fetch metadata from batch coordinator. Note: This executor is shared between hot and cold path requests. The hot/cold path separation only applies to data fetching (after metadata is retrieved). A burst of lagging consumer requests can still compete with recent consumer requests at the metadata layer. For workloads with significant lagging consumer traffic, consider increasing this value proportionally to the combined fetch.data.thread.pool.size + fetch.lagging.consumer.thread.pool.size to prevent metadata fetching from becoming a bottleneck in mixed hot/cold workloads.
+
+  * Type: int
+  * Default: 8
+  * Valid Values: [1,...]
+  * Importance: low
+
+``file.cleaner.interval.ms``
+  The interval with which to clean up files marked for deletion.
+
+  * Type: int
+  * Default: 300000 (5 minutes)
+  * Valid Values: [1,...]
+  * Importance: low
+
+``file.cleaner.retention.period.ms``
+  The retention period for files marked for deletion.
+
+  * Type: int
+  * Default: 60000 (1 minute)
+  * Valid Values: [1,...]
+  * Importance: low
+
+``object.key.log.prefix.masked``
+  Whether to log full object key path, or mask the prefix.
+
+  * Type: boolean
+  * Default: false
+  * Importance: low
+
+``produce.upload.thread.pool.size``
+  Thread pool size to concurrently upload files to remote storage
+
+  * Type: int
+  * Default: 8
+  * Valid Values: [1,...]
+  * Importance: low
+
+``retention.enforcement.interval.ms``
+  The interval with which to enforce retention policies on a partition. This interval is approximate, because each scheduling event is randomized. The retention enforcement mechanism also takes into account the total number of brokers in the cluster: the more brokers, the less frequently each one of them enforces retention policy.
+
+  * Type: int
+  * Default: 300000 (5 minutes)
+  * Valid Values: [1,...]
+  * Importance: low
+
+``retention.enforcement.max.batches.per.request``
+  The maximum number of batches to delete per partition when enforcing retention. A value of 0 means all eligible batches are deleted in one request. Setting this to a lower value can help to reduce the load on the control plane back-end.
+
+  * Type: int
+  * Default: 0
+  * Valid Values: [0,...]
+  * Importance: low
+
+
+
+-----------------
+InMemoryControlPlaneConfig
+-----------------
+Under ``inkless.control.plane.``
+
+
+
+-----------------
+PostgresControlPlaneConfig
+-----------------
+Under ``inkless.control.plane.``
+
+``connection.string``
+  PostgreSQL connection string
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``username``
+  Username
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``password``
+  Password
+
+  * Type: password
+  * Default: null
+  * Importance: high
+
+``connection.pool.timeout.ms``
+  Maximum time in milliseconds to wait for a PostgreSQL connection from the pool.
+
+  * Type: long
+  * Default: 5000 (5 seconds)
+  * Valid Values: [250,...]
+  * Importance: medium
+
+``max.connections``
+  Maximum number of connections to the database
+
+  * Type: int
+  * Default: 10
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``socket.timeout.ms``
+  Maximum time in milliseconds to wait for PostgreSQL socket reads.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``tcp.connect.timeout.ms``
+  Maximum time in milliseconds to establish a PostgreSQL TCP connection.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+
+
+-----------------
+PostgresControlPlaneConfig - read overrides
+-----------------
+Under ``inkless.control.plane.read.``
+
+``connection.string``
+  PostgreSQL connection string
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``username``
+  Username
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``password``
+  Password
+
+  * Type: password
+  * Default: null
+  * Importance: high
+
+``connection.pool.timeout.ms``
+  Maximum time in milliseconds to wait for a PostgreSQL connection from the pool.
+
+  * Type: long
+  * Default: 5000 (5 seconds)
+  * Valid Values: [250,...]
+  * Importance: medium
+
+``max.connections``
+  Maximum number of connections to the database
+
+  * Type: int
+  * Default: 10
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``socket.timeout.ms``
+  Maximum time in milliseconds to wait for PostgreSQL socket reads.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``tcp.connect.timeout.ms``
+  Maximum time in milliseconds to establish a PostgreSQL TCP connection.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+
+
+-----------------
+PostgresControlPlaneConfig - write overrides
+-----------------
+Under ``inkless.control.plane.write.``
+
+``connection.string``
+  PostgreSQL connection string
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``username``
+  Username
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``password``
+  Password
+
+  * Type: password
+  * Default: null
+  * Importance: high
+
+``connection.pool.timeout.ms``
+  Maximum time in milliseconds to wait for a PostgreSQL connection from the pool.
+
+  * Type: long
+  * Default: 5000 (5 seconds)
+  * Valid Values: [250,...]
+  * Importance: medium
+
+``max.connections``
+  Maximum number of connections to the database
+
+  * Type: int
+  * Default: 10
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``socket.timeout.ms``
+  Maximum time in milliseconds to wait for PostgreSQL socket reads.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``tcp.connect.timeout.ms``
+  Maximum time in milliseconds to establish a PostgreSQL TCP connection.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+
+
+-----------------
+AzureBlobStorageConfig
+-----------------
+Under ``inkless.storage.``
+
+``azure.container.name``
+  Azure container to store log segments
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``azure.account.name``
+  Azure account name
+
+  * Type: string
+  * Default: null
+  * Valid Values: null or non-empty string
+  * Importance: high
+
+``azure.account.key``
+  Azure account key
+
+  * Type: password
+  * Default: null
+  * Valid Values: null or Non-empty password text
+  * Importance: medium
+
+``azure.connection.string``
+  Azure connection string. Cannot be used together with azure.account.name, azure.account.key, and azure.endpoint.url
+
+  * Type: password
+  * Default: null
+  * Valid Values: null or Non-empty password text
+  * Importance: medium
+
+``azure.sas.token``
+  Azure SAS token
+
+  * Type: password
+  * Default: null
+  * Valid Values: null or Non-empty password text
+  * Importance: medium
+
+``azure.upload.block.size``
+  Size of blocks to use when uploading objects to Azure
+
+  * Type: int
+  * Default: 5242880
+  * Valid Values: [102400,...,2147483647]
+  * Importance: medium
+
+``azure.endpoint.url``
+  Custom Azure Blob Storage endpoint URL
+
+  * Type: string
+  * Default: null
+  * Valid Values: null or Valid URL as defined in rfc2396
+  * Importance: low
+
+
+
+-----------------
+GcsStorageConfig
+-----------------
+Under ``inkless.storage.``
+
+``gcs.bucket.name``
+  GCS bucket to store log segments
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``gcs.credentials.default``
+  Use the default GCP credentials. Cannot be set together with "gcs.credentials.json" or "gcs.credentials.path"
+
+  * Type: boolean
+  * Default: null
+  * Importance: medium
+
+``gcs.credentials.json``
+  GCP credentials as a JSON string. Cannot be set together with "gcs.credentials.path" or "gcs.credentials.default"
+
+  * Type: password
+  * Default: null
+  * Valid Values: Non-empty password text
+  * Importance: medium
+
+``gcs.credentials.path``
+  The path to a GCP credentials file. This can be standard GCP credentials format, or JSON with a single `access_token` field containing the access token with limited lifetime obtained from Google Authorization Server. Cannot be set together with "gcs.credentials.json" or "gcs.credentials.default"
+
+  * Type: string
+  * Default: null
+  * Valid Values: non-empty string
+  * Importance: medium
+
+``gcs.endpoint.url``
+  Custom GCS endpoint URL. To be used with custom GCS-compatible backends.
+
+  * Type: string
+  * Default: null
+  * Valid Values: Valid URL as defined in rfc2396
+  * Importance: low
+
+
+
+-----------------
+S3StorageConfig
+-----------------
+Under ``inkless.storage.``
+
+``s3.bucket.name``
+  S3 bucket to store log segments
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``s3.region``
+  AWS region where S3 bucket is placed
+
+  * Type: string
+  * Importance: medium
+
+``aws.access.key.id``
+  AWS access key ID. To be used when static credentials are provided.
+
+  * Type: password
+  * Default: null
+  * Valid Values: Non-empty password text
+  * Importance: medium
+
+``aws.checksum.check.enabled``
+  This property is used to enable checksum validation done by AWS library. When set to "false", there will be no validation. It is disabled by default as Kafka already validates integrity of the files.
+
+  * Type: boolean
+  * Default: false
+  * Importance: medium
+
+``aws.credentials.file``
+  This property is used to define a file where credentials are defined. The file must contain AWS credentials in the format as those would be in the properties file: inkless.storage.aws.access.key.id=, inkless.storage.aws.secret.access.key=, and inkless.storage.aws.session.token=.The file might be updated during process life cycle, and the credentials will be reloaded from the file.
+
+  * Type: string
+  * Default: null
+  * Importance: medium
+
+``aws.secret.access.key``
+  AWS secret access key. To be used when static credentials are provided.
+
+  * Type: password
+  * Default: null
+  * Valid Values: Non-empty password text
+  * Importance: medium
+
+``aws.session.token``
+  The AWS session token. Retrieved from an AWS token service, used for authenticating that this user has received temporary permission to access some resource.
+
+  * Type: password
+  * Default: null
+  * Valid Values: Non-empty password text
+  * Importance: medium
+
+``aws.certificate.check.enabled``
+  This property is used to enable SSL certificate checking for AWS services. When set to "false", the SSL certificate checking for AWS services will be bypassed. Use with caution and always only in a test environment, as disabling certificate lead the storage to be vulnerable to man-in-the-middle attacks.
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``aws.credentials.provider.class``
+  AWS credentials provider. If not set, AWS SDK uses the default software.amazon.awssdk.auth.credentials.AwsCredentialsProviderChain
+
+  * Type: class
+  * Default: null
+  * Valid Values: Any implementation of software.amazon.awssdk.auth.credentials.AwsCredentialsProvider
+  * Importance: low
+
+``aws.http.max.connections``
+  This max number of HTTP connections to keep in the client pool.
+
+  * Type: int
+  * Default: 150
+  * Valid Values: [50,...]
+  * Importance: low
+
+``s3.api.call.attempt.timeout``
+  AWS S3 API call attempt (single retry) timeout in milliseconds
+
+  * Type: long
+  * Default: null
+  * Valid Values: null or [1,...,9223372036854775807]
+  * Importance: low
+
+``s3.api.call.timeout``
+  AWS S3 API call timeout in milliseconds, including all retries
+
+  * Type: long
+  * Default: null
+  * Valid Values: null or [1,...,9223372036854775807]
+  * Importance: low
+
+``s3.endpoint.url``
+  Custom S3 endpoint URL. To be used with custom S3-compatible backends (e.g. minio).
+
+  * Type: string
+  * Default: null
+  * Valid Values: Valid URL as defined in rfc2396
+  * Importance: low
+
+``s3.path.style.access.enabled``
+  Whether to use path style access or virtual hosts. By default, empty value means S3 library will auto-detect. Amazon S3 uses virtual hosts by default (true), but other S3-compatible backends may differ (e.g. minio).
+
+  * Type: boolean
+  * Default: null
+  * Importance: low
+
+
+

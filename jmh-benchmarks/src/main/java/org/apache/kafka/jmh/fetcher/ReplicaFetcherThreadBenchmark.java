@@ -35,7 +35,7 @@ import kafka.server.metadata.KRaftMetadataCache;
 import kafka.utils.TestUtils;
 
 import org.apache.kafka.clients.FetchSessionHandler;
-import org.apache.kafka.common.PartitionState;
+import org.apache.kafka.common.DirectoryId;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
@@ -52,7 +52,9 @@ import org.apache.kafka.common.requests.FetchResponse;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.metadata.LeaderRecoveryState;
 import org.apache.kafka.metadata.MockConfigRepository;
+import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.common.OffsetAndEpoch;
 import org.apache.kafka.server.network.BrokerEndPoint;
@@ -121,7 +123,7 @@ public class ReplicaFetcherThreadBenchmark {
         KafkaConfig config =  KafkaConfig.fromProps(TestUtils.createBrokerConfig(
             0, true, true, 9092, Option.empty(), Option.empty(),
             Option.empty(), true, false, 0, false, 0, false, 0, Option.empty(), 1, true, 1,
-            (short) 1, false));
+            (short) 1, false, Option.empty()));
         LogConfig logConfig = createLogConfig();
 
         BrokerTopicStats brokerTopicStats = new BrokerTopicStats(false);
@@ -163,19 +165,21 @@ public class ReplicaFetcherThreadBenchmark {
         for (int i = 0; i < partitionCount; i++) {
             TopicPartition tp = new TopicPartition("topic", i);
 
-            List<Integer> replicas = List.of(0, 1, 2);
-            PartitionState partitionState = new PartitionState()
-                    .setLeader(0)
-                    .setLeaderEpoch(0)
-                    .setIsr(replicas)
-                    .setPartitionEpoch(1)
-                    .setReplicas(replicas)
-                    .setIsNew(true);
+            int[] replicas = {0, 1, 2};
+            PartitionRegistration partitionRegistration = new PartitionRegistration.Builder()
+                .setLeader(0)
+                .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
+                .setLeaderEpoch(0)
+                .setIsr(replicas)
+                .setPartitionEpoch(1)
+                .setReplicas(replicas)
+                .setDirectories(DirectoryId.unassignedArray(replicas.length))
+                .build();
 
             OffsetCheckpoints checkpoints = (logDir, topicPartition) -> Optional.of(0L);
             Partition partition = replicaManager.createPartition(tp);
 
-            partition.makeFollower(partitionState, checkpoints, topicId, Option.empty());
+            partition.makeFollower(partitionRegistration, true, checkpoints, topicId, Option.empty());
             pool.put(tp, partition);
             initialFetchStates.put(tp, new InitialFetchState(topicId, new BrokerEndPoint(3, "host", 3000), 0, 0, "", Optional.empty()));
             BaseRecords fetched = new BaseRecords() {

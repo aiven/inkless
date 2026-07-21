@@ -22,6 +22,8 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
+import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
+import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.AlterPartitionRequestData;
@@ -46,6 +48,8 @@ import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
+import org.apache.kafka.common.message.InitDisklessLogRequestData;
+import org.apache.kafka.common.message.InitDisklessLogResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
@@ -471,6 +475,36 @@ public interface Controller extends AclMutator, AutoCloseable {
     CompletableFuture<AssignReplicasToDirsResponseData> assignReplicasToDirs(
         ControllerRequestContext context,
         AssignReplicasToDirsRequestData request
+    );
+
+    /**
+     * Initialize diskless logs for classic-to-diskless migration. Validates the leader
+     * and persists classicToDisklessStartOffset and producer states in a PartitionChangeRecord.
+     *
+     * @param context       The controller request context.
+     * @param request       The InitDisklessLog request data.
+     *
+     * @return              A future yielding the response with per-partition error codes.
+     */
+    CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
+        ControllerRequestContext context,
+        InitDisklessLogRequestData request
+    );
+
+    /**
+     * Override the classic-to-diskless switch state of a single partition. Unlike
+     * {@link #initDisklessLog}, this is an operator-driven write that does not require the caller
+     * to be the partition leader: a non-negative seal offset forces (re-)sealing, {@code -1} aborts
+     * the switch and reverts the partition to classic, and {@code -2} re-arms the switch as pending.
+     *
+     * @param context       The controller request context.
+     * @param request       The AlterDisklessSwitch request data.
+     *
+     * @return              A future yielding the response with the top-level error code.
+     */
+    CompletableFuture<AlterDisklessSwitchResponseData> alterDisklessSwitch(
+        ControllerRequestContext context,
+        AlterDisklessSwitchRequestData request
     );
 
     /**

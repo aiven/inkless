@@ -17,6 +17,8 @@
 
 package kafka.api
 
+import kafka.server.GroupProtocolAndMaybeTopicTypeProvider
+
 import java.util.{Locale, Properties}
 import java.util.concurrent.{ExecutionException, Future, TimeUnit}
 import kafka.utils.{TestInfoUtils, TestUtils}
@@ -28,18 +30,36 @@ import org.apache.kafka.common.record.{DefaultRecord, DefaultRecordBatch, Record
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import org.apache.kafka.server.config.ServerLogConfigs
 import org.junit.jupiter.api.Assertions._
-import org.junit.jupiter.api.Timeout
+import org.junit.jupiter.api.{Tag, Timeout}
+import org.junit.jupiter.api.{BeforeEach, TestInfo}
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.{Arguments, MethodSource}
+import org.junit.jupiter.params.provider.{Arguments, ArgumentsSource, MethodSource}
 
 import java.nio.charset.StandardCharsets
 
 
+@Tag("inkless")
 class PlaintextProducerSendTest extends BaseProducerSendTest {
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testWrongSerializer(groupProtocol: String): Unit = {
+  // topic auto creation is enabled by default, only some tests disable it
+  var disableAutoTopicCreation = false
+
+  override def brokerOverrides: Properties = {
+    val props = super.brokerOverrides
+    if (disableAutoTopicCreation) {
+      props.put("auto.create.topics.enable", "false")
+    }
+    props
+  }
+  @BeforeEach
+  override def setUp(testInfo: TestInfo): Unit = {
+    disableAutoTopicCreation = testInfo.getDisplayName.contains("autoCreateTopicsEnabled=false")
+    super.setUp(testInfo)
+  }
+
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testWrongSerializer(groupProtocol: String, topicType: String): Unit = {
     val producerProps = new Properties()
     producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers())
     producerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringSerializer")
@@ -49,20 +69,21 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     assertThrows(classOf[SerializationException], () => producer.send(record))
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testBatchSizeZero(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testBatchSizeZero(groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer(
       lingerMs = Int.MaxValue,
       deliveryTimeoutMs = Int.MaxValue,
       batchSize = 0)
-    sendAndVerify(producer)
+    // diskless: default timeout is not enough for the 100 requests
+    sendAndVerify(producer, timeoutMs = 60_000)
   }
 
   @Timeout(value = 15, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testBatchSizeZeroNoPartitionNoRecordKey(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testBatchSizeZeroNoPartitionNoRecordKey(groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer(batchSize = 0)
     val numRecords = 10
     try {
@@ -83,9 +104,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     }
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testSendCompressedMessageWithLogAppendTime(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testSendCompressedMessageWithLogAppendTime(groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer(
       compressionType = "gzip",
       lingerMs = Int.MaxValue,
@@ -93,9 +114,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     sendAndVerifyTimestamp(producer, TimestampType.LOG_APPEND_TIME)
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testSendNonCompressedMessageWithLogAppendTime(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testSendNonCompressedMessageWithLogAppendTime(groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer(lingerMs = Int.MaxValue, deliveryTimeoutMs = Int.MaxValue)
     sendAndVerifyTimestamp(producer, TimestampType.LOG_APPEND_TIME)
   }
@@ -105,9 +126,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
    *
    * The topic should be created upon sending the first message
    */
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testAutoCreateTopic(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testAutoCreateTopic(groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer()
     try {
       // Send a message to auto-create the topic
@@ -121,9 +142,42 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     }
   }
 
+  /**
+   * Test error message received when send fails waiting on metadata for a topic that does not exist.
+   * No need to run this for both rebalance protocols.
+   */
+  @ParameterizedTest(name = "groupProtocol={0}.autoCreateTopicsEnabled={1}")
+  @MethodSource(Array("protocolAndAutoCreateTopicProviders"))
+  def testSendTimeoutErrorMessageWhenTopicDoesNotExist(groupProtocol: String, autoCreateTopicsEnabled: String): Unit = {
+    val producer = createProducer(maxBlockMs = 500)
+    val record = new ProducerRecord(topic, null, "key".getBytes, "value".getBytes)
+    val exception = assertThrows(classOf[ExecutionException], () => producer.send(record).get)
+    assertInstanceOf(classOf[TimeoutException], exception.getCause)
+    assertEquals("Topic topic not present in metadata after 500 ms.", exception.getCause.getMessage)
+  }
+
+  /**
+   * Test error message received when send fails waiting on metadata for a partition that does not exist (topic exists).
+   * No need to run this for both rebalance protocols.
+   */
   @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
+  @MethodSource(Array("getTestGroupProtocolParametersClassicGroupProtocolOnly"))
+  def testSendTimeoutErrorWhenPartitionDoesNotExist(groupProtocol: String): Unit = {
+    val producer = createProducer(maxBlockMs = 500)
+    // Send a message to auto-create the topic
+    var record = new ProducerRecord(topic, null, "key".getBytes, "value".getBytes)
+    assertEquals(0L, producer.send(record).get.offset, "Should have offset 0")
+
+    // Send another message to the topic that exists but to a partition that does not
+    record = new ProducerRecord(topic, 10, "key".getBytes, "value".getBytes)
+    val exception = assertThrows(classOf[ExecutionException], () => producer.send(record).get)
+    assertInstanceOf(classOf[TimeoutException], exception.getCause)
+    assertEquals("Partition 10 of topic topic with partition count 4 is not present in metadata after 500 ms.", exception.getCause.getMessage)
+  }
+
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
   @MethodSource(Array("timestampConfigProvider"))
-  def testSendWithInvalidBeforeAndAfterTimestamp(groupProtocol: String, messageTimeStampConfig: String, recordTimestamp: Long): Unit = {
+  def testSendWithInvalidBeforeAndAfterTimestamp(groupProtocol: String, messageTimeStampConfig: String, recordTimestamp: Long, topicType: String): Unit = {
     val topicProps = new Properties()
     // set the TopicConfig for timestamp validation to have 1 minute threshold. Note that recordTimestamp has 5 minutes diff
     val oneMinuteInMs: Long = 1 * 60 * 60 * 1000L
@@ -150,9 +204,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     }
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
   @MethodSource(Array("timestampConfigProvider"))
-  def testValidBeforeAndAfterTimestampsAtThreshold(groupProtocol: String, messageTimeStampConfig: String, recordTimestamp: Long): Unit = {
+  def testValidBeforeAndAfterTimestampsAtThreshold(groupProtocol: String, messageTimeStampConfig: String, recordTimestamp: Long, topicType: String): Unit = {
     val topicProps = new Properties()
 
     // set the TopicConfig for timestamp validation to be the same as the record timestamp
@@ -170,9 +224,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     compressedProducer.close()
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
   @MethodSource(Array("timestampConfigProvider"))
-  def testValidBeforeAndAfterTimestampsWithinThreshold(groupProtocol: String, messageTimeStampConfig: String, recordTimestamp: Long): Unit = {
+  def testValidBeforeAndAfterTimestampsWithinThreshold(groupProtocol: String, messageTimeStampConfig: String, recordTimestamp: Long, topicType: String): Unit = {
     val topicProps = new Properties()
 
     // set the TopicConfig for timestamp validation to have 10 minute threshold. Note that recordTimestamp has 5 minutes diff
@@ -194,9 +248,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
   // Test that producer with max.block.ms=0 can be used to send in non-blocking mode
   // where requests are failed immediately without blocking if metadata is not available
   // or buffer is full.
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testNonBlockingProducer(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testNonBlockingProducer(groupProtocol: String, topicType: String): Unit = {
 
     def send(producer: KafkaProducer[Array[Byte],Array[Byte]]): Future[RecordMetadata] = {
       producer.send(new ProducerRecord(topic, 0, "key".getBytes, new Array[Byte](1000)))
@@ -250,9 +304,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     verifySendSuccess(future2)               // previous batch should be completed and sent now
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testSendRecordBatchWithMaxRequestSizeAndHigher(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testSendRecordBatchWithMaxRequestSizeAndHigher(groupProtocol: String, topicType: String): Unit = {
     val producerProps = new Properties()
     producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers())
     val producer = registerProducer(new KafkaProducer(producerProps, new ByteArraySerializer, new ByteArraySerializer))
@@ -280,9 +334,17 @@ object PlaintextProducerSendTest {
     val fiveMinutesInMs: Long = 5 * 60 * 60 * 1000L
     val data = new java.util.ArrayList[Arguments]()
     for (groupProtocol <- GroupProtocol.values().map(gp => gp.name.toLowerCase(Locale.ROOT))) {
-      data.add(Arguments.of(groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_BEFORE_MAX_MS_CONFIG, Long.box(now - fiveMinutesInMs)))
-      data.add(Arguments.of(groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG, Long.box(now + fiveMinutesInMs)))
+      data.add(Arguments.of(groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_BEFORE_MAX_MS_CONFIG, Long.box(now - fiveMinutesInMs), "classic"))
+      data.add(Arguments.of(groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG, Long.box(now + fiveMinutesInMs), "classic"))
+      data.add(Arguments.of(groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_BEFORE_MAX_MS_CONFIG, Long.box(now - fiveMinutesInMs), "diskless"))
+      data.add(Arguments.of(groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG, Long.box(now + fiveMinutesInMs), "diskless"))
     }
+    data.stream()
+  }
+
+  def protocolAndAutoCreateTopicProviders: java.util.stream.Stream[Arguments] = {
+    val data = new java.util.ArrayList[Arguments]()
+    data.add(Arguments.of("classic", "false"))
     data.stream()
   }
 }

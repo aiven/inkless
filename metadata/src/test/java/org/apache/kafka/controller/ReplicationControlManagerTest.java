@@ -29,6 +29,7 @@ import org.apache.kafka.common.errors.InvalidTopicException;
 import org.apache.kafka.common.errors.PolicyViolationException;
 import org.apache.kafka.common.errors.StaleBrokerEpochException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
+import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignablePartition;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignableTopic;
@@ -127,6 +128,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_COMPACT;
+import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.SEGMENT_BYTES_CONFIG;
 import static org.apache.kafka.common.metadata.MetadataRecordType.CLEAR_ELR_RECORD;
 import static org.apache.kafka.common.protocol.Errors.ELECTION_NOT_NEEDED;
@@ -135,6 +140,7 @@ import static org.apache.kafka.common.protocol.Errors.INELIGIBLE_REPLICA;
 import static org.apache.kafka.common.protocol.Errors.INVALID_PARTITIONS;
 import static org.apache.kafka.common.protocol.Errors.INVALID_REPLICATION_FACTOR;
 import static org.apache.kafka.common.protocol.Errors.INVALID_REPLICA_ASSIGNMENT;
+import static org.apache.kafka.common.protocol.Errors.INVALID_REQUEST;
 import static org.apache.kafka.common.protocol.Errors.INVALID_TOPIC_EXCEPTION;
 import static org.apache.kafka.common.protocol.Errors.NEW_LEADER_ELECTED;
 import static org.apache.kafka.common.protocol.Errors.NONE;
@@ -168,13 +174,22 @@ public class ReplicationControlManagerTest {
     private static final Logger log = LoggerFactory.getLogger(ReplicationControlManagerTest.class);
     private static final int BROKER_SESSION_TIMEOUT_MS = 1000;
 
-    private static class ReplicationControlTestContext {
-        private static class Builder {
+    static class ReplicationControlTestContext {
+        static class Builder {
             private Optional<CreateTopicPolicy> createTopicPolicy = Optional.empty();
             private MetadataVersion metadataVersion = MetadataVersion.latestTesting();
             private MockTime mockTime = new MockTime();
             private boolean isElrEnabled = false;
             private final Map<String, Object> staticConfig = new HashMap<>();
+            private boolean defaultDisklessEnable = false;
+            private boolean disklessStorageSystemEnable = false;
+            private boolean disklessManagedReplicasEnable = false;
+            private boolean disklessRemoteStorageConsolidationEnabled = false;
+            private boolean disklessAllowFromClassicEnabled = false;
+            private boolean classicRemoteStorageForceEnabled = false;
+            private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
+            private boolean disklessForceEnabled = false;
+            private List<String> disklessForceIncludeTopicRegexes = List.of();
 
             Builder setCreateTopicPolicy(CreateTopicPolicy createTopicPolicy) {
                 this.createTopicPolicy = Optional.of(createTopicPolicy);
@@ -201,12 +216,66 @@ public class ReplicationControlManagerTest {
                 return this;
             }
 
+            Builder setDefaultDisklessEnable(boolean disklessEnable) {
+                this.defaultDisklessEnable = disklessEnable;
+                return this;
+            }
+
+            Builder setDisklessStorageSystemEnabled(boolean disklessStorageSystemEnable) {
+                this.disklessStorageSystemEnable = disklessStorageSystemEnable;
+                return this;
+            }
+
+            Builder setDisklessManagedReplicasEnabled(boolean disklessManagedReplicasEnable) {
+                this.disklessManagedReplicasEnable = disklessManagedReplicasEnable;
+                return this;
+            }
+
+            Builder setDisklessRemoteStorageConsolidationEnabled(boolean enabled) {
+                this.disklessRemoteStorageConsolidationEnabled = enabled;
+                return this;
+            }
+
+            Builder setDisklessAllowFromClassicEnabled(boolean enabled) {
+                this.disklessAllowFromClassicEnabled = enabled;
+                return this;
+            }
+
+            Builder setClassicRemoteStorageForceEnabled(final boolean classicRemoteStorageForceEnabled) {
+                this.classicRemoteStorageForceEnabled = classicRemoteStorageForceEnabled;
+                return this;
+            }
+
+            Builder setClassicRemoteStorageForceExcludeTopicRegexes(final List<String> classicRemoteStorageForceExcludeTopicRegexes) {
+                this.classicRemoteStorageForceExcludeTopicRegexes = classicRemoteStorageForceExcludeTopicRegexes;
+                return this;
+            }
+
+            Builder setDisklessForceEnabled(boolean disklessForceEnabled) {
+                this.disklessForceEnabled = disklessForceEnabled;
+                return this;
+            }
+
+            Builder setDisklessForceIncludeTopicRegexes(List<String> disklessForceIncludeTopicRegexes) {
+                this.disklessForceIncludeTopicRegexes = disklessForceIncludeTopicRegexes;
+                return this;
+            }
+
             ReplicationControlTestContext build() {
                 return new ReplicationControlTestContext(metadataVersion,
                     createTopicPolicy,
                     mockTime,
                     isElrEnabled,
-                    staticConfig);
+                    staticConfig,
+                    defaultDisklessEnable,
+                    disklessStorageSystemEnable,
+                    disklessManagedReplicasEnable,
+                    disklessRemoteStorageConsolidationEnabled,
+                    disklessAllowFromClassicEnabled,
+                    classicRemoteStorageForceEnabled,
+                    classicRemoteStorageForceExcludeTopicRegexes,
+                    disklessForceEnabled,
+                    disklessForceIncludeTopicRegexes);
             }
         }
 
@@ -231,7 +300,16 @@ public class ReplicationControlManagerTest {
             Optional<CreateTopicPolicy> createTopicPolicy,
             MockTime time,
             boolean isElrEnabled,
-            Map<String, Object> staticConfig
+            Map<String, Object> staticConfig,
+            boolean defaultDisklessEnable,
+            boolean disklessStorageSystemEnable,
+            boolean disklessManagedReplicasEnable,
+            boolean disklessRemoteStorageConsolidationEnabled,
+            boolean disklessAllowFromClassicEnabled,
+            final boolean classicRemoteStorageForceEnabled,
+            final List<String> classicRemoteStorageForceExcludeTopicRegexes,
+            final boolean disklessForceEnabled,
+            final List<String> disklessForceIncludeTopicRegexes
         ) {
             this.time = time;
             this.featureControl = new FeatureControlManager.Builder().
@@ -275,6 +353,15 @@ public class ReplicationControlManagerTest {
                 setClusterControl(clusterControl).
                 setCreateTopicPolicy(createTopicPolicy).
                 setFeatureControl(featureControl).
+                setDefaultDisklessEnable(defaultDisklessEnable).
+                setDisklessStorageSystemEnabled(disklessStorageSystemEnable).
+                setDisklessManagedReplicasEnabled(disklessManagedReplicasEnable).
+                setDisklessRemoteStorageConsolidationEnabled(disklessRemoteStorageConsolidationEnabled).
+                setDisklessAllowFromClassicEnabled(disklessAllowFromClassicEnabled).
+                setClassicRemoteStorageForceEnabled(classicRemoteStorageForceEnabled).
+                setClassicRemoteStorageForceExcludeTopicRegexes(classicRemoteStorageForceExcludeTopicRegexes).
+                setDisklessForceEnabled(disklessForceEnabled).
+                setDisklessForceIncludeTopicRegexes(disklessForceIncludeTopicRegexes).
                 build();
             clusterControl.activate();
         }
@@ -287,9 +374,23 @@ public class ReplicationControlManagerTest {
                                              int numPartitions,
                                              short replicationFactor,
                                              short expectedErrorCode) {
+            return createTestTopic(name, numPartitions, replicationFactor, Map.of(), expectedErrorCode);
+        }
+
+        CreatableTopicResult createTestTopic(String name,
+                                             int numPartitions,
+                                             short replicationFactor,
+                                             Map<String, String> configs,
+                                             short expectedErrorCode) {
             CreateTopicsRequestData request = new CreateTopicsRequestData();
             CreatableTopic topic = new CreatableTopic().setName(name);
             topic.setNumPartitions(numPartitions).setReplicationFactor(replicationFactor);
+            configs.forEach((key, value) -> topic.configs().add(
+                    new CreateTopicsRequestData.CreatableTopicConfig()
+                        .setName(key)
+                        .setValue(value)
+                )
+            );
             request.topics().add(topic);
             ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
             ControllerResult<CreateTopicsResponseData> result =
@@ -387,6 +488,28 @@ public class ReplicationControlManagerTest {
                 );
             }
             registerBrokersWithDirs(brokersAndDirs);
+        }
+
+        void registerBrokersWithRacks(Object... brokerIdsAndRacks) {
+            if (brokerIdsAndRacks.length % 2 != 0) {
+                throw new IllegalArgumentException("uneven number of arguments");
+            }
+            for (int i = 0; i < brokerIdsAndRacks.length / 2; i++) {
+                int brokerId = (int) brokerIdsAndRacks[i * 2];
+                String rackId = (String) brokerIdsAndRacks[i * 2 + 1];
+                List<Uuid> logDirs = List.of(
+                    Uuid.fromString("TESTBROKER" + Integer.toString(100000 + brokerId).substring(1) + "DIRAAAA")
+                );
+                RegisterBrokerRecord brokerRecord = new RegisterBrokerRecord().
+                    setBrokerEpoch(defaultBrokerEpoch(brokerId)).setBrokerId(brokerId).
+                    setRack(rackId).setLogDirs(logDirs);
+                brokerRecord.endPoints().add(new RegisterBrokerRecord.BrokerEndpoint().
+                    setSecurityProtocol(SecurityProtocol.PLAINTEXT.id).
+                    setPort((short) 9092 + brokerId).
+                    setName("PLAINTEXT").
+                    setHost("localhost"));
+                replay(List.of(new ApiMessageAndVersion(brokerRecord, (short) 3)));
+            }
         }
 
         @SuppressWarnings("unchecked")
@@ -1823,7 +1946,7 @@ public class ReplicationControlManagerTest {
                         OptionalInt.of(3))).getMessage());
     }
 
-    private static final ListPartitionReassignmentsResponseData NONE_REASSIGNING =
+    static final ListPartitionReassignmentsResponseData NONE_REASSIGNING =
         new ListPartitionReassignmentsResponseData().setErrorMessage(null);
 
     @ParameterizedTest
@@ -2333,7 +2456,7 @@ public class ReplicationControlManagerTest {
                         new ReassignablePartitionResponse().setPartitionIndex(0).setErrorMessage(null), 
                         new ReassignablePartitionResponse().setPartitionIndex(1).setErrorMessage(null), 
                         new ReassignablePartitionResponse().setPartitionIndex(2).setErrorCode(INVALID_REPLICA_ASSIGNMENT.code()).
-                            setErrorMessage("The manual partition assignment includes broker 5, but no such broker is registered."), 
+                            setErrorMessage("The manual partition assignment includes broker 5, but no such broker is registered."),
                         new ReassignablePartitionResponse().setPartitionIndex(3).setErrorCode(INVALID_REPLICA_ASSIGNMENT.code()).
                             setErrorMessage("The manual partition assignment includes an empty replica list."))),
                     new ReassignableTopicResponse().setName("bar").setPartitions(List.of(
@@ -3224,7 +3347,7 @@ public class ReplicationControlManagerTest {
         return new BrokerState().setBrokerId(brokerId).setBrokerEpoch(brokerEpoch);
     }
 
-    private static Long defaultBrokerEpoch(int brokerId) {
+    static Long defaultBrokerEpoch(int brokerId) {
         return brokerId + 100L;
     }
 
@@ -3473,5 +3596,190 @@ public class ReplicationControlManagerTest {
         int partitionEpoch = ctx.replicationControl.getPartition(fooId, 0).partitionEpoch;
         ctx.replay(List.of(new ApiMessageAndVersion(new ClearElrRecord(), CLEAR_ELR_RECORD.highestSupportedVersion())));
         assertEquals(partitionEpoch, ctx.replicationControl.getPartition(fooId, 0).partitionEpoch);
+    }
+
+    @Test
+    void testForceClassicRemoteStorageEnableOverridesExplicitFalse() {
+        final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setClassicRemoteStorageForceEnabled(true)
+            .setDisklessStorageSystemEnabled(true)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        final CreateTopicsRequestData request = new CreateTopicsRequestData();
+        final CreateTopicsRequestData.CreatableTopicConfigCollection configs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+            .setValue("false"));
+        request.topics().add(new CreatableTopic()
+            .setName("foo")
+            .setNumPartitions(1)
+            .setReplicationFactor((short) 1)
+            .setConfigs(configs));
+
+        final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+        assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+        assertTrue(result.records().stream()
+            .filter(m -> m.message() instanceof ConfigRecord)
+            .map(m -> (ConfigRecord) m.message())
+            .anyMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")));
+    }
+
+    @Test
+    void testForceClassicRemoteStorageEnableNotAppliedToDisklessTopics() {
+        final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setClassicRemoteStorageForceEnabled(true)
+            .setDisklessStorageSystemEnabled(true)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        final CreateTopicsRequestData request = new CreateTopicsRequestData();
+        final CreateTopicsRequestData.CreatableTopicConfigCollection configs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(DISKLESS_ENABLE_CONFIG)
+            .setValue("true"));
+        request.topics().add(new CreatableTopic()
+            .setName("foo")
+            .setNumPartitions(-1)
+            .setReplicationFactor((short) -1)
+            .setConfigs(configs));
+
+        final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+        assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+        assertTrue(result.records().stream()
+            .filter(m -> m.message() instanceof ConfigRecord)
+            .map(m -> (ConfigRecord) m.message())
+            .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")));
+    }
+
+    @Test
+    void testForceClassicRemoteStorageEnableNotAppliedToCompactedTopics() {
+        final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setClassicRemoteStorageForceEnabled(true)
+            .setDisklessStorageSystemEnabled(true)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        final CreateTopicsRequestData request = new CreateTopicsRequestData();
+        final CreateTopicsRequestData.CreatableTopicConfigCollection configs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(CLEANUP_POLICY_CONFIG)
+            .setValue(CLEANUP_POLICY_COMPACT));
+        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+            .setValue("false"));
+        request.topics().add(new CreatableTopic()
+            .setName("foo")
+            .setNumPartitions(1)
+            .setReplicationFactor((short) 1)
+            .setConfigs(configs));
+
+        final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+        assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+        assertTrue(result.records().stream()
+            .filter(m -> m.message() instanceof ConfigRecord)
+            .map(m -> (ConfigRecord) m.message())
+            .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")));
+    }
+
+    @Test
+    void testForceClassicRemoteStorageEnableNotAppliedToInternalTopics() {
+        final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setClassicRemoteStorageForceEnabled(true)
+            .setDisklessStorageSystemEnabled(true)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        final CreateTopicsRequestData request = new CreateTopicsRequestData();
+        final CreateTopicsRequestData.CreatableTopicConfigCollection configs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+            .setValue("false"));
+        request.topics().add(new CreatableTopic()
+            .setName(Topic.GROUP_METADATA_TOPIC_NAME)
+            .setNumPartitions(1)
+            .setReplicationFactor((short) 1)
+            .setConfigs(configs));
+
+        final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of(Topic.GROUP_METADATA_TOPIC_NAME));
+        assertEquals(NONE.code(), result.response().topics().find(Topic.GROUP_METADATA_TOPIC_NAME).errorCode());
+        assertTrue(result.records().stream()
+            .filter(m -> m.message() instanceof ConfigRecord)
+            .map(m -> (ConfigRecord) m.message())
+            .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")));
+    }
+
+    @Test
+    void testForceClassicRemoteStorageEnableNotAppliedToExcludedRegexTopics() {
+        final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setClassicRemoteStorageForceEnabled(true)
+            .setClassicRemoteStorageForceExcludeTopicRegexes(List.of("mm2-(.*)"))
+            .setDisklessStorageSystemEnabled(true)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        final CreateTopicsRequestData request = new CreateTopicsRequestData();
+        final CreateTopicsRequestData.CreatableTopicConfigCollection configs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+            .setValue("false"));
+        request.topics().add(new CreatableTopic()
+            .setName("mm2-foo")
+            .setNumPartitions(1)
+            .setReplicationFactor((short) 1)
+            .setConfigs(configs));
+
+        final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("mm2-foo"));
+        assertEquals(NONE.code(), result.response().topics().find("mm2-foo").errorCode());
+        assertTrue(result.records().stream()
+            .filter(m -> m.message() instanceof ConfigRecord)
+            .map(m -> (ConfigRecord) m.message())
+            .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")));
+    }
+
+    @Test
+    void testDisklessForceInterceptorRejectsOnlyOffendingTopic() {
+        final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setDisklessForceEnabled(true)
+            .setDisklessForceIncludeTopicRegexes(List.of("forced-.*"))
+            .setDisklessStorageSystemEnabled(true)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        final CreateTopicsRequestData request = new CreateTopicsRequestData();
+
+        // Topic that matches the regex and explicitly sets diskless.enable=false — should be rejected
+        final CreateTopicsRequestData.CreatableTopicConfigCollection badConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        badConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(DISKLESS_ENABLE_CONFIG)
+            .setValue("false"));
+        request.topics().add(new CreatableTopic()
+            .setName("forced-bad")
+            .setNumPartitions(1)
+            .setReplicationFactor((short) 1)
+            .setConfigs(badConfigs));
+
+        // Topic that does not match the regex — should succeed
+        request.topics().add(new CreatableTopic()
+            .setName("normal-topic")
+            .setNumPartitions(1)
+            .setReplicationFactor((short) 1));
+
+        final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("forced-bad", "normal-topic"));
+
+        assertEquals(INVALID_REQUEST.code(), result.response().topics().find("forced-bad").errorCode());
+        assertEquals(NONE.code(), result.response().topics().find("normal-topic").errorCode());
     }
 }

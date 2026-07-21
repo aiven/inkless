@@ -16,7 +16,6 @@
  */
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.ConsumerGroupState;
 import org.apache.kafka.common.ElectionType;
 import org.apache.kafka.common.GroupState;
 import org.apache.kafka.common.IsolationLevel;
@@ -50,6 +49,8 @@ import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
 import org.apache.kafka.common.message.AlterClientQuotasResponseData;
 import org.apache.kafka.common.message.AlterConfigsResponseData;
+import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
+import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.AlterPartitionRequestData;
@@ -165,8 +166,6 @@ import org.apache.kafka.common.message.FetchResponseData;
 import org.apache.kafka.common.message.FetchSnapshotRequestData;
 import org.apache.kafka.common.message.FetchSnapshotResponseData;
 import org.apache.kafka.common.message.FindCoordinatorRequestData;
-import org.apache.kafka.common.message.GetReplicaLogInfoRequestData;
-import org.apache.kafka.common.message.GetReplicaLogInfoResponseData;
 import org.apache.kafka.common.message.GetTelemetrySubscriptionsRequestData;
 import org.apache.kafka.common.message.GetTelemetrySubscriptionsResponseData;
 import org.apache.kafka.common.message.HeartbeatRequestData;
@@ -176,6 +175,8 @@ import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData.AlterC
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData.AlterableConfig;
 import org.apache.kafka.common.message.IncrementalAlterConfigsResponseData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsResponseData.AlterConfigsResourceResponse;
+import org.apache.kafka.common.message.InitDisklessLogRequestData;
+import org.apache.kafka.common.message.InitDisklessLogResponseData;
 import org.apache.kafka.common.message.InitProducerIdRequestData;
 import org.apache.kafka.common.message.InitProducerIdResponseData;
 import org.apache.kafka.common.message.InitializeShareGroupStateRequestData;
@@ -235,6 +236,8 @@ import org.apache.kafka.common.message.RemoveRaftVoterRequestData;
 import org.apache.kafka.common.message.RemoveRaftVoterResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
+import org.apache.kafka.common.message.RepairDisklessLogRequestData;
+import org.apache.kafka.common.message.RepairDisklessLogResponseData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsRequestData;
 import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
 import org.apache.kafka.common.message.SaslAuthenticateRequestData;
@@ -321,6 +324,7 @@ import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.apache.kafka.common.protocol.ApiKeys.API_VERSIONS;
+import static org.apache.kafka.common.protocol.ApiKeys.CREATE_DELEGATION_TOKEN;
 import static org.apache.kafka.common.protocol.ApiKeys.CREATE_PARTITIONS;
 import static org.apache.kafka.common.protocol.ApiKeys.CREATE_TOPICS;
 import static org.apache.kafka.common.protocol.ApiKeys.DELETE_ACLS;
@@ -833,7 +837,7 @@ public class RequestResponseTest {
     @Test
     public void testListGroupRequestV3FailsWithStates() {
         ListGroupsRequestData data = new ListGroupsRequestData()
-                .setStatesFilter(singletonList(ConsumerGroupState.STABLE.name()));
+                .setStatesFilter(singletonList(GroupState.STABLE.name()));
         assertThrows(UnsupportedVersionException.class, () -> new ListGroupsRequest.Builder(data).build((short) 3));
     }
 
@@ -1100,7 +1104,9 @@ public class RequestResponseTest {
             case DESCRIBE_SHARE_GROUP_OFFSETS: return createDescribeShareGroupOffsetsRequest(version);
             case ALTER_SHARE_GROUP_OFFSETS: return createAlterShareGroupOffsetsRequest(version);
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsRequest(version);
-            case GET_REPLICA_LOG_INFO: return createGetReplicaLogInfoRequest(version);
+            case INIT_DISKLESS_LOG: return createInitDisklessLogRequest(version);
+            case ALTER_DISKLESS_SWITCH: return createAlterDisklessSwitchRequest(version);
+            case REPAIR_DISKLESS_LOG: return createRepairDisklessLogRequest(version);
             case START_MIRROR_TOPICS: return createStartMirrorTopicsRequest(version);
             case STOP_MIRROR_TOPICS: return createStopMirrorTopicsRequest(version);
             case LIST_CLUSTER_MIRRORS: return createListClusterMirrorsRequest(version);
@@ -1207,7 +1213,9 @@ public class RequestResponseTest {
             case DESCRIBE_SHARE_GROUP_OFFSETS: return createDescribeShareGroupOffsetsResponse();
             case ALTER_SHARE_GROUP_OFFSETS: return createAlterShareGroupOffsetsResponse();
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsResponse();
-            case GET_REPLICA_LOG_INFO: return createGetReplicaLogInfoResponse();
+            case INIT_DISKLESS_LOG: return createInitDisklessLogResponse();
+            case ALTER_DISKLESS_SWITCH: return createAlterDisklessSwitchResponse();
+            case REPAIR_DISKLESS_LOG: return createRepairDisklessLogResponse();
             case START_MIRROR_TOPICS: return createStartMirrorTopicsResponse();
             case STOP_MIRROR_TOPICS: return createStopMirrorTopicsResponse();
             case LIST_CLUSTER_MIRRORS: return createListClusterMirrorsResponse();
@@ -1433,7 +1441,7 @@ public class RequestResponseTest {
                     .setGroupId("group")
                     .setErrorCode((short) 0)
                     .setErrorMessage(Errors.forCode((short) 0).message())
-                    .setGroupState(ConsumerGroupState.EMPTY.toString())
+                    .setGroupState(GroupState.EMPTY.toString())
                     .setGroupEpoch(0)
                     .setAssignmentEpoch(0)
                     .setAssignorName("range")
@@ -1506,6 +1514,74 @@ public class RequestResponseTest {
                                 ))
                 ));
         return new AssignReplicasToDirsResponse(data);
+    }
+
+    private InitDisklessLogRequest createInitDisklessLogRequest(short version) {
+        InitDisklessLogRequestData data = new InitDisklessLogRequestData()
+                .setBrokerId(1)
+                .setBrokerEpoch(123L)
+                .setTopics(singletonList(
+                        new InitDisklessLogRequestData.TopicData()
+                                .setTopicId(Uuid.fromString("qo0Pcp70TdGnAa7YKMKCqw"))
+                                .setPartitions(singletonList(
+                                        new InitDisklessLogRequestData.PartitionData()
+                                                .setPartitionId(0)
+                                                .setDisklessStartOffset(100L)
+                                                .setLeaderEpoch(5)
+                                                .setProducerStates(singletonList(
+                                                        new InitDisklessLogRequestData.ProducerState()
+                                                                .setProducerId(1000L)
+                                                                .setProducerEpoch((short) 0)
+                                                                .setBaseSequence(0)
+                                                                .setLastSequence(10)
+                                                                .setAssignedOffset(100L)
+                                                                .setBatchMaxTimestamp(System.currentTimeMillis())
+                                                ))
+                                ))
+                ));
+        return new InitDisklessLogRequest.Builder(data).build(version);
+    }
+
+    private InitDisklessLogResponse createInitDisklessLogResponse() {
+        InitDisklessLogResponseData data = new InitDisklessLogResponseData()
+                .setThrottleTimeMs(123)
+                .setTopics(singletonList(
+                        new InitDisklessLogResponseData.TopicResponse()
+                                .setTopicId(Uuid.fromString("qo0Pcp70TdGnAa7YKMKCqw"))
+                                .setPartitions(singletonList(
+                                        new InitDisklessLogResponseData.PartitionResponse()
+                                                .setPartitionId(0)
+                                                .setErrorCode(Errors.NONE.code())
+                                ))
+                ));
+        return new InitDisklessLogResponse(data);
+    }
+
+    private AlterDisklessSwitchRequest createAlterDisklessSwitchRequest(short version) {
+        AlterDisklessSwitchRequestData data = new AlterDisklessSwitchRequestData()
+                .setTopicName("foo")
+                .setPartitionIndex(0)
+                .setSealOffset(100L);
+        return new AlterDisklessSwitchRequest.Builder(data).build(version);
+    }
+
+    private AlterDisklessSwitchResponse createAlterDisklessSwitchResponse() {
+        return new AlterDisklessSwitchResponse(new AlterDisklessSwitchResponseData()
+                .setThrottleTimeMs(123)
+                .setErrorCode(Errors.NONE.code()));
+    }
+
+    private RepairDisklessLogRequest createRepairDisklessLogRequest(short version) {
+        RepairDisklessLogRequestData data = new RepairDisklessLogRequestData()
+                .setTopicName("foo")
+                .setPartitionIndex(0);
+        return new RepairDisklessLogRequest.Builder(data).build(version);
+    }
+
+    private RepairDisklessLogResponse createRepairDisklessLogResponse() {
+        return new RepairDisklessLogResponse(new RepairDisklessLogResponseData()
+                .setThrottleTimeMs(123)
+                .setErrorCode(Errors.NONE.code()));
     }
 
     private DescribeTopicPartitionsRequest createDescribeTopicPartitionsRequest(short version) {
@@ -2668,8 +2744,7 @@ public class RequestResponseTest {
                                 .setPartitionIndexes(List.of(1))
                         ))
                 )),
-            false,
-            true
+            false
         ).build(version);
     }
 
@@ -2715,8 +2790,7 @@ public class RequestResponseTest {
                         .setGroupId("group5")
                         .setTopics(null)
                 )),
-            false,
-            true
+            false
         ).build(version);
     }
 
@@ -2731,8 +2805,7 @@ public class RequestResponseTest {
                         .setMemberEpoch(version >= 9 ? 10 : -1)
                         .setTopics(null)
                 )),
-            false,
-            true
+            false
         ).build(version);
     }
 
@@ -3070,7 +3143,7 @@ public class RequestResponseTest {
 
     private WriteTxnMarkersRequest createWriteTxnMarkersRequest(short version) {
         List<TopicPartition> partitions = singletonList(new TopicPartition("topic", 73));
-        WriteTxnMarkersRequest.TxnMarkerEntry txnMarkerEntry = new WriteTxnMarkersRequest.TxnMarkerEntry(21L, (short) 42, 73, TransactionResult.ABORT, partitions);
+        WriteTxnMarkersRequest.TxnMarkerEntry txnMarkerEntry = new WriteTxnMarkersRequest.TxnMarkerEntry(21L, (short) 42, 73, TransactionResult.ABORT, partitions, (short) 0);
         return new WriteTxnMarkersRequest.Builder(singletonList(txnMarkerEntry)).build(version);
     }
 
@@ -3318,7 +3391,7 @@ public class RequestResponseTest {
     }
 
     private AlterConfigsRequest createAlterConfigsRequest(short version) {
-        Map<ConfigResource, AlterConfigsRequest.Config> configs = new HashMap<>();
+        Map<ConfigResource, AlterConfigsRequest.Config> configs = new LinkedHashMap<>();
         List<AlterConfigsRequest.ConfigEntry> configEntries = asList(
                 new AlterConfigsRequest.ConfigEntry("config_name", "config_value"),
                 new AlterConfigsRequest.ConfigEntry("another_name", "another value")
@@ -3326,7 +3399,19 @@ public class RequestResponseTest {
         configs.put(new ConfigResource(ConfigResource.Type.BROKER, "0"), new AlterConfigsRequest.Config(configEntries));
         configs.put(new ConfigResource(ConfigResource.Type.TOPIC, "topic"),
                 new AlterConfigsRequest.Config(emptyList()));
-        return new AlterConfigsRequest.Builder(configs, false).build(version);
+        AlterConfigsRequest alterConfigsRequest = new AlterConfigsRequest.Builder(configs, false).build(version);
+        assertEquals(
+                "AlterConfigsRequestData(resources=[" +
+                        "AlterConfigsResource(resourceType=" + ConfigResource.Type.BROKER.id() + ", " +
+                        "resourceName='0', " +
+                        "configs=[AlterableConfig(name='config_name', value='REDACTED'), " +
+                        "AlterableConfig(name='another_name', value='REDACTED')]), " +
+                        "AlterConfigsResource(resourceType=" + ConfigResource.Type.TOPIC.id() + ", " +
+                        "resourceName='topic', configs=[])], " +
+                        "validateOnly=false)",
+                alterConfigsRequest.toString()
+        );
+        return alterConfigsRequest;
     }
 
     private AlterConfigsResponse createAlterConfigsResponse() {
@@ -3429,7 +3514,12 @@ public class RequestResponseTest {
                 .setMaxTimestampMs(System.currentTimeMillis())
                 .setTokenId("token1")
                 .setHmac("test".getBytes());
-        return new CreateDelegationTokenResponse(data);
+        var response = new CreateDelegationTokenResponse(data);
+
+        String responseStr = response.toString();
+        assertTrue(responseStr.contains("tokenId='REDACTED'"));
+        assertTrue(responseStr.contains("hmac=[]"));
+        return response;
     }
 
     private CreateClusterMirrorRequest createCreateClusterMirrorRequest(short version) {
@@ -3501,7 +3591,14 @@ public class RequestResponseTest {
         tokenList.add(new DelegationToken(tokenInfo1, "test".getBytes()));
         tokenList.add(new DelegationToken(tokenInfo2, "test".getBytes()));
 
-        return new DescribeDelegationTokenResponse(version, 20, Errors.NONE, tokenList);
+        var response = new DescribeDelegationTokenResponse(version, 20, Errors.NONE, tokenList);
+
+        String responseStr = response.toString();
+        String[] parts = responseStr.split(",");
+        // The 2 token info should both be redacted
+        assertEquals(2, Arrays.stream(parts).filter(s -> s.trim().contains("tokenId='REDACTED'")).count());
+        assertEquals(2, Arrays.stream(parts).filter(s -> s.trim().contains("hmac=[]")).count());
+        return response;
     }
 
     private ElectLeadersRequest createElectLeadersRequestNullPartitions() {
@@ -3973,6 +4070,7 @@ public class RequestResponseTest {
                     .setPartition(0)
                     .setStateEpoch(0)
                     .setStartOffset(0)
+                    .setDeliveryCompleteCount(0)
                     .setStateBatches(singletonList(new WriteShareGroupStateRequestData.StateBatch()
                         .setFirstOffset(0)
                         .setLastOffset(0)
@@ -4076,6 +4174,7 @@ public class RequestResponseTest {
                     .setPartitionIndex(0)
                     .setErrorCode(Errors.NONE.code())
                     .setStartOffset(0)
+                    .setLag(0)
                     .setLeaderEpoch(0)))))));
         return new DescribeShareGroupOffsetsResponse(data);
     }
@@ -4219,6 +4318,28 @@ public class RequestResponseTest {
         String msg = assertThrows(RuntimeException.class, () -> AbstractRequest.
                 parseRequest(SASL_AUTHENTICATE, SASL_AUTHENTICATE.latestVersion(), accessor)).getMessage();
         assertEquals("Error reading byte array of 32767 byte(s): only 3 byte(s) available", msg);
+    }
+
+    @Test
+    public void testSaslAuthenticateRequestResponseToStringMasksSensitiveData() {
+        byte[] sensitiveAuthBytes = "sensitive-auth-token-123".getBytes(StandardCharsets.UTF_8);
+        SaslAuthenticateRequestData requestData = new SaslAuthenticateRequestData().setAuthBytes(sensitiveAuthBytes);
+        SaslAuthenticateRequest request = new SaslAuthenticateRequest(requestData, (short) 2);
+
+        String requestString = request.toString();
+
+        // Verify that the authBytes field is present but empty in the output
+        assertTrue(requestString.contains("authBytes=[]"),
+                "authBytes field should be empty in toString() output");
+
+        SaslAuthenticateResponseData responseData = new SaslAuthenticateResponseData().setAuthBytes(sensitiveAuthBytes);
+        SaslAuthenticateResponse response = new SaslAuthenticateResponse(responseData);
+
+        String responseString = response.toString();
+
+        // Verify that the authBytes field is present but empty in the output
+        assertTrue(responseString.contains("authBytes=[]"),
+                "authBytes field should be empty in toString() output");
     }
 
     @Test

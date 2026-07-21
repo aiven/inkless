@@ -21,6 +21,7 @@ import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.yammer.metrics.core.Meter;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -58,8 +59,19 @@ public final class BrokerTopicMetrics {
     // For backward compatibility, we keep the old package name as metric group name.
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup("kafka.server", "BrokerTopicMetrics");
     private final Map<String, String> tags;
-    private final Map<String, MeterWrapper> metricTypeMap = new java.util.HashMap<>();
-    private final Map<String, GaugeWrapper> metricGaugeTypeMap = new java.util.HashMap<>();
+    // topicType tags are only used for broker-level "all topics" meters.
+    // They intentionally do NOT depend on any topic name: they represent a broker-wide split of traffic.
+    // We also intentionally avoid adding topicType tags to per-topic metrics to prevent metric cardinality
+    // explosion (classic + diskless variants for every topic would double the meters kept in memory).
+    private final Map<String, String> classicTags = Map.of("topicType", "classic");
+    private final Map<String, String> disklessTags = Map.of("topicType", "diskless");
+    private final boolean isAllTopicsStats;
+    private final Map<String, MeterWrapper> metricTypeMap = new HashMap<>();
+    private final Map<String, GaugeWrapper> metricGaugeTypeMap = new HashMap<>();
+    // Only used for all-topics bytes metrics (topicType=diskless). Classic meters are stored in metricTypeMap.
+    // These are not additional metric names, but mappings to existing bytesIn/Out names + diskless topic type tags.
+    private final MeterWrapper disklessBytesInRate;
+    private final MeterWrapper disklessBytesOutRate;
 
     public BrokerTopicMetrics(boolean remoteStorageEnabled) {
         this(Optional.empty(), remoteStorageEnabled);
@@ -71,10 +83,28 @@ public final class BrokerTopicMetrics {
 
     private BrokerTopicMetrics(Optional<String> name, boolean remoteStorageEnabled) {
         this.tags = name.map(s -> Map.of("topic", s)).orElse(Map.of());
+        this.isAllTopicsStats = name.isEmpty();
 
         metricTypeMap.put(MESSAGE_IN_PER_SEC, new MeterWrapper(MESSAGE_IN_PER_SEC, "messages"));
-        metricTypeMap.put(BYTES_IN_PER_SEC, new MeterWrapper(BYTES_IN_PER_SEC, "bytes"));
-        metricTypeMap.put(BYTES_OUT_PER_SEC, new MeterWrapper(BYTES_OUT_PER_SEC, "bytes"));
+
+        final MeterWrapper classicBytesInRate;
+        final MeterWrapper classicBytesOutRate;
+        if (isAllTopicsStats) {
+            // All-topics (broker-level) meters with topicType tag are eagerly initialized
+            // by MeterWrapper constructor since they only have topicType tag (global metrics).
+            classicBytesInRate = new MeterWrapper(BYTES_IN_PER_SEC, "bytes", classicTags);
+            classicBytesOutRate = new MeterWrapper(BYTES_OUT_PER_SEC, "bytes", classicTags);
+            disklessBytesInRate = new MeterWrapper(BYTES_IN_PER_SEC, "bytes", disklessTags);
+            disklessBytesOutRate = new MeterWrapper(BYTES_OUT_PER_SEC, "bytes", disklessTags);
+        } else {
+            classicBytesInRate = new MeterWrapper(BYTES_IN_PER_SEC, "bytes", tags);
+            classicBytesOutRate = new MeterWrapper(BYTES_OUT_PER_SEC, "bytes", tags);
+            disklessBytesInRate = null;
+            disklessBytesOutRate = null;
+        }
+        metricTypeMap.put(BYTES_IN_PER_SEC, classicBytesInRate);
+        metricTypeMap.put(BYTES_OUT_PER_SEC, classicBytesOutRate);
+
         metricTypeMap.put(BYTES_REJECTED_PER_SEC, new MeterWrapper(BYTES_REJECTED_PER_SEC, "bytes"));
         metricTypeMap.put(FAILED_PRODUCE_REQUESTS_PER_SEC, new MeterWrapper(FAILED_PRODUCE_REQUESTS_PER_SEC, "requests"));
         metricTypeMap.put(FAILED_FETCH_REQUESTS_PER_SEC, new MeterWrapper(FAILED_FETCH_REQUESTS_PER_SEC, "requests"));
@@ -123,12 +153,24 @@ public final class BrokerTopicMetrics {
     public void closeMetric(String metricName) {
         MeterWrapper mw = metricTypeMap.get(metricName);
         if (mw != null) mw.close();
+        if (isAllTopicsStats) {
+            if (BYTES_IN_PER_SEC.equals(metricName) && disklessBytesInRate != null) {
+                disklessBytesInRate.close();
+            }
+            if (BYTES_OUT_PER_SEC.equals(metricName) && disklessBytesOutRate != null) {
+                disklessBytesOutRate.close();
+            }
+        }
         GaugeWrapper mg = metricGaugeTypeMap.get(metricName);
         if (mg != null) mg.close();
     }
 
     public void close() {
         metricTypeMap.values().forEach(MeterWrapper::close);
+        if (isAllTopicsStats) {
+            if (disklessBytesInRate != null) disklessBytesInRate.close();
+            if (disklessBytesOutRate != null) disklessBytesOutRate.close();
+        }
         metricGaugeTypeMap.values().forEach(GaugeWrapper::close);
     }
 
@@ -145,11 +187,93 @@ public final class BrokerTopicMetrics {
         return metricTypeMap.get(MESSAGE_IN_PER_SEC).meter();
     }
 
+    /**
+     * Returns the bytes in rate meter for topic-specific metrics.
+     * <p>
+     * This is a convenience method equivalent to calling {@link #bytesInRate(boolean)} with {@code false}.
+     * It is primarily intended for topic-specific metrics (when a topic name was specified in the constructor),
+     * where the {@code isDiskless} parameter is ignored and the meter is tagged only by topic name.
+     * <p>
+     * For all-topics stats (broker-level aggregation), prefer using {@link #bytesInRate(boolean)} explicitly
+     * to make the topic type tagging intention clear.
+     *
+     * @return the bytes in rate meter
+     */
     public Meter bytesInRate() {
+        return bytesInRate(false);
+    }
+
+    /**
+     * Returns the bytes in rate meter, optionally tagged by topic type.
+     * <p>
+     * Behavior depends on whether this is an all-topics aggregated metric or topic-specific:
+     * <ul>
+     *   <li><b>All-topics stats</b> (when no topic name was specified in constructor):
+     *       Returns a meter tagged with {@code topicType=classic} or {@code topicType=diskless}.
+     *       Separate meters are maintained for each topic type to allow independent tracking
+     *       of classic vs diskless topic throughput at the broker level.</li>
+     *   <li><b>Topic-specific stats</b> (when a topic name was specified in constructor):
+     *       The {@code isDiskless} parameter is ignored. Returns the same meter regardless
+     *       of the parameter value, as topic-specific metrics are only tagged by the topic
+     *       name and do not include a {@code topicType} tag. This is intentional: tagging per-topic
+     *       meters with topicType would double the number of meters we keep in memory (classic + diskless
+     *       variants per topic).</li>
+     * </ul>
+     *
+     * @param isDiskless if true, returns the diskless-tagged meter (for all-topics stats only);
+     *                   if false, returns the classic-tagged meter (for all-topics stats only)
+     * @return the bytes in rate meter
+     */
+    public Meter bytesInRate(boolean isDiskless) {
+        if (isAllTopicsStats && isDiskless) {
+            return disklessBytesInRate.meter();
+        }
+        // For topic-specific stats, isDiskless is intentionally ignored.
         return metricTypeMap.get(BYTES_IN_PER_SEC).meter();
     }
 
+    /**
+     * Returns the bytes out rate meter for topic-specific metrics.
+     * <p>
+     * This is a convenience method equivalent to calling {@link #bytesOutRate(boolean)} with {@code false}.
+     * It is primarily intended for topic-specific metrics (when a topic name was specified in the constructor),
+     * where the {@code isDiskless} parameter is ignored and the meter is tagged only by topic name.
+     * <p>
+     * For all-topics stats (broker-level aggregation), prefer using {@link #bytesOutRate(boolean)} explicitly
+     * to make the topic type tagging intention clear.
+     *
+     * @return the bytes out rate meter
+     */
     public Meter bytesOutRate() {
+        return bytesOutRate(false);
+    }
+
+    /**
+     * Returns the bytes out rate meter, optionally tagged by topic type.
+     * <p>
+     * Behavior depends on whether this is an all-topics aggregated metric or topic-specific:
+     * <ul>
+     *   <li><b>All-topics stats</b> (when no topic name was specified in constructor):
+     *       Returns a meter tagged with {@code topicType=classic} or {@code topicType=diskless}.
+     *       Separate meters are maintained for each topic type to allow independent tracking
+     *       of classic vs diskless topic throughput at the broker level.</li>
+     *   <li><b>Topic-specific stats</b> (when a topic name was specified in constructor):
+     *       The {@code isDiskless} parameter is ignored. Returns the same meter regardless
+     *       of the parameter value, as topic-specific metrics are only tagged by the topic
+     *       name and do not include a {@code topicType} tag. This is intentional: tagging per-topic
+     *       meters with topicType would double the number of meters we keep in memory (classic + diskless
+     *       variants per topic).</li>
+     * </ul>
+     *
+     * @param isDiskless if true, returns the diskless-tagged meter (for all-topics stats only);
+     *                   if false, returns the classic-tagged meter (for all-topics stats only)
+     * @return the bytes out rate meter
+     */
+    public Meter bytesOutRate(boolean isDiskless) {
+        if (isAllTopicsStats && isDiskless) {
+            return disklessBytesOutRate.meter();
+        }
+        // For topic-specific stats, isDiskless is intentionally ignored.
         return metricTypeMap.get(BYTES_OUT_PER_SEC).meter();
     }
 
@@ -348,14 +472,26 @@ public final class BrokerTopicMetrics {
     private class MeterWrapper {
         private final String metricType;
         private final String eventType;
+        private final Map<String, String> metricTags;
         private volatile Meter lazyMeter;
         private final Lock meterLock = new ReentrantLock();
 
         public MeterWrapper(String metricType, String eventType) {
+            this(metricType, eventType, BrokerTopicMetrics.this.tags);
+        }
+
+        public MeterWrapper(String metricType, String eventType, Map<String, String> metricTags) {
             this.metricType = metricType;
             this.eventType = eventType;
-            if (tags.isEmpty()) {
-                meter(); // greedily initialize the general topic metrics
+            this.metricTags = new HashMap<>(metricTags);
+            // Eagerly initialize global metrics so they are always registered and visible in monitoring
+            // systems from broker startup, even before any traffic is recorded.
+            // Global metrics are those with:
+            // - No tags (general broker-level metrics)
+            // - Only topicType tag (broker-level metrics split by topic type, e.g., classic vs diskless)
+            boolean onlyTopicTypeTag = this.metricTags.size() == 1 && this.metricTags.containsKey("topicType");
+            if (this.metricTags.isEmpty() || onlyTopicTypeTag) {
+                meter();
             }
         }
 
@@ -366,7 +502,7 @@ public final class BrokerTopicMetrics {
                 try {
                     meter = lazyMeter;
                     if (meter == null) {
-                        meter = metricsGroup.newMeter(metricType, eventType, TimeUnit.SECONDS, tags);
+                        meter = metricsGroup.newMeter(metricType, eventType, TimeUnit.SECONDS, metricTags);
                         lazyMeter = meter;
                     }
                 } finally {
@@ -380,7 +516,7 @@ public final class BrokerTopicMetrics {
             meterLock.lock();
             try {
                 if (lazyMeter != null) {
-                    metricsGroup.removeMetric(metricType, tags);
+                    metricsGroup.removeMetric(metricType, metricTags);
                     lazyMeter = null;
                 }
             } finally {

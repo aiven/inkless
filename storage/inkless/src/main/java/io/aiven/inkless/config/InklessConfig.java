@@ -1,0 +1,841 @@
+/*
+ * Inkless
+ * Copyright (C) 2024 - 2025 Aiven OY
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package io.aiven.inkless.config;
+
+import org.apache.kafka.common.config.AbstractConfig;
+import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.metrics.Metrics;
+import org.apache.kafka.common.network.ListenerName;
+
+import java.lang.reflect.InvocationTargetException;
+import java.time.Duration;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import io.aiven.inkless.common.config.validators.Subclass;
+import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.InMemoryControlPlane;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.storage_backend.in_memory.InMemoryStorage;
+
+public class InklessConfig extends AbstractConfig {
+    public static final String PREFIX = "inkless.";
+
+    public static final String CONTROL_PLANE_PREFIX = "control.plane.";
+
+    public static final String CONTROL_PLANE_CLASS_CONFIG = CONTROL_PLANE_PREFIX + "class";
+    private static final String CONTROL_PLANE_CLASS_DOC = "The control plane implementation class";
+    private static final String CONTROL_PLANE_CLASS_DEFAULT = InMemoryControlPlane.class.getCanonicalName();
+
+    public static final String OBJECT_KEY_PREFIX_CONFIG = "object.key.prefix";
+    private static final String OBJECT_KEY_PREFIX_DOC = "The object storage key prefix. It cannot start of finish with a slash.";
+
+    public static final String OBJECT_KEY_LOG_PREFIX_MASKED_CONFIG = "object.key.log.prefix.masked";
+    private static final String OBJECT_KEY_LOG_PREFIX_MASKED_DOC = "Whether to log full object key path, or mask the prefix.";
+
+    public static final String PRODUCE_PREFIX = "produce.";
+
+    public static final String PRODUCE_COMMIT_INTERVAL_MS_CONFIG = PRODUCE_PREFIX + "commit.interval.ms";
+    private static final String PRODUCE_COMMIT_INTERVAL_MS_DOC = "The interval with which produced data are committed.";
+    private static final int PRODUCE_COMMIT_INTERVAL_MS_DEFAULT = 250;
+
+    public static final String PRODUCE_BUFFER_MAX_BYTES_CONFIG = PRODUCE_PREFIX + "buffer.max.bytes";
+    private static final String PRODUCE_BUFFER_MAX_BYTES_DOC = "The max size of the buffer to accumulate produce requests. "
+        + "This is a best effort limit that cannot always be strictly enforced.";
+    private static final int PRODUCE_BUFFER_MAX_BYTES_DEFAULT = 8 * 1024 * 1024;  // 8 MiB
+
+    public static final String PRODUCE_MAX_UPLOAD_ATTEMPTS_CONFIG = PRODUCE_PREFIX + "max.upload.attempts";
+    private static final String PRODUCE_MAX_UPLOAD_ATTEMPTS_DOC = "The max number of attempts to upload a file to the object storage.";
+    private static final int PRODUCE_MAX_UPLOAD_ATTEMPTS_DEFAULT = 3;
+
+    public static final String PRODUCE_UPLOAD_BACKOFF_MS_CONFIG = PRODUCE_PREFIX + "upload.backoff.ms";
+    private static final String PRODUCE_UPLOAD_BACKOFF_MS_DOC = "The number of millisecond to back off for before the next upload attempt.";
+    private static final int PRODUCE_UPLOAD_BACKOFF_MS_DEFAULT = 10;
+
+    public static final String STORAGE_PREFIX = "storage.";
+
+    public static final String STORAGE_BACKEND_CLASS_CONFIG = STORAGE_PREFIX + "backend.class";
+    private static final String STORAGE_BACKEND_CLASS_DOC = "The storage backend implementation class";
+    private static final String STORAGE_BACKEND_CLASS_DEFAULT = InMemoryStorage.class.getCanonicalName();
+
+    public static final String CONSUME_PREFIX = "consume.";
+
+    public static final String CONSUME_CACHE_BLOCK_BYTES_CONFIG = CONSUME_PREFIX + "cache.block.bytes";
+    private static final String CONSUME_CACHE_BLOCK_BYTES_DOC = "The number of bytes to fetch as a single block from object storage when serving fetch requests.";
+    private static final int CONSUME_CACHE_BLOCK_BYTES_DEFAULT = 16 * 1024 * 1024;  // 16 MiB
+
+    public static final String CONSUME_CACHE_MAX_COUNT_CONFIG = CONSUME_PREFIX + "cache.max.count";
+    private static final String CONSUME_CACHE_MAX_COUNT_DOC = "The maximum number of objects to cache in memory.";
+    private static final int CONSUME_CACHE_MAX_COUNT_DEFAULT = 1000;
+
+    public static final String CONSUME_CACHE_MAX_BYTES_CONFIG = CONSUME_PREFIX + "cache.max.bytes";
+    private static final String CONSUME_CACHE_MAX_BYTES_DOC = "Best-effort limit on cached data based on the sum of cached payload byte lengths. " +
+        "When set to a value greater than 0, byte-based eviction is used instead of count-based (" + CONSUME_CACHE_MAX_COUNT_CONFIG + "). " +
+        "Set to 0 (default) to use count-based eviction.";
+    private static final long CONSUME_CACHE_MAX_BYTES_DEFAULT = 0;
+
+    public static final String CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG = CONSUME_PREFIX + "cache.expiration.lifespan.sec";
+    private static final String CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DOC = "The lifespan in seconds of a cache entry before it will be removed from all storages.";
+    private static final int CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DEFAULT = 60; // Defaults to 1 minute
+
+    public static final String CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_CONFIG = CONSUME_PREFIX + "cache.expiration.max.idle.sec";
+    private static final String CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_DOC = "The maximum idle time in seconds before a cache entry will be removed from all storages. " +
+        "-1 means disabled, and entries will not be removed based on idle time.";
+    private static final int CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_DEFAULT = -1; // Disabled by default
+
+    public static final String CONSUME_BATCH_COORDINATE_CACHE_ENABLED_CONFIG = CONSUME_PREFIX + "batch.coordinate.cache.enabled";
+    public static final String CONSUME_BATCH_COORDINATE_CACHE_ENABLED_DOC = "If true, the Batch Coordinate cache is enabled.";
+    private static final boolean CONSUME_BATCH_COORDINATE_CACHE_ENABLED_DEFAULT = true;
+
+    public static final String CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_CONFIG = CONSUME_PREFIX + "batch.coordinate.cache.ttl.ms";
+    public static final String CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_DOC = "Time to live in milliseconds for an entry in the Batch Coordinate cache. " +
+        "The time to live must be <= than half of the value of of file.cleaner.interval.ms.";
+    private static final int CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_DEFAULT = 5000;
+
+    public static final String CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_CONFIG = CONSUME_PREFIX + "cross.tier.log.start.cache.enabled";
+    public static final String CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_DOC = "If true, the cross-tier log start offset cache is enabled. " +
+        "It caches the EARLIEST offset of consolidating diskless topics to avoid querying the control plane on every request.";
+    private static final boolean CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_DEFAULT = true;
+
+    public static final String CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_CONFIG = CONSUME_PREFIX + "cross.tier.log.start.cache.ttl.ms";
+    public static final String CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_DOC = "Time to live in milliseconds for an entry in the cross-tier log start offset cache. " +
+        "A stale entry can only ever be too low (the safe direction), so this only bounds how quickly a retention advance becomes visible from non-leader brokers.";
+    private static final int CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_DEFAULT = 10000;
+
+    public static final String RETENTION_ENFORCEMENT_INTERVAL_MS_CONFIG = "retention.enforcement.interval.ms";
+    private static final String RETENTION_ENFORCEMENT_INTERVAL_MS_DOC = "The interval with which to enforce retention policies on a partition. " +
+        "This interval is approximate, because each scheduling event is randomized. " +
+        "The retention enforcement mechanism also takes into account the total number of brokers in the cluster: " +
+        "the more brokers, the less frequently each one of them enforces retention policy.";
+    private static final int RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
+
+    public static final String CONSOLIDATION_CLEANUP_INTERVAL_MS_CONFIG = "consolidation.cleanup.interval.ms";
+    private static final String CONSOLIDATION_CLEANUP_INTERVAL_MS_DOC = "The interval with which to run consolidated diskless WAL pruning on each broker.";
+    private static final int CONSOLIDATION_CLEANUP_INTERVAL_MS_DEFAULT = RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT;
+
+    public static final String FILE_CLEANER_INTERVAL_MS_CONFIG = "file.cleaner.interval.ms";
+    private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion.";
+    private static final int FILE_CLEANER_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
+
+    public static final String CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_CONFIG = "cross.tier.log.start.report.interval.ms";
+    private static final String CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_DOC = "The interval with which the leader reports " +
+        "the cross-tier (remote) log start offset of consolidating diskless partitions to the control plane. " +
+        "This is dwarfed by remote.log.manager.task.interval.ms (default 30s), which governs how often the underlying " +
+        "remote-retention observation is even produced, so raising this mainly trades off control-plane call frequency, " +
+        "not the effective staleness window.";
+    private static final int CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_DEFAULT = 1000;
+
+    public static final String FILE_CLEANER_RETENTION_PERIOD_MS_CONFIG = "file.cleaner.retention.period.ms";
+    private static final String FILE_CLEANER_RETENTION_PERIOD_MS_DOC = "The retention period for files marked for deletion.";
+    private static final int FILE_CLEANER_RETENTION_PERIOD_MS_DEFAULT = 60 * 1000;  // 1 minute
+
+
+    public static final String PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG = "produce.upload.thread.pool.size";
+    private static final String PRODUCE_UPLOAD_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently upload files to remote storage";
+    // Given that S3 upload is ~400ms P99, and commits to PG are ~50ms P99, defaulting to 8
+    // to avoid starting an upload if 8 commits are executing sequentially
+    private static final int PRODUCE_UPLOAD_THREAD_POOL_SIZE_DEFAULT = 8;
+
+    public static final String FETCH_DATA_THREAD_POOL_SIZE_CONFIG = "fetch.data.thread.pool.size";
+    public static final String FETCH_DATA_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently fetch data files from remote storage";
+    private static final int FETCH_DATA_THREAD_POOL_SIZE_DEFAULT = 32;
+
+    public static final String FETCH_METADATA_THREAD_POOL_SIZE_CONFIG = "fetch.metadata.thread.pool.size";
+    public static final String FETCH_METADATA_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently fetch metadata from batch coordinator. "
+        + "Note: This executor is shared between hot and cold path requests. The hot/cold path separation "
+        + "only applies to data fetching (after metadata is retrieved). A burst of lagging consumer requests "
+        + "can still compete with recent consumer requests at the metadata layer. For workloads with significant "
+        + "lagging consumer traffic, consider increasing this value proportionally to the combined "
+        + "fetch.data.thread.pool.size + fetch.lagging.consumer.thread.pool.size to prevent metadata fetching "
+        + "from becoming a bottleneck in mixed hot/cold workloads.";
+    private static final int FETCH_METADATA_THREAD_POOL_SIZE_DEFAULT = 8;
+
+    public static final String FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_CONFIG = "fetch.lagging.consumer.thread.pool.size";
+    public static final String FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_DOC = "Thread pool size for lagging consumer fetch requests (consumers reading old data). "
+        + "Set to 0 to disable the lagging consumer feature (all requests will use the recent data path). "
+        + "The default value of 16 is designed as approximately half of the default fetch.data.thread.pool.size (32), "
+        + "providing sufficient capacity for typical cold storage access patterns while leaving headroom for the hot path. "
+        + "The queue capacity is automatically set to thread.pool.size * 100, providing burst buffering "
+        + "(e.g., 16 threads = 1600 queue capacity ~= 8 seconds buffer at 200 req/s). "
+        + "Tune based on lagging consumer SLA and expected load patterns.";
+    // Default 16: Designed as half of default fetch.data.thread.pool.size (32), sufficient for typical
+    // cold storage access patterns while leaving headroom for hot path. Tune based on lagging consumer SLA.
+    private static final int FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_DEFAULT = 16;
+
+    public static final String FETCH_LAGGING_CONSUMER_THRESHOLD_MS_CONFIG = "fetch.lagging.consumer.threshold.ms";
+    public static final String FETCH_LAGGING_CONSUMER_THRESHOLD_MS_DOC = "The time threshold in milliseconds to distinguish between recent and lagging consumers. "
+        + "Fetch requests for data strictly older than this threshold (dataAge > threshold, based on batch timestamp) will use the lagging consumer path. "
+        + "Set to -1 to use the default heuristic: the cache expiration lifespan. "
+        + "This provides a grace period ensuring data remains in cache before being considered 'lagging', "
+        + "accounting for cache warm-up and typical consumer lag variations. "
+        + "Must be >= cache expiration lifespan (see " + CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG + "). "
+        + "This is a startup-only configuration (no dynamic reconfiguration support). "
+        + "Both threshold and cache lifespan must be set together at startup to maintain the constraint.";
+    /**
+     * Default value for {@link #FETCH_LAGGING_CONSUMER_THRESHOLD_MS_CONFIG}.
+     * A value of -1 means "auto-detect from cache TTL" - the {@link #fetchLaggingConsumerThresholdMs()} method
+     * will automatically use the cache expiration lifespan as the effective threshold.
+     */
+    private static final int FETCH_LAGGING_CONSUMER_THRESHOLD_MS_DEFAULT = -1;
+
+    public static final String FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_CONFIG = "fetch.lagging.consumer.request.rate.limit";
+    public static final String FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DOC = "Maximum requests per second for lagging consumer data fetches. "
+        + "Set to 0 to disable rate limiting. "
+        + "The upper bound of 10000 req/s is a safety limit to prevent misconfiguration. For high-throughput systems, "
+        + "consider the relationship between this rate limit, thread pool size, and storage backend capacity. "
+        + "At the default rate of 200 req/s with ~50ms per request latency, this allows ~10 concurrent requests. "
+        + "Note: hedge requests triggered by slow fetches are exempt from this limit. In the worst case, "
+        + "effective storage GET rate can reach up to 2x this value.";
+    // Default 200 req/s: Conservative limit based on typical object storage GET request costs and latency.
+    // At ~50ms per request, 200 req/s = ~10 concurrent requests, balancing throughput with cost control.
+    // Tune based on storage backend capacity and budget constraints.
+    private static final int FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DEFAULT = 200;
+
+    public static final String FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG = "fetch.hedge.ttfb.threshold.ms";
+    public static final String FETCH_HEDGE_TTFB_THRESHOLD_MS_DOC = "Time-to-first-byte threshold in milliseconds to trigger a hedge request. "
+        + "When a storage fetch has not received its first byte within this threshold, a competing hedge request is submitted. "
+        + "This catches stuck connections early, before the total-time threshold. "
+        + "Set to 0 to disable TTFB-based hedging. "
+        + "When both hedging thresholds are enabled, fetch.hedge.total.time.threshold.ms must be strictly greater than this value.";
+    private static final long FETCH_HEDGE_TTFB_THRESHOLD_MS_DEFAULT = 0;
+
+    public static final String FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_CONFIG = "fetch.hedge.total.time.threshold.ms";
+    public static final String FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_DOC = "Total time threshold in milliseconds to trigger a hedge request. "
+        + "When a storage fetch has not completed within this threshold, a competing hedge request is submitted. "
+        + "The first request to complete wins; the other continues in the background and its result is ignored. "
+        + "Set to 0 to disable total-time-based hedging. "
+        + "When both hedging thresholds are enabled, this value must be strictly greater than "
+        + FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG + ". "
+        + "Capacity impact: hedges submit to the same executor as primaries (fetch.data.thread.pool.size for hot path, "
+        + "fetch.lagging.consumer.thread.pool.size for cold path). "
+        + "Normal case: only tail-latency requests (exceeding threshold) trigger hedges -- typically <5% of traffic. "
+        + "Worst case: if all in-flight requests exceed the threshold, effective storage GET rate doubles "
+        + "(one primary + one hedge per request), bounded by executor thread pool + queue capacity. "
+        + "Monitor HedgeRequestRate to detect excessive hedging. If hedge rate is too high, increase this threshold.";
+    private static final long FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_DEFAULT = 0;
+
+    public static final String FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG = "fetch.find.batches.max.per.partition";
+    public static final String FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DOC = "The maximum number of batches to find per partition when processing a fetch request. "
+        + "A value of 0 means all available batches are fetched. "
+        + "This is primarily intended for environments where the batches fan-out on fetch requests can overload the control plane back-end.";
+    private static final int FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DEFAULT = 0;
+
+    public static final String RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_CONFIG = "retention.enforcement.max.batches.per.request";
+    public static final String RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DOC = "The maximum number of batches to delete per partition when enforcing retention. "
+        + "A value of 0 means all eligible batches are deleted in one request. "
+        + "Setting this to a lower value can help to reduce the load on the control plane back-end.";
+    private static final int RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DEFAULT = 0;
+
+    public static final String BATCH_COALESCING_ENABLED_CONFIG = CONTROL_PLANE_PREFIX + "batch.coalescing.enabled";
+    public static final String BATCH_COALESCING_ENABLED_DOC = "When true, contiguous same-partition batch runs within a single commit are collapsed "
+        + "into a single row in the batches table via commit_file_v2, reducing control-plane metadata growth "
+        + "for low-throughput producers. "
+        + "Set to true only after all brokers in the cluster have been upgraded to a version that supports "
+        + "reading coalesced rows. "
+        + "Defaults to false for safe rolling upgrades.";
+    private static final boolean BATCH_COALESCING_ENABLED_DEFAULT = false;
+
+    public static final String CLIENT_AZ_LISTENER_MAP_CONFIG = "client.az.listener.map";
+    private static final String CLIENT_AZ_LISTENER_MAP_DOC = "Cluster-wide mapping from AZ-specific listener aliases to physical "
+        + "availability zone (rack) IDs, used for listener-based AZ routing of diskless topic metadata. "
+        + "Format is a comma-separated list of LISTENER=az pairs, for example "
+        + "SASL_SSL_US_EAST_1_AZ_1=use1-az1,SASL_SSL_US_EAST_1_AZ_2=use1-az2. "
+        + "Every broker should use the same mapping. Listener names are matched case-insensitively "
+        + "(normalized to upper case). Defaults to empty (feature disabled).";
+
+    public static ConfigDef configDef() {
+        final ConfigDef configDef = new ConfigDef();
+
+        configDef.define(
+            CONTROL_PLANE_CLASS_CONFIG,
+            ConfigDef.Type.CLASS,
+            CONTROL_PLANE_CLASS_DEFAULT,
+            new Subclass(ControlPlane.class),
+            ConfigDef.Importance.HIGH,
+            CONTROL_PLANE_CLASS_DOC
+        );
+
+        configDef.define(
+            OBJECT_KEY_PREFIX_CONFIG,
+            ConfigDef.Type.STRING,
+            "",
+            new ConfigDef.NonNullValidator(),
+            ConfigDef.Importance.MEDIUM,
+            OBJECT_KEY_PREFIX_DOC
+        );
+        configDef.define(
+            OBJECT_KEY_LOG_PREFIX_MASKED_CONFIG,
+            ConfigDef.Type.BOOLEAN,
+            false,
+            ConfigDef.Importance.LOW,
+            OBJECT_KEY_LOG_PREFIX_MASKED_DOC
+        );
+
+        configDef.define(
+            PRODUCE_COMMIT_INTERVAL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            PRODUCE_COMMIT_INTERVAL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.HIGH,
+            PRODUCE_COMMIT_INTERVAL_MS_DOC
+        );
+
+        configDef.define(
+            PRODUCE_BUFFER_MAX_BYTES_CONFIG,
+            ConfigDef.Type.INT,
+            PRODUCE_BUFFER_MAX_BYTES_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.HIGH,
+            PRODUCE_BUFFER_MAX_BYTES_DOC
+        );
+
+        configDef.define(
+            PRODUCE_MAX_UPLOAD_ATTEMPTS_CONFIG,
+            ConfigDef.Type.INT,
+            PRODUCE_MAX_UPLOAD_ATTEMPTS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.MEDIUM,
+            PRODUCE_MAX_UPLOAD_ATTEMPTS_DOC
+        );
+
+        configDef.define(
+            PRODUCE_UPLOAD_BACKOFF_MS_CONFIG,
+            ConfigDef.Type.INT,
+            PRODUCE_UPLOAD_BACKOFF_MS_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.MEDIUM,
+            PRODUCE_UPLOAD_BACKOFF_MS_DOC
+        );
+
+        configDef.define(
+            STORAGE_BACKEND_CLASS_CONFIG,
+            ConfigDef.Type.CLASS,
+            STORAGE_BACKEND_CLASS_DEFAULT,
+            ConfigDef.Importance.HIGH,
+            STORAGE_BACKEND_CLASS_DOC
+        );
+
+        configDef.define(
+                CONSUME_CACHE_BLOCK_BYTES_CONFIG,
+                ConfigDef.Type.INT,
+                CONSUME_CACHE_BLOCK_BYTES_DEFAULT,
+                ConfigDef.Importance.LOW,
+                CONSUME_CACHE_BLOCK_BYTES_DOC
+        );
+
+        configDef.define(
+            RETENTION_ENFORCEMENT_INTERVAL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            RETENTION_ENFORCEMENT_INTERVAL_MS_DOC
+        );
+
+        configDef.define(
+            CONSOLIDATION_CLEANUP_INTERVAL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            CONSOLIDATION_CLEANUP_INTERVAL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            CONSOLIDATION_CLEANUP_INTERVAL_MS_DOC
+        );
+
+        configDef.define(
+            FILE_CLEANER_INTERVAL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            FILE_CLEANER_INTERVAL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            FILE_CLEANER_INTERVAL_MS_DOC
+        );
+
+        configDef.define(
+            FILE_CLEANER_RETENTION_PERIOD_MS_CONFIG,
+            ConfigDef.Type.INT,
+            FILE_CLEANER_RETENTION_PERIOD_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            FILE_CLEANER_RETENTION_PERIOD_MS_DOC
+        );
+
+        configDef.define(
+            CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_DOC
+        );
+
+        configDef.define(
+            CONSUME_CACHE_MAX_COUNT_CONFIG,
+            ConfigDef.Type.LONG,
+            CONSUME_CACHE_MAX_COUNT_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            CONSUME_CACHE_MAX_COUNT_DOC
+        );
+        configDef.define(
+            CONSUME_CACHE_MAX_BYTES_CONFIG,
+            ConfigDef.Type.LONG,
+            CONSUME_CACHE_MAX_BYTES_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            CONSUME_CACHE_MAX_BYTES_DOC
+        );
+        configDef.define(
+            CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG,
+            ConfigDef.Type.INT,
+            CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DEFAULT,
+            ConfigDef.Range.atLeast(10), // As it checks every 5 seconds, and the object lock timeout is 10 secs.
+            ConfigDef.Importance.LOW,
+            CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DOC
+        );
+        configDef.define(
+            CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_CONFIG,
+            ConfigDef.Type.INT,
+            CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_DEFAULT,
+            ConfigDef.Range.atLeast(-1),
+            ConfigDef.Importance.LOW,
+            CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_DOC
+        );
+        configDef.define(
+            PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG,
+            ConfigDef.Type.INT,
+            PRODUCE_UPLOAD_THREAD_POOL_SIZE_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            PRODUCE_UPLOAD_THREAD_POOL_SIZE_DOC
+        );
+        configDef.define(
+            FETCH_DATA_THREAD_POOL_SIZE_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_DATA_THREAD_POOL_SIZE_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            FETCH_DATA_THREAD_POOL_SIZE_DOC
+        );
+        configDef.define(
+            FETCH_METADATA_THREAD_POOL_SIZE_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_METADATA_THREAD_POOL_SIZE_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            FETCH_METADATA_THREAD_POOL_SIZE_DOC
+        );
+        configDef.define(
+            FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_DOC
+        );
+        configDef.define(
+            FETCH_LAGGING_CONSUMER_THRESHOLD_MS_CONFIG,
+            ConfigDef.Type.LONG,
+            FETCH_LAGGING_CONSUMER_THRESHOLD_MS_DEFAULT,
+            ConfigDef.Range.atLeast(-1),
+            ConfigDef.Importance.MEDIUM,
+            FETCH_LAGGING_CONSUMER_THRESHOLD_MS_DOC
+        );
+        configDef.define(
+            FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DEFAULT,
+            ConfigDef.Range.between(0, 10000),
+            // Safety limit to prevent misconfiguration. For high-throughput systems,
+            // consider the relationship between this rate limit, thread pool size, and storage backend capacity.
+            ConfigDef.Importance.MEDIUM,
+            FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DOC
+        );
+        configDef.define(
+            FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_CONFIG,
+            ConfigDef.Type.LONG,
+            FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_DOC
+        );
+        configDef.define(
+            FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG,
+            ConfigDef.Type.LONG,
+            FETCH_HEDGE_TTFB_THRESHOLD_MS_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            FETCH_HEDGE_TTFB_THRESHOLD_MS_DOC
+        );
+        configDef.define(
+            FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DOC
+        );
+        configDef.define(
+            RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_CONFIG,
+            ConfigDef.Type.INT,
+            RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DOC
+        );
+        configDef.define(
+            CONSUME_BATCH_COORDINATE_CACHE_ENABLED_CONFIG,
+            ConfigDef.Type.BOOLEAN,
+            CONSUME_BATCH_COORDINATE_CACHE_ENABLED_DEFAULT,
+            ConfigDef.Importance.LOW,
+            CONSUME_BATCH_COORDINATE_CACHE_ENABLED_DOC
+        );
+        configDef.define(
+            CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_DOC
+        );
+        configDef.define(
+            CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_CONFIG,
+            ConfigDef.Type.BOOLEAN,
+            CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_DEFAULT,
+            ConfigDef.Importance.LOW,
+            CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_DOC
+        );
+        configDef.define(
+            CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_DOC
+        );
+
+        configDef.define(
+            BATCH_COALESCING_ENABLED_CONFIG,
+            ConfigDef.Type.BOOLEAN,
+            BATCH_COALESCING_ENABLED_DEFAULT,
+            ConfigDef.Importance.MEDIUM,
+            BATCH_COALESCING_ENABLED_DOC
+        );
+
+        configDef.define(
+            CLIENT_AZ_LISTENER_MAP_CONFIG,
+            ConfigDef.Type.LIST,
+            Collections.emptyList(),
+            ConfigDef.Importance.MEDIUM,
+            CLIENT_AZ_LISTENER_MAP_DOC
+        );
+
+        return configDef;
+    }
+
+    private static Map<String, String> parseClientAzListenerMap(final List<String> entries) {
+        final Map<String, String> result = new LinkedHashMap<>();
+        for (final String entry : entries) {
+            final int sep = entry.indexOf('=');
+            if (sep < 0) {
+                throw new ConfigException(
+                    CLIENT_AZ_LISTENER_MAP_CONFIG, entry,
+                    "Entry is missing the '=' separator between listener name and AZ.");
+            }
+            final String listener = entry.substring(0, sep).trim();
+            final String az = entry.substring(sep + 1).trim();
+            if (listener.isEmpty()) {
+                throw new ConfigException(
+                    CLIENT_AZ_LISTENER_MAP_CONFIG, entry, "Listener name must not be empty.");
+            }
+            if (az.isEmpty()) {
+                throw new ConfigException(
+                    CLIENT_AZ_LISTENER_MAP_CONFIG, entry, "AZ must not be empty.");
+            }
+            final String normalizedListener = ListenerName.normalised(listener).value();
+            if (result.containsKey(normalizedListener)) {
+                throw new ConfigException(
+                    CLIENT_AZ_LISTENER_MAP_CONFIG, entry,
+                    "Duplicate listener name '" + normalizedListener + "' (matching is case-insensitive).");
+            }
+            result.put(normalizedListener, az);
+        }
+        return result;
+    }
+
+    public InklessConfig(final AbstractConfig config) {
+        this(config.originalsWithPrefix(InklessConfig.PREFIX));
+    }
+
+    public InklessConfig(final Map<String, ?> props) {
+        super(validate(props), props);
+    }
+
+    private static ConfigDef validate(final Map<String, ?> props) {
+        final ConfigDef configDef = configDef();
+        // Parse the properties using ConfigDef directly for validation. This avoids creating a
+        // temporary AbstractConfig instance while still leveraging the same parsing and defaulting
+        // logic that AbstractConfig would use. Note: We still parse twice (once here, once in super()),
+        // but this avoids the overhead of creating an AbstractConfig instance. This is necessary to
+        // avoid 'this-escape' warnings in JDK 23+ and ensure super() is the first statement for JDK 17.
+        // The performance impact is minimal since config parsing only happens at startup.
+        final Map<String, Object> parsedProps = configDef.parse(props);
+
+        final long thresholdMs =
+            ((Number) parsedProps.get(FETCH_LAGGING_CONSUMER_THRESHOLD_MS_CONFIG)).longValue();
+        final int cacheLifespanSec =
+            ((Number) parsedProps.get(CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG)).intValue();
+        final long lifespanMs = Duration.ofSeconds(cacheLifespanSec).toMillis();
+
+        // Validate threshold is not less than cache lifespan (unless using default heuristic).
+        // If threshold < cache lifespan, we'd route requests for potentially cached data to the
+        // cold path, defeating the cache and unnecessarily loading the cold path/storage backend.
+        //
+        // Note: This validation occurs at construction time. These configurations are startup-only
+        // and do not support dynamic reconfiguration. Both threshold and cache lifespan must be set
+        // together at startup to maintain the constraint that threshold >= cache lifespan.
+        //
+        // Explicitly reject threshold=0 with a clear error message: While threshold=0 would always fail
+        // the cache lifespan validation below (since minimum cache lifespan is 10 seconds = 10000ms),
+        // we check it explicitly here to provide a more specific error message that explains why 0 is
+        // invalid. With threshold=0, the runtime check (dataAge > threshold) would route almost all cached
+        // data (anything with dataAge > 0) to the cold path, defeating the cache. Only data with
+        // dataAge == 0 would use the hot path, which is negligible.
+        if (thresholdMs == 0) {
+            throw new ConfigException(
+                FETCH_LAGGING_CONSUMER_THRESHOLD_MS_CONFIG,
+                thresholdMs,
+                "Lagging consumer threshold cannot be 0. Use -1 to auto-detect from cache TTL, or set a value >= cache lifespan ("
+                    + lifespanMs + "ms). Threshold=0 would route almost all cached data to the cold path, defeating the cache."
+            );
+        }
+        //
+        // Minimum allowed value: threshold == cache lifespan (>=, not >) is valid because:
+        // - The runtime check uses dataAge > threshold (strictly greater), so dataAge == threshold uses hot path
+        // - Data can still be in cache at exactly TTL seconds old (cache expiration runs periodically)
+        // - With threshold == cache lifespan, when dataAge == cache lifespan, data might still be cached
+        //   and correctly uses hot path. When dataAge > cache lifespan, data is expired and uses cold path.
+        // This ensures we only route data to cold path after it's guaranteed to be expired from cache.
+        //
+        // Special case: thresholdMs == -1 is explicitly excluded from validation (condition checks != -1)
+        // because fetchLaggingConsumerThresholdMs() will automatically use cache lifespan as the effective
+        // runtime value, which is always >= cache lifespan by definition. This design allows operators
+        // to use -1 as a "use cache TTL" heuristic without needing to know the exact cache lifespan value.
+        if (thresholdMs != -1 && thresholdMs < lifespanMs) {
+            throw new ConfigException(
+                FETCH_LAGGING_CONSUMER_THRESHOLD_MS_CONFIG,
+                thresholdMs,
+                "Lagging consumer threshold (" + thresholdMs + "ms) must be >= cache lifespan ("
+                    + lifespanMs + "ms) to avoid routing requests for cached data to the lagging path."
+            );
+        }
+
+        final long hedgeTtfbMs =
+            ((Number) parsedProps.get(FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG)).longValue();
+        final long hedgeTotalTimeMs =
+            ((Number) parsedProps.get(FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_CONFIG)).longValue();
+
+        // When both hedging triggers are enabled, total-time threshold must be > TTFB threshold.
+        // TTFB fires early to catch stuck connections; total-time is a broader safety net.
+        // If total-time <= TTFB, the total-time timer would fire first (or simultaneously),
+        // making TTFB redundant and defeating the two-tier design.
+        if (hedgeTtfbMs > 0 && hedgeTotalTimeMs > 0 && hedgeTotalTimeMs <= hedgeTtfbMs) {
+            throw new ConfigException(
+                FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_CONFIG,
+                hedgeTotalTimeMs,
+                FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_CONFIG + " (" + hedgeTotalTimeMs + "ms) must be greater than "
+                    + FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG + " (" + hedgeTtfbMs + "ms) when both are enabled."
+            );
+        }
+
+        // Parse the AZ listener map to trigger strict validation at startup.
+        // The parsed result is discarded here; the accessor re-parses on demand.
+        @SuppressWarnings("unchecked")
+        final List<String> azListenerEntries =
+            (List<String>) parsedProps.get(CLIENT_AZ_LISTENER_MAP_CONFIG);
+        parseClientAzListenerMap(azListenerEntries);
+
+        return configDef;
+    }
+
+    @SuppressWarnings("unchecked")
+    public Class<ControlPlane> controlPlaneClass() {
+        return (Class<ControlPlane>) getClass(CONTROL_PLANE_CLASS_CONFIG);
+    }
+
+    public Map<String, Object> controlPlaneConfig() {
+        return originalsWithPrefix(CONTROL_PLANE_PREFIX);
+    }
+
+    public String objectKeyPrefix() {
+        return getString(OBJECT_KEY_PREFIX_CONFIG);
+    }
+
+    public boolean objectKeyLogPrefixMasked() {
+        return getBoolean(OBJECT_KEY_LOG_PREFIX_MASKED_CONFIG);
+    }
+
+    public StorageBackend storage(final Metrics metrics) {
+        try {
+            @SuppressWarnings("unchecked")
+            final Class<? extends StorageBackend> storageClass = (Class<? extends StorageBackend>) getClass(STORAGE_BACKEND_CLASS_CONFIG);
+            final StorageBackend storage = storageClass.getDeclaredConstructor(Metrics.class).newInstance(metrics);
+            storage.configure(this.originalsWithPrefix(STORAGE_PREFIX));
+            return storage;
+        } catch (NoSuchMethodException | InvocationTargetException | InstantiationException |
+                 IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public Duration commitInterval() {
+        return Duration.ofMillis(getInt(PRODUCE_COMMIT_INTERVAL_MS_CONFIG));
+    }
+
+    public int produceBufferMaxBytes() {
+        return getInt(PRODUCE_BUFFER_MAX_BYTES_CONFIG);
+    }
+
+    public int produceMaxUploadAttempts() {
+        return getInt(PRODUCE_MAX_UPLOAD_ATTEMPTS_CONFIG);
+    }
+    public Duration produceUploadBackoff() {
+        return Duration.ofMillis(getInt(PRODUCE_UPLOAD_BACKOFF_MS_CONFIG));
+    }
+
+
+    public int fetchCacheBlockBytes() {
+        return getInt(CONSUME_CACHE_BLOCK_BYTES_CONFIG);
+    }
+
+    public Duration retentionEnforcementInterval() {
+        return Duration.ofMillis(getInt(RETENTION_ENFORCEMENT_INTERVAL_MS_CONFIG));
+    }
+
+    public Duration consolidationCleanupInterval() {
+        return Duration.ofMillis(getInt(CONSOLIDATION_CLEANUP_INTERVAL_MS_CONFIG));
+    }
+
+    public Duration fileCleanerInterval() {
+        return Duration.ofMillis(getInt(FILE_CLEANER_INTERVAL_MS_CONFIG));
+    }
+
+    public Duration fileCleanerRetentionPeriod() {
+        return Duration.ofMillis(getInt(FILE_CLEANER_RETENTION_PERIOD_MS_CONFIG));
+    }
+
+    public Duration crossTierLogStartReportInterval() {
+        return Duration.ofMillis(getInt(CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_CONFIG));
+    }
+
+
+    public Long cacheMaxCount() {
+        return getLong(CONSUME_CACHE_MAX_COUNT_CONFIG);
+    }
+
+    public int cacheExpirationLifespanSec() {
+        return getInt(CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG);
+    }
+
+    public int cacheExpirationMaxIdleSec() {
+        return getInt(CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_CONFIG);
+    }
+
+    public int produceUploadThreadPoolSize() {
+        return getInt(PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    public int fetchDataThreadPoolSize() {
+        return getInt(FETCH_DATA_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    public int fetchMetadataThreadPoolSize() {
+        return getInt(FETCH_METADATA_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    public int fetchLaggingConsumerThreadPoolSize() {
+        return getInt(FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    /**
+     * Returns the effective lagging consumer threshold in milliseconds.
+     * <p>
+     * If the configured value is -1 (auto), this method returns the cache expiration lifespan,
+     * which serves as the default heuristic. This ensures the effective threshold is always >= cache
+     * lifespan, which is why validation in the constructor skips threshold=-1 (it will automatically
+     * use cache lifespan at runtime).
+     * </p>
+     *
+     * @return the effective threshold in milliseconds (cache lifespan if configured as -1, otherwise the configured value)
+     */
+    public long fetchLaggingConsumerThresholdMs() {
+        final long configuredValue = getLong(FETCH_LAGGING_CONSUMER_THRESHOLD_MS_CONFIG);
+        if (configuredValue == -1) {
+            // Use heuristic: cache TTL (provides grace period for recent data)
+            return Duration.ofSeconds(getInt(CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG)).toMillis();
+        }
+        return configuredValue;
+    }
+
+    public int fetchLaggingConsumerRequestRateLimit() {
+        return getInt(FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_CONFIG);
+    }
+
+    public long fetchHedgeTtfbThresholdMs() {
+        return getLong(FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG);
+    }
+
+    public long fetchHedgeTotalTimeThresholdMs() {
+        return getLong(FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_CONFIG);
+    }
+
+    public int maxBatchesPerPartitionToFind() {
+        return getInt(FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG);
+    }
+
+    public int maxBatchesPerEnforcementRequest() {
+        return getInt(RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_CONFIG);
+    }
+
+    public boolean isBatchCoordinateCacheEnabled() {
+        return getBoolean(CONSUME_BATCH_COORDINATE_CACHE_ENABLED_CONFIG);
+    }
+
+    public Duration batchCoordinateCacheTtl() {
+        return Duration.ofMillis(getInt(CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_CONFIG));
+    }
+
+    public boolean isCrossTierLogStartCacheEnabled() {
+        return getBoolean(CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_CONFIG);
+    }
+
+    public Duration crossTierLogStartCacheTtl() {
+        return Duration.ofMillis(getInt(CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_CONFIG));
+    }
+
+    public long cacheMaxBytes() {
+        return getLong(CONSUME_CACHE_MAX_BYTES_CONFIG);
+    }
+
+    public Map<String, String> clientAzListenerMap() {
+        return Collections.unmodifiableMap(
+            parseClientAzListenerMap(getList(CLIENT_AZ_LISTENER_MAP_CONFIG)));
+    }
+}

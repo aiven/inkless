@@ -61,3 +61,9 @@ storage/kafka-tiered-storage/
 docker/test/report_*.html
 kafka.Kafka
 __pycache__
+
+_data/
+
+.inkless-sync/
+
+core/data/

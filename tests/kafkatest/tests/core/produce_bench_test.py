@@ -41,6 +41,11 @@ class ProduceBenchTest(Test):
         self.trogdor.stop()
         self.kafka.stop()
 
+    def producer_config(self):
+        # Overridable hook so subclasses (e.g. the inkless consolidation variant)
+        # can tune the producer; the base benchmark uses defaults.
+        return {}
+
     @cluster(num_nodes=8)
     @matrix(metadata_quorum=quorum.all_non_upgrade)
     def test_produce_bench(self, metadata_quorum):
@@ -49,7 +54,7 @@ class ProduceBenchTest(Test):
                                         self.workload_service.bootstrap_servers,
                                         target_messages_per_sec=1000,
                                         max_messages=100000,
-                                        producer_conf={},
+                                        producer_conf=self.producer_config(),
                                         admin_client_conf={},
                                         common_client_conf={},
                                         inactive_topics=self.inactive_topics,
@@ -67,7 +72,7 @@ class ProduceBenchTest(Test):
                                         self.workload_service.bootstrap_servers,
                                         target_messages_per_sec=1000,
                                         max_messages=100000,
-                                        producer_conf={},
+                                        producer_conf=self.producer_config(),
                                         admin_client_conf={},
                                         common_client_conf={},
                                         inactive_topics=self.inactive_topics,

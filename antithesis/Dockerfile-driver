@@ -1,0 +1,20 @@
+FROM ducker-ak-openjdk-17-bullseye
+
+RUN pip install antithesis
+
+USER root
+RUN mkdir -p /opt/kafka-dev
+RUN chown ducker /opt/kafka-dev
+# Autoinstrumentation of Python files.
+# https://antithesis.com/docs/using_antithesis/sdk/python/#instrumentation
+RUN mkdir -p /opt/antithesis/catalog
+RUN ln -s /opt/kafka-dev/tests/kafkatest /opt/antithesis/catalog
+# Patch Ducktape to not fail the whole process (bad in Antithesis).
+ADD antithesis/ducktape.patch /opt/kafka-dev
+RUN cd /usr/local/lib/python3.9/dist-packages/ && patch -p0 < /opt/kafka-dev/ducktape.patch
+USER ducker
+
+ADD antithesis/test /opt/antithesis/test
+ADD antithesis/cluster.json /opt/kafka-dev
+ADD antithesis/entrypoint-driver.sh /opt/kafka-dev
+ADD tests/kafkatest /opt/kafka-dev/tests/kafkatest

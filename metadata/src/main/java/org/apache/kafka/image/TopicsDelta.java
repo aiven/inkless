@@ -142,6 +142,7 @@ public final class TopicsDelta {
         String topicName;
         if (topicDelta != null) {
             topicName = topicDelta.image().name();
+            createdTopics.remove(topicName);
             if (image.topicsById().containsKey(record.topicId())) {
                 deletedTopicIds.add(record.topicId());
             }

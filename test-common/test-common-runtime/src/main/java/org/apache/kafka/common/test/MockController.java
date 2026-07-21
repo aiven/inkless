@@ -26,6 +26,8 @@ import org.apache.kafka.common.errors.NotControllerException;
 import org.apache.kafka.common.errors.ThrottlingQuotaExceededException;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
+import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
+import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.AlterPartitionRequestData;
@@ -52,6 +54,8 @@ import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
+import org.apache.kafka.common.message.InitDisklessLogRequestData;
+import org.apache.kafka.common.message.InitDisklessLogResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
@@ -592,6 +596,21 @@ public class MockController implements Controller {
     }
 
     @Override
+    public CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
+        ControllerRequestContext context,
+        InitDisklessLogRequestData request
+    ) {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
+    @Override
+    public CompletableFuture<AlterDisklessSwitchResponseData> alterDisklessSwitch(
+        ControllerRequestContext context,
+        AlterDisklessSwitchRequestData request
+    ) {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
     public void beginShutdown() {
         this.active = false;
     }

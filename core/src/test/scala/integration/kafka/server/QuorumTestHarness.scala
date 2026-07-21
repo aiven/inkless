@@ -17,6 +17,10 @@
 
 package kafka.server
 
+import io.aiven.inkless.test_utils.{InklessPostgreSQLContainer, MinioContainer, PostgreSQLTestContainer, S3TestContainer}
+import kafka.server.QuorumTestHarness.{minioContainer, pgContainer}
+import kafka.utils.TestUtils.DisklessMode
+
 import java.io.File
 import java.net.InetSocketAddress
 import java.util
@@ -45,8 +49,9 @@ import org.apache.kafka.server.config.{KRaftConfigs, ServerConfigs, ServerLogCon
 import org.apache.kafka.server.fault.{FaultHandler, MockFaultHandler}
 import org.apache.kafka.server.util.timer.SystemTimer
 import org.junit.jupiter.api.Assertions._
+import org.junit.jupiter.api.extension.ExtensionContext
 import org.junit.jupiter.api.{AfterAll, AfterEach, BeforeAll, BeforeEach, Tag, TestInfo}
-import org.junit.jupiter.params.provider.Arguments
+import org.junit.jupiter.params.provider.{Arguments, ArgumentsProvider}
 
 import java.nio.file.{Files, Paths}
 import scala.collection.Seq
@@ -163,6 +168,10 @@ abstract class QuorumTestHarness extends Logging {
     TestInfoUtils.maybeGroupProtocolSpecified(testInfo)
   }
 
+  def topicTypeSpecified(): String = {
+    TestInfoUtils.topicTypeSpecified(testInfo)
+  }
+
   def groupProtocolFromTestParameters(): GroupProtocol = {
     val gp = maybeGroupProtocolSpecified()
 
@@ -182,6 +191,8 @@ abstract class QuorumTestHarness extends Logging {
 
   val faultHandler = faultHandlerFactory.faultHandler
 
+  var disklessMode: Option[DisklessMode] = None
+
   // Note: according to the junit documentation: "JUnit Jupiter does not guarantee the execution
   // order of multiple @BeforeEach methods that are declared within a single test class or test
   // interface." Therefore, if you have things you would like to do before each test case runs, it
@@ -190,6 +201,8 @@ abstract class QuorumTestHarness extends Logging {
   @BeforeEach
   def setUp(testInfo: TestInfo): Unit = {
     this.testInfo = testInfo
+    val disklessEnabled = testInfo.getTags.contains("inkless")
+    if (disklessEnabled) this.disklessMode = Some(new DisklessMode(pgContainer, minioContainer))
     Exit.setExitProcedure((code, message) => {
       try {
         throw new RuntimeException(s"exit($code, $message) called!")
@@ -213,8 +226,17 @@ abstract class QuorumTestHarness extends Logging {
     val name = testInfo.getTestMethod.toScala
       .map(_.toString)
       .getOrElse("[unspecified]")
+
+    val props = new Properties()
+    if (disklessEnabled) {
+      pgContainer.createDatabase(testInfo)
+      minioContainer.createBucket(testInfo)
+
+      disklessMode.foreach(mode => mode.disklessControllerConfigs(props))
+    }
+
     info(s"Running KRAFT test $name")
-    implementation = newKRaftQuorum(testInfo)
+    implementation = newKRaftQuorum(testInfo, props)
   }
 
   def createBroker(
@@ -233,10 +255,6 @@ abstract class QuorumTestHarness extends Logging {
   }
 
   def addFormatterSettings(formatter: Formatter): Unit = {}
-
-  private def newKRaftQuorum(testInfo: TestInfo): KRaftQuorumImplementation = {
-    newKRaftQuorum(testInfo, new Properties())
-  }
 
   protected def extraControllerSecurityProtocols(): Seq[SecurityProtocol] = {
     Seq.empty
@@ -263,8 +281,10 @@ abstract class QuorumTestHarness extends Logging {
     val listeners = extraControllerSecurityProtocols().map(sc => sc + "://localhost:0").mkString(",")
     val listenerNames = extraControllerSecurityProtocols().mkString(",")
     props.setProperty(SocketServerConfigs.LISTENER_SECURITY_PROTOCOL_MAP_CONFIG, s"CONTROLLER:$proto,$securityProtocolMaps")
-    props.setProperty(SocketServerConfigs.LISTENERS_CONFIG, s"CONTROLLER://localhost:0,$listeners")
-    props.setProperty(KRaftConfigs.CONTROLLER_LISTENER_NAMES_CONFIG, s"CONTROLLER,$listenerNames")
+    props.setProperty(SocketServerConfigs.LISTENERS_CONFIG,
+      if (listeners.isEmpty) "CONTROLLER://localhost:0" else s"CONTROLLER://localhost:0,$listeners")
+    props.setProperty(KRaftConfigs.CONTROLLER_LISTENER_NAMES_CONFIG,
+      if (listeners.isEmpty) "CONTROLLER" else s"CONTROLLER,$listenerNames")
     props.setProperty(QuorumConfig.QUORUM_VOTERS_CONFIG, s"$nodeId@localhost:0")
     props.setProperty(ServerLogConfigs.LOG_DELETE_DELAY_MS_CONFIG, "1000")
     val config = new KafkaConfig(props)
@@ -356,6 +376,17 @@ abstract class QuorumTestHarness extends Logging {
 
 object QuorumTestHarness {
 
+  val pgContainer: InklessPostgreSQLContainer = {
+    val container = PostgreSQLTestContainer.container()
+    container.start()
+    container
+  }
+  val minioContainer: MinioContainer = {
+    val container = S3TestContainer.minio()
+    container.start()
+    container
+  }
+
   /**
    * Verify that a previous test that doesn't use QuorumTestHarness hasn't left behind an unexpected thread.
    * This assumes that brokers, admin clients, producers and consumers are not created in another @BeforeClass,
@@ -419,5 +450,39 @@ object QuorumTestHarness {
     stream.Stream.of(
       Arguments.of(GroupProtocol.CONSUMER.name.toLowerCase(Locale.ROOT))
     )
+  }
+}
+
+import java.util.stream.Stream
+
+// Instead of updating getTestQuorumAndGroupProtocolParametersAll with topic type,
+// had to replace with ArgumentsProvider instead to be able to enable inkless at a class level
+// but disable it at a method level.
+// This was not possible with MethodSource as it only has a class level annotation.
+class GroupProtocolAndMaybeTopicTypeProvider extends ArgumentsProvider {
+  override def provideArguments(context: ExtensionContext): Stream[_ <: Arguments] = {
+    val hasInklessTag = context.getTestMethod
+      .filter(method => method.isAnnotationPresent(classOf[Tag]) &&
+        method.getAnnotation(classOf[Tag]).value().contains("inkless"))
+      .isPresent || context.getTags.contains("inkless")
+
+    val hasNoInklessTag = context.getTestMethod
+      .filter(method => method.isAnnotationPresent(classOf[Tag]) &&
+        method.getAnnotation(classOf[Tag]).value().contains("noinkless"))
+      .isPresent || context.getTags.contains("noinkless")
+
+    if (hasInklessTag && !hasNoInklessTag) {
+      Stream.of(
+        Arguments.of(GroupProtocol.CLASSIC.name.toLowerCase(Locale.ROOT), "classic"),
+        Arguments.of(GroupProtocol.CONSUMER.name.toLowerCase(Locale.ROOT), "classic"),
+        Arguments.of(GroupProtocol.CLASSIC.name.toLowerCase(Locale.ROOT), "diskless"),
+        Arguments.of(GroupProtocol.CONSUMER.name.toLowerCase(Locale.ROOT), "diskless")
+      )
+    } else {
+      Stream.of(
+        Arguments.of(GroupProtocol.CLASSIC.name.toLowerCase(Locale.ROOT), "classic"),
+        Arguments.of(GroupProtocol.CONSUMER.name.toLowerCase(Locale.ROOT), "classic")
+      )
+    }
   }
 }

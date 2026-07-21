@@ -1,0 +1,300 @@
+/*
+ * Inkless
+ * Copyright (C) 2024 - 2025 Aiven OY
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package io.aiven.inkless.common;
+
+import org.apache.kafka.common.metrics.JmxReporter;
+import org.apache.kafka.common.metrics.KafkaMetricsContext;
+import org.apache.kafka.common.metrics.MetricConfig;
+import org.apache.kafka.common.metrics.Metrics;
+import org.apache.kafka.common.metrics.MetricsReporter;
+import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.storage.internals.log.LogConfig;
+import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
+
+import java.io.Closeable;
+import java.io.IOException;
+import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Supplier;
+
+import io.aiven.inkless.cache.BatchCoordinateCache;
+import io.aiven.inkless.cache.CaffeineBatchCoordinateCache;
+import io.aiven.inkless.cache.CaffeineCache;
+import io.aiven.inkless.cache.CaffeineCrossTierLogStartCache;
+import io.aiven.inkless.cache.CrossTierLogStartCache;
+import io.aiven.inkless.cache.FixedBlockAlignment;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.NullBatchCoordinateCache;
+import io.aiven.inkless.cache.NullCrossTierLogStartCache;
+import io.aiven.inkless.cache.ObjectCache;
+import io.aiven.inkless.config.InklessConfig;
+import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.delete.CrossTierLogStartReporter;
+import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
+
+public final class SharedState implements Closeable {
+    public static final String STORAGE_METRIC_CONTEXT = "io.aiven.inkless.storage";
+
+    private final Time time;
+    private final int brokerId;
+    private final InklessConfig config;
+    private final MetadataView metadata;
+    private final ControlPlane controlPlane;
+    private final StorageBackend fetchStorage;
+    // Separate storage client for lagging consumers to:
+    // 1. Isolate connection pool usage (lagging consumers shouldn't exhaust connections for hot path)
+    // 2. Allow independent tuning of timeouts/retries for cold storage access patterns
+    private final Optional<ObjectFetcher> maybeLaggingFetchStorage;
+    private final StorageBackend produceStorage;
+    // backgroundStorage is used by FileCleaner executor.
+    // A dedicated backend instance guarantees it doesn't contend with hot-path fetch/produce clients.
+    private final StorageBackend backgroundStorage;
+    private final ObjectKeyCreator objectKeyCreator;
+    private final KeyAlignmentStrategy keyAlignmentStrategy;
+    private final ObjectCache cache;
+    private final BatchCoordinateCache batchCoordinateCache;
+    private final CrossTierLogStartCache crossTierLogStartCache;
+    private final CrossTierLogStartReporter crossTierLogStartReporter;
+    private final BrokerTopicStats brokerTopicStats;
+    private final Supplier<LogConfig> defaultTopicConfigs;
+    private final Metrics storageMetrics;
+
+    private SharedState(
+        final Time time,
+        final int brokerId,
+        final InklessConfig config,
+        final MetadataView metadata,
+        final ControlPlane controlPlane,
+        final StorageBackend fetchStorage,
+        final Optional<ObjectFetcher> maybeLaggingFetchStorage,
+        final StorageBackend produceStorage,
+        final StorageBackend backgroundStorage,
+        final Metrics storageMetrics,
+        final ObjectKeyCreator objectKeyCreator,
+        final KeyAlignmentStrategy keyAlignmentStrategy,
+        final ObjectCache cache,
+        final BatchCoordinateCache batchCoordinateCache,
+        final CrossTierLogStartCache crossTierLogStartCache,
+        final CrossTierLogStartReporter crossTierLogStartReporter,
+        final BrokerTopicStats brokerTopicStats,
+        final Supplier<LogConfig> defaultTopicConfigs
+    ) {
+        this.time = time;
+        this.brokerId = brokerId;
+        this.config = config;
+        this.metadata = metadata;
+        this.controlPlane = controlPlane;
+        this.fetchStorage = fetchStorage;
+        this.maybeLaggingFetchStorage = maybeLaggingFetchStorage;
+        this.produceStorage = produceStorage;
+        this.backgroundStorage = backgroundStorage;
+        this.storageMetrics = storageMetrics;
+        this.objectKeyCreator = objectKeyCreator;
+        this.keyAlignmentStrategy = keyAlignmentStrategy;
+        this.cache = cache;
+        this.batchCoordinateCache = batchCoordinateCache;
+        this.crossTierLogStartCache = crossTierLogStartCache;
+        this.crossTierLogStartReporter = crossTierLogStartReporter;
+        this.brokerTopicStats = brokerTopicStats;
+        this.defaultTopicConfigs = defaultTopicConfigs;
+    }
+
+    public static SharedState initialize(
+        Time time,
+        int brokerId,
+        InklessConfig config,
+        MetadataView metadata,
+        ControlPlane controlPlane,
+        BrokerTopicStats brokerTopicStats,
+        Supplier<LogConfig> defaultTopicConfigs
+    ) {
+        Duration maxTtl = config.fileCleanerRetentionPeriod().dividedBy(2);
+        if (config.isBatchCoordinateCacheEnabled() && config.batchCoordinateCacheTtl().toMillis() > maxTtl.toMillis()) {
+            throw new IllegalArgumentException(
+                "Value of consume.batch.coordinate.cache.ttl.ms exceeds file.cleaner.retention.period.ms / 2"
+            );
+        }
+
+        CaffeineCache objectCache = null;
+        BatchCoordinateCache batchCoordinateCache = null;
+        CrossTierLogStartCache crossTierLogStartCache = null;
+        StorageBackend fetchStorage = null;
+        StorageBackend laggingFetchStorage = null;
+        StorageBackend produceStorage = null;
+        StorageBackend backgroundStorage = null;
+        Metrics storageMetrics = null;
+        try {
+            objectCache = new CaffeineCache(
+                config.cacheMaxCount(),
+                config.cacheMaxBytes(),
+                config.cacheExpirationLifespanSec(),
+                config.cacheExpirationMaxIdleSec()
+            );
+            batchCoordinateCache = config.isBatchCoordinateCacheEnabled()
+                ? new CaffeineBatchCoordinateCache(config.batchCoordinateCacheTtl())
+                : new NullBatchCoordinateCache();
+            crossTierLogStartCache = config.isCrossTierLogStartCacheEnabled()
+                ? new CaffeineCrossTierLogStartCache(config.crossTierLogStartCacheTtl())
+                : new NullCrossTierLogStartCache();
+
+            final MetricsReporter reporter = new JmxReporter();
+            storageMetrics = new Metrics(
+                new MetricConfig(), List.of(reporter), Time.SYSTEM,
+                new KafkaMetricsContext(STORAGE_METRIC_CONTEXT)
+            );
+            fetchStorage = config.storage(storageMetrics);
+            // Dedicated storage client for the lagging-consumer cold path (rationale on the maybeLaggingFetchStorage field).
+            // Created only when the feature is enabled; pool size 0 disables it and skips the client.
+            laggingFetchStorage = config.fetchLaggingConsumerThreadPoolSize() > 0 ? config.storage(storageMetrics) : null;
+            produceStorage = config.storage(storageMetrics);
+            // backgroundStorage has two users: FileCleaner (delete after retention) and the
+            // consolidation Reader cold path (bypass object cache for old-data fetches).
+            // Consolidation reads through this client, not laggingFetchStorage — the two cold
+            // paths use separate clients.
+            backgroundStorage = config.storage(storageMetrics);
+            final var objectKeyCreator = ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked());
+            final var keyAlignmentStrategy = new FixedBlockAlignment(config.fetchCacheBlockBytes());
+            final var crossTierLogStartReporter = new CrossTierLogStartReporter(metadata, controlPlane, crossTierLogStartCache);
+            return new SharedState(
+                time,
+                brokerId,
+                config,
+                metadata,
+                controlPlane,
+                fetchStorage,
+                Optional.<ObjectFetcher>ofNullable(laggingFetchStorage),
+                produceStorage,
+                backgroundStorage,
+                storageMetrics,
+                objectKeyCreator,
+                keyAlignmentStrategy,
+                objectCache,
+                batchCoordinateCache,
+                crossTierLogStartCache,
+                crossTierLogStartReporter,
+                brokerTopicStats,
+                defaultTopicConfigs
+            );
+        } catch (Exception e) {
+            Utils.closeQuietly(backgroundStorage, "backgroundStorage");
+            Utils.closeQuietly(produceStorage, "produceStorage");
+            Utils.closeQuietly(laggingFetchStorage, "laggingFetchStorage");
+            Utils.closeQuietly(fetchStorage, "fetchStorage");
+            Utils.closeQuietly(storageMetrics, "storageMetrics");
+            Utils.closeQuietly(batchCoordinateCache, "batchCoordinateCache");
+            Utils.closeQuietly(crossTierLogStartCache, "crossTierLogStartCache");
+            Utils.closeQuietly(objectCache, "objectCache");
+            throw new RuntimeException("Failed to initialize SharedState", e);
+        }
+    }
+
+    @Override
+    public void close() throws IOException {
+        Utils.closeQuietly(backgroundStorage, "backgroundStorage");
+        Utils.closeQuietly(produceStorage, "produceStorage");
+        maybeLaggingFetchStorage.ifPresent(s -> Utils.closeQuietly(s, "laggingFetchStorage"));
+        Utils.closeQuietly(fetchStorage, "fetchStorage");
+        Utils.closeQuietly(storageMetrics, "storageMetrics");
+        Utils.closeQuietly(batchCoordinateCache, "batchCoordinateCache");
+        Utils.closeQuietly(crossTierLogStartCache, "crossTierLogStartCache");
+        Utils.closeQuietly(crossTierLogStartReporter, "crossTierLogStartReporter");
+        Utils.closeQuietly(cache, "objectCache");
+    }
+
+    public Time time() {
+        return time;
+    }
+
+    public int brokerId() {
+        return brokerId;
+    }
+
+    public InklessConfig config() {
+        return config;
+    }
+
+    public MetadataView metadata() {
+        return metadata;
+    }
+
+    public ControlPlane controlPlane() {
+        return controlPlane;
+    }
+
+    public ObjectKeyCreator objectKeyCreator() {
+        return objectKeyCreator;
+    }
+
+    public KeyAlignmentStrategy keyAlignmentStrategy() {
+        return keyAlignmentStrategy;
+    }
+
+    public ObjectCache cache() {
+        return cache;
+    }
+
+    public boolean isBatchCoordinateCacheEnabled() {
+        return config.isBatchCoordinateCacheEnabled();
+    }
+    
+    public BatchCoordinateCache batchCoordinateCache() {
+        return batchCoordinateCache;
+    }
+
+    public CrossTierLogStartCache crossTierLogStartCache() {
+        return crossTierLogStartCache;
+    }
+
+    public CrossTierLogStartReporter crossTierLogStartReporter() {
+        return crossTierLogStartReporter;
+    }
+
+    public BrokerTopicStats brokerTopicStats() {
+        return brokerTopicStats;
+    }
+
+    public Supplier<LogConfig> defaultTopicConfigs() {
+        return defaultTopicConfigs;
+    }
+
+    public StorageBackend fetchStorage() {
+        return fetchStorage;
+    }
+
+    /**
+     * Optional access to the lagging fetch storage backend.
+     *
+     * <p>When {@code fetch.lagging.consumer.thread.pool.size == 0}, the lagging consumer
+     * path is disabled and this storage backend is not created.</p>
+     */
+    public Optional<ObjectFetcher> maybeLaggingFetchStorage() {
+        return maybeLaggingFetchStorage;
+    }
+
+    public StorageBackend produceStorage() {
+        return produceStorage;
+    }
+
+    public StorageBackend backgroundStorage() {
+        return backgroundStorage;
+    }
+}

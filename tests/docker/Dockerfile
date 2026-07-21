@@ -60,7 +60,9 @@ ARG ducker_creator=default
 LABEL ducker.creator=$ducker_creator
 
 # Update Linux and install necessary utilities.
-RUN apt update && apt install -y sudo git netcat iptables rsync unzip wget curl jq coreutils openssh-server net-tools vim python3-pip python3-dev libffi-dev libssl-dev cmake pkg-config libfuse-dev iperf traceroute iproute2 iputils-ping && apt-get -y clean
+# postgresql-client (psql) is used by the inkless consolidation pipeline test to
+# query the Postgres control plane (WAL batches / log_start_offset) and assert WAL pruning.
+RUN apt update && apt install -y sudo git netcat iptables rsync unzip wget curl jq coreutils openssh-server net-tools vim python3-pip python3-dev libffi-dev libssl-dev cmake pkg-config libfuse-dev iperf traceroute iproute2 iputils-ping postgresql-client && apt-get -y clean
 RUN python3 -m pip install -U pip;
 # NOTE: ducktape 0.14.0 supports py 3.9, 3.10, 3.11, 3.12 and 3.13
 COPY requirements.txt requirements.txt
@@ -95,6 +97,7 @@ RUN mkdir -p "/opt/kafka-3.7.2" && chmod a+rw /opt/kafka-3.7.2 && curl -s "$KAFK
 RUN mkdir -p "/opt/kafka-3.8.1" && chmod a+rw /opt/kafka-3.8.1 && curl -s "$KAFKA_MIRROR/kafka_2.12-3.8.1.tgz" | tar xz --strip-components=1 -C "/opt/kafka-3.8.1"
 RUN mkdir -p "/opt/kafka-3.9.1" && chmod a+rw /opt/kafka-3.9.1 && curl -s "$KAFKA_MIRROR/kafka_2.12-3.9.1.tgz" | tar xz --strip-components=1 -C "/opt/kafka-3.9.1"
 RUN mkdir -p "/opt/kafka-4.0.0" && chmod a+rw /opt/kafka-4.0.0 && curl -s "$KAFKA_MIRROR/kafka_2.13-4.0.0.tgz" | tar xz --strip-components=1 -C "/opt/kafka-4.0.0"
+RUN mkdir -p "/opt/kafka-4.1.1" && chmod a+rw /opt/kafka-4.1.1 && curl -s "$KAFKA_MIRROR/kafka_2.13-4.1.1.tgz" | tar xz --strip-components=1 -C "/opt/kafka-4.1.1"
 
 
 # Streams test dependencies
@@ -117,6 +120,32 @@ RUN curl -s "$KAFKA_MIRROR/kafka-streams-3.7.2-test.jar" -o /opt/kafka-3.7.2/lib
 RUN curl -s "$KAFKA_MIRROR/kafka-streams-3.8.1-test.jar" -o /opt/kafka-3.8.1/libs/kafka-streams-3.8.1-test.jar
 RUN curl -s "$KAFKA_MIRROR/kafka-streams-3.9.1-test.jar" -o /opt/kafka-3.9.1/libs/kafka-streams-3.9.1-test.jar
 RUN curl -s "$KAFKA_MIRROR/kafka-streams-4.0.0-test.jar" -o /opt/kafka-4.0.0/libs/kafka-streams-4.0.0-test.jar
+RUN curl -s "$KAFKA_MIRROR/kafka-streams-4.1.1-test.jar" -o /opt/kafka-4.1.1/libs/kafka-streams-4.1.1-test.jar
+
+# Aiven Tiered Storage plugin (for consolidation/remote storage in system tests).
+# Download explicitly with curl (-f fails on HTTP errors, -L follows the GitHub
+# release redirect, --retry tolerates transient network hiccups).
+ARG ts_plugin_version=1.1.1
+ARG ts_plugin_base_url=https://github.com/Aiven-Open/tiered-storage-for-apache-kafka/releases/download/v${ts_plugin_version}
+RUN mkdir -p /opt/tiered-storage-plugin/core /opt/tiered-storage-plugin/s3 && \
+    curl -fsSL --retry 5 --retry-delay 5 "${ts_plugin_base_url}/core-${ts_plugin_version}.tgz" -o /tmp/core.tgz && \
+    curl -fsSL --retry 5 --retry-delay 5 "${ts_plugin_base_url}/s3-${ts_plugin_version}.tgz" -o /tmp/s3.tgz && \
+    tar xzf /tmp/core.tgz -C /opt/tiered-storage-plugin/core --strip-components=1 && \
+    tar xzf /tmp/s3.tgz -C /opt/tiered-storage-plugin/s3 --strip-components=1 && \
+    rm /tmp/*.tgz
+
+# MinIO client (mc) for consolidation system tests that assert object movement
+# (diskless WAL -> tiered-storage prefix) in MinIO.
+ARG mc_version=mc.RELEASE.2025-08-13T08-35-41Z
+RUN arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) mc_arch=amd64; mc_sha=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891 ;; \
+      arm64) mc_arch=arm64; mc_sha=14c8c9616cfce4636add161304353244e8de383b2e2752c0e9dad01d4c27c12c ;; \
+      *) echo "unsupported arch for mc: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 5 --retry-delay 5 "https://dl.min.io/client/mc/release/linux-${mc_arch}/archive/${mc_version}" -o /usr/local/bin/mc && \
+    echo "${mc_sha}  /usr/local/bin/mc" | sha256sum -c - && \
+    chmod +x /usr/local/bin/mc
 
 # To ensure the Kafka cluster starts successfully under JDK 17, we need to update the Zookeeper 
 # client from version 3.4.x to 3.5.7 in Kafka versions 2.1.1, 2.2.2, and 2.3.1, as the older Zookeeper 

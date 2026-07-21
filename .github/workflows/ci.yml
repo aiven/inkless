@@ -16,8 +16,17 @@
 name: CI
 
 on:
-  pull_request:
-    branches: ['cl3']
+  push:
+    branches:
+      - 'trunk'
+      - '4.0'
+      - 'main'
+      - 'inkless-*'
+
+  schedule:
+    - cron: '0 0 * * 6,0'    # Run on Saturday and Sunday at midnight UTC
+  # on-demand
+  workflow_dispatch:
 
 jobs:
   build:

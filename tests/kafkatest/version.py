@@ -62,6 +62,9 @@ class KafkaVersion(LooseVersion):
 
         return LooseVersion._cmp(self, other)
 
+    def acl_command_supports_bootstrap_server(self):
+        return self >= V_2_1_0
+
     def topic_command_supports_bootstrap_server(self):
         return self >= V_2_3_0
 
@@ -97,6 +100,21 @@ class KafkaVersion(LooseVersion):
     def supports_feature_command(self):
         return self >= V_3_8_0
 
+    def supports_command_config(self):
+        # VerifiableProducer/Consumer and the console/perf tools switched to the
+        # unified --command-config flag (from --producer.config/--consumer.config).
+        return self >= V_4_2_0
+
+    def supports_formatter_property(self):
+        # The console consumer/share consumer switched to the --formatter-property
+        # flag (deprecating --property) as part of the tools options overhaul.
+        return self >= V_4_2_0
+
+    def supports_command_property(self):
+        # The console consumer/share consumer switched to the --command-property
+        # flag (deprecating --consumer-property) as part of the tools options overhaul.
+        return self >= V_4_2_0
+
 def get_version(node=None):
     """Return the version attached to the given node.
     Default to DEV_BRANCH if node or node.version is undefined (aka None)
@@ -107,11 +125,11 @@ def get_version(node=None):
         return DEV_BRANCH
 
 DEV_BRANCH = KafkaVersion("dev")
-DEV_VERSION = KafkaVersion("4.2.0-SNAPSHOT")
+DEV_VERSION = KafkaVersion("4.2.0-inkless-SNAPSHOT")
 
 LATEST_STABLE_TRANSACTION_VERSION = 2
 # This should match the LATEST_PRODUCTION version defined in MetadataVersion.java
-LATEST_STABLE_METADATA_VERSION = "4.1-IV1"
+LATEST_STABLE_METADATA_VERSION = "4.0-IV3"
 
 # 2.1.x versions
 V_2_1_0 = KafkaVersion("2.1.0")
@@ -223,6 +241,10 @@ LATEST_4_0 = V_4_0_0
 # 4.1.x version
 V_4_1_0 = KafkaVersion("4.1.0")
 LATEST_4_1 = V_4_1_0
+
+# 4.2.x version
+V_4_2_0 = KafkaVersion("4.2.0")
+LATEST_4_2 = V_4_2_0
 
 # Cluster Mirroring
 CLUSTER_MIRRORING_METADATA_VERSION = "4.2-IV2"

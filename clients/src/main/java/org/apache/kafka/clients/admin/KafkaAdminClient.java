@@ -108,6 +108,7 @@ import org.apache.kafka.common.errors.UnsupportedSaslMechanismException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.internals.KafkaFutureImpl;
 import org.apache.kafka.common.message.AddRaftVoterRequestData;
+import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignableTopic;
 import org.apache.kafka.common.message.AlterReplicaLogDirsRequestData;
@@ -170,6 +171,7 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.MetadataRequestData;
 import org.apache.kafka.common.message.RemoveRaftVoterRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
+import org.apache.kafka.common.message.RepairDisklessLogRequestData;
 import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
 import org.apache.kafka.common.message.StopMirrorTopicsRequestData;
 import org.apache.kafka.common.message.UnregisterBrokerRequestData;
@@ -192,6 +194,8 @@ import org.apache.kafka.common.requests.AddRaftVoterRequest;
 import org.apache.kafka.common.requests.AddRaftVoterResponse;
 import org.apache.kafka.common.requests.AlterClientQuotasRequest;
 import org.apache.kafka.common.requests.AlterClientQuotasResponse;
+import org.apache.kafka.common.requests.AlterDisklessSwitchRequest;
+import org.apache.kafka.common.requests.AlterDisklessSwitchResponse;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsRequest;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsResponse;
 import org.apache.kafka.common.requests.AlterReplicaLogDirsRequest;
@@ -262,6 +266,8 @@ import org.apache.kafka.common.requests.RemoveRaftVoterRequest;
 import org.apache.kafka.common.requests.RemoveRaftVoterResponse;
 import org.apache.kafka.common.requests.RenewDelegationTokenRequest;
 import org.apache.kafka.common.requests.RenewDelegationTokenResponse;
+import org.apache.kafka.common.requests.RepairDisklessLogRequest;
+import org.apache.kafka.common.requests.RepairDisklessLogResponse;
 import org.apache.kafka.common.requests.ResumeMirrorTopicsRequest;
 import org.apache.kafka.common.requests.ResumeMirrorTopicsResponse;
 import org.apache.kafka.common.requests.StartMirrorTopicsRequest;
@@ -2359,7 +2365,7 @@ public class KafkaAdminClient extends AdminClient {
         }
 
         // First, we need to retrieve the node info.
-        DescribeClusterResult clusterResult = describeCluster();
+        DescribeClusterResult clusterResult = describeCluster(new DescribeClusterOptions().timeoutMs(options.timeoutMs()));
         clusterResult.nodes().whenComplete(
             (nodes, exception) -> {
                 if (exception != null) {
@@ -2493,6 +2499,98 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
+    public DescribeTopicPartitionsResult describeTopicPartitions(Collection<String> topics, DescribeTopicsOptions options) {
+        if (topics.isEmpty()) {
+            throw new IllegalArgumentException("topics must not be empty");
+        }
+        final KafkaFutureImpl<DescribeTopicPartitionsResponseData> future = new KafkaFutureImpl<>();
+        final DescribeTopicPartitionsResponseData accumulated = new DescribeTopicPartitionsResponseData();
+        final long now = time.milliseconds();
+        final List<String> topicNamesList = new ArrayList<>(topics);
+        topicNamesList.sort(String::compareTo);
+
+        runnable.call(new Call("describeTopicPartitions", calcDeadlineMs(now, options.timeoutMs()),
+            new LeastLoadedNodeProvider()) {
+            DescribeTopicPartitionsResponseData.Cursor cursor = null;
+
+            @Override
+            DescribeTopicPartitionsRequest.Builder createRequest(int timeoutMs) {
+                DescribeTopicPartitionsRequestData request = new DescribeTopicPartitionsRequestData()
+                    .setTopics(topicNamesList.stream()
+                        .map(name -> new TopicRequest().setName(name))
+                        .collect(Collectors.toList()))
+                    .setResponsePartitionLimit(options.partitionSizeLimitPerResponse());
+                if (cursor != null) {
+                    request.setCursor(new DescribeTopicPartitionsRequestData.Cursor()
+                        .setTopicName(cursor.topicName())
+                        .setPartitionIndex(cursor.partitionIndex()));
+                }
+                return new DescribeTopicPartitionsRequest.Builder(request);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                DescribeTopicPartitionsResponse response = (DescribeTopicPartitionsResponse) abstractResponse;
+                DescribeTopicPartitionsResponseData data = response.data();
+
+                for (DescribeTopicPartitionsResponseTopic topic : data.topics()) {
+                    Errors error = Errors.forCode(topic.errorCode());
+                    if (error != Errors.NONE) {
+                        future.completeExceptionally(error.exception());
+                        return;
+                    }
+                    for (DescribeTopicPartitionsResponsePartition partition : topic.partitions()) {
+                        Errors partitionError = Errors.forCode(partition.errorCode());
+                        if (partitionError != Errors.NONE) {
+                            future.completeExceptionally(partitionError.exception());
+                            return;
+                        }
+                    }
+                    DescribeTopicPartitionsResponseTopic existing = accumulated.topics().find(topic.name());
+                    if (existing != null) {
+                        if (!existing.topicId().equals(topic.topicId())) {
+                            future.completeExceptionally(new UnknownTopicOrPartitionException(
+                                "Topic " + topic.name() + " changed while fetching paginated response"));
+                            return;
+                        }
+                        existing.partitions().addAll(copyPartitionsWithTaggedFields(topic.partitions()));
+                    } else {
+                        DescribeTopicPartitionsResponseTopic copy = topic.duplicate();
+                        copy.setPartitions(copyPartitionsWithTaggedFields(topic.partitions()));
+                        accumulated.topics().add(copy);
+                    }
+                }
+
+                cursor = data.nextCursor();
+                if (cursor != null) {
+                    runnable.call(this, time.milliseconds());
+                } else {
+                    future.complete(accumulated);
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        }, now);
+
+        return new DescribeTopicPartitionsResult(future);
+    }
+
+    private static List<DescribeTopicPartitionsResponsePartition> copyPartitionsWithTaggedFields(
+            List<DescribeTopicPartitionsResponsePartition> partitions) {
+        List<DescribeTopicPartitionsResponsePartition> copies = new ArrayList<>(partitions.size());
+        for (DescribeTopicPartitionsResponsePartition partition : partitions) {
+            DescribeTopicPartitionsResponsePartition copy = partition.duplicate();
+            // duplicate() drops the unknown tagged fields
+            copy.unknownTaggedFields().addAll(partition.unknownTaggedFields());
+            copies.add(copy);
+        }
+        return copies;
+    }
+
+    @Override
     public DescribeClusterResult describeCluster(DescribeClusterOptions options) {
         final KafkaFutureImpl<Collection<Node>> describeClusterFuture = new KafkaFutureImpl<>();
         final KafkaFutureImpl<Node> controllerFuture = new KafkaFutureImpl<>();
@@ -2533,8 +2631,7 @@ public class KafkaAdminClient extends AdminClient {
                     DescribeClusterResponse response = (DescribeClusterResponse) abstractResponse;
                     Errors error = Errors.forCode(response.data().errorCode());
                     if (error != Errors.NONE) {
-                        ApiError apiError = new ApiError(error, response.data().errorMessage());
-                        handleFailure(apiError.exception());
+                        handleFailure(error.exception(response.data().errorMessage()));
                         return;
                     }
 
@@ -2730,10 +2827,9 @@ public class KafkaAdminClient extends AdminClient {
                         } else {
                             List<FilterResult> filterResults = new ArrayList<>();
                             for (DeleteAclsMatchingAcl matchingAcl : filterResult.matchingAcls()) {
-                                ApiError aclError = new ApiError(Errors.forCode(matchingAcl.errorCode()),
-                                    matchingAcl.errorMessage());
+                                Errors aclError = Errors.forCode(matchingAcl.errorCode());
                                 AclBinding aclBinding = DeleteAclsResponse.aclBinding(matchingAcl);
-                                filterResults.add(new FilterResult(aclBinding, aclError.exception()));
+                                filterResults.add(new FilterResult(aclBinding, aclError.exception(matchingAcl.errorMessage())));
                             }
                             future.complete(new FilterResults(filterResults));
                         }
@@ -3622,6 +3718,7 @@ public class KafkaAdminClient extends AdminClient {
             .collect(Collectors.toMap(entry -> entry.getKey().idValue, Map.Entry::getValue)));
     }
 
+    @SuppressWarnings("removal")
     @Deprecated
     private static final class ListConsumerGroupsResults {
         private final List<Throwable> errors;
@@ -3856,7 +3953,7 @@ public class KafkaAdminClient extends AdminClient {
     @Override
     public ListShareGroupOffsetsResult listShareGroupOffsets(final Map<String, ListShareGroupOffsetsSpec> groupSpecs,
                                                              final ListShareGroupOffsetsOptions options) {
-        SimpleAdminApiFuture<CoordinatorKey, Map<TopicPartition, OffsetAndMetadata>> future = ListShareGroupOffsetsHandler.newFuture(groupSpecs.keySet());
+        SimpleAdminApiFuture<CoordinatorKey, Map<TopicPartition, SharePartitionOffsetInfo>> future = ListShareGroupOffsetsHandler.newFuture(groupSpecs.keySet());
         ListShareGroupOffsetsHandler handler = new ListShareGroupOffsetsHandler(groupSpecs, logContext);
         invokeDriver(handler, future, options.timeoutMs);
         return new ListShareGroupOffsetsResult(future.all());
@@ -4035,7 +4132,7 @@ public class KafkaAdminClient extends AdminClient {
                             for (ReassignablePartitionResponse partition : topicResponse.partitions()) {
                                 errors.put(
                                     new TopicPartition(topicName, partition.partitionIndex()),
-                                    new ApiError(topLevelError, response.data().errorMessage()).exception()
+                                    topLevelError.exception(response.data().errorMessage())
                                 );
                                 receivedResponsesCount += 1;
                             }
@@ -4075,7 +4172,7 @@ public class KafkaAdminClient extends AdminClient {
                         if (partitionError == Errors.NONE) {
                             errors.put(tp, null);
                         } else {
-                            errors.put(tp, new ApiError(partitionError, partResponse.errorMessage()).exception());
+                            errors.put(tp, partitionError.exception(partResponse.errorMessage()));
                         }
                         receivedResponsesCount += 1;
                     }
@@ -4151,7 +4248,7 @@ public class KafkaAdminClient extends AdminClient {
                         handleNotControllerError(error);
                         break;
                     default:
-                        partitionReassignmentsFuture.completeExceptionally(new ApiError(error, response.data().errorMessage()).exception());
+                        partitionReassignmentsFuture.completeExceptionally(error.exception(response.data().errorMessage()));
                         break;
                 }
                 Map<TopicPartition, PartitionReassignment> reassignmentMap = new HashMap<>();
@@ -5442,6 +5539,81 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
+    public AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset,
+                                                         AlterDisklessSwitchOptions options) {
+        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        final Call call = new Call("alterDisklessSwitch", calcDeadlineMs(now, options.timeoutMs()),
+            new LeastLoadedBrokerOrActiveKController()) {
+
+            @Override
+            AlterDisklessSwitchRequest.Builder createRequest(int timeoutMs) {
+                AlterDisklessSwitchRequestData data = new AlterDisklessSwitchRequestData()
+                    .setTopicName(topic)
+                    .setPartitionIndex(partition)
+                    .setSealOffset(sealOffset)
+                    .setClearProducerStates(options.clearProducerStates());
+                return new AlterDisklessSwitchRequest.Builder(data);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final AlterDisklessSwitchResponse response = (AlterDisklessSwitchResponse) abstractResponse;
+                Errors error = Errors.forCode(response.data().errorCode());
+                if (error == Errors.NONE) {
+                    future.complete(null);
+                } else {
+                    future.completeExceptionally(error.exception(response.data().errorMessage()));
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return new AlterDisklessSwitchResult(future);
+    }
+
+    @Override
+    public RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId,
+                                                     RepairDisklessLogOptions options) {
+        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        // The control-plane write happens on the partition leader, so send directly to that broker.
+        final Call call = new Call("repairDisklessLog", calcDeadlineMs(now, options.timeoutMs()),
+            new ConstantNodeIdProvider(brokerId)) {
+
+            @Override
+            RepairDisklessLogRequest.Builder createRequest(int timeoutMs) {
+                RepairDisklessLogRequestData data = new RepairDisklessLogRequestData()
+                    .setTopicName(topic)
+                    .setPartitionIndex(partition);
+                return new RepairDisklessLogRequest.Builder(data);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final RepairDisklessLogResponse response = (RepairDisklessLogResponse) abstractResponse;
+                Errors error = Errors.forCode(response.data().errorCode());
+                if (error == Errors.NONE) {
+                    future.complete(null);
+                } else {
+                    future.completeExceptionally(error.exception(response.data().errorMessage()));
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return new RepairDisklessLogResult(future);
+    }
+
+    @Override
     public DescribeProducersResult describeProducers(Collection<TopicPartition> topicPartitions, DescribeProducersOptions options) {
         PartitionLeaderStrategy.PartitionLeaderFuture<DescribeProducersResult.PartitionProducerState> future =
             DescribeProducersHandler.newFuture(topicPartitions, partitionLeaderCache);
@@ -5629,14 +5801,11 @@ public class KafkaAdminClient extends AdminClient {
             void handleResponse(AbstractResponse response) {
                 handleNotControllerError(response);
                 AddRaftVoterResponse addResponse = (AddRaftVoterResponse) response;
-                if (addResponse.data().errorCode() != Errors.NONE.code()) {
-                    ApiError error = new ApiError(
-                        addResponse.data().errorCode(),
-                        addResponse.data().errorMessage());
-                    future.completeExceptionally(error.exception());
-                } else {
+                Errors error = Errors.forCode(addResponse.data().errorCode());
+                if (error != Errors.NONE)
+                    future.completeExceptionally(error.exception(addResponse.data().errorMessage()));
+                else
                     future.complete(null);
-                }
             }
 
             @Override
@@ -5674,14 +5843,11 @@ public class KafkaAdminClient extends AdminClient {
             void handleResponse(AbstractResponse response) {
                 handleNotControllerError(response);
                 RemoveRaftVoterResponse addResponse = (RemoveRaftVoterResponse) response;
-                if (addResponse.data().errorCode() != Errors.NONE.code()) {
-                    ApiError error = new ApiError(
-                        addResponse.data().errorCode(),
-                        addResponse.data().errorMessage());
-                    future.completeExceptionally(error.exception());
-                } else {
+                Errors error = Errors.forCode(addResponse.data().errorCode());
+                if (error != Errors.NONE)
+                    future.completeExceptionally(error.exception(addResponse.data().errorMessage()));
+                else
                     future.complete(null);
-                }
             }
 
             @Override
@@ -5790,6 +5956,8 @@ public class KafkaAdminClient extends AdminClient {
             return ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP;
         } else if (offsetSpec instanceof OffsetSpec.LatestTieredSpec) {
             return ListOffsetsRequest.LATEST_TIERED_TIMESTAMP;
+        } else if (offsetSpec instanceof OffsetSpec.EarliestPendingUploadSpec) {
+            return ListOffsetsRequest.EARLIEST_PENDING_UPLOAD_TIMESTAMP;
         }
         return ListOffsetsRequest.LATEST_TIMESTAMP;
     }

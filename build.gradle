@@ -14,6 +14,8 @@
 // limitations under the License.
 
 import org.ajoberstar.grgit.Grgit
+import org.jooq.meta.jaxb.ForcedType
+
 import java.nio.charset.StandardCharsets
 
 buildscript {
@@ -29,22 +31,24 @@ buildscript {
 }
 
 plugins {
-  id 'com.github.ben-manes.versions' version '0.48.0'
+  id 'com.github.ben-manes.versions' version '0.53.0'
   id 'idea'
   id 'jacoco'
   id 'java-library'
-  id 'org.owasp.dependencycheck' version '8.2.1'
+  id 'org.owasp.dependencycheck' version '12.1.8'
   id 'org.nosphere.apache.rat' version "0.8.1"
   id "io.swagger.core.v3.swagger-gradle-plugin" version "${swaggerVersion}"
 
-  id "com.github.spotbugs" version '6.2.3' apply false
-  id 'org.scoverage' version '8.0.3' apply false
-  id 'com.gradleup.shadow' version '8.3.6' apply false
-  id 'com.diffplug.spotless' version "6.25.0"
+  id "com.github.spotbugs" version '6.4.4' apply false
+  id 'org.scoverage' version '8.1' apply false
+  id 'com.gradleup.shadow' version '8.3.9' apply false
+  id 'com.diffplug.spotless' version "8.0.0"
+
+  id 'info.solidsoft.pitest' version '1.19.0-rc.3' apply false
+  id 'dev.monosoul.jooq-docker'  version "6.1.19" apply false
 }
 
 ext {
-  gradleVersion = versions.gradle
   minClientJavaVersion = 11
   minNonClientJavaVersion = 17
   modulesNeedingJava11 = [":clients", ":generator", ":streams", ":streams:test-utils", ":streams:examples", ":streams-scala", ":test-common:test-common-util"]
@@ -72,12 +76,6 @@ ext {
       "--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED"
     )
 
-  if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_24)) {
-    // Spotbugs is not compatible with Java 24+ until Spotbugs 4.9.4. Disable it until we can upgrade to that version.
-    project.gradle.startParameter.excludedTaskNames.add("spotbugsMain")
-    project.gradle.startParameter.excludedTaskNames.add("spotbugsTest")
-  }
-
   maxTestForks = project.hasProperty('maxParallelForks') ? maxParallelForks.toInteger() : Runtime.runtime.availableProcessors()
   maxScalacThreads = project.hasProperty('maxScalacThreads') ? maxScalacThreads.toInteger() :
       Math.min(Runtime.runtime.availableProcessors(), 8)
@@ -102,7 +100,7 @@ ext {
   userKeepAliveModeString = project.hasProperty("keepAliveMode") ? keepAliveMode : "daemon"
   userKeepAliveMode = KeepAliveMode.values().find(m -> m.name().toLowerCase().equals(userKeepAliveModeString))
   if (userKeepAliveMode == null) {
-    def keepAliveValues = KeepAliveMode.values().collect(m -> m.name.toLowerCase())
+    def keepAliveValues = KeepAliveMode.values().collect(m -> m.name().toLowerCase())
     throw new GradleException("Unexpected value for keepAliveMode property. Expected one of $keepAliveValues, but received: $userKeepAliveModeString")
   }
 
@@ -136,20 +134,25 @@ ext {
       options.compilerArgs << "-Xlint:-serial"
       options.compilerArgs << "-Xlint:-try"
       options.compilerArgs << "-Werror"
+      if (userKeepAliveMode == KeepAliveMode.SESSION){
+        // Suppress warning triggered under keepAliveMode=SESSION during joint compilation
+        // Unexpected javac output: warning: [path] bad path element ".../core/build/classes/java/main": no such file or directory
+        options.compilerArgs << "-Xlint:-path"
+      }
     }
   }
 
   runtimeTestLibs = [
     libs.slf4jLog4j2,
     libs.junitPlatformLanucher,
-    libs.jacksonDatabindYaml,
+    libs.jacksonDataformatYaml,
     project(":test-common:test-common-util")
   ]
 
   log4jReleaseLibs = [
     libs.slf4jLog4j2,
     libs.log4j1Bridge2Api,
-    libs.jacksonDatabindYaml
+    libs.jacksonDataformatYaml
   ]
 
   log4j2Libs = [
@@ -163,7 +166,7 @@ ext {
     libs.log4j2Api,
     libs.log4j2Core
   ]
-  
+
 }
 
 allprojects {
@@ -199,8 +202,6 @@ allprojects {
           // ensure we have a single version in the classpath despite transitive dependencies
           libs.scalaLibrary,
           libs.scalaReflect,
-          // Workaround before `commons-validator` has new release. See KAFKA-19359.
-          libs.commonsBeanutils,
           libs.jacksonAnnotations,
           libs.commonsLang
         )
@@ -267,7 +268,7 @@ if (repo != null) {
   rat {
     dependsOn subprojects.collect {
       it.tasks.matching {
-        it.name == "processMessages" || it.name == "processTestMessages"
+        it.name == "processMessages" || it.name == "processTestMessages" || it.name == "generateJooqClasses"
       }
     }
 
@@ -280,6 +281,7 @@ if (repo != null) {
     excludes = new ArrayList<String>(repo.clean(ignore: false, directories: true, dryRun: true))
     // And some of the files that we have checked in should also be excluded from this check
     excludes.addAll([
+        'antithesis/**',
         '**/.git/**',
         '**/build/**',
         '.github/pull_request_template.md',
@@ -294,6 +296,35 @@ if (repo != null) {
         'checkstyle/suppressions.xml',
         'streams/quickstart/java/src/test/resources/projects/basic/goal.txt',
         'streams/streams-scala/logs/*',
+        // Ignore inkless licenses from RAT check for the time being
+        'LICENSE.md',
+        'LICENSE-AGPL',
+        'Makefile',
+        '.inkless-sync/**',
+        'storage/inkless/**',
+        'docker/examples/docker-compose-files/inkless/**',
+        'config/inkless/**',
+        'checkstyle/import-control-storage-inkless.xml',
+        '.github/workflows/inkless*',
+        'docker/extra',
+        'docs/inkless/**',
+        'dump-schema-compose.yml',
+        'inkless-benchmarks/**',
+        'tests/kafkatest/services/inkless/**',
+        'tests/kafkatest/tests/inkless/**',
+        'inkless-sync/**',
+        'core/src/main/scala/io/aiven/inkless/**',
+        'core/src/test/scala/io/aiven/inkless/**',
+        // Inkless coding agent configurations
+        'INKLESS_OWNERSHIP',
+        'AGENTS.md',
+        'CLAUDE.md',
+        '.ai-agents/**',
+        '.claude/**',
+        '.cursor/**',
+        '.opencode/**',
+        '.github/copilot-instructions.md',
+        // end of inkless ignored files
         'licenses/*',
         '**/generated/**',
         'clients/src/test/resources/serializedData/*',
@@ -305,7 +336,7 @@ if (repo != null) {
 } else {
   rat.enabled = false
 }
-println("Starting build with version $version (commit id ${commitId == null ? "null" : commitId.take(8)}) using Gradle $gradleVersion, Java ${JavaVersion.current()} and Scala ${versions.scala}")
+println("Starting build with version $version (commit id ${commitId == null ? "null" : commitId.take(8)}) using Gradle $versions.gradle, Java ${JavaVersion.current()} and Scala ${versions.scala}")
 println("Build properties: ignoreFailures=$userIgnoreFailures, maxParallelForks=$maxTestForks, maxScalacThreads=$maxScalacThreads, maxTestRetries=$userMaxTestRetries")
 
 subprojects {
@@ -334,6 +365,16 @@ subprojects {
     // The maven plugin was replaced by the maven-publish plugin in Gradle 7.0
     tasks.register('install').configure { dependsOn(publishToMavenLocal) }
     tasks.register('uploadArchives').configure { dependsOn(publish) }
+  }
+
+  tasks.withType(AbstractArchiveTask).configureEach {
+    reproducibleFileOrder = false
+    preserveFileTimestamps = true
+    useFileSystemPermissions()
+  }
+
+  tasks.withType(AbstractTestTask).configureEach {
+    failOnNoDiscoveredTests = false
   }
 
   // apply the eclipse plugin only to subprojects that hold code. 'connect' is just a folder.
@@ -490,10 +531,35 @@ subprojects {
     }
   }
 
+  // Workaround for Mockito Java Agent restrictions in Java 21+
+  // Starting with Java 21, the JDK restricts libraries from attaching a Java agent
+  // to their own JVM. As a result, Mockito’s inline mock maker (mockito-core)
+  // fails without explicit instrumentation, and the JVM consistently emits warnings.
+  // See also: https://javadoc.io/doc/org.mockito/mockito-core/latest/org.mockito/org/mockito/Mockito.html#mockito-instrumentation
+  afterEvaluate { subproject ->
+    def hasMockitoCore = subproject.configurations.findAll {
+      it.canBeResolved
+    }.any { config ->
+      config.incoming.dependencies.any { dependency ->
+          "$dependency" == libs.mockitoCore
+      }
+    }
+
+    if (hasMockitoCore) {
+      subproject.configurations {
+        mockitoAgent {
+          transitive = false
+        }
+      }
+      subproject.dependencies {
+        mockitoAgent libs.mockitoCore
+      }
+    }
+  }
+
   // The suites are for running sets of tests in IDEs.
   // Gradle will run each test class, so we exclude the suites to avoid redundantly running the tests twice.
   def testsToExclude = ['**/*Suite.class']
-
 
   // This task will copy JUnit XML files out of the sub-project's build directory and into
   // a top-level build/junit-xml directory. This is necessary to avoid reporting on tests which
@@ -524,6 +590,14 @@ subprojects {
   }
 
   test {
+
+    doFirst {
+      def mockitoAgentConfig = configurations.findByName('mockitoAgent')
+      if (mockitoAgentConfig) {
+        jvmArgs("-javaagent:${mockitoAgentConfig.asPath}")
+      }
+    }
+
     maxParallelForks = maxTestForks
     ignoreFailures = userIgnoreFailures
 
@@ -557,11 +631,14 @@ subprojects {
         maxFailures = userMaxTestRetryFailures
       }
     }
-    
+
     finalizedBy("copyTestXml")
   }
 
   task integrationTest(type: Test, dependsOn: compileJava) {
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+
     maxParallelForks = maxTestForks
     ignoreFailures = userIgnoreFailures
 
@@ -594,6 +671,9 @@ subprojects {
   }
 
   task unitTest(type: Test, dependsOn: compileJava) {
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+
     maxParallelForks = maxTestForks
     ignoreFailures = userIgnoreFailures
 
@@ -1015,9 +1095,12 @@ project(':core') {
     implementation project(':transaction-coordinator')
     implementation project(':metadata')
     implementation project(':storage:storage-api')
+    // tools-api is automatically included in releaseTarGz via core's runtimeClasspath.
+    // If removed from here, remember to explicitly add it back in the releaseTarGz task.
     implementation project(':tools:tools-api')
     implementation project(':raft')
     implementation project(':storage')
+    implementation project(':storage:inkless')
     implementation project(':server')
     implementation project(':coordinator-common')
     implementation project(':share-coordinator')
@@ -1028,7 +1111,7 @@ project(':core') {
     implementation libs.jacksonDatabind
     implementation libs.jacksonDataformatCsv
     implementation libs.jacksonJDK8Datatypes
-    implementation libs.jacksonDatabindYaml
+    implementation libs.jacksonDataformatYaml
     implementation libs.joptSimple
     implementation libs.jose4j
     implementation libs.metrics
@@ -1071,15 +1154,27 @@ project(':core') {
     testImplementation testLog4j2Libs
     testImplementation libs.mockOAuth2Server
 
+    // testcontainers for inkless cluster tests
+    testImplementation libs.assertj
+    testImplementation libs.junitJupiter
+    testImplementation libs.mockitoCore
+    testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
+    testImplementation libs.testcontainers
+    testImplementation libs.testcontainersJunitJupiter
+    testImplementation libs.testcontainersLocalstack
+    testImplementation libs.testcontainersPostgresql
+    testImplementation libs.tieredStorageForKafkaCore
+    testImplementation libs.tieredStorageForKafkaS3
+    testImplementation libs.awsSdkS3
+    testImplementation project(':storage:inkless').sourceSets.test.output
+
     testRuntimeOnly runtimeTestLibs
   }
 
   if (userEnableTestCoverage) {
     scoverage {
       scoverageVersion = versions.scoverage
-      if (versions.baseScala == '2.13') {
-        scoverageScalaVersion = '2.13.9' // there's no newer 2.13 artifact, org.scoverage:scalac-scoverage-plugin_2.13.9:2.0.11 is the latest as of now
-      }
+      scoverageScalaVersion = versions.scala
       reportDir = file("${layout.buildDirectory.get().asFile.path}/scoverage")
       highlighting = false
       minimumRate = 0.0
@@ -1238,8 +1333,6 @@ project(':core') {
     from(project(':streams:test-utils').configurations.runtimeClasspath) { into("libs/") }
     from(project(':streams:examples').jar) { into("libs/") }
     from(project(':streams:examples').configurations.runtimeClasspath) { into("libs/") }
-    from(project(':tools:tools-api').jar) { into("libs/") }
-    from(project(':tools:tools-api').configurations.runtimeClasspath) { into("libs/") }
     duplicatesStrategy 'exclude'
   }
 
@@ -1446,7 +1539,7 @@ project(':group-coordinator') {
     testImplementation project(':clients').sourceSets.test.output
     testImplementation project(':server-common').sourceSets.test.output
     testImplementation project(':coordinator-common').sourceSets.test.output
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation testLog4j2Libs
@@ -1568,7 +1661,7 @@ project(':test-common:test-common-runtime') {
 
     implementation libs.junitPlatformLanucher
     implementation libs.junitJupiter
-    implementation libs.jacksonDatabindYaml
+    implementation libs.jacksonDataformatYaml
     implementation libs.slf4jApi
 
     testImplementation libs.junitJupiter
@@ -2036,21 +2129,20 @@ project(':clients') {
     include "**/org/apache/kafka/common/*"
     include "**/org/apache/kafka/common/acl/*"
     include "**/org/apache/kafka/common/annotation/*"
+    include "**/org/apache/kafka/common/config/*"
+    include "**/org/apache/kafka/common/config/provider/*"
     include "**/org/apache/kafka/common/errors/*"
     include "**/org/apache/kafka/common/header/*"
     include "**/org/apache/kafka/common/metrics/*"
     include "**/org/apache/kafka/common/metrics/stats/*"
     include "**/org/apache/kafka/common/quota/*"
     include "**/org/apache/kafka/common/resource/*"
-    include "**/org/apache/kafka/common/serialization/*"
-    include "**/org/apache/kafka/common/config/*"
-    include "**/org/apache/kafka/common/config/provider/*"
     include "**/org/apache/kafka/common/security/auth/*"
+    include "**/org/apache/kafka/common/security/oauthbearer/*"
     include "**/org/apache/kafka/common/security/plain/*"
     include "**/org/apache/kafka/common/security/scram/*"
     include "**/org/apache/kafka/common/security/token/delegation/*"
-    include "**/org/apache/kafka/common/security/oauthbearer/*"
-    include "**/org/apache/kafka/common/security/oauthbearer/secured/*"
+    include "**/org/apache/kafka/common/serialization/*"
     include "**/org/apache/kafka/server/authorizer/*"
     include "**/org/apache/kafka/server/policy/*"
     include "**/org/apache/kafka/server/quota/*"
@@ -2112,7 +2204,7 @@ project(':raft') {
     testImplementation project(':server-common').sourceSets.test.output
     testImplementation project(':clients')
     testImplementation project(':clients').sourceSets.test.output
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation libs.jqwik
@@ -2209,7 +2301,7 @@ project(':server-common') {
 
     testImplementation project(':clients')
     testImplementation project(':clients').sourceSets.test.output
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation testLog4j2Libs
@@ -2342,6 +2434,17 @@ project(':storage') {
     testImplementation project(':core')
     testImplementation project(':core').sourceSets.test.output
     testImplementation project(':storage:storage-api').sourceSets.test.output
+    // testcontainers for inkless cluster tests
+    testImplementation libs.assertj
+    testImplementation libs.junitJupiter
+    testImplementation libs.mockitoCore
+    testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
+    testImplementation libs.testcontainers
+    testImplementation libs.testcontainersJunitJupiter
+    testImplementation libs.testcontainersLocalstack
+    testImplementation libs.testcontainersPostgresql
+    testImplementation libs.awsSdkS3
+    testImplementation project(':storage:inkless').sourceSets.test.output
     testImplementation project(':test-common:test-common-internal-api')
     testImplementation project(':test-common:test-common-runtime')
     testImplementation project(':test-common:test-common-util')
@@ -2350,7 +2453,7 @@ project(':storage') {
     testImplementation project(':server-common').sourceSets.test.output
     testImplementation project(':transaction-coordinator')
     testImplementation libs.hamcrest
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation libs.bcpkix
@@ -2442,6 +2545,274 @@ project(':storage') {
 
   checkstyle {
     configProperties = checkstyleConfigProperties("import-control-storage.xml")
+  }
+
+  systemTestLibs {
+    dependsOn testJar
+  }
+}
+
+project(':storage:inkless') {
+
+  configurations {
+    generator
+  }
+
+  apply plugin: 'dev.monosoul.jooq-docker'
+
+  dependencies {
+    api project(':clients')
+    implementation project(':server-common')
+    implementation project(':storage')
+    implementation project(':metadata')
+
+    api libs.pitestAnnotations
+
+    implementation libs.slf4jApi
+    implementation libs.postgresql
+    implementation libs.hikariCP
+    implementation libs.flyway
+    implementation libs.flywayPostgres
+    implementation libs.jooq
+    compileOnly libs.jooqMeta  // mostly to suppress compiler warnings, we don't use this at run time
+    implementation libs.awsSdkS3
+    runtimeOnly libs.awsSdkSts
+    implementation platform(libs.azureSdkBom)
+    implementation("com.azure:azure-identity") {
+      exclude group: "com.fasterxml.jackson.core"
+      exclude group: "org.slf4j"
+    }
+    implementation("com.azure:azure-storage-blob") {
+      exclude group: "com.fasterxml.jackson.core"
+      exclude group: "org.slf4j"
+    }
+    implementation(libs.gcsSdk) {
+      exclude group: 'com.google.errorprone', module: 'error_prone_annotations'
+      exclude group: 'org.checkerframework', module: 'checker-qual'
+      exclude group: 'com.google.code.findbugs', module: 'jsr305'
+      exclude group: 'com.google.j2objc', module: 'j2objc-annotations'
+      exclude group: 'org.codehaus.mojo', module: 'animal-sniffer-annotations'
+      exclude group: 'com.google.guava', module: 'listenablefuture'
+    }
+    implementation libs.metrics
+    implementation libs.caffeine
+    implementation libs.bucket4jCore
+
+    testImplementation project(':clients').sourceSets.test.output.classesDirs
+    testImplementation project(':test-common')
+    testImplementation libs.assertj
+    testImplementation libs.awaitility
+    testImplementation libs.junitJupiter
+    testImplementation libs.mockitoCore
+    testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
+    testImplementation libs.testcontainers
+    testImplementation libs.testcontainersJunitJupiter
+    testImplementation libs.testcontainersFakegcs
+    testImplementation libs.testcontainersPostgresql
+    testImplementation libs.testcontainersLocalstack
+    testImplementation libs.wiremock
+    testImplementation libs.jqwik
+
+    testRuntimeOnly runtimeTestLibs
+
+    generator project(':generator')
+
+    jooqCodegen libs.jooq
+    jooqCodegen libs.jooqMeta
+    jooqCodegen libs.jooqCodegen
+    jooqCodegen libs.postgresql
+  }
+
+  // Needed for Docker compatibility when generating classes using jooq
+  System.setProperty("api.version", "1.44")
+  System.setProperty("docker.api.version", "1.44")
+  System.setProperty("docker.client.strategy",
+    "org.testcontainers.dockerclient.EnvironmentAndSystemPropertyClientProviderStrategy")
+
+  task processMessages(type:JavaExec) {
+    mainClass = "org.apache.kafka.message.MessageGenerator"
+    classpath = configurations.generator
+    args = [ "-p", "io.aiven.inkless.generated",
+             "-o", "${projectDir}/build/generated/main/java/io/aiven/inkless/generated",
+             "-i", "src/main/resources/message",
+             "-m", "MessageDataGenerator", "JsonConverterGenerator"
+    ]
+    inputs.dir("src/main/resources/message")
+            .withPropertyName("messages")
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.cacheIf { true }
+    outputs.dir("${projectDir}/build/generated/main/java/io/aiven/inkless/generated")
+  }
+
+  task genInklessConfigDoc(type: JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.aiven.inkless.doc.ConfigsDocs'
+
+    // Define the outputs formally
+    outputs.file("$rootDir/docs/inkless/configs.rst")
+
+    // Set up the output in the execution phase, not configuration, and avoid removing on clean
+    doFirst {
+      standardOutput = new File("$rootDir/docs/inkless/configs.rst").newOutputStream()
+    }
+  }
+
+  task genInklessTopicConfigDoc(type: JavaExec) {
+    classpath = project(':storage:inkless').sourceSets.main.runtimeClasspath
+    mainClass = 'io.aiven.inkless.doc.TopicConfigsDocs'
+
+    // Define the outputs formally
+    outputs.file("$rootDir/docs/inkless/topic_configs.rst")
+
+    // Set up the output in the execution phase, not configuration, and avoid removing on clean
+    doFirst {
+      standardOutput = new File("$rootDir/docs/inkless/topic_configs.rst").newOutputStream()
+    }
+  }
+
+  task genInklessMetricsDoc(type: JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.aiven.inkless.doc.MetricsDocs'
+
+    // Define the outputs formally
+    outputs.file("$rootDir/docs/inkless/metrics.rst")
+
+    // Set up the output in the execution phase, not configuration, and avoid removing on clean
+    doFirst {
+      standardOutput = new File("$rootDir/docs/inkless/metrics.rst").newOutputStream()
+    }
+  }
+
+  tasks {
+    generateJooqClasses {
+      withContainer {
+        image {
+          name = "postgres:17.2-alpine"
+        }
+      }
+
+      usingJavaConfig {
+        // Docs: https://www.jooq.org/doc/latest/manual/code-generation/codegen-advanced/codegen-config-database/codegen-database-forced-types/codegen-database-forced-types-converter/
+        database.withForcedTypes(
+                new ForcedType()
+                  .withName("UUID")
+                  .withUserType("org.apache.kafka.common.Uuid")
+                  .withIncludeExpression("TOPIC_ID")
+                  .withConverter("io.aiven.inkless.control_plane.postgres.converters.UUIDtoUuidConverter"),
+
+                new ForcedType()
+                  .withName("TIMESTAMP WITH TIME ZONE")
+                  .withUserType("java.time.Instant")
+                  .withIncludeExpression("NOW|ARG_NOW|.*_AT")
+                  .withConverter("io.aiven.inkless.control_plane.postgres.converters.OffsetDateTimeToInstantConverter"),
+
+                new ForcedType()
+                  .withName("TIMESTAMP_TYPE_T")
+                  .withUserType("org.apache.kafka.common.record.TimestampType")
+                  .withIncludeExpression("TIMESTAMP_TYPE")
+                  .withConverter("io.aiven.inkless.control_plane.postgres.converters.ShortToTimestampTypeConverter"),
+
+                new ForcedType()
+                  .withName("FILE_REASON_T")
+                  .withUserType("io.aiven.inkless.control_plane.FileReason")
+                  .withIncludeExpression("REASON")
+                  .withConverter("io.aiven.inkless.control_plane.postgres.converters.FileReasonTToFileReasonConverter")
+        )
+      }
+      basePackageName.set("org.jooq.generated")
+      outputDirectory.set(project.layout.projectDirectory.dir("src/main/jooq"))
+      includeFlywayTable.set(false)
+      outputSchemaToDefault.add("public")
+      inputs.dir("src/main/resources/db/migration")
+    }
+  }
+
+  sourceSets {
+    main {
+      java {
+        srcDirs = [
+                "src/main/java",
+                "src/main/jooq",
+                "${projectDir}/build/generated/main/java"
+        ]
+      }
+    }
+    test {
+      java {
+        srcDirs = ["src/test/java"]
+      }
+    }
+  }
+
+  compileJava.dependsOn('processMessages', 'generateJooqClasses')
+  srcJar.dependsOn('processMessages', 'generateJooqClasses')
+
+  javadoc {
+    enabled = false
+  }
+
+  checkstyle {
+    // TODO enable
+    checkstyleMain.enabled = false
+    checkstyleTest.enabled = false
+
+    configProperties = checkstyleConfigProperties("import-control-storage-inkless.xml")
+  }
+
+  test {
+    useJUnitPlatform {
+      includeEngines 'jqwik', 'junit-jupiter'
+      // 'benchmark'-tagged tests are measurement harnesses (e.g. commit_file coalescing row reduction),
+      // not correctness gates. Exclude them from the default test run / CI; use the benchmarkTest task.
+      excludeTags 'benchmark'
+    }
+  }
+
+  // Opt-in task to run @Tag("benchmark") measurement tests on demand. Not wired into `check`/`test`
+  // or any CI workflow; run manually with `./gradlew :storage:inkless:benchmarkTest`.
+  tasks.register('benchmarkTest', Test) {
+    description = 'Runs @Tag("benchmark") inkless measurement tests (e.g. commit_file coalescing). Excluded from `check`/`test`.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+      includeTags 'benchmark'
+      includeEngines 'junit-jupiter'
+    }
+    // Surface the printed comparison report directly instead of digging it out of the test XML.
+    testLogging {
+      showStandardStreams = true
+    }
+  }
+
+  apply plugin: 'info.solidsoft.pitest'
+  apply plugin: 'info.solidsoft.pitest.aggregator'
+
+  pitest {
+    //adds dependency to org.pitest:pitest-junit5-plugin and sets "testPlugin" to "junit5"
+    junit5PluginVersion = '1.2.3'
+    pitestVersion = '1.21.1'
+    addJUnitPlatformLauncher = false
+    targetClasses.add("io.aiven.inkless.*")
+    excludedTestClasses.add("*io.aiven.inkless.storage_backend.s3.integration.*")
+    excludedTestClasses.add("*io.aiven.inkless.storage_backend.azure.integration.*")
+    excludedTestClasses.add("*io.aiven.inkless.storage_backend.gcs.integration.*")
+    excludedTestClasses.add("*io.aiven.inkless.produce.WriterIntegrationTest")
+    excludedTestClasses.add("*io.aiven.inkless.produce.WriterPropertyTest")
+    excludedTestClasses.add("*io.aiven.inkless.control_plane.postgres.*")
+    excludedTestClasses.add("*io.aiven.inkless.delete.*")
+    excludedTestClasses.add("*io.aiven.inkless.merge.*")
+    targetTests.add("io.aiven.inkless.*")
+    threads = Runtime.getRuntime().availableProcessors()
+    outputFormats.addAll('XML', 'HTML')
+    mutators.add('ALL')
+    exportLineCoverage = true
+  }
+
+  tasks.named('build') {
+    dependsOn tasks.named('genInklessConfigDoc')
+    dependsOn tasks.named('genInklessTopicConfigDoc')
+    dependsOn tasks.named('genInklessMetricsDoc')
   }
 }
 
@@ -2562,6 +2933,17 @@ project(':tools') {
     testImplementation libs.apachedsProtocolLdap
     testImplementation libs.apachedsLdifPartition
     testImplementation testLog4j2Libs
+    // testcontainers for inkless cluster tests
+    testImplementation libs.assertj
+    testImplementation libs.junitJupiter
+    testImplementation libs.mockitoCore
+    testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
+    testImplementation libs.testcontainers
+    testImplementation libs.testcontainersJunitJupiter
+    testImplementation libs.testcontainersLocalstack
+    testImplementation libs.testcontainersPostgresql
+    testImplementation libs.awsSdkS3
+    testImplementation project(':storage:inkless').sourceSets.test.output
 
     testRuntimeOnly runtimeTestLibs
     testRuntimeOnly libs.hamcrest
@@ -2668,7 +3050,7 @@ project(':shell') {
     testImplementation project(':core')
     testImplementation project(':server-common')
     testImplementation project(':server-common').sourceSets.test.output
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation testLog4j2Libs
 
@@ -2717,7 +3099,7 @@ project(':streams') {
     testCompileOnly libs.bndlib
 
     testImplementation project(':clients').sourceSets.test.output
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.bcpkix
     testImplementation libs.hamcrest
@@ -2862,7 +3244,7 @@ project(':streams:streams-scala') {
     testImplementation project(':clients').sourceSets.test.output
     testImplementation project(':streams:test-utils')
 
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
     testImplementation testLog4j2Libs
@@ -2966,7 +3348,7 @@ project(':streams:test-utils') {
     implementation libs.slf4jApi
 
     testImplementation project(':clients').sourceSets.test.output
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation libs.hamcrest
@@ -3394,6 +3776,22 @@ project(':streams:upgrade-system-tests-40') {
   }
 }
 
+project(':streams:upgrade-system-tests-41') {
+  base {
+    archivesName = "kafka-streams-upgrade-system-tests-41"
+  }
+
+  dependencies {
+    testImplementation libs.kafkaStreams_41
+    testRuntimeOnly libs.junitJupiter
+    testRuntimeOnly runtimeTestLibs
+  }
+
+  systemTestLibs {
+    dependsOn testJar
+  }
+}
+
 project(':jmh-benchmarks') {
 
   apply plugin: 'com.gradleup.shadow'
@@ -3412,6 +3810,7 @@ project(':jmh-benchmarks') {
     implementation project(':raft')
     implementation project(':clients')
     implementation project(':coordinator-common')
+    implementation project(':coordinator-common').sourceSets.test.output
     implementation project(':group-coordinator')
     implementation project(':group-coordinator:group-coordinator-api')
     implementation project(':metadata')
@@ -3644,7 +4043,7 @@ project(':connect:runtime') {
     testImplementation project(':connect:test-plugins')
     testImplementation project(':server-common').sourceSets.test.output
 
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation libs.mockitoJunitJupiter
@@ -3729,8 +4128,12 @@ project(':connect:runtime') {
     buildClasspath = classpath + configurations.swagger
     outputFileName = 'connect_rest'
     outputFormat = 'YAML'
-    prettyPrint = 'TRUE'
-    sortOutput = 'TRUE'
+    prettyPrint = true
+    sortOutput = true
+    encoding = 'UTF-8'
+    alwaysResolveAppPath = false
+    skipResolveAppPath = false
+    readAllResources = true
     openApiFile = file("${layout.buildDirectory.get().asFile.path}/resources/docs/openapi.yaml")
     resourcePackages = ['org.apache.kafka.connect.runtime.rest.resources']
     if( !generatedDocsDir.exists() ) { generatedDocsDir.mkdirs() }

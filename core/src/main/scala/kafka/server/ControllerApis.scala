@@ -16,6 +16,8 @@
  */
 package kafka.server
 
+import io.aiven.inkless.control_plane.{ControlPlane, CreateTopicAndPartitionsRequest}
+
 import java.{lang, util}
 import java.nio.ByteBuffer
 import java.util.{Collections, OptionalLong, Properties}
@@ -23,10 +25,9 @@ import java.util.Map.Entry
 import java.util.concurrent.CompletableFuture
 import java.util.function.Consumer
 import kafka.network.RequestChannel
-import kafka.raft.RaftManager
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.logger.RuntimeLoggerManager
-import kafka.server.metadata.KRaftMetadataCache
+import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.mirror.ClusterMirrorUtils
 import kafka.utils.Logging
 import org.apache.kafka.clients.CommonClientConfigs
@@ -34,7 +35,7 @@ import org.apache.kafka.clients.admin.{AlterConfigOp, EndpointType}
 import org.apache.kafka.common.Uuid.ZERO_UUID
 import org.apache.kafka.common.acl.AclOperation.{ALTER, ALTER_CONFIGS, CLUSTER_ACTION, CREATE, CREATE_TOKENS, DELETE, DESCRIBE, DESCRIBE_CONFIGS}
 import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
-import org.apache.kafka.common.errors.{ApiException, ClusterAuthorizationException, ClusterMirrorAuthorizationException, InvalidRequestException, TopicAuthorizationException, TopicDeletionDisabledException, UnsupportedVersionException}
+import org.apache.kafka.common.errors.{ApiException, ClusterAuthorizationException, ClusterMirrorAuthorizationException, InvalidRequestException, TopicAuthorizationException, TopicDeletionDisabledException, UnknownServerException, UnsupportedVersionException}
 import org.apache.kafka.common.internals.{FatalExitError, Plugin, Topic}
 import org.apache.kafka.common.message.AlterConfigsResponseData.{AlterConfigsResourceResponse => OldAlterConfigsResourceResponse}
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic
@@ -58,6 +59,9 @@ import org.apache.kafka.image.publisher.ControllerRegistrationsPublisher
 import org.apache.kafka.metadata.{BrokerHeartbeatReply, BrokerRegistrationReply}
 import org.apache.kafka.common.security.auth.KafkaPrincipal
 import org.apache.kafka.common.security.auth.SecurityProtocol
+import org.apache.kafka.raft.RaftManager
+import org.apache.kafka.security.DelegationTokenManager
+import org.apache.kafka.server.{ApiVersionManager, ProcessRole}
 import org.apache.kafka.network.Session
 import org.apache.kafka.server.{ApiVersionManager, DelegationTokenManager, ProcessRole}
 import org.apache.kafka.server.authorizer.Authorizer
@@ -65,6 +69,7 @@ import org.apache.kafka.server.common.{ApiMessageAndVersion, RequestLocal}
 import org.apache.kafka.server.quota.ControllerMutationQuota
 import org.apache.kafka.server.record.BrokerCompressionType
 
+import java.time.Duration
 import scala.jdk.CollectionConverters._
 
 /**
@@ -81,7 +86,8 @@ class ControllerApis(
   val clusterId: String,
   val registrationsPublisher: ControllerRegistrationsPublisher,
   val apiVersionManager: ApiVersionManager,
-  val metadataCache: KRaftMetadataCache
+  val metadataCache: KRaftMetadataCache,
+  val inklessControlPlane: Option[ControlPlane] = None
 ) extends ApiRequestHandler with Logging {
 
   this.logIdent = s"[ControllerApis nodeId=${config.nodeId}] "
@@ -90,6 +96,8 @@ class ControllerApis(
   val requestHelper = new RequestHandlerHelper(requestChannel, quotas, time)
   val runtimeLoggerManager = new RuntimeLoggerManager(config.nodeId, logger.underlying)
   private val aclApis = new AclApis(authHelper, authorizerPlugin, requestHelper, ProcessRole.ControllerRole, config)
+
+  private val inklessMetadataView = new InklessMetadataView(metadataCache, () => config.extractLogConfigMap)
 
   def isClosed: Boolean = aclApis.isClosed
 
@@ -137,6 +145,8 @@ class ControllerApis(
         case ApiKeys.ADD_RAFT_VOTER => handleAddRaftVoter(request)
         case ApiKeys.REMOVE_RAFT_VOTER => handleRemoveRaftVoter(request)
         case ApiKeys.UPDATE_RAFT_VOTER => handleUpdateRaftVoter(request)
+        case ApiKeys.INIT_DISKLESS_LOG => handleInitDisklessLogRequest(request)
+        case ApiKeys.ALTER_DISKLESS_SWITCH => handleAlterDisklessSwitchRequest(request)
         case ApiKeys.CREATE_CLUSTER_MIRROR => handleCreateClusterMirror(request)
         case ApiKeys.START_MIRROR_TOPICS => handleStartMirrorTopics(request)
         case ApiKeys.STOP_MIRROR_TOPICS => handleStopMirrorTopics(request)
@@ -627,6 +637,22 @@ class ControllerApis(
             appendResponse(name, ZERO_UUID, new ApiError(TOPIC_AUTHORIZATION_FAILED))
           }
         }
+
+        // Deletes topics from the Inkless control plane before removing them from the Kafka quorum metadata.
+        // This ordering is crucial because the disappearance of the topics from the quorum metadata
+        // signals successful topic removal and is where retry attempts for this entire operation cease.
+        // If errors occur, the diskless removal is retried, ensuring that the diskless side is in sync
+        // with Kafka. The diskless deletion is idempotent (provided topics with the same names aren't created in between).
+        val topicIdsToDeleteFromControlPlane = idToName.asScala
+          .filter { case (_, name) => inklessMetadataView.isDisklessTopic(name) }
+          .map { case (topicId, _) => topicId }
+          .toSet.asJava
+        if (!config.disklessStorageSystemEnabled && !topicIdsToDeleteFromControlPlane.isEmpty)
+          warn(s"Attempting to delete diskless topics $topicIdsToDeleteFromControlPlane " +
+            "from the control plane, but the diskless storage system is not enabled. " +
+            "Topic will only be removed from KRaft metadata as no control plane is available.")
+        inklessControlPlane.foreach { cp => cp.deleteTopics(topicIdsToDeleteFromControlPlane) }
+
         // Finally, the idToName map contains all the topics that we are authorized to delete.
         // Perform the deletion and create responses for each one.
         controller.deleteTopics(context, idToName.keySet).thenApply { idToError =>
@@ -725,7 +751,49 @@ class ControllerApis(
             setErrorMessage("Authorization failed."))
         }
       }
+
+      createTopicsDiskless(response)
+
       response
+    }
+  }
+
+  private def createTopicsDiskless(response: CreateTopicsResponseData): Unit = {
+    inklessControlPlane.foreach { cp =>
+      val successfullyCreatedTopics = response.topics.asScala
+        // Include only diskless topics
+        .filter(t =>
+          t.configs().stream()
+            .filter(c => c.name() == TopicConfig.DISKLESS_ENABLE_CONFIG)
+            .filter(c => c.value() == "true")
+            .findAny()
+            .isPresent
+        )
+        // It's OK if we retry creating for already existing topics,
+        // this may save some trouble when diskless creation failed for some reason and the user retries.
+        .filter(t => t.errorCode() == Errors.NONE.code() || t.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code())
+
+      // We need to be sure the newly created topic exist in the metadata.
+      // As this is the same process, this should happen very quickly.
+      // We could have probably bound to the context deadline,
+      // but since diskless operations themselves aren't time-bound now, this doesn't make much sense.
+      val timer = time.timer(Duration.ofSeconds(10))
+      while (timer.notExpired()
+        // `getTopicId` returns `ZERO_UUID` when not found
+        && successfullyCreatedTopics.exists {t => inklessMetadataView.getTopicId(t.name()) != t.topicId()}) {
+        timer.sleep(10)
+      }
+      if (timer.isExpired) {
+        // If after all this happens, we can not bother ourselves with proper fine-grained error responses
+        // and let the user retry.
+        throw new UnknownServerException("Could not find newly created topic metadata")
+      }
+
+      val createTopicRequests = successfullyCreatedTopics
+        .filter(t => inklessMetadataView.isDisklessTopic(t.name()))
+        .map(t => new CreateTopicAndPartitionsRequest(t.topicId(), t.name(), t.numPartitions()))
+        .toSet.asJava
+      cp.createTopicAndPartitions(createTopicRequests)
     }
   }
 
@@ -892,6 +960,38 @@ class ControllerApis(
         new AlterPartitionResponse(result)
       }
       requestHelper.sendResponseExemptThrottle(request, response)
+    }
+  }
+
+  def handleInitDisklessLogRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    val initDisklessLogRequest = request.body[InitDisklessLogRequest]
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      OptionalLong.empty())
+    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    val future = controller.initDisklessLog(context, initDisklessLogRequest.data)
+    future.handle[Unit] { (result, exception) =>
+      val response = if (exception != null) {
+        initDisklessLogRequest.getErrorResponse(exception)
+      } else {
+        new InitDisklessLogResponse(result)
+      }
+      requestHelper.sendResponseExemptThrottle(request, response)
+    }
+  }
+
+  def handleAlterDisklessSwitchRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    val alterDisklessSwitchRequest = request.body[AlterDisklessSwitchRequest]
+    authHelper.authorizeClusterOperation(request, ALTER)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      OptionalLong.empty())
+    controller.alterDisklessSwitch(context, alterDisklessSwitchRequest.data).handle[Unit] { (result, e) =>
+      requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs => {
+        if (e != null) {
+          alterDisklessSwitchRequest.getErrorResponse(requestThrottleMs, e)
+        } else {
+          new AlterDisklessSwitchResponse(result.setThrottleTimeMs(requestThrottleMs))
+        }
+      })
     }
   }
 
@@ -1142,9 +1242,50 @@ class ControllerApis(
           setErrorCode(TOPIC_AUTHORIZATION_FAILED.code))
       }
     }
-    controller.createPartitions(context, topics, request.validateOnly).thenApply { results =>
+    controller.createPartitions(context, topics, request.validateOnly).thenCompose { results =>
       results.forEach(response => responses.add(response))
-      responses
+
+      createDisklessPartitions(request.validateOnly, context, topics, results)
+        .thenApply(_ => responses)
+    }
+  }
+
+  private def createDisklessPartitions(validateOnly: Boolean,
+                                      context: ControllerRequestContext,
+                                      topics: java.util.List[CreatePartitionsTopic],
+                                      results: java.util.List[CreatePartitionsTopicResult]): CompletableFuture[Unit] = {
+    inklessControlPlane match {
+      case _ if validateOnly =>
+        CompletableFuture.completedFuture(())
+      case None =>
+        CompletableFuture.completedFuture(())
+
+      case Some(cp) =>
+        val successfulCreations = (topics.asScala zip results.asScala)
+          // It's OK if we retry creating for already existing topics,
+          // this may save some trouble when Inkless creation failed for some reason and the user retries.
+          .filter { case (_, res) => res.errorCode() == Errors.NONE.code() || res.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code() }
+          // In contrast to the topic creation, we only create new partitions to existing topics.
+          // Hence, the topics themselves must be in the metadata already, no need to wait.
+          .filter { case (req, _) => inklessMetadataView.isDisklessTopic(req.name()) }
+          .map { case (req, _) => req }
+          .toSet
+        val topicNames = successfulCreations.map(_.name()).toList.asJava
+        controller.findTopicIds(context, topicNames).thenApply { topicIds =>
+          val createPartitionRequests = successfulCreations.flatMap { req =>
+            val topicName = req.name()
+            val topicIdOrError = topicIds.get(topicName)
+            if (topicIdOrError.isError) {
+              // The chances for this are slim: only when someone concurrently deleted the topic
+              // right after the partitions were created in the quorum metadata.
+              logger.error("Error finding topic ID for topic {}: partitions will not be created", topicName)
+              None
+            } else {
+              Some(new CreateTopicAndPartitionsRequest(topicIdOrError.result(), req.name(), req.count()))
+            }
+          }
+          cp.createTopicAndPartitions(createPartitionRequests.asJava)
+        }
     }
   }
 
@@ -1359,7 +1500,7 @@ class ControllerApis(
       EndpointType.CONTROLLER,
       clusterId,
       () => registrationsPublisher.describeClusterControllers(request.context.listenerName()),
-      () => raftManager.leaderAndEpoch.leaderId().orElse(-1)
+      () => raftManager.client.leaderAndEpoch.leaderId().orElse(-1)
     )
     requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
       new DescribeClusterResponse(response.setThrottleTimeMs(requestThrottleMs)))

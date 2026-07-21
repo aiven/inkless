@@ -31,6 +31,8 @@ import org.apache.kafka.common.errors.StaleBrokerEpochException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
+import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
+import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.AlterPartitionRequestData;
@@ -55,6 +57,8 @@ import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
+import org.apache.kafka.common.message.InitDisklessLogRequestData;
+import org.apache.kafka.common.message.InitDisklessLogResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
@@ -128,6 +132,7 @@ import org.apache.kafka.server.common.KRaftVersion;
 import org.apache.kafka.server.common.OffsetAndEpoch;
 import org.apache.kafka.server.fault.FaultHandler;
 import org.apache.kafka.server.fault.FaultHandlerException;
+import org.apache.kafka.server.mutable.BoundedList;
 import org.apache.kafka.server.policy.AlterConfigPolicy;
 import org.apache.kafka.server.policy.CreateTopicPolicy;
 import org.apache.kafka.snapshot.SnapshotReader;
@@ -229,6 +234,16 @@ public final class QuorumController implements Controller {
         private long delegationTokenExpiryCheckIntervalMs = TimeUnit.MINUTES.toMillis(5);
         private long uncleanLeaderElectionCheckIntervalMs = TimeUnit.MINUTES.toMillis(5);
 
+        private boolean defaultDisklessEnable = false;
+        private boolean disklessStorageSystemEnabled = false;
+        private boolean disklessManagedReplicasEnabled = false;
+        private boolean disklessRemoteStorageConsolidationEnabled = false;
+        private boolean disklessAllowFromClassicEnabled = false;
+        private boolean classicRemoteStorageForceEnabled = false;
+        private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
+        private boolean disklessForceEnabled = false;
+        private List<String> disklessForceIncludeTopicRegexes = List.of();
+
         public Builder(int nodeId, String clusterId) {
             this.nodeId = nodeId;
             this.clusterId = clusterId;
@@ -268,8 +283,8 @@ public final class QuorumController implements Controller {
             return this;
         }
 
-        public Builder setRaftClient(RaftClient<ApiMessageAndVersion> logManager) {
-            this.raftClient = logManager;
+        public Builder setRaftClient(RaftClient<ApiMessageAndVersion> raftClient) {
+            this.raftClient = raftClient;
             return this;
         }
 
@@ -285,6 +300,51 @@ public final class QuorumController implements Controller {
 
         public Builder setDefaultNumPartitions(int defaultNumPartitions) {
             this.defaultNumPartitions = defaultNumPartitions;
+            return this;
+        }
+
+        public Builder setDefaultDisklessEnable(boolean defaultDisklessEnable) {
+            this.defaultDisklessEnable = defaultDisklessEnable;
+            return this;
+        }
+
+        public Builder setDisklessStorageSystemEnabled(boolean disklessStorageSystemEnabled) {
+            this.disklessStorageSystemEnabled = disklessStorageSystemEnabled;
+            return this;
+        }
+
+        public Builder setDisklessManagedReplicasEnabled(boolean disklessManagedReplicasEnabled) {
+            this.disklessManagedReplicasEnabled = disklessManagedReplicasEnabled;
+            return this;
+        }
+
+        public Builder setDisklessRemoteStorageConsolidationEnabled(boolean disklessRemoteStorageConsolidationEnabled) {
+            this.disklessRemoteStorageConsolidationEnabled = disklessRemoteStorageConsolidationEnabled;
+            return this;
+        }
+
+        public Builder setDisklessAllowFromClassicEnabled(boolean disklessAllowFromClassicEnabled) {
+            this.disklessAllowFromClassicEnabled = disklessAllowFromClassicEnabled;
+            return this;
+        }
+
+        public Builder setClassicRemoteStorageForceEnabled(boolean classicRemoteStorageForceEnabled) {
+            this.classicRemoteStorageForceEnabled = classicRemoteStorageForceEnabled;
+            return this;
+        }
+
+        public Builder setClassicRemoteStorageForceExcludeTopicRegexes(List<String> classicRemoteStorageForceExcludeTopicRegexes) {
+            this.classicRemoteStorageForceExcludeTopicRegexes = classicRemoteStorageForceExcludeTopicRegexes;
+            return this;
+        }
+
+        public Builder setDisklessForceEnabled(boolean disklessForceEnabled) {
+            this.disklessForceEnabled = disklessForceEnabled;
+            return this;
+        }
+
+        public Builder setDisklessForceIncludeTopicRegexes(List<String> disklessForceIncludeTopicRegexes) {
+            this.disklessForceIncludeTopicRegexes = disklessForceIncludeTopicRegexes;
             return this;
         }
 
@@ -414,7 +474,14 @@ public final class QuorumController implements Controller {
 
             KafkaEventQueue queue = null;
             try {
-                queue = new KafkaEventQueue(time, logContext, threadNamePrefix);
+                queue = new KafkaEventQueue(
+                    time,
+                    logContext,
+                    threadNamePrefix,
+                    EventQueue.VoidEvent.INSTANCE,
+                    controllerMetrics::updateIdleTime
+                );
+
                 return new QuorumController(
                     nonFatalFaultHandler,
                     fatalFaultHandler,
@@ -428,6 +495,15 @@ public final class QuorumController implements Controller {
                     quorumFeatures,
                     defaultReplicationFactor,
                     defaultNumPartitions,
+                    defaultDisklessEnable,
+                    disklessStorageSystemEnabled,
+                    disklessManagedReplicasEnabled,
+                    disklessRemoteStorageConsolidationEnabled,
+                    disklessAllowFromClassicEnabled,
+                    classicRemoteStorageForceEnabled,
+                    classicRemoteStorageForceExcludeTopicRegexes,
+                    disklessForceEnabled,
+                    disklessForceIncludeTopicRegexes,
                     replicaPlacer,
                     leaderImbalanceCheckIntervalNs,
                     maxIdleIntervalNs,
@@ -1090,7 +1166,7 @@ public final class QuorumController implements Controller {
 
         @Override
         public void beginShutdown() {
-            queue.beginShutdown("MetaLogManager.Listener");
+            queue.beginShutdown("QuorumMetaLogListener");
         }
 
         private void appendRaftEvent(String name, Runnable runnable) {
@@ -1470,6 +1546,15 @@ public final class QuorumController implements Controller {
         QuorumFeatures quorumFeatures,
         short defaultReplicationFactor,
         int defaultNumPartitions,
+        boolean defaultDisklessEnable,
+        boolean disklessStorageSystemEnabled,
+        boolean disklessManagedReplicasEnabled,
+        boolean disklessRemoteStorageConsolidationEnabled,
+        boolean disklessAllowFromClassicEnabled,
+        boolean classicRemoteStorageForceEnabled,
+        List<String> classicRemoteStorageForceExcludeTopicRegexes,
+        boolean disklessForceEnabled,
+        List<String> disklessForceIncludeTopicRegexes,
         ReplicaPlacer replicaPlacer,
         OptionalLong leaderImbalanceCheckIntervalNs,
         OptionalLong maxIdleIntervalNs,
@@ -1552,6 +1637,15 @@ public final class QuorumController implements Controller {
             setLogContext(logContext).
             setDefaultReplicationFactor(defaultReplicationFactor).
             setDefaultNumPartitions(defaultNumPartitions).
+            setDefaultDisklessEnable(defaultDisklessEnable).
+            setDisklessStorageSystemEnabled(disklessStorageSystemEnabled).
+            setDisklessManagedReplicasEnabled(disklessManagedReplicasEnabled).
+            setDisklessRemoteStorageConsolidationEnabled(disklessRemoteStorageConsolidationEnabled).
+            setDisklessAllowFromClassicEnabled(disklessAllowFromClassicEnabled).
+            setClassicRemoteStorageForceEnabled(classicRemoteStorageForceEnabled).
+            setClassicRemoteStorageForceExcludeTopicRegexes(classicRemoteStorageForceExcludeTopicRegexes).
+            setDisklessForceEnabled(disklessForceEnabled).
+            setDisklessForceIncludeTopicRegexes(disklessForceIncludeTopicRegexes).
             setMaxElectionsPerImbalance(ReplicationControlManager.MAX_ELECTIONS_PER_IMBALANCE).
             setConfigurationControl(configurationControl).
             setClusterControl(clusterControl).
@@ -1722,6 +1816,27 @@ public final class QuorumController implements Controller {
         }
         return appendWriteEvent("alterPartition", context.deadlineNs(),
             () -> replicationControl.alterPartition(context, request));
+    }
+
+    @Override
+    public CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
+        ControllerRequestContext context,
+        InitDisklessLogRequestData request
+    ) {
+        if (request.topics().isEmpty()) {
+            return CompletableFuture.completedFuture(new InitDisklessLogResponseData());
+        }
+        return appendWriteEvent("initDisklessLog", context.deadlineNs(),
+            () -> replicationControl.initDisklessLog(context, request));
+    }
+
+    @Override
+    public CompletableFuture<AlterDisklessSwitchResponseData> alterDisklessSwitch(
+        ControllerRequestContext context,
+        AlterDisklessSwitchRequestData request
+    ) {
+        return appendWriteEvent("alterDisklessSwitch", context.deadlineNs(),
+            () -> replicationControl.alterDisklessSwitch(request));
     }
 
     @Override
@@ -1948,11 +2063,23 @@ public final class QuorumController implements Controller {
             return CompletableFuture.completedFuture(Map.of());
         }
         return appendWriteEvent("incrementalAlterConfigs", context.deadlineNs(), () -> {
+            Map<ConfigResource, Map<String, Entry<OpType, String>>> effectiveChanges =
+                replicationControl.maybeAddRemoteStorageEnableForSwitch(configChanges);
             ControllerResult<Map<ConfigResource, ApiError>> result =
-                configurationControl.incrementalAlterConfigs(configChanges, false);
+                configurationControl.incrementalAlterConfigs(effectiveChanges, false,
+                    resource -> replicationControl.validateClassicToDisklessSwitchPrecondition(
+                        resource, effectiveChanges));
             if (validateOnly) {
                 return result.withoutRecords();
             } else {
+                List<ApiMessageAndVersion> migrationRecords =
+                    replicationControl.markClassicToDisklessSwitchStarted(effectiveChanges, result.response());
+                if (!migrationRecords.isEmpty()) {
+                    List<ApiMessageAndVersion> allRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+                    allRecords.addAll(result.records());
+                    allRecords.addAll(migrationRecords);
+                    return ControllerResult.atomicOf(allRecords, result.response());
+                }
                 return result;
             }
         });
@@ -1993,11 +2120,23 @@ public final class QuorumController implements Controller {
             return CompletableFuture.completedFuture(Map.of());
         }
         return appendWriteEvent("legacyAlterConfigs", context.deadlineNs(), () -> {
+            Map<ConfigResource, Map<String, String>> effectiveConfigs =
+                replicationControl.maybeAddRemoteStorageEnableForLegacyAlterConfigs(newConfigs);
             ControllerResult<Map<ConfigResource, ApiError>> result =
-                configurationControl.legacyAlterConfigs(newConfigs, false);
+                configurationControl.legacyAlterConfigs(effectiveConfigs, false,
+                    resource -> replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(
+                        resource, effectiveConfigs));
             if (validateOnly) {
                 return result.withoutRecords();
             } else {
+                List<ApiMessageAndVersion> migrationRecords =
+                    replicationControl.markClassicToDisklessSwitchStartedForLegacyAlterConfigs(effectiveConfigs, result.response());
+                if (!migrationRecords.isEmpty()) {
+                    List<ApiMessageAndVersion> allRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+                    allRecords.addAll(result.records());
+                    allRecords.addAll(migrationRecords);
+                    return ControllerResult.atomicOf(allRecords, result.response());
+                }
                 return result;
             }
         });

@@ -16,15 +16,18 @@
  */
 package kafka.api
 
+import kafka.server.GroupProtocolAndMaybeTopicTypeProvider
 import kafka.utils.TestInfoUtils
 import org.apache.kafka.clients.consumer.{Consumer, ConsumerConfig, GroupProtocol}
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig}
 import org.apache.kafka.common.{ClusterResource, ClusterResourceListener, PartitionInfo}
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.serialization.{Deserializer, Serializer}
+import org.apache.kafka.server.config.ServerConfigs
 import org.junit.jupiter.api.Assertions._
+import org.junit.jupiter.api.{BeforeEach, TestInfo}
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.MethodSource
+import org.junit.jupiter.params.provider.ArgumentsSource
 
 import java.util.Properties
 import java.util.concurrent.atomic.AtomicInteger
@@ -36,9 +39,28 @@ import scala.collection.Seq
  */
 abstract class BaseConsumerTest extends AbstractConsumerTest {
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testSimpleConsumption(groupProtocol: String): Unit = {
+  private var currentTestName: String = _
+
+  @BeforeEach
+  override def setUp(testInfo: TestInfo): Unit = {
+    currentTestName = testInfo.getTestMethod.get().getName
+    super.setUp(testInfo)
+  }
+
+  override protected def brokerPropertyOverrides(properties: Properties): Unit = {
+    super.brokerPropertyOverrides(properties)
+
+    if (currentTestName != null && currentTestName.equals("testCoordinatorFailover")) {
+      // Enable controlled shutdown to allow the broker to notify the controller before shutting down.
+      // This speeds up the test by triggering an immediate failover instead of waiting for the
+      // broker session timeout (default: 9s) to expire.
+      properties.setProperty(ServerConfigs.CONTROLLED_SHUTDOWN_ENABLE_CONFIG, "true")
+    }
+  }
+
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testSimpleConsumption(groupProtocol: String, topicType: String): Unit = {
     val numRecords = 10000
     val producer = createProducer()
     val startingTimestamp = System.currentTimeMillis()
@@ -56,9 +78,9 @@ abstract class BaseConsumerTest extends AbstractConsumerTest {
     sendAndAwaitAsyncCommit(consumer)
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testClusterResourceListener(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testClusterResourceListener(groupProtocol: String, topicType: String): Unit = {
     val numRecords = 100
     val producerProps = new Properties()
     producerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, classOf[BaseConsumerTest.TestClusterResourceListenerSerializer])
@@ -78,9 +100,9 @@ abstract class BaseConsumerTest extends AbstractConsumerTest {
     assertNotEquals(0, BaseConsumerTest.updateConsumerCount.get())
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testCoordinatorFailover(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testCoordinatorFailover(groupProtocol: String, topicType: String): Unit = {
     val listener = new TestConsumerReassignmentListener()
     if (groupProtocol.equalsIgnoreCase(GroupProtocol.CLASSIC.name)) {
       this.consumerConfig.setProperty(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, "5001")

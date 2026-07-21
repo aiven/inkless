@@ -18,6 +18,9 @@
 package org.apache.kafka.controller.metrics;
 
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.ConfigResource;
+import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.image.ConfigurationsImage;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.image.TopicDelta;
@@ -28,6 +31,12 @@ import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.fault.FaultHandler;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
 
@@ -41,6 +50,8 @@ import java.util.Optional;
  *
  */
 public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
+    private static final Logger log = LoggerFactory.getLogger(ControllerMetadataMetricsPublisher.class);
+
     private final ControllerMetadataMetrics metrics;
     private final FaultHandler faultHandler;
     private MetadataImage prevImage = MetadataImage.EMPTY;
@@ -67,7 +78,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         switch (manifest.type()) {
             case LOG_DELTA:
                 try {
-                    publishDelta(delta);
+                    publishDelta(delta, newImage);
                 } catch (Throwable e) {
                     faultHandler.handleFault("Failed to publish controller metrics from log delta " +
                             " ending at offset " + manifest.provenance().lastContainedOffset(), e);
@@ -88,7 +99,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         }
     }
 
-    private void publishDelta(MetadataDelta delta) {
+    private void publishDelta(MetadataDelta delta, MetadataImage newImage) {
         ControllerMetricsChanges changes = new ControllerMetricsChanges();
         if (delta.clusterDelta() != null) {
             for (Entry<Integer, Optional<BrokerRegistration>> entry :
@@ -107,10 +118,31 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
                     throw new RuntimeException("Unable to find deleted topic id " + topicId +
                             " in previous topics image.");
                 }
-                changes.handleDeletedTopic(prevTopic);
+                // For deleted topics, check isDiskless from prevImage since config is already removed from newImage
+                changes.handleDeletedTopic(prevTopic, isDisklessTopic(prevImage.configs(), prevTopic.name()));
             }
             for (Entry<Uuid, TopicDelta> entry : delta.topicsDelta().changedTopics().entrySet()) {
-                changes.handleTopicChange(prevImage.topics().getTopic(entry.getKey()), entry.getValue());
+                // Use prevImage configs intentionally: diskless.enable transitions
+                // are handled by the configsDelta loop below, not here.
+                changes.handleTopicChange(
+                    prevImage.topics().getTopic(entry.getKey()),
+                    entry.getValue(),
+                    isDisklessTopic(prevImage.configs(), entry.getValue().name()));
+            }
+        }
+        // Handle diskless.enable config changes on existing topics (no TopicDelta required).
+        // Recategorizes partitions between classic and diskless metric buckets.
+        if (delta.configsDelta() != null) {
+            for (ConfigResource resource : delta.configsDelta().changes().keySet()) {
+                if (resource.type() != ConfigResource.Type.TOPIC) continue;
+                boolean wasDiskless = isDisklessTopic(prevImage.configs(), resource.name());
+                boolean isDiskless = isDisklessTopic(newImage.configs(), resource.name());
+                if (wasDiskless != isDiskless) {
+                    TopicImage topic = newImage.topics().getTopic(resource.name());
+                    if (topic != null) {
+                        changes.handleDisklessConfigChange(topic, isDiskless);
+                    }
+                }
             }
         }
         changes.apply(metrics);
@@ -138,20 +170,76 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         int totalPartitions = 0;
         int offlinePartitions = 0;
         int partitionsWithoutPreferredLeader = 0;
+        int disklessTopics = 0;
+        int disklessPartitions = 0;
+        int disklessOfflinePartitions = 0;
+        int disklessWithoutRemoteStorage = 0;
+        List<String> disklessTopicsWithoutRemoteStorage = new ArrayList<>();
         for (TopicImage topicImage : newImage.topics().topicsById().values()) {
+            // Check diskless from newImage configs directly for consistency with delta path
+            final boolean isDiskless = isDisklessTopic(newImage.configs(), topicImage.name());
+            if (isDiskless) {
+                disklessTopics++;
+                if (hasRemoteStorageExplicitlyDisabled(newImage.configs(), topicImage.name())) {
+                    disklessWithoutRemoteStorage++;
+                    if (disklessTopicsWithoutRemoteStorage.size() < 20) {
+                        disklessTopicsWithoutRemoteStorage.add(topicImage.name());
+                    }
+                }
+            }
             for (PartitionRegistration partition : topicImage.partitions().values()) {
-                if (!partition.hasLeader()) {
-                    offlinePartitions++;
-                }
-                if (!partition.hasPreferredLeader()) {
-                    partitionsWithoutPreferredLeader++;
-                }
                 totalPartitions++;
+                if (isDiskless) {
+                    disklessPartitions++;
+                    if (!partition.hasLeader()) {
+                        disklessOfflinePartitions++;
+                    }
+                } else {
+                    if (!partition.hasLeader()) {
+                        offlinePartitions++;
+                    }
+                    if (!partition.hasPreferredLeader()) {
+                        partitionsWithoutPreferredLeader++;
+                    }
+                }
             }
         }
         metrics.setGlobalPartitionCount(totalPartitions);
         metrics.setOfflinePartitionCount(offlinePartitions);
         metrics.setPreferredReplicaImbalanceCount(partitionsWithoutPreferredLeader);
+        metrics.setDisklessTopicCount(disklessTopics);
+        metrics.setDisklessPartitionCount(disklessPartitions);
+        metrics.setDisklessOfflinePartitionCount(disklessOfflinePartitions);
+        // Only refreshed on snapshot (not delta) — advisory metric for legacy topic detection,
+        // not a real-time alert. Snapshots occur on controller failover or periodically
+        // (default: every hour or 20MB of metadata records, whichever comes first).
+        metrics.setDisklessWithoutRemoteStorageCount(disklessWithoutRemoteStorage);
+        warnDisklessWithoutRemoteStorage(disklessWithoutRemoteStorage, disklessTopicsWithoutRemoteStorage);
+    }
+
+    private static boolean isDisklessTopic(ConfigurationsImage configsImage, String topicName) {
+        ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
+        Map<String, String> configMap = configsImage.configMapForResource(resource);
+        return Boolean.parseBoolean(configMap.getOrDefault(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
+    }
+
+    private static boolean hasRemoteStorageExplicitlyDisabled(ConfigurationsImage configsImage, String topicName) {
+        ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
+        Map<String, String> configMap = configsImage.configMapForResource(resource);
+        // Only flag topics where remote.storage.enable is explicitly stored as false.
+        // Absent means "never configured" — the controller will auto-enable on next interaction.
+        String value = configMap.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
+        return value != null && !Boolean.parseBoolean(value);
+    }
+
+    private void warnDisklessWithoutRemoteStorage(int count, List<String> topicNames) {
+        if (count > 0 && count <= 20) {
+            log.warn("Found {} diskless topic(s) with remote.storage.enable explicitly set to false: {}. "
+                + "Set remote.storage.enable=true on these topics.", count, topicNames);
+        } else if (count > 20) {
+            log.warn("Found {} diskless topic(s) with remote.storage.enable explicitly set to false (truncated, first 20): {}. "
+                + "Set remote.storage.enable=true on these topics.", count, topicNames.stream().limit(20).toList());
+        }
     }
 
     @Override

@@ -17,6 +17,7 @@
 package kafka.utils
 
 import com.yammer.metrics.core.{Histogram, Meter}
+import io.aiven.inkless.test_utils.{InklessPostgreSQLContainer, MinioContainer}
 import kafka.log.LogManager
 import kafka.network.RequestChannel
 import kafka.security.JaasTestUtils
@@ -160,13 +161,14 @@ object TestUtils extends Logging {
     numPartitions: Int = 1,
     defaultReplicationFactor: Short = 1,
     startingIdNumber: Int = 0,
-    enableFetchFromFollower: Boolean = false): Seq[Properties] = {
+    enableFetchFromFollower: Boolean = false,
+    disklessMode: Option[DisklessMode] = None): Seq[Properties] = {
     val endingIdNumber = startingIdNumber + numConfigs - 1
     (startingIdNumber to endingIdNumber).map { node =>
       createBrokerConfig(node, enableControlledShutdown, enableDeleteTopic, RandomPort,
         interBrokerSecurityProtocol, trustStoreFile, saslProperties, enablePlaintext = enablePlaintext, enableSsl = enableSsl,
         enableSaslPlaintext = enableSaslPlaintext, enableSaslSsl = enableSaslSsl, rack = rackInfo.get(node), logDirCount = logDirCount, enableToken = enableToken,
-        numPartitions = numPartitions, defaultReplicationFactor = defaultReplicationFactor, enableFetchFromFollower = enableFetchFromFollower)
+        numPartitions = numPartitions, defaultReplicationFactor = defaultReplicationFactor, enableFetchFromFollower = enableFetchFromFollower, disklessMode = disklessMode)
     }
   }
 
@@ -229,7 +231,8 @@ object TestUtils extends Logging {
                          enableToken: Boolean = false,
                          numPartitions: Int = 1,
                          defaultReplicationFactor: Short = 1,
-                         enableFetchFromFollower: Boolean = false): Properties = {
+                         enableFetchFromFollower: Boolean = false,
+                         disklessMode: Option[DisklessMode] = None): Properties = {
     def shouldEnable(protocol: SecurityProtocol) = interBrokerSecurityProtocol.fold(false)(_ == protocol)
 
     val protocolAndPorts = ArrayBuffer[(SecurityProtocol, Int)]()
@@ -311,6 +314,10 @@ object TestUtils extends Logging {
       props.put(ServerConfigs.BROKER_RACK_CONFIG, nodeId.toString)
       props.put(ReplicationConfigs.REPLICA_SELECTOR_CLASS_CONFIG, "org.apache.kafka.common.replica.RackAwareReplicaSelector")
     }
+
+    disklessMode.foreach { mode =>
+      mode.disklessBrokerConfigs(props)
+    }
     props
   }
 
@@ -364,6 +371,7 @@ object TestUtils extends Logging {
     replicationFactor: Int = 1,
     replicaAssignment: collection.Map[Int, Seq[Int]] = Map.empty,
     topicConfig: Properties = new Properties,
+    topicType: String = "classic"
   ): scala.collection.immutable.Map[Int, Int] = {
     val effectiveNumPartitions = if (replicaAssignment.isEmpty) {
       numPartitions
@@ -378,15 +386,22 @@ object TestUtils extends Logging {
         waitForAllPartitionsMetadata(brokers, topic, effectiveNumPartitions).nonEmpty &&
         topicHasSameNumPartitionsAndReplicationFactor(admin, topic, effectiveNumPartitions, replicationFactor)
     }
+    val innerTopicConfig = new Properties()
+    innerTopicConfig.putAll(topicConfig)
+    var rf = replicationFactor
+    if (topicType == "diskless") {
+      innerTopicConfig.put("diskless.enable", "true")
+      rf = 1
+    }
 
     try {
       createTopicWithAdminRaw(
         admin,
         topic,
         numPartitions,
-        replicationFactor,
+        rf,
         replicaAssignment,
-        topicConfig
+        innerTopicConfig
       )
     } catch {
       case e: ExecutionException =>
@@ -687,6 +702,21 @@ object TestUtils extends Logging {
     waitUntilTrue(() => {
       consumer.poll(Duration.ofMillis(100))
       action()
+    }, msg = msg, pause = 0L, waitTimeMs = waitTimeMs)
+  }
+
+  def pollUntilException(consumer: Consumer[_, _],
+                         action: Throwable => Boolean,
+                         msg: => String,
+                         waitTimeMs: Long = JTestUtils.DEFAULT_MAX_WAIT_MS,
+                         pollTimeoutMs: Long = 100): Unit = {
+    waitUntilTrue(() => {
+      try {
+        consumer.poll(Duration.ofMillis(pollTimeoutMs))
+        false
+      } catch {
+        case t: Throwable => action(t)
+      }
     }, msg = msg, pause = 0L, waitTimeMs = waitTimeMs)
   }
 
@@ -1520,6 +1550,40 @@ object TestUtils extends Logging {
 
     override def onTimeout(): Unit = {
       timedOut.set(true)
+    }
+  }
+
+  class DisklessMode(val pgContainer: InklessPostgreSQLContainer, val minioContainer: MinioContainer) {
+    def disklessControllerConfigs(props: Properties): Unit = {
+      disklessSystemConfig(props)
+      inklessControlPlaneConfig(props)
+    }
+
+    def disklessBrokerConfigs(props: Properties): Unit = {
+      disklessSystemConfig(props)
+      inklessControlPlaneConfig(props)
+      inklessStorageS3Config(props)
+    }
+
+    private def inklessStorageS3Config(props: Properties): Unit = {
+      props.put("inkless.storage.backend.class", "io.aiven.inkless.storage_backend.s3.S3Storage")
+      props.put("inkless.storage.s3.bucket.name", minioContainer.getBucketName)
+      props.put("inkless.storage.s3.region", minioContainer.getRegion)
+      props.put("inkless.storage.s3.endpoint.url", minioContainer.getEndpoint)
+      props.put("inkless.storage.s3.path.style.access.enabled", "true")
+      props.put("inkless.storage.aws.access.key.id", minioContainer.getAccessKey)
+      props.put("inkless.storage.aws.secret.access.key", minioContainer.getSecretKey)
+    }
+
+    private def inklessControlPlaneConfig(props: Properties): Unit = {
+      props.put("inkless.control.plane.class", "io.aiven.inkless.control_plane.postgres.PostgresControlPlane")
+      props.put("inkless.control.plane.connection.string", pgContainer.getUserJdbcUrl)
+      props.put("inkless.control.plane.username", pgContainer.getUsername)
+      props.put("inkless.control.plane.password", pgContainer.getPassword)
+    }
+
+    def disklessSystemConfig(props: Properties): Unit = {
+      props.put("diskless.storage.system.enable", "true")
     }
   }
 }

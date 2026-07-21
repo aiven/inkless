@@ -27,6 +27,7 @@ import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.config.types.Password;
+import org.apache.kafka.common.errors.InvalidConfigurationException;
 import org.apache.kafka.common.message.CreateClusterMirrorResponseData;
 import org.apache.kafka.common.message.DeleteClusterMirrorResponseData;
 import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
@@ -42,6 +43,7 @@ import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.metadata.KafkaConfigSchema;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
+import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.common.MirrorPartitionState;
 import org.apache.kafka.server.mutable.BoundedList;
 import org.apache.kafka.server.policy.AlterConfigPolicy;
@@ -67,6 +69,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -218,6 +221,14 @@ public class ConfigurationControlManager {
         Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
         boolean newlyCreatedResource
     ) {
+        return incrementalAlterConfigs(configChanges, newlyCreatedResource, null);
+    }
+
+    ControllerResult<Map<ConfigResource, ApiError>> incrementalAlterConfigs(
+        Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
+        boolean newlyCreatedResource,
+        Function<ConfigResource, ApiError> postConfigValidation
+    ) {
         List<ApiMessageAndVersion> outputRecords =
                 BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         Map<ConfigResource, ApiError> outputResults = new HashMap<>();
@@ -226,7 +237,8 @@ public class ConfigurationControlManager {
             ApiError apiError = incrementalAlterConfigResource(resourceEntry.getKey(),
                 resourceEntry.getValue(),
                 newlyCreatedResource,
-                outputRecords);
+                outputRecords,
+                postConfigValidation);
             outputResults.put(resourceEntry.getKey(), apiError);
         }
         outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));
@@ -837,7 +849,8 @@ public class ConfigurationControlManager {
         ApiError apiError = incrementalAlterConfigResource(configResource,
             keyToOps,
             newlyCreatedResource,
-            outputRecords);
+            outputRecords,
+            null);
 
         outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));
         return ControllerResult.atomicOf(outputRecords, apiError);
@@ -847,7 +860,8 @@ public class ConfigurationControlManager {
         ConfigResource configResource,
         Map<String, Entry<OpType, String>> keysToOps,
         boolean newlyCreatedResource,
-        List<ApiMessageAndVersion> outputRecords
+        List<ApiMessageAndVersion> outputRecords,
+        Function<ConfigResource, ApiError> postConfigValidation
     ) {
         List<ApiMessageAndVersion> newRecords = new ArrayList<>();
         for (Entry<String, Entry<OpType, String>> keysToOpsEntry : keysToOps.entrySet()) {
@@ -863,9 +877,18 @@ public class ConfigurationControlManager {
             String opValue = opTypeAndNewValue.getValue();
             switch (opType) {
                 case SET:
+                    if (isDisallowedDisklessEnableOnExistingTopic(configResource, newlyCreatedResource,
+                            key, opValue, currentValue)) {
+                        return ApiError.fromThrowable(
+                            new InvalidConfigurationException("It is invalid to enable diskless on an already existing topic."));
+                    }
                     newValue = opValue;
                     break;
                 case DELETE:
+                    if (Objects.equals(key, TopicConfig.DISKLESS_ENABLE_CONFIG)) {
+                        return ApiError.fromThrowable(
+                            new InvalidConfigurationException("It is not allowed to delete the diskless.enable config"));
+                    }
                     newValue = null;
                     break;
                 case APPEND:
@@ -903,6 +926,12 @@ public class ConfigurationControlManager {
         if (error.isFailure()) {
             return error;
         }
+        if (postConfigValidation != null) {
+            error = postConfigValidation.apply(configResource);
+            if (error.isFailure()) {
+                return error;
+            }
+        }
         outputRecords.addAll(newRecords);
         return ApiError.NONE;
     }
@@ -928,12 +957,31 @@ public class ConfigurationControlManager {
             } else if (isDisallowedClusterMinIsrTransition(configRecord)) {
                 return DISALLOWED_CLUSTER_MIN_ISR_REMOVAL_ERROR;
             } else if (configRecord.value() == null) {
+                if (Objects.equals(configRecord.name(), TopicConfig.DISKLESS_ENABLE_CONFIG)) {
+                    // Deleting diskless.enable is not allowed: it would revert the topic to the
+                    // broker default, enabling an implicit classic-to-diskless switch (if the
+                    // default is true) without persisting diskless.enable=true or emitting the
+                    // required switch-pending markers.
+                    // A switch must always be an explicit diskless.enable=true.
+                    // If/when a diskless-to-classic rollback is supported,
+                    // this guard must be updated to allow an explicit diskless.enable=false instead.
+                    return ApiError.fromThrowable(
+                        new InvalidConfigurationException("It is not allowed to delete the diskless.enable config"));
+                }
                 allConfigs.remove(configRecord.name());
             } else if (configRecord.value().length() > Short.MAX_VALUE) {
                 // In KRaft mode, large config values cannot be created by appending.
                 // If the size exceeds Short.MAX_VALUE, this error will be thrown to notify the user.
                 return DISALLOWED_CONFIG_VALUE_SIZE_ERROR;
             } else {
+                // Mirror the incremental AlterConfigs SET guard: legacy AlterConfigs must not enable
+                // diskless on an existing classic topic when the allow-from-classic flag is off.
+                if (isDisallowedDisklessEnableOnExistingTopic(configResource, newlyCreatedResource,
+                        configRecord.name(), configRecord.value(),
+                        existingConfigsMap.get(TopicConfig.DISKLESS_ENABLE_CONFIG))) {
+                    return ApiError.fromThrowable(
+                        new InvalidConfigurationException("It is invalid to enable diskless on an already existing topic."));
+                }
                 allConfigs.put(configRecord.name(), configRecord.value());
             }
             alteredConfigsForAlterConfigPolicyCheck.put(configRecord.name(), configRecord.value());
@@ -944,11 +992,26 @@ public class ConfigurationControlManager {
                 return DISALLOWED_BROKER_MIN_ISR_TRANSITION_ERROR;
             } else if (isDisallowedClusterMinIsrTransition(configRecord)) {
                 return DISALLOWED_CLUSTER_MIN_ISR_REMOVAL_ERROR;
+            } else if (Objects.equals(configRecord.name(), TopicConfig.DISKLESS_ENABLE_CONFIG)) {
+                // Legacy AlterConfigs replaces the whole config map, so omitting diskless.enable
+                // implicitly deletes the override. Reject it, matching the incremental DELETE guard:
+                // a classic-to-diskless switch must be an explicit diskless.enable=true, never a
+                // revert-to-default via deletion. If a diskless-to-classic rollback is ever
+                // supported, this guard must be updated to allow an explicit diskless.enable=false.
+                return ApiError.fromThrowable(
+                    new InvalidConfigurationException("It is not allowed to delete the diskless.enable config"));
             } else {
                 allConfigs.remove(configRecord.name());
             }
             // As per KAFKA-14195, do not include implicit deletions caused by using the legacy AlterConfigs API
             // in the list passed to the policy in order to maintain backwards compatibility
+        }
+        if (!newlyCreatedResource &&
+            configResource.type().equals(Type.TOPIC) &&
+            Boolean.parseBoolean(allConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG)) &&
+            ReplicationControlManager.isSystemTopic(configResource.name())) {
+            return ApiError.fromThrowable(
+                new InvalidConfigurationException("System topics cannot be diskless topics."));
         }
         try {
             validator.validate(configResource, allConfigs, existingConfigsMap);
@@ -980,6 +1043,35 @@ public class ConfigurationControlManager {
     private static final ApiError DISALLOWED_CONFIG_VALUE_SIZE_ERROR =
         new ApiError(INVALID_CONFIG, "The configuration value cannot be added because " +
             "it exceeds the maximum value size of " + Short.MAX_VALUE + " bytes.");
+
+    /**
+     * A classic-to-diskless switch (flipping {@code diskless.enable} from false/unset to true on an
+     * existing topic) is only allowed when the {@code diskless.allow.from.classic.enable} broker flag
+     * is on. Shared by the incremental SET path and the legacy full-map path.
+     * If a diskless-to-classic rollback is ever supported, revisit whether an explicit
+     * {@code diskless.enable=false} should be allowed too.
+     *
+     * @param requestedValue the value being set (the SET opValue, or the legacy record value)
+     * @param currentValue   the topic's current {@code diskless.enable} value (null if unset)
+     */
+    private boolean isDisallowedDisklessEnableOnExistingTopic(ConfigResource configResource,
+                                                              boolean newlyCreatedResource,
+                                                              String key,
+                                                              String requestedValue,
+                                                              String currentValue) {
+        return !newlyCreatedResource
+            && configResource.type() == Type.TOPIC
+            && Objects.equals(key, TopicConfig.DISKLESS_ENABLE_CONFIG)
+            && Boolean.parseBoolean(requestedValue)
+            && !Boolean.parseBoolean(currentValue)
+            && !isDisklessAllowFromClassicEnabled();
+    }
+
+    private boolean isDisklessAllowFromClassicEnabled() {
+        return Boolean.parseBoolean(String.valueOf(staticConfig.getOrDefault(
+            ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG,
+            ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DEFAULT)));
+    }
 
     boolean isDisallowedBrokerMinIsrTransition(ConfigRecord configRecord) {
         if (configRecord.name().equals(MIN_IN_SYNC_REPLICAS_CONFIG) &&
@@ -1017,6 +1109,14 @@ public class ConfigurationControlManager {
         Map<ConfigResource, Map<String, String>> newConfigs,
         boolean newlyCreatedResource
     ) {
+        return legacyAlterConfigs(newConfigs, newlyCreatedResource, null);
+    }
+
+    ControllerResult<Map<ConfigResource, ApiError>> legacyAlterConfigs(
+        Map<ConfigResource, Map<String, String>> newConfigs,
+        boolean newlyCreatedResource,
+        Function<ConfigResource, ApiError> postConfigValidation
+    ) {
         List<ApiMessageAndVersion> outputRecords =
                 BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         Map<ConfigResource, ApiError> outputResults = new HashMap<>();
@@ -1026,7 +1126,8 @@ public class ConfigurationControlManager {
                 resourceEntry.getValue(),
                 newlyCreatedResource,
                 outputRecords,
-                outputResults);
+                outputResults,
+                postConfigValidation);
         }
         outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));
         return ControllerResult.atomicOf(outputRecords, outputResults);
@@ -1036,7 +1137,8 @@ public class ConfigurationControlManager {
                                            Map<String, String> newConfigs,
                                            boolean newlyCreatedResource,
                                            List<ApiMessageAndVersion> outputRecords,
-                                           Map<ConfigResource, ApiError> outputResults) {
+                                           Map<ConfigResource, ApiError> outputResults,
+                                           Function<ConfigResource, ApiError> postConfigValidation) {
         List<ApiMessageAndVersion> recordsExplicitlyAltered = new ArrayList<>();
         Map<String, String> currentConfigs = configData.get(configResource);
         if (currentConfigs == null) {
@@ -1069,6 +1171,13 @@ public class ConfigurationControlManager {
         if (error.isFailure()) {
             outputResults.put(configResource, error);
             return;
+        }
+        if (postConfigValidation != null) {
+            error = postConfigValidation.apply(configResource);
+            if (error.isFailure()) {
+                outputResults.put(configResource, error);
+                return;
+            }
         }
         outputRecords.addAll(recordsExplicitlyAltered);
         outputRecords.addAll(recordsImplicitlyDeleted);

@@ -27,6 +27,7 @@ import org.apache.kafka.common.metadata.RemoveTopicRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.image.writer.RecordListWriter;
+import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.LeaderRecoveryState;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.metadata.RecordTestUtils;
@@ -898,5 +899,45 @@ public class TopicsImageTest {
 
         var result = IMAGE1.topicIdToNameView().get("zar");
         assertNull(result);
+    }
+
+    @Test
+    public void testTopicsDeltaCreateThenDelete() {
+        TopicsDelta delta = new TopicsDelta(TopicsImage.EMPTY);
+        delta.replay(new TopicRecord().setName("test").setTopicId(FOO_UUID));
+        assertEquals(delta.createdTopicIds().contains(FOO_UUID), true);
+        assertEquals(delta.deletedTopicIds().contains(FOO_UUID), false);
+        delta.replay(new RemoveTopicRecord().setTopicId(FOO_UUID));
+        assertEquals(delta.deletedTopicIds().contains(FOO_UUID), false);
+        assertEquals(delta.createdTopicIds().contains(FOO_UUID), false);
+    }
+
+    @Test
+    public void testInitDisklessLogFieldsSnapshotRoundTrip() {
+        List<InitDisklessLogFields.ProducerStateEntry> producerStates = List.of(
+            new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L),
+            new InitDisklessLogFields.ProducerStateEntry(2L, (short) 3, 5, 15, 200L, 6000L)
+        );
+        PartitionRegistration partition = new PartitionRegistration.Builder()
+            .setReplicas(new int[]{0, 1, 2})
+            .setDirectories(DirectoryId.unassignedArray(3))
+            .setIsr(new int[]{0, 1, 2})
+            .setLeader(0)
+            .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
+            .setLeaderEpoch(0)
+            .setPartitionEpoch(0)
+            .setClassicToDisklessStartOffset(42L)
+            .setDisklessProducerStates(producerStates)
+            .build();
+        Uuid topicId = Uuid.randomUuid();
+        TopicImage topicImage = newTopicImage("diskless-test", topicId, partition);
+        TopicsImage image = TopicsImage.EMPTY.including(topicImage);
+
+        List<ApiMessageAndVersion> records = getImageRecords(image);
+        testToImage(image, records);
+
+        PartitionRegistration restored = image.getPartition(topicId, 0);
+        assertEquals(42L, restored.classicToDisklessStartOffset);
+        assertEquals(producerStates, restored.disklessProducerStates);
     }
 }

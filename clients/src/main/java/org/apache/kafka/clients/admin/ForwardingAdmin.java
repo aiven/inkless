@@ -79,6 +79,21 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
+    public DescribeTopicPartitionsResult describeTopicPartitions(Collection<String> topics, DescribeTopicsOptions options) {
+        return delegate.describeTopicPartitions(topics, options);
+    }
+
+    @Override
+    public AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset, AlterDisklessSwitchOptions options) {
+        return delegate.alterDisklessSwitch(topic, partition, sealOffset, options);
+    }
+
+    @Override
+    public RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId, RepairDisklessLogOptions options) {
+        return delegate.repairDisklessLog(topic, partition, brokerId, options);
+    }
+
+    @Override
     public DescribeClusterResult describeCluster(DescribeClusterOptions options) {
         return delegate.describeCluster(options);
     }

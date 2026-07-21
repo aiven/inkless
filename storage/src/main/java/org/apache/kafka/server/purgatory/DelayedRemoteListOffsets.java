@@ -39,6 +39,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import static org.apache.kafka.common.utils.Utils.mkEntry;
 import static org.apache.kafka.common.utils.Utils.mkMap;
@@ -55,17 +56,20 @@ public class DelayedRemoteListOffsets extends DelayedOperation {
     private final int version;
     private final Map<TopicPartition, ListOffsetsPartitionStatus> statusByPartition;
     private final Consumer<TopicPartition> partitionOrException;
+    private final Function<String, Boolean> isInklessTopic;
     private final Consumer<Collection<ListOffsetsResponseData.ListOffsetsTopicResponse>> responseCallback;
 
     public DelayedRemoteListOffsets(long delayMs,
                                     int version,
                                     Map<TopicPartition, ListOffsetsPartitionStatus> statusByPartition,
                                     Consumer<TopicPartition> partitionOrException,
+                                    Function<String, Boolean> isInklessTopic,
                                     Consumer<Collection<ListOffsetsResponseData.ListOffsetsTopicResponse>> responseCallback) {
         super(delayMs);
         this.version = version;
         this.statusByPartition = statusByPartition;
         this.partitionOrException = partitionOrException;
+        this.isInklessTopic = isInklessTopic;
         this.responseCallback = responseCallback;
         // Mark the status as completed, if there is no async task to track.
         // If there is a task to track, then build the response as REQUEST_TIMED_OUT by default.
@@ -118,7 +122,8 @@ public class DelayedRemoteListOffsets extends DelayedOperation {
         statusByPartition.forEach((partition, status) -> {
             if (!status.completed()) {
                 try {
-                    partitionOrException.accept(partition);
+                    if (!isInklessTopic.apply(partition.topic()))
+                        partitionOrException.accept(partition);
                 } catch (ApiException e) {
                     status.futureHolderOpt().ifPresent(futureHolder -> {
                         futureHolder.jobFuture().cancel(false);

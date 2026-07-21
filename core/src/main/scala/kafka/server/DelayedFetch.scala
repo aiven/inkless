@@ -18,46 +18,47 @@
 package kafka.server
 
 import com.yammer.metrics.core.Meter
+import io.aiven.inkless.control_plane.FindBatchRequest
 import kafka.utils.Logging
 
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{CompletableFuture, TimeUnit}
+import java.util.concurrent.atomic.AtomicBoolean
 import org.apache.kafka.common.TopicIdPartition
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.protocol.Errors
-import org.apache.kafka.common.requests.FetchRequest.PartitionData
+import org.apache.kafka.common.record.MemoryRecords
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.{UNDEFINED_EPOCH, UNDEFINED_EPOCH_OFFSET}
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 import org.apache.kafka.server.purgatory.DelayedOperation
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
-import org.apache.kafka.storage.internals.log.LogOffsetMetadata
+import org.apache.kafka.storage.internals.log.{FetchPartitionStatus, LogOffsetMetadata, LogReadResult}
 
+import java.util
 import scala.collection._
 import scala.jdk.CollectionConverters._
 
-case class FetchPartitionStatus(startOffsetMetadata: LogOffsetMetadata, fetchInfo: PartitionData) {
-
-  override def toString: String = {
-    "[startOffsetMetadata: " + startOffsetMetadata +
-      ", fetchInfo: " + fetchInfo +
-      "]"
-  }
-}
-
 /**
  * A delayed fetch operation that can be created by the replica manager and watched
- * in the fetch operation purgatory
+ * in the fetch operation purgatory.
+ * It includes classic and diskless fetch partition requests.
+ * These cannot be completed separately because they need to serve the same callback.
  */
 class DelayedFetch(
   params: FetchParams,
-  fetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)],
+  classicFetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus],
+  disklessFetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus] = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
+  consolidatingSupplements: Map[TopicIdPartition, Long] = Map.empty,
   replicaManager: ReplicaManager,
   quota: ReplicaQuota,
-  responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit
-) extends DelayedOperation(params.maxWaitMs) with Logging {
+  maxWaitMs: Option[Long] = None,
+  minBytes: Option[Int] = None,
+  responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit,
+) extends DelayedOperation(maxWaitMs.getOrElse(params.maxWaitMs)) with Logging {
 
   override def toString: String = {
     s"DelayedFetch(params=$params" +
-      s", numPartitions=${fetchPartitionStatus.size}" +
+      s", numClassicPartitions=${classicFetchPartitionStatus.size}" +
+      s", numDisklessPartitions=${disklessFetchPartitionStatus.size}" +
       ")"
   }
 
@@ -75,51 +76,50 @@ class DelayedFetch(
    * Upon completion, should return whatever data is available for each valid partition
    */
   override def tryComplete(): Boolean = {
-    var accumulatedSize = 0
-    fetchPartitionStatus.foreach {
-      case (topicIdPartition, fetchStatus) =>
-        val fetchOffset = fetchStatus.startOffsetMetadata
-        val fetchLeaderEpoch = fetchStatus.fetchInfo.currentLeaderEpoch
-        try {
-          if (fetchOffset != LogOffsetMetadata.UNKNOWN_OFFSET_METADATA) {
-            val partition = replicaManager.getPartitionOrException(topicIdPartition.topicPartition)
-            val offsetSnapshot = partition.fetchOffsetSnapshot(fetchLeaderEpoch, params.fetchOnlyLeader)
+    var accumulatedSize = 0L
+    classicFetchPartitionStatus.forEach { (topicIdPartition, fetchStatus) =>
+      val fetchOffset = fetchStatus.startOffsetMetadata
+      val fetchLeaderEpoch = fetchStatus.fetchInfo.currentLeaderEpoch
+      try {
+        if (fetchOffset != LogOffsetMetadata.UNKNOWN_OFFSET_METADATA) {
+          val partition = replicaManager.getPartitionOrException(topicIdPartition.topicPartition)
+          val offsetSnapshot = partition.fetchOffsetSnapshot(fetchLeaderEpoch, params.fetchOnlyLeader)
 
-            val endOffset = params.isolation match {
-              case FetchIsolation.LOG_END => offsetSnapshot.logEndOffset
-              case FetchIsolation.HIGH_WATERMARK => offsetSnapshot.highWatermark
-              case FetchIsolation.TXN_COMMITTED => offsetSnapshot.lastStableOffset
-            }
+          val endOffset = params.isolation match {
+            case FetchIsolation.LOG_END => offsetSnapshot.logEndOffset
+            case FetchIsolation.HIGH_WATERMARK => offsetSnapshot.highWatermark
+            case FetchIsolation.TXN_COMMITTED => offsetSnapshot.lastStableOffset
+          }
 
-            // Go directly to the check for Case G if the message offsets are the same. If the log segment
-            // has just rolled, then the high watermark offset will remain the same but be on the old segment,
-            // which would incorrectly be seen as an instance of Case F.
-            if (fetchOffset.messageOffset > endOffset.messageOffset) {
-              // Case F, this can happen when the new fetch operation is on a truncated leader
-              debug(s"Satisfying fetch $this since it is fetching later segments of partition $topicIdPartition.")
-              return forceComplete()
-            } else if (fetchOffset.messageOffset < endOffset.messageOffset) {
-              if (fetchOffset.onOlderSegment(endOffset)) {
-                // Case F, this can happen when the fetch operation is falling behind the current segment
-                // or the partition has just rolled a new segment
-                debug(s"Satisfying fetch $this immediately since it is fetching older segments.")
-                // We will not force complete the fetch request if a replica should be throttled.
-                if (!params.isFromFollower || !replicaManager.shouldLeaderThrottle(quota, partition, params.replicaId))
-                  return forceComplete()
-              } else if (fetchOffset.onSameSegment(endOffset)) {
-                // we take the partition fetch size as upper bound when accumulating the bytes (skip if a throttled partition)
-                val bytesAvailable = math.min(endOffset.positionDiff(fetchOffset), fetchStatus.fetchInfo.maxBytes)
-                if (!params.isFromFollower || !replicaManager.shouldLeaderThrottle(quota, partition, params.replicaId))
-                  accumulatedSize += bytesAvailable
-              }
+          // Go directly to the check for Case G if the message offsets are the same. If the log segment
+          // has just rolled, then the high watermark offset will remain the same but be on the old segment,
+          // which would incorrectly be seen as an instance of Case F.
+          if (fetchOffset.messageOffset > endOffset.messageOffset) {
+            // Case F, this can happen when the new fetch operation is on a truncated leader
+            debug(s"Satisfying fetch $this since it is fetching later segments of partition $topicIdPartition.")
+            return forceComplete()
+          } else if (fetchOffset.messageOffset < endOffset.messageOffset) {
+            if (fetchOffset.onOlderSegment(endOffset)) {
+              // Case F, this can happen when the fetch operation is falling behind the current segment
+              // or the partition has just rolled a new segment
+              debug(s"Satisfying fetch $this immediately since it is fetching older segments.")
+              // We will not force complete the fetch request if a replica should be throttled.
+              if (!params.isFromFollower || !replicaManager.shouldLeaderThrottle(quota, partition, params.replicaId))
+                return forceComplete()
+            } else if (fetchOffset.onSameSegment(endOffset)) {
+              // we take the partition fetch size as upper bound when accumulating the bytes (skip if a throttled partition)
+              val bytesAvailable = math.min(endOffset.positionDiff(fetchOffset), fetchStatus.fetchInfo.maxBytes)
+              if (!params.isFromFollower || !replicaManager.shouldLeaderThrottle(quota, partition, params.replicaId))
+                accumulatedSize += bytesAvailable
             }
+          }
 
             // Case H: If truncation has caused diverging epoch while this request was in purgatory, return to trigger truncation
             fetchStatus.fetchInfo.lastFetchedEpoch.ifPresent { fetchEpoch =>
               val epochEndOffset = partition.lastOffsetForLeaderEpoch(fetchLeaderEpoch, fetchEpoch, fetchOnlyFromLeader = false)
               if (epochEndOffset.errorCode != Errors.NONE.code()
-                  || epochEndOffset.endOffset == UNDEFINED_EPOCH_OFFSET
-                  || epochEndOffset.leaderEpoch == UNDEFINED_EPOCH) {
+                || epochEndOffset.endOffset == UNDEFINED_EPOCH_OFFSET
+                || epochEndOffset.leaderEpoch == UNDEFINED_EPOCH) {
                 debug(s"Could not obtain last offset for leader epoch for partition $topicIdPartition, epochEndOffset=$epochEndOffset.")
                 return forceComplete()
               } else if (epochEndOffset.leaderEpoch < fetchEpoch || epochEndOffset.endOffset < fetchStatus.fetchInfo.fetchOffset) {
@@ -146,11 +146,75 @@ class DelayedFetch(
         }
     }
 
+    tryCompleteDiskless(disklessFetchPartitionStatus) match {
+      case Some(disklessAccumulatedSize) => accumulatedSize += disklessAccumulatedSize
+      case None => forceComplete()
+    }
+
     // Case G
-    if (accumulatedSize >= params.minBytes)
-       forceComplete()
+    if (accumulatedSize >= minBytes.getOrElse(params.minBytes))
+      forceComplete()
     else
       false
+  }
+
+  /**
+   * The operation can be completed if:
+   *
+   * Case A: The fetch offset locates not on the last segment of the log
+   * Case B: The accumulated bytes from all the fetching partitions exceeds the minimum bytes
+   * Case C: An error occurs while trying to find diskless batches
+   * Case D: The fetch offset is equal to the end offset, meaning that we have reached the end of the log
+   * Upon completion, should return whatever data is available for each valid partition
+   */
+  private def tryCompleteDiskless(fetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]): Option[Long] = {
+    var accumulatedSize = 0L
+    val fetchPartitionStatusMap = fetchPartitionStatus.asScala
+    val requests = fetchPartitionStatusMap.map { case (topicIdPartition, fetchStatus) =>
+      new FindBatchRequest(topicIdPartition, fetchStatus.startOffsetMetadata.messageOffset, fetchStatus.fetchInfo.maxBytes)
+    }
+    if (requests.isEmpty) return Some(0)
+
+    val response = try {
+      replicaManager.findDisklessBatches(requests.toSeq)
+    } catch {
+      case e: Throwable =>
+        error("Error while trying to find diskless batches on delayed fetch.", e)
+        return None  // Case C
+    }
+
+    response.get.asScala.foreach { r =>
+      r.errors() match {
+        case Errors.NONE =>
+          if (r.batches().size() > 0) {
+            // Gather topic id partition from first batch. Same for all batches in the response.
+            val topicIdPartition = r.batches().get(0).metadata().topicIdPartition()
+            val endOffset = r.highWatermark()
+
+            val fetchPartitionStatus = fetchPartitionStatusMap.get(topicIdPartition)
+            if (fetchPartitionStatus.isEmpty) {
+              warn(s"Fetch partition status for $topicIdPartition not found in delayed fetch $this.")
+              return None  // Case C
+            }
+
+            val fetchOffset = fetchPartitionStatus.get.startOffsetMetadata
+            // If the fetch offset is greater than the end offset, it means that the log has been truncated
+            // If it is equal to the end offset, it means that we have reached the end of the log
+            // If the fetch offset is less than the end offset, we can accumulate the size of the batches
+            if (fetchOffset.messageOffset > endOffset) {
+              // Truncation happened
+              debug(s"Satisfying fetch $this since it is fetching later segments of partition $topicIdPartition.")
+              return None  // Case A
+            } else if (fetchOffset.messageOffset < endOffset) {
+              val bytesAvailable = r.estimatedByteSize(fetchOffset.messageOffset)
+              accumulatedSize += bytesAvailable // Case B: accumulate the size of the batches
+            } // Case D: same as fetchOffset == endOffset, no new data available
+          }
+        case _ => return None  // Case C
+      }
+    }
+
+    Some(accumulatedSize)
   }
 
   override def onExpiration(): Unit = {
@@ -164,30 +228,124 @@ class DelayedFetch(
    * Upon completion, read whatever data is available and pass to the complete callback
    */
   override def onComplete(): Unit = {
-    val fetchInfos = fetchPartitionStatus.map { case (tp, status) =>
+    val classicFetchInfos = classicFetchPartitionStatus.asScala.iterator.map { case (tp, status) =>
       tp -> status.fetchInfo
+    }.toBuffer
+
+    val classicRequestsSize = classicFetchPartitionStatus.size.toFloat
+    val disklessRequestsSize = disklessFetchPartitionStatus.size.toFloat
+    val totalRequestsSize = classicRequestsSize + disklessRequestsSize
+
+    if (totalRequestsSize == 0) {
+      responseCallback(Seq.empty)
+      return
     }
 
-    val logReadResults = replicaManager.readFromLog(
-      params,
-      fetchInfos,
-      quota,
-      readFromPurgatory = true
-    )
+    // Read classic partitions from local log.
+    val (logReadResults, logReadResultMap) = if (classicRequestsSize > 0) {
+      val classicPercentage = classicRequestsSize / totalRequestsSize
+      val classicParams = replicaManager.fetchParamsWithNewMaxBytes(params, classicPercentage)
+      val results = replicaManager.readFromLog(classicParams, classicFetchInfos, quota, readFromPurgatory = true)
+      val resultMap = new util.HashMap[TopicIdPartition, LogReadResult]()
+      results.foreach { case (tp, r) => resultMap.put(tp, r) }
+      (results, resultMap)
+    } else (Seq.empty, new util.HashMap[TopicIdPartition, LogReadResult]())
 
-    val fetchPartitionData = logReadResults.map { case (tp, result) =>
-      val isReassignmentFetch = params.isFromFollower &&
-        replicaManager.isAddingReplica(tp.topicPartition, params.replicaId)
+    // Supplement consolidating partitions whose local read has remaining byte budget.
+    // consolidatingSupplements is passed from fetchMessages (identified at routing time),
+    // so no per-partition metadata lookups are needed here.
+    val supplementFetchInfos =
+      if (consolidatingSupplements.nonEmpty)
+        replicaManager.buildConsolidationSupplementFetchInfos(consolidatingSupplements, classicFetchInfos.toSeq, logReadResultMap)
+      else Seq.empty
 
-      tp -> result.toFetchPartitionData(isReassignmentFetch)
-    }
+    val emptySupplementMap: Map[TopicIdPartition, FetchPartitionData] = Map.empty
+    val supplementFuture: CompletableFuture[Map[TopicIdPartition, FetchPartitionData]] =
+      if (supplementFetchInfos.nonEmpty) {
+        val supplementParams = replicaManager.fetchParamsWithNewMaxBytes(
+          params, supplementFetchInfos.size.toFloat / totalRequestsSize)
+        replicaManager.fetchDisklessMessages(supplementParams, supplementFetchInfos)
+          .thenApply[Map[TopicIdPartition, FetchPartitionData]](_.toMap)
+          .exceptionally((e: Throwable) => {
+            logger.warn("Failed to fetch diskless supplement for consolidating partitions in delayed fetch, returning local data only", e)
+            emptySupplementMap
+          })
+      } else {
+        CompletableFuture.completedFuture(emptySupplementMap)
+      }
 
-    responseCallback(fetchPartitionData)
+    val emptyDisklessSeq: Seq[(TopicIdPartition, FetchPartitionData)] = Seq.empty
+    val disklessFuture: CompletableFuture[Seq[(TopicIdPartition, FetchPartitionData)]] =
+      if (disklessRequestsSize > 0) {
+        val disklessPercentage = disklessRequestsSize / totalRequestsSize
+        val disklessParams = replicaManager.fetchParamsWithNewMaxBytes(params, disklessPercentage)
+        val disklessFetchInfos = disklessFetchPartitionStatus.asScala.map { case (tp, status) =>
+          tp -> status.fetchInfo
+        }
+        replicaManager.fetchDisklessMessages(disklessParams, disklessFetchInfos.toSeq)
+          .exceptionally((e: Throwable) => {
+            logger.warn("Failed to fetch diskless data in delayed fetch, returning per-partition errors", e)
+            val error = Errors.forException(e)
+            disklessFetchInfos.map { case (tp, _) =>
+              tp -> new FetchPartitionData(
+                error,
+                -1L,
+                -1L,
+                MemoryRecords.EMPTY,
+                util.Optional.empty(),
+                util.OptionalLong.empty(),
+                util.Optional.empty(),
+                util.OptionalInt.empty(),
+                false
+              )
+            }.toSeq
+          })
+      } else {
+        CompletableFuture.completedFuture(emptyDisklessSeq)
+      }
+
+    // Join both futures and fire the single response callback once both are ready.
+    // The supplement and pure-diskless fetches run concurrently so latency equals the slower of the two.
+    // The AtomicBoolean ensures responseCallback is called exactly once even if an unexpected exception
+    // escapes the thenCombine lambda after the happy-path callback has already fired.
+    val callbackFired = new AtomicBoolean(false)
+    supplementFuture.thenCombine[Seq[(TopicIdPartition, FetchPartitionData)], Void](disklessFuture,
+      (supplementData: Map[TopicIdPartition, FetchPartitionData],
+       disklessData: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        val classicData = logReadResults.map { case (tp, result) =>
+          val isReassignmentFetch = params.isFromFollower &&
+            replicaManager.isAddingReplica(tp.topicPartition, params.replicaId)
+          val localData = result.toFetchPartitionData(isReassignmentFetch)
+          val mergedData = supplementData.get(tp) match {
+            // don't merge if local result has errors
+            case Some(sd) if result.error == Errors.NONE && sd.error == Errors.NONE && sd.records.sizeInBytes > 0 =>
+              try replicaManager.mergeConsolidationSupplement(tp, localData, sd)
+              catch {
+                case e: Exception =>
+                  logger.warn(s"Failed to merge diskless supplement for $tp in delayed fetch, returning local data only", e)
+                  localData
+              }
+            case _ => localData
+          }
+          tp -> mergedData
+        }
+        if (callbackFired.compareAndSet(false, true))
+          responseCallback(classicData ++ disklessData)
+        null
+      }).exceptionally((e: Throwable) => {
+        logger.error("Unexpected error in delayed fetch completion", e)
+        if (callbackFired.compareAndSet(false, true))
+          responseCallback(Seq.empty)
+        null
+      })
   }
 }
 
 object DelayedFetchMetrics {
-  private val metricsGroup = new KafkaMetricsGroup(DelayedFetchMetrics.getClass)
+  // Changing the package or class name may cause incompatibility with existing code and metrics configuration
+  private val metricsPackage = "kafka.server"
+  private val metricsClassName = "DelayedFetchMetrics"
+  private val metricsGroup = new KafkaMetricsGroup(metricsPackage, metricsClassName)
   private val FetcherTypeKey = "fetcherType"
   val followerExpiredRequestMeter: Meter = metricsGroup.newMeter("ExpiresPerSec", "requests", TimeUnit.SECONDS, Map(FetcherTypeKey -> "follower").asJava)
   val consumerExpiredRequestMeter: Meter = metricsGroup.newMeter("ExpiresPerSec", "requests", TimeUnit.SECONDS, Map(FetcherTypeKey -> "consumer").asJava)

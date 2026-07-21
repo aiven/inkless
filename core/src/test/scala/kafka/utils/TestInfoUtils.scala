@@ -32,6 +32,8 @@ class EmptyTestInfo extends TestInfo {
 
 object TestInfoUtils {
 
+  final val TestWithParameterizedGroupProtocolNamesAndTopicType = "{displayName}.groupProtocol={0}.topicType={1}"
+
   final val TestWithParameterizedGroupProtocolNames = "{displayName}.groupProtocol={0}"
 
   def maybeGroupProtocolSpecified(testInfo: TestInfo): Option[GroupProtocol] = {
@@ -41,6 +43,15 @@ object TestInfoUtils {
       Some(GroupProtocol.CONSUMER)
     else
       None
+  }
+
+  def topicTypeSpecified(testInfo: TestInfo): String = {
+    if (testInfo.getDisplayName.contains("topicType=classic"))
+      "classic"
+    else if (testInfo.getDisplayName.contains("topicType=diskless"))
+      "diskless"
+    else
+      "classic" // default
   }
 
   /**

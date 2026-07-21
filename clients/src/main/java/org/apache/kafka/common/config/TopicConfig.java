@@ -159,7 +159,10 @@ public class TopicConfig {
         "<a href=\"#compaction\">log compaction</a>, which retains the latest value for each key. " +
         "It is also possible to specify both policies in a comma-separated list (e.g. \"delete,compact\"). " +
         "In this case, old segments will be discarded per the retention time and size configuration, " +
-        "while retained segments will be compacted.";
+        "while retained segments will be compacted. " +
+        "An empty list means infinite retention - no cleanup policies will be applied and log segments " +
+        "will be retained indefinitely. Note that with remote storage enabled, local retention limits " +
+        "(log.local.retention.ms and log.local.retention.bytes) are still applied to local segments.";
 
     public static final String UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG = "unclean.leader.election.enable";
     public static final String UNCLEAN_LEADER_ELECTION_ENABLE_DOC = "Indicates whether to enable replicas " +
@@ -242,4 +245,8 @@ public class TopicConfig {
     @Deprecated
     public static final String MESSAGE_DOWNCONVERSION_ENABLE_DOC = "Down-conversion is not possible in Apache Kafka 4.0 and newer, " +
         "hence this configuration is no-op and it is deprecated for removal in Apache Kafka 5.0.";
+
+    public static final String DISKLESS_ENABLE_CONFIG = "diskless.enable";
+    public static final String DISKLESS_ENABLE_DOC = "To enable diskless mode for a topic, set this configuration as true. " +
+            "You can not disable this config once it is enabled. If not set, defaults to server level config log.diskless.enable.";
 }

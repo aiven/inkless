@@ -23,7 +23,7 @@ import java.util.Properties
 import java.util.concurrent.TimeUnit
 import kafka.integration.KafkaServerTestHarness
 import kafka.security.JaasTestUtils
-import kafka.server.KafkaConfig
+import kafka.server.{KafkaConfig, GroupProtocolAndMaybeTopicTypeProvider}
 import kafka.utils.{TestInfoUtils, TestUtils}
 import org.apache.kafka.clients.admin.{Admin, NewPartitions}
 import org.apache.kafka.clients.consumer.Consumer
@@ -37,9 +37,9 @@ import org.apache.kafka.common.{KafkaException, TopicPartition}
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig
 import org.apache.kafka.server.config.ServerLogConfigs
 import org.junit.jupiter.api.Assertions._
-import org.junit.jupiter.api.{AfterEach, BeforeEach, TestInfo}
+import org.junit.jupiter.api.{AfterEach, BeforeEach, Tag, TestInfo}
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.MethodSource
+import org.junit.jupiter.params.provider.ArgumentsSource
 
 import scala.collection.mutable
 import scala.concurrent.ExecutionException
@@ -48,16 +48,21 @@ import scala.jdk.javaapi.OptionConverters
 abstract class BaseProducerSendTest extends KafkaServerTestHarness {
 
   def generateConfigs: scala.collection.Seq[KafkaConfig] = {
-    val overridingProps = new Properties()
     val numServers = 2
-    overridingProps.put(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, 2.toShort)
-    overridingProps.put(ServerLogConfigs.NUM_PARTITIONS_CONFIG, 4.toString)
     TestUtils.createBrokerConfigs(
       numServers,
       interBrokerSecurityProtocol = Some(securityProtocol),
       trustStoreFile = trustStoreFile,
-      saslProperties = serverSaslProperties
-    ).map(KafkaConfig.fromProps(_, overridingProps))
+      saslProperties = serverSaslProperties,
+      disklessMode = disklessMode
+    ).map(KafkaConfig.fromProps(_, brokerOverrides))
+  }
+
+  protected def brokerOverrides: Properties = {
+    val overridingProps = new Properties()
+    overridingProps.put(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, 2.toShort)
+    overridingProps.put(ServerLogConfigs.NUM_PARTITIONS_CONFIG, 4.toString)
+    overridingProps
   }
 
   private var consumer: Consumer[Array[Byte], Array[Byte]] = _
@@ -127,9 +132,9 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
    * 1. Send with null key/value/partition-id should be accepted; send with null topic should be rejected.
    * 2. Last message of the non-blocking send should return the correct offset metadata
    */
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testSendOffset(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testSendOffset(groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer()
     val partition = 0
 
@@ -157,7 +162,7 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
 
     try {
       // create topic
-      TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 1, 2)
+      TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 1)
 
       // send a normal record
       val record0 = new ProducerRecord[Array[Byte], Array[Byte]](topic, partition, "key".getBytes(StandardCharsets.UTF_8),
@@ -189,9 +194,9 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
     }
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testSendCompressedMessageWithCreateTime(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testSendCompressedMessageWithCreateTime(groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer(
       compressionType = "gzip",
       lingerMs = Int.MaxValue,
@@ -199,9 +204,9 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
     sendAndVerifyTimestamp(producer, TimestampType.CREATE_TIME)
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testSendNonCompressedMessageWithCreateTime(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testSendNonCompressedMessageWithCreateTime(groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer(lingerMs = Int.MaxValue, deliveryTimeoutMs = Int.MaxValue)
     sendAndVerifyTimestamp(producer, TimestampType.CREATE_TIME)
   }
@@ -292,9 +297,9 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
    *
    * After close() returns, all messages should be sent with correct returned offset metadata
    */
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testClose(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testClose(groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer()
 
     try {
@@ -326,9 +331,9 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
    *
    * The specified partition-id should be respected
    */
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testSendToPartition(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testSendToPartition(groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer()
 
     try {
@@ -366,9 +371,10 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
     }
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testSendToPartitionWithFollowerShutdownShouldNotTimeout(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  @Tag("noinkless") // Not-applicable for Inkless since it does not have followers
+  def testSendToPartitionWithFollowerShutdownShouldNotTimeout(groupProtocol: String, topicType: String): Unit = {
     // This test produces to a leader that has follower that is shutting down. It shows that
     // the produce request succeed, do not timeout and do not need to be retried.
     val producer = createProducer()
@@ -419,9 +425,9 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
     * Producer will attempt to send messages to the partition specified in each record, and should
     * succeed as long as the partition is included in the metadata.
     */
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testSendBeforeAndAfterPartitionExpansion(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testSendBeforeAndAfterPartitionExpansion(groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer(maxBlockMs = 5 * 1000L)
 
     // create topic
@@ -477,9 +483,9 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
   /**
    * Test that flush immediately sends all accumulated requests.
    */
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testFlush(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testFlush(groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer(lingerMs = Int.MaxValue, deliveryTimeoutMs = Int.MaxValue)
     try {
       TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 2, 2)
@@ -499,9 +505,9 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
   /**
    * Test close with zero timeout from caller thread
    */
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testCloseWithZeroTimeoutFromCallerThread(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testCloseWithZeroTimeoutFromCallerThread(groupProtocol: String, topicType: String): Unit = {
     TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 2, 2)
     val partition = 0
     consumer.assign(java.util.List.of(new TopicPartition(topic, partition)))
@@ -525,9 +531,9 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
   /**
    * Test close with zero and non-zero timeout from sender thread
    */
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
-  @MethodSource(Array("getTestGroupProtocolParametersAll"))
-  def testCloseWithZeroTimeoutFromSenderThread(groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
+  def testCloseWithZeroTimeoutFromSenderThread(groupProtocol: String, topicType: String): Unit = {
     TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 1, 2)
     val partition = 0
     consumer.assign(java.util.List.of(new TopicPartition(topic, partition)))

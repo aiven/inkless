@@ -208,6 +208,8 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
                  use_transactions_v2=False,
                  use_share_groups=None,
                  use_streams_groups=False,
+                 consolidation=None
+                 use_streams_groups=False,
                  use_cluster_mirroring=False,
                  ):
         """
@@ -301,6 +303,14 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         self.use_transactions_v2 = use_transactions_v2
         self.use_share_groups = use_share_groups
         self.use_streams_groups = use_streams_groups
+        # Enable inkless consolidation (diskless + remote tiering) for this
+        # service. When None, fall back to the run-wide `--globals consolidation`
+        # flag so existing global-driven runs keep working. Setting it
+        # explicitly per-test lets consolidating and non-consolidating clusters
+        # coexist in a single ducktape session (e.g. the classic->diskless
+        # switch tests, which require the classic default, alongside the
+        # consolidation tests).
+        self.consolidation = consolidation
 
         self.use_cluster_mirroring = use_cluster_mirroring
 
@@ -362,7 +372,9 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
                     extra_kafka_opts=extra_kafka_opts, tls_version=tls_version,
                     isolated_kafka=self, allow_zk_with_kraft=self.allow_zk_with_kraft,
                     server_prop_overrides=server_prop_overrides, dynamicRaftQuorum=self.dynamicRaftQuorum,
-                    use_streams_groups=self.use_streams_groups, use_cluster_mirroring=self.use_cluster_mirroring
+                    use_streams_groups=self.use_streams_groups,
+                    consolidation=consolidation,
+                    use_cluster_mirroring=self.use_cluster_mirroring
                 )
                 self.controller_quorum = self.isolated_controller_quorum
 
@@ -757,7 +769,9 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         config_template = self.render('kafka.properties', node=node, broker_id=self.idx(node),
                                       security_config=self.security_config, num_nodes=self.num_nodes,
                                       listener_security_config=self.listener_security_config,
-                                      use_share_groups=self.use_share_groups)
+                                      use_share_groups=self.use_share_groups,
+                                      consolidation=(self.consolidation if self.consolidation is not None
+                                                     else self.context.globals.get("consolidation", False)))
 
         configs = dict( l.rstrip().split('=', 1) for l in config_template.split('\n')
                         if not l.startswith("#") and "=" in l )
@@ -1355,15 +1369,85 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         self.logger.info("Running alter message format command...\n%s" % cmd)
         node.account.ssh(cmd)
 
-    def alter_topic_config(self, topic, config, node=None):
+    def alter_topic_config(self, topic, config_name, config_value, node=None):
         if node is None:
             node = self.nodes[0]
+        self.logger.info("Altering topic %s config %s=%s", topic, config_name, config_value)
+
         force_use_zk_connection = not self.all_nodes_configs_command_uses_bootstrap_server()
+
         cmd = fix_opts_for_new_jvm(node)
-        cmd += "%s --entity-name %s --entity-type topics --alter --add-config %s" % \
-              (self.kafka_configs_cmd_with_optional_security_settings(node, force_use_zk_connection), topic, config)
+        cmd += "%s --entity-name %s --entity-type topics --alter --add-config %s=%s" % \
+              (self.kafka_configs_cmd_with_optional_security_settings(node, force_use_zk_connection),
+               topic, config_name, config_value)
         self.logger.info("Running alter topic config command...\n%s" % cmd)
         node.account.ssh(cmd)
+
+    def alter_topic_configs(self, topic, configs, node=None):
+        """Atomically set multiple topic configs in a single ``--add-config`` alter.
+
+        ``configs`` is a dict of config name -> value. Combining configs into one
+        request matters for transitions that are only valid when applied together,
+        e.g. setting ``diskless.enable=true`` and ``remote.storage.enable=true`` at
+        once for a classic-to-consolidated switch (applying them in separate alters
+        either trips the mutual-exclusion validator or never starts consolidation).
+        kafka-configs uses commas to separate ``--add-config`` entries, so a value
+        that itself contains commas (e.g. a list like ``cleanup.policy=compact,delete``)
+        must use the bracket syntax ``cleanup.policy=[compact,delete]``; raw commas in
+        a value are rejected.
+        """
+        if node is None:
+            node = self.nodes[0]
+        self.logger.info("Altering topic %s configs %s", topic, configs)
+
+        assert configs, "alter_topic_configs requires at least one config to set"
+        for name, value in configs.items():
+            value_str = str(value)
+            # kafka-configs splits --add-config on commas, so a value with commas
+            # must be wrapped in [...] (e.g. cleanup.policy=[compact,delete]).
+            # Reject only raw, unbracketed commas that would corrupt the request.
+            if "," in value_str:
+                assert value_str.startswith("[") and value_str.endswith("]"), \
+                    ("alter_topic_configs value for '%s' contains a comma but is not wrapped "
+                     "in [...]; list values must use the bracket syntax "
+                     "(e.g. cleanup.policy=[compact,delete]): %s=%s"
+                     % (name, name, value_str))
+
+        force_use_zk_connection = not self.all_nodes_configs_command_uses_bootstrap_server()
+        # Sorted for a deterministic, easily-diffable command line.
+        add_config = ",".join("%s=%s" % (name, configs[name]) for name in sorted(configs))
+
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --entity-name %s --entity-type topics --alter --add-config %s" % \
+              (self.kafka_configs_cmd_with_optional_security_settings(node, force_use_zk_connection),
+               topic, add_config)
+        self.logger.info("Running alter topic configs command...\n%s" % cmd)
+        node.account.ssh(cmd)
+
+    def describe_topic_config(self, topic, node=None):
+        if node is None:
+            node = self.nodes[0]
+        self.logger.info("Describing config for topic %s", topic)
+
+        force_use_zk_connection = not self.all_nodes_configs_command_uses_bootstrap_server()
+
+        cmd = fix_opts_for_new_jvm(node)
+        cmd += "%s --entity-name %s --entity-type topics --describe" % \
+              (self.kafka_configs_cmd_with_optional_security_settings(node, force_use_zk_connection), topic)
+        self.logger.info("Running describe topic config command...\n%s" % cmd)
+        config = {}
+        in_config_block = False
+        for line in node.account.ssh_capture(cmd):
+            line = line.decode("utf-8") if isinstance(line, bytes) else line
+            stripped = line.strip()
+            if "configs for" in stripped.lower() and "are:" in stripped.lower():
+                in_config_block = True
+                continue
+            if in_config_block and stripped and "=" in stripped:
+                k, rest = stripped.split("=", 1)
+                v = rest.split(" ")[0]
+                config[k.strip()] = v.strip()
+        return config
 
     def kafka_acls_cmd_with_optional_security_settings(self, node, kafka_security_protocol = None, override_command_config = None):
         if self.quorum_info.using_kraft and not self.quorum_info.has_brokers:
@@ -2192,11 +2276,11 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
             mirror = item["mirror"]
             if mirror not in mirrors:
                 mirrors[mirror] = {}
-            
+
             topic = item["topic"]
             if topic not in mirrors[mirror]:
                 mirrors[mirror][topic] = {}
-            
+
             partition = item["partition"]
             mirrors[mirror][topic][partition] = {
                 "src_offset": item["sourceOffset"],

@@ -1,0 +1,159 @@
+# Copyright (c) 2025 Aiven, Helsinki, Finland. https://aiven.io/
+# Workflow for inkless integration tests
+name: Inkless Nightly CI
+
+on:
+  push:
+    branches:
+      - 'main'
+      - 'inkless-*'
+  # nightly cron job
+  schedule:
+    - cron: '0 0 * * *'
+  # on-demand
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java: [ 17, 25 ]  # If we change these, make sure to adjust ci-complete.yml
+    name: JUnit tests Java ${{ matrix.java }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r .github/scripts/requirements.txt
+      - name: Setup Gradle
+        uses: ./.github/actions/setup-gradle
+        with:
+          java-version: ${{ matrix.java }}
+          gradle-cache-read-only: ${{ inputs.gradle-cache-read-only }}
+          gradle-cache-write-only: ${{ inputs.gradle-cache-write-only }}
+          develocity-access-key: ${{ secrets.GE_ACCESS_TOKEN }}
+      # JOOQ classes are generated on the previous validate job,
+      # but if generated with JDK 17, there are no warning suppressions for `this-escape` needed after JDK 21.
+      # see https://github.com/jOOQ/jOOQ/issues/15619
+      - name: Regenerate JOOQ classes (needed after JDK 21)
+        if: matrix.java != '17'
+        run: ./gradlew :storage:inkless:generateJooqClasses
+      - name: Test
+        # Gradle flags
+        # --build-cache:  Let Gradle restore the build cache
+        # --no-scan:      Don't attempt to publish the scan yet. We want to archive it first.
+        # --continue:     Keep running even if a test fails
+        # -PcommitId      Prevent the Git SHA being written into the jar files (which breaks caching)
+        id: junit-test
+        env:
+          # Nightly runs full test packages, so it needs more headroom than inkless.yml.
+          TIMEOUT_MINUTES: 120
+          GRADLE_ARGS: >-
+            --build-cache --no-scan
+            -PtestLoggingEvents=started,passed,skipped,failed
+            -PmaxParallelForks=2
+            -PmaxTestRetries=1 -PmaxTestRetryFailures=3
+            -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=0
+            -Pkafka.test.xml.output.dir=${{ matrix.java }}
+            -PcommitId=xxxxxxxxxxxxxxxx
+        # Point to inkless tests
+        run: |
+          set +e
+          ./.github/scripts/thread-dump.sh &
+          # inkless tests
+          # Wrap the whole chain in a single timeout so a hang in any suite is
+          # killed and yields exit 124, which triggers the thread-dump upload.
+          timeout ${TIMEOUT_MINUTES}m bash -c '
+          ./gradlew ${GRADLE_ARGS} :storage:inkless:test :storage:inkless:integrationTest && \
+          ./gradlew ${GRADLE_ARGS} :metadata:test --tests "org.apache.kafka.controller.*" && \
+          ./gradlew ${GRADLE_ARGS} :core:test --tests "*Inkless*" --tests "*Diskless*" && \
+          ./gradlew ${GRADLE_ARGS} :core:test --tests "kafka.server.*" && \
+          ./gradlew ${GRADLE_ARGS} :core:test --tests "kafka.api.*" && \
+          ./gradlew ${GRADLE_ARGS} :core:test --tests "kafka.log.*"
+          '
+          exitcode="$?"
+          if [ "$exitcode" -eq 124 ]; then
+            echo "::error::Test step exceeded the ${TIMEOUT_MINUTES}-minute timeout and was killed; results are partial. A hung test is likely, check the thread-dumps artifact."
+            {
+              echo "## Tests killed by timeout"
+              echo ""
+              echo "The test step exceeded the **${TIMEOUT_MINUTES}-minute** timeout and was killed by the \`timeout\` wrapper. Results are partial and a hung test is likely; check the uploaded thread dumps."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
+      - name: Archive JUnit HTML reports
+        uses: actions/upload-artifact@v4
+        id: junit-upload-artifact
+        with:
+          name: junit-reports-${{ matrix.java }}
+          path: |
+            **/build/reports/tests/*
+          compression-level: 9
+          if-no-files-found: ignore
+      - name: Archive JUnit XML
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-xml-${{ matrix.java }}
+          path: |
+            build/junit-xml/**/*.xml
+          compression-level: 9
+          if-no-files-found: ignore
+      - name: Archive Thread Dumps
+        id: thread-dump-upload-artifact
+        if: always() && ( steps.junit-test.outputs.exitcode == '124' )
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-thread-dumps-${{ matrix.java }}
+          path: |
+            thread-dumps/*
+          compression-level: 9
+          if-no-files-found: ignore
+      - name: Prune incomplete JUnit reports
+        if: always()
+        run: |
+          # junit.py crashes on empty/truncated JUnit XML, left behind when a test class is killed
+          # mid-run (e.g. the timeout wrapper). Drop them so parsing still produces a summary; the
+          # real failure surfaces via GRADLE_TEST_EXIT_CODE.
+          python - <<'PY'
+          import glob, os, xml.etree.ElementTree as ET
+          root = os.path.realpath("build/junit-xml")
+          for f in glob.glob("build/junit-xml/**/*.xml", recursive=True):
+              # Only prune real files that resolve inside the reports dir (ignore symlinks/traversal).
+              if os.path.islink(f) or not os.path.isfile(f) or os.path.commonpath([root, os.path.realpath(f)]) != root:
+                  continue
+              try:
+                  ET.parse(f)
+              except ET.ParseError:
+                  print(f"::warning file={f}::Dropping unparseable JUnit report (test likely killed before finishing)")
+                  os.remove(f)
+          PY
+      - name: Parse JUnit tests
+        if: always()
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          JUNIT_REPORT_URL: ${{ steps.junit-upload-artifact.outputs.artifact-url }}
+          THREAD_DUMP_URL: ${{ steps.thread-dump-upload-artifact.outputs.artifact-url }}
+          GRADLE_TEST_EXIT_CODE: ${{ steps.junit-test.outputs.exitcode }}
+        run: |
+          python .github/scripts/junit.py --path build/junit-xml >> $GITHUB_STEP_SUMMARY
+      - name: Archive Test Catalog
+        if: ${{ always() && matrix.java == '21' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-catalog
+          path: test-catalog
+          compression-level: 9
+          if-no-files-found: ignore
+      - name: Archive Build Scan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-scan-test-${{ matrix.java }}
+          path: ~/.gradle/build-scan-data
+          compression-level: 9
+          if-no-files-found: ignore

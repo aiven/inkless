@@ -1,0 +1,56 @@
+services:
+  create_topic:
+    image: ghcr.io/aiven/inkless:${KAFKA_VERSION}
+    restart: "no"
+    depends_on:
+      broker:
+        condition: service_healthy
+    command: [ "/opt/kafka/bin/kafka-topics.sh",
+               "--bootstrap-server", "broker:19092",
+               "--create",
+               "--config", "diskless.enable=true",
+               "--topic", "test-topic",
+               "--partitions", "64" ]
+
+  producer-1: &producer-config
+    image: apache/kafka:4.0.0
+    environment:
+      KAFKA_OPTS: -javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar=7070:/opt/prometheus-jmx-exporter/kafka-client.yml
+    volumes:
+      - ./../../../extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter:Z
+    depends_on:
+      create_topic:
+        condition: service_completed_successfully
+    command: [ "/opt/kafka/bin/kafka-producer-perf-test.sh",
+               "--producer-props", "bootstrap.servers=broker:19092", "batch.size=1000000", "linger.ms=100", "max.request.size=64000000",
+               # simulate az placement
+               # "client.rack=demo-producer,diskless_az=az1",
+               "--topic", "test-topic",
+               "--record-size", "1000",
+               "--num-records", "5000000",
+               # simulate 10k msg/s, use -1 to disable throughput limit
+               "--throughput", "10000" ]
+
+  producer-2:
+    <<: *producer-config
+
+  consumer:
+    image: apache/kafka:4.0.0
+    depends_on:
+      producer-1:
+        condition: service_started
+      producer-2:
+        condition: service_started
+    environment:
+      KAFKA_HEAP_OPTS: "-Xmx1G"
+      KAFKA_OPTS: -javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar=7070:/opt/prometheus-jmx-exporter/kafka-client.yml
+    volumes:
+      - ./../../../extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter:Z
+    command: [ "/opt/kafka/bin/kafka-consumer-perf-test.sh",
+               "--bootstrap-server", "broker:19092",
+               "--topic", "test-topic",
+               "--messages", "10000000",
+               "--reporting-interval", "5000",
+               "--show-detailed-stats",
+               "--timeout", "60000",
+               "--fetch-size", "512000" ]

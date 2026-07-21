@@ -57,6 +57,11 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
     logManager.updateTopicConfig(topic, topicConfig, kafkaConfig.remoteLogManagerConfig.isRemoteStorageSystemEnabled,
       wasRemoteLogEnabled)
     maybeUpdateRemoteLogComponents(topic, logs, wasRemoteLogEnabled, wasCopyDisabled)
+
+    if (logs.isEmpty) {
+      // Update cached LogConfig only for diskless topics (topics without local logs) to preserve lazy population.
+      replicaManager.inklessMetadataView().updateTopicConfig(topic, topicConfig)
+    }
   }
 
   private[server] def maybeUpdateRemoteLogComponents(topic: String,
@@ -165,6 +170,8 @@ class BrokerConfigHandler(private val brokerConfig: KafkaConfig,
     quotaManagers.leader.updateQuota(upperBound(getOrDefault(QuotaConfig.LEADER_REPLICATION_THROTTLED_RATE_CONFIG).toDouble))
     quotaManagers.follower.updateQuota(upperBound(getOrDefault(QuotaConfig.FOLLOWER_REPLICATION_THROTTLED_RATE_CONFIG).toDouble))
     quotaManagers.alterLogDirs.updateQuota(upperBound(getOrDefault(QuotaConfig.REPLICA_ALTER_LOG_DIRS_IO_MAX_BYTES_PER_SECOND_CONFIG).toDouble))
+    quotaManagers.disklessConsolidationFetch.updateQuota(
+      upperBound(brokerConfig.dynamicConfig.currentKafkaConfig.disklessConsolidationFetchRateLimitBytesPerSecond.toDouble))
     quotaManagers.mirror.updateQuota(upperBound(getOrDefault(QuotaConfig.MIRROR_REPLICATION_THROTTLED_RATE_CONFIG).toDouble))
   }
 }

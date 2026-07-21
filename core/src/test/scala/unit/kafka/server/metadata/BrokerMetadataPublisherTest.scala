@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import kafka.log.LogManager
 import kafka.server.share.SharePartitionManager
 import kafka.server.{BrokerServer, KafkaConfig, ReplicaManager}
+import kafka.server.metadata.InklessMetadataView
 import kafka.server.mirror.{MirrorMetadataManager, ClusterMirrorCoordinator}
 import kafka.utils.TestUtils
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET
@@ -41,7 +42,7 @@ import org.apache.kafka.coordinator.group.GroupCoordinator
 import org.apache.kafka.coordinator.share.ShareCoordinator
 import org.apache.kafka.image.{AclsImage, ClientQuotasImage, ClusterImageTest, ConfigurationsImage, DelegationTokenImage, FeaturesImage, MetadataDelta, MetadataImage, MetadataImageTest, MetadataProvenance, ProducerIdsImage, ScramImage, TopicsImage}
 import org.apache.kafka.image.loader.LogDeltaManifest
-import org.apache.kafka.metadata.publisher.AclPublisher
+import org.apache.kafka.metadata.publisher.{AclPublisher, DelegationTokenPublisher, DynamicClientQuotaPublisher, ScramPublisher}
 import org.apache.kafka.network.SocketServerConfigs
 import org.apache.kafka.raft.LeaderAndEpoch
 import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion, ShareVersion}
@@ -50,7 +51,7 @@ import org.junit.jupiter.api.Assertions.{assertEquals, assertNotNull, assertTrue
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito
-import org.mockito.Mockito.{doThrow, mock, verify}
+import org.mockito.Mockito.{doThrow, mock, verify, when}
 import org.mockito.invocation.InvocationOnMock
 import org.mockito.stubbing.Answer
 
@@ -193,6 +194,8 @@ class BrokerMetadataPublisherTest {
     val metadataCache = new KRaftMetadataCache(0, () => KRaftVersion.KRAFT_VERSION_1)
     val logManager = mock(classOf[LogManager])
     val replicaManager = mock(classOf[ReplicaManager])
+    val inklessMetadataView = mock(classOf[InklessMetadataView])
+    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
     val groupCoordinator = mock(classOf[GroupCoordinator])
     val faultHandler = mock(classOf[FaultHandler])
 
@@ -251,6 +254,7 @@ class BrokerMetadataPublisherTest {
 
     verify(groupCoordinator).onResignation(0, OptionalInt.empty())
     verify(groupCoordinator).onResignation(1, OptionalInt.empty())
+    verify(inklessMetadataView).removeTopicConfig(Topic.GROUP_METADATA_TOPIC_NAME)
   }
 
   @Test

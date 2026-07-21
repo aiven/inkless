@@ -17,6 +17,7 @@
 
 package kafka.server
 
+import io.aiven.inkless.control_plane.ControlPlane
 import kafka.metrics.KafkaMetricsReporter
 import kafka.raft.{DefaultExternalKRaftMetrics, KafkaRaftManager}
 import kafka.server.Server.MetricsPrefix
@@ -112,6 +113,10 @@ class SharedServer(
   private var usedByController: Boolean = false
   val brokerConfig = new KafkaConfig(sharedServerConfig.props, false)
   val controllerConfig = new KafkaConfig(sharedServerConfig.props, false)
+  
+  // Factory for creating request handler pools with shared aggregate thread counter
+  val requestHandlerPoolFactory = new KafkaRequestHandlerPoolFactory()
+
   @volatile var metrics: Metrics = _metrics
   @volatile var raftManager: KafkaRaftManager[ApiMessageAndVersion] = _
   @volatile var brokerMetrics: BrokerServerMetrics = _
@@ -122,6 +127,8 @@ class SharedServer(
   @volatile var snapshotEmitter: SnapshotEmitter = _
   @volatile private var snapshotGenerator: SnapshotGenerator = _
   @volatile private var metadataLoaderMetrics: MetadataLoaderMetrics = _
+
+  @volatile var inklessControlPlane: Option[ControlPlane] = None
 
   def clusterId: String = metaPropsEnsemble.clusterId().get()
 
@@ -269,7 +276,7 @@ class SharedServer(
           // This is only done in tests.
           metrics = new Metrics()
         }
-        sharedServerConfig.dynamicConfig.initialize(clientMetricsReceiverPluginOpt = None)
+        sharedServerConfig.dynamicConfig.initialize(clientTelemetryExporterPluginOpt = None)
 
         if (sharedServerConfig.processRoles.contains(ProcessRole.BrokerRole)) {
           brokerMetrics = new BrokerServerMetrics(metrics)
@@ -279,6 +286,9 @@ class SharedServer(
         }
 
         val externalKRaftMetrics = new DefaultExternalKRaftMetrics(Option(brokerMetrics), Option(controllerServerMetrics))
+
+        if (brokerConfig.disklessStorageSystemEnabled)
+          inklessControlPlane = Some(ControlPlane.create(sharedServerConfig.inklessConfig, time))
 
         val _raftManager = new KafkaRaftManager[ApiMessageAndVersion](
           clusterId,
@@ -301,12 +311,14 @@ class SharedServer(
 
         nodeMetrics = new NodeMetrics(metrics, controllerConfig.unstableFeatureVersionsEnabled)
         metadataLoaderMetrics = if (brokerMetrics != null) {
-          new MetadataLoaderMetrics(Optional.of(KafkaYammerMetrics.defaultRegistry()),
+          new MetadataLoaderMetrics(
+            Optional.of(KafkaYammerMetrics.defaultRegistry()),
             elapsedNs => brokerMetrics.updateBatchProcessingTime(elapsedNs),
             batchSize => brokerMetrics.updateBatchSize(batchSize),
             brokerMetrics.lastAppliedImageProvenance)
         } else {
-          new MetadataLoaderMetrics(Optional.of(KafkaYammerMetrics.defaultRegistry()),
+          new MetadataLoaderMetrics(
+            Optional.of(KafkaYammerMetrics.defaultRegistry()),
             _ => {},
             _ => {},
             new AtomicReference[MetadataProvenance](MetadataProvenance.EMPTY))
@@ -342,7 +354,7 @@ class SharedServer(
             throw new RuntimeException("Unable to install metadata publishers.", t)
           }
         }
-        _raftManager.register(loader)
+        _raftManager.client.register(loader)
         debug("Completed SharedServer startup.")
         started = true
       } catch {
@@ -385,6 +397,10 @@ class SharedServer(
         CoreUtils.swallow(raftManager.shutdown(), this)
         raftManager = null
       }
+
+      // Inkless
+      inklessControlPlane.foreach(Utils.closeQuietly(_, "inkless control plane"))
+
       Utils.closeQuietly(controllerServerMetrics, "controller server metrics")
       controllerServerMetrics = null
       Utils.closeQuietly(brokerMetrics, "broker metrics")

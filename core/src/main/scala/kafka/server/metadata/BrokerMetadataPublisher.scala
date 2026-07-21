@@ -34,7 +34,7 @@ import org.apache.kafka.coordinator.transaction.TransactionLogConfig
 import org.apache.kafka.image.loader.LoaderManifest
 import org.apache.kafka.image.publisher.MetadataPublisher
 import org.apache.kafka.image.{MetadataDelta, MetadataImage, TopicDelta}
-import org.apache.kafka.metadata.publisher.AclPublisher
+import org.apache.kafka.metadata.publisher.{AclPublisher, DelegationTokenPublisher, DynamicClientQuotaPublisher, ScramPublisher}
 import org.apache.kafka.server.common.MetadataVersion.MINIMUM_VERSION
 import org.apache.kafka.server.common.{FinalizedFeatures, ClusterMirrorVersion, RequestLocal, ShareVersion}
 import org.apache.kafka.server.fault.FaultHandler
@@ -151,7 +151,6 @@ class BrokerMetadataPublisher(
         debug(s"Publishing metadata at offset $highestOffsetAndEpoch with $metadataVersionLogMsg.")
       }
 
-      // Apply topic deltas.
       Option(delta.topicsDelta()).foreach { topicsDelta =>
         try {
           // Notify the replica manager about changes to topics.
@@ -220,6 +219,10 @@ class BrokerMetadataPublisher(
           case t: Throwable => metadataPublishingFaultHandler.handleFault("Error updating share " +
             s"coordinator with deleted partitions in $deltaName", t)
         }
+        // Evict cached LogConfig for deleted diskless topics.
+        topicsDelta.deletedTopicIds().forEach { id =>
+          replicaManager.inklessMetadataView().removeTopicConfig(topicsDelta.image().getTopic(id).name())
+        }
         // Only update mirror coordinator if mirror.version is enabled
         if (finalizedMirrorVersion > 0) {
           try {
@@ -240,16 +243,16 @@ class BrokerMetadataPublisher(
       dynamicConfigPublisher.onMetadataUpdate(delta, newImage)
 
       // Apply client quotas delta.
-      dynamicClientQuotaPublisher.onMetadataUpdate(delta, newImage)
+      dynamicClientQuotaPublisher.onMetadataUpdate(delta, newImage, manifest)
 
       // Apply topic or cluster quotas delta.
       dynamicTopicClusterQuotaPublisher.onMetadataUpdate(delta, newImage)
 
       // Apply SCRAM delta.
-      scramPublisher.onMetadataUpdate(delta, newImage)
+      scramPublisher.onMetadataUpdate(delta, newImage, manifest)
 
       // Apply DelegationToken delta.
-      delegationTokenPublisher.onMetadataUpdate(delta, newImage)
+      delegationTokenPublisher.onMetadataUpdate(delta, newImage, manifest)
 
       // Apply ACL delta.
       aclPublisher.onMetadataUpdate(delta, newImage, manifest)

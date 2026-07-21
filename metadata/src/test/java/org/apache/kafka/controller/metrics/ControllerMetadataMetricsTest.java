@@ -63,6 +63,10 @@ public class ControllerMetadataMetricsTest {
                         "kafka.controller:type=KafkaController,name=OfflinePartitionsCount",
                         "kafka.controller:type=KafkaController,name=PreferredReplicaImbalanceCount",
                         "kafka.controller:type=KafkaController,name=IgnoredStaticVoters",
+                        "kafka.controller:type=KafkaController,name=DisklessTopicCount",
+                        "kafka.controller:type=KafkaController,name=DisklessPartitionCount",
+                        "kafka.controller:type=KafkaController,name=DisklessOfflinePartitionCount",
+                        "kafka.controller:type=KafkaController,name=DisklessWithoutRemoteStorageCount",
                         "kafka.controller:type=ControllerStats,name=UncleanLeaderElectionsPerSec",
                         "kafka.controller:type=ControllerStats,name=ElectionFromEligibleLeaderReplicasPerSec"
                     ));
@@ -160,6 +164,7 @@ public class ControllerMetadataMetricsTest {
         );
     }
 
+    @SuppressWarnings("unchecked") // suppress warning about Gauge typecast
     @Test
     public void testBrokerRegistrationStateMetrics() {
         MetricsRegistry registry = new MetricsRegistry();
@@ -287,6 +292,59 @@ public class ControllerMetadataMetricsTest {
             assertEquals(1, ignoredStaticVoters.value());
             metrics.setIgnoredStaticVoters(false);
             assertEquals(0, ignoredStaticVoters.value());
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testDisklessTopicCountMetric() {
+        testIntGaugeMetric(
+            m -> m.disklessTopicCount(),
+            registry -> ((Gauge<Integer>) registry.allMetrics().
+                    get(metricName("KafkaController", "DisklessTopicCount"))).value(),
+            (m, v) -> m.setDisklessTopicCount(v),
+            (m, v) -> m.addToDisklessTopicCount(v)
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testDisklessPartitionCountMetric() {
+        testIntGaugeMetric(
+            m -> m.disklessPartitionCount(),
+            registry -> ((Gauge<Integer>) registry.allMetrics().
+                    get(metricName("KafkaController", "DisklessPartitionCount"))).value(),
+            (m, v) -> m.setDisklessPartitionCount(v),
+            (m, v) -> m.addToDisklessPartitionCount(v)
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testDisklessOfflinePartitionCountMetric() {
+        testIntGaugeMetric(
+            m -> m.disklessOfflinePartitionCount(),
+            registry -> ((Gauge<Integer>) registry.allMetrics().
+                    get(metricName("KafkaController", "DisklessOfflinePartitionCount"))).value(),
+            (m, v) -> m.setDisklessOfflinePartitionCount(v),
+            (m, v) -> m.addToDisklessOfflinePartitionCount(v)
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testDisklessWithoutRemoteStorageCountMetric() {
+        MetricsRegistry registry = new MetricsRegistry();
+        try (ControllerMetadataMetrics metrics = new ControllerMetadataMetrics(Optional.of(registry))) {
+            assertEquals(0, metrics.disklessWithoutRemoteStorageCount());
+            assertEquals(0, ((Gauge<Integer>) registry.allMetrics().
+                    get(metricName("KafkaController", "DisklessWithoutRemoteStorageCount"))).value());
+            metrics.setDisklessWithoutRemoteStorageCount(5);
+            assertEquals(5, metrics.disklessWithoutRemoteStorageCount());
+            assertEquals(5, ((Gauge<Integer>) registry.allMetrics().
+                    get(metricName("KafkaController", "DisklessWithoutRemoteStorageCount"))).value());
         } finally {
             registry.shutdown();
         }

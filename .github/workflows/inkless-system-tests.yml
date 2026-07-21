@@ -1,0 +1,104 @@
+# Copyright (c) 2026 Aiven, Helsinki, Finland. https://aiven.io/
+# Workflow for Inkless ducktape system tests
+name: Inkless System Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      test-target:
+        description: "Ducktape test target"
+        required: true
+        default: "tests/kafkatest/tests/inkless/"
+        type: string
+
+concurrency:
+  group: inkless-system-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  inkless-system-tests:
+    name: Inkless system tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+
+      - name: Setup Gradle
+        uses: ./.github/actions/setup-gradle
+        with:
+          java-version: 17
+          gradle-cache-read-only: true
+          develocity-access-key: ${{ secrets.DEVELOCITY_ACCESS_KEY }}
+
+      - name: Build system test libraries
+        run: ./gradlew --build-cache --no-scan -PcommitId=xxxxxxxxxxxxxxxx systemTestLibs
+
+      - name: Start ducker cluster
+        run: bash tests/docker/ducker-ak up -n 11
+
+      - name: Start Postgres and MinIO
+        run: |
+          docker run -d --name postgres --network ducknet --network-alias postgres \
+            -e POSTGRES_DB=inkless \
+            -e POSTGRES_USER=admin \
+            -e POSTGRES_PASSWORD=admin \
+            postgres:17.2
+
+          until docker exec postgres pg_isready --dbname=inkless -U admin; do
+            echo "waiting for postgres"
+            sleep 2
+          done
+
+          docker run -d --name storage --network ducknet --network-alias storage \
+            quay.io/minio/minio server /data --console-address ":9001"
+
+          docker run --rm --network ducknet --entrypoint /bin/sh quay.io/minio/mc -c '
+            until /usr/bin/mc alias set local http://storage:9000 minioadmin minioadmin; do
+              echo "waiting for minio"; sleep 2;
+            done;
+            /usr/bin/mc mb -p local/inkless
+          '
+
+      - name: Run inkless system tests
+        id: system-tests
+        env:
+          DEFAULT_TEST_TARGET: tests/kafkatest/tests/inkless/
+          REQUESTED_TEST_TARGET: ${{ github.event.inputs['test-target'] }}
+        run: |
+          set +e
+          test_target="${REQUESTED_TEST_TARGET:-${DEFAULT_TEST_TARGET}}"
+          timeout 100m bash tests/docker/ducker-ak test "$test_target" -- --test-runner-timeout 7200000
+          exitcode="$?"
+          echo "exitcode=$exitcode" >> "$GITHUB_OUTPUT"
+
+      - name: Archive ducktape results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: inkless-system-tests-results
+          path: |
+            results/**
+            tests/results/**
+            **/build/reports/**
+          compression-level: 9
+          if-no-files-found: ignore
+
+      - name: Cleanup Docker
+        if: always()
+        run: |
+          docker rm -f postgres storage || true
+          bash tests/docker/ducker-ak down -f || true
+
+      - name: Check test result
+        if: always() && steps.system-tests.outputs.exitcode != '0'
+        run: exit 1

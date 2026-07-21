@@ -31,6 +31,7 @@ import org.apache.kafka.common.internals.Plugin;
 import org.apache.kafka.common.memory.MemoryPool;
 import org.apache.kafka.common.message.DescribeTopicPartitionsRequestData;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
+import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponsePartition;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponseTopic;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.RegisterBrokerRecord;
@@ -57,6 +58,8 @@ import org.apache.kafka.image.ClusterImage;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.image.MetadataProvenance;
+import org.apache.kafka.metadata.InitDisklessLogFields;
+import org.apache.kafka.metadata.InitDisklessLogFields.ProducerStateEntry;
 import org.apache.kafka.metadata.LeaderRecoveryState;
 import org.apache.kafka.network.SocketServerConfigs;
 import org.apache.kafka.network.metrics.RequestChannelMetrics;
@@ -478,6 +481,113 @@ class DescribeTopicPartitionsRequestHandlerTest {
         }
     }
 
+    @Test
+    void testDescribeTopicPartitionsResponseIncludesDisklessFields() {
+        Authorizer authorizer = mock(Authorizer.class);
+        Plugin<Authorizer> authorizerPlugin = Plugin.wrapInstance(authorizer, null, "authorizer.class.name");
+        String topicName = "diskless-topic";
+
+        Action expectedAction = new Action(AclOperation.DESCRIBE, new ResourcePattern(ResourceType.TOPIC, topicName, PatternType.LITERAL), 1, true, true);
+        when(authorizer.authorize(any(RequestContext.class), argThat(t -> t.contains(expectedAction))))
+            .thenAnswer(invocation -> {
+                List<Action> actions = invocation.getArgument(1);
+                return actions.stream().map(action -> AuthorizationResult.ALLOWED).toList();
+            });
+
+        Uuid topicId = Uuid.randomUuid();
+
+        BrokerEndpointCollection collection = new BrokerEndpointCollection();
+        collection.add(brokerEndpoint);
+
+        PartitionRecord switchedPartition = new PartitionRecord()
+            .setTopicId(topicId)
+            .setPartitionId(0)
+            .setReplicas(List.of(0))
+            .setLeader(0)
+            .setIsr(List.of(0))
+            .setLeaderEpoch(5)
+            .setPartitionEpoch(1)
+            .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED.value());
+        switchedPartition.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeClassicToDisklessStartOffset(42L));
+        switchedPartition.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeDisklessLeaderEpoch(7));
+        switchedPartition.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeProducerStates(List.of(
+                new ProducerStateEntry(1001L, (short) 2, 0, 5, 40L, 1700000000000L)
+            )));
+
+        PartitionRecord classicPartition = new PartitionRecord()
+            .setTopicId(topicId)
+            .setPartitionId(1)
+            .setReplicas(List.of(0))
+            .setLeader(0)
+            .setIsr(List.of(0))
+            .setLeaderEpoch(3)
+            .setPartitionEpoch(1)
+            .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED.value());
+
+        List<ApiMessage> records = List.of(
+            new RegisterBrokerRecord()
+                .setBrokerId(brokerId)
+                .setBrokerEpoch(0)
+                .setIncarnationId(Uuid.randomUuid())
+                .setEndPoints(collection)
+                .setRack(rack)
+                .setFenced(false),
+            new TopicRecord().setName(topicName).setTopicId(topicId),
+            switchedPartition,
+            classicPartition
+        );
+
+        KRaftMetadataCache metadataCache = new KRaftMetadataCache(0, () -> KRaftVersion.KRAFT_VERSION_1);
+        updateKraftMetadataCache(metadataCache, records);
+        DescribeTopicPartitionsRequestHandler handler =
+            new DescribeTopicPartitionsRequestHandler(metadataCache, new AuthHelper(scala.Option.apply(authorizerPlugin)), createKafkaDefaultConfig());
+
+        DescribeTopicPartitionsRequest describeRequest = new DescribeTopicPartitionsRequest(
+            new DescribeTopicPartitionsRequestData()
+                .setTopics(List.of(new DescribeTopicPartitionsRequestData.TopicRequest().setName(topicName)))
+        );
+
+        RequestChannel.Request request;
+        try {
+            request = buildRequest(describeRequest, plaintextListener);
+        } catch (Exception e) {
+            fail(e.getMessage());
+            return;
+        }
+
+        DescribeTopicPartitionsResponseData response = handler.handleDescribeTopicPartitionsRequest(request);
+        List<DescribeTopicPartitionsResponseTopic> topics = response.topics().valuesList();
+        assertEquals(1, topics.size());
+
+        DescribeTopicPartitionsResponseTopic topicData = topics.get(0);
+        assertEquals(topicName, topicData.name());
+        assertEquals(2, topicData.partitions().size());
+
+        // Partition 0 (switched to diskless): has diskless tagged fields
+        DescribeTopicPartitionsResponsePartition p0 = topicData.partitions().get(0);
+        assertEquals(0, p0.partitionIndex());
+        assertEquals(42L, InitDisklessLogFields.decodeClassicToDisklessStartOffset(p0.unknownTaggedFields()));
+        assertEquals(7, InitDisklessLogFields.decodeDisklessLeaderEpoch(p0.unknownTaggedFields()));
+        List<ProducerStateEntry> producerStates = InitDisklessLogFields.decodeProducerStates(p0.unknownTaggedFields());
+        assertEquals(1, producerStates.size());
+        assertEquals(1001L, producerStates.get(0).producerId());
+        assertEquals((short) 2, producerStates.get(0).producerEpoch());
+        assertEquals(0, producerStates.get(0).baseSequence());
+        assertEquals(5, producerStates.get(0).lastSequence());
+        assertEquals(40L, producerStates.get(0).assignedOffset());
+        assertEquals(1700000000000L, producerStates.get(0).batchMaxTimestamp());
+
+        // Partition 1 (classic): no diskless tagged fields
+        DescribeTopicPartitionsResponsePartition p1 = topicData.partitions().get(1);
+        assertEquals(1, p1.partitionIndex());
+        assertEquals(-1L, InitDisklessLogFields.decodeClassicToDisklessStartOffset(p1.unknownTaggedFields()));
+        assertEquals(-1, InitDisklessLogFields.decodeDisklessLeaderEpoch(p1.unknownTaggedFields()));
+        assertEquals(List.of(), InitDisklessLogFields.decodeProducerStates(p1.unknownTaggedFields()));
+    }
+
     void updateKraftMetadataCache(KRaftMetadataCache kRaftMetadataCache, List<ApiMessage> records) {
         MetadataImage image = kRaftMetadataCache.currentImage();
         MetadataImage partialImage = new MetadataImage(
@@ -538,7 +648,8 @@ class DescribeTopicPartitionsRequestHandlerTest {
             false,
             1,
             (short) 1,
-            false);
+            false,
+            scala.Option.empty());
         properties.put(KRaftConfigs.NODE_ID_CONFIG, Integer.toString(brokerId));
         properties.put(KRaftConfigs.PROCESS_ROLES_CONFIG, "broker");
         int voterId = brokerId + 1;

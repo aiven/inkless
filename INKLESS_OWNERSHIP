@@ -1,0 +1,61 @@
+# Inkless Ownership Manifest
+#
+# Single source of truth for what is inkless-owned in this fork, and in what mode.
+# Format is CODEOWNERS-like: <glob>  <owner...>  # <description>
+#
+# This is a DOCUMENTARY manifest, not a live .github/CODEOWNERS: @apache/kafka is
+# not a GitHub team in this repo, so nothing here triggers review routing. It exists
+# to answer, in one place, "who owns this path and how do we treat it on upstream sync":
+#
+#   @apache/kafka                 upstream default. Follow upstream conventions; keep
+#                                 inkless edits out unless unavoidable.
+#   @aiven/inkless                OWNED: net-new, inkless-only. Auto-resolved "ours" on
+#                                 upstream merge conflicts (see inkless-sync/main-sync.sh).
+#   @aiven/inkless @apache/kafka  INTERLEAVED: inkless edits woven into an upstream file.
+#                                 NOT auto-resolved -- these need manual conflict review
+#                                 on every upstream sync.
+#
+# CODEOWNERS last-match-wins: the `*` default is first; specifics below override it.
+# The sync tooling derives its auto-resolve set from the OWNED lines (single-owner
+# @aiven/inkless) in this file -- INTERLEAVED (dual-owner) lines are excluded on purpose.
+# Consumers: inkless-sync/main-sync.sh, AGENTS.md.
+
+# ── Upstream default ─────────────────────────────────────────────────────────
+*                                                        @apache/kafka
+
+# ── OWNED — net-new, entirely inkless ────────────────────────────────────────
+storage/inkless/**                                       @aiven/inkless  # core Java: control_plane, storage_backend, produce/consume, cache, metadata
+core/src/main/scala/io/aiven/inkless/**                  @aiven/inkless  # Scala broker integration in its own package (e.g. consolidation)
+core/src/test/scala/io/aiven/inkless/**                  @aiven/inkless  # tests for the above
+core/src/main/scala/kafka/server/*Diskless*.scala        @aiven/inkless  # net-new diskless files in the upstream package (e.g. DisklessFetchOffsetRouter)
+core/src/main/scala/kafka/server/InitDisklessLog*.scala  @aiven/inkless  # net-new: InitDisklessLogManager / State / BatchQueue
+core/src/test/java/kafka/server/Inkless*.java            @aiven/inkless
+core/src/test/scala/kafka/server/metadata/Inkless*.scala @aiven/inkless
+docs/inkless/**                                          @aiven/inkless
+config/inkless/**                                        @aiven/inkless
+docker/inkless/**                                        @aiven/inkless
+docker/examples/docker-compose-files/inkless/**          @aiven/inkless
+inkless-benchmarks/**                                    @aiven/inkless
+inkless-sync/**                                          @aiven/inkless
+tests/kafkatest/tests/inkless/**                         @aiven/inkless
+tests/kafkatest/services/inkless/**                      @aiven/inkless
+.github/workflows/inkless*.yml                           @aiven/inkless
+Makefile                                                 @aiven/inkless  # inkless-specific targets
+INKLESS_OWNERSHIP                                        @aiven/inkless  # this manifest itself
+AGENTS.md                                                @aiven/inkless
+CLAUDE.md                                                @aiven/inkless
+.ai-agents/**                                            @aiven/inkless
+.claude/**                                               @aiven/inkless
+.cursor/**                                               @aiven/inkless
+.opencode/**                                             @aiven/inkless
+.github/copilot-instructions.md                          @aiven/inkless
+
+# ── INTERLEAVED — upstream files carrying inkless edits (both own; manual sync) ──
+core/src/main/scala/kafka/server/ReplicaManager.scala      @aiven/inkless @apache/kafka  # heaviest: diskless fetch/append routing
+core/src/main/scala/kafka/server/ControllerApis.scala      @aiven/inkless @apache/kafka  # diskless topic create/alter/delete API paths
+core/src/main/scala/kafka/server/KafkaConfig.scala         @aiven/inkless @apache/kafka  # inkless.* config definitions
+core/src/main/scala/kafka/server/BrokerServer.scala        @aiven/inkless @apache/kafka  # SharedState wiring, reporter scheduling
+core/src/main/scala/kafka/server/DelayedFetch.scala        @aiven/inkless @apache/kafka  # diskless fetch completion
+core/src/main/scala/kafka/server/DynamicBrokerConfig.scala @aiven/inkless @apache/kafka  # dynamic inkless config reconfig
+core/src/main/scala/kafka/server/ConfigHandler.scala       @aiven/inkless @apache/kafka  # topic-config propagation
+core/src/main/scala/kafka/server/ControllerServer.scala    @aiven/inkless @apache/kafka  # controller-side diskless wiring

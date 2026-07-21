@@ -67,6 +67,7 @@ public class CommonNameLoggingTrustManagerFactoryWrapperTest {
     }
 
     @Test
+    @SuppressWarnings("deprecation")
     void testNeverExpiringX509Certificate() throws Exception {
         final KeyPair keyPair = TestSslUtils.generateKeyPair("RSA");
         final String dn = "CN=Test, L=London, C=GB";

@@ -1,0 +1,123 @@
+/*
+ * Inkless
+ * Copyright (C) 2024 - 2025 Aiven OY
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package io.aiven.inkless.control_plane;
+
+import org.apache.kafka.common.Configurable;
+import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.utils.Time;
+
+import java.io.Closeable;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.util.List;
+import java.util.Set;
+
+import io.aiven.inkless.common.ObjectFormat;
+import io.aiven.inkless.config.InklessConfig;
+
+public interface ControlPlane extends Closeable, Configurable {
+    List<CommitBatchResponse> commitFile(
+            String objectKey,
+            ObjectFormat format,
+            int uploaderBrokerId,
+            long fileSize,
+            List<CommitBatchRequest> batches);
+
+    /**
+     * Find batches for the given partition requests.
+     *
+     * @param findBatchRequests the list of partition requests
+     * @param fetchMaxBytes maximum bytes to fetch across all partitions
+     * @param maxBatchesPerPartition maximum batches per partition to return
+     * @return list of responses, one per request, in the same order as the requests.
+     *         The contract requires that responses[i] corresponds to findBatchRequests[i] for all i.
+     */
+    List<FindBatchResponse> findBatches(
+        List<FindBatchRequest> findBatchRequests,
+        int fetchMaxBytes,
+        int maxBatchesPerPartition
+    );
+
+    void createTopicAndPartitions(Set<CreateTopicAndPartitionsRequest> requests);
+
+    /**
+     * Initialize diskless logs for classic-to-diskless switch.
+     * <p>
+     * An error is returned if the diskless log is already initialized.
+     * This method should only be called by the leader of the partition after the disklessStartOffset
+     * has been successfully stored in the KRaft metadata.
+     *
+     * @param requests the list of initialization requests
+     * @return list of responses, one per request, in the same order as the requests.
+     */
+    List<InitDisklessLogResponse> initDisklessLog(List<InitDisklessLogRequest> requests);
+
+    /**
+     * Reconcile the control-plane diskless log entry with the seal offset committed in KRaft.
+     *
+     * @param requests the list of repair requests
+     * @return list of responses, one per request, in the same order as the requests.
+     */
+    List<RepairDisklessLogResponse> repairDisklessLog(List<RepairDisklessLogRequest> requests);
+
+    List<DeleteRecordsResponse> deleteRecords(List<DeleteRecordsRequest> requests);
+
+    void deleteTopics(Set<Uuid> topicIds);
+
+    List<EnforceRetentionResponse> enforceRetention(List<EnforceRetentionRequest> requests, int maxBatchesPerRequest);
+
+    /**
+     * Forward-only update of the cross-tier (remote) log start offset for the given partitions.
+     * <p>
+     * Called by the partition's classic leader whenever its remote retention advances the lowest
+     * offset still readable from the remote + local tiers. The stored value never moves backwards,
+     * so this operation is idempotent and safe under retries.
+     *
+     * @param requests the list of advance requests
+     * @return list of responses, one per request, in the same order as the requests.
+     */
+    List<AdvanceCrossTierLogStartOffsetResponse> advanceCrossTierLogStartOffset(List<AdvanceCrossTierLogStartOffsetRequest> requests);
+
+    List<FileToDelete> getFilesToDelete();
+
+    void deleteFiles(DeleteFilesRequest request);
+
+    List<ListOffsetsResponse> listOffsets(List<ListOffsetsRequest> requests);
+
+    static ControlPlane create(final InklessConfig config, final Time time) {
+        final Class<ControlPlane> controlPlaneClass = config.controlPlaneClass();
+        try {
+            final Constructor<ControlPlane> ctor = controlPlaneClass.getConstructor(Time.class);
+            final ControlPlane result = ctor.newInstance(time);
+            result.configure(config.controlPlaneConfig());
+            return result;
+        } catch (final NoSuchMethodException | InstantiationException | IllegalAccessException |
+                       InvocationTargetException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    boolean isSafeToDeleteFile(String objectKeyPath);
+
+    // used for testing purposes only
+    List<GetLogInfoResponse> getLogInfo(List<GetLogInfoRequest> requests);
+
+    List<GetProducerStateResponse> getProducerState(List<GetProducerStateRequest> requests);
+
+    List<PruneDisklessLogsResponse> pruneDisklessLogs(List<PruneDisklessLogsRequest> pruneDisklessLogsRequests);
+}

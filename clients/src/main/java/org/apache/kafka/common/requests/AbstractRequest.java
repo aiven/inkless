@@ -354,6 +354,12 @@ public abstract class AbstractRequest implements AbstractRequestResponse {
                 return AlterShareGroupOffsetsRequest.parse(readable, apiVersion);
             case DELETE_SHARE_GROUP_OFFSETS:
                 return DeleteShareGroupOffsetsRequest.parse(readable, apiVersion);
+            case INIT_DISKLESS_LOG:
+                return InitDisklessLogRequest.parse(readable, apiVersion);
+            case ALTER_DISKLESS_SWITCH:
+                return AlterDisklessSwitchRequest.parse(readable, apiVersion);
+            case REPAIR_DISKLESS_LOG:
+                return RepairDisklessLogRequest.parse(readable, apiVersion);
             case GET_REPLICA_LOG_INFO:
                 return GetReplicaLogInfoRequest.parse(readable, apiVersion);
             case CREATE_CLUSTER_MIRROR:

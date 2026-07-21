@@ -32,6 +32,7 @@ import org.apache.kafka.common.acl.AclBindingFilter;
 import org.apache.kafka.common.annotation.InterfaceStability;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.FeatureUpdateFailedException;
+import org.apache.kafka.common.errors.InconsistentClusterIdException;
 import org.apache.kafka.common.errors.InterruptException;
 import org.apache.kafka.common.metrics.KafkaMetric;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
@@ -329,6 +330,93 @@ public interface Admin extends AutoCloseable {
      * @return The DescribeTopicsResult.
      */
     DescribeTopicsResult describeTopics(TopicCollection topics, DescribeTopicsOptions options);
+
+    /**
+     * Describe topic partitions in the cluster, returning raw response data including unknown tagged fields.
+     * This is a convenience method for {@link #describeTopicPartitions(Collection, DescribeTopicsOptions)}
+     * with default options.
+     *
+     * @param topics The topics to describe.
+     * @return The DescribeTopicPartitionsResult containing raw response data.
+     */
+    default DescribeTopicPartitionsResult describeTopicPartitions(Collection<String> topics) {
+        return describeTopicPartitions(topics, new DescribeTopicsOptions());
+    }
+
+    /**
+     * Describe topic partitions in the cluster, returning raw response data including unknown tagged fields.
+     * This is useful for accessing Inkless-specific metadata (classicToDisklessStartOffset, disklessLeaderEpoch,
+     * producerStates) that are encoded as tagged fields on the DescribeTopicPartitions response.
+     *
+     * @param topics  The topics to describe.
+     * @param options The options to use when describing the topics.
+     * @return The DescribeTopicPartitionsResult containing raw response data.
+     */
+    DescribeTopicPartitionsResult describeTopicPartitions(Collection<String> topics, DescribeTopicsOptions options);
+
+    /**
+     * Override the classic-to-diskless switch state of a single partition. This is an operator
+     * tool that writes the {@code classicToDisklessStartOffset} directly on the controller without
+     * requiring the caller to be the partition leader.
+     *
+     * This is a convenience method for {@link #alterDisklessSwitch(String, int, long, AlterDisklessSwitchOptions)}
+     * with default options.
+     *
+     * @param topic       The topic name.
+     * @param partition   The partition index.
+     * @param sealOffset  The seal offset to commit: {@code >= 0} forces (re-)sealing at that offset,
+     *                    {@code -1} aborts the switch and reverts the partition to classic, and
+     *                    {@code -2} re-arms the switch as pending.
+     * @return The AlterDisklessSwitchResult.
+     */
+    default AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset) {
+        return alterDisklessSwitch(topic, partition, sealOffset, new AlterDisklessSwitchOptions());
+    }
+
+    /**
+     * Override the classic-to-diskless switch state of a single partition. This is an operator
+     * tool that writes the {@code classicToDisklessStartOffset} directly on the controller without
+     * requiring the caller to be the partition leader.
+     *
+     * @param topic       The topic name.
+     * @param partition   The partition index.
+     * @param sealOffset  The seal offset to commit: {@code >= 0} forces (re-)sealing at that offset,
+     *                    {@code -1} aborts the switch and reverts the partition to classic, and
+     *                    {@code -2} re-arms the switch as pending.
+     * @param options     The options to use.
+     * @return The AlterDisklessSwitchResult.
+     */
+    AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset, AlterDisklessSwitchOptions options);
+
+    /**
+     * Reconcile the control-plane diskless log entry of a single partition with the seal committed in
+     * KRaft. This is an operator tool; the request must be sent to the partition leader, which owns the
+     * control-plane connection, so the caller supplies its broker id.
+     *
+     * This is a convenience method for {@link #repairDisklessLog(String, int, int, RepairDisklessLogOptions)}
+     * with default options.
+     *
+     * @param topic     The topic name.
+     * @param partition The partition index.
+     * @param brokerId  The id of the partition leader broker to send the request to.
+     * @return The RepairDisklessLogResult.
+     */
+    default RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId) {
+        return repairDisklessLog(topic, partition, brokerId, new RepairDisklessLogOptions());
+    }
+
+    /**
+     * Reconcile the control-plane diskless log entry of a single partition with the seal committed in
+     * KRaft. This is an operator tool; the request must be sent to the partition leader, which owns the
+     * control-plane connection, so the caller supplies its broker id.
+     *
+     * @param topic     The topic name.
+     * @param partition The partition index.
+     * @param brokerId  The id of the partition leader broker to send the request to.
+     * @param options   The options to use.
+     * @return The RepairDisklessLogResult.
+     */
+    RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId, RepairDisklessLogOptions options);
 
     /**
      * Get information about the nodes in the cluster, using the default options.
@@ -1992,10 +2080,17 @@ public interface Admin extends AutoCloseable {
     /**
      * Add a new voter node to the KRaft metadata quorum.
      *
+     * <p>
+     * The clusterId in {@link AddRaftVoterOptions} is optional.
+     * If provided, the operation will only succeed if the cluster id matches the id
+     * of the current cluster. If the cluster id does not match, the operation
+     * will fail with {@link InconsistentClusterIdException}.
+     * If not provided, the cluster id check is skipped.
+     *
      * @param voterId           The node ID of the voter.
      * @param voterDirectoryId  The directory ID of the voter.
      * @param endpoints         The endpoints that the new voter has.
-     * @param options           The options to use when adding the new voter node.
+     * @param options           Additional options for the operation, including optional cluster ID.
      */
     AddRaftVoterResult addRaftVoter(
         int voterId,
@@ -2020,9 +2115,16 @@ public interface Admin extends AutoCloseable {
     /**
      * Remove a voter node from the KRaft metadata quorum.
      *
+     * <p>
+     * The clusterId in {@link RemoveRaftVoterOptions} is optional.
+     * If provided, the operation will only succeed if the cluster id matches the id
+     * of the current cluster. If the cluster id does not match, the operation
+     * will fail with {@link InconsistentClusterIdException}.
+     * If not provided, the cluster id check is skipped.
+     *
      * @param voterId           The node ID of the voter.
      * @param voterDirectoryId  The directory ID of the voter.
-     * @param options           The options to use when removing the voter node.
+     * @param options           Additional options for the operation, including optional cluster ID.
      */
     RemoveRaftVoterResult removeRaftVoter(
         int voterId,

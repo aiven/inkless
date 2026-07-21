@@ -18,9 +18,15 @@
 package org.apache.kafka.controller.metrics;
 
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.ConfigResource;
+import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.metadata.ConfigRecord;
+import org.apache.kafka.common.metadata.PartitionRecord;
+import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.image.AclsImage;
 import org.apache.kafka.image.ClientQuotasImage;
 import org.apache.kafka.image.ClusterImage;
+import org.apache.kafka.image.ConfigurationImage;
 import org.apache.kafka.image.ConfigurationsImage;
 import org.apache.kafka.image.DelegationTokenImage;
 import org.apache.kafka.image.FeaturesImage;
@@ -29,6 +35,7 @@ import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.image.MetadataProvenance;
 import org.apache.kafka.image.ProducerIdsImage;
 import org.apache.kafka.image.ScramImage;
+import org.apache.kafka.image.TopicImage;
 import org.apache.kafka.image.TopicsImage;
 import org.apache.kafka.image.loader.LoaderManifest;
 import org.apache.kafka.image.loader.LogDeltaManifest;
@@ -41,6 +48,8 @@ import org.apache.kafka.server.fault.MockFaultHandler;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.apache.kafka.controller.metrics.ControllerMetricsTestUtils.FakePartitionRegistrationType.NON_PREFERRED_LEADER;
@@ -57,8 +66,11 @@ public class ControllerMetadataMetricsPublisherTest {
                 new MockFaultHandler("ControllerMetadataMetricsPublisher");
         ControllerMetadataMetrics metrics =
                 new ControllerMetadataMetrics(Optional.empty());
-        ControllerMetadataMetricsPublisher publisher =
-                new ControllerMetadataMetricsPublisher(metrics, faultHandler);
+        ControllerMetadataMetricsPublisher publisher;
+
+        TestEnv() {
+            publisher = new ControllerMetadataMetricsPublisher(metrics, faultHandler);
+        }
 
         @Override
         public void close() {
@@ -80,12 +92,16 @@ public class ControllerMetadataMetricsPublisherTest {
     }
 
     static MetadataImage fakeImageFromTopicsImage(TopicsImage topicsImage) {
+        return fakeImageFromTopicsImage(topicsImage, ConfigurationsImage.EMPTY);
+    }
+
+    static MetadataImage fakeImageFromTopicsImage(TopicsImage topicsImage, ConfigurationsImage configurationsImage) {
         return new MetadataImage(
             MetadataProvenance.EMPTY,
             FeaturesImage.EMPTY,
             ClusterImage.EMPTY,
             topicsImage,
-            ConfigurationsImage.EMPTY,
+            configurationsImage,
             ClientQuotasImage.EMPTY,
             ProducerIdsImage.EMPTY,
             AclsImage.EMPTY,
@@ -93,9 +109,24 @@ public class ControllerMetadataMetricsPublisherTest {
             DelegationTokenImage.EMPTY);
     }
 
+    static ConfigurationsImage fakeDisklessConfigsImage(TopicsImage topicsImage) {
+        Map<ConfigResource, ConfigurationImage> configs = new HashMap<>();
+        for (TopicImage topicImage : topicsImage.topicsById().values()) {
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicImage.name());
+            ConfigurationImage configImage = new ConfigurationImage(
+                resource,
+                Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")
+            );
+            configs.put(resource, configImage);
+        }
+        return new ConfigurationsImage(configs);
+    }
+
     static final TopicsImage TOPICS_IMAGE1;
 
     static final MetadataImage IMAGE1;
+
+    static final MetadataImage IMAGE1_DISKLESS;
 
     static {
         TOPICS_IMAGE1 = fakeTopicsImage(
@@ -114,6 +145,7 @@ public class ControllerMetadataMetricsPublisherTest {
                     fakePartitionRegistration(OFFLINE))
         );
         IMAGE1 = fakeImageFromTopicsImage(TOPICS_IMAGE1);
+        IMAGE1_DISKLESS = fakeImageFromTopicsImage(TOPICS_IMAGE1, fakeDisklessConfigsImage(TOPICS_IMAGE1));
     }
 
     @Test
@@ -154,6 +186,187 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(3, env.metrics.offlinePartitionCount());
             assertEquals(4, env.metrics.preferredReplicaImbalanceCount());
             assertEquals(0, env.metrics.metadataErrorCount());
+            // No diskless topics in IMAGE1
+            assertEquals(0, env.metrics.disklessTopicCount());
+            assertEquals(0, env.metrics.disklessPartitionCount());
+            assertEquals(0, env.metrics.disklessOfflinePartitionCount());
+        }
+    }
+
+    @Test
+    public void testLoadSnapshotWithDisklessTopics() {
+        try (TestEnv env = new TestEnv()) {
+            MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
+            ImageReWriter writer = new ImageReWriter(delta);
+            IMAGE1_DISKLESS.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
+            env.publisher.onMetadataUpdate(delta, IMAGE1_DISKLESS, fakeManifest(true));
+            assertEquals(0, env.metrics.activeBrokerCount());
+            assertEquals(3, env.metrics.globalTopicCount());
+            assertEquals(7, env.metrics.globalPartitionCount());
+            // Diskless topics are not counted in offline/imbalance metrics
+            assertEquals(0, env.metrics.offlinePartitionCount());
+            assertEquals(0, env.metrics.preferredReplicaImbalanceCount());
+            assertEquals(0, env.metrics.metadataErrorCount());
+            // All 3 topics (7 partitions total) should be counted as diskless
+            assertEquals(3, env.metrics.disklessTopicCount());
+            assertEquals(7, env.metrics.disklessPartitionCount());
+            // 3 partitions from "quux" topic are offline (leader=-1)
+            assertEquals(3, env.metrics.disklessOfflinePartitionCount());
+            // remote.storage.enable absent (never configured) — not counted; only explicit false triggers the metric
+            assertEquals(0, env.metrics.disklessWithoutRemoteStorageCount());
+        }
+    }
+
+    @Test
+    public void testDisklessWithoutRemoteStorageCountsOnlyExplicitFalse() {
+        // Only diskless topics with remote.storage.enable explicitly stored as "false" are counted.
+        try (TestEnv env = new TestEnv()) {
+            // Build image with 3 diskless topics: remote.storage.enable=true, =false, and absent
+            Map<ConfigResource, ConfigurationImage> configs = new HashMap<>();
+            for (TopicImage topicImage : TOPICS_IMAGE1.topicsById().values()) {
+                ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicImage.name());
+                Map<String, String> configMap = new HashMap<>();
+                configMap.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
+                if (topicImage.name().equals("foo")) {
+                    configMap.put(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+                } else if (topicImage.name().equals("bar")) {
+                    configMap.put(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false");
+                }
+                // "quux" has no remote.storage.enable config (absent)
+                configs.put(resource, new ConfigurationImage(resource, configMap));
+            }
+            MetadataImage image = fakeImageFromTopicsImage(TOPICS_IMAGE1, new ConfigurationsImage(configs));
+            MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
+            ImageReWriter writer = new ImageReWriter(delta);
+            image.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
+            env.publisher.onMetadataUpdate(delta, image, fakeManifest(true));
+
+            assertEquals(3, env.metrics.disklessTopicCount());
+            // Only "bar" (remote.storage.enable explicitly false) is counted
+            assertEquals(1, env.metrics.disklessWithoutRemoteStorageCount());
+        }
+    }
+
+    @Test
+    public void testCreateDisklessTopicViaDeltaDoesNotDoubleCount() {
+        // Regression test: creating a diskless topic produces both a TopicDelta and a ConfigDelta
+        // in the same metadata batch. The diskless topic count must not be incremented twice.
+        try (TestEnv env = new TestEnv()) {
+            Uuid topicId = Uuid.fromString("JKNp6fQaT-icHxh654ok-w");
+            String topicName = "diskless-topic";
+
+            MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
+            delta.replay(new TopicRecord().setTopicId(topicId).setName(topicName));
+            delta.replay(new PartitionRecord()
+                .setTopicId(topicId)
+                .setPartitionId(0)
+                .setReplicas(java.util.List.of(0, 1, 2))
+                .setIsr(java.util.List.of(0, 1, 2))
+                .setLeader(0)
+                .setLeaderEpoch(0)
+                .setPartitionEpoch(0));
+            delta.replay(new ConfigRecord()
+                .setResourceType(ConfigResource.Type.TOPIC.id())
+                .setResourceName(topicName)
+                .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+                .setValue("true"));
+            MetadataImage newImage = delta.apply(MetadataProvenance.EMPTY);
+
+            env.publisher.onMetadataUpdate(delta, newImage, fakeManifest(false));
+
+            assertEquals(1, env.metrics.globalTopicCount(),
+                "Global topic count should be 1");
+            assertEquals(1, env.metrics.disklessTopicCount(),
+                "Diskless topic count should equal global topic count, not be double-counted");
+            assertEquals(1, env.metrics.globalPartitionCount());
+            assertEquals(1, env.metrics.disklessPartitionCount(),
+                "Diskless partition count should equal global partition count");
+            assertEquals(0, env.metrics.offlinePartitionCount());
+            assertEquals(0, env.metrics.disklessOfflinePartitionCount());
+        }
+    }
+
+    @Test
+    public void testDeleteDisklessTopicViaDelta() {
+        // First create a diskless topic via snapshot, then delete it via delta.
+        try (TestEnv env = new TestEnv()) {
+            Uuid topicId = Uuid.fromString("JKNp6fQaT-icHxh654ok-w");
+            String topicName = "diskless-topic";
+            TopicsImage topicsImage = fakeTopicsImage(
+                fakeTopicImage(topicName, topicId, fakePartitionRegistration(NORMAL)));
+            ConfigurationsImage configsImage = fakeDisklessConfigsImage(topicsImage);
+            MetadataImage baseImage = fakeImageFromTopicsImage(topicsImage, configsImage);
+
+            // Load snapshot to set baseline
+            MetadataDelta snapshotDelta = new MetadataDelta(MetadataImage.EMPTY);
+            ImageReWriter writer = new ImageReWriter(snapshotDelta);
+            baseImage.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
+            env.publisher.onMetadataUpdate(snapshotDelta, baseImage, fakeManifest(true));
+            assertEquals(1, env.metrics.globalTopicCount());
+            assertEquals(1, env.metrics.disklessTopicCount());
+
+            // Now delete via delta
+            MetadataDelta deleteDelta = new MetadataDelta(baseImage);
+            deleteDelta.replay(new org.apache.kafka.common.metadata.RemoveTopicRecord().setTopicId(topicId));
+            MetadataImage afterDelete = deleteDelta.apply(MetadataProvenance.EMPTY);
+
+            env.publisher.onMetadataUpdate(deleteDelta, afterDelete, fakeManifest(false));
+
+            assertEquals(0, env.metrics.globalTopicCount());
+            assertEquals(0, env.metrics.disklessTopicCount());
+            assertEquals(0, env.metrics.globalPartitionCount());
+            assertEquals(0, env.metrics.disklessPartitionCount());
+        }
+    }
+
+    @Test
+    public void testDisklessConfigChangeOnExistingTopicWithNewPartitions() {
+        // An existing classic topic gets new partitions AND its diskless.enable config changes
+        // in the same batch. The new partitions should not be double-counted in diskless metrics.
+        try (TestEnv env = new TestEnv()) {
+            Uuid topicId = Uuid.fromString("JKNp6fQaT-icHxh654ok-w");
+            String topicName = "migrating-topic";
+
+            // Start with a classic topic (1 partition)
+            TopicsImage topicsImage = fakeTopicsImage(
+                fakeTopicImage(topicName, topicId, fakePartitionRegistration(NORMAL)));
+            MetadataImage baseImage = fakeImageFromTopicsImage(topicsImage);
+
+            MetadataDelta snapshotDelta = new MetadataDelta(MetadataImage.EMPTY);
+            ImageReWriter writer = new ImageReWriter(snapshotDelta);
+            baseImage.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
+            env.publisher.onMetadataUpdate(snapshotDelta, baseImage, fakeManifest(true));
+            assertEquals(1, env.metrics.globalTopicCount());
+            assertEquals(1, env.metrics.globalPartitionCount());
+            assertEquals(0, env.metrics.disklessTopicCount());
+            assertEquals(0, env.metrics.disklessPartitionCount());
+
+            // Now add a partition AND enable diskless in the same batch
+            MetadataDelta delta = new MetadataDelta(baseImage);
+            delta.replay(new PartitionRecord()
+                .setTopicId(topicId)
+                .setPartitionId(1)
+                .setReplicas(java.util.List.of(0, 1, 2))
+                .setIsr(java.util.List.of(0, 1, 2))
+                .setLeader(0)
+                .setLeaderEpoch(0)
+                .setPartitionEpoch(0));
+            delta.replay(new ConfigRecord()
+                .setResourceType(ConfigResource.Type.TOPIC.id())
+                .setResourceName(topicName)
+                .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+                .setValue("true"));
+            MetadataImage newImage = delta.apply(MetadataProvenance.EMPTY);
+
+            env.publisher.onMetadataUpdate(delta, newImage, fakeManifest(false));
+
+            assertEquals(1, env.metrics.globalTopicCount());
+            assertEquals(2, env.metrics.globalPartitionCount());
+            assertEquals(1, env.metrics.disklessTopicCount(),
+                "Diskless topic count should be 1");
+            assertEquals(2, env.metrics.disklessPartitionCount(),
+                "Both partitions (old + new) should be counted as diskless exactly once");
+            assertEquals(0, env.metrics.offlinePartitionCount());
         }
     }
 }

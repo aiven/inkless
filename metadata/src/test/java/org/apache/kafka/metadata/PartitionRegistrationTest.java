@@ -18,8 +18,6 @@
 package org.apache.kafka.metadata;
 
 import org.apache.kafka.common.DirectoryId;
-import org.apache.kafka.common.PartitionState;
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
@@ -92,50 +90,6 @@ public class PartitionRegistrationTest {
         PartitionRegistration registrationB =
             new PartitionRegistration((PartitionRecord) record.message());
         assertEquals(registrationA, registrationB);
-    }
-
-    @Test
-    public void testToLeaderAndIsrPartitionState() {
-        PartitionRegistration a = new PartitionRegistration.Builder().
-            setReplicas(new int[]{1, 2, 3}).
-                setDirectories(new Uuid[]{
-                    Uuid.fromString("NSmkU0ieQuy2IHN59Ce0Bw"),
-                    Uuid.fromString("Y8N9gnSKSLKKFCioX2laGA"),
-                    Uuid.fromString("Oi7nvb8KQPyaGEqr4JtCRw")
-                }).
-            setIsr(new int[]{1, 2}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(123).setPartitionEpoch(456).build();
-        PartitionRegistration b = new PartitionRegistration.Builder().
-            setReplicas(new int[]{2, 3, 4}).
-                setDirectories(new Uuid[]{
-                    Uuid.fromString("tAn3q03aQAWEYkNajXm3lA"),
-                    Uuid.fromString("zgj8rqatTmWMyWBsRZyiVg"),
-                    Uuid.fromString("bAAlGAz1TN2doZjtWlvhRQ")
-                }).
-            setIsr(new int[]{2, 3, 4}).setLeader(2).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(234).setPartitionEpoch(567).build();
-        assertEquals(new PartitionState().
-                setTopicName("foo").
-                setPartitionIndex(1).
-                setLeader(1).
-                setLeaderEpoch(123).
-                setIsr(List.of(1, 2)).
-                setPartitionEpoch(456).
-                setReplicas(List.of(1, 2, 3)).
-                setAddingReplicas(List.of()).
-                setRemovingReplicas(List.of()).
-                setIsNew(true).toString(),
-            a.toLeaderAndIsrPartitionState(new TopicPartition("foo", 1), true).toString());
-        assertEquals(new PartitionState().
-                setTopicName("bar").
-                setPartitionIndex(0).
-                setLeader(2).
-                setLeaderEpoch(234).
-                setIsr(List.of(2, 3, 4)).
-                setPartitionEpoch(567).
-                setReplicas(List.of(2, 3, 4)).
-                setAddingReplicas(List.of()).
-                setRemovingReplicas(List.of()).
-                setIsNew(false).toString(),
-            b.toLeaderAndIsrPartitionState(new TopicPartition("bar", 0), false).toString());
     }
 
     @Test
@@ -452,5 +406,290 @@ public class PartitionRegistrationTest {
                 setPartitionEpoch(0);
         PartitionRegistration registration = new PartitionRegistration(record);
         assertArrayEquals(new Uuid[]{DirectoryId.MIGRATING, DirectoryId.MIGRATING}, registration.directories);
+    }
+
+    @Test
+    public void testDefaultClassicToDisklessStartOffset() {
+        PartitionRegistration registration = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).build();
+        assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, registration.classicToDisklessStartOffset);
+    }
+
+    @Test
+    public void testWithClassicToDisklessStartOffset() {
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(10).setPartitionEpoch(20).build();
+
+        PartitionRegistration updated = original.withClassicToDisklessStartOffset(42L);
+
+        assertEquals(42L, updated.classicToDisklessStartOffset);
+        assertArrayEquals(original.replicas, updated.replicas);
+        assertArrayEquals(original.isr, updated.isr);
+        assertEquals(original.leader, updated.leader);
+        assertEquals(original.leaderEpoch, updated.leaderEpoch);
+        assertEquals(original.partitionEpoch, updated.partitionEpoch);
+        assertEquals(original.leaderRecoveryState, updated.leaderRecoveryState);
+    }
+
+    @Test
+    public void testWithClassicToDisklessStartOffsetPreservesImmutability() {
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).build();
+
+        PartitionRegistration updated = original.withClassicToDisklessStartOffset(100L);
+
+        assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, original.classicToDisklessStartOffset);
+        assertEquals(100L, updated.classicToDisklessStartOffset);
+        assertNotEquals(original, updated);
+    }
+
+    @Test
+    public void testMergePreservesDisklessFields() {
+        List<InitDisklessLogFields.ProducerStateEntry> producerStates = List.of(
+            new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L),
+            new InitDisklessLogFields.ProducerStateEntry(2L, (short) 1, 5, 15, 200L, 6000L)
+        );
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setClassicToDisklessStartOffset(42L).
+            setDisklessProducerStates(producerStates).build();
+
+        PartitionRegistration merged = original.merge(new PartitionChangeRecord().
+            setLeader(2).setIsr(List.of(2, 3)));
+
+        assertEquals(42L, merged.classicToDisklessStartOffset);
+        assertEquals(producerStates, merged.disklessProducerStates);
+    }
+
+    @Test
+    public void testMergeStartOffsetWithoutProducerStatesTagPreservesProducerStates() {
+        List<InitDisklessLogFields.ProducerStateEntry> producerStates = List.of(
+            new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L)
+        );
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setClassicToDisklessStartOffset(42L).
+            setDisklessProducerStates(producerStates).build();
+
+        PartitionChangeRecord changeRecord = new PartitionChangeRecord();
+        changeRecord.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeClassicToDisklessStartOffset(99L));
+
+        PartitionRegistration merged = original.merge(changeRecord);
+        assertEquals(99L, merged.classicToDisklessStartOffset);
+        assertEquals(producerStates, merged.disklessProducerStates);
+    }
+
+    @Test
+    public void testMergeExplicitEmptyProducerStatesClearsThem() {
+        List<InitDisklessLogFields.ProducerStateEntry> producerStates = List.of(
+            new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L)
+        );
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setClassicToDisklessStartOffset(42L).
+            setDisklessProducerStates(producerStates).build();
+
+        PartitionChangeRecord changeRecord = new PartitionChangeRecord();
+        changeRecord.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeProducerStates(List.of()));
+
+        PartitionRegistration merged = original.merge(changeRecord);
+        assertEquals(List.of(), merged.disklessProducerStates);
+    }
+
+    @Test
+    public void testDisklessFieldsInEqualsAndHashCode() {
+        List<InitDisklessLogFields.ProducerStateEntry> states = List.of(
+            new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L)
+        );
+        PartitionRegistration a = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setClassicToDisklessStartOffset(42L).
+            setDisklessProducerStates(states).build();
+        PartitionRegistration b = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setClassicToDisklessStartOffset(42L).
+            setDisklessProducerStates(states).build();
+        PartitionRegistration c = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setClassicToDisklessStartOffset(99L).build();
+        PartitionRegistration d = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setClassicToDisklessStartOffset(42L).build();
+
+        assertEquals(a, b);
+        assertEquals(a.hashCode(), b.hashCode());
+        assertNotEquals(a, c);
+        assertNotEquals(a, d);
+    }
+
+    @Test
+    public void testSwitchPendingRoundTrip() {
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).
+            setClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING).build();
+
+        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING, original.classicToDisklessStartOffset);
+
+        Uuid topicId = Uuid.randomUuid();
+        ApiMessageAndVersion record = original.toRecord(topicId, 0,
+            new ImageWriterOptions.Builder(MetadataVersion.latestTesting()).build());
+        PartitionRecord partitionRecord = (PartitionRecord) record.message();
+        PartitionRegistration restored = new PartitionRegistration(partitionRecord);
+        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING, restored.classicToDisklessStartOffset);
+    }
+
+    @Test
+    public void testMergeFromSwitchPendingToActualOffset() {
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).
+            setClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING).build();
+
+        PartitionChangeRecord changeRecord = new PartitionChangeRecord();
+        changeRecord.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L));
+
+        PartitionRegistration merged = original.merge(changeRecord);
+        assertEquals(100L, merged.classicToDisklessStartOffset);
+    }
+
+    @Test
+    public void testMergeAbortsSwitchWithExplicitMinusOne() {
+        List<InitDisklessLogFields.ProducerStateEntry> producerStates = List.of(
+            new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L));
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setClassicToDisklessStartOffset(100L).
+            setDisklessProducerStates(producerStates).setDisklessLeaderEpoch(7).build();
+
+        PartitionChangeRecord changeRecord = new PartitionChangeRecord();
+        changeRecord.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+                PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET));
+
+        PartitionRegistration merged = original.merge(changeRecord);
+        assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, merged.classicToDisklessStartOffset);
+        // Aborting must drop the dependent switch metadata from the previous completed switch.
+        assertEquals(List.of(), merged.disklessProducerStates);
+        assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, merged.disklessLeaderEpoch);
+    }
+
+    @Test
+    public void testMergeReArmsSwitchWithExplicitMinusTwo() {
+        List<InitDisklessLogFields.ProducerStateEntry> producerStates = List.of(
+            new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L));
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).setClassicToDisklessStartOffset(100L).
+            setDisklessProducerStates(producerStates).setDisklessLeaderEpoch(7).build();
+
+        PartitionChangeRecord changeRecord = new PartitionChangeRecord();
+        changeRecord.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+                PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING));
+
+        PartitionRegistration merged = original.merge(changeRecord);
+        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING, merged.classicToDisklessStartOffset);
+        // Re-arming must drop the dependent switch metadata so the next initDisklessLog re-captures it.
+        assertEquals(List.of(), merged.disklessProducerStates);
+        assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, merged.disklessLeaderEpoch);
+    }
+
+    @Test
+    public void testMergePreservesSwitchPending() {
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).
+            setClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING).build();
+
+        PartitionRegistration merged = original.merge(new PartitionChangeRecord().
+            setLeader(2).setIsr(List.of(2, 3)));
+
+        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING, merged.classicToDisklessStartOffset);
+    }
+
+    @Test
+    public void testDefaultDisklessLeaderEpoch() {
+        PartitionRegistration registration = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(0).setPartitionEpoch(0).build();
+        assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, registration.disklessLeaderEpoch);
+    }
+
+    @Test
+    public void testDisklessLeaderEpochRoundTrip() {
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(7).setPartitionEpoch(0).setClassicToDisklessStartOffset(42L).
+            setDisklessLeaderEpoch(7).build();
+
+        Uuid topicId = Uuid.randomUuid();
+        ApiMessageAndVersion record = original.toRecord(topicId, 0,
+            new ImageWriterOptions.Builder(MetadataVersion.latestTesting()).build());
+        PartitionRecord partitionRecord = (PartitionRecord) record.message();
+        PartitionRegistration restored = new PartitionRegistration(partitionRecord);
+
+        assertEquals(7, restored.disklessLeaderEpoch);
+        assertEquals(42L, restored.classicToDisklessStartOffset);
+        assertEquals(original, restored);
+    }
+
+    @Test
+    public void testMergeCapturesDisklessLeaderEpoch() {
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(5).setPartitionEpoch(0).
+            setClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING).build();
+
+        // Simulates the initDisklessLog commit: it carries both the seal and the captured leader epoch.
+        PartitionChangeRecord changeRecord = new PartitionChangeRecord();
+        changeRecord.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L));
+        changeRecord.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeDisklessLeaderEpoch(5));
+
+        PartitionRegistration merged = original.merge(changeRecord);
+        assertEquals(100L, merged.classicToDisklessStartOffset);
+        assertEquals(5, merged.disklessLeaderEpoch);
+    }
+
+    @Test
+    public void testMergePreservesDisklessLeaderEpoch() {
+        PartitionRegistration original = new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(5).setPartitionEpoch(0).setClassicToDisklessStartOffset(100L).
+            setDisklessLeaderEpoch(5).build();
+
+        // A subsequent change record (e.g. a leader change) does not carry the diskless epoch tag.
+        PartitionRegistration merged = original.merge(new PartitionChangeRecord().
+            setLeader(2).setIsr(List.of(2, 3)));
+
+        assertEquals(5, merged.disklessLeaderEpoch);
+        assertEquals(100L, merged.classicToDisklessStartOffset);
     }
 }

@@ -49,6 +49,7 @@
     <suppress checks="MethodLength|JavaNCSS|NPath" files="DescribeTopicPartitionsRequestHandlerTest.java"/>
     <suppress checks="CyclomaticComplexity" files="ListConsumerGroupTest.java"/>
     <suppress checks="ClassFanOutComplexity|CyclomaticComplexity|MethodLength|ParameterNumber|JavaNCSS|ImportControl" files="RequestConvertToJson.java"/>
+    <suppress checks="ImportControl" files="BrokerRegistrationRequestTest.java"/>
 
     <!-- Clients -->
     <suppress id="dontUseSystemExit"
@@ -85,9 +86,13 @@
               files="MemoryRecordsBuilder.java"/>
     <suppress checks="ParameterNumber"
               files="ClientUtils.java"/>
+    <!-- ReplicationControlManager is at the edge of crossing this limit; adding it to include params for diskless logic.
+         The test context constructor mirrors the same param list, so it crosses the limit too. -->
+    <suppress checks="ParameterNumber"
+              files="(ReplicationControlManager|ReplicationControlManagerTest).java"/>
 
     <suppress checks="ClassDataAbstractionCoupling"
-              files="(KafkaConsumer|ConsumerCoordinator|AbstractFetch|KafkaProducer|AbstractRequest|AbstractResponse|TransactionManager|Admin|KafkaAdminClient|MockAdminClient|KafkaNetworkChannelTest).java"/>
+              files="(KafkaConsumer|ConsumerCoordinator|AbstractFetch|KafkaProducer|AbstractRequest|AbstractResponse|TransactionManager|Admin|KafkaAdminClient|MockAdminClient|KafkaNetworkChannelTest|ClientTelemetryReporterTest).java"/>
     <suppress checks="ClassDataAbstractionCoupling"
               files="(Errors|SaslAuthenticatorTest|AgentTest|CoordinatorTest|NetworkClientTest).java"/>
 
@@ -174,7 +179,7 @@
     <suppress checks="ClassFanOutComplexity"
               files="(WorkerSink|WorkerSource|ErrorHandling)Task(|WithTopicCreation|Mockito)Test.java"/>
     <suppress checks="ClassFanOutComplexity"
-              files="DistributedHerderTest.java"/>
+              files="(AbstractHerderTest|DistributedHerderTest).java"/>
 
     <suppress checks="MethodLength"
               files="(RequestResponse|WorkerSinkTask|WorkerSinkTaskMockito)Test.java"/>
@@ -317,12 +322,20 @@
               files="(ClientQuotasImage|KafkaEventQueue|MetadataDelta|QuorumController|ReplicationControlManager|KRaftMigrationDriver|ClusterControlManager|MetaPropertiesEnsemble).java"/>
     <suppress checks="NPathComplexity"
               files="(ClientQuotasImage|KafkaEventQueue|ReplicationControlManager|FeatureControlManager|KRaftMigrationDriver|ScramControlManager|ClusterControlManager|MetadataDelta|MetaPropertiesEnsemble).java"/>
+    <!-- ReplicationControlManager has multiple long methods; suppression needed for diskless managed replicas logic -->
+    <suppress checks="MethodLength"
+              files="ReplicationControlManager.java"/>
+    <!-- ReplicationControlManager crossed the class NCSS limit as diskless switch logic was added; the class already carries several complexity suppressions above -->
+    <suppress checks="JavaNCSS"
+              files="ReplicationControlManager.java"/>
     <suppress checks="BooleanExpressionComplexity"
               files="(MetadataImage).java"/>
     <suppress checks="ImportControl"
               files="ApiVersionsResponse.java"/>
     <suppress checks="AvoidStarImport"
               files="MetadataVersionTest.java"/>
+    <suppress checks="JavaNCSS"
+              files="(ReplicationControlManagerTest|ReplicationControlManagerInklessTest).java"/>
 
     <!-- group coordinator -->
     <suppress checks="CyclomaticComplexity"
@@ -339,6 +352,8 @@
               files="(GroupMetadataManager|GroupMetadataManagerTest).java"/>
 
     <!-- coordinator-common -->
+    <suppress checks="JavaNCSS"
+              files="CoordinatorRuntimeTest.java"/>
     <suppress checks="NPathComplexity"
               files="CoordinatorRuntime.java"/>
 
@@ -354,7 +369,7 @@
 
     <!-- storage -->
     <suppress checks="CyclomaticComplexity"
-              files="(LogLoader|LogValidator|RemoteLogManagerConfig|RemoteLogManager|UnifiedLog).java"/>
+              files="(LogLoader|LogValidator|RemoteLogManagerConfig|RemoteLogManager|UnifiedLog|DelayedRemoteListOffsets).java"/>
     <suppress checks="NPathComplexity"
               files="(LocalLog|LogLoader|LogValidator|RemoteLogManager|RemoteIndexCache|UnifiedLog).java"/>
     <suppress checks="ParameterNumber"

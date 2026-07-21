@@ -1,0 +1,37 @@
+global:
+  # How frequently to scrape targets by default.
+  # Default 15s
+  scrape_interval: 30s
+  # How long until a scrape request times out.
+  # Default to 10s.
+  scrape_timeout: 30s
+
+scrape_configs:
+  - job_name: 'kafka'
+    static_configs:
+    - targets: ['broker:7070']
+      labels:
+        host: 'broker'
+    - targets: ['broker2:7070']
+      labels:
+        host: 'broker2'
+    - targets: ['broker101:7070']
+      labels:
+        host: 'broker101'
+    - targets: ['broker102:7070']
+      labels:
+        host: 'broker102'
+  - job_name: 'kafka-client'
+    static_configs:
+    - targets: ['producer-1:7070']
+      labels:
+        host: 'producer-1'
+    - targets: ['producer-2:7070']
+      labels:
+        host: 'producer-2'
+    - targets: ['consumer:7070']
+      labels:
+        host: 'consumer'
+  - job_name: 'postgres'
+    static_configs:
+    - targets: ['postgres_exporter:9187']
