@@ -34,6 +34,7 @@ import org.mockito.quality.Strictness;
 
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
+import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -71,6 +72,7 @@ import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.test_utils.SynchronousExecutor;
 import io.github.bucket4j.Bucket;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -786,7 +788,7 @@ public class FetchPlannerTest {
                 try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] expectedData = "recent-data".getBytes();
                     final Bucket rateLimiter = Bucket.builder()
-                        .addLimit(limit -> limit.capacity(1).refillGreedy(1, java.time.Duration.ofSeconds(1)))
+                        .addLimit(limit -> limit.capacity(1).refillGreedy(1, Duration.ofSeconds(1)))
                         .build();
 
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
@@ -868,7 +870,7 @@ public class FetchPlannerTest {
                 try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] expectedData = "old-data".getBytes();
                     final Bucket rateLimiter = Bucket.builder()
-                        .addLimit(limit -> limit.capacity(10).refillGreedy(10, java.time.Duration.ofSeconds(1)))
+                        .addLimit(limit -> limit.capacity(10).refillGreedy(10, Duration.ofSeconds(1)))
                         .build();
 
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
@@ -1051,6 +1053,8 @@ public class FetchPlannerTest {
                             fetcher, // laggingConsumerFetcher
                             threshold,
                             null, // No rate limiter
+                            null, // no byte-rate limiter
+                            0L, // byte-rate capacity
                             saturatedExecutor, // Saturated executor
                             null, // no hedge scheduler
                             0, // TTFB hedging disabled
@@ -1131,6 +1135,8 @@ public class FetchPlannerTest {
                         fetcher, // laggingConsumerFetcher
                         threshold,
                         null, // No rate limiter
+                        null, // no byte-rate limiter
+                        0L, // byte-rate capacity
                         shutdownExecutor, // Shutdown executor
                         null, // no hedge scheduler
                         0, // TTFB hedging disabled
@@ -1255,6 +1261,8 @@ public class FetchPlannerTest {
                             fetcher, // laggingConsumerFetcher
                             threshold,
                             null, // No rate limiter
+                            null, // no byte-rate limiter
+                            0L, // byte-rate capacity
                             coldExecutor, // Cold path executor
                             null, // no hedge scheduler
                             0, // TTFB hedging disabled
@@ -1377,7 +1385,7 @@ public class FetchPlannerTest {
                 try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
                     final byte[] expectedData = "cold-with-limit".getBytes();
                     final Bucket rateLimiter = Bucket.builder()
-                        .addLimit(limit -> limit.capacity(10).refillGreedy(10, java.time.Duration.ofSeconds(1)))
+                        .addLimit(limit -> limit.capacity(10).refillGreedy(10, Duration.ofSeconds(1)))
                         .build();
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
                     when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
@@ -1608,6 +1616,8 @@ public class FetchPlannerTest {
             fetcher,
             thresholdMs,
             rateLimiter,
+            null, // no byte-rate limiter
+            0L, // byte-rate capacity
             laggingConsumerExecutor,
             null, // no hedge scheduler
             0, // TTFB hedging disabled
@@ -1618,6 +1628,44 @@ public class FetchPlannerTest {
             metrics
         );
     }
+
+    /**
+     * Creates a FetchPlanner with a byte-rate limiter (and optionally a request-rate limiter).
+     * Use for testing byte-rate (bandwidth) limiting on the cold path.
+     */
+    private FetchPlanner createFetchPlannerWithByteRateLimit(
+        KeyAlignmentStrategy keyAlignmentStrategy,
+        ObjectCache cache,
+        Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture,
+        long thresholdMs,
+        ExecutorService laggingConsumerExecutor,
+        Bucket rateLimiter,
+        Bucket byteRateLimiter,
+        long byteRateCapacity
+    ) {
+        return new FetchPlanner(
+            time,
+            FetchPlannerTest.OBJECT_KEY_CREATOR,
+            keyAlignmentStrategy,
+            cache,
+            fetcher,
+            fetchDataExecutor,
+            fetcher,
+            thresholdMs,
+            rateLimiter,
+            byteRateLimiter,
+            byteRateCapacity,
+            laggingConsumerExecutor,
+            null, // no hedge scheduler
+            0, // TTFB hedging disabled
+            0, // total-time hedging disabled
+            new ConcurrentHashMap<>(),
+            batchCoordinatesFuture,
+            false,
+            metrics
+        );
+    }
+
 
     /**
      * Creates a FetchPlanner with lagging consumer feature enabled (default 60s threshold).
@@ -1658,6 +1706,165 @@ public class FetchPlannerTest {
     }
 
     @Nested
+    class ByteRateLimitTests {
+
+        private Map<TopicIdPartition, FindBatchResponse> coldCoordinates(final long byteSize) {
+            final long oldTimestamp = time.milliseconds() - 120_000L; // 2 minutes ago -> cold path
+            return Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, byteSize, 0, 0, 10, oldTimestamp, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+        }
+
+        @Test
+        public void byteRateLimitedFetchCompletesAndRecordsWaitTime() throws Exception {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
+                final byte[] expectedData = "cold-data".getBytes();
+                // Generous capacity: the fetch is not throttled, but the byte limiter path is exercised.
+                final long capacity = 1_000_000L;
+                final Bucket byteRateLimiter = Bucket.builder()
+                    .addLimit(limit -> limit.capacity(capacity).refillGreedy(capacity, Duration.ofSeconds(1)))
+                    .build();
+
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+
+                final FetchPlanner planner = createFetchPlannerWithByteRateLimit(
+                    keyAlignmentStrategy, caffeineCache, coldCoordinates(100),
+                    60 * 1000L, laggingFetchDataExecutor, null, byteRateLimiter, capacity
+                );
+
+                final FileExtent result = planner.get().get(0).future().get();
+                assertThat(result.data()).isEqualTo(expectedData);
+
+                verify(metrics).recordLaggingConsumerRequest();
+                verify(metrics).recordRateLimitWaitTime(any(Long.class));
+                verify(metrics, never()).recordByteRateOversized();
+            }
+        }
+
+        @Test
+        public void oversizedFetchIsChargedFullBucketAndCompletes() throws Exception {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
+                final byte[] expectedData = "oversized-cold-data".getBytes();
+                // Capacity smaller than the fetched byte range: the fetch can never be fully satisfied,
+                // so it is charged a full bucket and let through rather than deadlocking.
+                final long capacity = 10L;
+                final long fetchByteSize = 1_000L;
+                final Bucket byteRateLimiter = Bucket.builder()
+                    .addLimit(limit -> limit.capacity(capacity).refillGreedy(capacity, Duration.ofSeconds(1)))
+                    .build();
+
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+
+                final FetchPlanner planner = createFetchPlannerWithByteRateLimit(
+                    keyAlignmentStrategy, caffeineCache, coldCoordinates(fetchByteSize),
+                    60 * 1000L, laggingFetchDataExecutor, null, byteRateLimiter, capacity
+                );
+
+                // Must complete (not hang) even though the fetch exceeds the bucket capacity.
+                final FileExtent result = planner.get().get(0).future().get(5, TimeUnit.SECONDS);
+                assertThat(result.data()).isEqualTo(expectedData);
+
+                verify(metrics).recordByteRateOversized();
+                verify(metrics).recordRateLimitWaitTime(any(Long.class));
+            }
+        }
+
+        @Test
+        public void byteRateLimitEnabledIndependentlyOfRequestRate() throws Exception {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
+                final byte[] expectedData = "byte-only".getBytes();
+                final long capacity = 1_000_000L;
+                final Bucket byteRateLimiter = Bucket.builder()
+                    .addLimit(limit -> limit.capacity(capacity).refillGreedy(capacity, Duration.ofSeconds(1)))
+                    .build();
+
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+
+                // request-rate limiter is null; only the byte-rate limiter is configured.
+                final FetchPlanner planner = createFetchPlannerWithByteRateLimit(
+                    keyAlignmentStrategy, caffeineCache, coldCoordinates(100),
+                    60 * 1000L, laggingFetchDataExecutor, null, byteRateLimiter, capacity
+                );
+
+                final FileExtent result = planner.get().get(0).future().get();
+                assertThat(result.data()).isEqualTo(expectedData);
+
+                verify(metrics).recordLaggingConsumerRequest();
+                verify(metrics).recordRateLimitWaitTime(any(Long.class));
+            }
+        }
+
+        @Test
+        public void byteRateThrottleBlocksWhenBucketDrained() throws Exception {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
+                final byte[] expectedData = "byte-throttled".getBytes();
+                final long capacity = 1_000_000L;
+                final long fetchByteSize = 200_000L;
+                final Bucket byteRateLimiter = Bucket.builder()
+                    .addLimit(limit -> limit.capacity(capacity).refillGreedy(capacity, Duration.ofSeconds(1)))
+                    .build();
+                // Pre-drain: consume the full bucket so the next consume must wait for a refill.
+                assertThat(byteRateLimiter.tryConsume(capacity)).isTrue();
+
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+
+                // Run the cold-path task inline (no executor scheduling gap), so applyRateLimit runs
+                // immediately after the drain: tryConsume(cost) deterministically fails and blocks on
+                // refill regardless of machine load. This removes the timing dependence.
+                final FetchPlanner planner = createFetchPlannerWithByteRateLimit(
+                    keyAlignmentStrategy, caffeineCache, coldCoordinates(fetchByteSize),
+                    60 * 1000L, new SynchronousExecutor(), null, byteRateLimiter, capacity
+                );
+
+                final FileExtent result = planner.get().get(0).future().get(10, TimeUnit.SECONDS);
+                assertThat(result.data()).isEqualTo(expectedData);
+
+                // The byte limiter blocked: throttle recorded, not oversized (cost <= capacity).
+                verify(metrics).recordByteRateThrottled();
+                verify(metrics, never()).recordByteRateOversized();
+                verify(metrics).recordRateLimitWaitTime(any(Long.class));
+            }
+        }
+
+        @Test
+        public void requestRateThrottleBlocksWhenBucketDrained() throws Exception {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
+                final byte[] expectedData = "request-throttled".getBytes();
+                final int capacity = 10;
+                final Bucket rateLimiter = Bucket.builder()
+                    .addLimit(limit -> limit.capacity(capacity).refillGreedy(capacity, Duration.ofSeconds(1)))
+                    .build();
+                // Pre-drain the request bucket.
+                assertThat(rateLimiter.tryConsume(capacity)).isTrue();
+
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+
+                // Run the cold-path task inline (no executor scheduling gap): tryConsume(1) runs
+                // immediately after the drain and deterministically fails, so it blocks on refill.
+                // Only the request-rate limiter is configured (byte-rate disabled).
+                final FetchPlanner planner = createFetchPlannerWithCustomThreshold(
+                    keyAlignmentStrategy, caffeineCache, coldCoordinates(100),
+                    60 * 1000L, new SynchronousExecutor(), rateLimiter
+                );
+
+                final FileExtent result = planner.get().get(0).future().get(10, TimeUnit.SECONDS);
+                assertThat(result.data()).isEqualTo(expectedData);
+
+                verify(metrics).recordRequestRateThrottled();
+                verify(metrics).recordRateLimitWaitTime(any(Long.class));
+            }
+        }
+    }
+
+    @Nested
     class HedgingTests {
         private final long hedgeThresholdMs = 50;
         private final java.util.concurrent.ScheduledExecutorService hedgeScheduler =
@@ -1683,6 +1890,8 @@ public class FetchPlannerTest {
                 fetcher,
                 60 * 1000L,
                 null, // no rate limiter
+                null, // no byte-rate limiter
+                0L, // byte-rate capacity
                 laggingFetchDataExecutor,
                 hedgeScheduler,
                 0, // TTFB hedging disabled by default
@@ -1766,6 +1975,8 @@ public class FetchPlannerTest {
                     fetcher,
                     60 * 1000L,
                     null,
+                    null, // no byte-rate limiter
+                    0L, // byte-rate capacity
                     laggingFetchDataExecutor,
                     hedgeScheduler,
                     0, // TTFB hedging disabled
@@ -1870,6 +2081,8 @@ public class FetchPlannerTest {
                     fetcher,
                     60 * 1000L,
                     null,
+                    null, // no byte-rate limiter
+                    0L, // byte-rate capacity
                     laggingFetchDataExecutor,
                     hedgeScheduler,
                     0, // TTFB hedging disabled
@@ -1935,6 +2148,8 @@ public class FetchPlannerTest {
                     fetcher,
                     60 * 1000L,
                     null,
+                    null, // no byte-rate limiter
+                    0L, // byte-rate capacity
                     laggingFetchDataExecutor,
                     hedgeScheduler,
                     0, // TTFB hedging disabled
@@ -1999,6 +2214,8 @@ public class FetchPlannerTest {
                     fetcher,
                     60 * 1000L,
                     null,
+                    null, // no byte-rate limiter
+                    0L, // byte-rate capacity
                     laggingFetchDataExecutor,
                     hedgeScheduler,
                     0, // TTFB hedging disabled
@@ -2069,6 +2286,8 @@ public class FetchPlannerTest {
                     fetcher,
                     60 * 1000L, // lagging threshold
                     null, // no rate limiter
+                    null, // no byte-rate limiter
+                    0L, // byte-rate capacity
                     multiExecutor, // cold path executor
                     hedgeScheduler,
                     0, // TTFB hedging disabled
@@ -2145,6 +2364,8 @@ public class FetchPlannerTest {
                     fetcher,
                     60 * 1000L,
                     null,
+                    null, // no byte-rate limiter
+                    0L, // byte-rate capacity
                     laggingFetchDataExecutor,
                     hedgeScheduler,
                     ttfbThreshold,
@@ -2210,6 +2431,8 @@ public class FetchPlannerTest {
                 fetcher,
                 60 * 1000L,
                 null,
+                null, // no byte-rate limiter
+                0L, // byte-rate capacity
                 laggingFetchDataExecutor,
                 hedgeScheduler,
                 ttfbThreshold,
@@ -2272,6 +2495,8 @@ public class FetchPlannerTest {
                     fetcher,
                     60 * 1000L,
                     null,
+                    null, // no byte-rate limiter
+                    0L, // byte-rate capacity
                     laggingFetchDataExecutor,
                     hedgeScheduler,
                     ttfbThreshold,
@@ -2348,12 +2573,12 @@ public class FetchPlannerTest {
                 // Two planners sharing the same cache and metrics — simulates two concurrent Reader.fetch() calls
                 final FetchPlanner planner1 = new FetchPlanner(
                     time, OBJECT_KEY_CREATOR, keyAlignmentStrategy, cache, fetcher,
-                    multiExecutor, fetcher, 60 * 1000L, null, laggingFetchDataExecutor,
+                    multiExecutor, fetcher, 60 * 1000L, null, null, 0L, laggingFetchDataExecutor,
                     hedgeScheduler, 0, hedgeThresholdMs, hedgeGuards, coordinates, false, metrics
                 );
                 final FetchPlanner planner2 = new FetchPlanner(
                     time, OBJECT_KEY_CREATOR, keyAlignmentStrategy, cache, fetcher,
-                    multiExecutor, fetcher, 60 * 1000L, null, laggingFetchDataExecutor,
+                    multiExecutor, fetcher, 60 * 1000L, null, null, 0L, laggingFetchDataExecutor,
                     hedgeScheduler, 0, hedgeThresholdMs, hedgeGuards, coordinates, false, metrics
                 );
 
@@ -2433,6 +2658,8 @@ public class FetchPlannerTest {
                     fetcher,
                     60 * 1000L,         // lagging threshold
                     rateLimiter,        // rate limiter that blocks ~200ms
+                    null,               // no byte-rate limiter
+                    0L,                 // byte-rate capacity
                     multiExecutor,      // cold path executor
                     hedgeScheduler,
                     0,                  // TTFB hedging disabled
@@ -2492,7 +2719,7 @@ public class FetchPlannerTest {
 
             // Generous rate limiter (won't block significantly)
             final Bucket rateLimiter = Bucket.builder()
-                .addLimit(limit -> limit.capacity(10).refillGreedy(10, java.time.Duration.ofSeconds(1)))
+                .addLimit(limit -> limit.capacity(10).refillGreedy(10, Duration.ofSeconds(1)))
                 .build();
 
             final ExecutorService multiExecutor = Executors.newFixedThreadPool(2);
@@ -2507,6 +2734,8 @@ public class FetchPlannerTest {
                     fetcher,
                     60 * 1000L,
                     rateLimiter,        // non-blocking rate limiter
+                    null,               // no byte-rate limiter
+                    0L,                 // byte-rate capacity
                     multiExecutor,
                     hedgeScheduler,
                     0,                  // TTFB disabled
@@ -2743,6 +2972,8 @@ public class FetchPlannerTest {
                 fetcher,
                 60 * 1000L,
                 null, // no rate limiter
+                null, // no byte-rate limiter
+                0L, // byte-rate capacity
                 laggingFetchDataExecutor,
                 null, // no hedge scheduler
                 0,    // TTFB hedging disabled

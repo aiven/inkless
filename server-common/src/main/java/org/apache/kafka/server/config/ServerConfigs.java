@@ -216,6 +216,14 @@ public class ServerConfigs {
         "for consolidation cold-path fetches. 0 (default) means unlimited -- consolidation is internal background work and does not " +
         "need throttling under normal conditions. Set > 0 as a safety valve to bound object storage request rate from consolidation.";
 
+    public static final String DISKLESS_CONSOLIDATION_FETCH_LAGGING_BYTE_RATE_LIMIT_CONFIG = "diskless.consolidation.fetch.lagging.byte.rate.limit";
+    public static final long DISKLESS_CONSOLIDATION_FETCH_LAGGING_BYTE_RATE_LIMIT_DEFAULT = 0;
+    public static final String DISKLESS_CONSOLIDATION_FETCH_LAGGING_BYTE_RATE_LIMIT_DOC = "Maximum bytes per second read from object storage " +
+        "for consolidation cold-path fetches. This bounds the physical object-storage read bandwidth (the S3 GET range size, including read " +
+        "amplification from bounding-range reads over multi-partition objects), which is distinct from " + DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_CONFIG + " " +
+        "that limits the processed record bytes appended to the consolidated log. 0 (default) means unlimited. Set > 0 to protect the node's " +
+        "network bandwidth from consolidation read amplification.";
+
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG = "classic.remote.storage.force.enable";
     public static final boolean CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT = false;
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC = "Force classic topics to be created with remote.storage.enable=true, " +
@@ -314,6 +322,8 @@ public class ServerConfigs {
                 atLeast(0), LOW, DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_DOC)
             .define(DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_CONFIG, INT, DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_DEFAULT,
                 atLeast(0), LOW, DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_DOC)
+            .define(DISKLESS_CONSOLIDATION_FETCH_LAGGING_BYTE_RATE_LIMIT_CONFIG, LONG, DISKLESS_CONSOLIDATION_FETCH_LAGGING_BYTE_RATE_LIMIT_DEFAULT,
+                atLeast(0), LOW, DISKLESS_CONSOLIDATION_FETCH_LAGGING_BYTE_RATE_LIMIT_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG, BOOLEAN, CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT, LOW,
                 CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG, LIST, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DEFAULT,

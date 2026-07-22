@@ -319,6 +319,10 @@ class ReplicaManager(val config: KafkaConfig,
           // consumer-cached block, older data is bounding-range aligned for a cheaper cold fetch.
           state.config().fetchLaggingConsumerThresholdMs(),
           config.disklessConsolidationFetchLaggingRequestRateLimit,
+          // Byte-rate limit on the physical object-storage read (bounding-range GET size, incl. read
+          // amplification). Distinct from disklessConsolidationFetchRateLimitBytesPerSecond, which limits
+          // the processed record bytes appended to the log via the replication quota.
+          config.disklessConsolidationFetchLaggingByteRateLimit,
           0, // use the consolidation data pool instead
           // no hedged fetch for consolidation
           0L, 0L,

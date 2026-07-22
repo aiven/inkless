@@ -437,6 +437,7 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   val disklessConsolidationFindBatchesMaxPerPartition: Int = getInt(ServerConfigs.DISKLESS_CONSOLIDATION_FIND_BATCHES_MAX_PER_PARTITION_CONFIG)
   val disklessConsolidationFetchRateLimitBytesPerSecond: Long = getLong(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_CONFIG)
   val disklessConsolidationFetchLaggingRequestRateLimit: Int = getInt(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_CONFIG)
+  val disklessConsolidationFetchLaggingByteRateLimit: Long = getLong(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_LAGGING_BYTE_RATE_LIMIT_CONFIG)
   val classicRemoteStorageForceEnabled: Boolean = getBoolean(ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG)
   val classicRemoteStorageForceExcludeTopicRegexes: java.util.List[String] =
     getList(ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG)

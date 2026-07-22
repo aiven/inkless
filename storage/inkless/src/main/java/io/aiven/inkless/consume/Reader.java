@@ -31,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -119,6 +120,8 @@ public class Reader implements AutoCloseable {
     private final InklessFetchMetrics fetchMetrics;
     private final BrokerTopicStats brokerTopicStats;
     private final Bucket rateLimiter;
+    private final Bucket byteRateLimiter;
+    private final long byteRateCapacity;
     private ThreadPoolMonitor metadataThreadPoolMonitor;
     private ThreadPoolMonitor dataThreadPoolMonitor;
     private ThreadPoolMonitor laggingConsumerThreadPoolMonitor;
@@ -136,6 +139,7 @@ public class Reader implements AutoCloseable {
         Optional<ObjectFetcher> maybeLaggingFetchStorage,
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
+        long laggingConsumerByteRateLimit,
         int laggingConsumerThreadPoolSize,
         long hedgeTtfbThresholdMs,
         long hedgeTotalTimeThresholdMs,
@@ -143,7 +147,7 @@ public class Reader implements AutoCloseable {
     ) {
         this(time, objectKeyCreator, keyAlignmentStrategy, cache, controlPlane, objectFetcher, brokerTopicStats,
             fetchMetadataThreadPoolSize, fetchDataThreadPoolSize, maybeLaggingFetchStorage,
-            laggingConsumerThresholdMs, laggingConsumerRequestRateLimit, laggingConsumerThreadPoolSize,
+            laggingConsumerThresholdMs, laggingConsumerRequestRateLimit, laggingConsumerByteRateLimit, laggingConsumerThreadPoolSize,
             hedgeTtfbThresholdMs, hedgeTotalTimeThresholdMs,
             maxBatchesPerPartitionToFind,
             new KafkaMetricsGroup(InklessFetchMetrics.class.getPackageName(), InklessFetchMetrics.class.getSimpleName()),
@@ -163,6 +167,7 @@ public class Reader implements AutoCloseable {
         Optional<ObjectFetcher> maybeLaggingFetchStorage,
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
+        long laggingConsumerByteRateLimit,
         int laggingConsumerThreadPoolSize,
         long hedgeTtfbThresholdMs,
         long hedgeTotalTimeThresholdMs,
@@ -183,6 +188,7 @@ public class Reader implements AutoCloseable {
             maybeLaggingFetchStorage,
             laggingConsumerThresholdMs,
             laggingConsumerRequestRateLimit,
+            laggingConsumerByteRateLimit,
             laggingConsumerThreadPoolSize,
             hedgeTtfbThresholdMs,
             hedgeTotalTimeThresholdMs,
@@ -206,6 +212,7 @@ public class Reader implements AutoCloseable {
         Optional<ObjectFetcher> maybeLaggingFetchStorage,
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
+        long laggingConsumerByteRateLimit,
         int laggingConsumerThreadPoolSize,
         long hedgeTtfbThresholdMs,
         long hedgeTotalTimeThresholdMs,
@@ -239,6 +246,7 @@ public class Reader implements AutoCloseable {
                 : maybeLaggingFetchStorage.orElse(null),
             laggingConsumerThresholdMs,
             laggingConsumerRequestRateLimit,
+            laggingConsumerByteRateLimit,
             // Only create a dedicated lagging pool when pool size > 0.
             // When pool size is 0 and a fetcher is present, the cold path reuses fetchDataExecutor.
             laggingConsumerThreadPoolSize > 0
@@ -313,7 +321,7 @@ public class Reader implements AutoCloseable {
     ) {
         this(time, objectKeyCreator, keyAlignmentStrategy, cache, controlPlane, objectFetcher,
             maxBatchesPerPartitionToFind, metadataExecutor, fetchDataExecutor,
-            laggingConsumerObjectFetcher, laggingConsumerThresholdMs, laggingConsumerRequestRateLimit,
+            laggingConsumerObjectFetcher, laggingConsumerThresholdMs, laggingConsumerRequestRateLimit, 0L,
             laggingFetchDataExecutor, hedgeScheduler, hedgeTtfbThresholdMs, hedgeTotalTimeThresholdMs,
             fetchMetrics, brokerTopicStats, monitorPrefix, false);
     }
@@ -332,6 +340,7 @@ public class Reader implements AutoCloseable {
         ObjectFetcher laggingConsumerObjectFetcher,
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
+        long laggingConsumerByteRateLimit,
         ExecutorService laggingFetchDataExecutor,
         ScheduledExecutorService hedgeScheduler,
         long hedgeTtfbThresholdMs,
@@ -398,13 +407,33 @@ public class Reader implements AutoCloseable {
             // pool limits concurrent execution, providing both rate limiting and concurrency control.
             final Bandwidth limit = Bandwidth.builder()
                 .capacity(laggingConsumerRequestRateLimit)
-                .refillGreedy(laggingConsumerRequestRateLimit, java.time.Duration.ofSeconds(1))
+                .refillGreedy(laggingConsumerRequestRateLimit, Duration.ofSeconds(1))
                 .build();
             this.rateLimiter = Bucket.builder()
                 .addLimit(limit)
                 .build();
         } else {
             this.rateLimiter = null;
+        }
+
+        // Byte-rate limiter: bounds cold-path storage-to-broker bandwidth per node. Independent of the
+        // request-rate limiter above (that protects storage GET cost; this protects network bandwidth).
+        // capacity = byteRateLimit: a 1-second burst, consistent with the request limiter. A single cold
+        // fetch covers one storage object and is indivisible; if it exceeds capacity it can never be fully
+        // satisfied, so FetchPlanner charges a full bucket and lets it through (see applyRateLimit) rather
+        // than deadlocking. That only occurs when the limit is set below the produced object size.
+        if (this.laggingFetchDataExecutor != null && laggingConsumerByteRateLimit > 0) {
+            final Bandwidth byteLimit = Bandwidth.builder()
+                .capacity(laggingConsumerByteRateLimit)
+                .refillGreedy(laggingConsumerByteRateLimit, Duration.ofSeconds(1))
+                .build();
+            this.byteRateLimiter = Bucket.builder()
+                .addLimit(byteLimit)
+                .build();
+            this.byteRateCapacity = laggingConsumerByteRateLimit;
+        } else {
+            this.byteRateLimiter = null;
+            this.byteRateCapacity = 0L;
         }
 
         this.isConsolidationFetch = isConsolidationFetch;
@@ -490,6 +519,8 @@ public class Reader implements AutoCloseable {
                     laggingConsumerObjectFetcher,
                     laggingConsumerThresholdMs,
                     rateLimiter,
+                    byteRateLimiter,
+                    byteRateCapacity,
                     laggingFetchDataExecutor,
                     hedgeScheduler,
                     hedgeTtfbThresholdMs,

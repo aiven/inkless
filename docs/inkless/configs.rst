@@ -53,6 +53,14 @@ Under ``inkless.``
   * Default: false
   * Importance: medium
 
+``fetch.lagging.consumer.byte.rate.limit``
+  Maximum bytes per second read from object storage for lagging consumer data fetches. This caps the storage-to-broker (ingress) throughput of the cold path to keep it below the node's baseline network bandwidth. It is independent of and complementary to fetch.lagging.consumer.request.rate.limit: the request-rate limit protects against storage GET request cost (QPS), while this byte-rate limit protects network bandwidth. Set to 0 (default) to disable byte-rate limiting. Metered by the fetched byte range, so it governs storage-to-broker ingress only (not broker-to-consumer egress). A single cold fetch covers one storage object (bounding range), so it should be set at or above the produced object size (produce.buffer.max.bytes); a lower value only throttles the stream of fetches, it cannot split an individual object below its own size. Note: hedge requests triggered by slow fetches are exempt from this limit.
+
+  * Type: long
+  * Default: 0
+  * Valid Values: [0,...]
+  * Importance: medium
+
 ``fetch.lagging.consumer.request.rate.limit``
   Maximum requests per second for lagging consumer data fetches. Set to 0 to disable rate limiting. The upper bound of 10000 req/s is a safety limit to prevent misconfiguration. For high-throughput systems, consider the relationship between this rate limit, thread pool size, and storage backend capacity. At the default rate of 200 req/s with ~50ms per request latency, this allows ~10 concurrent requests. Note: hedge requests triggered by slow fetches are exempt from this limit. In the worst case, effective storage GET rate can reach up to 2x this value.
 
