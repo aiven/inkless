@@ -16,6 +16,12 @@ RELEASE_BRANCH=""
 VERBOSE=false
 SHOW_MISSING=false
 SHOW_ALL=false
+CHECK=false
+
+# Set by check_consistency: number of actionable missing commits (newer than the
+# last cherry-pick; old below-window commits do not count). Used by --check to
+# derive the process exit code.
+ACTIONABLE_COUNT=0
 
 usage() {
     cat <<EOF
@@ -30,6 +36,8 @@ Options:
   --missing         Show only missing commits (not yet cherry-picked)
   --all             Show ALL missing commits (including old ones)
                     By default, only shows commits newer than last cherry-picked
+  --check           Exit non-zero if there are actionable missing commits
+                    (old below-window commits do not count). For CI gates.
   --verbose         Show detailed commit information
   -h, --help        Show this help
 
@@ -39,6 +47,9 @@ Examples:
 
   # Show only missing commits
   $(basename "$0") inkless-4.0 --missing
+
+  # CI gate: nonzero exit when the branch is behind
+  $(basename "$0") inkless-4.0 --check
 
   # Verbose output with commit details
   $(basename "$0") inkless-4.0 --verbose
@@ -57,6 +68,10 @@ parse_args() {
                 ;;
             --all)
                 SHOW_ALL=true
+                shift
+                ;;
+            --check)
+                CHECK=true
                 shift
                 ;;
             --verbose)
@@ -245,6 +260,9 @@ check_consistency() {
     local actionable_count=${#actionable_commits[@]}
     local old_count=${#old_commits[@]}
 
+    # Publish the actionable count for --check (process exit code).
+    ACTIONABLE_COUNT=$actionable_count
+
     # Summary
     echo ""
     echo "## Summary"
@@ -330,10 +348,30 @@ main() {
     parse_args "$@"
 
     require_git_repo
-    fetch_upstream
-    git fetch origin --prune
+    # --check only compares origin/main against origin/<branch> and is meant for CI
+    # gates that populate those refs themselves (pinned to the release target). Skip
+    # BOTH fetches in that mode: fetch_upstream needs an apache/upstream remote that
+    # CI checkouts lack, and `git fetch origin --prune` would reset refs/remotes/origin/*
+    # to the live remote HEAD, clobbering the caller's pinned comparison base.
+    if [[ "$CHECK" != "true" ]]; then
+        fetch_upstream
+        git fetch origin --prune
+    fi
 
     check_consistency "$RELEASE_BRANCH"
+
+    # --check turns the actionable-missing count into a process exit code so CI
+    # can gate on it without parsing the human-readable output. Old (below-window)
+    # commits are NOT actionable and do not fail the check.
+    if [[ "$CHECK" == "true" ]]; then
+        if [[ "$ACTIONABLE_COUNT" -gt 0 ]]; then
+            echo ""
+            echo "CHECK FAILED: $RELEASE_BRANCH has $ACTIONABLE_COUNT actionable missing commit(s)."
+            exit 1
+        fi
+        echo ""
+        echo "CHECK OK: $RELEASE_BRANCH has no actionable missing commits."
+    fi
 }
 
 main "$@"
