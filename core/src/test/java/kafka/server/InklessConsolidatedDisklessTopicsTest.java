@@ -291,8 +291,7 @@ public class InklessConsolidatedDisklessTopicsTest {
         final int duringConsolidationRecords = 50;
         final int totalRecords = preMigrationRecords + duringConsolidationRecords;
         // Large values to force segment rolls so the consolidated WAL is actually tiered to remote storage.
-        final IntFunction<ProducerRecord<String, String>> recordFactory = i ->
-            new ProducerRecord<>(topicName, i % numPartitions, null, TestUtils.randomString(104_857));
+        final IntFunction<ProducerRecord<String, String>> recordFactory = largeValueRecordFactory();
 
         final Uuid topicUuid;
         try (Admin admin = AdminClient.create(commonConfigs)) {
@@ -324,10 +323,7 @@ public class InklessConsolidatedDisklessTopicsTest {
 
             producerThread.start();
             try {
-                log.info("Migrating classic topic {} to diskless (remote storage auto-enabled atomically)", topicName);
-                incrementalAlterTopicConfigs(admin, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
-                TopicMetadataProbe.awaitValue(admin, topicName, DISKLESS_ENABLE_CONFIG, "true");
-                TopicMetadataProbe.awaitValue(admin, topicName, REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+                switchTopicToConsolidatedDiskless(admin);
             } finally {
                 producerThread.join(TimeUnit.SECONDS.toMillis(120));
                 // If the producer is still running (e.g. a send blocked), interrupt it so it unwinds
@@ -350,12 +346,7 @@ public class InklessConsolidatedDisklessTopicsTest {
 
         // Consolidation copies the diskless WAL data into Kafka tiered storage; wait until at least one
         // object lands in the bucket as evidence that consolidation made progress.
-        try (S3Client s3 = s3Container.getS3Client()) {
-            final String bucket = s3Container.getBucketName();
-            TestUtils.waitForCondition(() -> countObjectsWithPrefix(s3, bucket, RSM_OBJECT_KEY_PREFIX) > 0,
-                120_000,
-                () -> "Expected at least one tiered object in the Minio bucket after consolidation");
-        }
+        waitForAtLeastOneTieredObject("after consolidation");
 
         ControlPlaneDisklessSnapshot beforeConsumeSnapshot = readControlPlaneDisklessSnapshot(topicUuid);
         log.info("Control plane snapshot before first consume: {}", beforeConsumeSnapshot);
@@ -370,6 +361,91 @@ public class InklessConsolidatedDisklessTopicsTest {
         waitUntilTieredDisklessDataPrunedFromControlPlane(topicUuid, beforeConsumeSnapshot);
 
         consumeAndVerify(commonConfigs, totalRecords);
+    }
+
+    /**
+     * KC-234: an idle switched (classic→diskless) topic must tier its classic tail.
+     *
+     * <p>Switching seals the partition at offset {@code S} and force-rolls the active segment
+     * so the boundary {@code [base_active, S)} becomes a closed tiering candidate. This test
+     * verifies that even with no post-switch appends, {@code latest-tiered} reaches the seal.
+     */
+    @Test
+    public void testIdleSwitchedTopicTiersClassicTail() throws Exception {
+        // Single partition so seal == preSwitchRecords (no per-partition seal math).
+        numPartitions = 1;
+        topicName = "idle-switched-classic-tail";
+
+        final Map<String, Object> commonConfigs = new HashMap<>();
+        commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        // 30 × ~104 KB ≈ 3 MiB → ~3-4 segments at segment.bytes=1 MiB; the last is the boundary
+        // [base_active, seal) that KC-234 says never tiers.
+        final int preSwitchRecords = 30;
+        final long seal = preSwitchRecords;
+
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            createClassicTopic(admin);
+            produceRecords(commonConfigs, preSwitchRecords, largeValueRecordFactory());
+            switchTopicToConsolidatedDiskless(admin);
+            // The idle case: no post-switch appends. The fix in seal() force-rolls the boundary
+            // segment so it becomes a closed tiering candidate even without further appends.
+        }
+
+        // Evidence that RLM is running: the closed classic segments tier normally.
+        waitForAtLeastOneTieredObject("after the switch (closed classic segments)");
+
+        // The boundary segment must also tier for the classic tail to be durable in remote.
+        // latest-tiered == highestOffsetInRemoteStorage, which is the last record offset in the
+        // last tiered segment. When the boundary [base_active, seal) is tiered, this equals
+        // seal - 1 (the last record before the LEO).
+        final TopicPartition tp = new TopicPartition(topicName, 0);
+        final long lastTieredOffset = seal - 1;
+        final AtomicLong lastSeenTiered = new AtomicLong(-1L);
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            TestUtils.waitForCondition(() -> {
+                long latestTiered = admin.listOffsets(Map.of(tp, OffsetSpec.latestTiered()))
+                    .all().get(10, TimeUnit.SECONDS).get(tp).offset();
+                lastSeenTiered.set(latestTiered);
+                return latestTiered >= lastTieredOffset;
+            }, 60_000, () -> "KC-234: latest-tiered (" + lastSeenTiered.get()
+                + ") never reached the last record offset (" + lastTieredOffset
+                + "); the idle switched topic's classic tail [base_active, " + seal
+                + ") was not tiered");
+        }
+    }
+
+    /**
+     * A record factory that produces ~104 KB values (large enough to roll segments at
+     * {@code segment.bytes=1 MiB} after ~10 records) with round-robin partitioning.
+     */
+    private IntFunction<ProducerRecord<String, String>> largeValueRecordFactory() {
+        return i -> new ProducerRecord<>(topicName, i % numPartitions, null, TestUtils.randomString(104_857));
+    }
+
+    /**
+     * Switch a classic topic to consolidating diskless via a single {@code diskless.enable=true}
+     * alter. With the broker-level consolidation flag on, this auto-enables remote storage
+     * atomically; wait for both config values to converge.
+     */
+    private void switchTopicToConsolidatedDiskless(Admin admin)
+        throws ExecutionException, InterruptedException, TimeoutException {
+        log.info("Migrating classic topic {} to diskless (remote storage auto-enabled atomically)", topicName);
+        incrementalAlterTopicConfigs(admin, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
+        TopicMetadataProbe.awaitValue(admin, topicName, DISKLESS_ENABLE_CONFIG, "true");
+        TopicMetadataProbe.awaitValue(admin, topicName, REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+    }
+
+    /**
+     * Wait until at least one segment has been tiered to the MinIO bucket.
+     */
+    private void waitForAtLeastOneTieredObject(String contextForMessage) throws InterruptedException {
+        try (S3Client s3 = s3Container.getS3Client()) {
+            final String bucket = s3Container.getBucketName();
+            TestUtils.waitForCondition(() -> countObjectsWithPrefix(s3, bucket, RSM_OBJECT_KEY_PREFIX) > 0,
+                120_000,
+                () -> "Expected at least one tiered object in the Minio bucket " + contextForMessage);
+        }
     }
 
     private Uuid createClassicTopic(Admin admin) throws Exception {
