@@ -185,9 +185,34 @@ for pair in "inkless-4.1.2-0.45 4.1.2" "inkless-4.2.1-0.45 4.2.1"; do
 done
 ```
 
-Attach the `.tgz` distributions and publish the Release with `gh release create`/`edit`
+Attach the `.tgz` distributions and publish the Release as in the changelog section below
 (the workflow's `finalize-release` normally does this). Prefer `resume=true` over this whenever
 the workflow is available.
+
+### Changelog and release notes
+
+Every release increment gets an entry in [CHANGELOG.md](CHANGELOG.md) and a curated GitHub
+release-notes summary. Both are generated from the commit history plus the auto-generated
+`configs.rst`/`metrics.rst` diffs between the previous and new `inkless-release-*` tags, then curated
+(metric deltas in particular need review -- see the changelog header for why).
+
+The **curated summary is injected into the GitHub Release body automatically** by the release
+workflow's `finalize-release` job (it runs the generator against the freshly created tag; if
+generation fails it falls back to boilerplate notes). You do **not** need to paste it by hand,
+and re-running publish reproduces the same notes rather than clobbering them.
+
+The **detailed CHANGELOG.md entry is a manual commit to `main` via a normal PR** (there is no
+automation and no auto-PR). Because it is diffed from the new `inkless-release-<N>` tag, it can
+only be produced **after** the release workflow creates that tag -- in practice at the start of
+the next increment's prep. Generate it and prepend to `docs/inkless/CHANGELOG.md`:
+
+```bash
+# Detailed CHANGELOG entry for inkless-release-<N> (prepend to CHANGELOG.md, then PR to main)
+.ai-agents/skills/inkless-changelog/gen-changelog.py --version <N>
+
+# Curated summary (same text the workflow injects) -- for preview/manual override
+.ai-agents/skills/inkless-changelog/gen-changelog.py --version <N> --summary
+```
 
 ### Onboarding a new release branch
 

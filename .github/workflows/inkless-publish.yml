@@ -306,6 +306,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: inkless-release-${{ needs.prepare.outputs.inkless_version }}
+          # Full history + tags so the changelog generator can diff this release
+          # tag against the previous inkless-release-* tag for the release notes.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Gradle
@@ -362,12 +365,38 @@ jobs:
           path: distributions
           merge-multiple: true
 
+      - name: Generate curated changelog summary
+        id: changelog
+        env:
+          INKLESS_VERSION: ${{ needs.prepare.outputs.inkless_version }}
+        run: |
+          # Best-effort: the curated summary is diffed from the previous
+          # inkless-release-* tag. If it can't be produced (e.g. first release,
+          # or the previous tag is missing), fall back to boilerplate-only notes
+          # rather than failing the release.
+          SUMMARY=""
+          if SUMMARY=$(python3 .ai-agents/skills/inkless-changelog/gen-changelog.py \
+                --version "$INKLESS_VERSION" --summary 2>/tmp/changelog.err); then
+            echo "Generated changelog summary ($(printf '%s' "$SUMMARY" | wc -l) lines)"
+          else
+            echo "::warning::Changelog summary generation failed; using boilerplate notes only."
+            cat /tmp/changelog.err || true
+            SUMMARY=""
+          fi
+          # Persist via multiline output for the next step.
+          {
+            echo "summary<<CHANGELOG_EOF"
+            printf '%s\n' "$SUMMARY"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create or update GitHub Release
         env:
           GH_TOKEN:            ${{ secrets.GITHUB_TOKEN }}
           INKLESS_VERSION:     ${{ needs.prepare.outputs.inkless_version }}
           KAFKA_BASE_MATRIX:   ${{ needs.prepare.outputs.kafka_base_matrix }}
           GITHUB_REPOSITORY:   ${{ github.repository }}
+          CHANGELOG_SUMMARY:   ${{ steps.changelog.outputs.summary }}
         run: |
           set -eo pipefail
           RELEASE_TAG="inkless-release-${INKLESS_VERSION}"
@@ -397,6 +426,11 @@ jobs:
                   "$KAFKA_VER" "$tag" "$GITHUB_REPOSITORY" "$tag"
               fi
             done <<< "$TAGS"
+
+            # Append the curated changelog summary when available.
+            if [ -n "${CHANGELOG_SUMMARY//[$'\n\r\t ']/}" ]; then
+              printf '\n%s\n' "$CHANGELOG_SUMMARY"
+            fi
           } > "$NOTES_FILE"
 
           if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
