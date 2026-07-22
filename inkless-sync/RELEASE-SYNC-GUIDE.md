@@ -313,4 +313,4 @@ make test
 
 ## AI-Assisted Sync
 
-For AI-assisted release syncs, see [RELEASE-SYNC-PROMPT.md](RELEASE-SYNC-PROMPT.md) for a ready-to-use prompt.
+For AI-assisted release syncs, use the [`inkless-upstream-sync`](../.ai-agents/skills/inkless-upstream-sync/SKILL.md) skill, which routes the release-sync workflow.

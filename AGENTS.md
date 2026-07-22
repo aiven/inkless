@@ -54,8 +54,10 @@ Read these only when a task touches the relevant area. All docs are under
 | `configs.rst`, `topic_configs.rst`, `metrics.rst` | Auto-generated config/metrics reference.                                     |
 
 Upstream Kafka build, test, and tooling commands are in the root
-[`README.md`](README.md). Upstream sync procedures live in
-[`inkless-sync/`](inkless-sync/).
+[`README.md`](README.md). Upstream sync tooling lives in
+[`inkless-sync/`](inkless-sync/), driven by the
+[`inkless-upstream-sync`](.ai-agents/skills/inkless-upstream-sync/SKILL.md) and
+[`inkless-release-prep`](.ai-agents/skills/inkless-release-prep/SKILL.md) skills.
 
 ### Engineering Rules
 
