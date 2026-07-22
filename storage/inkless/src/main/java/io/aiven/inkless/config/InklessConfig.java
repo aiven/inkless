@@ -23,6 +23,9 @@ import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.network.ListenerName;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.lang.reflect.InvocationTargetException;
 import java.time.Duration;
 import java.util.Collections;
@@ -37,6 +40,8 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.in_memory.InMemoryStorage;
 
 public class InklessConfig extends AbstractConfig {
+
+    private static final Logger LOG = LoggerFactory.getLogger(InklessConfig.class);
     public static final String PREFIX = "inkless.";
 
     public static final String CONTROL_PLANE_PREFIX = "control.plane.";
@@ -208,6 +213,19 @@ public class InklessConfig extends AbstractConfig {
     // At ~50ms per request, 200 req/s = ~10 concurrent requests, balancing throughput with cost control.
     // Tune based on storage backend capacity and budget constraints.
     private static final int FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DEFAULT = 200;
+
+    public static final String FETCH_LAGGING_CONSUMER_BYTE_RATE_LIMIT_CONFIG = "fetch.lagging.consumer.byte.rate.limit";
+    public static final String FETCH_LAGGING_CONSUMER_BYTE_RATE_LIMIT_DOC = "Maximum bytes per second read from object storage for lagging consumer data fetches. "
+        + "This caps the storage-to-broker (ingress) throughput of the cold path to keep it below the node's baseline network bandwidth. "
+        + "It is independent of and complementary to " + FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_CONFIG + ": the request-rate limit "
+        + "protects against storage GET request cost (QPS), while this byte-rate limit protects network bandwidth. "
+        + "Set to 0 (default) to disable byte-rate limiting. "
+        + "Metered by the fetched byte range, so it governs storage-to-broker ingress only (not broker-to-consumer egress). "
+        + "A single cold fetch covers one storage object (bounding range), so it should be set at or above the produced object size "
+        + "(" + PRODUCE_BUFFER_MAX_BYTES_CONFIG + "); a lower value only throttles the stream of fetches, it cannot split an "
+        + "individual object below its own size. "
+        + "Note: hedge requests triggered by slow fetches are exempt from this limit.";
+    private static final long FETCH_LAGGING_CONSUMER_BYTE_RATE_LIMIT_DEFAULT = 0;
 
     public static final String FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG = "fetch.hedge.ttfb.threshold.ms";
     public static final String FETCH_HEDGE_TTFB_THRESHOLD_MS_DOC = "Time-to-first-byte threshold in milliseconds to trigger a hedge request. "
@@ -469,6 +487,14 @@ public class InklessConfig extends AbstractConfig {
             FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DOC
         );
         configDef.define(
+            FETCH_LAGGING_CONSUMER_BYTE_RATE_LIMIT_CONFIG,
+            ConfigDef.Type.LONG,
+            FETCH_LAGGING_CONSUMER_BYTE_RATE_LIMIT_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.MEDIUM,
+            FETCH_LAGGING_CONSUMER_BYTE_RATE_LIMIT_DOC
+        );
+        configDef.define(
             FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_CONFIG,
             ConfigDef.Type.LONG,
             FETCH_HEDGE_TOTAL_TIME_THRESHOLD_MS_DEFAULT,
@@ -672,6 +698,24 @@ public class InklessConfig extends AbstractConfig {
             (List<String>) parsedProps.get(CLIENT_AZ_LISTENER_MAP_CONFIG);
         parseClientAzListenerMap(azListenerEntries);
 
+        // Warn (do not reject) if the lagging byte-rate limit is below the produced object size.
+        // A single cold fetch covers one storage object (bounding range) and is indivisible, so a limit
+        // below the object size cannot throttle an individual fetch below its own size: such fetches are
+        // charged a full bucket and let through (tracked via LaggingConsumerByteRateOversizedRate).
+        // produce.buffer.max.bytes is only a best-effort, node-local estimate of object size, so this is
+        // a heuristic sanity check rather than a guarantee.
+        final long laggingByteRateLimit =
+            ((Number) parsedProps.get(FETCH_LAGGING_CONSUMER_BYTE_RATE_LIMIT_CONFIG)).longValue();
+        final int produceBufferMaxBytes =
+            ((Number) parsedProps.get(PRODUCE_BUFFER_MAX_BYTES_CONFIG)).intValue();
+        if (laggingByteRateLimit > 0 && laggingByteRateLimit < produceBufferMaxBytes) {
+            LOG.warn("{} ({} bytes/s) is below {} ({} bytes); individual cold fetches larger than the limit "
+                    + "cannot be throttled and will pass through charged a full bucket. This is likely a "
+                    + "misconfiguration - set the byte-rate limit at or above the produced object size.",
+                FETCH_LAGGING_CONSUMER_BYTE_RATE_LIMIT_CONFIG, laggingByteRateLimit,
+                PRODUCE_BUFFER_MAX_BYTES_CONFIG, produceBufferMaxBytes);
+        }
+
         return configDef;
     }
 
@@ -796,6 +840,10 @@ public class InklessConfig extends AbstractConfig {
 
     public int fetchLaggingConsumerRequestRateLimit() {
         return getInt(FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_CONFIG);
+    }
+
+    public long fetchLaggingConsumerByteRateLimit() {
+        return getLong(FETCH_LAGGING_CONSUMER_BYTE_RATE_LIMIT_CONFIG);
     }
 
     public long fetchHedgeTtfbThresholdMs() {

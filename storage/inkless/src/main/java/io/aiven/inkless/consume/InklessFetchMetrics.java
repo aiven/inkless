@@ -102,7 +102,17 @@ public class InklessFetchMetrics {
     // Always records wait time to avoid histogram bias - zero-wait cases show when rate limiting is NOT a bottleneck.
     // Use to monitor: rate limiting latency distribution, actual throttling pressure, and limiter effectiveness.
     private static final String LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME = "LaggingConsumerRateLimitWaitTime";
-    private static final String LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME_DOC = "Wait time for rate-limited lagging consumer requests in milliseconds";
+    private static final String LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME_DOC = "Combined wait time (request-rate plus byte-rate limiters) for rate-limited lagging consumer requests in milliseconds";
+
+    private static final String LAGGING_CONSUMER_REQUEST_RATE_THROTTLED_RATE = "LaggingConsumerRequestRateThrottledRate";
+    private static final String LAGGING_CONSUMER_REQUEST_RATE_THROTTLED_RATE_DOC = "Rate of lagging consumer requests that had to wait on the request-rate limiter (cost/QPS protection) per second. "
+        + "Together with LaggingConsumerByteRateThrottledRate, attributes which limiter is the binding constraint (the combined wait is in LaggingConsumerRateLimitWaitTime).";
+    private static final String LAGGING_CONSUMER_BYTE_RATE_THROTTLED_RATE = "LaggingConsumerByteRateThrottledRate";
+    private static final String LAGGING_CONSUMER_BYTE_RATE_THROTTLED_RATE_DOC = "Rate of lagging consumer requests that had to wait on the byte-rate limiter (bandwidth protection) per second. "
+        + "Together with LaggingConsumerRequestRateThrottledRate, attributes which limiter is the binding constraint (the combined wait is in LaggingConsumerRateLimitWaitTime).";
+    private static final String LAGGING_CONSUMER_BYTE_RATE_OVERSIZED_RATE = "LaggingConsumerByteRateOversizedRate";
+    private static final String LAGGING_CONSUMER_BYTE_RATE_OVERSIZED_RATE_DOC = "Rate of lagging consumer fetches whose byte range exceeds the byte-rate limiter capacity (fetch.lagging.consumer.byte.rate.limit) per second. "
+        + "Such a fetch cannot be split below its own size, so it is charged a full bucket and allowed through. A non-zero rate indicates the byte-rate limit is set below the produced object size (likely misconfiguration).";
 
     private static final String HEDGE_REQUEST_RATE = "HedgeRequestRate";
     private static final String HEDGE_REQUEST_RATE_DOC = "Rate of hedged fetch requests issued per second";
@@ -147,6 +157,9 @@ public class InklessFetchMetrics {
             new MetricNameTemplate(LAGGING_CONSUMER_REQUEST_RATE, GROUP, LAGGING_CONSUMER_REQUEST_RATE_DOC),
             new MetricNameTemplate(LAGGING_CONSUMER_REQUEST_REJECTED_RATE, GROUP, LAGGING_CONSUMER_REQUEST_REJECTED_RATE_DOC),
             new MetricNameTemplate(LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME, GROUP, LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME_DOC),
+            new MetricNameTemplate(LAGGING_CONSUMER_REQUEST_RATE_THROTTLED_RATE, GROUP, LAGGING_CONSUMER_REQUEST_RATE_THROTTLED_RATE_DOC),
+            new MetricNameTemplate(LAGGING_CONSUMER_BYTE_RATE_THROTTLED_RATE, GROUP, LAGGING_CONSUMER_BYTE_RATE_THROTTLED_RATE_DOC),
+            new MetricNameTemplate(LAGGING_CONSUMER_BYTE_RATE_OVERSIZED_RATE, GROUP, LAGGING_CONSUMER_BYTE_RATE_OVERSIZED_RATE_DOC),
             new MetricNameTemplate(HEDGE_REQUEST_RATE, GROUP, HEDGE_REQUEST_RATE_DOC),
             new MetricNameTemplate(HEDGE_TTFB_TRIGGERED_RATE, GROUP, HEDGE_TTFB_TRIGGERED_RATE_DOC),
             new MetricNameTemplate(HEDGE_TOTAL_TIME_TRIGGERED_RATE, GROUP, HEDGE_TOTAL_TIME_TRIGGERED_RATE_DOC),
@@ -185,6 +198,9 @@ public class InklessFetchMetrics {
     private final Meter laggingConsumerRequestRate;
     private final Meter laggingConsumerRejectedRate;
     private final Histogram laggingRateLimitWaitTime;
+    private final Meter laggingRequestRateThrottledRate;
+    private final Meter laggingByteRateThrottledRate;
+    private final Meter laggingByteRateOversizedRate;
     private final Meter hedgeRequestRate;
     private final Meter hedgeTtfbTriggeredRate;
     private final Meter hedgeTotalTimeTriggeredRate;
@@ -225,6 +241,9 @@ public class InklessFetchMetrics {
         laggingConsumerRequestRate = metricsGroup.newMeter(LAGGING_CONSUMER_REQUEST_RATE, "requests", TimeUnit.SECONDS, Map.of());
         laggingConsumerRejectedRate = metricsGroup.newMeter(LAGGING_CONSUMER_REQUEST_REJECTED_RATE, "rejections", TimeUnit.SECONDS, Map.of());
         laggingRateLimitWaitTime = metricsGroup.newHistogram(LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME, true, Map.of());
+        laggingRequestRateThrottledRate = metricsGroup.newMeter(LAGGING_CONSUMER_REQUEST_RATE_THROTTLED_RATE, "requests", TimeUnit.SECONDS, Map.of());
+        laggingByteRateThrottledRate = metricsGroup.newMeter(LAGGING_CONSUMER_BYTE_RATE_THROTTLED_RATE, "requests", TimeUnit.SECONDS, Map.of());
+        laggingByteRateOversizedRate = metricsGroup.newMeter(LAGGING_CONSUMER_BYTE_RATE_OVERSIZED_RATE, "requests", TimeUnit.SECONDS, Map.of());
         hedgeRequestRate = metricsGroup.newMeter(HEDGE_REQUEST_RATE, "hedges", TimeUnit.SECONDS, Map.of());
         hedgeTtfbTriggeredRate = metricsGroup.newMeter(HEDGE_TTFB_TRIGGERED_RATE, "hedges", TimeUnit.SECONDS, Map.of());
         hedgeTotalTimeTriggeredRate = metricsGroup.newMeter(HEDGE_TOTAL_TIME_TRIGGERED_RATE, "hedges", TimeUnit.SECONDS, Map.of());
@@ -321,6 +340,9 @@ public class InklessFetchMetrics {
         metricsGroup.removeMetric(LAGGING_CONSUMER_REQUEST_RATE);
         metricsGroup.removeMetric(LAGGING_CONSUMER_REQUEST_REJECTED_RATE);
         metricsGroup.removeMetric(LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME);
+        metricsGroup.removeMetric(LAGGING_CONSUMER_REQUEST_RATE_THROTTLED_RATE);
+        metricsGroup.removeMetric(LAGGING_CONSUMER_BYTE_RATE_THROTTLED_RATE);
+        metricsGroup.removeMetric(LAGGING_CONSUMER_BYTE_RATE_OVERSIZED_RATE);
         metricsGroup.removeMetric(HEDGE_REQUEST_RATE);
         metricsGroup.removeMetric(HEDGE_TTFB_TRIGGERED_RATE);
         metricsGroup.removeMetric(HEDGE_TOTAL_TIME_TRIGGERED_RATE);
@@ -438,6 +460,37 @@ public class InklessFetchMetrics {
      */
     public void recordRateLimitWaitTime(long waitMs) {
         laggingRateLimitWaitTime.update(waitMs);
+    }
+
+    /**
+     * Records that a lagging consumer request had to wait on the request-rate limiter
+     * (cost/QPS protection). Call only when the non-blocking acquire failed and a blocking
+     * wait was required, so the meter reflects how often request-rate is the binding constraint.
+     * Metric: LaggingConsumerRequestRateThrottledRate
+     */
+    public void recordRequestRateThrottled() {
+        laggingRequestRateThrottledRate.mark();
+    }
+
+    /**
+     * Records that a lagging consumer request had to wait on the byte-rate limiter
+     * (bandwidth protection). Call only when the non-blocking acquire failed and a blocking
+     * wait was required, so the meter reflects how often byte-rate is the binding constraint.
+     * Metric: LaggingConsumerByteRateThrottledRate
+     */
+    public void recordByteRateThrottled() {
+        laggingByteRateThrottledRate.mark();
+    }
+
+    /**
+     * Records a lagging consumer fetch whose byte range exceeds the byte-rate limiter capacity.
+     * Such a fetch is charged a full bucket and allowed through (it cannot be split below its own
+     * size). A non-zero rate indicates fetch.lagging.consumer.byte.rate.limit is set below the
+     * produced object size (likely misconfiguration).
+     * Metric: LaggingConsumerByteRateOversizedRate
+     */
+    public void recordByteRateOversized() {
+        laggingByteRateOversizedRate.mark();
     }
 
     public void recordHedgeRequest() {
