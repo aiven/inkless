@@ -1735,12 +1735,13 @@ class ReplicaManager(val config: KafkaConfig,
       return Map.empty
     }
 
-    // A consolidating partition's converted delete offset X: the concrete requested offset, or -- for
-    // HIGH_WATERMARK, which on a consolidating topic always reaches into the WAL and thus runs the
-    // diskless leg -- the low watermark that leg returned (= log_start_offset = HWM).
+    // Convert each delete offset: use the requested offset, or the leg's returned low watermark when
+    // the request was HIGH_WATERMARK (which always reaches the WAL, so the diskless leg ran).
     val requests = new java.util.ArrayList[AdvanceCrossTierLogStartOffsetRequest]()
     val partitionsInOrder = mutable.ArrayBuffer.empty[TopicPartition]
     response.foreach { case (topicPartition, result) =>
+      // Non-consolidating partitions and errors will be skipped here as they're handled in the caller
+      // finalizeCrossTierAndRespond by returning their original response.
       if (result.errorCode == Errors.NONE.code &&
         _inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)) {
         val requested = offsetPerPartition.getOrElse(topicPartition, DeleteRecordsRequest.HIGH_WATERMARK)
