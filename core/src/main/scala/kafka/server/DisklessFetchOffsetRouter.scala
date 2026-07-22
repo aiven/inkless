@@ -136,15 +136,15 @@ class DisklessFetchOffsetRouter(
           classicLookup()
 
         case ListOffsetsRequest.EARLIEST_TIMESTAMP =>
-          // Classic owns the earliest offset only while the local log still holds the pre-switch
-          // prefix (classicLogStartOffset < classicToDisklessStartOffset). A born-consolidated
-          // partition has no committed switch offset (NO_CLASSIC_TO_DISKLESS_START_OFFSET == -1),
-          // so its classic log never owns the earliest: the RLM-pinned local log start does not
-          // track cross-tier retention in time, whereas the control-plane leg does. Route those
-          // to diskless, whose list_offsets_v1 returns COALESCE(remote_log_start_offset,
-          // log_start_offset) and therefore reflects retention that advanced the remote/diskless
-          // start above 0 on a born-consolidated topic.
-          if (classicLogStartOffsetProvider(topicPartition).exists(_ < classicToDisklessStartOffset)) {
+          // Route every consolidating partition to the control plane, the authoritative
+          // broker-agnostic cross-tier earliest (COALESCE(remote_log_start_offset, log_start_offset)).
+          // The local classic log start is unsafe: it is frozen at the switch on followers, so a
+          // client the metadata transformer sends to a follower would see a stale earliest, and
+          // retention/DeleteRecords advance the control plane, not every replica's local log.
+          // Non-consolidating switched partitions have no such tracking, so they keep the classic leg
+          // while it still owns the pre-switch prefix (classicLogStartOffset < classicToDisklessStartOffset).
+          if (!isConsolidatingPartition &&
+              classicLogStartOffsetProvider(topicPartition).exists(_ < classicToDisklessStartOffset)) {
             classicLookup()
           } else {
             asStatus(topicPartition, disklessLookup)
