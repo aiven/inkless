@@ -920,9 +920,12 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
 
         private void maybeUpdateLogStartOffsetOnBecomingLeader(UnifiedLog log) throws RemoteStorageException {
             if (!isLogStartOffsetUpdated) {
-                // For a consolidating diskless partition, prefer the control-plane cross-tier earliest so a
+                // For a consolidating diskless partition, prefer the raw control-plane remote log start so a
                 // freshly-elected leader does not report its local seal as the cross-tier earliest (which
-                // would push the broker-agnostic earliest up to the seal). No-op for classic topics.
+                // would push the broker-agnostic earliest up to the seal). This is deliberately the raw
+                // remote start, not ListOffsets(EARLIEST): the latter COALESCEs to the WAL prune frontier
+                // when the remote start is unreported, which would lock the wrong value in via the
+                // forward-only advance. No-op for classic topics.
                 OptionalLong override = logStartOffsetOverride.apply(topicIdPartition.topicPartition());
                 long logStartOffset = override.isPresent()
                         ? override.getAsLong()
@@ -1298,22 +1301,25 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
          * The log start offset that drives the remote-retention log-start-offset reclaim floor.
          *
          * <p>Classic topics use the broker-local log start. A consolidating diskless partition instead uses
-         * the control-plane cross-tier earliest ({@link RemoteLogManager#logStartOffsetOverride}): on a
+         * the raw control-plane remote log start ({@link RemoteLogManager#logStartOffsetOverride}): on a
          * rebuilt leader the local log start is pinned at the classic-to-diskless seal (and only increments),
          * so it would delete the whole remote classic prefix {@code [earliest, seal)} though only
-         * {@code [0, earliest)} was removed.
+         * {@code [0, earliest)} was removed. This is deliberately the raw remote start, not
+         * {@code ListOffsets(EARLIEST)}: the latter COALESCEs to the WAL prune frontier when the remote
+         * start is unreported, which would itself over-reclaim still-live remote segments and lock the
+         * wrong value in via the forward-only control-plane advance.
          *
-         * <p>If the override is empty for such a partition (control plane unreachable or metadata not yet
-         * propagated) we fail safe to the remote earliest
+         * <p>If the override is empty for such a partition (control plane unreachable, metadata not yet
+         * propagated, or the remote start simply not reported yet) we fail safe to the remote earliest
          * ({@link RemoteLogManager#findLogStartOffset(TopicIdPartition, UnifiedLog)}), not the seal: nothing
-         * over-reclaims this cycle, time/size retention still applies, and the log-start reclaim retries once
-         * the cross-tier earliest resolves. Deferring is safe since remote deletes are irreversible.
+         * over-reclaims this cycle, time/size retention still applies, and the log-start reclaim retries
+         * once the remote start resolves. Deferring is safe since remote deletes are irreversible.
          */
         private long reclaimFloorLogStartOffset(UnifiedLog log) throws RemoteStorageException {
             final TopicPartition tp = topicIdPartition.topicPartition();
-            final OptionalLong crossTierEarliest = logStartOffsetOverride.apply(tp);
-            if (crossTierEarliest.isPresent()) {
-                return crossTierEarliest.getAsLong();
+            final OptionalLong crossTierRemoteStart = logStartOffsetOverride.apply(tp);
+            if (crossTierRemoteStart.isPresent()) {
+                return crossTierRemoteStart.getAsLong();
             }
             if (isConsolidatingDisklessPartition.test(tp)) {
                 return findLogStartOffset(topicIdPartition, log);
