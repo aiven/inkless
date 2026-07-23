@@ -1789,12 +1789,47 @@ class ReplicaManager(val config: KafkaConfig,
   /**
    * Whether `topicPartition` is a consolidating diskless topic on this broker. Used by the
    * [[org.apache.kafka.server.log.remote.storage.RemoteLogManager]] to pick its reclaim-floor fallback
-   * when [[crossTierEarliestOffset]] is unavailable: such a partition must not fall back to the
+   * when [[crossTierRemoteLogStartOffset]] is unavailable: such a partition must not fall back to the
    * broker-local log start (pinned at the seal on a rebuilt leader). Mirrors the guard in
-   * [[crossTierEarliestOffset]] so the two agree.
+   * [[crossTierRemoteLogStartOffset]] so the two agree.
    */
   def isConsolidatingDisklessPartition(topicPartition: TopicPartition): Boolean =
     inklessSharedState.isDefined && _inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
+
+  /**
+   * The raw cross-tier remote log start (`logs.remote_log_start_offset`) for a consolidating diskless
+   * partition, present only when the partition's classic leader has actually reported it; empty when it
+   * is unset (NULL), for non-consolidating/non-inkless partitions, or when unresolved.
+   *
+   * This is the reclaim floor and become-leader report source for the
+   * [[org.apache.kafka.server.log.remote.storage.RemoteLogManager]]. Unlike [[crossTierEarliestOffset]]
+   * it deliberately does NOT fall back to `log_start_offset` (the WAL prune frontier): that frontier can
+   * run ahead of the true remote start, so using it as the reclaim floor would delete still-live remote
+   * segments, and reporting it back would lock the wrong value in via the forward-only control-plane
+   * advance. Returning empty here makes the RLM fail safe to the true remote earliest instead.
+   *
+   * Reads the dedicated control-plane accessor rather than the write-through
+   * [[io.aiven.inkless.cache.CrossTierLogStartCache]], since that cache is also populated by
+   * ListOffsets(EARLIEST) read-throughs and can therefore hold a COALESCE'd frontier value.
+   */
+  def crossTierRemoteLogStartOffset(topicPartition: TopicPartition): OptionalLong = {
+    val sharedState = inklessSharedState.orNull
+    if (sharedState == null || !_inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)) {
+      return OptionalLong.empty()
+    }
+    val topicId = _inklessMetadataView.getTopicId(topicPartition.topic)
+    if (topicId == null || topicId.equals(Uuid.ZERO_UUID)) {
+      return OptionalLong.empty()
+    }
+    val tidp = new TopicIdPartition(topicId, topicPartition.partition, topicPartition.topic)
+    try {
+      sharedState.controlPlane().getCrossTierLogStart(tidp)
+    } catch {
+      case e: Exception =>
+        warn(s"Failed to resolve cross-tier remote log start for $topicPartition from the control plane", e)
+        OptionalLong.empty()
+    }
+  }
 
   /**
    * The authoritative, broker-agnostic cross-tier earliest offset for a consolidating diskless
@@ -1832,7 +1867,7 @@ class ReplicaManager(val config: KafkaConfig,
       }
       OptionalLong.empty()
     } catch {
-      case e: Throwable =>
+      case e: Exception =>
         warn(s"Failed to resolve cross-tier earliest offset for $topicPartition from the control plane", e)
         OptionalLong.empty()
     }

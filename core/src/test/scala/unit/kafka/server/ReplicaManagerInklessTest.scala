@@ -1185,6 +1185,97 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testCrossTierRemoteLogStartOffsetReturnsEmptyWhenRemoteStartUnreported(): Unit = {
+    // Data-loss guard (the whole point of the raw accessor): when remote_log_start_offset is NULL the
+    // dedicated control-plane read returns empty. The accessor must propagate that (NOT the WAL prune
+    // frontier that ListOffsets(EARLIEST) would COALESCE to), so the RLM reclaim floor / become-leader
+    // report fall back to the true remote earliest instead of over-reclaiming still-live remote segments.
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.getCrossTierLogStart(any())).thenReturn(OptionalLong.empty())
+    val cache = mock(classOf[CrossTierLogStartCache])
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      crossTierLogStartCache = Some(cache),
+    )
+    try {
+      assertEquals(OptionalLong.empty(),
+        replicaManager.crossTierRemoteLogStartOffset(disklessTopicPartition.topicPartition()))
+      // The raw accessor bypasses the shared cross-tier cache: that cache is also populated by
+      // ListOffsets(EARLIEST) read-throughs and can therefore hold a COALESCE'd frontier value.
+      verify(cache, never()).get(any())
+      verify(cache, never()).put(any(), anyLong())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testCrossTierRemoteLogStartOffsetReturnsReportedValue(): Unit = {
+    // Once the classic leader has reported a remote start, the accessor returns it verbatim (still
+    // bypassing the shared cache).
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.getCrossTierLogStart(any())).thenReturn(OptionalLong.of(150L))
+    val cache = mock(classOf[CrossTierLogStartCache])
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      crossTierLogStartCache = Some(cache),
+    )
+    try {
+      assertEquals(OptionalLong.of(150L),
+        replicaManager.crossTierRemoteLogStartOffset(disklessTopicPartition.topicPartition()))
+      verify(cache, never()).get(any())
+      verify(cache, never()).put(any(), anyLong())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testCrossTierRemoteLogStartOffsetReturnsEmptyForNonConsolidatingTopic(): Unit = {
+    // Short-circuits to empty without touching the control plane for classic / pure-diskless topics.
+    val controlPlane = mock(classOf[ControlPlane])
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      consolidatingDisklessTopics = Set.empty,
+    )
+    try {
+      assertEquals(OptionalLong.empty(),
+        replicaManager.crossTierRemoteLogStartOffset(disklessTopicPartition.topicPartition()))
+      verify(controlPlane, never()).getCrossTierLogStart(any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testCrossTierRemoteLogStartOffsetReturnsEmptyWhenControlPlaneThrows(): Unit = {
+    // A control-plane outage in the reclaim window yields empty (not an exception); the RLM then fails
+    // safe to the true remote earliest rather than the local seal.
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.getCrossTierLogStart(any())).thenThrow(new ControlPlaneException("boom"))
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    )
+    try {
+      assertEquals(OptionalLong.empty(),
+        replicaManager.crossTierRemoteLogStartOffset(disklessTopicPartition.topicPartition()))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testIsConsolidatingDisklessPartitionReflectsMetadataView(): Unit = {
     // The RLM reclaim-floor fail-safe keys off this accessor; it must be true exactly for consolidating
     // diskless topics (so they never fall back to the local seal) and false for classic/pure-diskless.

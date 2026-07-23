@@ -36,6 +36,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -491,6 +492,19 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             responses.add(AdvanceCrossTierLogStartOffsetResponse.success(logInfo.remoteLogStartOffset));
         }
         return responses;
+    }
+
+    @Override
+    public synchronized OptionalLong getCrossTierLogStart(final TopicIdPartition topicIdPartition) {
+        // Direct O(1) lookup like listOffset: the caller (ReplicaManager) passes a fully-formed
+        // TopicIdPartition. This differs from advanceCrossTierLogStartOffset, whose request has no topic
+        // name and so must fall back to the O(n) findTopicIdPartition scan.
+        final LogInfo logInfo = logs.get(topicIdPartition);
+        if (logInfo == null) {
+            return OptionalLong.empty();
+        }
+        // remoteLogStartOffset is -1 (the NULL sentinel) until the classic leader reports it.
+        return logInfo.remoteLogStartOffset < 0 ? OptionalLong.empty() : OptionalLong.of(logInfo.remoteLogStartOffset);
     }
 
     @Override
