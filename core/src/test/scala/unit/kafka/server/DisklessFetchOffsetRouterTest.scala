@@ -516,7 +516,7 @@ class DisklessFetchOffsetRouterTest {
 
   @Test
   def consolidatingSwitchedEarliestIsConsistentAcrossBrokersRegardlessOfLocalClassicLogStart(): Unit = {
-    // Problem A regression guard: two brokers with different local classic log starts (leader at 60,
+    // Cross-broker EARLIEST consistency guard: two brokers with different local classic log starts (leader at 60,
     // follower still frozen at 0, both below the seal of 100) must return the SAME earliest. Both
     // route to the control plane, so neither consults its local classic log.
     when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)

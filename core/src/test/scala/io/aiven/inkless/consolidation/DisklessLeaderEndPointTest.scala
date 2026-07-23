@@ -1043,7 +1043,7 @@ class DisklessLeaderEndPointTest {
 
   @Test
   def testFetchUsesCrossTierEarliestAsWholeLogStartForConsolidatingLeader(): Unit = {
-    // Problem B: on a freshly-rebuilt consolidating leader the local log start is pinned at the seal
+    // On a freshly-rebuilt consolidating leader the local log start is pinned at the seal
     // (400) even though DeleteRecords / retention left the true earliest at 200 (tracked in the control
     // plane). The endpoint must report the cross-tier earliest (200) as the whole-log start so that (a) a
     // read of the surviving remote prefix [200, 400) redirects to tiered storage instead of being
@@ -1122,8 +1122,8 @@ class DisklessLeaderEndPointTest {
     // start -- which on a freshly-rebuilt consolidating leader is the seal (400). A read of the
     // surviving remote prefix [200, 400) then sees requestedOffset (200) < reported logStartOffset (400),
     // so it is treated as below the whole-log start (a genuine out-of-range) and is NOT redirected to
-    // tiered storage: the surviving prefix is effectively invisible. This pins the transient Problem B
-    // reversion that the empty fallback implies, so the risk is visible rather than silent.
+    // tiered storage: the surviving prefix is effectively invisible. This pins the transient reversion to
+    // the pre-fix seal-based behavior that the empty fallback implies, so the risk is visible rather than silent.
     val fetchHandler = mock(classOf[FetchHandler])
     val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
     val replicaManager = mock(classOf[ReplicaManager])

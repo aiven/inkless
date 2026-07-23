@@ -2620,7 +2620,7 @@ public class RemoteLogManagerTest {
     @Test
     public void testConsolidatingReclaimFailsSafeWhenOverrideAbsent()
             throws RemoteStorageException, ExecutionException, InterruptedException, IOException {
-        // Fail-safe (Problem B hardening): when the log-start-offset override yields empty for a
+        // Fail-safe (over-reclaim hardening): when the log-start-offset override yields empty for a
         // CONSOLIDATING partition (control-plane outage or not-yet-propagated metadata on the RLM leader)
         // the reclaim floor must NOT be derived from findLogStartOffset. On a rebuilt leader whose
         // leader-epoch cache has been truncated to the seal, findLogStartOffset itself returns the seal
@@ -2686,7 +2686,7 @@ public class RemoteLogManagerTest {
     @Test
     public void testConsolidatingBecomeLeaderSkipsReportWhenOverrideAbsent()
             throws RemoteStorageException, InterruptedException, IOException {
-        // Fail-safe (Problem B hardening, become-leader leg): on a consolidating partition whose cross-tier
+        // Fail-safe (over-reclaim hardening, become-leader leg): on a consolidating partition whose cross-tier
         // remote start is not reported yet, the become-leader log-start report must be skipped rather than
         // falling back to findLogStartOffset. On a rebuilt leader with a seal-truncated leader-epoch cache
         // that fallback returns the seal, and reporting it would persist the seal permanently through the
