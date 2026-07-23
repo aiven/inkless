@@ -124,13 +124,19 @@ public class GcsStorage extends StorageBackend {
     }
 
     @Override
-    public void delete(final Set<ObjectKey> keys) throws StorageBackendException {
+    public Set<ObjectKey> delete(final Set<ObjectKey> keys) throws StorageBackendException {
         try {
             final Set<BlobId> ids = keys.stream()
                     .map(k -> BlobId.of(this.bucketName,k.value()))
                     .collect(Collectors.toSet());
 
+            // storage.delete returns a List<Boolean> of deleted-vs-already-absent, but a genuine
+            // failure surfaces as a thrown BaseServiceException rather than a per-blob flag, so we
+            // cannot extract a confirmed-deleted subset the way the S3 backend does. This stays
+            // all-or-nothing: on success every key is gone (idempotent), and on failure we delete
+            // nothing and let the FileCleaner cycle retry the whole set.
             storage.delete(ids);
+            return Set.copyOf(keys);
         } catch (final BaseServiceException e) {
             throw new StorageBackendException("Failed to delete " + keys, e);
         }

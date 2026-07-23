@@ -32,12 +32,16 @@ import com.azure.storage.blob.specialized.SpecializedBlobClientBuilder;
 import com.azure.storage.common.StorageSharedKeyCredential;
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -52,6 +56,8 @@ import reactor.core.Exceptions;
 
 @CoverageIgnore // tested on integration level
 public final class AzureBlobStorage extends StorageBackend {
+    private static final Logger LOGGER = LoggerFactory.getLogger(AzureBlobStorage.class);
+
     private AzureBlobStorageConfig config;
     private BlobContainerClient blobContainerClient;
     private MetricCollector.MetricsPolicy policy;
@@ -195,16 +201,23 @@ public final class AzureBlobStorage extends StorageBackend {
     }
 
     @Override
-    public void delete(final Set<ObjectKey> keys) throws StorageBackendException {
-        try {
-            for (ObjectKey key : keys) {
+    public Set<ObjectKey> delete(final Set<ObjectKey> keys) throws StorageBackendException {
+        // Deleting one blob at a time (there is no Azure batch-delete dependency here), so a failure
+        // on one key must not abandon the rest: accumulate the keys that were removed and leave the
+        // failed ones for the next FileCleaner cycle. deleteIfExists() returns true if the blob was
+        // deleted and false if it was already absent; both mean the key is gone (idempotent).
+        final Set<ObjectKey> deleted = new HashSet<>();
+        for (final ObjectKey key : keys) {
+            try {
                 blobContainerClient.getBlobClient(key.value()).deleteIfExists();
+                deleted.add(key);
+            } catch (final BlobStorageException e) {
+                LOGGER.warn("Failed to delete {}; leaving it for the next cycle", key, e);
+            } catch (final RuntimeException e) {
+                LOGGER.warn("Failed to delete {}; leaving it for the next cycle", key, Exceptions.unwrap(e));
             }
-        } catch (final BlobStorageException e) {
-            throw new StorageBackendException("Failed to delete " + keys, e);
-        } catch (final RuntimeException e) {
-            throw unwrapReactorExceptions(e, "Failed to delete " + keys);
         }
+        return deleted;
     }
 
     private StorageBackendException unwrapReactorExceptions(final RuntimeException e, final String message) {

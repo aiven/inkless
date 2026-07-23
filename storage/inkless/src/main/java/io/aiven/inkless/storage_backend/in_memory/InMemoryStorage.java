@@ -110,9 +110,10 @@ public final class InMemoryStorage extends StorageBackend {
     }
 
     @Override
-    public void delete(final Set<ObjectKey> keys) throws StorageBackendException {
+    public Set<ObjectKey> delete(final Set<ObjectKey> keys) throws StorageBackendException {
         Objects.requireNonNull(keys, "keys cannot be null");
         keys.forEach(storage::remove);
+        return Set.copyOf(keys);
     }
 
     @Override
