@@ -18,6 +18,7 @@
 package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.common.Configurable;
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
@@ -25,6 +26,7 @@ import java.io.Closeable;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.Set;
 
 import io.aiven.inkless.common.ObjectFormat;
@@ -92,6 +94,20 @@ public interface ControlPlane extends Closeable, Configurable {
      * @return list of responses, one per request, in the same order as the requests.
      */
     List<AdvanceCrossTierLogStartOffsetResponse> advanceCrossTierLogStartOffset(List<AdvanceCrossTierLogStartOffsetRequest> requests);
+
+    /**
+     * The raw cross-tier (remote) log start offset stored for a partition, or empty when it has not
+     * been reported yet ({@code remote_log_start_offset IS NULL}) or the partition is unknown.
+     * <p>
+     * Unlike {@code ListOffsets(EARLIEST)} this deliberately does NOT fall back to
+     * {@code log_start_offset} (the diskless WAL prune frontier). That frontier can run ahead of the
+     * true remote start, so a caller using it as a reclaim floor would delete still-live remote
+     * segments. Returning empty lets such callers fail safe to the true remote earliest instead.
+     *
+     * @param topicIdPartition the partition to read
+     * @return the reported remote log start offset, or empty when unreported/unknown
+     */
+    OptionalLong getCrossTierLogStart(TopicIdPartition topicIdPartition);
 
     List<FileToDelete> getFilesToDelete();
 

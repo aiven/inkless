@@ -79,6 +79,7 @@ import org.apache.kafka.storage.internals.log.TxnIndexSearchResult;
 import org.apache.kafka.storage.internals.log.UnifiedLog;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
+import com.yammer.metrics.core.Meter;
 import com.yammer.metrics.core.Timer;
 
 import org.slf4j.Logger;
@@ -148,12 +149,32 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RemoteLogManager.class);
     private static final String REMOTE_LOG_READER_THREAD_NAME_PATTERN = "remote-log-reader-%d";
+    // Inkless: registered on this RLM's metricsGroup (kafka.log.remote:type=RemoteLogManager) rather than in the
+    // upstream RemoteStorageMetrics, to keep the diskless-specific metric isolated from upstream tiered-storage code.
+    private static final String CROSS_TIER_LOG_START_REPORT_DEFERRED_PER_SEC = "CrossTierLogStartReportDeferredPerSec";
     private final RemoteLogManagerConfig rlmConfig;
     private final int brokerId;
     private final String logDir;
     private final Time time;
     private final Function<TopicPartition, Optional<UnifiedLog>> fetchLog;
     private final BiConsumer<TopicPartition, Long> updateRemoteLogStartOffset;
+    // Inkless: the reclaim floor (and become-leader log-start report) for consolidating diskless
+    // partitions. Their broker-local UnifiedLog.logStartOffset can be pinned at the classic-to-diskless
+    // seal on a rebuilt leader, so using it would over-reclaim the remote classic prefix and report the
+    // seal as the cross-tier earliest. Returns the raw control-plane remote log start, present only once
+    // the classic leader has reported it and not COALESCEd to the WAL prune frontier (which could also
+    // over-reclaim). Empty for classic/non-inkless partitions and for an unreported remote start; when
+    // empty for a consolidating partition the reclaim floor and the become-leader report both defer rather
+    // than trust the local seal (see reclaimFloorLogStartOffset and maybeUpdateLogStartOffsetOnBecomingLeader).
+    // Non-consolidating partitions keep the upstream log.logStartOffset() behavior.
+    private final Function<TopicPartition, OptionalLong> logStartOffsetOverride;
+    // Inkless: tells whether a partition is a consolidating diskless topic. Used with an empty
+    // {@link #logStartOffsetOverride} to decide the fail-safe: a consolidating partition must never fall
+    // back to the broker-local log start (the classic-to-diskless seal on a rebuilt leader), nor to
+    // findLogStartOffset (which returns that same seal once the leader-epoch cache is truncated to it).
+    // Instead the reclaim defers (0 floor) and the become-leader report is skipped until the remote start
+    // resolves. Classic topics keep the upstream local-log-start behavior. No-op predicate for non-Inkless callers.
+    private final Predicate<TopicPartition> isConsolidatingDisklessPartition;
     private final BrokerTopicStats brokerTopicStats;
     private final Metrics metrics;
 
@@ -190,6 +211,13 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
     // The endpoint for remote log metadata manager to connect to
     private final Optional<Endpoint> endpoint;
     private final Timer remoteReadTimer;
+    // Inkless: broker-level rate and count of RLM cycles that deferred an irreversible log-start action
+    // (the become-leader report or the remote reclaim floor) because a consolidating partition's cross-tier
+    // remote start was not available. A sustained non-zero rate means the cross-tier log-start reporter is
+    // stuck (control plane down or metadata not yet propagated), so operators can alert on it instead of
+    // grepping logs. Both deferral legs mark this meter; see reclaimFloorLogStartOffset and
+    // maybeUpdateLogStartOffsetOnBecomingLeader.
+    private final Meter crossTierLogStartReportDeferredRate;
 
     private boolean closed = false;
 
@@ -208,7 +236,6 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
      * @param brokerTopicStats BrokerTopicStats instance to update the respective metrics.
      * @param metrics  Metrics instance
      */
-    @SuppressWarnings({"this-escape"})
     public RemoteLogManager(RemoteLogManagerConfig rlmConfig,
                             int brokerId,
                             String logDir,
@@ -219,6 +246,29 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                             BrokerTopicStats brokerTopicStats,
                             Metrics metrics,
                             Optional<Endpoint> endpoint) throws IOException {
+        this(rlmConfig, brokerId, logDir, clusterId, time, fetchLog, updateRemoteLogStartOffset,
+                brokerTopicStats, metrics, endpoint, tp -> OptionalLong.empty(), tp -> false);
+    }
+
+    /**
+     * Creates a RemoteLogManager with an Inkless log-start-offset override (see
+     * {@link #logStartOffsetOverride}) and a consolidating-partition predicate (see
+     * {@link #isConsolidatingDisklessPartition}). Non-Inkless callers should use the other constructor,
+     * which defaults both to no-ops.
+     */
+    @SuppressWarnings({"this-escape"})
+    public RemoteLogManager(RemoteLogManagerConfig rlmConfig,
+                            int brokerId,
+                            String logDir,
+                            String clusterId,
+                            Time time,
+                            Function<TopicPartition, Optional<UnifiedLog>> fetchLog,
+                            BiConsumer<TopicPartition, Long> updateRemoteLogStartOffset,
+                            BrokerTopicStats brokerTopicStats,
+                            Metrics metrics,
+                            Optional<Endpoint> endpoint,
+                            Function<TopicPartition, OptionalLong> logStartOffsetOverride,
+                            Predicate<TopicPartition> isConsolidatingDisklessPartition) throws IOException {
         this.rlmConfig = rlmConfig;
         this.brokerId = brokerId;
         this.logDir = logDir;
@@ -226,6 +276,8 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
         this.time = time;
         this.fetchLog = fetchLog;
         this.updateRemoteLogStartOffset = updateRemoteLogStartOffset;
+        this.logStartOffsetOverride = logStartOffsetOverride;
+        this.isConsolidatingDisklessPartition = isConsolidatingDisklessPartition;
         this.brokerTopicStats = brokerTopicStats;
         this.metrics = metrics;
         this.endpoint = endpoint;
@@ -253,6 +305,8 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
         metricsGroup.newGauge(REMOTE_LOG_MANAGER_TASKS_AVG_IDLE_PERCENT_METRIC, rlmCopyThreadPool::getIdlePercent);
         remoteReadTimer = metricsGroup.newTimer(REMOTE_LOG_READER_FETCH_RATE_AND_TIME_METRIC,
                 TimeUnit.MILLISECONDS, TimeUnit.SECONDS);
+        crossTierLogStartReportDeferredRate = metricsGroup.newMeter(CROSS_TIER_LOG_START_REPORT_DEFERRED_PER_SEC,
+                "deferrals", TimeUnit.SECONDS);
 
         remoteStorageReaderThreadPool = new RemoteStorageThreadPool(
                 REMOTE_LOG_READER_THREAD_NAME_PATTERN,
@@ -313,6 +367,7 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
     private void removeMetrics() {
         metricsGroup.removeMetric(REMOTE_LOG_MANAGER_TASKS_AVG_IDLE_PERCENT_METRIC);
         metricsGroup.removeMetric(REMOTE_LOG_READER_FETCH_RATE_AND_TIME_METRIC);
+        metricsGroup.removeMetric(CROSS_TIER_LOG_START_REPORT_DEFERRED_PER_SEC);
         remoteStorageReaderThreadPool.removeMetrics();
         Utils.closeQuietly(fetchQuotaMetrics, "fetchQuotaMetrics");
         Utils.closeQuietly(copyQuotaMetrics, "copyQuotaMetrics");
@@ -882,8 +937,32 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
 
         private void maybeUpdateLogStartOffsetOnBecomingLeader(UnifiedLog log) throws RemoteStorageException {
             if (!isLogStartOffsetUpdated) {
-                long logStartOffset = findLogStartOffset(topicIdPartition, log);
-                updateRemoteLogStartOffset.accept(topicIdPartition.topicPartition(), logStartOffset);
+                final TopicPartition tp = topicIdPartition.topicPartition();
+                // For a consolidating diskless partition, prefer the raw control-plane remote log start so a
+                // freshly-elected leader does not report its local seal as the cross-tier earliest (which
+                // would push the broker-agnostic earliest up to the seal). This is deliberately the raw
+                // remote start, not ListOffsets(EARLIEST): the latter COALESCEs to the WAL prune frontier
+                // when the remote start is unreported, which would lock the wrong value in via the
+                // forward-only advance. No-op for classic topics.
+                OptionalLong override = logStartOffsetOverride.apply(tp);
+                if (override.isEmpty() && isConsolidatingDisklessPartition.test(tp)) {
+                    // The cross-tier remote start is not known yet. Do not derive one from findLogStartOffset:
+                    // on a rebuilt leader whose leader-epoch cache has been truncated to the seal it returns
+                    // the seal, and reporting that would persist the seal permanently through the forward-only
+                    // control-plane advance. Skip the report and leave isLogStartOffsetUpdated false so a later
+                    // copy cycle reports the true value once the remote start resolves. This runs every copy
+                    // cycle while the start stays unavailable, so surface it through the deferral meter (which
+                    // operators can alert on) and keep the per-partition detail at debug to avoid log spam.
+                    crossTierLogStartReportDeferredRate.mark();
+                    logger.debug("Cross-tier remote log start unavailable for consolidating partition {}; " +
+                            "skipping the become-leader log-start report to avoid persisting the local seal.",
+                            topicIdPartition);
+                    return;
+                }
+                long logStartOffset = override.isPresent()
+                        ? override.getAsLong()
+                        : findLogStartOffset(topicIdPartition, log);
+                updateRemoteLogStartOffset.accept(tp, logStartOffset);
                 isLogStartOffsetUpdated = true;
                 logger.info("Found the logStartOffset: {} for partition: {} after becoming leader",
                         logStartOffset, topicIdPartition);
@@ -1250,6 +1329,46 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
             brokerTopicStats.recordRemoteDeleteLagBytes(topic, partition, sizeOfDeletableSegmentsBytes);
         }
 
+        /**
+         * The log start offset that drives the remote-retention log-start-offset reclaim floor.
+         *
+         * <p>Classic topics use the broker-local log start. A consolidating diskless partition instead uses
+         * the raw control-plane remote log start ({@link RemoteLogManager#logStartOffsetOverride}): on a
+         * rebuilt leader the local log start is pinned at the classic-to-diskless seal (and only increments),
+         * so it would delete the whole remote classic prefix {@code [earliest, seal)} though only
+         * {@code [0, earliest)} was removed. This is deliberately the raw remote start, not
+         * {@code ListOffsets(EARLIEST)}: the latter COALESCEs to the WAL prune frontier when the remote
+         * start is unreported, which would itself over-reclaim still-live remote segments and lock the
+         * wrong value in via the forward-only control-plane advance.
+         *
+         * <p>If the override is empty for such a partition (control plane unreachable, metadata not yet
+         * propagated, or the remote start simply not reported yet) we defer the log-start reclaim entirely
+         * by returning {@code 0}, rather than deriving a floor from
+         * {@link RemoteLogManager#findLogStartOffset(TopicIdPartition, UnifiedLog)}. On a rebuilt leader the
+         * leader-epoch cache can be truncated to the seal, in which case findLogStartOffset also returns the
+         * seal and would over-reclaim the remote classic prefix. With a {@code 0} floor no segment breaches
+         * the log-start offset this cycle, time/size retention still applies, and the log-start reclaim
+         * resumes once the remote start resolves. Deferring is safe since remote deletes are irreversible.
+         */
+        private long reclaimFloorLogStartOffset(UnifiedLog log) {
+            final TopicPartition tp = topicIdPartition.topicPartition();
+            final OptionalLong crossTierRemoteStart = logStartOffsetOverride.apply(tp);
+            if (crossTierRemoteStart.isPresent()) {
+                return crossTierRemoteStart.getAsLong();
+            }
+            if (isConsolidatingDisklessPartition.test(tp)) {
+                // Runs every expiration cycle while the start stays unavailable, so surface it through the
+                // deferral meter (which operators can alert on) and keep the per-partition detail at debug to
+                // avoid log spam.
+                crossTierLogStartReportDeferredRate.mark();
+                logger.debug("Cross-tier remote log start unavailable for consolidating partition {}; " +
+                        "deferring log-start remote reclaim this cycle (time/size retention still applies).",
+                        topicIdPartition);
+                return 0L;
+            }
+            return log.logStartOffset();
+        }
+
         /** Cleanup expired and dangling remote log segments. */
         void cleanupExpiredRemoteLogSegments() throws RemoteStorageException, ExecutionException, InterruptedException {
             if (isCancelled()) {
@@ -1295,7 +1414,7 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
             // Build the leader epoch map by filtering the epochs that do not have any records.
             NavigableMap<Integer, Long> epochWithOffsets = buildFilteredLeaderEpochMap(leaderEpochCache.epochWithOffsets());
 
-            long logStartOffset = log.logStartOffset();
+            long logStartOffset = reclaimFloorLogStartOffset(log);
             long logEndOffset = log.logEndOffset();
             Optional<RetentionSizeData> retentionSizeData = buildRetentionSizeData(log.config().retentionSize,
                     log.onlyLocalLogSegmentsSize(), logEndOffset, epochWithOffsets);

@@ -20,7 +20,7 @@ import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, Reader}
 import io.aiven.inkless.storage_backend.common.ObjectFetcher
-import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetRequest, AdvanceCrossTierLogStartOffsetResponse, BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, RepairDisklessLogRequest}
+import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetRequest, AdvanceCrossTierLogStartOffsetResponse, BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, RepairDisklessLogRequest, ListOffsetsRequest => CpListOffsetsRequest}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.produce.AppendHandler
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, ConsolidationMetrics, ConsolidationReconciler}
@@ -1778,11 +1778,108 @@ class ReplicaManager(val config: KafkaConfig,
       }
       replacements.toMap
     } catch {
-      case e: Throwable =>
+      case e: Exception =>
+        // Catch only Exception, not Throwable: control-plane failures are ControlPlaneException (a
+        // RuntimeException), but Errors (e.g. OutOfMemoryError) must propagate rather than fail open.
         // Reporting failure must not fail the delete (the data is already deleted); leave the per-leg
         // low watermark in place and let the RLM's own report reconcile the control plane later.
         error(s"Failed to advance cross-tier log start offset for ${partitionsInOrder.mkString(", ")}", e)
         Map.empty
+    }
+  }
+
+  /**
+   * Whether `topicPartition` is a consolidating diskless topic on this broker. Used by the
+   * [[org.apache.kafka.server.log.remote.storage.RemoteLogManager]] to pick its reclaim-floor fallback
+   * when [[crossTierRemoteLogStartOffset]] is unavailable: such a partition must not fall back to the
+   * broker-local log start (pinned at the seal on a rebuilt leader). Mirrors the guard in
+   * [[crossTierRemoteLogStartOffset]] so the two agree.
+   */
+  def isConsolidatingDisklessPartition(topicPartition: TopicPartition): Boolean =
+    inklessSharedState.isDefined && _inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
+
+  /**
+   * The raw cross-tier remote log start (`logs.remote_log_start_offset`) for a consolidating diskless
+   * partition, present only when the partition's classic leader has actually reported it; empty when it
+   * is unset (NULL), for non-consolidating/non-inkless partitions, or when unresolved.
+   *
+   * This is the reclaim floor and become-leader report source for the
+   * [[org.apache.kafka.server.log.remote.storage.RemoteLogManager]]. Unlike [[crossTierEarliestOffset]]
+   * it deliberately does NOT fall back to `log_start_offset` (the WAL prune frontier): that frontier can
+   * run ahead of the true remote start, so using it as the reclaim floor would delete still-live remote
+   * segments, and reporting it back would lock the wrong value in via the forward-only control-plane
+   * advance. Returning empty here makes the RLM defer instead: it skips the log-start reclaim and the
+   * become-leader report for that cycle and retries once the value resolves, never trusting the local
+   * seal. This defer-on-empty is deliberately stricter than the read paths that source
+   * [[crossTierEarliestOffset]], because over-reclaim and the forward-only advance are irreversible.
+   *
+   * Reads the dedicated control-plane accessor rather than the write-through
+   * [[io.aiven.inkless.cache.CrossTierLogStartCache]], since that cache is also populated by
+   * ListOffsets(EARLIEST) read-throughs and can therefore hold a COALESCE'd frontier value.
+   */
+  def crossTierRemoteLogStartOffset(topicPartition: TopicPartition): OptionalLong = {
+    val sharedState = inklessSharedState.orNull
+    if (sharedState == null || !_inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)) {
+      return OptionalLong.empty()
+    }
+    val topicId = _inklessMetadataView.getTopicId(topicPartition.topic)
+    if (topicId == null || topicId.equals(Uuid.ZERO_UUID)) {
+      return OptionalLong.empty()
+    }
+    val tidp = new TopicIdPartition(topicId, topicPartition.partition, topicPartition.topic)
+    try {
+      sharedState.controlPlane().getCrossTierLogStart(tidp)
+    } catch {
+      case e: Exception =>
+        warn(s"Failed to resolve cross-tier remote log start for $topicPartition from the control plane", e)
+        OptionalLong.empty()
+    }
+  }
+
+  /**
+   * The authoritative, broker-agnostic cross-tier earliest offset for a consolidating diskless
+   * partition, as tracked by the control plane (`COALESCE(remote_log_start_offset, log_start_offset)`,
+   * what `ListOffsets(EARLIEST)` returns); empty for non-consolidating/non-inkless partitions or when
+   * unresolved. Preferred over the broker-local `UnifiedLog.logStartOffset`, which on a rebuilt leader
+   * is pinned at the seal and never pulled back down (monotonic), so using it would over-reclaim and
+   * reject reads of the classic prefix `[earliest, seal)`. Reads the write-through
+   * [[io.aiven.inkless.cache.CrossTierLogStartCache]] first, else queries the control plane and caches
+   * the hit; a stale entry can only be too low (safe: under-reclaims/over-serves).
+   *
+   * On empty, read/rebuild callers (the DisklessLeaderEndPoint fetch whole-log start and the
+   * follower-read guard in readFromLog) fail open to the broker-local start rather than deferring: an
+   * outage there is a transient, self-healing availability matter. This is the opposite of the
+   * defer-on-empty contract of [[crossTierRemoteLogStartOffset]], whose callers perform irreversible work.
+   */
+  def crossTierEarliestOffset(topicPartition: TopicPartition): OptionalLong = {
+    val sharedState = inklessSharedState.orNull
+    if (sharedState == null || !_inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)) {
+      return OptionalLong.empty()
+    }
+    val topicId = _inklessMetadataView.getTopicId(topicPartition.topic)
+    if (topicId == null || topicId.equals(Uuid.ZERO_UUID)) {
+      return OptionalLong.empty()
+    }
+    val tidp = new TopicIdPartition(topicId, topicPartition.partition, topicPartition.topic)
+    val cached = sharedState.crossTierLogStartCache().get(tidp)
+    if (cached != null) {
+      return OptionalLong.of(cached)
+    }
+    try {
+      val responses = sharedState.controlPlane().listOffsets(
+        util.List.of(new CpListOffsetsRequest(tidp, CpListOffsetsRequest.EARLIEST_TIMESTAMP)))
+      if (responses != null && !responses.isEmpty) {
+        val response = responses.get(0)
+        if (response.errors() == Errors.NONE && response.offset() >= 0) {
+          sharedState.crossTierLogStartCache().put(tidp, response.offset())
+          return OptionalLong.of(response.offset())
+        }
+      }
+      OptionalLong.empty()
+    } catch {
+      case e: Exception =>
+        warn(s"Failed to resolve cross-tier earliest offset for $topicPartition from the control plane", e)
+        OptionalLong.empty()
     }
   }
 
