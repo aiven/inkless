@@ -347,6 +347,11 @@ if __name__ == "__main__":
     exit_code = get_env("GRADLE_TEST_EXIT_CODE", int)
     junit_report_url = get_env("JUNIT_REPORT_URL")
     thread_dump_url = get_env("THREAD_DUMP_URL")
+    # Inkless: in the flaky/quarantine test job, tests fail by definition (they are @Flaky-tagged
+    # and known unreliable). Their failures must not fail the job, otherwise the workflow shows a
+    # red signal even when nothing at the Kafka coverage level is broken. Real infrastructure
+    # problems (timeout=124, thread dumps, missing exit code) still fail the job below.
+    run_flaky = (get_env("RUN_FLAKY") or "").lower() == "true"
 
     if exit_code is None:
         failure_messages.append("Missing required GRADLE_TEST_EXIT_CODE environment variable. Failing this script.")
@@ -357,7 +362,7 @@ if __name__ == "__main__":
         # this script. If any task fails due to timeout, we want to fail the overall build since it will not
         # include all the test results
         failure_messages.append(f"Gradle task had a timeout. Failing this script. These are partial results!")
-    elif exit_code > 0:
+    elif exit_code > 0 and not run_flaky:
         failure_messages.append(f"Gradle task had a failure exit code. Failing this script.")
 
     if thread_dump_url:

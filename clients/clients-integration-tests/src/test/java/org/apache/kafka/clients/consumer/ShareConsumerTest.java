@@ -62,6 +62,7 @@ import org.apache.kafka.common.test.ClusterInstance;
 import org.apache.kafka.common.test.api.ClusterConfigProperty;
 import org.apache.kafka.common.test.api.ClusterTest;
 import org.apache.kafka.common.test.api.ClusterTestDefaults;
+import org.apache.kafka.common.test.api.Flaky;
 import org.apache.kafka.common.test.api.Type;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.coordinator.group.GroupConfig;
@@ -1716,6 +1717,7 @@ public class ShareConsumerTest {
      * causes it to throw InterruptException
      */
     @ClusterTest
+    @Flaky(value = "KAFKA-19961", comment = "Flaky ShareConsumerTest#testPollThrowsInterruptExceptionIfInterrupted.")
     public void testPollThrowsInterruptExceptionIfInterrupted() {
         alterShareAutoOffsetReset("group1", "earliest");
         try (ShareConsumer<byte[], byte[]> shareConsumer = createShareConsumer("group1")) {

@@ -58,8 +58,10 @@ public class NodeApiVersionsTest {
 
     @Test
     public void testUnknownApiVersionsToString() {
-        NodeApiVersions versions = NodeApiVersions.create((short) 337, (short) 0, (short) 1);
-        assertTrue(versions.toString().endsWith("UNKNOWN(337): 0 to 1)"));
+        // Inkless: use an id above all real ApiKeys (incl. diskless keys 500/501) so that the
+        // unknown key sorts last in NodeApiVersions.toString()'s ascending-by-id output.
+        NodeApiVersions versions = NodeApiVersions.create(Short.MAX_VALUE, (short) 0, (short) 1);
+        assertTrue(versions.toString().endsWith("UNKNOWN(" + Short.MAX_VALUE + "): 0 to 1)"));
     }
 
     @Test

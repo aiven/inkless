@@ -35,6 +35,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.test.api.Flaky;
 import org.apache.kafka.common.utils.Exit;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
@@ -280,6 +281,7 @@ public class MirrorConnectorsIntegrationBaseTest {
     }
     
     @Test
+    @Flaky(value = "KAFKA-16488", comment = "Chronically flaky MM2 integration test across all subclasses; see also KAFKA-12566.")
     public void testReplication() throws Exception {
         produceMessages(primaryProducer, "test-topic-1");
         String backupTopic1 = remoteTopicName("test-topic-1", PRIMARY_CLUSTER_ALIAS);
@@ -816,6 +818,7 @@ public class MirrorConnectorsIntegrationBaseTest {
     }
 
     @Test
+    @Flaky(value = "KAFKA-15945", comment = "Chronically flaky MM2 integration test across all subclasses; see also KAFKA-15523, KAFKA-14971.")
     public void testSyncTopicConfigs() throws InterruptedException {
         mm2Config = new MirrorMakerConfig(mm2Props);
 
@@ -859,6 +862,7 @@ public class MirrorConnectorsIntegrationBaseTest {
     }
 
     @Test
+    @Flaky(value = "KAFKA-15926", comment = "Chronically flaky MM2 integration test across all subclasses; open tickets KAFKA-15926 (SSL), KAFKA-15927 (ExactlyOnce).")
     public void testReplicateSourceDefault() throws Exception {
         mm2Props.put(DefaultConfigPropertyFilter.USE_DEFAULTS_FROM, "source");
         mm2Config = new MirrorMakerConfig(mm2Props);
@@ -901,6 +905,7 @@ public class MirrorConnectorsIntegrationBaseTest {
     }
 
     @Test
+    @Flaky(value = "KAFKA-15926", comment = "No dedicated ticket; same MM2 replication-harness flakiness as testReplicateSourceDefault (KAFKA-15926/KAFKA-15927).")
     public void testReplicateTargetDefault() throws Exception {
         mm2Config = new MirrorMakerConfig(mm2Props);
 
