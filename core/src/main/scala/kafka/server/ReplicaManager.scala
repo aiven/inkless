@@ -1808,7 +1808,10 @@ class ReplicaManager(val config: KafkaConfig,
    * it deliberately does NOT fall back to `log_start_offset` (the WAL prune frontier): that frontier can
    * run ahead of the true remote start, so using it as the reclaim floor would delete still-live remote
    * segments, and reporting it back would lock the wrong value in via the forward-only control-plane
-   * advance. Returning empty here makes the RLM fail safe to the true remote earliest instead.
+   * advance. Returning empty here makes the RLM defer instead: it skips the log-start reclaim and the
+   * become-leader report for that cycle and retries once the value resolves, never trusting the local
+   * seal. This defer-on-empty is deliberately stricter than the read paths that source
+   * [[crossTierEarliestOffset]], because over-reclaim and the forward-only advance are irreversible.
    *
    * Reads the dedicated control-plane accessor rather than the write-through
    * [[io.aiven.inkless.cache.CrossTierLogStartCache]], since that cache is also populated by
@@ -1842,6 +1845,11 @@ class ReplicaManager(val config: KafkaConfig,
    * reject reads of the classic prefix `[earliest, seal)`. Reads the write-through
    * [[io.aiven.inkless.cache.CrossTierLogStartCache]] first, else queries the control plane and caches
    * the hit; a stale entry can only be too low (safe: under-reclaims/over-serves).
+   *
+   * On empty, read/rebuild callers (the DisklessLeaderEndPoint fetch whole-log start and the
+   * follower-read guard in readFromLog) fail open to the broker-local start rather than deferring: an
+   * outage there is a transient, self-healing availability matter. This is the opposite of the
+   * defer-on-empty contract of [[crossTierRemoteLogStartOffset]], whose callers perform irreversible work.
    */
   def crossTierEarliestOffset(topicPartition: TopicPartition): OptionalLong = {
     val sharedState = inklessSharedState.orNull

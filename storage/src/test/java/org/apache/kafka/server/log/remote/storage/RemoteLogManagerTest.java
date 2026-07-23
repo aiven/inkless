@@ -117,6 +117,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -2621,12 +2622,13 @@ public class RemoteLogManagerTest {
             throws RemoteStorageException, ExecutionException, InterruptedException, IOException {
         // Fail-safe (Problem B hardening): when the log-start-offset override yields empty for a
         // CONSOLIDATING partition (control-plane outage or not-yet-propagated metadata on the RLM leader)
-        // the reclaim floor must NOT fall back to the broker-local log start -- on a freshly-rebuilt
-        // consolidating leader that is the seal (200) and would irreversibly delete the entire remote
-        // classic prefix. Instead it uses the remote earliest (findLogStartOffset -> 0), so no segment
-        // breaches the log-start-offset and NOTHING is reclaimed this cycle. Retention is disabled here,
-        // so both segments [0,99] and [100,199] survive; log-start reclaim retries once the control plane
-        // recovers.
+        // the reclaim floor must NOT be derived from findLogStartOffset. On a rebuilt leader whose
+        // leader-epoch cache has been truncated to the seal, findLogStartOffset itself returns the seal
+        // (200) and would irreversibly delete the entire remote classic prefix. The fail-safe instead
+        // defers the log-start reclaim by returning 0, so no segment breaches the log-start-offset and
+        // NOTHING is reclaimed this cycle. Retention is disabled here, so both segments [0,99] and
+        // [100,199] survive; log-start reclaim resumes once the control plane reports the real cross-tier
+        // start. findLogStartOffset is stubbed to the dangerous seal value (200) to prove it is not used.
         Map<String, Long> logProps = new HashMap<>();
         logProps.put("retention.bytes", -1L);
         logProps.put("retention.ms", -1L);
@@ -2667,7 +2669,7 @@ public class RemoteLogManagerTest {
             }
             @Override
             long findLogStartOffset(TopicIdPartition topicIdPartition, UnifiedLog log) {
-                return 0L; // remote earliest
+                return 200L; // the seal (the trap): must NOT be used as the fail-safe floor
             }
         }) {
             doReturn(true).when(remoteLogMetadataManager).isReady(any(TopicIdPartition.class));
@@ -2675,10 +2677,72 @@ public class RemoteLogManagerTest {
             task.cleanupExpiredRemoteLogSegments();
         }
 
-        // Neither segment is reclaimed: the fail-safe floor (remote earliest 0) breaches nothing, so the
+        // Neither segment is reclaimed: the fail-safe defers to a 0 floor that breaches nothing, so the
         // remote classic prefix is preserved rather than over-reclaimed to the seal.
         verify(remoteStorageManager, never()).deleteLogSegmentData(metadataList.get(0));
         verify(remoteStorageManager, never()).deleteLogSegmentData(metadataList.get(1));
+    }
+
+    @Test
+    public void testConsolidatingBecomeLeaderSkipsReportWhenOverrideAbsent()
+            throws RemoteStorageException, InterruptedException, IOException {
+        // Fail-safe (Problem B hardening, become-leader leg): on a consolidating partition whose cross-tier
+        // remote start is not reported yet, the become-leader log-start report must be skipped rather than
+        // falling back to findLogStartOffset. On a rebuilt leader with a seal-truncated leader-epoch cache
+        // that fallback returns the seal, and reporting it would persist the seal permanently through the
+        // forward-only control-plane advance. The report stays deferred (and keeps retrying) until the
+        // override resolves, then reports the real value. findLogStartOffset is stubbed to the dangerous
+        // seal (200) to prove it is not consulted; lastStableOffset is 0 so no segment copy runs and the
+        // test isolates the become-leader leg.
+        Map<String, Long> logProps = new HashMap<>();
+        logProps.put("retention.bytes", -1L);
+        logProps.put("retention.ms", -1L);
+        LogConfig mockLogConfig = new LogConfig(logProps);
+        when(mockLog.config()).thenReturn(mockLogConfig);
+
+        List<EpochEntry> epochEntries = List.of(epochEntry0);
+        checkpoint.write(epochEntries);
+        LeaderEpochFileCache cache = new LeaderEpochFileCache(tp, checkpoint, scheduler);
+        when(mockLog.leaderEpochCache()).thenReturn(cache);
+        when(mockLog.topicPartition()).thenReturn(leaderTopicIdPartition.topicPartition());
+        when(mockLog.logEndOffset()).thenReturn(200L);
+        when(mockLog.logStartOffset()).thenReturn(200L);   // seal
+        when(mockLog.lastStableOffset()).thenReturn(0L);   // no copy: isolate the become-leader report leg
+
+        AtomicReference<OptionalLong> override = new AtomicReference<>(OptionalLong.empty());
+        List<Long> reportedOffsets = new ArrayList<>();
+
+        try (RemoteLogManager rlm = new RemoteLogManager(config, brokerId, logDir, clusterId, time,
+                topicPartition -> Optional.of(mockLog),
+                (topicPartition, offset) -> reportedOffsets.add(offset),
+                brokerTopicStats, metrics, endPoint,
+                topicPartition -> override.get(),
+                topicPartition -> true) {
+            @Override
+            public RemoteStorageManager createRemoteStorageManager() {
+                return remoteStorageManager;
+            }
+            @Override
+            public RemoteLogMetadataManager createRemoteLogMetadataManager() {
+                return remoteLogMetadataManager;
+            }
+            @Override
+            long findLogStartOffset(TopicIdPartition topicIdPartition, UnifiedLog log) {
+                return 200L; // the seal (the trap): must NOT be reported
+            }
+        }) {
+            RemoteLogManager.RLMCopyTask task = rlm.new RLMCopyTask(leaderTopicIdPartition, 128);
+
+            // Override absent: two become-leader cycles report nothing and the retry stays armed.
+            task.copyLogSegmentsToRemote(mockLog);
+            task.copyLogSegmentsToRemote(mockLog);
+            assertEquals(List.of(), reportedOffsets);
+
+            // Once the control plane reports the real cross-tier start, the next cycle reports exactly that.
+            override.set(OptionalLong.of(100L));
+            task.copyLogSegmentsToRemote(mockLog);
+            assertEquals(List.of(100L), reportedOffsets);
+        }
     }
 
     @Test
