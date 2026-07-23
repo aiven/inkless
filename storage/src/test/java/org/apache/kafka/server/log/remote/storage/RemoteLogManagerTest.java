@@ -68,6 +68,7 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 import org.apache.kafka.test.TestUtils;
 
 import com.yammer.metrics.core.Gauge;
+import com.yammer.metrics.core.Meter;
 import com.yammer.metrics.core.MetricName;
 
 import org.junit.jupiter.api.AfterEach;
@@ -1173,6 +1174,15 @@ public class RemoteLogManagerTest {
         }
     }
 
+    private long yammerMeterCount(String name) {
+        return KafkaYammerMetrics.defaultRegistry().allMetrics().entrySet().stream()
+                .filter(e -> e.getKey().getMBeanName().endsWith(name))
+                .map(e -> (Meter) e.getValue())
+                .findFirst()
+                .map(Meter::count)
+                .orElse(0L);
+    }
+
     @Test
     void testMetricsUpdateOnCopyLogSegmentsFailure() throws Exception {
         long oldSegmentStartOffset = 0L;
@@ -1807,8 +1817,12 @@ public class RemoteLogManagerTest {
 
             verify(mockRlmMetricsGroup, times(1)).newGauge(any(MetricName.class), any());
             verify(mockRlmMetricsGroup, times(1)).newTimer(any(MetricName.class), any(), any());
+            // Inkless: the cross-tier log-start deferral meter is registered by name (not MetricName).
+            verify(mockRlmMetricsGroup, times(1)).newMeter(eq("CrossTierLogStartReportDeferredPerSec"), anyString(), any());
             // Verify that the RemoteLogManager metrics are removed
             remoteLogManagerMetricNames.forEach(metricName -> verify(mockRlmMetricsGroup).removeMetric(metricName));
+            // Inkless: the deferral meter is removed by name on close.
+            verify(mockRlmMetricsGroup).removeMetric("CrossTierLogStartReportDeferredPerSec");
 
             verify(mockThreadPoolMetricsGroup, times(remoteStorageThreadPoolMetricNames.size())).newGauge(anyString(), any());
             // Verify that the RemoteStorageThreadPool metrics are removed
@@ -2674,7 +2688,12 @@ public class RemoteLogManagerTest {
         }) {
             doReturn(true).when(remoteLogMetadataManager).isReady(any(TopicIdPartition.class));
             RemoteLogManager.RLMExpirationTask task = rlmWithEmptyOverride.new RLMExpirationTask(leaderTopicIdPartition);
+            // Read the deferral meter while the RLM is open; closing it deregisters the metric.
+            long deferralsBefore = yammerMeterCount("CrossTierLogStartReportDeferredPerSec");
             task.cleanupExpiredRemoteLogSegments();
+            // The deferral is surfaced through the meter so operators can alert on a stuck reporter instead of
+            // grepping logs.
+            assertEquals(deferralsBefore + 1, yammerMeterCount("CrossTierLogStartReportDeferredPerSec"));
         }
 
         // Neither segment is reclaimed: the fail-safe defers to a 0 floor that breaches nothing, so the
@@ -2733,15 +2752,22 @@ public class RemoteLogManagerTest {
         }) {
             RemoteLogManager.RLMCopyTask task = rlm.new RLMCopyTask(leaderTopicIdPartition, 128);
 
-            // Override absent: two become-leader cycles report nothing and the retry stays armed.
+            // Read the deferral meter while the RLM is open; closing it deregisters the metric.
+            long deferralsBefore = yammerMeterCount("CrossTierLogStartReportDeferredPerSec");
+
+            // Override absent: two become-leader cycles report nothing and the retry stays armed. Each
+            // deferral marks the meter so a stuck reporter is observable without grepping logs.
             task.copyLogSegmentsToRemote(mockLog);
             task.copyLogSegmentsToRemote(mockLog);
             assertEquals(List.of(), reportedOffsets);
+            assertEquals(deferralsBefore + 2, yammerMeterCount("CrossTierLogStartReportDeferredPerSec"));
 
-            // Once the control plane reports the real cross-tier start, the next cycle reports exactly that.
+            // Once the control plane reports the real cross-tier start, the next cycle reports exactly that
+            // and no longer marks the deferral meter.
             override.set(OptionalLong.of(100L));
             task.copyLogSegmentsToRemote(mockLog);
             assertEquals(List.of(100L), reportedOffsets);
+            assertEquals(deferralsBefore + 2, yammerMeterCount("CrossTierLogStartReportDeferredPerSec"));
         }
     }
 

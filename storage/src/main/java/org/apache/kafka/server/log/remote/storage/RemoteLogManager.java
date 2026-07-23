@@ -79,6 +79,7 @@ import org.apache.kafka.storage.internals.log.TxnIndexSearchResult;
 import org.apache.kafka.storage.internals.log.UnifiedLog;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
+import com.yammer.metrics.core.Meter;
 import com.yammer.metrics.core.Timer;
 
 import org.slf4j.Logger;
@@ -148,6 +149,9 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RemoteLogManager.class);
     private static final String REMOTE_LOG_READER_THREAD_NAME_PATTERN = "remote-log-reader-%d";
+    // Inkless: registered on this RLM's metricsGroup (kafka.log.remote:type=RemoteLogManager) rather than in the
+    // upstream RemoteStorageMetrics, to keep the diskless-specific metric isolated from upstream tiered-storage code.
+    private static final String CROSS_TIER_LOG_START_REPORT_DEFERRED_PER_SEC = "CrossTierLogStartReportDeferredPerSec";
     private final RemoteLogManagerConfig rlmConfig;
     private final int brokerId;
     private final String logDir;
@@ -207,6 +211,13 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
     // The endpoint for remote log metadata manager to connect to
     private final Optional<Endpoint> endpoint;
     private final Timer remoteReadTimer;
+    // Inkless: broker-level rate and count of RLM cycles that deferred an irreversible log-start action
+    // (the become-leader report or the remote reclaim floor) because a consolidating partition's cross-tier
+    // remote start was not available. A sustained non-zero rate means the cross-tier log-start reporter is
+    // stuck (control plane down or metadata not yet propagated), so operators can alert on it instead of
+    // grepping logs. Both deferral legs mark this meter; see reclaimFloorLogStartOffset and
+    // maybeUpdateLogStartOffsetOnBecomingLeader.
+    private final Meter crossTierLogStartReportDeferredRate;
 
     private boolean closed = false;
 
@@ -294,6 +305,8 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
         metricsGroup.newGauge(REMOTE_LOG_MANAGER_TASKS_AVG_IDLE_PERCENT_METRIC, rlmCopyThreadPool::getIdlePercent);
         remoteReadTimer = metricsGroup.newTimer(REMOTE_LOG_READER_FETCH_RATE_AND_TIME_METRIC,
                 TimeUnit.MILLISECONDS, TimeUnit.SECONDS);
+        crossTierLogStartReportDeferredRate = metricsGroup.newMeter(CROSS_TIER_LOG_START_REPORT_DEFERRED_PER_SEC,
+                "deferrals", TimeUnit.SECONDS);
 
         remoteStorageReaderThreadPool = new RemoteStorageThreadPool(
                 REMOTE_LOG_READER_THREAD_NAME_PATTERN,
@@ -354,6 +367,7 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
     private void removeMetrics() {
         metricsGroup.removeMetric(REMOTE_LOG_MANAGER_TASKS_AVG_IDLE_PERCENT_METRIC);
         metricsGroup.removeMetric(REMOTE_LOG_READER_FETCH_RATE_AND_TIME_METRIC);
+        metricsGroup.removeMetric(CROSS_TIER_LOG_START_REPORT_DEFERRED_PER_SEC);
         remoteStorageReaderThreadPool.removeMetrics();
         Utils.closeQuietly(fetchQuotaMetrics, "fetchQuotaMetrics");
         Utils.closeQuietly(copyQuotaMetrics, "copyQuotaMetrics");
@@ -936,10 +950,12 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                     // on a rebuilt leader whose leader-epoch cache has been truncated to the seal it returns
                     // the seal, and reporting that would persist the seal permanently through the forward-only
                     // control-plane advance. Skip the report and leave isLogStartOffsetUpdated false so a later
-                    // copy cycle reports the true value once the remote start resolves.
-                    logger.warn("Cross-tier remote log start unavailable for consolidating partition {}; " +
-                            "skipping the become-leader log-start report to avoid persisting the local seal. " +
-                            "If this persists, the cross-tier log-start reporter is likely failing to flush.",
+                    // copy cycle reports the true value once the remote start resolves. This runs every copy
+                    // cycle while the start stays unavailable, so surface it through the deferral meter (which
+                    // operators can alert on) and keep the per-partition detail at debug to avoid log spam.
+                    crossTierLogStartReportDeferredRate.mark();
+                    logger.debug("Cross-tier remote log start unavailable for consolidating partition {}; " +
+                            "skipping the become-leader log-start report to avoid persisting the local seal.",
                             topicIdPartition);
                     return;
                 }
@@ -1341,9 +1357,12 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                 return crossTierRemoteStart.getAsLong();
             }
             if (isConsolidatingDisklessPartition.test(tp)) {
-                logger.warn("Cross-tier remote log start unavailable for consolidating partition {}; " +
-                        "deferring log-start remote reclaim this cycle (time/size retention still applies). " +
-                        "If this persists, the cross-tier log-start reporter is likely failing to flush.",
+                // Runs every expiration cycle while the start stays unavailable, so surface it through the
+                // deferral meter (which operators can alert on) and keep the per-partition detail at debug to
+                // avoid log spam.
+                crossTierLogStartReportDeferredRate.mark();
+                logger.debug("Cross-tier remote log start unavailable for consolidating partition {}; " +
+                        "deferring log-start remote reclaim this cycle (time/size retention still applies).",
                         topicIdPartition);
                 return 0L;
             }
