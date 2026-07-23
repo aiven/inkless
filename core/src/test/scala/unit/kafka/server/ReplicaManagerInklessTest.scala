@@ -1276,6 +1276,27 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testCrossTierRemoteLogStartOffsetReturnsEmptyWithoutSharedState(): Unit = {
+    // Without inkless shared state (non-inkless broker) the accessor short-circuits to empty without
+    // touching the control plane, so the RLM keeps the plain upstream local-log-start reclaim floor.
+    // Mirrors testIsConsolidatingDisklessPartitionFalseWithoutSharedState for symmetry.
+    val controlPlane = mock(classOf[ControlPlane])
+    val replicaManager = createReplicaManager(
+      List.empty,
+      controlPlane = Some(controlPlane),
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      inklessSharedStateEnabled = false,
+    )
+    try {
+      assertEquals(OptionalLong.empty(),
+        replicaManager.crossTierRemoteLogStartOffset(disklessTopicPartition.topicPartition()))
+      verify(controlPlane, never()).getCrossTierLogStart(any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testIsConsolidatingDisklessPartitionReflectsMetadataView(): Unit = {
     // The RLM reclaim-floor fail-safe keys off this accessor; it must be true exactly for consolidating
     // diskless topics (so they never fall back to the local seal) and false for classic/pure-diskless.
