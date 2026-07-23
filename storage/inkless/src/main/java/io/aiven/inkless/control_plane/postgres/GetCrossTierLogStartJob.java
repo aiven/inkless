@@ -18,12 +18,14 @@
 package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.utils.Time;
 
 import org.jooq.Configuration;
 import org.jooq.DSLContext;
 
 import java.util.OptionalLong;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 import static org.jooq.generated.tables.Logs.LOGS;
 
@@ -34,17 +36,24 @@ import static org.jooq.generated.tables.Logs.LOGS;
  * (not yet reported by the classic leader). Deliberately does not fall back to {@code log_start_offset}.
  */
 public class GetCrossTierLogStartJob implements Callable<OptionalLong> {
+    private final Time time;
     private final DSLContext jooqCtx;
     private final TopicIdPartition topicIdPartition;
+    private final Consumer<Long> durationCallback;
 
-    public GetCrossTierLogStartJob(final DSLContext jooqCtx, final TopicIdPartition topicIdPartition) {
+    public GetCrossTierLogStartJob(final Time time,
+                                   final DSLContext jooqCtx,
+                                   final TopicIdPartition topicIdPartition,
+                                   final Consumer<Long> durationCallback) {
+        this.time = time;
         this.jooqCtx = jooqCtx;
         this.topicIdPartition = topicIdPartition;
+        this.durationCallback = durationCallback;
     }
 
     @Override
     public OptionalLong call() {
-        return JobUtils.run(this::runOnce);
+        return JobUtils.run(this::runOnce, time, durationCallback);
     }
 
     private OptionalLong runOnce() {
