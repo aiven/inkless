@@ -1778,7 +1778,9 @@ class ReplicaManager(val config: KafkaConfig,
       }
       replacements.toMap
     } catch {
-      case e: Throwable =>
+      case e: Exception =>
+        // Catch only Exception, not Throwable: control-plane failures are ControlPlaneException (a
+        // RuntimeException), but Errors (e.g. OutOfMemoryError) must propagate rather than fail open.
         // Reporting failure must not fail the delete (the data is already deleted); leave the per-leg
         // low watermark in place and let the RLM's own report reconcile the control plane later.
         error(s"Failed to advance cross-tier log start offset for ${partitionsInOrder.mkString(", ")}", e)
