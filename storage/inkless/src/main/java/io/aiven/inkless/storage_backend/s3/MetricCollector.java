@@ -34,6 +34,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import software.amazon.awssdk.core.metrics.CoreMetric;
 import software.amazon.awssdk.metrics.MetricCollection;
@@ -52,6 +53,8 @@ import static io.aiven.inkless.storage_backend.s3.MetricRegistry.COMPLETE_MULTIP
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.COMPLETE_MULTIPART_UPLOAD_TIME_AVG_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.COMPLETE_MULTIPART_UPLOAD_TIME_MAX_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.CONFIGURED_TIMEOUT_ERRORS;
+import static io.aiven.inkless.storage_backend.s3.MetricRegistry.CONFIGURED_TIMEOUT_ERRORS_BY_OPERATION_RATE_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.s3.MetricRegistry.CONFIGURED_TIMEOUT_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.CONFIGURED_TIMEOUT_ERRORS_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.CONFIGURED_TIMEOUT_ERRORS_TOTAL_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.CREATE_MULTIPART_UPLOAD_REQUESTS;
@@ -79,9 +82,14 @@ import static io.aiven.inkless.storage_backend.s3.MetricRegistry.GET_OBJECT_TIME
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.GET_OBJECT_TIME_AVG_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.GET_OBJECT_TIME_MAX_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.IO_ERRORS;
+import static io.aiven.inkless.storage_backend.s3.MetricRegistry.IO_ERRORS_BY_OPERATION_RATE_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.s3.MetricRegistry.IO_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.IO_ERRORS_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.IO_ERRORS_TOTAL_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.s3.MetricRegistry.OPERATION_TAG;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.OTHER_ERRORS;
+import static io.aiven.inkless.storage_backend.s3.MetricRegistry.OTHER_ERRORS_BY_OPERATION_RATE_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.s3.MetricRegistry.OTHER_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.OTHER_ERRORS_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.OTHER_ERRORS_TOTAL_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.PUT_OBJECT_REQUESTS;
@@ -91,9 +99,13 @@ import static io.aiven.inkless.storage_backend.s3.MetricRegistry.PUT_OBJECT_TIME
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.PUT_OBJECT_TIME_AVG_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.PUT_OBJECT_TIME_MAX_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.SERVER_ERRORS;
+import static io.aiven.inkless.storage_backend.s3.MetricRegistry.SERVER_ERRORS_BY_OPERATION_RATE_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.s3.MetricRegistry.SERVER_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.SERVER_ERRORS_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.SERVER_ERRORS_TOTAL_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.THROTTLING_ERRORS;
+import static io.aiven.inkless.storage_backend.s3.MetricRegistry.THROTTLING_ERRORS_BY_OPERATION_RATE_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.s3.MetricRegistry.THROTTLING_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.THROTTLING_ERRORS_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.THROTTLING_ERRORS_TOTAL_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.UPLOAD_PART_REQUESTS;
@@ -117,6 +129,10 @@ public class MetricCollector implements MetricPublisher {
     private final Map<String, Sensor> requestMetrics = new HashMap<>();
     private final Map<String, Sensor> latencyMetrics = new HashMap<>();
     private final Map<String, Sensor> errorMetrics = new HashMap<>();
+    // {rate, total} templates for the per-operation (operation-tagged) variant of each error type.
+    private final Map<String, MetricNameTemplate[]> errorByOperationTemplates = new HashMap<>();
+    // Lazily created operation-tagged error sensors, keyed by errorType + ":" + operationName.
+    private final Map<String, Sensor> errorByOperationMetrics = new ConcurrentHashMap<>();
 
     public MetricCollector(Metrics metrics) {
         this.metrics = metrics;
@@ -247,6 +263,46 @@ public class MetricCollector implements MetricPublisher {
             OTHER_ERRORS_TOTAL_METRIC_NAME
         );
         errorMetrics.put(OTHER.toString(), otherErrorsSensor);
+
+        errorByOperationTemplates.put(THROTTLING.toString(), new MetricNameTemplate[]{
+            THROTTLING_ERRORS_BY_OPERATION_RATE_METRIC_NAME,
+            THROTTLING_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME
+        });
+        errorByOperationTemplates.put(SERVER_ERROR.toString(), new MetricNameTemplate[]{
+            SERVER_ERRORS_BY_OPERATION_RATE_METRIC_NAME,
+            SERVER_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME
+        });
+        errorByOperationTemplates.put(CONFIGURED_TIMEOUT.toString(), new MetricNameTemplate[]{
+            CONFIGURED_TIMEOUT_ERRORS_BY_OPERATION_RATE_METRIC_NAME,
+            CONFIGURED_TIMEOUT_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME
+        });
+        errorByOperationTemplates.put(IO.toString(), new MetricNameTemplate[]{
+            IO_ERRORS_BY_OPERATION_RATE_METRIC_NAME,
+            IO_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME
+        });
+        errorByOperationTemplates.put(OTHER.toString(), new MetricNameTemplate[]{
+            OTHER_ERRORS_BY_OPERATION_RATE_METRIC_NAME,
+            OTHER_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME
+        });
+    }
+
+    /**
+     * Returns the operation-tagged sensor for the given SDK error type and S3 operation, creating it
+     * on first use. The untagged global error sensors are recorded separately; this variant lets an
+     * error (e.g. a throttle) be attributed to a specific operation such as DeleteObjects.
+     */
+    private Sensor errorSensorByOperation(final String errorType, final String operationName) {
+        final MetricNameTemplate[] templates = errorByOperationTemplates.get(errorType);
+        if (templates == null) {
+            return null;
+        }
+        return errorByOperationMetrics.computeIfAbsent(errorType + ":" + operationName, key -> {
+            final Map<String, String> tags = Map.of(OPERATION_TAG, operationName);
+            final Sensor sensor = metrics.sensor(key);
+            sensor.add(metrics.metricInstance(templates[0], tags), new Rate());
+            sensor.add(metrics.metricInstance(templates[1], tags), new CumulativeCount());
+            return sensor;
+        });
     }
 
     private Sensor createRequestsSensor(
@@ -275,6 +331,7 @@ public class MetricCollector implements MetricPublisher {
     public void publish(final MetricCollection metricCollection) {
         final List<String> metricValues = metricCollection.metricValues(CoreMetric.OPERATION_NAME);
         // metrics are reported per request, so 1 value can be assumed.
+        final String operationName = metricValues.size() == 1 ? metricValues.get(0) : null;
         if (metricValues.size() == 1) {
             final var metricValue = metricValues.get(0);
             final var requests = requestMetrics.get(metricValue);
@@ -309,6 +366,14 @@ public class MetricCollector implements MetricPublisher {
             final var sensor = errorMetrics.get(errorValue);
             if (sensor != null) {
                 sensor.record();
+            }
+            // Attribute the error to its operation too (e.g. is it deletes being throttled?).
+            // Skipped when the operation name is ambiguous.
+            if (operationName != null) {
+                final var byOperation = errorSensorByOperation(errorValue, operationName);
+                if (byOperation != null) {
+                    byOperation.record();
+                }
             }
         }
     }

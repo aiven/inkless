@@ -26,6 +26,7 @@ import java.util.List;
 @CoverageIgnore  // tested on integration level
 public class MetricRegistry {
     static final String METRIC_GROUP = "s3-client-metrics";
+    static final String OPERATION_TAG = "operation";
     static final String GET_OBJECT_REQUESTS = "get-object-requests";
     static final String GET_OBJECT_REQUESTS_RATE = GET_OBJECT_REQUESTS + "-rate";
     static final String GET_OBJECT_REQUESTS_TOTAL = GET_OBJECT_REQUESTS + "-total";
@@ -330,6 +331,71 @@ public class MetricRegistry {
         TOTAL_DOC_PREFIX + OTHER_ERRORS_DOC
     );
 
+    // Per-operation variants of the error metrics above, tagged with the S3 operation name
+    // (e.g. DeleteObjects, PutObject). These are recorded in addition to the untagged global
+    // error metrics so that throttling can be attributed to a specific operation.
+    static final String PER_OPERATION_DOC_SUFFIX = " per S3 operation";
+    static final MetricNameTemplate THROTTLING_ERRORS_BY_OPERATION_RATE_METRIC_NAME = new MetricNameTemplate(
+        THROTTLING_ERRORS_RATE,
+        METRIC_GROUP,
+        RATE_DOC_PREFIX + THROTTLING_ERRORS_DOC + PER_OPERATION_DOC_SUFFIX,
+        OPERATION_TAG
+    );
+    static final MetricNameTemplate THROTTLING_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME = new MetricNameTemplate(
+        THROTTLING_ERRORS_TOTAL,
+        METRIC_GROUP,
+        TOTAL_DOC_PREFIX + THROTTLING_ERRORS_DOC + PER_OPERATION_DOC_SUFFIX,
+        OPERATION_TAG
+    );
+    static final MetricNameTemplate SERVER_ERRORS_BY_OPERATION_RATE_METRIC_NAME = new MetricNameTemplate(
+        SERVER_ERRORS_RATE,
+        METRIC_GROUP,
+        RATE_DOC_PREFIX + SERVER_ERRORS_DOC + PER_OPERATION_DOC_SUFFIX,
+        OPERATION_TAG
+    );
+    static final MetricNameTemplate SERVER_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME = new MetricNameTemplate(
+        SERVER_ERRORS_TOTAL,
+        METRIC_GROUP,
+        TOTAL_DOC_PREFIX + SERVER_ERRORS_DOC + PER_OPERATION_DOC_SUFFIX,
+        OPERATION_TAG
+    );
+    static final MetricNameTemplate CONFIGURED_TIMEOUT_ERRORS_BY_OPERATION_RATE_METRIC_NAME = new MetricNameTemplate(
+        CONFIGURED_TIMEOUT_ERRORS_RATE,
+        METRIC_GROUP,
+        RATE_DOC_PREFIX + CONFIGURED_TIMEOUT_ERRORS_DOC + PER_OPERATION_DOC_SUFFIX,
+        OPERATION_TAG
+    );
+    static final MetricNameTemplate CONFIGURED_TIMEOUT_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME = new MetricNameTemplate(
+        CONFIGURED_TIMEOUT_ERRORS_TOTAL,
+        METRIC_GROUP,
+        TOTAL_DOC_PREFIX + CONFIGURED_TIMEOUT_ERRORS_DOC + PER_OPERATION_DOC_SUFFIX,
+        OPERATION_TAG
+    );
+    static final MetricNameTemplate IO_ERRORS_BY_OPERATION_RATE_METRIC_NAME = new MetricNameTemplate(
+        IO_ERRORS_RATE,
+        METRIC_GROUP,
+        RATE_DOC_PREFIX + IO_ERRORS_DOC + PER_OPERATION_DOC_SUFFIX,
+        OPERATION_TAG
+    );
+    static final MetricNameTemplate IO_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME = new MetricNameTemplate(
+        IO_ERRORS_TOTAL,
+        METRIC_GROUP,
+        TOTAL_DOC_PREFIX + IO_ERRORS_DOC + PER_OPERATION_DOC_SUFFIX,
+        OPERATION_TAG
+    );
+    static final MetricNameTemplate OTHER_ERRORS_BY_OPERATION_RATE_METRIC_NAME = new MetricNameTemplate(
+        OTHER_ERRORS_RATE,
+        METRIC_GROUP,
+        RATE_DOC_PREFIX + OTHER_ERRORS_DOC + PER_OPERATION_DOC_SUFFIX,
+        OPERATION_TAG
+    );
+    static final MetricNameTemplate OTHER_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME = new MetricNameTemplate(
+        OTHER_ERRORS_TOTAL,
+        METRIC_GROUP,
+        TOTAL_DOC_PREFIX + OTHER_ERRORS_DOC + PER_OPERATION_DOC_SUFFIX,
+        OPERATION_TAG
+    );
+
     public static List<MetricNameTemplate> all() {
         return List.of(
             GET_OBJECT_REQUESTS_RATE_METRIC_NAME,
@@ -373,7 +439,17 @@ public class MetricRegistry {
             IO_ERRORS_RATE_METRIC_NAME,
             IO_ERRORS_TOTAL_METRIC_NAME,
             OTHER_ERRORS_RATE_METRIC_NAME,
-            OTHER_ERRORS_TOTAL_METRIC_NAME
+            OTHER_ERRORS_TOTAL_METRIC_NAME,
+            THROTTLING_ERRORS_BY_OPERATION_RATE_METRIC_NAME,
+            THROTTLING_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME,
+            SERVER_ERRORS_BY_OPERATION_RATE_METRIC_NAME,
+            SERVER_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME,
+            CONFIGURED_TIMEOUT_ERRORS_BY_OPERATION_RATE_METRIC_NAME,
+            CONFIGURED_TIMEOUT_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME,
+            IO_ERRORS_BY_OPERATION_RATE_METRIC_NAME,
+            IO_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME,
+            OTHER_ERRORS_BY_OPERATION_RATE_METRIC_NAME,
+            OTHER_ERRORS_BY_OPERATION_TOTAL_METRIC_NAME
         );
     }
 }
