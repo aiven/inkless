@@ -25,6 +25,7 @@ import kafka.server.metadata.InklessMetadataView
 import kafka.utils.TestUtils
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.compress.Compression
+import org.apache.kafka.common.errors.RecordBatchTooLargeException
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.record.{BaseRecords, MemoryRecords, SimpleRecord}
 import org.apache.kafka.metadata.PartitionRegistration
@@ -32,6 +33,7 @@ import org.apache.kafka.server.LeaderEndPoint
 import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
+import org.apache.kafka.common.InvalidRecordException
 import org.apache.kafka.storage.internals.log.{LogAppendInfo, UnifiedLog}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
@@ -114,6 +116,23 @@ class ConsolidationFetcherThreadTest {
     when(partition.localLogOrException).thenReturn(log)
     when(partition.appendRecordsToFollowerOrFutureReplica(any[MemoryRecords], any[Boolean], any[Int]))
       .thenReturn(Some(mock(classOf[LogAppendInfo])))
+    partition
+  }
+
+  // Partition whose follower append rejects the block as larger than segment.bytes, as UnifiedLog does
+  // when a single batch exceeds segment.bytes. logEndOffset matches the fetch offset so the append is
+  // reached (ReplicaFetcherThread.processPartitionData asserts offset == logEndOffset first).
+  private def mockPartitionAppendTooLarge(logEndOffset: Long, segmentSize: Int): Partition = {
+    val config = mock(classOf[org.apache.kafka.storage.internals.log.LogConfig])
+    when(config.segmentSize()).thenReturn(segmentSize)
+    val log = mock(classOf[UnifiedLog])
+    when(log.logEndOffset).thenReturn(logEndOffset)
+    when(log.config()).thenReturn(config)
+
+    val partition = mock(classOf[Partition])
+    when(partition.localLogOrException).thenReturn(log)
+    when(partition.appendRecordsToFollowerOrFutureReplica(any[MemoryRecords], any[Boolean], any[Int]))
+      .thenThrow(new RecordBatchTooLargeException("batch size 3000 exceeds segment size 2000"))
     partition
   }
 
@@ -347,6 +366,64 @@ class ConsolidationFetcherThreadTest {
   }
 
   @Test
+  def testOversizedBatchRethrownAsRetriableAndCounted(): Unit = {
+    val fetchOffset = 50L
+    val segmentSize = 2000
+    val partition = mockPartitionAppendTooLarge(fetchOffset, segmentSize)
+    val log = partition.localLogOrException
+    val replicaManager = mockReplicaManager(partition)
+    when(replicaManager.localLogOrException(topicPartition)).thenReturn(log)
+    val thread = createConsolidationFetcherThread(replicaManager, Some(metrics))
+
+    metrics.registerPartition(topicPartition)
+
+    // RecordBatchTooLargeException from the append is converted to ConsolidationSegmentOverflowException,
+    // which extends InvalidRecordException so AbstractFetcherThread treats it as a soft, retriable
+    // per-partition error (parked + backoff) rather than a hard failure.
+    val ex = assertThrows(classOf[ConsolidationSegmentOverflowException],
+      () => thread.processPartitionData(topicPartition, fetchOffset, Int.MaxValue, buildPartitionData(100L)))
+    assertInstanceOf(classOf[InvalidRecordException], ex)
+    assertInstanceOf(classOf[RecordBatchTooLargeException], ex.getCause)
+
+    assertEquals(1L, findGaugeValue("ConsolidationOversizedBatch", topicPartition))
+  }
+
+  @Test
+  def testOversizedBatchCounterIncrementsPerRetry(): Unit = {
+    val fetchOffset = 50L
+    val partition = mockPartitionAppendTooLarge(fetchOffset, segmentSize = 2000)
+    val log = partition.localLogOrException
+    val replicaManager = mockReplicaManager(partition)
+    when(replicaManager.localLogOrException(topicPartition)).thenReturn(log)
+    val thread = createConsolidationFetcherThread(replicaManager, Some(metrics))
+
+    metrics.registerPartition(topicPartition)
+
+    // Each retry (while segment.bytes stays too small) increments the per-partition counter.
+    (1 to 3).foreach { _ =>
+      assertThrows(classOf[ConsolidationSegmentOverflowException],
+        () => thread.processPartitionData(topicPartition, fetchOffset, Int.MaxValue, buildPartitionData(100L)))
+    }
+
+    assertEquals(3L, findGaugeValue("ConsolidationOversizedBatch", topicPartition))
+  }
+
+  @Test
+  def testOversizedBatchWithoutMetricsStillRethrows(): Unit = {
+    val fetchOffset = 50L
+    val partition = mockPartitionAppendTooLarge(fetchOffset, segmentSize = 2000)
+    val log = partition.localLogOrException
+    val replicaManager = mockReplicaManager(partition)
+    when(replicaManager.localLogOrException(topicPartition)).thenReturn(log)
+    val thread = createConsolidationFetcherThread(replicaManager, None)
+
+    // No ConsolidationMetrics wired: still converts the exception, just no counter.
+    assertThrows(classOf[ConsolidationSegmentOverflowException],
+      () => thread.processPartitionData(topicPartition, fetchOffset, Int.MaxValue, buildPartitionData(100L)))
+    assertNull(findGaugeOrNull("ConsolidationOversizedBatch", topicPartition))
+  }
+
+  @Test
   def testBrokerLevelAggregateGauges(): Unit = {
     val tp0 = new TopicPartition("topic-a", 0)
     val tp1 = new TopicPartition("topic-a", 1)
@@ -370,6 +447,31 @@ class ConsolidationFetcherThreadTest {
     assertEquals(50L, findBrokerGaugeValue("ConsolidationTotalLag"))
     assertEquals(20L, findBrokerGaugeValue("ConsolidationLocalLag"))
     assertEquals(15L, findBrokerGaugeValue("ConsolidationDeletableMessages"))
+  }
+
+  @Test
+  def testOversizedBatchCounterAggregatesAndSurvivesReRegistration(): Unit = {
+    val tp0 = new TopicPartition("topic-a", 0)
+    val tp1 = new TopicPartition("topic-a", 1)
+
+    metrics.registerPartition(tp0)
+    metrics.registerPartition(tp1)
+
+    metrics.recordOversizedBatch(tp0)
+    metrics.recordOversizedBatch(tp0)
+    metrics.recordOversizedBatch(tp1)
+
+    assertEquals(2L, findGaugeValue("ConsolidationOversizedBatch", tp0))
+    assertEquals(1L, findGaugeValue("ConsolidationOversizedBatch", tp1))
+    assertEquals(3L, findBrokerGaugeValue("ConsolidationOversizedBatch"))
+
+    // Re-registration must not reset the monotonic counter (unlike the lag gauges).
+    metrics.registerPartition(tp0)
+    assertEquals(2L, findGaugeValue("ConsolidationOversizedBatch", tp0))
+
+    metrics.unregisterPartition(tp0)
+    assertEquals(1L, findBrokerGaugeValue("ConsolidationOversizedBatch"))
+    assertNull(findGaugeOrNull("ConsolidationOversizedBatch", tp0))
   }
 
   private def findGaugeOrNull(name: String, tp: TopicPartition): com.yammer.metrics.core.Gauge[_] = {

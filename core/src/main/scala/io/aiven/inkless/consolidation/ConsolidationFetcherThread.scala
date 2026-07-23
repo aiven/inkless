@@ -21,6 +21,7 @@ package io.aiven.inkless.consolidation
 import io.aiven.inkless.consume.ConcatenatedRecords
 import kafka.server.{FailedPartitions, KafkaConfig, ReplicaFetcherThread, ReplicaManager, ReplicaQuota}
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.errors.RecordBatchTooLargeException
 import org.apache.kafka.common.record.{MemoryRecords, Records}
 import org.apache.kafka.common.requests.FetchResponse
 import org.apache.kafka.metadata.PartitionRegistration
@@ -54,7 +55,26 @@ class ConsolidationFetcherThread(name: String,
     partitionData: FetchData
   ): Option[LogAppendInfo] = {
     maybeStampDisklessLeaderEpoch(topicPartition, partitionData)
-    val result = super.processPartitionData(topicPartition, fetchOffset, partitionLeaderEpoch, partitionData)
+    val result =
+      try {
+        super.processPartitionData(topicPartition, fetchOffset, partitionLeaderEpoch, partitionData)
+      } catch {
+        case e: RecordBatchTooLargeException =>
+          // The block holds a batch larger than the follower's segment.bytes (e.g. max.message.bytes lowered
+          // below segment.bytes over time, or a coalesced diskless unit). Left as-is this is a hard failure
+          // requiring a become-follower/restart to recover. Rethrow as a soft, retriable per-partition error
+          // so the fetcher parks the partition at the same offset and retries with backoff; raising
+          // segment.bytes then resumes consolidation without operator intervention on the fetcher.
+          val segmentSize = Try(replicaMgr.getPartitionOrException(topicPartition)
+            .localLogOrException.config.segmentSize).toOption.getOrElse(-1)
+          error(s"Consolidation fetch for $topicPartition at offset $fetchOffset produced a block exceeding " +
+            s"segment.bytes ($segmentSize); the follower append rejected it. This partition holds a batch " +
+            s"larger than segment.bytes. Consolidation is parked and will retry with backoff; raise " +
+            s"segment.bytes above the batch size to resume. Underlying: ${e.getMessage}", e)
+          consolidationMetrics.foreach(_.recordOversizedBatch(topicPartition))
+          throw new ConsolidationSegmentOverflowException(
+            s"Consolidation block for $topicPartition exceeds segment.bytes ($segmentSize)", e)
+      }
 
     consolidationMetrics.foreach { metrics =>
       val logOpt = Try(replicaMgr.getPartitionOrException(topicPartition).localLogOrException).toOption

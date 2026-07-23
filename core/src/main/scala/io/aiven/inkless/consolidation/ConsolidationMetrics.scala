@@ -36,22 +36,31 @@ import scala.jdk.CollectionConverters._
  * - ConsolidationTotalLag: disklessLEO - remoteLogEndOffset (full pipeline: diskless → remote).
  *   Only updated when remote storage is active (highestOffsetInRemoteStorage ≥ 0); stays at 0 otherwise.
  * - ConsolidationDeletableMessages: messages already in remote storage eligible for WAL pruning
+ * - ConsolidationOversizedBatch: count of consolidation append attempts rejected because the block held a
+ *   batch larger than the partition's segment.bytes (RecordBatchTooLargeException). The partition is parked
+ *   and retried with backoff, so this increments once per retry while the condition persists. Non-zero
+ *   indicates a partition holding a batch larger than the current segment.bytes (e.g. max.message.bytes
+ *   lowered below segment.bytes over time, or a coalesced diskless unit); raise segment.bytes above the
+ *   batch size to resume. See DisklessLeaderEndPoint.clampRecordsToSegment.
  */
 class ConsolidationMetrics extends Closeable {
   private val TotalLag = "ConsolidationTotalLag"
   private val LocalLag = "ConsolidationLocalLag"
   private val DeletableMessages = "ConsolidationDeletableMessages"
+  private val OversizedBatch = "ConsolidationOversizedBatch"
 
   private val metricsGroup = new KafkaMetricsGroup("io.aiven.inkless.consolidation", "ConsolidationMetrics")
 
   private val totalLagByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val localLagByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val deletableByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
+  private val oversizedBatchByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
 
   // Broker-level aggregate gauges (sum across all partitions)
   metricsGroup.newGauge(TotalLag, () => sumValues(totalLagByPartition))
   metricsGroup.newGauge(LocalLag, () => sumValues(localLagByPartition))
   metricsGroup.newGauge(DeletableMessages, () => sumValues(deletableByPartition))
+  metricsGroup.newGauge(OversizedBatch, () => sumValues(oversizedBatchByPartition))
 
   def registerPartition(tp: TopicPartition): Unit = {
     val tags = Map("topic" -> tp.topic, "partition" -> tp.partition.toString).asJava
@@ -71,6 +80,12 @@ class ConsolidationMetrics extends Closeable {
       metricsGroup.newGauge(DeletableMessages, () => value.get, tags)
       value
     }).set(0)
+    // Monotonic event count; do not reset an existing value on re-registration.
+    oversizedBatchByPartition.computeIfAbsent(tp, _ => {
+      val value = new AtomicLong(0)
+      metricsGroup.newGauge(OversizedBatch, () => value.get, tags)
+      value
+    })
   }
 
   def updateTotalLag(tp: TopicPartition, lag: Long): Unit =
@@ -82,14 +97,19 @@ class ConsolidationMetrics extends Closeable {
   def updateDeletableMessages(tp: TopicPartition, count: Long): Unit =
     Option(deletableByPartition.get(tp)).foreach(_.set(count))
 
+  def recordOversizedBatch(tp: TopicPartition): Unit =
+    Option(oversizedBatchByPartition.get(tp)).foreach(_.incrementAndGet())
+
   def unregisterPartition(tp: TopicPartition): Unit = {
     val tags = Map("topic" -> tp.topic, "partition" -> tp.partition.toString).asJava
     totalLagByPartition.remove(tp)
     localLagByPartition.remove(tp)
     deletableByPartition.remove(tp)
+    oversizedBatchByPartition.remove(tp)
     metricsGroup.removeMetric(TotalLag, tags)
     metricsGroup.removeMetric(LocalLag, tags)
     metricsGroup.removeMetric(DeletableMessages, tags)
+    metricsGroup.removeMetric(OversizedBatch, tags)
   }
 
   override def close(): Unit = {
@@ -99,6 +119,7 @@ class ConsolidationMetrics extends Closeable {
     metricsGroup.removeMetric(TotalLag)
     metricsGroup.removeMetric(LocalLag)
     metricsGroup.removeMetric(DeletableMessages)
+    metricsGroup.removeMetric(OversizedBatch)
   }
 
   private def sumValues(map: ConcurrentHashMap[TopicPartition, AtomicLong]): Long =
