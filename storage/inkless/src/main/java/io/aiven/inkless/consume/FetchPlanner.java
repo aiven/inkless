@@ -85,6 +85,8 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
     private final ObjectFetcher laggingObjectFetcher;
     private final long laggingConsumerThresholdMs;
     private final Bucket laggingRateLimiter;
+    private final Bucket laggingByteRateLimiter;
+    private final long laggingByteRateCapacity;
     private final ScheduledExecutorService hedgeScheduler;
     private final long hedgeTtfbThresholdMs;
     private final long hedgeTotalTimeThresholdMs;
@@ -103,6 +105,8 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         ObjectFetcher laggingObjectFetcher,
         long laggingConsumerThresholdMs,
         Bucket laggingRateLimiter,
+        Bucket laggingByteRateLimiter,
+        long laggingByteRateCapacity,
         ExecutorService laggingFetchDataExecutor,
         ScheduledExecutorService hedgeScheduler,
         long hedgeTtfbThresholdMs,
@@ -122,6 +126,8 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         this.laggingFetchDataExecutor = laggingFetchDataExecutor;
         this.laggingConsumerThresholdMs = laggingConsumerThresholdMs;
         this.laggingRateLimiter = laggingRateLimiter;
+        this.laggingByteRateLimiter = laggingByteRateLimiter;
+        this.laggingByteRateCapacity = laggingByteRateCapacity;
         this.hedgeScheduler = hedgeScheduler;
         this.hedgeTtfbThresholdMs = hedgeTtfbThresholdMs;
         this.hedgeTotalTimeThresholdMs = hedgeTotalTimeThresholdMs;
@@ -308,9 +314,9 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                 // This prevents hedges from firing while the primary is waiting for a rate limit token.
                 final CompletableFuture<Void> fetchStarted = new CompletableFuture<>();
                 final CompletableFuture<FileExtent> primary = CompletableFuture.supplyAsync(() -> {
-                        // Apply rate limiting if configured (rate limit > 0)
-                        if (laggingRateLimiter != null) {
-                            applyRateLimit(); // InterruptedException here is wrapped in FetchException
+                        // Apply rate limiting if configured (request-rate and/or byte-rate)
+                        if (laggingRateLimiter != null || laggingByteRateLimiter != null) {
+                            applyRateLimit(request.byteRange().size()); // InterruptedException here is wrapped in FetchException
                         }
                         // Signal that rate limiting is done and the fetch is starting.
                         // Hedge timers begin counting from this point.
@@ -490,13 +496,37 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         }
     }
 
-    // Applies request-based rate limiting by blocking executor thread until token available.
-    // Always records wait time (including zero-wait) for accurate latency histogram.
+    // Applies rate limiting by blocking the executor thread until tokens are available.
+    // Two independent limiters may apply: request-rate (cost/QPS protection, 1 token per request)
+    // and byte-rate (bandwidth protection, byteRange size in tokens). Either may be disabled (null).
+    // Each limiter is acquired non-blocking first; only on failure do we record a throttle hit and
+    // block. This keeps the combined wait in a single histogram while still attributing which limiter
+    // was the binding constraint. Always records total wait time (including zero-wait) for an unbiased
+    // latency histogram.
     // Note: If interrupted, the duration is still recorded before the exception is thrown.
-    private void applyRateLimit() {
+    private void applyRateLimit(final long bytes) {
             TimeUtils.measureDurationMs(time, () -> {
                 try {
-                    laggingRateLimiter.asBlocking().consume(1);
+                    if (laggingRateLimiter != null && !laggingRateLimiter.tryConsume(1)) {
+                        metrics.recordRequestRateThrottled();
+                        laggingRateLimiter.asBlocking().consume(1);
+                    }
+                    if (laggingByteRateLimiter != null) {
+                        // A single cold fetch covers one storage object and is indivisible. If it is
+                        // larger than the bucket capacity it can never be fully satisfied, so charge a
+                        // full bucket (the max the limiter can enforce) and let it through instead of
+                        // blocking forever. This only happens when the byte-rate limit is set below the
+                        // produced object size (likely misconfiguration), tracked via the oversized meter.
+                        final long cost = Math.min(bytes, laggingByteRateCapacity);
+                        if (bytes > laggingByteRateCapacity) {
+                            metrics.recordByteRateOversized();
+                        }
+                        // cost == 0 only for a degenerate empty range; skip since Bucket4j rejects non-positive consume.
+                        if (cost > 0 && !laggingByteRateLimiter.tryConsume(cost)) {
+                            metrics.recordByteRateThrottled();
+                            laggingByteRateLimiter.asBlocking().consume(cost);
+                        }
+                    }
                 } catch (final InterruptedException e) {
                     // Rate limit wait was interrupted (typically during shutdown).
                     // Preserve interrupt status for executor framework, but wrap in FetchException

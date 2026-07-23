@@ -317,6 +317,9 @@ class InklessConfigTest {
         // Default rate limit
         assertThat(config.fetchLaggingConsumerRequestRateLimit()).isEqualTo(200);
 
+        // Default byte-rate limit: 0 (disabled)
+        assertThat(config.fetchLaggingConsumerByteRateLimit()).isEqualTo(0L);
+
         // Default threshold: -1 (auto) should use heuristic: cache TTL
         // Default cache TTL is 60 seconds, so threshold should follow that
         assertThat(config.fetchLaggingConsumerThresholdMs()).isEqualTo(60_000L);
@@ -330,12 +333,14 @@ class InklessConfigTest {
         configs.put("storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName());
         configs.put("fetch.lagging.consumer.thread.pool.size", "32");
         configs.put("fetch.lagging.consumer.request.rate.limit", "500");
+        configs.put("fetch.lagging.consumer.byte.rate.limit", "104857600");  // 100 MiB/s
         configs.put("fetch.lagging.consumer.threshold.ms", "300000");  // 5 minutes explicit
 
         final var config = new InklessConfig(configs);
 
         assertThat(config.fetchLaggingConsumerThreadPoolSize()).isEqualTo(32);
         assertThat(config.fetchLaggingConsumerRequestRateLimit()).isEqualTo(500);
+        assertThat(config.fetchLaggingConsumerByteRateLimit()).isEqualTo(104857600L);
         assertThat(config.fetchLaggingConsumerThresholdMs()).isEqualTo(300_000L);
     }
 
