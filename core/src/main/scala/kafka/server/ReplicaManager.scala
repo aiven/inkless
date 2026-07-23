@@ -2386,7 +2386,36 @@ class ReplicaManager(val config: KafkaConfig,
           getPartitionOrError(tp.topicPartition) match {
             case Right(partition) =>
               val logEndOffset = partition.log.map(_.logEndOffset).getOrElse(0L)
-              if (fetchPartitionData.fetchOffset < logEndOffset) {
+              // A follower's local logStartOffset stays frozen at the switch. DeleteRecords and
+              // retention advance only the real leader's log start and the control-plane cross-tier
+              // earliest, never a follower's. With managed replicas the metadata transformer routes
+              // consumers to a hash-selected replica (usually a follower), which then serves the read
+              // from that stale local log, so the consumer could read records below the authoritative
+              // earliest. Reject those with OFFSET_OUT_OF_RANGE so the consumer resets via
+              // ListOffsets(EARLIEST). This covers every consumer fetch, not just pre-KIP-392 ones: a
+              // modern consumer is served from the follower too (allowReplica is true for it once the
+              // transformer points it at that replica). The leader is skipped since its own local
+              // logStartOffset already advanced. Best effort: the cache is only ever stale-low, so a
+              // few deleted records may survive until it refreshes.
+              val mayServeFromFollowerLocalLog =
+                params.isFromConsumer && !partition.isLeader
+              val crossTierEarliest =
+                if (mayServeFromFollowerLocalLog) crossTierEarliestOffset(tp.topicPartition())
+                else OptionalLong.empty()
+              if (crossTierEarliest.isPresent && fetchPartitionData.fetchOffset < crossTierEarliest.getAsLong) {
+                immediateFetchResponses += tp -> new FetchPartitionData(
+                  Errors.OFFSET_OUT_OF_RANGE,
+                  UnifiedLog.UNKNOWN_OFFSET,
+                  UnifiedLog.UNKNOWN_OFFSET,
+                  MemoryRecords.EMPTY,
+                  Optional.empty(),
+                  OptionalLong.empty(),
+                  Optional.empty(),
+                  OptionalInt.empty(),
+                  false
+                )
+                partitionLookupFailed = true
+              } else if (fetchPartitionData.fetchOffset < logEndOffset) {
                 // Local log has data for this offset range — serve from local, track for diskless supplement
                 shouldReadFromUnifiedLog = true
                 // Skip supplement tracking when the fetch offset falls in the tiered-storage range

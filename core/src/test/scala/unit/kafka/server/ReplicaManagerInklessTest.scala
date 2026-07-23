@@ -45,6 +45,8 @@ import org.apache.kafka.common.metadata.{PartitionChangeRecord, PartitionRecord,
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record._
+import org.apache.kafka.common.replica.ClientMetadata.DefaultClientMetadata
+import org.apache.kafka.common.security.auth.KafkaPrincipal
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
@@ -72,6 +74,7 @@ import org.mockito.Mockito._
 import org.mockito.{Answers, ArgumentMatchers, MockedConstruction, Mockito}
 
 import java.io.File
+import java.net.InetAddress
 import java.util
 import java.util.{Collections, Optional, OptionalInt, OptionalLong, Properties}
 import java.util.concurrent.{CompletableFuture, CountDownLatch, TimeUnit}
@@ -1729,6 +1732,23 @@ class ReplicaManagerInklessTest {
       ArgumentMatchers.eq(tp.topicPartition()))
   }
 
+  // Like stubConsolidatingPartitionWithLocalLeoFor but also pins leadership (the read-path
+  // cross-tier-earliest guard only fires for followers) and localLogStartOffset.
+  private def stubConsolidatingPartitionForFollowerReadGuard(replicaManager: ReplicaManager,
+                                                             tp: TopicIdPartition,
+                                                             localLeo: Long,
+                                                             isLeader: Boolean,
+                                                             localLogStartOffset: Long = 0L): Unit = {
+    val mockPartition = mock(classOf[Partition])
+    val mockLog = mock(classOf[UnifiedLog])
+    when(mockLog.logEndOffset).thenReturn(localLeo)
+    when(mockLog.localLogStartOffset).thenReturn(localLogStartOffset)
+    when(mockPartition.log).thenReturn(Some(mockLog))
+    when(mockPartition.isLeader).thenReturn(isLeader)
+    doReturn(Right(mockPartition)).when(replicaManager).getPartitionOrError(
+      ArgumentMatchers.eq(tp.topicPartition()))
+  }
+
   private def stubConsolidatingPartitionWithoutLocalLog(replicaManager: ReplicaManager): Unit = {
     val mockPartition = mock(classOf[Partition])
     when(mockPartition.log).thenReturn(None)
@@ -1794,6 +1814,266 @@ class ReplicaManagerInklessTest {
   }
 
 
+
+  // The metadata transformer can route an older consumer (no rackId -> empty clientMetadata) to a
+  // follower whose local logStartOffset is frozen at the classic-to-diskless seal. DeleteRecords /
+  // retention only advance the control-plane cross-tier earliest, so a fetch below it must be rejected
+  // as OFFSET_OUT_OF_RANGE (consumer then resets via ListOffsets(EARLIEST)) instead of serving
+  // logically-deleted records from the follower's stale local log.
+  @Test
+  def testFetchConsolidatingRejectsFollowerReadBelowCrossTierEarliest(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val cp = mock(classOf[ControlPlane])
+    val cache = mock(classOf[CrossTierLogStartCache])
+    when(cache.get(any())).thenReturn(java.lang.Long.valueOf(100L))
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      crossTierLogStartCache = Some(cache),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      stubConsolidatingPartitionForFollowerReadGuard(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
+
+      // Older consumer: replicaId = -1 and empty clientMetadata.
+      val fetchParams = new FetchParams(
+        -1, -1L,
+        0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => responseData = response.toMap
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      waitForFetchResponse(responseData)
+      assertEquals(1, responseData.size)
+      assertEquals(Errors.OFFSET_OUT_OF_RANGE, responseData(disklessTopicPartition).error)
+      assertEquals(MemoryRecords.EMPTY, responseData(disklessTopicPartition).records)
+      verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  // At or above the cross-tier earliest the follower read is legitimate and served from the local log.
+  @Test
+  def testFetchConsolidatingServesFollowerReadAtOrAboveCrossTierEarliest(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val cp = mock(classOf[ControlPlane])
+    val cache = mock(classOf[CrossTierLogStartCache])
+    when(cache.get(any())).thenReturn(java.lang.Long.valueOf(50L))
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      crossTierLogStartCache = Some(cache),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      stubConsolidatingPartitionForFollowerReadGuard(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
+
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      // fetchOffset (50) == cross-tier earliest (50): not below, so the read proceeds.
+      val fetchParams = new FetchParams(
+        -1, -1L,
+        0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => responseData = response.toMap
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      waitForFetchResponse(responseData)
+      assertEquals(1, responseData.size)
+      assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+      verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  // The leader's own local logStartOffset already advanced with DeleteRecords/retention, so the guard
+  // is scoped to followers: a leader read below the cross-tier earliest is served from local without
+  // even consulting the cross-tier earliest.
+  @Test
+  def testFetchConsolidatingLeaderReadNotGatedByCrossTierEarliest(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val cp = mock(classOf[ControlPlane])
+    val cache = mock(classOf[CrossTierLogStartCache])
+    // Would reject offset 50 if consulted -- it must not be.
+    when(cache.get(any())).thenReturn(java.lang.Long.valueOf(100L))
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      crossTierLogStartCache = Some(cache),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      stubConsolidatingPartitionForFollowerReadGuard(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = true)
+
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      val fetchParams = new FetchParams(
+        -1, -1L,
+        0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => responseData = response.toMap
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      waitForFetchResponse(responseData)
+      assertEquals(1, responseData.size)
+      assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+      verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+      verify(cache, never()).get(any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  // A modern consumer (non-empty clientMetadata) is served from the follower's local log too: once the
+  // transformer points it at a non-leader replica, allowReplica is true for it. So the guard must reject
+  // its below-earliest reads exactly like an older consumer's, not just pre-KIP-392 ones.
+  @Test
+  def testFetchConsolidatingRejectsModernFollowerReadBelowCrossTierEarliest(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val cp = mock(classOf[ControlPlane])
+    val cache = mock(classOf[CrossTierLogStartCache])
+    when(cache.get(any())).thenReturn(java.lang.Long.valueOf(100L))
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      crossTierLogStartCache = Some(cache),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      stubConsolidatingPartitionForFollowerReadGuard(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
+
+      // Modern consumer: non-empty clientMetadata (rackId present).
+      val clientMetadata = new DefaultClientMetadata(
+        "rack-a", "client-id", InetAddress.getByName("localhost"), KafkaPrincipal.ANONYMOUS, "PLAINTEXT")
+      val fetchParams = new FetchParams(
+        -1, -1L,
+        0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.of(clientMetadata)
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => responseData = response.toMap
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      waitForFetchResponse(responseData)
+      assertEquals(1, responseData.size)
+      assertEquals(Errors.OFFSET_OUT_OF_RANGE, responseData(disklessTopicPartition).error)
+      assertEquals(MemoryRecords.EMPTY, responseData(disklessTopicPartition).records)
+      verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  // Fail-open: when the cross-tier earliest is unavailable (cache miss + control plane returns nothing,
+  // e.g. a control-plane outage), the guard does not reject. The cache is only ever stale-low, so the
+  // worst case is a few logically-deleted records survive until the earliest resolves -- preferable to
+  // spuriously failing legitimate reads.
+  @Test
+  def testFetchConsolidatingServesFollowerReadWhenCrossTierEarliestUnavailable(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val cp = mock(classOf[ControlPlane])
+    val cache = mock(classOf[CrossTierLogStartCache])
+    // Cache miss; control-plane listOffsets left unstubbed -> returns null -> earliest resolves empty.
+    when(cache.get(any())).thenReturn(null.asInstanceOf[java.lang.Long])
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      crossTierLogStartCache = Some(cache),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      stubConsolidatingPartitionForFollowerReadGuard(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
+
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      val fetchParams = new FetchParams(
+        -1, -1L,
+        0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => responseData = response.toMap
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      waitForFetchResponse(responseData)
+      assertEquals(1, responseData.size)
+      assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+      verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
 
   // When local log has data but below minBytes and diskless data is available, the fetch must
   // respond immediately (merged local+diskless) without parking in the delayed-fetch purgatory.
