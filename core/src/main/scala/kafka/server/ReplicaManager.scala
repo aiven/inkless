@@ -20,7 +20,7 @@ import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, Reader}
 import io.aiven.inkless.storage_backend.common.ObjectFetcher
-import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, RepairDisklessLogRequest}
+import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetRequest, AdvanceCrossTierLogStartOffsetResponse, BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, RepairDisklessLogRequest}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.produce.AppendHandler
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, ConsolidationMetrics, ConsolidationReconciler}
@@ -1603,6 +1603,20 @@ class ReplicaManager(val config: KafkaConfig,
     val immutableDisklessOffsets = disklessOffsetPerPartition.toMap
     val immutableHybridPartitions = hybridDisklessPartitions.toSet
 
+    // Report the cross-tier earliest of successfully-deleted consolidating diskless partitions to the
+    // control plane and use it as their low watermark, so any broker (leader or the follower the
+    // metadata transformer routes clients to) returns the same value as ListOffsets(EARLIEST).
+    def finalizeCrossTierAndRespond(response: Map[TopicPartition, DeleteRecordsPartitionResult]): Unit = {
+      val advanced = advanceCrossTierEarliestForDeleteRecords(response, offsetPerPartition)
+      if (advanced.isEmpty) {
+        responseCallback(response)
+      } else {
+        responseCallback(response.map { case (topicPartition, result) =>
+          topicPartition -> advanced.getOrElse(topicPartition, result)
+        })
+      }
+    }
+
     def maybeDeleteFromDiskless(localResponse: Map[TopicPartition, DeleteRecordsPartitionResult]): Unit = {
       // Keep pure diskless partitions and only the hybrid partitions whose local phase succeeded.
       val disklessOffsetsAfterLocalDelete = immutableDisklessOffsets.filterNot { case (topicPartition, _) =>
@@ -1610,11 +1624,11 @@ class ReplicaManager(val config: KafkaConfig,
           localResponse.get(topicPartition).exists(_.errorCode != Errors.NONE.code)
       }
       if (disklessOffsetsAfterLocalDelete.isEmpty) {
-        responseCallback(localResponse ++ failedDisklessDeleteRecords)
+        finalizeCrossTierAndRespond(localResponse ++ failedDisklessDeleteRecords)
       } else {
         inklessDeleteRecordsInterceptor.get.intercept(
           disklessOffsetsAfterLocalDelete.view.mapValues(java.lang.Long.valueOf).toMap.asJava,
-          r => responseCallback(localResponse ++ failedDisklessDeleteRecords ++ r.asScala))
+          r => finalizeCrossTierAndRespond(localResponse ++ failedDisklessDeleteRecords ++ r.asScala))
       }
     }
 
@@ -1627,7 +1641,25 @@ class ReplicaManager(val config: KafkaConfig,
     val localDeleteRecordsResults = deleteRecordsOnLocalLog(localOffsetPerPartition, allowInternalTopicDeletion)
     debug("Delete records on local log in %d ms".format(time.milliseconds - timeBeforeLocalDeleteRecords))
 
-    val deleteRecordsStatus = localDeleteRecordsResults.map { case (topicPartition, result) =>
+    // Consolidating diskless partitions (born-consolidating or switched-with-remote-storage) do not
+    // replicate their local consolidated log to followers, so their DeleteRecords completion must NOT
+    // wait on the ISR low watermark (Partition.lowWatermarkIfLeader), which is pinned at the followers'
+    // frozen, pre-switch logStartOffset. Their earliest is instead reported from the control plane in
+    // finalizeCrossTierAndRespond; only classic partitions keep the ISR-gated delayed operation. The
+    // local leg above still ran to drive the leader's RemoteLogManager physical deletion of remote
+    // segments.
+    val (crossTierResults, classicResults) = localDeleteRecordsResults.partition { case (topicPartition, _) =>
+      _inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
+    }
+
+    val crossTierResponseStatus = crossTierResults.map { case (topicPartition, result) =>
+      topicPartition -> new DeleteRecordsPartitionResult()
+        .setLowWatermark(result.lowWatermark)
+        .setErrorCode(result.error.code)
+        .setPartitionIndex(topicPartition.partition)
+    }
+
+    val deleteRecordsStatus = classicResults.map { case (topicPartition, result) =>
       topicPartition ->
         new DeleteRecordsPartitionStatus(
           result.requestedOffset, // requested offset
@@ -1637,7 +1669,7 @@ class ReplicaManager(val config: KafkaConfig,
             .setPartitionIndex(topicPartition.partition)) // response status
     }
 
-    if (delayedDeleteRecordsRequired(localDeleteRecordsResults)) {
+    if (delayedDeleteRecordsRequired(classicResults)) {
       def onAcks(topicPartition: TopicPartition, status: DeleteRecordsPartitionStatus): Unit = {
         val (lowWatermarkReached, error, lw) = getPartition(topicPartition) match {
           case HostedPartition.Online(partition) =>
@@ -1662,10 +1694,11 @@ class ReplicaManager(val config: KafkaConfig,
         }
       }
       // create delayed delete records operation
-      val delayedDeleteRecords = new DelayedDeleteRecords(timeout, deleteRecordsStatus.asJava, onAcks, response => maybeDeleteFromDiskless(response.asScala))
+      val delayedDeleteRecords = new DelayedDeleteRecords(timeout, deleteRecordsStatus.asJava, onAcks,
+        response => maybeDeleteFromDiskless(response.asScala ++ crossTierResponseStatus))
 
       // create a list of (topic, partition) pairs to use as keys for this delayed delete records operation
-      val deleteRecordsRequestKeys = localOffsetPerPartition.keys.map(new TopicPartitionOperationKey(_)).toList
+      val deleteRecordsRequestKeys = classicResults.keys.map(new TopicPartitionOperationKey(_)).toList
 
       // try to complete the request immediately, otherwise put it into the purgatory
       // this is because while the delayed delete records operation is being created, new
@@ -1674,7 +1707,82 @@ class ReplicaManager(val config: KafkaConfig,
     } else {
       // we can respond immediately
       val deleteRecordsResponseStatus = deleteRecordsStatus.map { case (k, status) => k -> status.responseStatus }
-      maybeDeleteFromDiskless(deleteRecordsResponseStatus)
+      maybeDeleteFromDiskless(deleteRecordsResponseStatus ++ crossTierResponseStatus)
+    }
+  }
+
+  /**
+   * For every successfully-deleted consolidating diskless partition in `response`, advance the
+   * control-plane cross-tier earliest (`remote_log_start_offset`) to the requested delete offset and
+   * return a replacement result whose low watermark is the stored value. `EARLIEST` is
+   * `COALESCE(remote_log_start_offset, log_start_offset)`, so reporting the just-advanced (non-null)
+   * `remote_log_start_offset` keeps the DeleteRecords low watermark and a subsequent
+   * `ListOffsets(EARLIEST)` in agreement on every broker.
+   *
+   * Physical deletion is unchanged: the diskless WAL objects are freed by `delete_records_v1` +
+   * `FileCleaner`, and the remote-tier segments by the leader's `RemoteLogManager` (driven by the
+   * leader's local `logStartOffset`); this method only moves the logical earliest pointer.
+   *
+   * Returns the replacement results keyed by partition (empty when nothing applies). The control-plane
+   * call is synchronous; `DeleteRecords` is an infrequent admin operation.
+   */
+  private def advanceCrossTierEarliestForDeleteRecords(
+    response: Map[TopicPartition, DeleteRecordsPartitionResult],
+    offsetPerPartition: Map[TopicPartition, Long]
+  ): Map[TopicPartition, DeleteRecordsPartitionResult] = {
+    val sharedState = inklessSharedState.orNull
+    if (sharedState == null) {
+      return Map.empty
+    }
+
+    // Convert each delete offset: use the requested offset, or the leg's returned low watermark when
+    // the request was HIGH_WATERMARK (which always reaches the WAL, so the diskless leg ran).
+    val requests = new java.util.ArrayList[AdvanceCrossTierLogStartOffsetRequest]()
+    val partitionsInOrder = mutable.ArrayBuffer.empty[TopicPartition]
+    response.foreach { case (topicPartition, result) =>
+      // Non-consolidating partitions and errors will be skipped here as they're handled in the caller
+      // finalizeCrossTierAndRespond by returning their original response.
+      if (result.errorCode == Errors.NONE.code &&
+        _inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)) {
+        val requested = offsetPerPartition.getOrElse(topicPartition, DeleteRecordsRequest.HIGH_WATERMARK)
+        val convertedOffset = if (requested == DeleteRecordsRequest.HIGH_WATERMARK) result.lowWatermark else requested
+        val topicId = _inklessMetadataView.getTopicId(topicPartition.topic)
+        if (convertedOffset >= 0 && topicId != null && !topicId.equals(Uuid.ZERO_UUID)) {
+          partitionsInOrder += topicPartition
+          requests.add(new AdvanceCrossTierLogStartOffsetRequest(topicId, topicPartition.partition, convertedOffset))
+        }
+      }
+    }
+
+    if (requests.isEmpty) {
+      return Map.empty
+    }
+
+    try {
+      val responses = sharedState.controlPlane().advanceCrossTierLogStartOffset(requests)
+      val replacements = mutable.Map.empty[TopicPartition, DeleteRecordsPartitionResult]
+      for (i <- 0 until responses.size()) {
+        val topicPartition = partitionsInOrder(i)
+        val advanceResponse = responses.get(i)
+        if (advanceResponse.errors() == Errors.NONE &&
+          advanceResponse.remoteLogStartOffset() != AdvanceCrossTierLogStartOffsetResponse.NO_OFFSET) {
+          val stored = advanceResponse.remoteLogStartOffset()
+          // Write-through so the leader's local read path does not re-query the control plane.
+          sharedState.crossTierLogStartCache().put(
+            new TopicIdPartition(requests.get(i).topicId(), topicPartition.partition, topicPartition.topic), stored)
+          replacements += topicPartition -> new DeleteRecordsPartitionResult()
+            .setPartitionIndex(topicPartition.partition)
+            .setLowWatermark(stored)
+            .setErrorCode(Errors.NONE.code)
+        }
+      }
+      replacements.toMap
+    } catch {
+      case e: Throwable =>
+        // Reporting failure must not fail the delete (the data is already deleted); leave the per-leg
+        // low watermark in place and let the RLM's own report reconcile the control plane later.
+        error(s"Failed to advance cross-tier log start offset for ${partitionsInOrder.mkString(", ")}", e)
+        Map.empty
     }
   }
 

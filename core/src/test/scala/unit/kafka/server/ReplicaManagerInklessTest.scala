@@ -21,7 +21,7 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager}
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse}
+import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse}
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.Partition
 import kafka.server.QuotaFactory.QuotaManagers
@@ -870,6 +870,118 @@ class ReplicaManagerInklessTest {
       assertEquals(150L, responseData(disklessTopicPartition.topicPartition()).lowWatermark)
       assertEquals(101L, partition.localLogOrException.logStartOffset)
       verify(controlPlane, timeout(5000)).deleteRecords(anyList())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDeleteRecordsConsolidatingClassicPrefixReportsCrossTierLowWatermarkWithoutDisklessLeg(): Unit = {
+    // A delete entirely within the classic/remote prefix of a switched consolidating topic
+    // (before classicToDisklessStartOffset) routes only to the local leg -- no diskless (WAL) leg --
+    // and its low watermark must come from the control-plane cross-tier earliest, not the ISR.
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.advanceCrossTierLogStartOffset(anyList()))
+      .thenReturn(util.List.of(AdvanceCrossTierLogStartOffsetResponse.success(50L)))
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    )
+    try {
+      val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 200L)
+      // switched topic: the classic prefix ends at 100, and we delete before 50 (inside that prefix).
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+
+      @volatile var responseData: Map[TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult] = Map.empty
+      replicaManager.deleteRecords(
+        timeout = 0L,
+        offsetPerPartition = Map(disklessTopicPartition.topicPartition() -> 50L),
+        responseCallback = response => responseData = response,
+      )
+
+      waitUntilTrue(() => responseData.nonEmpty, "Cross-tier delete records response was not completed")
+      assertEquals(Errors.NONE.code, responseData(disklessTopicPartition.topicPartition()).errorCode)
+      // Low watermark comes from the control-plane cross-tier earliest (advance), not the ISR.
+      assertEquals(50L, responseData(disklessTopicPartition.topicPartition()).lowWatermark)
+      // Local leg still ran (drives RLM remote deletion): local log start advanced to 50.
+      assertEquals(50L, partition.localLogOrException.logStartOffset)
+      verify(controlPlane, timeout(5000)).advanceCrossTierLogStartOffset(anyList())
+      // No WAL data below the classic prefix, so the diskless leg must not run.
+      verify(controlPlane, never()).deleteRecords(anyList())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDeleteRecordsConsolidatingOverridesLowWatermarkWithCrossTierEarliest(): Unit = {
+    // For a hybrid consolidating delete (into the WAL) both legs run, but the reported low watermark
+    // is the control-plane cross-tier earliest (advance), which may differ from the WAL log start.
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.deleteRecords(anyList())).thenReturn(util.List.of(CpDeleteRecordsResponse.success(150L)))
+    when(controlPlane.advanceCrossTierLogStartOffset(anyList()))
+      .thenReturn(util.List.of(AdvanceCrossTierLogStartOffsetResponse.success(150L)))
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    )
+    try {
+      val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+
+      @volatile var responseData: Map[TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult] = Map.empty
+      replicaManager.deleteRecords(
+        timeout = 0L,
+        offsetPerPartition = Map(disklessTopicPartition.topicPartition() -> 150L),
+        responseCallback = response => responseData = response,
+      )
+
+      waitUntilTrue(() => responseData.nonEmpty, "Hybrid consolidating delete records response was not completed")
+      assertEquals(Errors.NONE.code, responseData(disklessTopicPartition.topicPartition()).errorCode)
+      assertEquals(150L, responseData(disklessTopicPartition.topicPartition()).lowWatermark)
+      assertEquals(101L, partition.localLogOrException.logStartOffset)
+      verify(controlPlane, timeout(5000)).deleteRecords(anyList())
+      verify(controlPlane, timeout(5000)).advanceCrossTierLogStartOffset(anyList())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDeleteRecordsPureDisklessDoesNotAdvanceCrossTierEarliest(): Unit = {
+    // A pure (non-consolidating) diskless topic has no remote tier; its delete must go through the
+    // diskless leg only and must not touch the cross-tier earliest.
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.deleteRecords(anyList())).thenReturn(util.List.of(CpDeleteRecordsResponse.success(150L)))
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+    )
+    try {
+      @volatile var responseData: Map[TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult] = Map.empty
+      replicaManager.deleteRecords(
+        timeout = 0L,
+        offsetPerPartition = Map(disklessTopicPartition.topicPartition() -> 150L),
+        responseCallback = response => responseData = response,
+      )
+
+      waitUntilTrue(() => responseData.nonEmpty, "Pure diskless delete records response was not completed")
+      assertEquals(Errors.NONE.code, responseData(disklessTopicPartition.topicPartition()).errorCode)
+      assertEquals(150L, responseData(disklessTopicPartition.topicPartition()).lowWatermark)
+      verify(controlPlane, timeout(5000)).deleteRecords(anyList())
+      verify(controlPlane, never()).advanceCrossTierLogStartOffset(anyList())
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
