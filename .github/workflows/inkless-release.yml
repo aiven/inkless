@@ -36,6 +36,11 @@ on:
         description: 'Space-separated list of additional release branches to include (e.g. "inkless-4.3"). Used when onboarding a new branch for the first time.'
         required: false
         type: string
+      resume:
+        description: 'Resume a partially-completed release whose tags already exist but whose GitHub Release was never published. Skips tag creation and re-runs build+publish. Requires inkless_version to be set explicitly.'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: inkless-release
@@ -56,6 +61,7 @@ jobs:
       main_commit:       ${{ steps.resolve.outputs.main_commit }}
       release_tag:       ${{ steps.resolve.outputs.release_tag }}
       active_branches:   ${{ steps.resolve.outputs.active_branches }}
+      resume:            ${{ steps.resolve.outputs.resume }}
       kafka_versions:    ${{ steps.resolve-kafka.outputs.kafka_versions }}
       build_matrix:      ${{ steps.resolve-kafka.outputs.build_matrix }}
       kafka_base_matrix: ${{ steps.resolve-kafka.outputs.kafka_base_matrix }}
@@ -73,9 +79,19 @@ jobs:
           INPUT_VERSION:        ${{ inputs.inkless_version }}
           INPUT_COMMIT:         ${{ inputs.main_commit }}
           INPUT_EXTRA_BRANCHES: ${{ inputs.extra_branches }}
+          INPUT_RESUME:         ${{ inputs.resume }}
         run: |
+          RESUME="${INPUT_RESUME:-false}"
+
           # --- Inkless version ---
-          if [ -z "$INPUT_VERSION" ]; then
+          if [ "$RESUME" = "true" ]; then
+            # Resume reuses an EXISTING version; auto-increment would be wrong.
+            if [ -z "$INPUT_VERSION" ]; then
+              echo "::error::resume=true requires inkless_version to be set explicitly (the version whose tags already exist)."
+              exit 1
+            fi
+            INKLESS_VERSION="$INPUT_VERSION"
+          elif [ -z "$INPUT_VERSION" ]; then
             LATEST=$(git tag -l "inkless-release-*" | sort -V | tail -n1)
             if [ -z "$LATEST" ]; then
               echo "::error::No existing inkless-release-* tags found; specify inkless_version explicitly"
@@ -91,10 +107,19 @@ jobs:
 
           RELEASE_TAG="inkless-release-${INKLESS_VERSION}"
 
-          # Ensure the version doesn't already exist
-          if git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "::error::Tag $RELEASE_TAG already exists. If the release was never finalized (no GitHub Release published), delete the tag and retry. Otherwise use a higher version number."
-            exit 1
+          # --- Tag existence guard (inverted under resume) ---
+          if [ "$RESUME" = "true" ]; then
+            # Resuming: the release tag MUST already exist (tagging is skipped).
+            if ! git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
+              echo "::error::resume=true but $RELEASE_TAG does not exist. Run a normal release (resume=false) to create tags."
+              exit 1
+            fi
+            echo "Resuming release $RELEASE_TAG (tags already exist; will skip tagging, re-run build+publish)."
+          else
+            if git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
+              echo "::error::Tag $RELEASE_TAG already exists. To finish a release whose tags exist but was never published, re-run with resume=true. Otherwise use a higher version number."
+              exit 1
+            fi
           fi
 
           # --- Main commit ---
@@ -107,19 +132,25 @@ jobs:
           fi
 
           # --- Active release branches ---
-          # Discover from the previous release's Kafka-base tags.
-          PREV_VERSION=$(git tag -l "inkless-release-*" | sort -V | tail -n1)
-          PREV_VERSION="${PREV_VERSION#inkless-release-}"
+          # Discover active branches from Kafka-base tags. Normally these come
+          # from the PREVIOUS release; when resuming, the target version's own
+          # tags already exist, so discover from those.
+          if [ "$RESUME" = "true" ]; then
+            DISCOVER_VERSION="$INKLESS_VERSION"
+          else
+            DISCOVER_VERSION=$(git tag -l "inkless-release-*" | sort -V | tail -n1)
+            DISCOVER_VERSION="${DISCOVER_VERSION#inkless-release-}"
+          fi
           DISCOVERED=""
-          if [ -n "$PREV_VERSION" ]; then
-            DISCOVERED=$(git tag -l "inkless-*-${PREV_VERSION}" \
+          if [ -n "$DISCOVER_VERSION" ]; then
+            DISCOVERED=$(git tag -l "inkless-*-${DISCOVER_VERSION}" \
               | grep -E '^inkless-[0-9]+\.[0-9]+\.[0-9]+-' \
               | while read -r tag; do
                   if [[ "$tag" =~ ^inkless-([0-9]+\.[0-9]+)\.[0-9]+-(.+)$ ]]; then
                     echo "inkless-${BASH_REMATCH[1]}"
                   fi
                 done | sort -u)
-            echo "Discovered active branches from ${PREV_VERSION} tags: $(echo "$DISCOVERED" | tr '\n' ' ')"
+            echo "Discovered active branches from ${DISCOVER_VERSION} tags: $(echo "$DISCOVERED" | tr '\n' ' ')"
           fi
 
           # Merge with extra_branches input
@@ -135,6 +166,7 @@ jobs:
           echo "inkless_version=$INKLESS_VERSION"                   >> $GITHUB_OUTPUT
           echo "main_commit=$MAIN_COMMIT"                           >> $GITHUB_OUTPUT
           echo "release_tag=$RELEASE_TAG"                           >> $GITHUB_OUTPUT
+          echo "resume=$RESUME"                                     >> $GITHUB_OUTPUT
           echo "active_branches=$(echo "$ALL_BRANCHES" | tr '\n' ' ' | sed 's/ $//')" >> $GITHUB_OUTPUT
 
       - name: Resolve Kafka versions for active branches
@@ -142,8 +174,13 @@ jobs:
         env:
           ACTIVE_BRANCHES: ${{ steps.resolve.outputs.active_branches }}
           INKLESS_VERSION: ${{ steps.resolve.outputs.inkless_version }}
+          RESUME:          ${{ steps.resolve.outputs.resume }}
         run: |
-          # For each active branch, determine its current Kafka version from gradle.properties
+          # For each active branch, determine its Kafka version from gradle.properties.
+          # Normal release reads the branch HEAD (about to be tagged). On resume the
+          # tags already exist and the branch HEAD may have moved on, so read the
+          # gradle.properties captured at the existing kafka-base tag instead by
+          # discovering the tag directly.
           BUILD_MATRIX_ENTRIES=""
           KAFKA_MATRIX_ENTRIES=""
           LATEST_TAGS_JSON="{"
@@ -151,8 +188,23 @@ jobs:
           KAFKA_VERSIONS=""
 
           for BRANCH in $ACTIVE_BRANCHES; do
-            KAFKA_VER=$(git show "origin/${BRANCH}:gradle.properties" \
-              | grep '^version=' | head -1 | sed 's/version=\(.*\)-inkless.*/\1/')
+            if [ "$RESUME" = "true" ]; then
+              # Find the existing kafka-base tag for this branch+version and use it
+              # as-is: on resume the tag is authoritative (it was validated at cut
+              # time). Do NOT recompute the tag name from gradle.properties -- that
+              # would assume the embedded Kafka version still matches the tag.
+              KAFKA_MINOR="${BRANCH#inkless-}"
+              TAG=$(git tag -l "inkless-${KAFKA_MINOR}.*-${INKLESS_VERSION}" | sort -V | tail -n1)
+              if [ -z "$TAG" ]; then
+                echo "::error::resume: no existing tag inkless-${KAFKA_MINOR}.*-${INKLESS_VERSION} for branch $BRANCH"
+                exit 1
+              fi
+              KAFKA_VER=$(git show "${TAG}:gradle.properties" \
+                | grep '^version=' | head -1 | sed 's/version=\(.*\)-inkless.*/\1/')
+            else
+              KAFKA_VER=$(git show "origin/${BRANCH}:gradle.properties" \
+                | grep '^version=' | head -1 | sed 's/version=\(.*\)-inkless.*/\1/')
+            fi
 
             if [ -z "$KAFKA_VER" ]; then
               echo "::error::Cannot determine Kafka version for branch $BRANCH (gradle.properties version= not found)"
@@ -160,7 +212,11 @@ jobs:
             fi
 
             KAFKA_MAJOR_MINOR=$(echo "$KAFKA_VER" | cut -d. -f1-2)
-            TAG="inkless-${KAFKA_VER}-${INKLESS_VERSION}"
+            # On resume TAG is the discovered tag (kept above); on a normal release
+            # it is the tag about to be created for this branch's HEAD.
+            if [ "$RESUME" != "true" ]; then
+              TAG="inkless-${KAFKA_VER}-${INKLESS_VERSION}"
+            fi
 
             echo "$BRANCH -> Kafka $KAFKA_VER -> tag $TAG"
             KAFKA_VERSIONS="${KAFKA_VERSIONS} ${TAG}"
@@ -185,11 +241,17 @@ jobs:
           echo "kafka_base_matrix={\"include\":[${KAFKA_MATRIX_ENTRIES}]}" >> $GITHUB_OUTPUT
           echo "latest_tags=${LATEST_TAGS_JSON}"                          >> $GITHUB_OUTPUT
 
-  # Assert that each active release branch is ready to release:
-  #   - the target main commit is present on the branch
-  #   - branch-consistency.sh reports zero missing commits
+  # Assert that each active release branch is ready to release: it contains every
+  # actionable inkless commit from main (by PR presence, via branch-consistency.sh
+  # --check). We do NOT assert the exact main commit SHA is an ancestor: release
+  # branches are built by CHERRY-PICKING from main, so the commits are present
+  # under different SHAs. Skip-listed and old commits do not fail the check.
   validate:
     needs: prepare
+    # On resume the tags already exist and were validated when first cut; the
+    # branches (and main) may have moved on since, so re-checking against current
+    # main would spuriously fail. Skip validation when resuming.
+    if: needs.prepare.outputs.resume != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -205,34 +267,34 @@ jobs:
         run: |
           FAILED=0
           for BRANCH in $ACTIVE_BRANCHES; do
-            git fetch origin "$BRANCH"
+            # Populate the remote-tracking refs the check reads. Pin origin/main to
+            # the RESOLVED main_commit (not the live remote HEAD) so validation
+            # matches the exact release target, even if main advanced since prepare
+            # or an older main_commit was requested. branch-consistency.sh --check
+            # does no fetch of its own, so these refs are authoritative. The
+            # main_commit object is already present (checkout used fetch-depth: 0).
+            git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+            git update-ref refs/remotes/origin/main "$MAIN_COMMIT"
 
-            # Assert main commit is present
-            if ! git merge-base --is-ancestor "$MAIN_COMMIT" "origin/$BRANCH"; then
-              echo "::error::Commit $MAIN_COMMIT is NOT present on $BRANCH. Cherry-pick it first."
+            # branch-consistency.sh --check exits non-zero when the branch has
+            # actionable missing inkless commits. It matches by PR number, which
+            # is correct for cherry-picked history (SHAs differ from main).
+            if ./inkless-sync/branch-consistency.sh "$BRANCH" --check; then
+              echo "✓ $BRANCH is in sync with main"
+            else
+              echo "::error::$BRANCH is missing actionable inkless commits from main. Run cherry-pick sync first."
               FAILED=1
-              continue
             fi
-            echo "✓ $MAIN_COMMIT is present on $BRANCH"
-
-            # Assert no missing inkless commits
-            MISSING=$(./inkless-sync/branch-consistency.sh "$BRANCH" --missing 2>&1 \
-              | grep -E '^- [0-9a-f]{10}' | wc -l | tr -d ' ')
-            if [ "$MISSING" -gt 0 ]; then
-              echo "::error::$BRANCH has $MISSING missing inkless commit(s) from main. Run cherry-pick sync first."
-              ./inkless-sync/branch-consistency.sh "$BRANCH" --missing
-              FAILED=1
-              continue
-            fi
-            echo "✓ $BRANCH is in sync with main"
           done
           exit $FAILED
 
   # Create and push all tags:
   #   - inkless-release-<N> on the resolved main commit
   #   - inkless-<kafka-version>-<N> on the HEAD of each active release branch
+  # Skipped when resuming a release whose tags already exist.
   tag:
     needs: [prepare, validate]
+    if: needs.prepare.outputs.resume != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -278,8 +340,11 @@ jobs:
 
   # Build Docker images and binary distributions for all Kafka-base tags,
   # then finalize the GitHub Release with all artifacts.
+  # Runs after tagging on a normal release, or directly after validate when
+  # resuming (the tag job is skipped because tags already exist).
   publish:
-    needs: [prepare, tag]
+    needs: [prepare, validate, tag]
+    if: ${{ always() && !cancelled() && needs.prepare.result == 'success' && (needs.validate.result == 'success' || needs.validate.result == 'skipped') && (needs.tag.result == 'success' || needs.tag.result == 'skipped') }}
     uses: ./.github/workflows/inkless-publish.yml
     with:
       inkless_version:   ${{ needs.prepare.outputs.inkless_version }}
