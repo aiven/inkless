@@ -1627,6 +1627,28 @@ public abstract class AbstractControlPlaneTest {
         }
 
         @Test
+        void getCrossTierLogStartIsNullAwareUnlikeEarliest() {
+            // Before any leader report, remote_log_start_offset is NULL. EARLIEST COALESCEs that to the log start (0),
+            // but the dedicated read must expose the NULL as empty so the RLM reclaim floor does not mistake the WAL
+            // frontier for the cross-tier earliest.
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).isEmpty();
+            assertThat(controlPlane.listOffsets(List.of(new ListOffsetsRequest(tidp, EARLIEST_TIMESTAMP))))
+                .containsExactly(ListOffsetsResponse.success(tidp, NO_TIMESTAMP, 0));  // falls back to log start
+
+            // After a report the dedicated read returns the reported value.
+            controlPlane.advanceCrossTierLogStartOffset(List.of(
+                new AdvanceCrossTierLogStartOffsetRequest(topicId, 0, 50)
+            ));
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(50);
+        }
+
+        @Test
+        void getCrossTierLogStartIsEmptyForUnknownPartition() {
+            assertThat(controlPlane.getCrossTierLogStart(
+                new TopicIdPartition(NONEXISTENT_TOPIC_ID, 0, "nonexistent"))).isEmpty();
+        }
+
+        @Test
         void earliestReflectsCrossTierWhileEarliestLocalStaysAtLogStart() {
             controlPlane.advanceCrossTierLogStartOffset(List.of(
                 new AdvanceCrossTierLogStartOffsetRequest(topicId, 0, 50)

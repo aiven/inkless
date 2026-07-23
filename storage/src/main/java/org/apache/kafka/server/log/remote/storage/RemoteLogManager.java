@@ -154,13 +154,14 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
     private final Time time;
     private final Function<TopicPartition, Optional<UnifiedLog>> fetchLog;
     private final BiConsumer<TopicPartition, Long> updateRemoteLogStartOffset;
-    // Inkless: overrides the log start offset used to drive remote-retention reclaim (and the
-    // become-leader log-start report) for consolidating diskless partitions. For such partitions the
-    // broker-local UnifiedLog.logStartOffset can be pinned at the classic-to-diskless seal on a
-    // freshly-rebuilt leader, which would over-reclaim the remote classic prefix and report the seal as
-    // the cross-tier earliest. This function returns the control-plane cross-tier earliest for those
-    // partitions and OptionalLong.empty() for everything else (classic topics / non-inkless), where the
-    // upstream behavior (log.logStartOffset()) is unchanged.
+    // Inkless: the reclaim floor (and become-leader log-start report) for consolidating diskless
+    // partitions. Their broker-local UnifiedLog.logStartOffset can be pinned at the classic-to-diskless
+    // seal on a rebuilt leader, so using it would over-reclaim the remote classic prefix and report the
+    // seal as the cross-tier earliest. Returns the raw control-plane remote log start, present only once
+    // the classic leader has reported it and not COALESCEd to the WAL prune frontier (which could also
+    // over-reclaim). Empty for classic/non-inkless partitions and for an unreported remote start; when
+    // empty the reclaim path uses the true remote earliest (findLogStartOffset), not the local seal.
+    // Non-consolidating partitions keep the upstream log.logStartOffset() behavior.
     private final Function<TopicPartition, OptionalLong> logStartOffsetOverride;
     // Inkless: tells whether a partition is a consolidating diskless topic. Used to pick the reclaim
     // floor's fallback when {@link #logStartOffsetOverride} is empty: consolidating partitions must never

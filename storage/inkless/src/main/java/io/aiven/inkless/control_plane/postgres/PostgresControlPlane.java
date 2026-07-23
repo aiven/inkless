@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
@@ -33,6 +34,7 @@ import java.io.IOException;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -241,6 +243,15 @@ public class PostgresControlPlane extends AbstractControlPlane {
             return job.call();
         } catch (final Exception e) {
             throw new ControlPlaneException("Failed to advance cross-tier log start offset", e);
+        }
+    }
+
+    @Override
+    public OptionalLong getCrossTierLogStart(final TopicIdPartition topicIdPartition) {
+        try {
+            return new GetCrossTierLogStartJob(readJooqCtx, topicIdPartition).call();
+        } catch (final Exception e) {
+            throw new ControlPlaneException("Failed to get cross-tier log start offset", e);
         }
     }
 
