@@ -249,7 +249,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     public OptionalLong getCrossTierLogStart(final TopicIdPartition topicIdPartition) {
         try {
-            return new GetCrossTierLogStartJob(readJooqCtx, topicIdPartition).call();
+            return new GetCrossTierLogStartJob(time, readJooqCtx, topicIdPartition, pgMetrics::onGetCrossTierLogStartCompleted).call();
         } catch (final Exception e) {
             throw new ControlPlaneException("Failed to get cross-tier log start offset", e);
         }

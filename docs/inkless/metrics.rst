@@ -293,6 +293,8 @@ FilesDeleteQueryRate                Total number of FilesDelete queries executed
 FilesDeleteQueryTime                Time spent executing the FilesDelete query in milliseconds             
 FindBatchesQueryRate                Total number of FindBatches queries executed                           
 FindBatchesQueryTime                Time spent executing the FindBatches query in milliseconds             
+GetCrossTierLogStartQueryRate       Total number of GetCrossTierLogStart queries executed                  
+GetCrossTierLogStartQueryTime       Time spent executing the GetCrossTierLogStart query in milliseconds    
 GetFilesToDeleteQueryRate           Total number of GetFilesToDelete queries executed                      
 GetFilesToDeleteQueryTime           Time spent executing the GetFilesToDelete query in milliseconds        
 GetLogInfoQueryRate                 Total number of GetLogInfo queries executed                            
