@@ -2619,7 +2619,7 @@ public class RemoteLogManagerTest {
     @Test
     public void testConsolidatingReclaimFailsSafeWhenOverrideAbsent()
             throws RemoteStorageException, ExecutionException, InterruptedException, IOException {
-        // Fail-safe (Problem B hardening): when the log-start-offset override yields empty for a
+        // Fail-safe (over-reclaim hardening): when the log-start-offset override yields empty for a
         // CONSOLIDATING partition (control-plane outage or not-yet-propagated metadata on the RLM leader)
         // the reclaim floor must NOT fall back to the broker-local log start -- on a freshly-rebuilt
         // consolidating leader that is the seal (200) and would irreversibly delete the entire remote

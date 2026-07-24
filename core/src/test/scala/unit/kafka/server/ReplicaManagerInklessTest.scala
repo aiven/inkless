@@ -1047,7 +1047,7 @@ class ReplicaManagerInklessTest {
     // returns empty rather than propagating the exception. Callers (DisklessLeaderEndPoint whole-log
     // start, RemoteLogManager reclaim floor + become-leader report) then fall back to the broker-local
     // UnifiedLog.logStartOffset -- which on a freshly-rebuilt consolidating leader is the seal. So a
-    // control-plane outage in that window transiently reverts to the pre-fix (Problem B) behavior; it
+    // control-plane outage in that window transiently reverts to the pre-fix seal-based over-reclaim behavior; it
     // does not fail the fetch/cleanup. This test pins that contract so the fallback is a conscious
     // choice, not an accident.
     val controlPlane = mock(classOf[ControlPlane])
