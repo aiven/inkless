@@ -22,9 +22,12 @@ import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
+import org.apache.kafka.clients.admin.DeleteRecordsResult;
+import org.apache.kafka.clients.admin.DeletedRecords;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.admin.RecordsToDelete;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -416,6 +419,85 @@ public class InklessConsolidatedDisklessTopicsTest {
     }
 
     /**
+     * Cross-tier {@code DeleteRecords} on a switched consolidated topic must advance the earliest to
+     * exactly the requested boundary per partition, never over-reclaim the surviving classic prefix down
+     * to the seal, and honor the forward-only control-plane advance.
+     *
+     * <p>This exercises paths the single-partition ducktape system tests do not: two partitions across two
+     * AZs with managed replicas, a different delete boundary per partition, and repeated/idempotent deletes.
+     * It also asserts the cross-tier earliest bootstraps to {@code 0} in the control plane (never NULL),
+     * the invariant the reclaim floor and become-leader report depend on.
+     */
+    @Test
+    public void testCrossTierDeleteRecordsOnConsolidatedTopic() throws Exception {
+        topicName = "cross-tier-delete-records";
+        // Even split so each partition's seal and offsets are deterministic: 40 records over 2 partitions
+        // means offsets [0, 20) per partition, so the switch seals each partition at 20.
+        final int totalRecords = 40;
+        final long sealPerPartition = totalRecords / numPartitions;
+
+        final Map<String, Object> commonConfigs = new HashMap<>();
+        commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        final Uuid topicUuid;
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            topicUuid = createClassicTopic(admin);
+            // Produce the whole classic prefix before switching so the per-partition seal is exactly
+            // sealPerPartition; large values roll segments so the prefix tiers to remote.
+            produceRecords(commonConfigs, totalRecords, largeValueRecordFactory());
+            switchTopicToConsolidatedDiskless(admin);
+        }
+
+        // The classic prefix tiers to remote (the switch force-rolls the boundary segment).
+        waitForAtLeastOneTieredObject("after the switch");
+
+        // Everything is readable from 0, and the cross-tier earliest bootstrapped to 0 (not NULL, not the
+        // seal): the value DeleteRecords advances forward from.
+        assertBrokerEarliestOffsetsEqual(commonConfigs, 0L, "after the switch");
+        assertRemoteLogStartOffsetBootstrapped(topicUuid, 0L);
+
+        final TopicPartition p0 = new TopicPartition(topicName, 0);
+        final TopicPartition p1 = new TopicPartition(topicName, 1);
+
+        // 1) Per-partition boundaries, both below the seal and inside the remote classic prefix. The low
+        // watermark is the stored cross-tier earliest, advanced synchronously by the control plane.
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            final Map<TopicPartition, Long> lw = deleteRecordsBefore(admin, Map.of(p0, 3L, p1, 5L));
+            assertEquals(3L, lw.get(p0).longValue(), "DeleteRecords low watermark for " + p0);
+            assertEquals(5L, lw.get(p1).longValue(), "DeleteRecords low watermark for " + p1);
+        }
+        // Earliest settles at exactly each boundary, not the seal: the reclaim floor / reported earliest is
+        // the delete boundary, so the surviving classic prefix [boundary, seal) is preserved.
+        assertBrokerEarliestOffsets(commonConfigs, Map.of(p0, 3L, p1, 5L), "after per-partition DeleteRecords");
+
+        // 2) Monotonic advance: a higher boundary moves the earliest up on both partitions.
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            final Map<TopicPartition, Long> lw = deleteRecordsBefore(admin, Map.of(p0, 7L, p1, 7L));
+            assertEquals(7L, lw.get(p0).longValue(), "monotonic advance low watermark for " + p0);
+            assertEquals(7L, lw.get(p1).longValue(), "monotonic advance low watermark for " + p1);
+        }
+
+        // 3) Forward-only: a boundary below the current start is a no-op that returns the current start and
+        // never moves the earliest backwards.
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            final Map<TopicPartition, Long> lw = deleteRecordsBefore(admin, Map.of(p0, 2L, p1, 2L));
+            assertEquals(7L, lw.get(p0).longValue(), "below-start DeleteRecords must not move " + p0 + " back");
+            assertEquals(7L, lw.get(p1).longValue(), "below-start DeleteRecords must not move " + p1 + " back");
+        }
+        assertBrokerEarliestOffsets(commonConfigs, Map.of(p0, 7L, p1, 7L),
+            "after monotonic advance and below-start no-op");
+
+        // No creep: give the RLM a couple of reclaim cycles and confirm the earliest stays at the delete
+        // boundary rather than drifting up to the seal (the over-reclaim symptom this branch fixes).
+        Thread.sleep(TimeUnit.SECONDS.toMillis(15));
+        assertBrokerEarliestOffsets(commonConfigs, Map.of(p0, 7L, p1, 7L), "after waiting out RLM reclaim cycles");
+
+        // The survivors [7, seal) on each partition are still readable and contiguous across the cut.
+        final int survivorsPerPartition = (int) (sealPerPartition - 7);
+        consumeAndVerify(commonConfigs, survivorsPerPartition * numPartitions);
+    }
+
+    /**
      * A record factory that produces ~104 KB values (large enough to roll segments at
      * {@code segment.bytes=1 MiB} after ~10 records) with round-robin partitioning.
      */
@@ -537,6 +619,89 @@ public class InklessConsolidatedDisklessTopicsTest {
             }
             return out;
         }
+    }
+
+    /**
+     * Issues {@code DeleteRecords} before the given per-partition offsets and returns the resulting low
+     * watermark per partition (for a consolidating topic this is the stored cross-tier earliest, which the
+     * control plane advances synchronously and forward-only).
+     */
+    private Map<TopicPartition, Long> deleteRecordsBefore(Admin admin, Map<TopicPartition, Long> beforeOffsets)
+        throws ExecutionException, InterruptedException, TimeoutException {
+        final Map<TopicPartition, RecordsToDelete> request = new HashMap<>();
+        beforeOffsets.forEach((tp, offset) -> request.put(tp, RecordsToDelete.beforeOffset(offset)));
+        final DeleteRecordsResult result = admin.deleteRecords(request);
+        final Map<TopicPartition, Long> lowWatermarks = new HashMap<>();
+        for (final TopicPartition tp : request.keySet()) {
+            final DeletedRecords deleted = result.lowWatermarks().get(tp).get(30, TimeUnit.SECONDS);
+            lowWatermarks.put(tp, deleted.lowWatermark());
+        }
+        return lowWatermarks;
+    }
+
+    /**
+     * Like {@link #assertBrokerEarliestOffsetsEqual}, but asserts a distinct expected earliest per
+     * partition (waits for convergence, then hard-asserts each partition).
+     */
+    private void assertBrokerEarliestOffsets(Map<String, Object> commonConfigs,
+                                             Map<TopicPartition, Long> expected,
+                                             String context) throws Exception {
+        final AtomicReference<Map<TopicPartition, Long>> lastSeen = new AtomicReference<>();
+        TestUtils.waitForCondition(() -> {
+            Map<TopicPartition, Long> earliest = queryBrokerEarliestOffsets(commonConfigs);
+            lastSeen.set(earliest);
+            return expected.entrySet().stream().allMatch(e -> e.getValue().equals(earliest.get(e.getKey())));
+        }, 90_000, () -> "ListOffsets earliest should converge to " + expected + " " + context
+            + "; last observed: " + lastSeen.get());
+
+        Map<TopicPartition, Long> earliest = queryBrokerEarliestOffsets(commonConfigs);
+        log.info("Broker ListOffsets earliest per partition {}: {}", context, earliest);
+        expected.forEach((tp, exp) -> assertEquals(exp, earliest.get(tp),
+            "ListOffsets earliest for " + tp + " should be " + exp + " " + context));
+    }
+
+    /**
+     * Waits until {@code logs.remote_log_start_offset} for every partition is bootstrapped to
+     * {@code expected} (never NULL). A NULL here would make {@code ListOffsets(EARLIEST)} COALESCE to the
+     * pruned WAL frontier and hide the still-live remote prefix, the regression the become-leader report
+     * exists to prevent.
+     */
+    private void assertRemoteLogStartOffsetBootstrapped(Uuid kafkaTopicId, long expected) throws InterruptedException {
+        final UUID id = toJavaUuid(kafkaTopicId);
+        final AtomicReference<Map<Integer, Long>> lastSeen = new AtomicReference<>();
+        TestUtils.waitForCondition(() -> {
+            try {
+                Map<Integer, Long> perPartition = readRemoteLogStartOffsets(id);
+                lastSeen.set(perPartition);
+                return perPartition.size() == numPartitions
+                    && perPartition.values().stream().allMatch(v -> v != null && v == expected);
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
+            }
+        }, 120_000, () -> "remote_log_start_offset should be bootstrapped to " + expected + " for all "
+            + numPartitions + " partitions (never NULL, never the seal); last observed: " + lastSeen.get());
+    }
+
+    private Map<Integer, Long> readRemoteLogStartOffsets(UUID topicId) throws SQLException {
+        Map<Integer, Long> out = new HashMap<>();
+        try (
+            Connection connection = DriverManager.getConnection(
+                pgContainer.getJdbcUrl(),
+                PostgreSQLTestContainer.USERNAME,
+                PostgreSQLTestContainer.PASSWORD);
+            PreparedStatement ps = connection.prepareStatement(
+                "SELECT partition, remote_log_start_offset FROM logs WHERE topic_id = ?")
+        ) {
+            ps.setObject(1, topicId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    int partition = rs.getInt(1);
+                    long value = rs.getLong(2);
+                    out.put(partition, rs.wasNull() ? null : value);
+                }
+            }
+        }
+        return out;
     }
 
     private record ControlPlaneDisklessSnapshot(long batchRowCount, long minLogStartOffset) { }
