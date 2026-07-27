@@ -174,8 +174,9 @@ class DisklessLeaderEndPoint(
   }
 
   /**
-   * Trim a fetched block so the follower's single append fits `segment.bytes`, restoring the classic
-   * invariant `returned <= maxBytes + one physical batch (<= max.message.bytes) <= segment.bytes`.
+   * Trim a fetched block toward the classic shape `returned <= maxBytes + one physical batch`, so the
+   * follower's single append normally fits `segment.bytes`. This is a best-effort bound, not a guaranteed
+   * invariant: see the caveat below.
    *
    * `buildFetch` only reserves the headroom (`maxBytes = segment.bytes - max.message.bytes`); it is not
    * enough alone because `find_batches` limits at *coordinate* granularity and always admits the
@@ -188,8 +189,15 @@ class DisklessLeaderEndPoint(
    * emit a larger unit beyond `maxBytes` or this breaks again. Batches with `lastOffset < fetchOffset` are
    * dropped: a prior fetch may have truncated a coalesced coordinate mid-run and the follower re-fetches
    * into the same coordinate, so its already-appended prefix must not be re-served. At least one batch is
-   * always emitted for progress (a single batch is bounded by `max.message.bytes`, assumed
-   * `<= segment.bytes`; the degenerate case is warned about in `buildFetch` and left to fail).
+   * always emitted for progress.
+   *
+   * Caveat (the one-batch overshoot is NOT guaranteed `<= segment.bytes`): the always-emitted batch is bounded
+   * by `max.message.bytes` only when produced under the current config. A batch produced when `max.message.bytes`
+   * was higher and later lowered below `segment.bytes`, or a coalesced coordinate exceeding `segment.bytes`, is
+   * emitted whole and fails the append with `RecordBatchTooLargeException`.
+   * Not fatal: `ConsolidationFetcherThread` converts it to a retriable per-partition error 
+   * (parks + retries, self-heals once `segment.bytes` is raised);
+   * letting such a batch land without operator action is the outstanding fix (KC-345).
    */
   private def clampRecordsToSegment(records: Records, fetchOffset: Long, maxBytes: Int): Records = {
     val selected = new util.ArrayList[MutableRecordBatch]()
