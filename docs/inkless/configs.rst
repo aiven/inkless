@@ -266,10 +266,10 @@ Under ``inkless.``
   * Importance: low
 
 ``retention.enforcement.max.batches.per.request``
-  The maximum number of batches to delete per partition when enforcing retention. A value of 0 means all eligible batches are deleted in one request. Setting this to a lower value can help to reduce the load on the control plane back-end.
+  The maximum number of batches to delete per partition when enforcing retention. A value of 0 means all eligible batches are deleted in one request, which makes the retention boundary scan proportional to the partition depth and can exceed the control-plane socket timeout on very deep partitions. A positive value bounds both the boundary scan and the delete to that many batches per pass, so a deep backlog drains over successive enforcement cycles instead of one unbounded request. It should be set above the per-interval expiry rate so retention does not fall behind.
 
   * Type: int
-  * Default: 0
+  * Default: 1000
   * Valid Values: [0,...]
   * Importance: low
 

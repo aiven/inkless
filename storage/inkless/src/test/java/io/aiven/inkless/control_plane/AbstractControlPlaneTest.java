@@ -892,6 +892,35 @@ public abstract class AbstractControlPlaneTest {
             }
 
             @Test
+            void deleteWithinBoundedWindow() {
+                // cap = 1 with 3 batches makes the scan window (cap + 1 = 2) strictly smaller than the
+                // partition depth (3), so the bounded scan actually truncates. The size boundary still lands
+                // inside the window (keep batches 2 and 3), so exactly 1 batch is deletable - below the cap,
+                // so the under-lock cap-probe never clamps. This drives the truncated-window + in-window
+                // boundary path and asserts it matches the unbounded (cap = 0) result. Distinct from
+                // deleteOneAtTheTime, whose retentionBytes = 0 falls through to high_watermark and clamps.
+                addBatches();
+                assertThat(getLogStartOffset()).isEqualTo(0L);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+
+                // retentionBytes = B2 + B3: retaining batches 2 and 3 complies, retaining all 3 does not.
+                final var responses = controlPlane.enforceRetention(
+                    List.of(
+                        new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, BATCH_2_SIZE + BATCH_3_SIZE, -1)
+                    ),
+                    1
+                );
+
+                final long newLogStartOffset = BATCH_1_RECORDS;
+                assertThat(responses)
+                    .containsExactly(EnforceRetentionResponse.success(1, BATCH_1_SIZE, newLogStartOffset));
+                assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+                assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, 0, BATCH_2_SIZE + BATCH_3_SIZE));
+            }
+
+            @Test
             void deleteAll() {
                 addBatches();
                 assertThat(getLogStartOffset()).isEqualTo(0L);

@@ -240,9 +240,12 @@ public class InklessConfig extends AbstractConfig {
 
     public static final String RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_CONFIG = "retention.enforcement.max.batches.per.request";
     public static final String RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DOC = "The maximum number of batches to delete per partition when enforcing retention. "
-        + "A value of 0 means all eligible batches are deleted in one request. "
-        + "Setting this to a lower value can help to reduce the load on the control plane back-end.";
-    private static final int RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DEFAULT = 0;
+        + "A value of 0 means all eligible batches are deleted in one request, which makes the retention boundary "
+        + "scan proportional to the partition depth and can exceed the control-plane socket timeout on very deep "
+        + "partitions. A positive value bounds both the boundary scan and the delete to that many batches per pass, "
+        + "so a deep backlog drains over successive enforcement cycles instead of one unbounded request. "
+        + "It should be set above the per-interval expiry rate so retention does not fall behind.";
+    private static final int RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DEFAULT = 1000;
 
     public static final String BATCH_COALESCING_ENABLED_CONFIG = CONTROL_PLANE_PREFIX + "batch.coalescing.enabled";
     public static final String BATCH_COALESCING_ENABLED_DOC = "When true, contiguous same-partition batch runs within a single commit are collapsed "

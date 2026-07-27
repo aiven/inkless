@@ -72,9 +72,17 @@ import static org.jooq.generated.Tables.BATCHES;
  * that distinguishes lock-late alone (still blocks here) from lock-late plus per-request transactions
  * (does not).
  *
- * <p>A/B usage: run on the current implementation to capture the lock-coupled baseline, apply the
- * lock-decoupling rewrite, then re-run and compare the commit max/p95 columns. Both tests drive the
- * public {@link EnforceRetentionJob} API, so they run unchanged against either implementation.
+ * <p>A/B usage (lock decoupling, V21): run on the current implementation to capture the lock-coupled
+ * baseline, apply the lock-decoupling rewrite, then re-run and compare the commit max/p95 columns.
+ *
+ * <p>A/B usage (bounded scan, V22): once the scan runs unlocked, the commit columns no longer move, but
+ * the boundary scan still costs O(partition depth) per pass. The bounded-scan rewrite caps it at
+ * O(maxBatchesPerRequest). The signal is the {@code enforce ms} column of
+ * {@code benchmarkCommitBlockingDuringRetention} across the depth checkpoints: with a fixed cap it scales
+ * with depth on the unbounded version and stays flat once the scan is bounded.
+ *
+ * <p>Both tests drive the public {@link EnforceRetentionJob} API, so they run unchanged against either
+ * implementation.
  */
 @Tag("benchmark")
 @Testcontainers
@@ -86,7 +94,8 @@ class EnforceRetentionCommitBlockingBenchmarkTest {
     static final long FILE_SIZE = 100_000_000;
     static final int BATCH_BYTES = 120;
     static final int BATCHES_PER_WINDOW = 10_000;
-    static final int MAX_BATCHES_PER_ENFORCE = 1;
+    // Override with -Dinkless.benchmark.maxBatchesPerEnforce=<n> to sweep the cap (per-pass work size).
+    static final int MAX_BATCHES_PER_ENFORCE = Integer.getInteger("inkless.benchmark.maxBatchesPerEnforce", 1);
     static final long COMMIT_START_DELAY_MS = 10;
     static final long WARMUP_DEPTH = 100_000;
     static final long[] DEPTH_CHECKPOINTS = {200_000, 400_000, 800_000};
@@ -140,7 +149,9 @@ class EnforceRetentionCommitBlockingBenchmarkTest {
         }
 
         out.append(String.format("%nNote: latency is wall-clock against a local container and is indicative, not a microbenchmark. "
-            + "Run the same benchmark before and after the lock-decoupling change and compare the commit max/p95 columns.%n"));
+            + "Run the same benchmark before and after the lock-decoupling change and compare the commit max/p95 columns. "
+            + "For the bounded-scan change, compare the enforce ms column across the depth rows: it scales with depth on "
+            + "the unbounded scan and stays flat once the scan is capped at maxBatchesPerRequest.%n"));
         System.out.println(out);
     }
 
