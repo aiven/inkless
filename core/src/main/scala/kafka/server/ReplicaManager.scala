@@ -276,9 +276,12 @@ class ReplicaManager(val config: KafkaConfig,
   //
   // purgeInterval = 0 (matches delayedRemoteFetchPurgatory) so completed ops release their captured response
   // references immediately for GC.
-  // Each completed op pins a Map[TopicIdPartition, FetchPartitionData] holding fetched records,
-  // bounded per partition by diskless.consolidation.fetch.max.bytes and in aggregate by
-  // diskless.consolidation.fetch.response.max.bytes.
+  // Each completed operation pins a Map[TopicIdPartition, FetchPartitionData] holding fetched records, 
+  // bounded per partition by diskless.consolidation.fetch.max.bytes 
+  // and in aggregate by diskless.consolidation.fetch.response.max.bytes.
+  // The aggregate bound is best-effort: find_batches always admits each partition's first coordinate,
+  // so a response can overshoot by sum(first-coordinate byte_size). Harmless for correctness (append is
+  // per-partition); a heap-sizing concern only.
   // Without aggressive purging, watch lists accumulate up to ~purgeInterval completed ops worth of records
   // and exhaust the heap.
   val delayedConsolidationFetchPurgatory =
