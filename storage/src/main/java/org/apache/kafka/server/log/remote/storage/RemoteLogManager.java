@@ -1309,11 +1309,12 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
          * start is unreported, which would itself over-reclaim still-live remote segments and lock the
          * wrong value in via the forward-only control-plane advance.
          *
-         * <p>If the override is empty for such a partition (control plane unreachable, metadata not yet
-         * propagated, or the remote start simply not reported yet) we fail safe to the remote earliest
-         * ({@link RemoteLogManager#findLogStartOffset(TopicIdPartition, UnifiedLog)}), not the seal: nothing
-         * over-reclaims this cycle, time/size retention still applies, and the log-start reclaim retries
-         * once the remote start resolves. Deferring is safe since remote deletes are irreversible.
+         * <p>If the override is empty for such a partition (control plane unreachable, or metadata not yet
+         * propagated, or the remote start not reported yet) we fall back to
+         * {@link RemoteLogManager#findLogStartOffset(TopicIdPartition, UnifiedLog)}, which walks the
+         * cumulative remote epoch cache back to the true remote earliest. The classic prefix survives and
+         * time/size retention still applies. That floor is the true earliest and never the local seal, so
+         * the irreversible remote delete cannot over-reclaim.
          */
         private long reclaimFloorLogStartOffset(UnifiedLog log) throws RemoteStorageException {
             final TopicPartition tp = topicIdPartition.topicPartition();

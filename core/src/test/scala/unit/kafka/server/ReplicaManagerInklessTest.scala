@@ -1043,13 +1043,14 @@ class ReplicaManagerInklessTest {
 
   @Test
   def testCrossTierEarliestOffsetReturnsEmptyWhenControlPlaneThrows(): Unit = {
-    // Failure-mode characterization: if the control-plane query fails on a cache miss the accessor
-    // returns empty rather than propagating the exception. Callers (DisklessLeaderEndPoint whole-log
-    // start, RemoteLogManager reclaim floor + become-leader report) then fall back to the broker-local
-    // UnifiedLog.logStartOffset -- which on a freshly-rebuilt consolidating leader is the seal. So a
-    // control-plane outage in that window transiently reverts to the pre-fix seal-based over-reclaim behavior; it
-    // does not fail the fetch/cleanup. This test pins that contract so the fallback is a conscious
-    // choice, not an accident.
+    // A control-plane query that fails on a cache miss returns empty here; it does not throw. Only the
+    // read path (DisklessLeaderEndPoint, the whole-log start) reads this COALESCE'd accessor. On empty it
+    // uses the broker-local UnifiedLog.logStartOffset, which on a freshly-rebuilt consolidating leader is
+    // the seal, so a read of the surviving remote prefix [X, seal) fails as out-of-range until the control
+    // plane recovers. The fetch still completes; it just cannot see that prefix meanwhile. The reclaim
+    // floor and become-leader report never touch this accessor: they read the raw
+    // crossTierRemoteLogStartOffset and fall back to findLogStartOffset, the true remote earliest. This
+    // test locks in that read-path behavior.
     val controlPlane = mock(classOf[ControlPlane])
     when(controlPlane.listOffsets(anyList())).thenThrow(new ControlPlaneException("boom"))
     val cache = mock(classOf[CrossTierLogStartCache])

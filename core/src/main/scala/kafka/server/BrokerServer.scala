@@ -826,10 +826,11 @@ class BrokerServer(
         (tp: TopicPartition) =>
           if (_replicaManager != null) _replicaManager.crossTierRemoteLogStartOffset(tp) else util.OptionalLong.empty(),
         // Whether the partition is consolidating diskless: when the override above is unavailable, this
-        // makes the RLM fail safe (skip log-start reclaim) rather than reclaim to the local seal. False for
-        // classic topics. The `_replicaManager == null` branch is unreachable (these lambdas run only from
-        // leadership-scheduled RLM tasks, applied by ReplicaManager); we still default to the fail-safe
-        // `true` there so an impossible early call can never over-reclaim.
+        // makes the RLM fail safe to the true remote earliest (findLogStartOffset walks the cumulative
+        // remote epoch cache) rather than reclaim to the local seal. False for classic topics. The
+        // `_replicaManager == null` branch is unreachable (these lambdas run only from leadership-scheduled
+        // RLM tasks, applied by ReplicaManager); we still default to the fail-safe `true` there so an
+        // impossible early call can never over-reclaim.
         (tp: TopicPartition) =>
           if (_replicaManager != null) _replicaManager.isConsolidatingDisklessPartition(tp) else true)
       Some(rlm)

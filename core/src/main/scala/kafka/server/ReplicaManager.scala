@@ -1789,11 +1789,12 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
-   * Whether `topicPartition` is a consolidating diskless topic on this broker. Used by the
+   * Whether `topicPartition` is a consolidating diskless topic on this broker (covers both switched
+   * partitions, which carry a seal, and born-diskless partitions, which do not). Used by the
    * [[org.apache.kafka.server.log.remote.storage.RemoteLogManager]] to pick its reclaim-floor fallback
    * when [[crossTierRemoteLogStartOffset]] is unavailable: such a partition must not fall back to the
-   * broker-local log start (pinned at the seal on a rebuilt leader). Mirrors the guard in
-   * [[crossTierRemoteLogStartOffset]] so the two agree.
+   * broker-local log start, which on a rebuilt leader can sit above the true cross-tier earliest (at the
+   * seal for a switched partition). Mirrors the guard in [[crossTierRemoteLogStartOffset]] so the two agree.
    */
   def isConsolidatingDisklessPartition(topicPartition: TopicPartition): Boolean =
     inklessSharedState.isDefined && _inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
@@ -1837,9 +1838,13 @@ class ReplicaManager(val config: KafkaConfig,
    * The authoritative, broker-agnostic cross-tier earliest offset for a consolidating diskless
    * partition, as tracked by the control plane (`COALESCE(remote_log_start_offset, log_start_offset)`,
    * what `ListOffsets(EARLIEST)` returns); empty for non-consolidating/non-inkless partitions or when
-   * unresolved. Preferred over the broker-local `UnifiedLog.logStartOffset`, which on a rebuilt leader
-   * is pinned at the seal and never pulled back down (monotonic), so using it would over-reclaim and
-   * reject reads of the classic prefix `[earliest, seal)`. Reads the write-through
+   * unresolved. Preferred over the broker-local `UnifiedLog.logStartOffset`, which only moves forward
+   * (monotonic) and can sit above the true cross-tier earliest once the earlier data lives only in the
+   * remote tier: on a rebuilt switched leader it is pinned at the seal (`classicToDisklessStartOffset`),
+   * so using it would over-reclaim and reject reads of the surviving prefix `[earliest, seal)`. A
+   * born-diskless partition has no seal; there the equivalent hazard is the control-plane earliest
+   * itself degrading to the WAL prune frontier when `remote_log_start_offset` is NULL, which the raw
+   * [[crossTierRemoteLogStartOffset]] guards for the irreversible reclaim path. Reads the write-through
    * [[io.aiven.inkless.cache.CrossTierLogStartCache]] first, else queries the control plane and caches
    * the hit; a stale entry can only be too low (safe: under-reclaims/over-serves).
    */

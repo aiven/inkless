@@ -2619,14 +2619,14 @@ public class RemoteLogManagerTest {
     @Test
     public void testConsolidatingReclaimFailsSafeWhenOverrideAbsent()
             throws RemoteStorageException, ExecutionException, InterruptedException, IOException {
-        // Fail-safe (over-reclaim hardening): when the log-start-offset override yields empty for a
-        // CONSOLIDATING partition (control-plane outage or not-yet-propagated metadata on the RLM leader)
-        // the reclaim floor must NOT fall back to the broker-local log start -- on a freshly-rebuilt
-        // consolidating leader that is the seal (200) and would irreversibly delete the entire remote
-        // classic prefix. Instead it uses the remote earliest (findLogStartOffset -> 0), so no segment
-        // breaches the log-start-offset and NOTHING is reclaimed this cycle. Retention is disabled here,
-        // so both segments [0,99] and [100,199] survive; log-start reclaim retries once the control plane
-        // recovers.
+        // Fail-safe against over-reclaim: when the log-start override is empty for a CONSOLIDATING
+        // partition (control-plane outage, or metadata not yet propagated to the RLM leader) the reclaim
+        // floor must not fall back to the broker-local log start. On a freshly-rebuilt consolidating leader
+        // that start is the seal (200), which would irreversibly delete the whole remote classic prefix. It
+        // uses findLogStartOffset (-> 0) instead: the true cross-tier earliest, read back from the
+        // cumulative remote epoch cache. No segment breaches that floor, so nothing is over-reclaimed.
+        // Retention is off here, so both segments [0,99] and [100,199] survive; the floor advances to the
+        // override once it resolves.
         Map<String, Long> logProps = new HashMap<>();
         logProps.put("retention.bytes", -1L);
         logProps.put("retention.ms", -1L);
