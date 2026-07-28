@@ -147,7 +147,8 @@ public class ServerConfigs {
     // RF=-1 resolves to default.replication.factor. Explicit RF values (1, 2, 3, ...) are accepted.
     // Placement uses standard rack-aware assignment.
     // When disabled (default), diskless topics use legacy RF=1 behavior (RF=-1 resolves to 1, RF > 1 rejected).
-    // This config affects topic creation and add-partitions (manual assignments allowed when enabled).
+    // This config affects topic creation, add-partitions (manual assignments allowed when enabled), and
+    // partition reassignments (replication-factor changes on existing diskless topics are allowed when enabled).
     public static final String DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG = "diskless.managed.rf.enable";
     public static final boolean DISKLESS_MANAGED_REPLICAS_ENABLE_DEFAULT = false;
     public static final String DISKLESS_MANAGED_REPLICAS_ENABLE_DOC = "When enabled, new diskless topics are created " +

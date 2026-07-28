@@ -1688,7 +1688,8 @@ public class ReplicationControlManagerInklessTest {
             // ISR must match replicas — diskless brokers are immediately in-sync via object storage
             assertEquals(List.of(1), Replicas.toList(partition.isr));
 
-            // Try to increase the replication factor (should fail for diskless).
+            // Increase the replication factor: allowed for managed diskless topics.
+            // Data lives in object storage, so the new replica set is applied immediately.
             ControllerResult<AlterPartitionReassignmentsResponseData> alterResult2 =
                 replication.alterPartitionReassignments(
                     new AlterPartitionReassignmentsRequestData().setTopics(List.of(
@@ -1699,9 +1700,101 @@ public class ReplicationControlManagerInklessTest {
                     .setErrorMessage(null).setResponses(List.of(
                         new ReassignableTopicResponse().setName(topic).setPartitions(List.of(
                             new ReassignablePartitionResponse().setPartitionIndex(0)
-                                .setErrorCode(INVALID_REPLICATION_FACTOR.code())
-                                .setErrorMessage("The replication factor is changed from 1 to 2"))))),
+                                .setErrorMessage(null))))),
                 alterResult2.response());
+
+            ctx.replay(alterResult2.records());
+
+            // The replication factor is now 2, applied immediately (no ongoing reassignment).
+            assertEquals(NONE_REASSIGNING, replication.listPartitionReassignments(List.of(
+                new ListPartitionReassignmentsTopics().setName(topic).
+                    setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
+            PartitionRegistration increased = replication.getPartition(createResult.topicId(), 0);
+            assertEquals(List.of(0, 1), Replicas.toList(increased.replicas));
+            assertEquals(List.of(0, 1), Replicas.toList(increased.isr));
+        }
+
+        @Test
+        public void testIncreaseReplicationFactorForManagedDisklessTopic() {
+            MetadataVersion metadataVersion = MetadataVersion.latestTesting();
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(metadataVersion)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // A diskless topic created with RF=1 (e.g. before managed replicas were enabled).
+            String topic = "foo";
+            CreatableTopicResult createResult = ctx.createTestTopic(
+                topic, new int[][] {new int[] {0}}, Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0);
+            assertEquals(1, replication.getPartition(createResult.topicId(), 0).replicas.length);
+
+            // Grow the replica set from 1 to 3.
+            ControllerResult<AlterPartitionReassignmentsResponseData> alterResult =
+                replication.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName(topic).setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0)
+                                .setReplicas(List.of(0, 1, 2)))))));
+            assertEquals(new AlterPartitionReassignmentsResponseData()
+                    .setErrorMessage(null).setResponses(List.of(
+                        new ReassignableTopicResponse().setName(topic).setPartitions(List.of(
+                            new ReassignablePartitionResponse().setPartitionIndex(0)
+                                .setErrorMessage(null))))),
+                alterResult.response());
+
+            ctx.replay(alterResult.records());
+
+            // RF is now 3 and all replicas are in ISR (diskless: no catch-up needed).
+            assertEquals(NONE_REASSIGNING, replication.listPartitionReassignments(List.of(
+                new ListPartitionReassignmentsTopics().setName(topic).
+                    setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
+            PartitionRegistration partition = replication.getPartition(createResult.topicId(), 0);
+            assertEquals(List.of(0, 1, 2), Replicas.toList(partition.replicas));
+            assertEquals(List.of(0, 1, 2), Replicas.toList(partition.isr));
+        }
+
+        @Test
+        public void testDecreaseReplicationFactorForManagedDisklessTopic() {
+            MetadataVersion metadataVersion = MetadataVersion.latestTesting();
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(metadataVersion)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            String topic = "foo";
+            CreatableTopicResult createResult = ctx.createTestTopic(
+                topic, new int[][] {new int[] {0, 1, 2}}, Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0);
+            assertEquals(3, replication.getPartition(createResult.topicId(), 0).replicas.length);
+
+            // Shrink the replica set from 3 to 1.
+            ControllerResult<AlterPartitionReassignmentsResponseData> alterResult =
+                replication.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName(topic).setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0)
+                                .setReplicas(List.of(0)))))));
+            assertEquals(new AlterPartitionReassignmentsResponseData()
+                    .setErrorMessage(null).setResponses(List.of(
+                        new ReassignableTopicResponse().setName(topic).setPartitions(List.of(
+                            new ReassignablePartitionResponse().setPartitionIndex(0)
+                                .setErrorMessage(null))))),
+                alterResult.response());
+
+            ctx.replay(alterResult.records());
+
+            PartitionRegistration partition = replication.getPartition(createResult.topicId(), 0);
+            assertEquals(List.of(0), Replicas.toList(partition.replicas));
+            assertEquals(List.of(0), Replicas.toList(partition.isr));
         }
 
         @Test

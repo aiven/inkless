@@ -2736,7 +2736,15 @@ public class ReplicationControlManager {
                         .setAllowReplicationFactorChange(allowRFChange);
         int successfulAlterations = 0, totalAlterations = 0;
         for (ReassignableTopic topic : request.topics()) {
-            boolean effectiveRFChange = allowRFChange && !isDisklessTopic(topic.name());
+            // Legacy (unmanaged) diskless topics have their replication factor pinned (INK-193):
+            // the reassignment path applies target replicas directly, so RF was never allowed to
+            // change. With managed replicas enabled, a diskless topic has a real, user-defined
+            // replica set with rack-aware placement, and because the data lives in object storage a
+            // replica-set resize is immediate and safe (no inter-broker catch-up). Honor the
+            // KIP-860 allow-RF-change flag for managed diskless topics, exactly like classic topics.
+            boolean rfChangeAllowedForTopic =
+                !isDisklessTopic(topic.name()) || isDisklessManagedReplicasEnabled;
+            boolean effectiveRFChange = allowRFChange && rfChangeAllowedForTopic;
             ReassignableTopicResponse topicResponse = new ReassignableTopicResponse().
                 setName(topic.name());
             for (ReassignablePartition partition : topic.partitions()) {

@@ -57,8 +57,8 @@ If not specified above, features are untested and assumed to be inoperable.
 - `INCREMENTAL_ALTER_CONFIGS`
     - the remote storage cannot be enabled for Diskless topics.
 - `ALTER_PARTITION_REASSIGNMENTS`
-    - the replication factor can't be changed for Diskless topics;
-    - reassignments for diskless topics are applied immediately (no staged adding/removing) since data lives in object storage and all brokers are instantly in-sync.
+    - the replication factor can be changed for Diskless topics only when `diskless.managed.rf.enable=true`; in legacy mode (managed replicas disabled) the RF stays pinned and RF-changing reassignments are rejected with `INVALID_REPLICATION_FACTOR`;
+    - reassignments for diskless topics are applied immediately (no staged adding/removing) since data lives in object storage and all brokers are instantly in-sync. This includes growing/shrinking the replica set, e.g. increasing a legacy RF=1 topic to RF=3 after enabling managed replicas.
 
 ### Diskless topics are excluded
 - `ADD_PARTITIONS_TO_TXN`
@@ -155,7 +155,7 @@ Diskless topics can optionally use **managed replicas** — real KRaft-managed r
 
 | Config | Default | Description |
 |--------|---------|-------------|
-| `diskless.managed.rf.enable` | `false` | When enabled, new diskless topics accept user-defined RF and partition expansion (`CREATE_PARTITIONS`) allows manual assignments. Does not retrofit existing replica sets. |
+| `diskless.managed.rf.enable` | `false` | When enabled, new diskless topics accept user-defined RF and partition expansion (`CREATE_PARTITIONS`) allows manual assignments. Existing replica sets are not retrofitted automatically, but operators can grow/shrink them via `ALTER_PARTITION_REASSIGNMENTS` (e.g. bump a legacy RF=1 topic to RF=3). |
 | `default.replication.factor` | `1` | Used when RF=-1 is specified. Operators typically set this to match the rack/AZ count. |
 
 ### Behavior
