@@ -28,7 +28,7 @@ import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
@@ -159,6 +159,7 @@ object ReplicaManager {
   private val IsrExpandsPerSecMetricName = "IsrExpandsPerSec"
   private val IsrShrinksPerSecMetricName = "IsrShrinksPerSec"
   private val FailedIsrUpdatesPerSecMetricName = "FailedIsrUpdatesPerSec"
+  private val ConsolidationFetchBytesInPerSecMetricName = "ConsolidationFetchBytesInPerSec"
 
   private[server] val GaugeMetricNames = Set(
     LeaderCountMetricName,
@@ -176,7 +177,8 @@ object ReplicaManager {
   private[server] val MeterMetricNames = Set(
     IsrExpandsPerSecMetricName,
     IsrShrinksPerSecMetricName,
-    FailedIsrUpdatesPerSecMetricName
+    FailedIsrUpdatesPerSecMetricName,
+    ConsolidationFetchBytesInPerSecMetricName
   )
 
   private[server] val MetricNames = GaugeMetricNames.union(MeterMetricNames)
@@ -446,9 +448,12 @@ class ReplicaManager(val config: KafkaConfig,
   val isrExpandRate: Meter = metricsGroup.newMeter(IsrExpandsPerSecMetricName, "expands", TimeUnit.SECONDS)
   val isrShrinkRate: Meter = metricsGroup.newMeter(IsrShrinksPerSecMetricName, "shrinks", TimeUnit.SECONDS)
   val failedIsrUpdatesRate: Meter = metricsGroup.newMeter(FailedIsrUpdatesPerSecMetricName, "failedUpdates", TimeUnit.SECONDS)
+  private val consolidationFetchBytesInPerSec: Meter = metricsGroup.newMeter(ConsolidationFetchBytesInPerSecMetricName, "bytes", TimeUnit.SECONDS)
 
   private def isConsolidatingPartition(partition: Partition): Boolean =
     config.disklessRemoteStorageConsolidationEnabled && _inklessMetadataView.isConsolidatingDisklessTopic(partition.topic)
+
+  def recordConsolidationFetchBytesIn(bytes: Long): Unit = consolidationFetchBytesInPerSec.mark(bytes)
 
   def underReplicatedPartitionCount: Int = leaderPartitionsIterator.count { partition =>
     partition.isUnderReplicated && !isConsolidatingPartition(partition)

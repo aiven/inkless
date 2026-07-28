@@ -40,7 +40,7 @@ import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.{any, anyLong}
-import org.mockito.Mockito.{RETURNS_DEEP_STUBS, doNothing, mock, verify, when}
+import org.mockito.Mockito.{RETURNS_DEEP_STUBS, doNothing, mock, never, verify, when}
 
 import java.nio.charset.StandardCharsets
 import java.util.Optional
@@ -104,7 +104,8 @@ class ConsolidationFetcherThreadTest {
   private def mockPartitionWithLog(
     logEndOffset: Long,
     highestOffsetInRemoteStorage: Long,
-    localLogStartOffset: Long = 0L
+    localLogStartOffset: Long = 0L,
+    appendedValidBytes: Int = 0
   ): Partition = {
     val log = mock(classOf[UnifiedLog])
     when(log.logEndOffset).thenReturn(logEndOffset)
@@ -112,10 +113,12 @@ class ConsolidationFetcherThreadTest {
     when(log.localLogStartOffset()).thenReturn(localLogStartOffset)
     when(log.maybeUpdateHighWatermark(anyLong())).thenReturn(Optional.empty)
 
+    val appendInfo = mock(classOf[LogAppendInfo])
+    when(appendInfo.validBytes).thenReturn(appendedValidBytes)
     val partition = mock(classOf[Partition])
     when(partition.localLogOrException).thenReturn(log)
     when(partition.appendRecordsToFollowerOrFutureReplica(any[MemoryRecords], any[Boolean], any[Int]))
-      .thenReturn(Some(mock(classOf[LogAppendInfo])))
+      .thenReturn(Some(appendInfo))
     partition
   }
 
@@ -311,6 +314,34 @@ class ConsolidationFetcherThreadTest {
     assertEquals(40L, findGaugeValue("ConsolidationTotalLag", topicPartition))
     assertEquals(20L, findGaugeValue("ConsolidationLocalLag", topicPartition))
     assertEquals(50L, findGaugeValue("ConsolidationDeletableMessages", topicPartition))
+  }
+
+  @Test
+  def testRecordsConsolidationFetchBytesInAndSkipsReplicationBytesIn(): Unit = {
+    val validBytes = 512
+    val partition = mockPartitionWithLog(logEndOffset = 80L, highestOffsetInRemoteStorage = 60L,
+      appendedValidBytes = validBytes)
+    val replicaManager = mockReplicaManager(partition)
+    val brokerTopicStats = replicaManager.brokerTopicStats
+    val thread = createConsolidationFetcherThread(replicaManager, None)
+
+    thread.processPartitionData(topicPartition, 80L, Int.MaxValue, buildPartitionData(100L))
+
+    verify(replicaManager).recordConsolidationFetchBytesIn(validBytes.toLong)
+    // Consolidation throughput must not leak into the inter-broker ReplicationBytesInPerSec meter.
+    assertEquals(0L, brokerTopicStats.allTopicsStats.replicationBytesInRate().get.count())
+  }
+
+  @Test
+  def testDoesNotRecordConsolidationFetchBytesInWhenNoValidBytes(): Unit = {
+    val partition = mockPartitionWithLog(logEndOffset = 80L, highestOffsetInRemoteStorage = 60L,
+      appendedValidBytes = 0)
+    val replicaManager = mockReplicaManager(partition)
+    val thread = createConsolidationFetcherThread(replicaManager, None)
+
+    thread.processPartitionData(topicPartition, 80L, Int.MaxValue, buildPartitionData(100L))
+
+    verify(replicaManager, never()).recordConsolidationFetchBytesIn(anyLong())
   }
 
   @Test

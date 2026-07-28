@@ -48,6 +48,8 @@ class ConsolidationFetcherThread(name: String,
 
   override protected def shouldEvictFullySwitchedDisklessPartitions: Boolean = false
 
+  override protected def shouldRecordReplicationBytesIn: Boolean = false
+
   override def processPartitionData(
     topicPartition: TopicPartition,
     fetchOffset: Long,
@@ -75,6 +77,12 @@ class ConsolidationFetcherThread(name: String,
           throw new ConsolidationSegmentOverflowException(
             s"Consolidation block for $topicPartition exceeds segment.bytes ($segmentSize)", e)
       }
+
+    result.foreach { logAppendInfo =>
+      if (logAppendInfo.validBytes > 0) {
+        replicaMgr.recordConsolidationFetchBytesIn(logAppendInfo.validBytes.toLong)
+      }
+    }
 
     consolidationMetrics.foreach { metrics =>
       val logOpt = Try(replicaMgr.getPartitionOrException(topicPartition).localLogOrException).toOption

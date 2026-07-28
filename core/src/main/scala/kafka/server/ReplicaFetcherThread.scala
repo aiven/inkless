@@ -111,6 +111,11 @@ class ReplicaFetcherThread(name: String,
 
   protected def shouldEvictFullySwitchedDisklessPartitions: Boolean = true
 
+  // Overridden to false by ConsolidationFetcherThread so consolidation throughput is reported via the
+  // ConsolidationFetchBytesInPerSec meter (JMX: kafka.server:type=ReplicaManager,name=ConsolidationFetchBytesInPerSec)
+  // instead of inflating the inter-broker ReplicationBytesInPerSec metric.
+  protected def shouldRecordReplicationBytesIn: Boolean = true
+
   // process fetched data
   override def processPartitionData(
     topicPartition: TopicPartition,
@@ -160,7 +165,8 @@ class ReplicaFetcherThread(name: String,
     if (partition.isReassigning && partition.isAddingLocalReplica)
       brokerTopicStats.updateReassignmentBytesIn(records.sizeInBytes)
 
-    brokerTopicStats.updateReplicationBytesIn(records.sizeInBytes)
+    if (shouldRecordReplicationBytesIn)
+      brokerTopicStats.updateReplicationBytesIn(records.sizeInBytes)
 
     // Stop fetching after the switch from classic to diskless is completed: once the controller
     // has committed a classicToDisklessStartOffset for this partition AND our local LEO has reached it,
