@@ -51,7 +51,7 @@ public class RetentionEnforcer implements Runnable, Closeable {
     private final RetentionEnforcementScheduler retentionEnforcementScheduler;
     private final int maxBatchesPerRequest;
 
-    private final RetentionEnforcerMetrics metrics = new RetentionEnforcerMetrics();
+    private final RetentionEnforcerMetrics metrics;
 
     public RetentionEnforcer(final SharedState sharedState) {
         this(Objects.requireNonNull(sharedState, "sharedState cannot be null").time(),
@@ -78,6 +78,7 @@ public class RetentionEnforcer implements Runnable, Closeable {
         this.controlPlane = controlPlane;
         this.retentionEnforcementScheduler = retentionEnforcementScheduler;
         this.maxBatchesPerRequest = maxBatchesPerRequest;
+        this.metrics = new RetentionEnforcerMetrics(retentionEnforcementScheduler::scheduleLagMillis);
     }
 
     @Override

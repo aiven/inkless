@@ -145,7 +145,7 @@ class RetentionEnforcementSchedulerTest {
 
         final Instant expectedNextTime = Instant.ofEpochMilli(time.milliseconds() + ENFORCEMENT_INTERVAL_MS);
         assertThat(scheduler.dumpQueue())
-            .containsExactly(
+            .containsExactlyInAnyOrder(
                 new RetentionEnforcementScheduler.TopicIdPartitionWithNextEnforcementTime(T0P1, expectedNextTime),
                 new RetentionEnforcementScheduler.TopicIdPartitionWithNextEnforcementTime(T0P0, expectedNextTime)
             );
@@ -166,11 +166,33 @@ class RetentionEnforcementSchedulerTest {
         when(metadataView.getDisklessTopicPartitions()).thenReturn(Set.of(T0P1));
 
         assertThat(scheduler.getReadyPartitions()).containsExactlyInAnyOrder(T0P1);
-        
+
         final Instant expectedNextTime = Instant.ofEpochMilli(time.milliseconds() + ENFORCEMENT_INTERVAL_MS);
         assertThat(scheduler.dumpQueue())
             .containsExactly(
                 new RetentionEnforcementScheduler.TopicIdPartitionWithNextEnforcementTime(T0P1, expectedNextTime)
             );
+    }
+
+    @Test
+    void scheduleLagTracksOverduePartition() {
+        final var scheduler = new RetentionEnforcementScheduler(time, metadataView, ENFORCEMENT_INTERVAL, random);
+
+        when(metadataView.getDisklessTopicPartitions()).thenReturn(Set.of(T0P0));
+        when(metadataView.getBrokerCount()).thenReturn(1);
+
+        // Empty queue: nothing scheduled yet, so no lag.
+        assertThat(scheduler.scheduleLagMillis()).isZero();
+
+        // Initial scheduling: T0P0 scheduled at now + ENFORCEMENT_INTERVAL (deterministic random).
+        scheduler.getReadyPartitions();
+
+        // Head is in the future, so nothing is overdue.
+        assertThat(scheduler.scheduleLagMillis()).isZero();
+
+        // Advance past the scheduled time without draining the queue (simulates a stalled/blocked enforcer).
+        time.sleep(ENFORCEMENT_INTERVAL_MS + 2_000);
+
+        assertThat(scheduler.scheduleLagMillis()).isEqualTo(2_000L);
     }
 }

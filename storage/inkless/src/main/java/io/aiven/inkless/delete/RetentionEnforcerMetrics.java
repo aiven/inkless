@@ -26,6 +26,7 @@ import java.io.Closeable;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.function.Supplier;
 
 public class RetentionEnforcerMetrics implements Closeable {
     private static final String GROUP = RetentionEnforcer.class.getSimpleName();
@@ -40,6 +41,8 @@ public class RetentionEnforcerMetrics implements Closeable {
     private static final String RETENTION_ENFORCEMENT_TOTAL_BYTES_DELETED_DOC = "Total number of bytes deleted by retention enforcement";
     static final String RETENTION_ENFORCEMENT_ERROR_RATE = "RetentionEnforcementErrorRate";
     private static final String RETENTION_ENFORCEMENT_ERROR_RATE_DOC = "Total number of retention enforcement errors";
+    static final String RETENTION_ENFORCEMENT_SCHEDULE_LAG_MS = "RetentionEnforcementScheduleLagMs";
+    private static final String RETENTION_ENFORCEMENT_SCHEDULE_LAG_MS_DOC = "Milliseconds the most overdue diskless partition is past its scheduled retention enforcement time; 0 when on schedule or when no diskless partitions are scheduled";
 
     /**
      * This method returns a list of all the metric name templates for the RetentionEnforcerMetrics class.
@@ -51,7 +54,8 @@ public class RetentionEnforcerMetrics implements Closeable {
             new MetricNameTemplate(RETENTION_ENFORCEMENT_RATE, GROUP, RETENTION_ENFORCEMENT_RATE_DOC),
             new MetricNameTemplate(RETENTION_ENFORCEMENT_TOTAL_BATCHES_DELETED, GROUP, RETENTION_ENFORCEMENT_TOTAL_BATCHES_DELETED_DOC),
             new MetricNameTemplate(RETENTION_ENFORCEMENT_TOTAL_BYTES_DELETED, GROUP, RETENTION_ENFORCEMENT_TOTAL_BYTES_DELETED_DOC),
-            new MetricNameTemplate(RETENTION_ENFORCEMENT_ERROR_RATE, GROUP, RETENTION_ENFORCEMENT_ERROR_RATE_DOC)
+            new MetricNameTemplate(RETENTION_ENFORCEMENT_ERROR_RATE, GROUP, RETENTION_ENFORCEMENT_ERROR_RATE_DOC),
+            new MetricNameTemplate(RETENTION_ENFORCEMENT_SCHEDULE_LAG_MS, GROUP, RETENTION_ENFORCEMENT_SCHEDULE_LAG_MS_DOC)
         );
     }
 
@@ -63,12 +67,13 @@ public class RetentionEnforcerMetrics implements Closeable {
     private final LongAdder retentionEnforcementTotalBytesDeleted = new LongAdder();
     private final LongAdder retentionEnforcementErrorRate = new LongAdder();
 
-    public RetentionEnforcerMetrics() {
+    public RetentionEnforcerMetrics(final Supplier<Long> scheduleLagMsSupplier) {
         retentionEnforcementTotalTime = metricsGroup.newHistogram(RETENTION_ENFORCEMENT_TOTAL_TIME, true, Map.of());
         metricsGroup.newGauge(RETENTION_ENFORCEMENT_RATE, retentionEnforcementRate::intValue);
         metricsGroup.newGauge(RETENTION_ENFORCEMENT_TOTAL_BATCHES_DELETED, retentionEnforcementTotalBatchesDeleted::intValue);
         metricsGroup.newGauge(RETENTION_ENFORCEMENT_TOTAL_BYTES_DELETED, retentionEnforcementTotalBytesDeleted::intValue);
         metricsGroup.newGauge(RETENTION_ENFORCEMENT_ERROR_RATE, retentionEnforcementErrorRate::intValue);
+        metricsGroup.newGauge(RETENTION_ENFORCEMENT_SCHEDULE_LAG_MS, scheduleLagMsSupplier);
     }
 
     public void recordRetentionEnforcementStarted() {
@@ -94,5 +99,6 @@ public class RetentionEnforcerMetrics implements Closeable {
         metricsGroup.removeMetric(RETENTION_ENFORCEMENT_TOTAL_BATCHES_DELETED);
         metricsGroup.removeMetric(RETENTION_ENFORCEMENT_TOTAL_BYTES_DELETED);
         metricsGroup.removeMetric(RETENTION_ENFORCEMENT_ERROR_RATE);
+        metricsGroup.removeMetric(RETENTION_ENFORCEMENT_SCHEDULE_LAG_MS);
     }
 }

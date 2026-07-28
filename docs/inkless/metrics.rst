@@ -228,15 +228,16 @@ RetentionEnforcer metrics
 io.aiven.inkless.delete:type=RetentionEnforcer
 ----------------------------------------------
 
-========================================  =================================================================
-Attribute name                            Description                                                      
-========================================  =================================================================
-RetentionEnforcementErrorRate             Total number of retention enforcement errors                     
-RetentionEnforcementRate                  Total number of retention enforcement cycles started             
-RetentionEnforcementTotalBatchesDeleted   Total number of batches deleted by retention enforcement         
-RetentionEnforcementTotalBytesDeleted     Total number of bytes deleted by retention enforcement           
-RetentionEnforcementTotalTime             Total time spent on a retention enforcement cycle in milliseconds
-========================================  =================================================================
+========================================  ==================================================================================================================================================================
+Attribute name                            Description                                                                                                                                                       
+========================================  ==================================================================================================================================================================
+RetentionEnforcementErrorRate             Total number of retention enforcement errors                                                                                                                      
+RetentionEnforcementRate                  Total number of retention enforcement cycles started                                                                                                              
+RetentionEnforcementScheduleLagMs         Milliseconds the most overdue diskless partition is past its scheduled retention enforcement time; 0 when on schedule or when no diskless partitions are scheduled
+RetentionEnforcementTotalBatchesDeleted   Total number of batches deleted by retention enforcement                                                                                                          
+RetentionEnforcementTotalBytesDeleted     Total number of bytes deleted by retention enforcement                                                                                                            
+RetentionEnforcementTotalTime             Total time spent on a retention enforcement cycle in milliseconds                                                                                                 
+========================================  ==================================================================================================================================================================
 
 
 CrossTierLogStartReporter metrics

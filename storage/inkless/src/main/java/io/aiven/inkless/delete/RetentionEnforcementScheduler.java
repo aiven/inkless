@@ -65,6 +65,10 @@ class RetentionEnforcementScheduler {
     private Instant lastKnownPartitionsUpdate = Instant.MIN;
     private Set<TopicIdPartition> knownPartitions = new HashSet<>();
 
+    // Guards partitionsByNextEnforcementTime: mutated on the enforcement thread (getReadyPartitions),
+    // read by the metrics thread (scheduleLagMillis); PriorityQueue is not thread-safe.
+    private final Object queueLock = new Object();
+
     private final PriorityQueue<TopicIdPartitionWithNextEnforcementTime> partitionsByNextEnforcementTime = new PriorityQueue<>(
         TopicIdPartitionWithNextEnforcementTime.timeComparator()
     );
@@ -86,25 +90,44 @@ class RetentionEnforcementScheduler {
 
         final List<TopicIdPartition> result = new ArrayList<>();
         TopicIdPartitionWithNextEnforcementTime tidpwt;
-        // These peek() and poll() are guaranteed to work with the same item
-        // if there's no concurrent modification (which should be the case).
-        while ((tidpwt = partitionsByNextEnforcementTime.peek()) != null && tidpwt.nextEnforcementTime().isBefore(now)) {
-            partitionsByNextEnforcementTime.poll();
-            final TopicIdPartition partition = tidpwt.topicIdPartition();
-            // Filter out previously deleted partitions.
-            if (knownPartitions.contains(partition)) {
-                result.add(partition);
-            } else {
-                LOGGER.debug("Partition removed: {}", partition);
+        // Under queueLock nothing else mutates the queue, so peek() and the following poll()
+        // act on the same head element.
+        synchronized (queueLock) {
+            while ((tidpwt = partitionsByNextEnforcementTime.peek()) != null && tidpwt.nextEnforcementTime().isBefore(now)) {
+                partitionsByNextEnforcementTime.poll();
+                final TopicIdPartition partition = tidpwt.topicIdPartition();
+                // Filter out previously deleted partitions.
+                if (knownPartitions.contains(partition)) {
+                    result.add(partition);
+                } else {
+                    LOGGER.debug("Partition removed: {}", partition);
+                }
+            }
+
+            // We need to reschedule the taken partitions.
+            for (final TopicIdPartition partition : result) {
+                schedulePartition(now, partition);
             }
         }
 
-        // We need to reschedule the taken partitions.
-        for (final TopicIdPartition partition : result) {
-            schedulePartition(now, partition);
-        }
-
         return result;
+    }
+
+    /**
+     * Milliseconds by which the most overdue partition is past its scheduled enforcement time, or 0 when
+     * nothing in the queue is past due. A sustained nonzero value means enforcement is falling behind its
+     * cadence (a stalled or blocked enforcer loop), which is otherwise indistinguishable from an idle trough.
+     */
+    long scheduleLagMillis() {
+        final Instant now = TimeUtils.now(time);
+        synchronized (queueLock) {
+            final TopicIdPartitionWithNextEnforcementTime head = partitionsByNextEnforcementTime.peek();
+            if (head == null) {
+                return 0L;
+            }
+            final long lagMs = Duration.between(head.nextEnforcementTime(), now).toMillis();
+            return Math.max(0L, lagMs);
+        }
     }
 
     private void updateKnownPartitionsIfNeeded(final Instant now) {
@@ -123,9 +146,11 @@ class RetentionEnforcementScheduler {
     }
 
     private void schedulePartition(final Instant now, final TopicIdPartition partition) {
-        partitionsByNextEnforcementTime.add(
-            new TopicIdPartitionWithNextEnforcementTime(partition, nextCheck(now)
-        ));
+        synchronized (queueLock) {
+            partitionsByNextEnforcementTime.add(
+                new TopicIdPartitionWithNextEnforcementTime(partition, nextCheck(now)
+            ));
+        }
     }
 
     private Instant nextCheck(final Instant now) {
@@ -155,8 +180,13 @@ class RetentionEnforcementScheduler {
         }
     }
 
-    // Visible for testing.
+    // Visible for testing. Returns a snapshot ordered by nextEnforcementTime (PriorityQueue iteration
+    // is not sorted), so assertions don't depend on the internal heap layout.
     List<TopicIdPartitionWithNextEnforcementTime> dumpQueue() {
-        return partitionsByNextEnforcementTime.stream().toList();
+        synchronized (queueLock) {
+            return partitionsByNextEnforcementTime.stream()
+                .sorted(TopicIdPartitionWithNextEnforcementTime.timeComparator())
+                .toList();
+        }
     }
 }
