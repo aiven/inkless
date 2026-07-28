@@ -1262,7 +1262,7 @@ public class ReaderTest {
                 consolidationDataExecutor,   // metadataExecutor
                 consolidationDataExecutor,   // fetchDataExecutor
                 null,                        // laggingConsumerObjectFetcher — MISSING
-                60_000L, 0,
+                60_000L, 0, 0L, // byte-rate limit disabled
                 null,                        // laggingFetchDataExecutor absent, so guard 1 is skipped
                 null, 0, 0,
                 coldPathMetrics, new BrokerTopicStats(), "consolidation-",
@@ -1315,6 +1315,7 @@ public class ReaderTest {
                 Optional.empty(),
                 60_000L, // laggingConsumerThresholdMs
                 0, // laggingConsumerRequestRateLimit
+                0L, // byte-rate limit disabled
                 0, // laggingConsumerThreadPoolSize — feature disabled
                 0, // hedgeTtfbThresholdMs — disabled
                 0, // hedgeTotalTimeThresholdMs — disabled
@@ -1339,6 +1340,7 @@ public class ReaderTest {
                 Optional.of(mock(StorageBackend.class)),
                 60_000L, // laggingConsumerThresholdMs
                 0, // laggingConsumerRequestRateLimit
+                0L, // byte-rate limit disabled
                 4, // laggingConsumerThreadPoolSize — feature enabled
                 0, // hedgeTtfbThresholdMs — disabled
                 0, // hedgeTotalTimeThresholdMs — disabled
@@ -1365,6 +1367,7 @@ public class ReaderTest {
                 Optional.of(mock(StorageBackend.class)),
                 60_000L, // laggingConsumerThresholdMs
                 0, // laggingConsumerRequestRateLimit
+                0L, // byte-rate limit disabled
                 0, // laggingConsumerThreadPoolSize — no dedicated pool, reuses data pool
                 0, // hedgeTtfbThresholdMs — disabled
                 0, // hedgeTotalTimeThresholdMs — disabled
@@ -1388,6 +1391,7 @@ public class ReaderTest {
                 Optional.empty(), // no storage provided
                 60_000L, // laggingConsumerThresholdMs
                 0, // laggingConsumerRequestRateLimit
+                0L, // byte-rate limit disabled
                 4, // laggingConsumerThreadPoolSize — feature enabled but no storage
                 0, // hedgeTtfbThresholdMs — disabled
                 0, // hedgeTotalTimeThresholdMs — disabled
