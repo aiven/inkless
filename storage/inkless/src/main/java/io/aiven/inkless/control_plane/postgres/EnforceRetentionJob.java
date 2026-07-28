@@ -62,14 +62,17 @@ public class EnforceRetentionJob implements Callable<List<EnforceRetentionRespon
         if (requests.isEmpty()) {
             return List.of();
         }
-        return JobUtils.run(this::runOnce, time, durationCallback);
+        return JobUtils.run(this::runOnce);
     }
 
-    private List<EnforceRetentionResponse> runOnce() {
+    private List<EnforceRetentionResponse> runOnce() throws Exception {
         final Instant now = TimeUtils.now(time);
         final List<EnforceRetentionResponse> responses = new ArrayList<>(requests.size());
         for (final EnforceRetentionRequest request : requests) {
-            responses.add(enforceOne(now, request));
+            // enforceOne is one transaction per partition,
+            // so EnforceRetentionQueryTime/QueryRate are recorded per partition
+            // (the whole-wave total is the broker-side RetentionEnforcementTotalTime).
+            responses.add(TimeUtils.measureDurationMs(time, () -> enforceOne(now, request), durationCallback));
         }
         return responses;
     }

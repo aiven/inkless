@@ -43,6 +43,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
@@ -130,6 +131,27 @@ class EnforceRetentionJobTest {
             EnforceRetentionResponse.success(0, 0, 0),
             EnforceRetentionResponse.success(0, 0, 0)
         );
+    }
+
+    @Test
+    void durationCallbackFiresOncePerPartition() throws Exception {
+        final AtomicInteger count = new AtomicInteger();
+        final EnforceRetentionJob job = new EnforceRetentionJob(
+            time,
+            pgContainer.getJooqCtx(),
+            List.of(
+                new EnforceRetentionRequest(TOPIC_ID_0, 0, 1, 1),
+                new EnforceRetentionRequest(TOPIC_ID_1, 0, 1, 1),
+                new EnforceRetentionRequest(TOPIC_ID_0, 1000, 1, 1)  // non-existent still counts as one exec
+            ),
+            0,
+            duration -> count.incrementAndGet());
+
+        job.call();
+
+        // EnforceRetentionQueryTime/QueryRate are recorded per partition (one enforce_retention_v2 call each),
+        // including the unknown one; the whole-wave total lives in the broker's RetentionEnforcementTotalTime.
+        assertThat(count.get()).isEqualTo(3);
     }
 
     /**
