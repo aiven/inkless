@@ -88,6 +88,8 @@ public class InklessFetchMetrics {
     private static final String PARTITION_STORAGE_ERROR_RATE_DOC = "Rate of partition responses returning KAFKA_STORAGE_ERROR from FetchCompleter (missing batch metadata, or missing/incomplete extents so no records were constructable). Data-integrity failures are counted separately under PartitionCorruptRecordRate.";
     private static final String PARTITION_CORRUPT_RECORD_RATE = "PartitionCorruptRecordRate";
     private static final String PARTITION_CORRUPT_RECORD_RATE_DOC = "Rate of partition responses returning CORRUPT_MESSAGE or INVALID_RECORD from FetchCompleter because a batch failed integrity validation (CRC / declared size, or a coalesced-run offset mismatch), with no valid prefix to serve.";
+    private static final String PARTITION_CONTROL_PLANE_ERROR_RATE = "PartitionControlPlaneErrorRate";
+    private static final String PARTITION_CONTROL_PLANE_ERROR_RATE_DOC = "Rate of partition responses carrying a non-NONE error returned by the control-plane findBatches response (e.g. OFFSET_OUT_OF_RANGE, UNKNOWN_TOPIC_OR_PARTITION). Distinct from PartitionStorageErrorRate/PartitionCorruptRecordRate (data-plane failures in FetchCompleter); the specific error code is available from the WARN-level fetch logs.";
     private static final String RECENT_DATA_REQUEST_RATE = "RecentDataRequestRate";
     private static final String RECENT_DATA_REQUEST_RATE_DOC = "Rate of requests served via the hot path (recent data with cache) per second. "
         + "Under the consolidation metrics group (ConsolidationFetchMetrics) this counts cache-hit peeks that reuse consumer-cached data.";
@@ -143,6 +145,7 @@ public class InklessFetchMetrics {
             new MetricNameTemplate(PARTITION_PARTIAL_FETCH_RATE, GROUP, PARTITION_PARTIAL_FETCH_RATE_DOC),
             new MetricNameTemplate(PARTITION_STORAGE_ERROR_RATE, GROUP, PARTITION_STORAGE_ERROR_RATE_DOC),
             new MetricNameTemplate(PARTITION_CORRUPT_RECORD_RATE, GROUP, PARTITION_CORRUPT_RECORD_RATE_DOC),
+            new MetricNameTemplate(PARTITION_CONTROL_PLANE_ERROR_RATE, GROUP, PARTITION_CONTROL_PLANE_ERROR_RATE_DOC),
             new MetricNameTemplate(RECENT_DATA_REQUEST_RATE, GROUP, RECENT_DATA_REQUEST_RATE_DOC),
             new MetricNameTemplate(LAGGING_CONSUMER_REQUEST_RATE, GROUP, LAGGING_CONSUMER_REQUEST_RATE_DOC),
             new MetricNameTemplate(LAGGING_CONSUMER_REQUEST_REJECTED_RATE, GROUP, LAGGING_CONSUMER_REQUEST_REJECTED_RATE_DOC),
@@ -181,6 +184,7 @@ public class InklessFetchMetrics {
     private final Meter partitionPartialFetchRate;
     private final Meter partitionStorageErrorRate;
     private final Meter partitionCorruptRecordRate;
+    private final Meter partitionControlPlaneErrorRate;
     private final Meter recentDataRequestRate;
     private final Meter laggingConsumerRequestRate;
     private final Meter laggingConsumerRejectedRate;
@@ -219,6 +223,7 @@ public class InklessFetchMetrics {
         partitionPartialFetchRate = metricsGroup.newMeter(PARTITION_PARTIAL_FETCH_RATE, "partitions", TimeUnit.SECONDS, Map.of());
         partitionStorageErrorRate = metricsGroup.newMeter(PARTITION_STORAGE_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
         partitionCorruptRecordRate = metricsGroup.newMeter(PARTITION_CORRUPT_RECORD_RATE, "errors", TimeUnit.SECONDS, Map.of());
+        partitionControlPlaneErrorRate = metricsGroup.newMeter(PARTITION_CONTROL_PLANE_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
         cacheEntrySize = metricsGroup.newHistogram(CACHE_ENTRY_SIZE, true, Map.of());
         cacheSize = metricsGroup.newGauge(CACHE_SIZE, () -> cache.size());
         recentDataRequestRate = metricsGroup.newMeter(RECENT_DATA_REQUEST_RATE, "requests", TimeUnit.SECONDS, Map.of());
@@ -317,6 +322,7 @@ public class InklessFetchMetrics {
         metricsGroup.removeMetric(PARTITION_PARTIAL_FETCH_RATE);
         metricsGroup.removeMetric(PARTITION_STORAGE_ERROR_RATE);
         metricsGroup.removeMetric(PARTITION_CORRUPT_RECORD_RATE);
+        metricsGroup.removeMetric(PARTITION_CONTROL_PLANE_ERROR_RATE);
         metricsGroup.removeMetric(RECENT_DATA_REQUEST_RATE);
         metricsGroup.removeMetric(LAGGING_CONSUMER_REQUEST_RATE);
         metricsGroup.removeMetric(LAGGING_CONSUMER_REQUEST_REJECTED_RATE);
@@ -370,6 +376,16 @@ public class InklessFetchMetrics {
      */
     public void recordPartitionCorruptRecord() {
         partitionCorruptRecordRate.mark();
+    }
+
+    /**
+     * Increments the partition-control-plane-error counter. Call once per partition whose response
+     * carries a non-NONE error returned directly by the control-plane findBatches response (e.g.
+     * OFFSET_OUT_OF_RANGE, UNKNOWN_TOPIC_OR_PARTITION), as opposed to a data-plane failure classified
+     * in FetchCompleter (those go to recordPartitionStorageError / recordPartitionCorruptRecord).
+     */
+    public void recordPartitionControlPlaneError() {
+        partitionControlPlaneErrorRate.mark();
     }
 
     /**

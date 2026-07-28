@@ -166,6 +166,31 @@ public class FetchCompleterTest {
     }
 
     @Test
+    public void testControlPlaneErrorRecordsControlPlaneErrorMetric() {
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.offsetOutOfRange(0, 1)
+        );
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(),
+            OBJECT_KEY_CREATOR,
+            fetchInfos,
+            coordinates,
+            Collections.emptyList(),
+            durationMs -> {}, metrics
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+        FetchPartitionData data = result.get(partition0);
+        assertThat(data.error).isEqualTo(Errors.OFFSET_OUT_OF_RANGE);
+        verify(metrics, times(1)).recordPartitionControlPlaneError();
+        // Control-plane errors are distinct from the data-plane storage/corrupt classification.
+        verify(metrics, never()).recordPartitionStorageError();
+        verify(metrics, never()).recordPartitionCorruptRecord();
+    }
+
+    @Test
     public void testFetchSingleFile() {
         MemoryRecords records = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord((byte[]) null));
 

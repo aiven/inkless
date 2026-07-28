@@ -162,6 +162,10 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
             return errorResponse(Errors.KAFKA_STORAGE_ERROR);
         }
         if (metadata.errors() != Errors.NONE || metadata.batches().isEmpty()) {
+            if (metadata.errors() != Errors.NONE) {
+                metrics.recordPartitionControlPlaneError();
+                LOGGER.warn("Control-plane findBatches returned {} for partition {}", metadata.errors(), key);
+            }
             return new FetchPartitionData(
                 metadata.errors(),
                 metadata.highWatermark(),
