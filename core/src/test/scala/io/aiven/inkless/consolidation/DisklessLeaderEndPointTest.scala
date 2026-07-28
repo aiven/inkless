@@ -1085,7 +1085,7 @@ class DisklessLeaderEndPointTest {
     // rejected as out-of-range, and (b) the tier-state rebuild restarts the log at 200, not the seal.
     val fetchHandler = mock(classOf[FetchHandler])
     val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
-    val replicaManager = mock(classOf[ReplicaManager])
+    val replicaManager = replicaManagerMock()
     val partition = mock(classOf[Partition])
     val localLog = mock(classOf[UnifiedLog])
     when(partition.localLogOrException).thenReturn(localLog)
@@ -1121,7 +1121,7 @@ class DisklessLeaderEndPointTest {
     // local log still holds (the safe, over-serve direction).
     val fetchHandler = mock(classOf[FetchHandler])
     val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
-    val replicaManager = mock(classOf[ReplicaManager])
+    val replicaManager = replicaManagerMock()
     val partition = mock(classOf[Partition])
     val localLog = mock(classOf[UnifiedLog])
     when(partition.localLogOrException).thenReturn(localLog)
@@ -1161,7 +1161,7 @@ class DisklessLeaderEndPointTest {
     // the pre-fix seal-based behavior that the empty fallback implies, so the risk is visible rather than silent.
     val fetchHandler = mock(classOf[FetchHandler])
     val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
-    val replicaManager = mock(classOf[ReplicaManager])
+    val replicaManager = replicaManagerMock()
     val partition = mock(classOf[Partition])
     val localLog = mock(classOf[UnifiedLog])
     when(partition.localLogOrException).thenReturn(localLog)
