@@ -93,7 +93,6 @@ public class FileCleaner implements Runnable, Closeable {
     public void run() {
         try {
             final var now = TimeUtils.now(time);
-            LOGGER.info("Running file cleaner at {}", now);
 
             // find all files that are marked for deletion
             final List<FileToDelete> filesToDelete = controlPlane.getFilesToDelete();
@@ -107,7 +106,11 @@ public class FileCleaner implements Runnable, Closeable {
                 LOGGER.info("No files to delete, sleeping for {}", sleepDuration);
                 time.sleep(sleepMillis);
             } else {
+                LOGGER.info("Running file cleaner: deleting {} of {} marked files", objectKeyPaths.size(), filesToDelete.size());
                 metrics.recordFileCleanerStart();
+                // 1-element holder to carry the duration out of the (synchronous, same-thread) callback
+                // for the log line below; a plain local cannot be assigned from the lambda.
+                final long[] durationMs = {0};
                 TimeUtils.measureDurationMs(time, () -> {
                     try {
                         cleanFiles(objectKeyPaths);
@@ -115,8 +118,12 @@ public class FileCleaner implements Runnable, Closeable {
                         LOGGER.error("Error while cleaning files", e);
                         throw new RuntimeException(e);
                     }
-                }, metrics::recordFileCleanerTotalTime);
+                }, duration -> {
+                    durationMs[0] = duration;
+                    metrics.recordFileCleanerTotalTime(duration);
+                });
                 metrics.recordFileCleanerCompleted(objectKeyPaths.size());
+                LOGGER.info("File cleaner deleted {} files in {} ms", objectKeyPaths.size(), durationMs[0]);
             }
 
             attempts.set(0);
@@ -137,8 +144,6 @@ public class FileCleaner implements Runnable, Closeable {
         // update control plane
         final DeleteFilesRequest request = new DeleteFilesRequest(objectKeyPaths);
         controlPlane.deleteFiles(request);
-
-        LOGGER.info("Deleted {} files", objectKeyPaths.size());
     }
 
     @Override

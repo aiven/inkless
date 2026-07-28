@@ -92,6 +92,9 @@ public class RetentionEnforcer implements Runnable, Closeable {
 
     private synchronized void runUnsafe() {
         final List<EnforceRetentionRequest> requests = new ArrayList<>();
+        // Kept aligned 1:1 with requests (and thus responses) so per-partition logs are attributed correctly
+        // even when readyPartitions contains partitions filtered out below.
+        final List<TopicIdPartition> enforcedPartitions = new ArrayList<>();
         final List<TopicIdPartition> readyPartitions = retentionEnforcementScheduler.getReadyPartitions();
         final Map<String, LogConfig> topicConfigs = new HashMap<>();
         for (final TopicIdPartition partition : readyPartitions) {
@@ -105,6 +108,7 @@ public class RetentionEnforcer implements Runnable, Closeable {
                     topicConfig.retentionSize,
                     topicConfig.retentionMs
                 ));
+                enforcedPartitions.add(partition);
             }
         }
 
@@ -113,6 +117,8 @@ public class RetentionEnforcer implements Runnable, Closeable {
         }
 
         metrics.recordRetentionEnforcementStarted();
+
+        LOGGER.info("Enforcing retention for {} partitions", requests.size());
 
         final Instant start = TimeUtils.durationMeasurementNow(time);
         final List<EnforceRetentionResponse> responses;
@@ -126,12 +132,10 @@ public class RetentionEnforcer implements Runnable, Closeable {
         final Instant ended = TimeUtils.durationMeasurementNow(time);
         final long durationMs = Duration.between(start, ended).toMillis();
 
-        LOGGER.debug("Enforcing retention for {} partitions took {} ms", requests.size(), durationMs);
-
         long totalBatchesDeleted = 0;
         long totalBytesDeleted = 0;
         for (int i = 0; i < responses.size(); i++) {
-            final TopicIdPartition readyPartition = readyPartitions.get(i);
+            final TopicIdPartition enforcedPartition = enforcedPartitions.get(i);
             final var request = requests.get(i);
             final var response = responses.get(i);
 
@@ -139,7 +143,7 @@ public class RetentionEnforcer implements Runnable, Closeable {
                 case NONE -> {
                     LOGGER.trace("Enforcing retention for {} with retentionBytes={}, retentionMs={} completed successfully. " +
                             "{} batches and {} bytes deleted, new log start offset: {}",
-                        readyPartition.topicPartition(), request.retentionBytes(), request.retentionMs(),
+                        enforcedPartition.topicPartition(), request.retentionBytes(), request.retentionMs(),
                         response.batchesDeleted(), response.bytesDeleted(), response.logStartOffset());
                     totalBatchesDeleted += response.batchesDeleted();
                     totalBytesDeleted += response.bytesDeleted();
@@ -149,15 +153,18 @@ public class RetentionEnforcer implements Runnable, Closeable {
                     // When a topic is deleted, each partition may still be attempted once.
                     // Use debug logging to not pollute the log with this normal behavior.
                     LOGGER.debug("Enforcing retention for {} with retentionBytes={}, retentionMs={} completed with error: {}",
-                        readyPartition.topicPartition(), request.retentionBytes(), request.retentionMs(), response.errors());
+                        enforcedPartition.topicPartition(), request.retentionBytes(), request.retentionMs(), response.errors());
 
                 default ->
                     LOGGER.error("Enforcing retention for {} with retentionBytes={}, retentionMs={} completed with error: {}",
-                        readyPartition.topicPartition(), request.retentionBytes(), request.retentionMs(), response.errors());
+                        enforcedPartition.topicPartition(), request.retentionBytes(), request.retentionMs(), response.errors());
             }
         }
 
         metrics.recordRetentionEnforcementFinishedSuccessfully(durationMs, totalBatchesDeleted, totalBytesDeleted);
+
+        LOGGER.info("Enforced retention for {} partitions in {} ms: {} batches, {} bytes deleted",
+            requests.size(), durationMs, totalBatchesDeleted, totalBytesDeleted);
     }
 
     @Override
