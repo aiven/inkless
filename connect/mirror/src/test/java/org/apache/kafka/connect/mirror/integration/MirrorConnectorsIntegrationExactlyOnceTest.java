@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.connect.mirror.integration;
 
+import org.apache.kafka.common.test.api.Flaky;
 import org.apache.kafka.connect.connector.Connector;
 import org.apache.kafka.connect.mirror.MirrorSourceConnector;
 import org.apache.kafka.connect.runtime.distributed.DistributedConfig;
@@ -54,6 +55,7 @@ public class MirrorConnectorsIntegrationExactlyOnceTest extends MirrorConnectors
 
     @Override
     @Test
+    @Flaky(value = "KAFKA-16488", comment = "Chronically flaky MM2 integration test across all subclasses; see also KAFKA-12566.")
     public void testReplication() throws Exception {
         super.testReplication();
 
