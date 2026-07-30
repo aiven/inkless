@@ -131,8 +131,12 @@ class RetentionReclaimsAcrossTiersTest(Test):
                         "diskless.enable": "true",
                         "remote.storage.enable": "true",
                         "min.insync.replicas": 2,
-                        # Roll segments by size/time so they close and get tiered.
-                        "segment.bytes": 1048576,
+                        # segment.bytes must sit above max.message.bytes (default 1048588):
+                        # buildFetch reserves max.message.bytes of headroom for batch overshoot,
+                        # so a segment.bytes at or below it leaves a 1-byte fetch budget and
+                        # starves the consolidation fetcher. 2 MiB leaves ~1 MiB of fetch budget;
+                        # segment.ms still rolls small segments on time so tiering cadence holds.
+                        "segment.bytes": 2097152,
                         "segment.ms": 5000,
                         # Evict local segments soon after upload so the early prefix
                         # lives only in remote -- retention must then reclaim remote.
