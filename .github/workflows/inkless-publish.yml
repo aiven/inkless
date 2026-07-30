@@ -296,7 +296,12 @@ jobs:
   # inkless-release-<N> tag on main.
   finalize-release:
     needs: [prepare, build-kafka-base, manifest-kafka-base]
-    if: ${{ always() && github.event_name == 'workflow_call' && !cancelled() }}
+    # Run only on the workflow_call path (coordinated release), not on the
+    # push-tag trigger. `github.event_name` can't be used here: in a reusable
+    # workflow it reflects the caller's top-level event (workflow_dispatch),
+    # never 'workflow_call'. `inputs.inkless_version` is set only on the
+    # workflow_call path and empty on push, so it's the reliable signal.
+    if: ${{ always() && !cancelled() && inputs.inkless_version != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
