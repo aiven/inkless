@@ -296,7 +296,7 @@ jobs:
   # inkless-release-<N> tag on main.
   finalize-release:
     needs: [prepare, build-kafka-base, manifest-kafka-base]
-    if: ${{ always() && github.event_name == 'workflow_call' && !cancelled() }}
+    if: ${{ always() && github.event_name != 'push' && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
