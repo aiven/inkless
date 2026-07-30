@@ -91,7 +91,7 @@ class DependencyOutageDuringProduceTest(Test):
                         "diskless.enable": "true",
                         "remote.storage.enable": "true",
                         "min.insync.replicas": 2,
-                        "segment.bytes": 1048576,
+                        "segment.bytes": 2097152,
                         "segment.ms": 5000,
                         "local.retention.ms": 5000,
                     },
