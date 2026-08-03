@@ -320,19 +320,35 @@ jobs:
           git push origin "$RELEASE_TAG"
           echo "✓ Pushed $RELEASE_TAG"
 
-      - name: Create and push Kafka-base tags
+      - name: Set inkless version, commit, and push Kafka-base tags
         env:
           ACTIVE_BRANCHES: ${{ needs.prepare.outputs.active_branches }}
           INKLESS_VERSION: ${{ needs.prepare.outputs.inkless_version }}
         run: |
           for BRANCH in $ACTIVE_BRANCHES; do
             git fetch origin "$BRANCH"
-            BRANCH_HEAD=$(git rev-parse "origin/$BRANCH")
+            git checkout -B "$BRANCH" "origin/$BRANCH"
 
-            KAFKA_VER=$(git show "origin/${BRANCH}:gradle.properties" \
-              | grep '^version=' | head -1 | sed 's/version=\(.*\)-inkless.*/\1/')
+            KAFKA_VER=$(grep '^version=' gradle.properties | head -1 | sed 's/version=\(.*\)-inkless.*/\1/')
             TAG="inkless-${KAFKA_VER}-${INKLESS_VERSION}"
 
+            # Bake the inkless iteration into gradle.properties (the single source of
+            # truth) and commit it, so tarballs of the tagged commit resolve the version
+            # WITHOUT git (RPM/source-tarball builds). See determineInklessTag() in build.gradle.
+            if ! grep -q '^inklessVersion=' gradle.properties; then
+              echo "::error::gradle.properties on $BRANCH has no inklessVersion= line to set"
+              exit 1
+            fi
+            sed -i "s/^inklessVersion=.*/inklessVersion=${INKLESS_VERSION}/" gradle.properties
+            if ! grep -q "^inklessVersion=${INKLESS_VERSION}$" gradle.properties; then
+              echo "::error::Failed to set inklessVersion=${INKLESS_VERSION} in gradle.properties on $BRANCH"
+              exit 1
+            fi
+
+            git commit -am "inkless: set inklessVersion=${INKLESS_VERSION} for release ${TAG}"
+            git push origin "$BRANCH"
+
+            BRANCH_HEAD=$(git rev-parse HEAD)
             git tag -a "$TAG" "$BRANCH_HEAD" -m "Inkless release ${INKLESS_VERSION} on Kafka ${KAFKA_VER}"
             git push origin "$TAG"
             echo "✓ Pushed $TAG (on $BRANCH @ $BRANCH_HEAD)"

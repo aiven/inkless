@@ -169,6 +169,11 @@ jobs:
           gradle-cache-read-only: false
 
       - name: Build Kafka distribution
+        env:
+          # The tag name is authoritative for CI builds, so bake the inkless iteration
+          # in directly (git-less external builds rely on the committed gradle.properties
+          # value instead). See determineInklessTag() in build.gradle.
+          ORG_GRADLE_PROJECT_inklessVersion: ${{ steps.parse-build.outputs.inkless_version }}
         run: make build_release
 
       - name: Prepare distribution artifact info
@@ -320,6 +325,8 @@ jobs:
           gradle-cache-read-only: false
 
       - name: Build Kafka distribution (for latest Docker image)
+        env:
+          ORG_GRADLE_PROJECT_inklessVersion: ${{ needs.prepare.outputs.inkless_version }}
         run: make build_release
 
       - name: Set up Docker Buildx
