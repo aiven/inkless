@@ -56,6 +56,24 @@ upload-part-time-avg                       Average time spent uploading a single
 upload-part-time-max                       Maximum time spent uploading a single part                                   
 =========================================  =============================================================================
 
+io.aiven.inkless.storage:type=s3-client-metrics,operation="{operation}"
+-----------------------------------------------------------------------
+
+================================  ==========================================================
+Attribute name                    Description                                               
+================================  ==========================================================
+configured-timeout-errors-rate    Rate of configured timeout errors per S3 operation        
+configured-timeout-errors-total   Total number of configured timeout errors per S3 operation
+io-errors-rate                    Rate of IO errors per S3 operation                        
+io-errors-total                   Total number of IO errors per S3 operation                
+other-errors-rate                 Rate of other errors per S3 operation                     
+other-errors-total                Total number of other errors per S3 operation             
+server-errors-rate                Rate of server errors per S3 operation                    
+server-errors-total               Total number of server errors per S3 operation            
+throttling-errors-rate            Rate of throttling errors per S3 operation                
+throttling-errors-total           Total number of throttling errors per S3 operation        
+================================  ==========================================================
+
 
 AzureBlobStorage metrics
 ==================================
