@@ -157,9 +157,10 @@ public final class S3Storage extends StorageBackend {
     @Override
     public void delete(final Set<ObjectKey> keys) throws StorageBackendException {
         final List<ObjectKey> objectKeys = new ArrayList<>(keys);
+        List<ObjectKey> batch = null;
         try {
             for (int i = 0; i < objectKeys.size(); i += MAX_DELETE_KEYS_LIMIT) {
-                final var batch = objectKeys.subList(
+                batch = objectKeys.subList(
                     i,
                     Math.min(i + MAX_DELETE_KEYS_LIMIT, objectKeys.size())
                 );
@@ -178,13 +179,13 @@ public final class S3Storage extends StorageBackend {
                     final var errors = response.errors().stream()
                         .map(e -> String.format("Error %s: %s (%s)", e.key(), e.message(), e.code()))
                         .collect(Collectors.joining(", "));
-                    throw new StorageBackendException("Failed to delete keys " + keys + ": " + errors);
+                    throw new StorageBackendException("Failed to delete keys " + batch + ": " + errors);
                 }
             }
         } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
-            throw new StorageBackendTimeoutException("Failed to delete keys " + keys, e);
+            throw new StorageBackendTimeoutException("Failed to delete keys " + batch, e);
         } catch (final SdkException e) {
-            throw new StorageBackendException("Failed to delete keys " + keys, e);
+            throw new StorageBackendException("Failed to delete keys " + batch, e);
         }
     }
 
