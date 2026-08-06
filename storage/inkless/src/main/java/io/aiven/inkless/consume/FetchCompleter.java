@@ -95,7 +95,9 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
             metrics.recordFetchResponseSize(totalBytes);
             return result;
         } catch (Exception e) {
-            throw new FetchException("Failed to complete fetch for partitions " + fetchInfos.keySet(), e);
+            // Only the partition count: fetchInfos can span thousands of client-requested
+            // partitions, so interpolating the full key set here would build an unbounded string.
+            throw new FetchException("Failed to complete fetch for " + fetchInfos.size() + " partitions", e);
         }
     }
 

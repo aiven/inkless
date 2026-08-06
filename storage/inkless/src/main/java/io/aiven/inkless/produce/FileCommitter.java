@@ -219,7 +219,10 @@ class FileCommitter implements Closeable {
                             totalBytesInProgress.addAndGet(-file.size());
                             if (error != null) {
                                 // at this point the commit has failed and need to check whether it failed on upload or commit
-                                LOGGER.error("Failed to commit diskless file {}", file, error);
+                                // Log a bounded summary: ClosedFile.toString() would dump every aggregated
+                                // request/batch, an unbounded string on this error path.
+                                LOGGER.error("Failed to commit diskless file (start={}, requests={}, batches={}, bytes={})",
+                                        file.start(), file.originalRequests().size(), file.commitBatchRequests().size(), file.size(), error);
                                 if (error.getCause() instanceof FileUploadException) {
                                     metrics.fileUploadFailed();
                                 } else {
