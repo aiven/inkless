@@ -826,9 +826,11 @@ public class FetchPlannerTest {
                     verify(metrics, never()).recordLaggingConsumerRequest();
                     verify(metrics, never()).recordRateLimitWaitTime(any(Long.class));
 
-                    // Verify throughput metrics: cache miss records storage bytes in + bytes out, no cache hit
+                    // Verify throughput metrics: cache miss records storage bytes in + bytes out, no cache hit.
+                    // recordDisklessBytesOut runs in a thenAccept dependent stage off the awaited future, so
+                    // wait for it to avoid racing the executor thread that fires the callback.
                     verify(metrics).recordStorageBytesIn(expectedData.length);
-                    verify(metrics).recordDisklessBytesOut(expectedData.length);
+                    verify(metrics, timeout(1000)).recordDisklessBytesOut(expectedData.length);
                     verify(metrics, never()).recordCacheHitBytes(any(Long.class));
                     verify(metrics, never()).recordStorageLaggingBytesIn(any(Long.class));
                 }
