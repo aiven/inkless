@@ -138,7 +138,7 @@ public class GcsStorage extends StorageBackend {
             storage.delete(ids);
             return Set.copyOf(keys);
         } catch (final BaseServiceException e) {
-            throw new StorageBackendException("Failed to delete " + keys, e);
+            throw new StorageBackendException("Failed to delete " + keys.size() + " keys", e);
         }
     }
 

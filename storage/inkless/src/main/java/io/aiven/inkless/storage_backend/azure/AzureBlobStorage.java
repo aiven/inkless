@@ -23,6 +23,7 @@ import org.apache.kafka.common.metrics.Metrics;
 import com.azure.identity.DefaultAzureCredentialBuilder;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
+import com.azure.storage.blob.models.BlobErrorCode;
 import com.azure.storage.blob.models.BlobRange;
 import com.azure.storage.blob.models.BlobStorageException;
 import com.azure.storage.blob.models.ParallelTransferOptions;
@@ -45,6 +46,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
@@ -57,6 +59,11 @@ import reactor.core.Exceptions;
 @CoverageIgnore // tested on integration level
 public final class AzureBlobStorage extends StorageBackend {
     private static final Logger LOGGER = LoggerFactory.getLogger(AzureBlobStorage.class);
+
+    // Azure error codes that indicate throttling rather than a hard failure. The set only picks the log
+    // level: the next FileCleaner cycle retries either kind. INTERNAL_ERROR and OPERATION_TIMED_OUT stay
+    // out because a transient server error doesn't self-heal like backpressure, so they keep the WARN.
+    private static final Set<String> THROTTLE_ERROR_CODES = Set.of(BlobErrorCode.SERVER_BUSY.toString());
 
     private AzureBlobStorageConfig config;
     private BlobContainerClient blobContainerClient;
@@ -207,16 +214,34 @@ public final class AzureBlobStorage extends StorageBackend {
         // failed ones as not deleted. deleteIfExists() returns true if the blob was deleted and false
         // if it was already absent; both mean the key is gone (idempotent).
         final Set<ObjectKey> deleted = new HashSet<>();
+        // Count the failures by error code instead of logging one line per key: a pass that fails for
+        // every key repeats on every FileCleaner cycle, so per-key lines grow with the worklist.
+        final Map<String, Integer> failuresByCode = new TreeMap<>();
         for (final ObjectKey key : keys) {
             try {
                 blobContainerClient.getBlobClient(key.value()).deleteIfExists();
                 deleted.add(key);
             } catch (final BlobStorageException e) {
-                LOGGER.warn("Failed to delete {}; leaving it for the next cycle", key, e);
+                failuresByCode.merge(String.valueOf(e.getErrorCode()), 1, Integer::sum);
             } catch (final RuntimeException e) {
-                LOGGER.warn("Failed to delete {}; leaving it for the next cycle", key, Exceptions.unwrap(e));
+                // Not a service response, so there is no error code to count, and nothing says the next key
+                // fares better: the client itself is likely unusable. Report it in full and stop the pass,
+                // since deletion is idempotent and the remaining keys retry on the next FileCleaner cycle.
+                LOGGER.warn("Deleting {} failed unexpectedly, stopping the pass", key, Exceptions.unwrap(e));
+                break;
             }
         }
+
+        if (!failuresByCode.isEmpty()) {
+            // Throttling is backpressure the next FileCleaner cycle retries; any other code needs an
+            // operator, so it must not sit at INFO while the worklist stops draining.
+            if (THROTTLE_ERROR_CODES.containsAll(failuresByCode.keySet())) {
+                LOGGER.info("Delete failures by error code {}", failuresByCode);
+            } else {
+                LOGGER.warn("Delete failures by error code {}", failuresByCode);
+            }
+        }
+
         return deleted;
     }
 

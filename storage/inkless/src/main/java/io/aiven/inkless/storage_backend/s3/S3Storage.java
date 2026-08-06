@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.ByteRange;
@@ -58,7 +59,6 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.model.S3Error;
 
 @CoverageIgnore  // tested on integration level
 public final class S3Storage extends StorageBackend {
@@ -67,10 +67,13 @@ public final class S3Storage extends StorageBackend {
 
     public static final int MAX_DELETE_KEYS_LIMIT = 1000;
 
-    // Per-key S3 error codes that indicate throttling rather than a hard, non-transient failure. Used
-    // only to log throttling distinctly; neither kind is retried in-call.
-    private static final Set<String> THROTTLE_ERROR_CODES =
-        Set.of("SlowDown", "ServiceUnavailable", "RequestLimitExceeded");
+    // Per-key S3 error codes that indicate throttling rather than a hard failure. Matched by name because
+    // a per-key error is not an exception, so the SDK's own check (RetryUtils.isThrottlingException) does
+    // not apply; both names appear in the SDK's throttling list, AwsErrorCode.THROTTLING_ERROR_CODES,
+    // which is internal API and so not referenced here. ServiceUnavailable stays out: AWS classifies it as
+    // a retryable 503 rather than throttling, and a transient server error doesn't self-heal the way
+    // backpressure does, so it keeps the WARN.
+    private static final Set<String> THROTTLE_ERROR_CODES = Set.of("SlowDown", "RequestLimitExceeded");
 
     private S3Client s3Client;
     private String bucketName;
@@ -171,6 +174,10 @@ public final class S3Storage extends StorageBackend {
     public Set<ObjectKey> delete(final Set<ObjectKey> keys) throws StorageBackendException {
         final List<ObjectKey> objectKeys = new ArrayList<>(keys);
         final Set<ObjectKey> deleted = new HashSet<>();
+        // Count the failures by error code instead of logging one line per key: a pass that fails for
+        // every key repeats on every FileCleaner cycle, so per-key lines grow with the worklist.
+        final Map<String, Integer> failuresByCode = new TreeMap<>();
+
         for (int i = 0; i < objectKeys.size(); i += MAX_DELETE_KEYS_LIMIT) {
             final Set<ObjectKey> batch = new HashSet<>(objectKeys.subList(
                 i,
@@ -182,11 +189,9 @@ public final class S3Storage extends StorageBackend {
             try {
                 response = deleteObjectsOnce(batch);
             } catch (final SdkException e) {
-                // Whole-request failure, including a 503 the SDK's adaptive retry already exhausted and
-                // timeouts. Stop this pass and report the remaining keys as not deleted; deletion is
-                // idempotent, so re-attempting them later is safe.
-                LOGGER.warn("DeleteObjects request failed; {} keys not deleted",
-                    objectKeys.size() - deleted.size(), e);
+                // Nothing in this batch was attempted. Stop the pass; deletion is idempotent, so
+                // retrying the keys later is safe.
+                LOGGER.warn("DeleteObjects request failed, stopping the pass", e);
                 break;
             }
 
@@ -196,30 +201,22 @@ public final class S3Storage extends StorageBackend {
                     deleted.add(key);
                 }
             }
-            logDeleteErrors(response.errors());
-        }
-        return deleted;
-    }
-
-    /**
-     * Logs per-key delete errors, distinguishing throttling (expected under load, aggregated) from
-     * hard errors (logged individually). No retry happens here: keys that were not deleted stay marked
-     * for deletion and are retried on the next FileCleaner cycle, while request-rate backoff is left to
-     * the S3 client's adaptive retry strategy.
-     */
-    private void logDeleteErrors(final List<S3Error> errors) {
-        int throttled = 0;
-        for (final var error : errors) {
-            if (THROTTLE_ERROR_CODES.contains(error.code())) {
-                throttled++;
-            } else {
-                LOGGER.warn("Failed to delete {}: {} ({}); leaving it for the next cycle",
-                    error.key(), error.message(), error.code());
+            for (final var error : response.errors()) {
+                failuresByCode.merge(error.code(), 1, Integer::sum);
             }
         }
-        if (throttled > 0) {
-            LOGGER.info("{} keys throttled by S3; leaving them for the next cycle", throttled);
+
+        if (!failuresByCode.isEmpty()) {
+            // Throttling is backpressure the next FileCleaner cycle retries; any other code needs an
+            // operator, so it must not sit at INFO while the worklist stops draining.
+            if (THROTTLE_ERROR_CODES.containsAll(failuresByCode.keySet())) {
+                LOGGER.info("Delete failures by error code {}", failuresByCode);
+            } else {
+                LOGGER.warn("Delete failures by error code {}", failuresByCode);
+            }
         }
+
+        return deleted;
     }
 
     private DeleteObjectsResponse deleteObjectsOnce(final Set<ObjectKey> keys) {
