@@ -31,6 +31,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -422,7 +423,8 @@ public class InklessTopicMetadataTransformer implements Closeable {
      * Resolve the client AZ using based on client ID or listener name.
      */
     private String resolveClientAZ(final ListenerName listenerName, final String clientId) {
-        final String explicitAZ = normalizeAZ(ClientAZExtractor.getClientAZ(clientId));
+        final String explicitAZ = normalizeAZ(
+            ClientAZExtractor.getClientAZ(clientId, () -> computeKnownRacks(listenerName)));
         if (explicitAZ != null) {
             return explicitAZ;
         }
@@ -434,6 +436,18 @@ public class InklessTopicMetadataTransformer implements Closeable {
             }
         }
         return null;
+    }
+
+    private Set<String> computeKnownRacks(final ListenerName listenerName) {
+        final Set<String> racks = new HashSet<>(clientAzListenerMap.values());
+        if (listenerName != null) {
+            metadataView.getAliveBrokerNodes(listenerName)
+                    .stream()
+                    .map(Node::rack)
+                    .filter(r -> r != null && !r.isBlank())
+                    .forEach(racks::add);
+        }
+        return racks;
     }
 
     /**
