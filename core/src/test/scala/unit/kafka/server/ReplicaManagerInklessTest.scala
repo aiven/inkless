@@ -7097,6 +7097,106 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testFollowerFetchAtSealRecordsFetchStateAndAllowsIsrExpansionWhenEpochMatches(): Unit = {
+    val followerId = 2
+    val sealOffset = 5L
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+    )
+    try {
+      // Leader broker (1) hosts the fully-switched partition; follower (2) is assigned but out of ISR.
+      val partition = setupSwitchedLeaderWithOutOfSyncFollower(
+        replicaManager, disklessTopicPartition, followerId, sealOffset)
+      assertFalse(partition.inSyncReplicaIds.contains(followerId),
+        "Follower must start outside the ISR")
+
+      // AlterPartition submission is async; hand back an uncompleted future so the ISR-expansion path
+      // can run without the mock returning null (which would NPE inside submitAlterPartition).
+      doReturn(new CompletableFuture[Any]())
+        .when(alterPartitionManager).submit(any(), any())
+      clearInvocations(alterPartitionManager)
+
+      // Follower fetches at the seal, carrying the CURRENT leader epoch.
+      val fetchParams = new FetchParams(
+        followerId, -1L, 0L, 1, 1024 * 1024, FetchIsolation.LOG_END, Optional.empty())
+      val fetchInfos = Seq(
+        disklessTopicPartition ->
+          new PartitionData(disklessTopicPartition.topicId(), sealOffset, 0L, 1024 * 1024,
+            Optional.of(partition.getLeaderEpoch)))
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA,
+        response => responseData = response.toMap)
+
+      // The follower still gets the empty, HW-clamped placeholder (never reads diskless data)...
+      val data = responseData(disklessTopicPartition)
+      assertEquals(Errors.NONE, data.error)
+      assertEquals(MemoryRecords.EMPTY, data.records)
+      assertEquals(sealOffset, data.highWatermark)
+
+      // ...but because the request epoch matched the leader's, the leader recorded the follower's
+      // fetch state at the seal...
+      assertEquals(sealOffset, partition.getReplica(followerId).get.stateSnapshot.logEndOffset)
+      // ...which drives the normal ISR-expansion path for the now caught-up follower.
+      verify(alterPartitionManager).submit(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testFollowerFetchAtSealSkipsFetchStateAndIsrExpansionWhenLeaderEpochStale(): Unit = {
+    val followerId = 2
+    val sealOffset = 5L
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+    )
+    try {
+      val partition = setupSwitchedLeaderWithOutOfSyncFollower(
+        replicaManager, disklessTopicPartition, followerId, sealOffset)
+      assertFalse(partition.inSyncReplicaIds.contains(followerId),
+        "Follower must start outside the ISR")
+
+      doReturn(new CompletableFuture[Any]())
+        .when(alterPartitionManager).submit(any(), any())
+      clearInvocations(alterPartitionManager)
+
+      // Follower fetches at the seal, but carries a STALE (ahead-of-leader) leader epoch. This mirrors
+      // the classic read path, which validates the request epoch before touching follower state.
+      val staleEpoch = partition.getLeaderEpoch + 1
+      val fetchParams = new FetchParams(
+        followerId, -1L, 0L, 1, 1024 * 1024, FetchIsolation.LOG_END, Optional.empty())
+      val fetchInfos = Seq(
+        disklessTopicPartition ->
+          new PartitionData(disklessTopicPartition.topicId(), sealOffset, 0L, 1024 * 1024,
+            Optional.of(staleEpoch)))
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA,
+        response => responseData = response.toMap)
+
+      // The follower still gets the same empty, HW-clamped response...
+      val data = responseData(disklessTopicPartition)
+      assertEquals(Errors.NONE, data.error)
+      assertEquals(MemoryRecords.EMPTY, data.records)
+      assertEquals(sealOffset, data.highWatermark)
+
+      // ...but the epoch guard refused to record its fetch state, so it stays out of the ISR and no
+      // AlterPartition is submitted.
+      assertEquals(UnifiedLog.UNKNOWN_OFFSET,
+        partition.getReplica(followerId).get.stateSnapshot.logEndOffset)
+      assertFalse(partition.inSyncReplicaIds.contains(followerId))
+      verify(alterPartitionManager, never()).submit(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testFollowerFetchBelowClassicToDisklessStartOffsetReadsFromClassicLog(): Unit = {
     val fetchHandlerCtor = mockFetchHandler(Map.empty)
     val cp = mock(classOf[ControlPlane])
@@ -7340,6 +7440,62 @@ class ReplicaManagerInklessTest {
       log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, 0, records: _*), 0)
       log.updateHighWatermark(localEndOffset)
     }
+    partition
+  }
+
+  /**
+   * Like [[setupHybridLeaderPartition]] but assigns an extra follower replica that starts OUT of the
+   * ISR, and seals the local classic log at `sealOffset` (LEO == HW == sealOffset). Used to exercise
+   * the switched-follower fetch path on the leader, where a caught-up follower must be re-admitted to
+   * the ISR via `updateFollowerFetchState`. Registers the cluster brokers in the metadata cache so the
+   * follower can pass the leader's ISR-eligibility (alive, unfenced) check.
+   */
+  private def setupSwitchedLeaderWithOutOfSyncFollower(replicaManager: ReplicaManager,
+                                                       topicIdPartition: TopicIdPartition,
+                                                       followerId: Int,
+                                                       sealOffset: Long): Partition = {
+    val leaderId = replicaManager.config.brokerId
+    // ClusterImageTest.IMAGE1 registers brokers 1 (leader) and 2 (follower) as alive/unfenced, which
+    // is what isReplicaIsrEligible consults via metadataCache.getAliveBrokerEpoch on the leader.
+    replicaManager.metadataCache.asInstanceOf[KRaftMetadataCache].setImage(imageFromTopics(TopicsImage.EMPTY))
+
+    val topicDelta = new TopicsDelta(TopicsImage.EMPTY)
+    topicDelta.replay(new TopicRecord()
+      .setName(topicIdPartition.topic())
+      .setTopicId(topicIdPartition.topicId()))
+    topicDelta.replay(new PartitionRecord()
+      .setTopicId(topicIdPartition.topicId())
+      .setPartitionId(topicIdPartition.partition())
+      .setLeader(leaderId)
+      .setLeaderEpoch(0)
+      .setPartitionEpoch(0)
+      .setReplicas(List[Integer](leaderId, followerId).asJava)
+      .setIsr(List[Integer](leaderId).asJava))
+
+    val (partition, _) = replicaManager.getOrCreatePartition(
+      topicIdPartition.topicPartition(),
+      topicDelta,
+      topicIdPartition.topicId()).get
+    partition.makeLeader(
+      partitionRegistration(
+        leaderId,
+        leaderEpoch = 0,
+        isr = Array(leaderId),
+        partitionEpoch = 0,
+        replicas = Array(leaderId, followerId)),
+      isNew = false,
+      new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava),
+      None)
+
+    val records = (0L until sealOffset).map { i =>
+      new SimpleRecord(s"key-$i".getBytes, s"value-$i".getBytes)
+    }.toArray
+    val log = partition.localLogOrException
+    log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, 0, records: _*), 0)
+    log.updateHighWatermark(sealOffset)
+
+    when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(topicIdPartition.topicPartition()))
+      .thenReturn(sealOffset)
     partition
   }
 
