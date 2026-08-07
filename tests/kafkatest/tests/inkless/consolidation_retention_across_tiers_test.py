@@ -291,3 +291,117 @@ class RetentionReclaimsAcrossTiersTest(Test):
 
         # 4) End-to-end: the full surviving tail [earliest, end) comes back.
         self._read_back_tail(verifier, from_offset=earliest, expected=expected, phase1_end=acked1)
+
+    @cluster(num_nodes=6)
+    @matrix(metadata_quorum=[quorum.isolated_kraft])
+    def test_delete_records_composed_with_active_retention(self, metadata_quorum):
+        """``DeleteRecords`` and active time-based retention must compose across tiers:
+        the earliest settles at ``max(delete_boundary, retention_floor)`` and neither
+        over-reclaims the survivors.
+
+        Reuses this test's two age-separated cohorts so the retention floor is
+        deterministic (the aged phase-1 cohort expires to the boundary ``acked1``; the
+        fresh phase-2 cohort survives), then folds a ``DeleteRecords`` into the same run
+        twice:
+
+        - Below the retention floor (``delete < acked1``): retention dominates. The
+          smaller delete must not pin the earliest low; the forward-only floor advances to
+          the retention boundary once the aged cohort expires.
+        - Above the retention floor, inside the fresh survivors (``delete > acked1``): the
+          delete dominates. Retention (restored long, so phase 2 never ages) must not
+          block it, and the survivors above the delete stay intact and contiguous.
+
+        A born-consolidated topic is used deliberately. The switched-topic seal
+        over-reclaim is already covered by ``DeleteRecordsAcrossTiersTest`` (including the
+        leader-failover variant), and a switched topic cannot place a *time-based*
+        retention floor strictly inside the classic prefix deterministically: the whole
+        pre-switch prefix ages as one cohort, so the floor can only land at 0 or at the
+        seal. What is new here is the retention x ``DeleteRecords`` composition end to end;
+        it is unit-covered
+        (``testConsolidatingOverrideFloorHonoredWithActive{Size,Time}Retention``) but
+        never exercised across real tiers."""
+        self._start_cluster()
+        verifier = ConsolidationVerifier(self.kafka)
+        verifier.verify_tooling()
+        baseline_tiered = verifier.tiered_object_count()
+
+        verifier.start_jmx()
+
+        acked1 = verifier.produce(self.TOPIC, self.PHASE1_RECORDS, label="phase1",
+                                  throughput=self.PHASE1_THROUGHPUT,
+                                  timeout_sec=self.PHASE1_SPAN_SEC + 120)
+        self.logger.info("Phase 1 (aged cohort) produced and acked %d records" % acked1)
+
+        tiered_peak = self._drain_pipeline(verifier, baseline_tiered, acked1)
+
+        self.logger.info("Idling %ds so the whole phase-1 cohort ages past retention.ms=%d"
+                         % (self.AGE_AFTER_TIER_SEC, self.RETENTION_MS))
+        time.sleep(self.AGE_AFTER_TIER_SEC)
+
+        acked2 = verifier.produce(self.TOPIC, self.PHASE2_RECORDS, label="phase2")
+        total_acked = acked1 + acked2
+        self.logger.info("Phase 2 (fresh survivors) produced and acked %d records (total=%d)"
+                         % (acked2, total_acked))
+
+        # --- Sub-case A: delete BELOW the retention boundary; retention dominates. ---
+        delete_below = acked1 // 2
+        assert delete_below > 0, "phase-1 cohort too small to pick a delete boundary: %d" % acked1
+        lw_below = verifier.delete_records(self.TOPIC, before_offset=delete_below)
+        assert lw_below == delete_below, (
+            "DeleteRecords returned low_watermark=%d; expected the requested boundary %d"
+            % (lw_below, delete_below))
+        self.logger.info("Deleted below the retention floor at %d (phase-1 boundary %d)"
+                         % (delete_below, acked1))
+
+        # Lower retention so the aged phase-1 cohort expires. The earliest must advance
+        # past the (smaller) delete to the cohort boundary, not stay pinned at the delete.
+        verifier.kafka.alter_topic_config(self.TOPIC, "retention.ms", str(self.RETENTION_MS))
+        wait_until(lambda: verifier.offset_at(self.TOPIC, time_spec=-2) > delete_below,
+                   timeout_sec=300, backoff_sec=5,
+                   err_msg=("retention did not advance the earliest above the delete boundary %d; "
+                            "the aged phase-1 cohort was not reclaimed" % delete_below))
+        earliest_after_retention = verifier.wait_for_earliest_stable(self.TOPIC, timeout_sec=300)
+        # Freeze the floor before the next phase so the survivors cannot age into the window.
+        verifier.kafka.alter_topic_config(self.TOPIC, "retention.ms", str(self.INITIAL_RETENTION_MS))
+        assert delete_below < earliest_after_retention <= acked1, (
+            "with a delete at %d below the retention boundary, earliest settled at %d; expected "
+            "retention to dominate and advance it into (%d, %d]"
+            % (delete_below, earliest_after_retention, delete_below, acked1))
+        self.logger.info("Retention dominated the smaller delete: earliest advanced to %d (boundary %d)"
+                         % (earliest_after_retention, acked1))
+
+        # The aged phase-1 remote segments were physically reclaimed (no storage leak).
+        wait_until(lambda: verifier.tiered_object_count() < tiered_peak,
+                   timeout_sec=240, backoff_sec=5,
+                   err_msg=("tiered-storage object count did not drop below the pre-reclaim peak "
+                            "of %d; the aged phase-1 remote segments were not deleted" % tiered_peak))
+
+        # --- Sub-case B: delete ABOVE the retention boundary, inside the fresh survivors;
+        #     the delete dominates and the survivors above it stay intact. ---
+        delete_above = earliest_after_retention + max((total_acked - earliest_after_retention) // 2, 1)
+        assert earliest_after_retention < delete_above < total_acked, (
+            "could not place a delete boundary inside the survivor cohort (earliest=%d, total=%d)"
+            % (earliest_after_retention, total_acked))
+        lw_above = verifier.delete_records(self.TOPIC, before_offset=delete_above)
+        assert lw_above == delete_above, (
+            "DeleteRecords returned low_watermark=%d; expected the requested boundary %d"
+            % (lw_above, delete_above))
+
+        agreed_earliest = verifier.wait_for_consistent_earliest_across_brokers(
+            self.TOPIC, timeout_sec=300)
+        assert agreed_earliest == delete_above, (
+            "post-delete earliest %d did not settle at exactly the delete boundary %d (retention "
+            "floor was %d); the delete must dominate above the retention floor"
+            % (agreed_earliest, delete_above, earliest_after_retention))
+        self.logger.info("Delete dominated above the retention floor: earliest at exactly %d"
+                         % agreed_earliest)
+
+        # Survivors [delete_above, total) are readable and contiguous with correct content.
+        first_served = verifier.first_served_offset(self.TOPIC, from_offset=delete_above)
+        assert first_served == delete_above, (
+            "a fetch from the delete boundary %d returned offset %d; the survivors were reclaimed"
+            % (delete_above, first_served))
+        expected = total_acked - delete_above
+        self._read_back_tail(verifier, from_offset=delete_above, expected=expected, phase1_end=acked1)
+        self.logger.info("Survivor tail [%d, %d) intact after the retention x delete composition"
+                         % (delete_above, total_acked))
