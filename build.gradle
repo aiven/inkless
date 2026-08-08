@@ -248,22 +248,34 @@ def determineCommitId() {
 // Inkless: describe the nearest inkless-* tag (e.g. "inkless-4.2.1-0.45" at a tag,
 // or "inkless-4.2.1-0.45-3-g9c3cf45" a few commits past it). This surfaces the
 // git tag and the inkless increment in the baked-in version file. The increment
-// lives only in tags (never in gradle.properties), so this is the only build-time
-// source for it.
+// lives only in tags (never in gradle.properties), so git (or an explicit
+// -PinklessTag) is the only build-time source for it.
+//
+// An explicit `inklessTag` gradle property wins, so builds without a git checkout
+// (release packaging from a source tarball) can supply it. It must be read through
+// providers.gradleProperty: `-PinklessTag` lands in the project's `ext` namespace,
+// which `ext { inklessTag = ... }` then overwrites with this very provider, so
+// project.property('inklessTag') would resolve back to the provider itself.
 //
 // Returned as a lazy Provider using providers.exec (the configuration-cache-safe
 // API) rather than a config-time exec, and evaluated when createVersionFile runs.
 // Uses the git CLI (worktree-aware) so it works in linked worktrees where Grgit's
-// `repo` is null. Falls back to "unknown" on any error or missing tag.
+// `repo` is null. Falls back to "unknown" when there is no checkout and when git
+// fails (e.g. no tags and no HEAD): a missing version must not fail the build.
 def determineInklessTag() {
-  if (project.hasProperty('inklessTag')) {
-    return providers.provider { project.property('inklessTag').toString() }
+  def fromProperty = providers.gradleProperty('inklessTag').map { it.trim() }
+  if (!file("$rootDir/.git").exists()) {
+    return fromProperty.orElse("unknown")
   }
   def described = providers.exec {
     commandLine 'git', 'describe', '--tags', '--match', 'inkless-*', '--always', '--dirty'
     workingDir project.rootDir
-  }.standardOutput.asText.map { it.trim() }
-  return described.map { it.isEmpty() ? "unknown" : it }.orElse("unknown")
+    ignoreExitValue = true
+  }
+  def fromGit = described.standardOutput.asText.zip(described.result) { output, result ->
+    result.exitValue == 0 ? output.trim() : ""
+  }
+  return fromProperty.orElse(fromGit).map { it.isEmpty() ? "unknown" : it }.orElse("unknown")
 }
 
 /**
@@ -285,6 +297,16 @@ static def projectToJUnitXmlPath(project) {
 
 
 apply from: file('wrapper.gradle')
+
+// Inkless: resolve and print the tag baked into kafka-version.properties, without
+// running a build. Used by .github/scripts/test-inkless-tag.sh and by release
+// packaging to check what -PinklessTag resolves to.
+tasks.register('printInklessTag') {
+  def tag = inklessTag
+  doLast {
+    println "INKLESS_TAG=${tag.get()}"
+  }
+}
 
 if (repo != null) {
   rat {
@@ -328,6 +350,7 @@ if (repo != null) {
         'config/inkless/**',
         'checkstyle/import-control-storage-inkless.xml',
         '.github/workflows/inkless*',
+        '.github/scripts/test-inkless-tag.sh',
         'docker/extra',
         'docs/inkless/**',
         'dump-schema-compose.yml',

@@ -114,6 +114,24 @@ jobs:
       #   env:
       #     GITHUB_WORKSPACE: ${{ github.workspace }}
 
+  inkless-version-tag:
+    runs-on: ubuntu-latest
+    name: Inkless version tag resolution
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup Gradle
+        uses: ./.github/actions/setup-gradle
+        with:
+          java-version: 17
+          gradle-cache-read-only: true
+      # Guards the tag baked into kafka-version.properties: a git-less source tree
+      # must not fail the build, and -PinklessTag must be honoured verbatim.
+      - name: Check inkless tag resolution
+        run: ./.github/scripts/test-inkless-tag.sh
+
   test:
     needs: validate
     runs-on: ubuntu-latest
