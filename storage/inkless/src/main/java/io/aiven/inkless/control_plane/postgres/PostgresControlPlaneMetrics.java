@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 public class PostgresControlPlaneMetrics implements Closeable {
@@ -53,6 +54,8 @@ public class PostgresControlPlaneMetrics implements Closeable {
                 "Time spent executing the " + name + " query in milliseconds"));
             templates.add(new MetricNameTemplate(name + "QueryRate", GROUP,
                 "Total number of " + name + " queries executed"));
+            templates.add(new MetricNameTemplate(name + "LastSuccessfulQueryAgeMs", GROUP,
+                "Milliseconds since the last successful " + name + " query completed; -1 if no query has succeeded since startup"));
         }
         return templates;
     }
@@ -61,9 +64,11 @@ public class PostgresControlPlaneMetrics implements Closeable {
 
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
         PostgresControlPlane.class.getPackageName(), PostgresControlPlane.class.getSimpleName());
-    private final QueryMetrics findBatchesMetrics = new QueryMetrics("FindBatches");
+    // Visible for testing.
+    final QueryMetrics findBatchesMetrics = new QueryMetrics("FindBatches");
     private final QueryMetrics getLogsMetrics = new QueryMetrics("GetLogs");
-    private final QueryMetrics commitFileMetrics = new QueryMetrics("CommitFile");
+    // Visible for testing.
+    final QueryMetrics commitFileMetrics = new QueryMetrics("CommitFile");
     private final QueryMetrics topicCreateMetrics = new QueryMetrics("TopicCreate");
     private final QueryMetrics topicDeleteMetrics = new QueryMetrics("TopicDelete");
     private final QueryMetrics fileDeleteMetrics = new QueryMetrics("FilesDelete");
@@ -171,33 +176,46 @@ public class PostgresControlPlaneMetrics implements Closeable {
         safeDeleteFileCheckMetrics.remove();
         getLogInfoMetrics.remove();
         initDisklessLogMetrics.remove();
+        repairDisklessLogMetrics.remove();
         getProducerStateMetrics.remove();
         pruneDisklessLogsMetrics.remove();
         advanceCrossTierLogStartMetrics.remove();
         getCrossTierLogStartMetrics.remove();
     }
 
-    private class QueryMetrics {
+    // Visible for testing.
+    class QueryMetrics {
         private final String queryTimeMetricName;
         private final String queryRateMetricName;
+        private final String lastSuccessfulQueryAgeMsMetricName;
         private final Histogram queryTimeHistogram;
         private final LongAdder queryRate = new LongAdder();
+        // -1 means no successful query has occurred since startup.
+        // Visible for testing.
+        final AtomicLong lastSuccessfulQueryTimeMs = new AtomicLong(-1);
 
         private QueryMetrics(final String name) {
             this.queryTimeMetricName = name + "QueryTime";
             this.queryRateMetricName = name + "QueryRate";
+            this.lastSuccessfulQueryAgeMsMetricName = name + "LastSuccessfulQueryAgeMs";
             this.queryTimeHistogram = metricsGroup.newHistogram(queryTimeMetricName, true, Map.of());
             metricsGroup.newGauge(queryRateMetricName, queryRate::intValue);
+            metricsGroup.newGauge(lastSuccessfulQueryAgeMsMetricName, () -> {
+                final long last = lastSuccessfulQueryTimeMs.get();
+                return last == -1 ? -1L : time.milliseconds() - last;
+            });
         }
 
         private void record(final long duration) {
             queryTimeHistogram.update(duration);
             queryRate.increment();
+            lastSuccessfulQueryTimeMs.set(time.milliseconds());
         }
 
         private void remove() {
             metricsGroup.removeMetric(this.queryTimeMetricName);
             metricsGroup.removeMetric(this.queryRateMetricName);
+            metricsGroup.removeMetric(this.lastSuccessfulQueryAgeMsMetricName);
         }
     }
 }

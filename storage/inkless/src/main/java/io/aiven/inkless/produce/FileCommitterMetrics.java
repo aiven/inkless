@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
@@ -81,6 +82,8 @@ public class FileCommitterMetrics implements Closeable {
     private static final String WRITE_RATE_DOC = "Rate of successful write operations per second";
     private static final String WRITE_ERROR_RATE = "WriteErrorRate";
     private static final String WRITE_ERROR_RATE_DOC = "Rate of failed write operations per second";
+    private static final String LAST_SUCCESSFUL_FILE_COMMIT_AGE_MS = "LastSuccessfulFileCommitAgeMs";
+    private static final String LAST_SUCCESSFUL_FILE_COMMIT_AGE_MS_DOC = "Milliseconds since the last successful file commit completed; -1 if no commit has succeeded since startup";
 
     /**
      * This method returns a list of all the metric name templates for the FileCommitterMetrics class.
@@ -106,7 +109,8 @@ public class FileCommitterMetrics implements Closeable {
             new MetricNameTemplate(WRITE_RATE, GROUP, WRITE_RATE_DOC),
             new MetricNameTemplate(WRITE_ERROR_RATE, GROUP, WRITE_ERROR_RATE_DOC),
             new MetricNameTemplate(COMMIT_QUEUE_FILES, GROUP, COMMIT_QUEUE_FILES_DOC),
-            new MetricNameTemplate(COMMIT_QUEUE_BYTES, GROUP, COMMIT_QUEUE_BYTES_DOC)
+            new MetricNameTemplate(COMMIT_QUEUE_BYTES, GROUP, COMMIT_QUEUE_BYTES_DOC),
+            new MetricNameTemplate(LAST_SUCCESSFUL_FILE_COMMIT_AGE_MS, GROUP, LAST_SUCCESSFUL_FILE_COMMIT_AGE_MS_DOC)
         );
     }
 
@@ -132,6 +136,9 @@ public class FileCommitterMetrics implements Closeable {
     private final Meter batchesCommitRate;
     private final Meter writeRate;
     private final Meter writeErrorRate;
+    // -1 means no successful commit has occurred since startup.
+    // Visible for testing.
+    final AtomicLong lastSuccessfulFileCommitTimeMs = new AtomicLong(-1);
 
     FileCommitterMetrics(final Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -152,6 +159,10 @@ public class FileCommitterMetrics implements Closeable {
         cacheStoreTimeHistogram = metricsGroup.newHistogram(CACHE_STORE_TIME, true, Map.of());
         writeRate = metricsGroup.newMeter(WRITE_RATE, "writes", TimeUnit.SECONDS, Map.of());
         writeErrorRate = metricsGroup.newMeter(WRITE_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
+        metricsGroup.newGauge(LAST_SUCCESSFUL_FILE_COMMIT_AGE_MS, () -> {
+            final long last = lastSuccessfulFileCommitTimeMs.get();
+            return last == -1 ? -1L : time.milliseconds() - last;
+        });
     }
 
     void initTotalFilesInProgressMetric(final Supplier<Integer> supplier) {
@@ -230,6 +241,7 @@ public class FileCommitterMetrics implements Closeable {
         final Instant now = TimeUtils.durationMeasurementNow(time);
         fileTotalLifeTimeHistogram.update(Duration.between(fileStart, now).toMillis());
         fileUploadAndCommitTimeHistogram.update(Duration.between(uploadAndCommitStart, now).toMillis());
+        lastSuccessfulFileCommitTimeMs.set(time.milliseconds());
     }
 
     void writeCompleted() {
@@ -265,5 +277,6 @@ public class FileCommitterMetrics implements Closeable {
         metricsGroup.removeMetric(BATCHES_PER_PARTITION_PER_COMMIT);
         metricsGroup.removeMetric(WRITE_RATE);
         metricsGroup.removeMetric(WRITE_ERROR_RATE);
+        metricsGroup.removeMetric(LAST_SUCCESSFUL_FILE_COMMIT_AGE_MS);
     }
 }

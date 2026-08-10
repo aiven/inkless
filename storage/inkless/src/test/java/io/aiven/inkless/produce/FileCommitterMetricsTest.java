@@ -27,6 +27,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -40,11 +41,13 @@ class FileCommitterMetricsTest {
     static final TopicIdPartition T1 = new TopicIdPartition(TOPIC_ID, 1, "t");
     static final TopicIdPartition T2 = new TopicIdPartition(TOPIC_ID, 2, "t");
 
+    MockTime time;
     FileCommitterMetrics metrics;
 
     @BeforeEach
     void setUp() {
-        metrics = new FileCommitterMetrics(new MockTime());
+        time = new MockTime(0, 0, 0);
+        metrics = new FileCommitterMetrics(time);
     }
 
     @AfterEach
@@ -126,5 +129,37 @@ class FileCommitterMetricsTest {
         assertThat(metrics.batchesPerPartitionPerCommitHistogram.count()).isEqualTo(4);
         assertThat(metrics.batchesPerPartitionPerCommitHistogram.max()).isEqualTo(2.0);
         assertThat(metrics.batchesPerPartitionPerCommitHistogram.min()).isEqualTo(1.0);
+    }
+
+    @Test
+    void lastSuccessfulFileCommitAgeMs_isMinusOneBeforeFirstCommit() {
+        assertThat(metrics.lastSuccessfulFileCommitTimeMs.get()).isEqualTo(-1L);
+    }
+
+    @Test
+    void lastSuccessfulFileCommitAgeMs_recordedOnFileFinished() {
+        time.setCurrentTimeMs(1_000L);
+        metrics.fileFinished(Instant.EPOCH, Instant.EPOCH);
+
+        assertThat(metrics.lastSuccessfulFileCommitTimeMs.get()).isEqualTo(1_000L);
+    }
+
+    @Test
+    void lastSuccessfulFileCommitAgeMs_updatesOnSubsequentCommits() {
+        time.setCurrentTimeMs(1_000L);
+        metrics.fileFinished(Instant.EPOCH, Instant.EPOCH);
+
+        time.setCurrentTimeMs(3_000L);
+        metrics.fileFinished(Instant.EPOCH, Instant.EPOCH);
+
+        assertThat(metrics.lastSuccessfulFileCommitTimeMs.get()).isEqualTo(3_000L);
+    }
+
+    @Test
+    void lastSuccessfulFileCommitAgeMs_notUpdatedOnCommitFailure() {
+        time.setCurrentTimeMs(1_000L);
+        metrics.fileCommitFailed();
+
+        assertThat(metrics.lastSuccessfulFileCommitTimeMs.get()).isEqualTo(-1L);
     }
 }

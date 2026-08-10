@@ -186,29 +186,30 @@ FileCommitter metrics
 io.aiven.inkless.produce:type=FileCommitter
 -------------------------------------------
 
-=============================  ==================================================================================================
-Attribute name                 Description                                                                                       
-=============================  ==================================================================================================
-BatchesCommitRate              Rate of batches committed per second                                                              
-BatchesCount                   Number of batches per committed file                                                              
-BatchesPerPartitionPerCommit   Number of batches a single topic-partition contributes to a committed file (per-partition fan-in).
-CacheStoreTime                 Time spent storing file data in the cache after commit in milliseconds                            
-CommitQueueBytes               Current total bytes of files waiting to be committed                                              
-CommitQueueFiles               Current number of files waiting to be committed                                                   
-FileCommitErrorRate            Rate of failed file commits per second                                                            
-FileCommitRate                 Rate of successful file commits per second                                                        
-FileCommitTime                 Time spent committing a file to the control plane in milliseconds                                 
-FileCommitWaitTime             Time a file waits before commit starts in milliseconds                                            
-FileSize                       Size of committed files in bytes                                                                  
-FileTotalLifeTime              Total lifetime of a file from creation to commit completion in milliseconds                       
-FileUploadAndCommitTime        Time spent uploading and committing a file in milliseconds                                        
-FileUploadErrorRate            Rate of failed file uploads per second                                                            
-FileUploadRate                 Rate of successful file uploads per second                                                        
-FileUploadTime                 Time spent uploading a file to object storage in milliseconds                                     
-PartitionsPerCommit            Number of distinct topic-partitions in a committed file                                           
-WriteErrorRate                 Rate of failed write operations per second                                                        
-WriteRate                      Rate of successful write operations per second                                                    
-=============================  ==================================================================================================
+==============================  =========================================================================================================
+Attribute name                  Description                                                                                              
+==============================  =========================================================================================================
+BatchesCommitRate               Rate of batches committed per second                                                                     
+BatchesCount                    Number of batches per committed file                                                                     
+BatchesPerPartitionPerCommit    Number of batches a single topic-partition contributes to a committed file (per-partition fan-in).       
+CacheStoreTime                  Time spent storing file data in the cache after commit in milliseconds                                   
+CommitQueueBytes                Current total bytes of files waiting to be committed                                                     
+CommitQueueFiles                Current number of files waiting to be committed                                                          
+FileCommitErrorRate             Rate of failed file commits per second                                                                   
+FileCommitRate                  Rate of successful file commits per second                                                               
+FileCommitTime                  Time spent committing a file to the control plane in milliseconds                                        
+FileCommitWaitTime              Time a file waits before commit starts in milliseconds                                                   
+FileSize                        Size of committed files in bytes                                                                         
+FileTotalLifeTime               Total lifetime of a file from creation to commit completion in milliseconds                              
+FileUploadAndCommitTime         Time spent uploading and committing a file in milliseconds                                               
+FileUploadErrorRate             Rate of failed file uploads per second                                                                   
+FileUploadRate                  Rate of successful file uploads per second                                                               
+FileUploadTime                  Time spent uploading a file to object storage in milliseconds                                            
+LastSuccessfulFileCommitAgeMs   Milliseconds since the last successful file commit completed; -1 if no commit has succeeded since startup
+PartitionsPerCommit             Number of distinct topic-partitions in a committed file                                                  
+WriteErrorRate                  Rate of failed write operations per second                                                               
+WriteRate                       Rate of successful write operations per second                                                           
+==============================  =========================================================================================================
 
 
 FileCleaner metrics
@@ -284,44 +285,61 @@ PostgresControlPlane metrics
 io.aiven.inkless.control_plane.postgres:type=PostgresControlPlane
 -----------------------------------------------------------------
 
-==================================  =======================================================================
-Attribute name                      Description                                                            
-==================================  =======================================================================
-AdvanceCrossTierLogStartQueryRate   Total number of AdvanceCrossTierLogStart queries executed              
-AdvanceCrossTierLogStartQueryTime   Time spent executing the AdvanceCrossTierLogStart query in milliseconds
-CommitFileQueryRate                 Total number of CommitFile queries executed                            
-CommitFileQueryTime                 Time spent executing the CommitFile query in milliseconds              
-DeleteRecordsQueryRate              Total number of DeleteRecords queries executed                         
-DeleteRecordsQueryTime              Time spent executing the DeleteRecords query in milliseconds           
-EnforceRetentionQueryRate           Total number of EnforceRetention queries executed                      
-EnforceRetentionQueryTime           Time spent executing the EnforceRetention query in milliseconds        
-FilesDeleteQueryRate                Total number of FilesDelete queries executed                           
-FilesDeleteQueryTime                Time spent executing the FilesDelete query in milliseconds             
-FindBatchesQueryRate                Total number of FindBatches queries executed                           
-FindBatchesQueryTime                Time spent executing the FindBatches query in milliseconds             
-GetCrossTierLogStartQueryRate       Total number of GetCrossTierLogStart queries executed                  
-GetCrossTierLogStartQueryTime       Time spent executing the GetCrossTierLogStart query in milliseconds    
-GetFilesToDeleteQueryRate           Total number of GetFilesToDelete queries executed                      
-GetFilesToDeleteQueryTime           Time spent executing the GetFilesToDelete query in milliseconds        
-GetLogInfoQueryRate                 Total number of GetLogInfo queries executed                            
-GetLogInfoQueryTime                 Time spent executing the GetLogInfo query in milliseconds              
-GetLogsQueryRate                    Total number of GetLogs queries executed                               
-GetLogsQueryTime                    Time spent executing the GetLogs query in milliseconds                 
-GetProducerStateQueryRate           Total number of GetProducerState queries executed                      
-GetProducerStateQueryTime           Time spent executing the GetProducerState query in milliseconds        
-InitDisklessLogQueryRate            Total number of InitDisklessLog queries executed                       
-InitDisklessLogQueryTime            Time spent executing the InitDisklessLog query in milliseconds         
-ListOffsetsQueryRate                Total number of ListOffsets queries executed                           
-ListOffsetsQueryTime                Time spent executing the ListOffsets query in milliseconds             
-RepairDisklessLogQueryRate          Total number of RepairDisklessLog queries executed                     
-RepairDisklessLogQueryTime          Time spent executing the RepairDisklessLog query in milliseconds       
-SafeDeleteFileCheckQueryRate        Total number of SafeDeleteFileCheck queries executed                   
-SafeDeleteFileCheckQueryTime        Time spent executing the SafeDeleteFileCheck query in milliseconds     
-TopicCreateQueryRate                Total number of TopicCreate queries executed                           
-TopicCreateQueryTime                Time spent executing the TopicCreate query in milliseconds             
-TopicDeleteQueryRate                Total number of TopicDelete queries executed                           
-TopicDeleteQueryTime                Time spent executing the TopicDelete query in milliseconds             
-==================================  =======================================================================
+=================================================  ===========================================================================================================================
+Attribute name                                     Description                                                                                                                
+=================================================  ===========================================================================================================================
+AdvanceCrossTierLogStartLastSuccessfulQueryAgeMs   Milliseconds since the last successful AdvanceCrossTierLogStart query completed; -1 if no query has succeeded since startup
+AdvanceCrossTierLogStartQueryRate                  Total number of AdvanceCrossTierLogStart queries executed                                                                  
+AdvanceCrossTierLogStartQueryTime                  Time spent executing the AdvanceCrossTierLogStart query in milliseconds                                                    
+CommitFileLastSuccessfulQueryAgeMs                 Milliseconds since the last successful CommitFile query completed; -1 if no query has succeeded since startup              
+CommitFileQueryRate                                Total number of CommitFile queries executed                                                                                
+CommitFileQueryTime                                Time spent executing the CommitFile query in milliseconds                                                                  
+DeleteRecordsLastSuccessfulQueryAgeMs              Milliseconds since the last successful DeleteRecords query completed; -1 if no query has succeeded since startup           
+DeleteRecordsQueryRate                             Total number of DeleteRecords queries executed                                                                             
+DeleteRecordsQueryTime                             Time spent executing the DeleteRecords query in milliseconds                                                               
+EnforceRetentionLastSuccessfulQueryAgeMs           Milliseconds since the last successful EnforceRetention query completed; -1 if no query has succeeded since startup        
+EnforceRetentionQueryRate                          Total number of EnforceRetention queries executed                                                                          
+EnforceRetentionQueryTime                          Time spent executing the EnforceRetention query in milliseconds                                                            
+FilesDeleteLastSuccessfulQueryAgeMs                Milliseconds since the last successful FilesDelete query completed; -1 if no query has succeeded since startup             
+FilesDeleteQueryRate                               Total number of FilesDelete queries executed                                                                               
+FilesDeleteQueryTime                               Time spent executing the FilesDelete query in milliseconds                                                                 
+FindBatchesLastSuccessfulQueryAgeMs                Milliseconds since the last successful FindBatches query completed; -1 if no query has succeeded since startup             
+FindBatchesQueryRate                               Total number of FindBatches queries executed                                                                               
+FindBatchesQueryTime                               Time spent executing the FindBatches query in milliseconds                                                                 
+GetCrossTierLogStartLastSuccessfulQueryAgeMs       Milliseconds since the last successful GetCrossTierLogStart query completed; -1 if no query has succeeded since startup    
+GetCrossTierLogStartQueryRate                      Total number of GetCrossTierLogStart queries executed                                                                      
+GetCrossTierLogStartQueryTime                      Time spent executing the GetCrossTierLogStart query in milliseconds                                                        
+GetFilesToDeleteLastSuccessfulQueryAgeMs           Milliseconds since the last successful GetFilesToDelete query completed; -1 if no query has succeeded since startup        
+GetFilesToDeleteQueryRate                          Total number of GetFilesToDelete queries executed                                                                          
+GetFilesToDeleteQueryTime                          Time spent executing the GetFilesToDelete query in milliseconds                                                            
+GetLogInfoLastSuccessfulQueryAgeMs                 Milliseconds since the last successful GetLogInfo query completed; -1 if no query has succeeded since startup              
+GetLogInfoQueryRate                                Total number of GetLogInfo queries executed                                                                                
+GetLogInfoQueryTime                                Time spent executing the GetLogInfo query in milliseconds                                                                  
+GetLogsLastSuccessfulQueryAgeMs                    Milliseconds since the last successful GetLogs query completed; -1 if no query has succeeded since startup                 
+GetLogsQueryRate                                   Total number of GetLogs queries executed                                                                                   
+GetLogsQueryTime                                   Time spent executing the GetLogs query in milliseconds                                                                     
+GetProducerStateLastSuccessfulQueryAgeMs           Milliseconds since the last successful GetProducerState query completed; -1 if no query has succeeded since startup        
+GetProducerStateQueryRate                          Total number of GetProducerState queries executed                                                                          
+GetProducerStateQueryTime                          Time spent executing the GetProducerState query in milliseconds                                                            
+InitDisklessLogLastSuccessfulQueryAgeMs            Milliseconds since the last successful InitDisklessLog query completed; -1 if no query has succeeded since startup         
+InitDisklessLogQueryRate                           Total number of InitDisklessLog queries executed                                                                           
+InitDisklessLogQueryTime                           Time spent executing the InitDisklessLog query in milliseconds                                                             
+ListOffsetsLastSuccessfulQueryAgeMs                Milliseconds since the last successful ListOffsets query completed; -1 if no query has succeeded since startup             
+ListOffsetsQueryRate                               Total number of ListOffsets queries executed                                                                               
+ListOffsetsQueryTime                               Time spent executing the ListOffsets query in milliseconds                                                                 
+RepairDisklessLogLastSuccessfulQueryAgeMs          Milliseconds since the last successful RepairDisklessLog query completed; -1 if no query has succeeded since startup       
+RepairDisklessLogQueryRate                         Total number of RepairDisklessLog queries executed                                                                         
+RepairDisklessLogQueryTime                         Time spent executing the RepairDisklessLog query in milliseconds                                                           
+SafeDeleteFileCheckLastSuccessfulQueryAgeMs        Milliseconds since the last successful SafeDeleteFileCheck query completed; -1 if no query has succeeded since startup     
+SafeDeleteFileCheckQueryRate                       Total number of SafeDeleteFileCheck queries executed                                                                       
+SafeDeleteFileCheckQueryTime                       Time spent executing the SafeDeleteFileCheck query in milliseconds                                                         
+TopicCreateLastSuccessfulQueryAgeMs                Milliseconds since the last successful TopicCreate query completed; -1 if no query has succeeded since startup             
+TopicCreateQueryRate                               Total number of TopicCreate queries executed                                                                               
+TopicCreateQueryTime                               Time spent executing the TopicCreate query in milliseconds                                                                 
+TopicDeleteLastSuccessfulQueryAgeMs                Milliseconds since the last successful TopicDelete query completed; -1 if no query has succeeded since startup             
+TopicDeleteQueryRate                               Total number of TopicDelete queries executed                                                                               
+TopicDeleteQueryTime                               Time spent executing the TopicDelete query in milliseconds                                                                 
+=================================================  ===========================================================================================================================
 
 
 PostgresConnectionPool metrics
