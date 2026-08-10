@@ -18,6 +18,7 @@ package kafka.server
 
 import kafka.cluster.Partition
 import kafka.integration.KafkaServerTestHarness
+import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.utils.TestUtils.random
 import kafka.utils._
 import org.apache.kafka.clients.CommonClientConfigs
@@ -40,6 +41,8 @@ import org.apache.kafka.storage.internals.log.{LogConfig, UnifiedLog}
 import org.apache.kafka.test.TestUtils.assertFutureThrows
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{Test, Timeout}
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito._
@@ -614,36 +617,140 @@ class DynamicConfigChangeUnitTest {
     verify(inklessMetadataView).updateTopicConfig(topic, topicConfig)
   }
 
-  @Test
-  def testClassicTopicConfigUpdateDoesNotCallInklessMetadataView(): Unit = {
-    val topic = "classic-topic"
+  /**
+   * Drives TopicConfigHandler against a real InklessMetadataView (not a mock) so the assertions are on
+   * the config the diskless produce and retention paths would read, rather than on the handler's calls.
+   *
+   * @param localLogs logs this broker holds for the topic; a non-empty value is what every consolidated
+   *                  topic and every switched topic with a classic prefix looks like on a replica broker.
+   */
+  private def topicConfigHandlerWithInklessView(
+    topic: String,
+    publishedTopicConfig: Properties,
+    localLogs: Seq[UnifiedLog],
+    brokerDefaults: util.Map[String, Object]
+  ): (TopicConfigHandler, InklessMetadataView) = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    when(metadataCache.topicConfig(topic)).thenReturn(publishedTopicConfig)
+    val inklessMetadataView = new InklessMetadataView(metadataCache, () => brokerDefaults)
+
     val logManager = mock(classOf[kafka.log.LogManager])
+    when(logManager.logsByTopic(topic)).thenReturn(localLogs)
     val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
-    val inklessMetadataView = mock(classOf[kafka.server.metadata.InklessMetadataView])
     when(replicaManager.logManager).thenReturn(logManager)
     when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    when(replicaManager.metadataCache).thenReturn(metadataCache)
     when(replicaManager.remoteLogManager).thenReturn(None)
-    // Has local logs — classic topic
-    val tp0 = new TopicPartition(topic, 0)
-    val log = mock(classOf[UnifiedLog])
-    when(log.topicPartition).thenReturn(tp0)
-    when(log.remoteLogEnabled()).thenReturn(false)
-    when(log.config).thenReturn(new LogConfig(Collections.emptyMap()))
-    when(logManager.logsByTopic(topic)).thenReturn(Seq(log))
-    when(replicaManager.onlinePartition(tp0)).thenReturn(None)
+    localLogs.foreach(log => when(replicaManager.onlinePartition(log.topicPartition)).thenReturn(None))
 
     val quotas = mock(classOf[QuotaFactory.QuotaManagers])
     when(quotas.leader).thenReturn(mock(classOf[ReplicationQuotaManager]))
     when(quotas.follower).thenReturn(mock(classOf[ReplicationQuotaManager]))
 
-    val topicConfig = new Properties()
-    topicConfig.put(TopicConfig.RETENTION_MS_CONFIG, "3600000")
-
     val kafkaConfig = KafkaConfig.fromProps(TestUtils.createBrokerConfig(0, port = 9092))
-    val configHandler = new TopicConfigHandler(replicaManager, kafkaConfig, quotas)
-    configHandler.processConfigChanges(topic, topicConfig)
+    (new TopicConfigHandler(replicaManager, kafkaConfig, quotas), inklessMetadataView)
+  }
 
-    verify(inklessMetadataView, never()).updateTopicConfig(any(), any())
+  private def localLog(topic: String, remoteLogEnabled: Boolean): UnifiedLog = {
+    val log = mock(classOf[UnifiedLog])
+    when(log.topicPartition).thenReturn(new TopicPartition(topic, 0))
+    when(log.remoteLogEnabled()).thenReturn(remoteLogEnabled)
+    when(log.config).thenReturn(new LogConfig(Collections.emptyMap()))
+    log
+  }
+
+  private def disklessTopicProps(remoteStorageEnabled: Boolean, overrides: (String, String)*): Properties = {
+    val props = new Properties()
+    props.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")
+    if (remoteStorageEnabled) props.put(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")
+    overrides.foreach { case (k, v) => props.put(k, v) }
+    props
+  }
+
+  /**
+   * Both diskless topic kinds that hold a local log on this broker: a consolidated topic
+   * (remoteStorageEnabled = true) and a topic switched from classic without consolidation.
+   */
+  @ParameterizedTest(name = "remoteStorageEnabled={0}")
+  @ValueSource(booleans = Array(true, false))
+  def testDisklessTopicWithLocalLogConfigUpdateReachesInklessMetadataView(remoteStorageEnabled: Boolean): Unit = {
+    val topic = if (remoteStorageEnabled) "consolidating-diskless-topic" else "switched-diskless-topic"
+    val initialMaxMessageBytes = "1048588"
+    val raisedMaxMessageBytes = "6291456"
+    val (configHandler, inklessMetadataView) = topicConfigHandlerWithInklessView(
+      topic,
+      disklessTopicProps(remoteStorageEnabled, TopicConfig.MAX_MESSAGE_BYTES_CONFIG -> initialMaxMessageBytes),
+      // Consolidated: ReplicaManager takes the classic makeLeader branch, so every replica has a local log.
+      // Switched without consolidation: the pre-switch data stays on local disk, so the log exists too.
+      // Which of the two it is does not reach TopicConfigHandler, hence the local log is injected here.
+      Seq(localLog(topic, remoteLogEnabled = remoteStorageEnabled)),
+      Collections.singletonMap(TopicConfig.MAX_MESSAGE_BYTES_CONFIG, initialMaxMessageBytes)
+    )
+
+    // Seeds the leader's cached LogConfig at the initial limit; with no entry there is nothing to go stale.
+    assertEquals(initialMaxMessageBytes.toInt, inklessMetadataView.getTopicConfig(topic).maxMessageSize)
+
+    // The switched case is modelled after the switch: post-switch config, classic prefix still on disk.
+    configHandler.processConfigChanges(
+      topic,
+      disklessTopicProps(remoteStorageEnabled, TopicConfig.MAX_MESSAGE_BYTES_CONFIG -> raisedMaxMessageBytes)
+    )
+
+    assertEquals(raisedMaxMessageBytes.toInt, inklessMetadataView.getTopicConfig(topic).maxMessageSize,
+      "A raised max.message.bytes must reach the diskless append path on a broker holding a local log " +
+        "for the topic, otherwise produces are rejected with MESSAGE_TOO_LARGE against the old limit")
+  }
+
+  @Test
+  def testRetentionConfigUpdateReachesInklessMetadataViewForConsolidatingTopic(): Unit = {
+    val topic = "consolidating-diskless-topic-retention"
+    val (configHandler, inklessMetadataView) = topicConfigHandlerWithInklessView(
+      topic,
+      disklessTopicProps(remoteStorageEnabled = true,
+        TopicConfig.RETENTION_MS_CONFIG -> "604800000",
+        TopicConfig.RETENTION_BYTES_CONFIG -> "-1",
+        TopicConfig.CLEANUP_POLICY_CONFIG -> TopicConfig.CLEANUP_POLICY_DELETE),
+      Seq(localLog(topic, remoteLogEnabled = true)),
+      Collections.emptyMap[String, Object]()
+    )
+
+    val seeded = inklessMetadataView.getTopicConfig(topic)
+    assertEquals(604800000L, seeded.retentionMs)
+    assertEquals(-1L, seeded.retentionSize)
+
+    configHandler.processConfigChanges(topic, disklessTopicProps(remoteStorageEnabled = true,
+      TopicConfig.RETENTION_MS_CONFIG -> "3600000",
+      TopicConfig.RETENTION_BYTES_CONFIG -> "1048576",
+      TopicConfig.CLEANUP_POLICY_CONFIG -> TopicConfig.CLEANUP_POLICY_DELETE))
+
+    // RetentionEnforcer re-reads these three per cycle through getTopicConfig, so a stale entry keeps
+    // enforcing the old retention indefinitely (silently, and it governs deletion).
+    val updated = inklessMetadataView.getTopicConfig(topic)
+    assertEquals(3600000L, updated.retentionMs, "Shortened retention.ms must reach diskless retention enforcement")
+    assertEquals(1048576L, updated.retentionSize, "Changed retention.bytes must reach diskless retention enforcement")
+    assertTrue(updated.delete, "cleanup.policy must still be read from the refreshed entry")
+  }
+
+  @Test
+  def testClassicTopicConfigUpdateDoesNotPopulateInklessMetadataView(): Unit = {
+    val topic = "classic-topic"
+    val publishedTopicConfig = new Properties()
+    publishedTopicConfig.put(TopicConfig.RETENTION_MS_CONFIG, "7200000")
+    val (configHandler, inklessMetadataView) = topicConfigHandlerWithInklessView(
+      topic,
+      publishedTopicConfig,
+      Seq(localLog(topic, remoteLogEnabled = false)),
+      Collections.emptyMap[String, Object]()
+    )
+
+    val alteredTopicConfig = new Properties()
+    alteredTopicConfig.put(TopicConfig.RETENTION_MS_CONFIG, "3600000")
+    configHandler.processConfigChanges(topic, alteredTopicConfig)
+
+    // Lazy population is preserved by updateTopicConfig's computeIfPresent, not by the caller: a topic
+    // never read by a diskless path must still resolve from the metadata cache on first access.
+    assertEquals(7200000L, inklessMetadataView.getTopicConfig(topic).retentionMs)
+    verify(inklessMetadataView.metadataCache, times(1)).topicConfig(topic)
   }
 
   /**

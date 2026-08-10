@@ -40,6 +40,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
+import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -102,6 +103,7 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_DELETE;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.MAX_MESSAGE_BYTES_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.SEGMENT_BYTES_CONFIG;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -495,6 +497,83 @@ public class InklessConsolidatedDisklessTopicsTest {
         // The survivors [7, seal) on each partition are still readable and contiguous across the cut.
         final int survivorsPerPartition = (int) (sealPerPartition - 7);
         consumeAndVerify(commonConfigs, survivorsPerPartition * numPartitions);
+    }
+
+    /**
+     * A raised {@code max.message.bytes} must take effect on a consolidated diskless topic that has already
+     * been produced to.
+     *
+     * <p>The diskless append path validates against a per-broker cached {@code LogConfig} populated on the
+     * first produce. A consolidated topic always has a local log on its replicas, so a config-change refresh
+     * gated on "no local log" never reaches it and produces above the previously cached limit keep failing
+     * with {@code MESSAGE_TOO_LARGE}.
+     */
+    @Test
+    public void testRaisedMaxMessageBytesIsHonouredOnConsolidatedDisklessTopic() throws Exception {
+        topicName = "raised-max-message-bytes";
+        numPartitions = 1;
+        final int initialMaxMessageBytes = 262_144;
+        final int raisedMaxMessageBytes = 6_291_456;
+        // Over the initial limit, under the raised one.
+        final int largeValueSize = 1_048_576;
+
+        final Map<String, Object> commonConfigs = new HashMap<>();
+        commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            final Map<String, String> topicConfigs = Map.of(
+                DISKLESS_ENABLE_CONFIG, "true",
+                REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true",
+                CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_DELETE,
+                SEGMENT_BYTES_CONFIG, "1048576",
+                MAX_MESSAGE_BYTES_CONFIG, Integer.toString(initialMaxMessageBytes)
+            );
+            final NewTopic topic = new NewTopic(topicName, numPartitions, (short) -1).configs(topicConfigs);
+            admin.createTopics(Collections.singletonList(topic)).all().get(30, TimeUnit.SECONDS);
+            TopicMetadataProbe.awaitValue(admin, topicName, MAX_MESSAGE_BYTES_CONFIG,
+                Integer.toString(initialMaxMessageBytes));
+
+            // The first produce is what populates the leader's cached LogConfig.
+            produceRecords(commonConfigs, 1,
+                i -> new ProducerRecord<>(topicName, 0, null, TestUtils.randomString(1024)));
+
+            assertFalse(tryProduceValueOfSize(commonConfigs, largeValueSize),
+                "A record above the initial max.message.bytes must be rejected before the config is raised");
+
+            incrementalAlterTopicConfigs(admin,
+                Map.of(MAX_MESSAGE_BYTES_CONFIG, Integer.toString(raisedMaxMessageBytes)));
+            TopicMetadataProbe.awaitValue(admin, topicName, MAX_MESSAGE_BYTES_CONFIG,
+                Integer.toString(raisedMaxMessageBytes));
+
+            // Polled rather than asserted once: brokers apply the published config change asynchronously.
+            TestUtils.waitForCondition(() -> tryProduceValueOfSize(commonConfigs, largeValueSize),
+                60_000,
+                () -> "A " + largeValueSize + " byte record must be accepted after max.message.bytes was raised to "
+                    + raisedMaxMessageBytes + "; the diskless append path is still validating against the stale "
+                    + "cached limit (" + initialMaxMessageBytes + ")");
+        }
+    }
+
+    /**
+     * Sends one record with a value of {@code valueSize} bytes and reports whether the broker accepted it.
+     * {@code false} means it was rejected as too large; any other failure propagates.
+     */
+    private boolean tryProduceValueOfSize(Map<String, Object> commonConfigs, int valueSize) throws Exception {
+        final Map<String, Object> producerConfigs = new HashMap<>(commonConfigs);
+        producerConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        producerConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        // Keep the client-side limit out of the way; the broker-side limit is what is under test.
+        producerConfigs.put(ProducerConfig.MAX_REQUEST_SIZE_CONFIG, 8 * 1024 * 1024);
+        try (Producer<String, String> producer = new KafkaProducer<>(producerConfigs)) {
+            producer.send(new ProducerRecord<>(topicName, 0, null, TestUtils.randomString(valueSize)))
+                .get(30, TimeUnit.SECONDS);
+            return true;
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof RecordTooLargeException) {
+                return false;
+            }
+            throw e;
+        }
     }
 
     /**

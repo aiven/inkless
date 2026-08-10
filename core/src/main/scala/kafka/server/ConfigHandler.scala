@@ -58,10 +58,7 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
       wasRemoteLogEnabled)
     maybeUpdateRemoteLogComponents(topic, logs, wasRemoteLogEnabled, wasCopyDisabled)
 
-    if (logs.isEmpty) {
-      // Update cached LogConfig only for diskless topics (topics without local logs) to preserve lazy population.
-      replicaManager.inklessMetadataView().updateTopicConfig(topic, topicConfig)
-    }
+    replicaManager.inklessMetadataView().updateTopicConfig(topic, topicConfig)
   }
 
   private[server] def maybeUpdateRemoteLogComponents(topic: String,
