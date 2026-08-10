@@ -136,6 +136,18 @@ class TopicsAndPartitionsCreateJobTest {
     }
 
     @Test
+    void createOnlyTheAddedPartitions() {
+        final TopicsAndPartitionsCreateJob job = new TopicsAndPartitionsCreateJob(Time.SYSTEM, pgContainer.getJooqCtx(),
+            Set.of(new CreateTopicAndPartitionsRequest(TOPIC_ID1, TOPIC_1, 2, 4)), durationMs -> {});
+        job.run();
+
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactlyInAnyOrder(
+            new LogsRecord(TOPIC_ID1, 2, TOPIC_1, 0L, 0L, 0L, 0L, null, null),
+            new LogsRecord(TOPIC_ID1, 3, TOPIC_1, 0L, 0L, 0L, 0L, null, null)
+        );
+    }
+
+    @Test
     void existingRecordsNotAffected() throws SQLException {
         try (final Connection connection = pgContainer.getDataSource().getConnection()) {
             final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);

@@ -19,7 +19,33 @@ package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.common.Uuid;
 
+/**
+ * Request to create control-plane {@code logs} rows for a topic's partitions.
+ *
+ * <p>{@code numPartitions} is the topic's partition count once the operation completes; rows are created
+ * for {@code [firstPartition, numPartitions)}. Topic creation starts at 0, while a partition-count
+ * increase starts at the previous count so it does not insert an empty row over a partition that is
+ * concurrently switching from classic to diskless (KC-387, see
+ * {@code V23__Init_diskless_log_authoritative_seal.sql}).
+ */
 public record CreateTopicAndPartitionsRequest(Uuid topicId,
                                               String topicName,
+                                              int firstPartition,
                                               int numPartitions) {
+
+    public CreateTopicAndPartitionsRequest {
+        if (firstPartition < 0 || firstPartition > numPartitions) {
+            throw new IllegalArgumentException(String.format(
+                "firstPartition must be within [0, %d] for topic %s, but was %d",
+                numPartitions, topicName, firstPartition));
+        }
+    }
+
+    public CreateTopicAndPartitionsRequest(final Uuid topicId, final String topicName, final int numPartitions) {
+        this(topicId, topicName, 0, numPartitions);
+    }
+
+    public int partitionsToCreate() {
+        return numPartitions - firstPartition;
+    }
 }

@@ -952,18 +952,33 @@ class ControllerApis(
           setErrorCode(TOPIC_AUTHORIZATION_FAILED.code))
       }
     }
+    val priorTopicStates =
+      if (request.validateOnly || inklessControlPlane.isEmpty) Map.empty[String, TopicState]
+      else topicStatesBeforeIncrease(topics)
+
     controller.createPartitions(context, topics, request.validateOnly).thenCompose { results =>
       results.forEach(response => responses.add(response))
 
-      createDisklessPartitions(request.validateOnly, context, topics, results)
+      createDisklessPartitions(request.validateOnly, context, topics, results, priorTopicStates)
         .thenApply(_ => responses)
     }
+  }
+
+  private case class TopicState(topicId: Uuid, numPartitions: Int)
+
+  private def topicStatesBeforeIncrease(topics: util.List[CreatePartitionsTopic]): Map[String, TopicState] = {
+    val image = metadataCache.currentImage().topics()
+    topics.asScala.flatMap { topic =>
+      Option(image.getTopic(topic.name())).map(topicImage =>
+        topic.name() -> TopicState(topicImage.id(), topicImage.partitions().size()))
+    }.toMap
   }
 
   private def createDisklessPartitions(validateOnly: Boolean,
                                       context: ControllerRequestContext,
                                       topics: java.util.List[CreatePartitionsTopic],
-                                      results: java.util.List[CreatePartitionsTopicResult]): CompletableFuture[Unit] = {
+                                      results: java.util.List[CreatePartitionsTopicResult],
+                                      priorTopicStates: Map[String, TopicState]): CompletableFuture[Unit] = {
     inklessControlPlane match {
       case _ if validateOnly =>
         CompletableFuture.completedFuture(())
@@ -991,7 +1006,14 @@ class ControllerApis(
               logger.error("Error finding topic ID for topic {}: partitions will not be created", topicName)
               None
             } else {
-              Some(new CreateTopicAndPartitionsRequest(topicIdOrError.result(), req.name(), req.count()))
+              val topicId = topicIdOrError.result()
+              // The cached range is only usable when it belongs to the topic the controller just mutated.
+              // Otherwise create the full range and rely on init_diskless_log_v1 to resolve overlap (KC-387).
+              val firstPartition = priorTopicStates.get(topicName) match {
+                case Some(state) if state.topicId == topicId => math.min(state.numPartitions, req.count())
+                case _ => 0
+              }
+              Some(new CreateTopicAndPartitionsRequest(topicId, topicName, firstPartition, req.count()))
             }
           }
           cp.createTopicAndPartitions(createPartitionRequests.asJava)

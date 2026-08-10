@@ -77,7 +77,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     @Override
     public synchronized void createTopicAndPartitions(final Set<CreateTopicAndPartitionsRequest> requests) {
         for (final CreateTopicAndPartitionsRequest request : requests) {
-            for (int partition = 0; partition < request.numPartitions(); partition++) {
+            for (int partition = request.firstPartition(); partition < request.numPartitions(); partition++) {
                 final TopicIdPartition topicIdPartition = new TopicIdPartition(
                     request.topicId(), partition, request.topicName());
 
@@ -96,17 +96,27 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 request.topicId(), request.partition(), request.topicName());
 
             final LogInfo existingLog = logs.get(topicIdPartition);
-            if (existingLog != null) {
+            // Mirrors the guarded upsert in V23__Init_diskless_log_authoritative_seal.sql: a seal overwrites
+            // a row that is still an empty placeholder, anything else is already initialized.
+            final boolean sealAdvancesPlaceholder = existingLog != null
+                && existingLog.highWatermark == 0
+                && existingLog.disklessStartOffset == 0
+                && existingLog.byteSize == 0
+                && request.disklessStartOffset() > 0;
+            if (existingLog != null && !sealAdvancesPlaceholder) {
                 responses.add(InitDisklessLogResponse.alreadyInitialized());
                 continue;
             }
 
-            final LogInfo logInfo = new LogInfo();
+            final LogInfo logInfo = existingLog != null ? existingLog : new LogInfo();
             logInfo.logStartOffset = request.logStartOffset();
             logInfo.highWatermark = request.disklessStartOffset();
             logInfo.disklessStartOffset = request.disklessStartOffset();
             logs.put(topicIdPartition, logInfo);
             batches.putIfAbsent(topicIdPartition, new TreeMap<>());
+            // The incoming snapshot is the authority for the partition, so anything an earlier init of the
+            // placeholder recorded goes.
+            producers.remove(topicIdPartition);
 
             if (request.producerStates() != null) {
                 final TreeMap<Long, LatestProducerState> partitionProducers =

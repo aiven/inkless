@@ -25,6 +25,7 @@ import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.DeleteRecordsResult;
 import org.apache.kafka.clients.admin.DeletedRecords;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
+import org.apache.kafka.clients.admin.NewPartitions;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.RecordsToDelete;
@@ -577,6 +578,53 @@ public class InklessConsolidatedDisklessTopicsTest {
     }
 
     /**
+     * A partition-count increase applied while a classic topic is switching to diskless must not lose the
+     * still-switching partition's pre-switch records (KC-387).
+     *
+     * <p>This attempts the interleaving through the real controller and admin path by growing the partition
+     * count straight after the switch is submitted. Deterministic coverage of the conflicting writes lives
+     * in {@code AbstractControlPlaneTest.initAfterPartitionCreateMustSetLatestToSeal}; this test also verifies
+     * that the added partition reaches the control plane.
+     */
+    @Test
+    public void testPartitionIncreaseDuringSwitchKeepsClassicPrefix() throws Exception {
+        numPartitions = 1;
+        final int preSwitchRecords = 30;
+        final long seal = preSwitchRecords;
+        topicName = "switch-increase-keep-prefix";
+
+        final Map<String, Object> commonConfigs = new HashMap<>();
+        commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        final Uuid topicId;
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            topicId = createClassicTopic(admin);
+            produceRecords(commonConfigs, preSwitchRecords, largeValueRecordFactory());
+
+            // The alter future returns once the controller has committed diskless=true, which is well before
+            // the leader's initDisklessLog reaches the control plane.
+            incrementalAlterTopicConfigs(admin, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
+            admin.createPartitions(Map.of(topicName, NewPartitions.increaseTo(2)))
+                .all().get(30, TimeUnit.SECONDS);
+            TopicMetadataProbe.awaitValue(admin, topicName, DISKLESS_ENABLE_CONFIG, "true");
+        }
+
+        final long highWatermark = awaitPartitionHighWatermark(toJavaUuid(topicId), 0, seal, 60_000);
+        assertEquals(seal, highWatermark,
+            "partition 0 diskless high_watermark must equal the seal " + seal + " after the switch; a value "
+                + "of 0 means the partition-count increase re-created the row and the seal was dropped, so the "
+                + "classic prefix is truncated away and lost");
+
+        final long newPartitionHighWatermark =
+            awaitPartitionHighWatermark(toJavaUuid(topicId), 1, 0, 60_000);
+        assertEquals(0, newPartitionHighWatermark,
+            "new partition 1 must have a control-plane row after the partition-count increase");
+
+        // End-to-end: with the seal intact the whole classic prefix is still readable from offset 0.
+        consumeAndVerify(commonConfigs, preSwitchRecords);
+    }
+
+    /**
      * A record factory that produces ~104 KB values (large enough to roll segments at
      * {@code segment.bytes=1 MiB} after ~10 records) with round-robin partitioning.
      */
@@ -759,6 +807,51 @@ public class InklessConsolidatedDisklessTopicsTest {
             }
         }, 120_000, () -> "remote_log_start_offset should be bootstrapped to " + expected + " for all "
             + numPartitions + " partitions (never NULL, never the seal); last observed: " + lastSeen.get());
+    }
+
+    /**
+     * Polls the {@code logs} row for {@code partition} until its {@code high_watermark} reaches
+     * {@code expected} or {@code deadlineMs} elapses, then returns the last value seen. Once initDisklessLog
+     * records the seal this converges to it; if the defect drops the seal, the value stays at 0 and the
+     * deadline is hit, so the caller can assert on the returned value.
+     */
+    private long awaitPartitionHighWatermark(UUID topicId, int partition, long expected, long deadlineMs)
+        throws InterruptedException {
+        final long end = System.currentTimeMillis() + deadlineMs;
+        long lastSeen = -1L;
+        while (System.currentTimeMillis() < end) {
+            final Long hw = readPartitionHighWatermark(topicId, partition);
+            if (hw != null) {
+                lastSeen = hw;
+                if (hw == expected) {
+                    return hw;
+                }
+            }
+            Thread.sleep(500);
+        }
+        return lastSeen;
+    }
+
+    private Long readPartitionHighWatermark(UUID topicId, int partition) {
+        try (
+            Connection connection = DriverManager.getConnection(
+                pgContainer.getJdbcUrl(),
+                PostgreSQLTestContainer.USERNAME,
+                PostgreSQLTestContainer.PASSWORD);
+            PreparedStatement ps = connection.prepareStatement(
+                "SELECT high_watermark FROM logs WHERE topic_id = ? AND partition = ?")
+        ) {
+            ps.setObject(1, topicId);
+            ps.setInt(2, partition);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                return rs.getLong(1);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private Map<Integer, Long> readRemoteLogStartOffsets(UUID topicId) throws SQLException {

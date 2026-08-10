@@ -17,6 +17,7 @@
 
 package kafka.server
 
+import io.aiven.inkless.control_plane.{ControlPlane, CreateTopicAndPartitionsRequest}
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.metadata.KRaftMetadataCache
@@ -27,6 +28,7 @@ import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
 import org.apache.kafka.common.memory.MemoryPool
+import org.apache.kafka.common.metadata.{ConfigRecord, PartitionRecord, TopicRecord}
 import org.apache.kafka.common.message.AlterConfigsRequestData.{AlterConfigsResource => OldAlterConfigsResource, AlterConfigsResourceCollection => OldAlterConfigsResourceCollection, AlterableConfig => OldAlterableConfig, AlterableConfigCollection => OldAlterableConfigCollection}
 import org.apache.kafka.common.message.AlterConfigsResponseData.{AlterConfigsResourceResponse => OldAlterConfigsResourceResponse}
 import org.apache.kafka.common.message.ApiMessageType.ListenerType
@@ -51,6 +53,7 @@ import org.apache.kafka.common.{ElectionType, Uuid}
 import org.apache.kafka.common.requests.RequestHeader
 import org.apache.kafka.controller.ControllerRequestContextUtil.ANONYMOUS_CONTEXT
 import org.apache.kafka.controller.{Controller, ControllerRequestContext, ResultOrError}
+import org.apache.kafka.image.{MetadataDelta, MetadataImage, MetadataProvenance}
 import org.apache.kafka.image.publisher.ControllerRegistrationsPublisher
 import org.apache.kafka.network.SocketServerConfigs
 import org.apache.kafka.network.metrics.RequestChannelMetrics
@@ -161,7 +164,8 @@ class ControllerApisTest {
   private def createControllerApis(authorizer: Option[Plugin[Authorizer]],
                                    controller: Controller,
                                    props: Properties = new Properties(),
-                                   throttle: Boolean = false): ControllerApis = {
+                                   throttle: Boolean = false,
+                                   inklessControlPlane: Option[ControlPlane] = None): ControllerApis = {
     props.put(KRaftConfigs.NODE_ID_CONFIG, nodeId: java.lang.Integer)
     props.put(KRaftConfigs.PROCESS_ROLES_CONFIG, "controller")
     props.put(KRaftConfigs.CONTROLLER_LISTENER_NAMES_CONFIG, "CONTROLLER")
@@ -181,8 +185,28 @@ class ControllerApisTest {
         ListenerType.CONTROLLER,
         true,
         () => FinalizedFeatures.fromKRaftVersion(MetadataVersion.latestTesting())),
-      metadataCache
+      metadataCache,
+      inklessControlPlane
     )
+  }
+
+  private def setDisklessTopicImage(topicName: String, topicId: Uuid, numPartitions: Int): Unit = {
+    val delta = new MetadataDelta(MetadataImage.EMPTY)
+    delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+    (0 until numPartitions).foreach { partition =>
+      delta.replay(new PartitionRecord()
+        .setTopicId(topicId)
+        .setPartitionId(partition)
+        .setReplicas(singletonList(0))
+        .setIsr(singletonList(0))
+        .setLeader(0))
+    }
+    delta.replay(new ConfigRecord()
+      .setResourceType(ConfigResource.Type.TOPIC.id())
+      .setResourceName(topicName)
+      .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+      .setValue("true"))
+    metadataCache.setImage(delta.apply(MetadataProvenance.EMPTY))
   }
 
   /**
@@ -1011,6 +1035,105 @@ class ControllerApisTest {
   }
 
   @Test
+  def testCreateDisklessPartitionsUsesPriorRangeForSameTopic(): Unit = {
+    val topicName = "foo"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    val topic = new CreatePartitionsTopic().setName(topicName).setAssignments(null).setCount(4)
+    val result = new CreatePartitionsTopicResult().setName(topicName).setErrorCode(NONE.code())
+    setDisklessTopicImage(topicName, topicId, 2)
+
+    when(controller.createPartitions(any(), ArgumentMatchers.eq(singletonList(topic)), ArgumentMatchers.eq(false)))
+      .thenReturn(CompletableFuture.completedFuture(singletonList(result)))
+    when(controller.findTopicIds(any(), ArgumentMatchers.eq(singletonList(topicName))))
+      .thenReturn(CompletableFuture.completedFuture(
+        singletonMap(topicName, new ResultOrError[Uuid](topicId))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+
+    val request = new CreatePartitionsRequestData().setValidateOnly(false)
+    request.topics().add(topic)
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+
+    verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
+      new CreateTopicAndPartitionsRequest(topicId, topicName, 2, 4))))
+  }
+
+  @Test
+  def testCreateDisklessPartitionsUsesFullRangeAfterTopicRecreation(): Unit = {
+    val topicName = "foo"
+    val oldTopicId = Uuid.randomUuid()
+    val newTopicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    val topic = new CreatePartitionsTopic().setName(topicName).setAssignments(null).setCount(2)
+    val result = new CreatePartitionsTopicResult().setName(topicName).setErrorCode(NONE.code())
+    setDisklessTopicImage(topicName, oldTopicId, 4)
+
+    when(controller.createPartitions(any(), ArgumentMatchers.eq(singletonList(topic)), ArgumentMatchers.eq(false)))
+      .thenReturn(CompletableFuture.completedFuture(singletonList(result)))
+    when(controller.findTopicIds(any(), ArgumentMatchers.eq(singletonList(topicName))))
+      .thenReturn(CompletableFuture.completedFuture(
+        singletonMap(topicName, new ResultOrError[Uuid](newTopicId))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+
+    val request = new CreatePartitionsRequestData().setValidateOnly(false)
+    request.topics().add(topic)
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+
+    verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
+      new CreateTopicAndPartitionsRequest(newTopicId, topicName, 0, 2))))
+  }
+
+  @Test
+  def testCreateDisklessPartitionsUsesFullRangeWhenTopicAppearsDuringRequest(): Unit = {
+    val topicName = "foo"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    val topic = new CreatePartitionsTopic().setName(topicName).setAssignments(null).setCount(2)
+    val result = new CreatePartitionsTopicResult().setName(topicName).setErrorCode(NONE.code())
+    metadataCache.setImage(MetadataImage.EMPTY)
+
+    when(controller.createPartitions(any(), ArgumentMatchers.eq(singletonList(topic)), ArgumentMatchers.eq(false)))
+      .thenAnswer { _ =>
+        setDisklessTopicImage(topicName, topicId, 1)
+        CompletableFuture.completedFuture(singletonList(result))
+      }
+    when(controller.findTopicIds(any(), ArgumentMatchers.eq(singletonList(topicName))))
+      .thenReturn(CompletableFuture.completedFuture(
+        singletonMap(topicName, new ResultOrError[Uuid](topicId))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+
+    val request = new CreatePartitionsRequestData().setValidateOnly(false)
+    request.topics().add(topic)
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+
+    verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
+      new CreateTopicAndPartitionsRequest(topicId, topicName, 0, 2))))
+  }
+
+  @Test
+  def testValidateOnlyCreatePartitionsDoesNotReadOrWriteControlPlaneState(): Unit = {
+    val topicName = "foo"
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    val topic = new CreatePartitionsTopic().setName(topicName).setAssignments(null).setCount(2)
+    val result = new CreatePartitionsTopicResult().setName(topicName).setErrorCode(NONE.code())
+
+    when(controller.createPartitions(any(), ArgumentMatchers.eq(singletonList(topic)), ArgumentMatchers.eq(true)))
+      .thenReturn(CompletableFuture.completedFuture(singletonList(result)))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+
+    val request = new CreatePartitionsRequestData().setValidateOnly(true)
+    request.topics().add(topic)
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+
+    verify(controller, never()).findTopicIds(any(), any())
+    verifyNoInteractions(controlPlane)
+  }
+
+  @Test
   def testCreatePartitionsAuthorization(): Unit = {
     val controller = new MockController.Builder()
       .newInitialTopic("foo", Uuid.fromString("vZKYST0pSA2HO5x_6hoO2Q"))
@@ -1317,6 +1440,7 @@ class ControllerApisTest {
 
   @AfterEach
   def tearDown(): Unit = {
+    metadataCache.setImage(MetadataImage.EMPTY)
     quotasNeverThrottleControllerMutations.shutdown()
     quotasAlwaysThrottleControllerMutations.shutdown()
     if (controllerApis != null && !controllerApis.isClosed)

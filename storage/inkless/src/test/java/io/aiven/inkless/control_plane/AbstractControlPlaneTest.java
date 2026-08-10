@@ -1957,6 +1957,61 @@ public abstract class AbstractControlPlaneTest {
             assertThat(responses).containsExactly(InitDisklessLogResponse.alreadyInitialized());
         }
 
+        // KC-387: a partition-count increase during a classic->diskless switch inserts a logs row for the
+        // still-switching partition before the switch's initDisklessLog runs. The init has to be
+        // authoritative over that row, otherwise LATEST reports 0 instead of the seal and the consolidation
+        // fetcher truncates the classic prefix away.
+        @Test
+        void initAfterPartitionCreateMustSetLatestToSeal() {
+            final long seal = 30005;
+            final long producerId = 42L;
+            final short producerEpoch = 1;
+            final TopicIdPartition switchingPartition = new TopicIdPartition(NEW_TOPIC_ID, 0, NEW_TOPIC);
+
+            controlPlane.createTopicAndPartitions(Set.of(
+                new CreateTopicAndPartitionsRequest(NEW_TOPIC_ID, NEW_TOPIC, 2)
+            ));
+
+            controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 0, seal,
+                    List.of(new InitDisklessLogProducerState(producerId, producerEpoch, 5, 9, seal - 1, 5000)))
+            ));
+
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(0, seal, seal, 0));
+
+            assertThat(controlPlane.listOffsets(List.of(new ListOffsetsRequest(switchingPartition, LATEST_TIMESTAMP))))
+                .map(ListOffsetsResponse::offset)
+                .containsExactly(seal);
+
+            // The switch's producer-state snapshot has to survive the same path, so idempotent producers
+            // keep their sequences across the switch.
+            assertThat(controlPlane.getProducerState(List.of(new GetProducerStateRequest(NEW_TOPIC_ID, 0))))
+                .containsExactly(GetProducerStateResponse.success(List.of(
+                    new GetProducerStateResponse.ProducerStateEntry(producerId, producerEpoch, 5, 9, seal - 1, 5000)
+                )));
+        }
+
+        // Contrast case: with no row inserted first, the seal lands the same way. This is the ordering the
+        // switch relies on when the partition count is left alone.
+        @Test
+        void initOnFreshRowSetsLatestToSeal() {
+            final long seal = 30005;
+            final TopicIdPartition switchingPartition = new TopicIdPartition(NEW_TOPIC_ID, 0, NEW_TOPIC);
+
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 0, seal, List.of())
+            ));
+            assertThat(responses).containsExactly(InitDisklessLogResponse.success());
+
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(0, seal, seal, 0));
+
+            assertThat(controlPlane.listOffsets(List.of(new ListOffsetsRequest(switchingPartition, LATEST_TIMESTAMP))))
+                .map(ListOffsetsResponse::offset)
+                .containsExactly(seal);
+        }
+
         @Test
         void withProducerStates() {
             final long producerId = 42L;
