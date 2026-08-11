@@ -42,7 +42,7 @@ import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsParti
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetForLeaderPartition, OffsetForLeaderTopic}
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.{EpochEndOffset, OffsetForLeaderTopicResult}
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse
-import org.apache.kafka.common.message.{DescribeLogDirsResponseData, DescribeProducersResponseData}
+import org.apache.kafka.common.message.{DescribeLogDirsResponseData, DescribeProducersResponseData, FetchResponseData}
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.protocol.Errors
@@ -2508,30 +2508,35 @@ class ReplicaManager(val config: KafkaConfig,
         if (!partitionLookupFailed) {
           val disklessSwitchCompleted = !shouldReadFromUnifiedLog && classicToDisklessStartOffset >= 0
           if (params.isFromFollower && disklessSwitchCompleted) {
+            var divergingEpoch = Optional.empty[FetchResponseData.EpochEndOffset]
             // A recovered follower for a switched partition may already be caught up to the
             // seal offset but still be outside ISR. Record the seal-offset fetch so the normal
             // ISR expansion path can observe that the follower is caught up without reading
             // diskless data into the local log.
             if (fetchPartitionData.fetchOffset >= classicToDisklessStartOffset) {
               getPartitionOrError(tp.topicPartition).foreach { partition =>
-                // This short-circuit bypasses the normal fetch read, which is where the request's
-                // leader epoch is validated before follower state is updated. Re-check it here so a
-                // stale-epoch fetch cannot push a follower into ISR. A divergent log *below* the seal
-                // is not a concern: a follower can only reach the frozen seal LEO through the classic
-                // ReplicaFetcher, which reconciles leader epochs and truncates any divergent suffix
-                // before it gets there. An absent request epoch (older fetch protocol) is a match.
                 val requestEpochMatchesLeader =
                   fetchPartitionData.currentLeaderEpoch.toScala.forall(_.intValue() == partition.getLeaderEpoch)
                 if (requestEpochMatchesLeader) {
-                  partition.getReplica(params.replicaId).foreach { replica =>
-                    partition.updateFollowerFetchState(
-                      replica,
-                      followerFetchOffsetMetadata = new LogOffsetMetadata(classicToDisklessStartOffset),
-                      followerStartOffset = fetchPartitionData.logStartOffset,
-                      followerFetchTimeMs = time.milliseconds,
-                      leaderEndOffset = partition.localLogOrException.logEndOffset,
-                      params.replicaEpoch
+                  partition.getReplica(params.replicaId).foreach { _ =>
+                    // Use the classic follower-read validation without returning any records.
+                    val fetchAtSeal = new PartitionData(
+                      fetchPartitionData.topicId,
+                      classicToDisklessStartOffset,
+                      fetchPartitionData.logStartOffset,
+                      0,
+                      fetchPartitionData.currentLeaderEpoch,
+                      fetchPartitionData.lastFetchedEpoch
                     )
+                    val readInfo = partition.fetchRecords(
+                      fetchParams = params,
+                      fetchPartitionData = fetchAtSeal,
+                      fetchTimeMs = time.milliseconds,
+                      maxBytes = 0,
+                      minOneMessage = false,
+                      updateFetchState = true
+                    )
+                    divergingEpoch = readInfo.divergingEpoch
                   }
                 }
               }
@@ -2549,7 +2554,7 @@ class ReplicaManager(val config: KafkaConfig,
                 classicToDisklessStartOffset,
                 0L,
                 MemoryRecords.EMPTY,
-                Optional.empty(),
+                divergingEpoch,
                 OptionalLong.empty(),
                 Optional.empty(),
                 OptionalInt.empty(),

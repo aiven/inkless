@@ -7147,6 +7147,65 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testFollowerFetchAtSealReturnsDivergingEpochAndSkipsIsrExpansion(): Unit = {
+    val followerId = 2
+    val sealOffset = 5L
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+    )
+    try {
+      val partition = setupSwitchedLeaderWithOutOfSyncFollower(
+        replicaManager, disklessTopicPartition, followerId, sealOffset)
+      val leaderId = replicaManager.config.brokerId
+      val leaderEpoch = partition.getLeaderEpoch + 2
+      partition.makeLeader(
+        partitionRegistration(
+          leaderId,
+          leaderEpoch,
+          isr = Array(leaderId),
+          partitionEpoch = partition.getPartitionEpoch + 1,
+          replicas = Array(leaderId, followerId)),
+        isNew = false,
+        new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava),
+        None)
+
+      doReturn(new CompletableFuture[Any]())
+        .when(alterPartitionManager).submit(any(), any())
+      clearInvocations(alterPartitionManager)
+
+      val fetchParams = new FetchParams(
+        followerId, -1L, 0L, 1, 1024 * 1024, FetchIsolation.LOG_END, Optional.empty())
+      val fetchInfos = Seq(
+        disklessTopicPartition ->
+          new PartitionData(
+            disklessTopicPartition.topicId(),
+            sealOffset,
+            0L,
+            1024 * 1024,
+            Optional.of(leaderEpoch),
+            Optional.of(leaderEpoch - 1)))
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA,
+        response => responseData = response.toMap)
+
+      val data = responseData(disklessTopicPartition)
+      assertEquals(Errors.NONE, data.error)
+      assertEquals(MemoryRecords.EMPTY, data.records)
+      assertTrue(data.divergingEpoch.isPresent)
+      assertEquals(0, data.divergingEpoch.get.epoch)
+      assertEquals(sealOffset, data.divergingEpoch.get.endOffset)
+      assertEquals(UnifiedLog.UNKNOWN_OFFSET,
+        partition.getReplica(followerId).get.stateSnapshot.logEndOffset)
+      verify(alterPartitionManager, never()).submit(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testFollowerFetchAtSealSkipsFetchStateAndIsrExpansionWhenLeaderEpochStale(): Unit = {
     val followerId = 2
     val sealOffset = 5L
