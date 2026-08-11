@@ -296,6 +296,21 @@ class InklessMetadataViewTest {
     assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, metadataView.getClassicToDisklessStartOffset(tp))
   }
 
+  @Test
+  def testIsReplicaInIsrUsesImageState(): Unit = {
+    val tp = new TopicPartition("switched", 0)
+    stubImageTopic(tp.topic(), util.Map.of(Integer.valueOf(0), partitionRegistration()))
+    assertTrue(metadataView.isReplicaInIsr(tp, 1))
+    assertFalse(metadataView.isReplicaInIsr(tp, 2))
+  }
+
+  @Test
+  def testIsReplicaInIsrReturnsFalseWhenTopicMissing(): Unit = {
+    val tp = new TopicPartition("missing", 0)
+    stubImageWithoutTopic(tp.topic())
+    assertFalse(metadataView.isReplicaInIsr(tp, 1))
+  }
+
   @Nested
   class TopicConfigCacheTest {
     @Test

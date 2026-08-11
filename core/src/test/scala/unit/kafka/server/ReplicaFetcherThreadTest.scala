@@ -760,6 +760,15 @@ class ReplicaFetcherThreadTest {
   }
 
   @Test
+  def shouldNotEvictPartitionAtSealUntilMetadataIsrContainsReplica(): Unit = {
+    verifyDisklessSwitchEviction(
+      classicToDisklessStartOffset = 100L,
+      logEndOffsetAfterAppend = 100L,
+      expectEviction = false,
+      replicaInIsr = false)
+  }
+
+  @Test
   def shouldNotEvictPartitionWhenLogEndOffsetBelowClassicToDisklessSealOffset(): Unit = {
     verifyDisklessSwitchEviction(
       classicToDisklessStartOffset = 100L,
@@ -786,7 +795,8 @@ class ReplicaFetcherThreadTest {
   private def verifyDisklessSwitchEviction(
     classicToDisklessStartOffset: Long,
     logEndOffsetAfterAppend: Long,
-    expectEviction: Boolean
+    expectEviction: Boolean,
+    replicaInIsr: Boolean = true
   ): Unit = {
     val props = TestUtils.createBrokerConfig(1)
     val config = KafkaConfig.fromProps(props)
@@ -802,12 +812,13 @@ class ReplicaFetcherThreadTest {
 
     val partition: Partition = mock(classOf[Partition])
     when(partition.localLogOrException).thenReturn(log)
-    when(partition.inSyncReplicaIds).thenReturn(Set(config.brokerId))
+    when(partition.inSyncReplicaIds).thenReturn(Set.empty)
     when(partition.appendRecordsToFollowerOrFutureReplica(any[MemoryRecords], any[Boolean], any[Int]))
       .thenReturn(Some(mock(classOf[LogAppendInfo])))
 
     val inklessMetadataView: InklessMetadataView = mock(classOf[InklessMetadataView])
     when(inklessMetadataView.getClassicToDisklessStartOffset(t1p0)).thenReturn(classicToDisklessStartOffset)
+    when(inklessMetadataView.isReplicaInIsr(t1p0, config.brokerId)).thenReturn(replicaInIsr)
 
     val replicaFetcherManager: ReplicaFetcherManager = mock(classOf[ReplicaFetcherManager])
 

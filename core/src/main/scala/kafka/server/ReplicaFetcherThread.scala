@@ -180,7 +180,7 @@ class ReplicaFetcherThread(name: String,
     if (shouldEvictFullySwitchedDisklessPartitions &&
         classicToDisklessStartOffset >= 0 &&
         log.logEndOffset >= classicToDisklessStartOffset &&
-        (isConsolidatingPartition || partition.inSyncReplicaIds.contains(brokerConfig.brokerId))) {
+        (isConsolidatingPartition || inklessMetadataView.isReplicaInIsr(topicPartition, brokerConfig.brokerId))) {
       partitionsToEvictAfterDisklessSwitch += topicPartition
     }
 
