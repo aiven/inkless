@@ -518,11 +518,12 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    public List<FileToDelete> getFilesToDelete() {
-        return files.values().stream()
+    public List<FileToDelete> getFilesToDelete(final Instant markedBefore, final int limit) {
+        final Stream<FileToDelete> candidates = files.values().stream()
             .filter(f -> f.fileState == FileState.DELETING)
-            .map(f -> new FileToDelete(f.objectKey, f.markedForDeletionAt))
-            .toList();
+            .filter(f -> f.markedForDeletionAt.isBefore(markedBefore))
+            .map(f -> new FileToDelete(f.objectKey, f.markedForDeletionAt));
+        return (limit > 0 ? candidates.limit(limit) : candidates).toList();
     }
 
     @Override

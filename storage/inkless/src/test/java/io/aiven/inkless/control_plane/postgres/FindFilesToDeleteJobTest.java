@@ -89,10 +89,50 @@ class FindFilesToDeleteJobTest {
     }
 
     @Test
-    void test() {
-        final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, pgContainer.getJooqCtx(), duration -> {});
+    void returnsEligibleFile() {
+        final FindFilesToDeleteJob job = new FindFilesToDeleteJob(
+            time, pgContainer.getJooqCtx(), MARKED_FOR_DELETION_AT.plusMillis(1), 0, duration -> {});
         assertThat(job.call()).containsExactly(
             new FileToDelete(OBJECT_KEY, MARKED_FOR_DELETION_AT)
         );
+    }
+
+    @Test
+    void excludesFileStillInGracePeriod() {
+        // markedBefore is exclusive: a file marked at exactly the boundary is not yet eligible.
+        final FindFilesToDeleteJob job = new FindFilesToDeleteJob(
+            time, pgContainer.getJooqCtx(), MARKED_FOR_DELETION_AT, 0, duration -> {});
+        assertThat(job.call()).isEmpty();
+    }
+
+    @Test
+    void honoursLimit() {
+        insertDeletingFile("a2");
+        insertDeletingFile("a3");
+        final Instant markedBefore = MARKED_FOR_DELETION_AT.plusMillis(1);
+
+        final FindFilesToDeleteJob bounded = new FindFilesToDeleteJob(
+            time, pgContainer.getJooqCtx(), markedBefore, 2, duration -> {});
+        assertThat(bounded.call()).hasSize(2);
+
+        final FindFilesToDeleteJob unbounded = new FindFilesToDeleteJob(
+            time, pgContainer.getJooqCtx(), markedBefore, 0, duration -> {});
+        assertThat(unbounded.call()).hasSize(3);
+    }
+
+    private void insertDeletingFile(final String objectKey) {
+        // The container's DataSource has autoCommit=false; commit so the job's connection sees the row.
+        try (final Connection connection = pgContainer.getDataSource().getConnection()) {
+            DSL.using(connection, SQLDialect.POSTGRES).insertInto(FILES,
+                FILES.OBJECT_KEY, FILES.FORMAT, FILES.REASON, FILES.STATE, FILES.UPLOADER_BROKER_ID,
+                FILES.COMMITTED_AT, FILES.MARKED_FOR_DELETION_AT, FILES.SIZE
+            ).values(
+                objectKey, (short) ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT.id, FileReason.PRODUCE, FileStateT.deleting,
+                BROKER_ID, COMMITTED_AT, MARKED_FOR_DELETION_AT, 1000L
+            ).execute();
+            connection.commit();
+        } catch (final SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 }

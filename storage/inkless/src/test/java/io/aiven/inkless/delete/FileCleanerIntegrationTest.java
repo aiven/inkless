@@ -70,11 +70,13 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.consume.FetchHandler;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
+import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
@@ -220,11 +222,16 @@ class FileCleanerIntegrationTest {
 
             time.sleep(Duration.ofSeconds(2).toMillis());
 
-            assertThat(controlPlane.getFilesToDelete().size()).isEqualTo(files1.size());
+            // The bound is exclusive, so it must be strictly after every markedForDeletionAt.
+            final List<FileToDelete> allFilesToDeleteBeforeRun =
+                controlPlane.getFilesToDelete(TimeUtils.now(time).plusSeconds(1), 0);
+            assertThat(allFilesToDeleteBeforeRun.size()).isEqualTo(files1.size());
 
             fileCleaner.run();
 
-            assertThat(controlPlane.getFilesToDelete().size()).isZero();
+            final List<FileToDelete> allFilesToDeleteAfterRun =
+                controlPlane.getFilesToDelete(TimeUtils.now(time).plusSeconds(1), 0);
+            assertThat(allFilesToDeleteAfterRun.size()).isZero();
         }
     }
 

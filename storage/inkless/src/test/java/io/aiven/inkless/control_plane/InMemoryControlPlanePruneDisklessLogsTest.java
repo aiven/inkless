@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -121,7 +122,10 @@ class InMemoryControlPlanePruneDisklessLogsTest {
                 assertThat(r.error()).isEqualTo(PruneDisklessLogsError.NONE);
                 assertThat(r.disklessLogStartOffset()).isEqualTo(11L);
             });
-        assertThat(cp.getFilesToDelete()).extracting(FileToDelete::objectKey).containsExactly("obj-all");
+        // The bound is exclusive, so it must be strictly after every markedForDeletionAt.
+        final List<FileToDelete> allFilesToDelete =
+            cp.getFilesToDelete(TimeUtils.now(time).plusSeconds(1), 0);
+        assertThat(allFilesToDelete).extracting(FileToDelete::objectKey).containsExactly("obj-all");
     }
 
     @Test

@@ -31,6 +31,7 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -256,9 +257,10 @@ public class PostgresControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    public List<FileToDelete> getFilesToDelete() {
+    public List<FileToDelete> getFilesToDelete(final Instant markedBefore, final int limit) {
         try {
-            final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, jobsJooqCtx, pgMetrics::onGetFilesToDeleteCompleted);
+            final FindFilesToDeleteJob job = new FindFilesToDeleteJob(
+                time, jobsJooqCtx, markedBefore, limit, pgMetrics::onGetFilesToDeleteCompleted);
             return job.call();
         } catch (final Exception e) {
             throw new ControlPlaneException("Failed to get files to delete", e);

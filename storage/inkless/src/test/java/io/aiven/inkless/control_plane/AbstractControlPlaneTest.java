@@ -34,6 +34,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -72,6 +73,15 @@ public abstract class AbstractControlPlaneTest {
     protected MockTime time = new MockTime(0, START_TIME, 0);
 
     protected ControlPlane controlPlane;
+
+    /**
+     * Every file marked for deletion, ignoring the grace period and the per-cycle bound that production
+     * callers of {@link ControlPlane#getFilesToDelete(Instant, int)} must pass.
+     */
+    List<FileToDelete> allFilesToDelete(final ControlPlane controlPlane) {
+        // The bound is exclusive, so it must be strictly after every markedForDeletionAt.
+        return controlPlane.getFilesToDelete(TimeUtils.now(time).plusSeconds(1), 0);
+    }
 
     protected abstract ControlPlaneAndConfigs createControlPlane(final TestInfo testInfo);
     protected abstract void tearDownControlPlane() throws IOException;
@@ -434,7 +444,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID, Uuid.ONE_UUID));
 
         // objectKey2 is kept alive by the second topic, which isn't deleted
-        assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(
+        assertThat(allFilesToDelete(controlPlane)).containsExactlyInAnyOrder(
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );
 
@@ -444,7 +454,7 @@ public abstract class AbstractControlPlaneTest {
 
         // Nothing happens as it's idempotent.
         controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID, Uuid.ONE_UUID));
-        assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(
+        assertThat(allFilesToDelete(controlPlane)).containsExactlyInAnyOrder(
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );
 
@@ -496,7 +506,7 @@ public abstract class AbstractControlPlaneTest {
         assertThat(findResponseAtLogStart).containsExactly(
             new FindBatchResponse(Errors.NONE, findResponseBeforeDelete.get(0).batches(), 3, 10)
         );
-        assertThat(controlPlane.getFilesToDelete()).isEmpty();
+        assertThat(allFilesToDelete(controlPlane)).isEmpty();
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
             .containsExactly(GetLogInfoResponse.success(3, 10, 0, FILE_SIZE));
     }
@@ -568,7 +578,7 @@ public abstract class AbstractControlPlaneTest {
                 findResponseBeforeDelete.get(0).batches().get(2)
             ), 19, 30)
         );
-        assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(
+        assertThat(allFilesToDelete(controlPlane)).containsExactlyInAnyOrder(
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
@@ -608,7 +618,7 @@ public abstract class AbstractControlPlaneTest {
         );
         assertThat(findResponse).isEqualTo(findResponseBeforeDelete);
 
-        assertThat(controlPlane.getFilesToDelete()).isEmpty();
+        assertThat(allFilesToDelete(controlPlane)).isEmpty();
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
             .containsExactly(GetLogInfoResponse.success(0, 10, 0, FILE_SIZE));
     }
@@ -651,7 +661,7 @@ public abstract class AbstractControlPlaneTest {
             new FindBatchResponse(Errors.NONE, List.of(), 10, 10)
         );
 
-        assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(new FileToDelete(objectKey1, TimeUtils.now(time)));
+        assertThat(allFilesToDelete(controlPlane)).containsExactlyInAnyOrder(new FileToDelete(objectKey1, TimeUtils.now(time)));
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
             .containsExactly(GetLogInfoResponse.success(10, 10, 0, 0));
     }
@@ -686,7 +696,7 @@ public abstract class AbstractControlPlaneTest {
         );
         assertThat(findResponse).isEqualTo(findResponseBeforeDelete);
 
-        assertThat(controlPlane.getFilesToDelete()).isEmpty();
+        assertThat(allFilesToDelete(controlPlane)).isEmpty();
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
             .containsExactly(GetLogInfoResponse.success(0, 10, 0, FILE_SIZE));
     }
@@ -722,7 +732,7 @@ public abstract class AbstractControlPlaneTest {
         );
         assertThat(findResponse).isEqualTo(findResponseBeforeDelete);
 
-        assertThat(controlPlane.getFilesToDelete()).isEmpty();
+        assertThat(allFilesToDelete(controlPlane)).isEmpty();
     }
 
     @Nested
@@ -854,7 +864,7 @@ public abstract class AbstractControlPlaneTest {
 
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
                     .containsExactly(GetLogInfoResponse.success(BATCH_1_RECORDS, EXPECTED_HIGH_WATERMARK, 0, BATCH_2_SIZE + BATCH_3_SIZE));
-                assertThat(controlPlane.getFilesToDelete()).isEmpty();
+                assertThat(allFilesToDelete(controlPlane)).isEmpty();
 
                 final var responses2 = controlPlane.enforceRetention(
                     List.of(
@@ -870,7 +880,7 @@ public abstract class AbstractControlPlaneTest {
 
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
                     .containsExactly(GetLogInfoResponse.success(BATCH_3_RECORDS, EXPECTED_HIGH_WATERMARK, 0, BATCH_3_SIZE));
-                assertThat(controlPlane.getFilesToDelete()).isEmpty();
+                assertThat(allFilesToDelete(controlPlane)).isEmpty();
 
                 final var responses3 = controlPlane.enforceRetention(
                     List.of(
@@ -886,7 +896,7 @@ public abstract class AbstractControlPlaneTest {
 
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
                     .containsExactly(GetLogInfoResponse.success(EXPECTED_HIGH_WATERMARK, EXPECTED_HIGH_WATERMARK, 0, 0));
-                assertThat(controlPlane.getFilesToDelete()).containsExactly(
+                assertThat(allFilesToDelete(controlPlane)).containsExactly(
                     new FileToDelete(FILE_NAME, TimeUtils.now(time))
                 );
             }
@@ -940,7 +950,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
                     .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, 0, 0));
-                assertThat(controlPlane.getFilesToDelete()).containsExactly(
+                assertThat(allFilesToDelete(controlPlane)).containsExactly(
                     new FileToDelete(FILE_NAME, TimeUtils.now(time))
                 );
             }
@@ -1032,7 +1042,7 @@ public abstract class AbstractControlPlaneTest {
 
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
                     .containsExactly(GetLogInfoResponse.success(BATCH_1_RECORDS, EXPECTED_HIGH_WATERMARK, 0, BATCH_2_SIZE + BATCH_3_SIZE));
-                assertThat(controlPlane.getFilesToDelete()).isEmpty();
+                assertThat(allFilesToDelete(controlPlane)).isEmpty();
 
                 final var responses2 = controlPlane.enforceRetention(
                     List.of(
@@ -1048,7 +1058,7 @@ public abstract class AbstractControlPlaneTest {
 
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
                     .containsExactly(GetLogInfoResponse.success(BATCH_3_RECORDS, EXPECTED_HIGH_WATERMARK, 0, BATCH_3_SIZE));
-                assertThat(controlPlane.getFilesToDelete()).isEmpty();
+                assertThat(allFilesToDelete(controlPlane)).isEmpty();
 
                 final var responses3 = controlPlane.enforceRetention(
                     List.of(
@@ -1064,7 +1074,7 @@ public abstract class AbstractControlPlaneTest {
 
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
                     .containsExactly(GetLogInfoResponse.success(EXPECTED_HIGH_WATERMARK, EXPECTED_HIGH_WATERMARK, 0, 0));
-                assertThat(controlPlane.getFilesToDelete()).containsExactly(
+                assertThat(allFilesToDelete(controlPlane)).containsExactly(
                     new FileToDelete(FILE_NAME, TimeUtils.now(time))
                 );
             }
@@ -1090,7 +1100,7 @@ public abstract class AbstractControlPlaneTest {
                 assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
                 assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
                     .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, 0, 0));
-                assertThat(controlPlane.getFilesToDelete()).containsExactly(
+                assertThat(allFilesToDelete(controlPlane)).containsExactly(
                     new FileToDelete(FILE_NAME, TimeUtils.now(time))
                 );
             }
@@ -1362,13 +1372,13 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID, Uuid.ONE_UUID));
 
         // objectKey2 is kept alive by the second topic, which isn't deleted
-        assertThat(controlPlane.getFilesToDelete()).containsExactly(
+        assertThat(allFilesToDelete(controlPlane)).containsExactly(
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );
 
         // Delete files from Control Plane
         controlPlane.deleteFiles(new DeleteFilesRequest(Set.of(objectKey1)));
-        assertThat(controlPlane.getFilesToDelete()).isEmpty();
+        assertThat(allFilesToDelete(controlPlane)).isEmpty();
     }
 
     @Test
@@ -1774,7 +1784,7 @@ public abstract class AbstractControlPlaneTest {
             )
         );
         // The file must be deleted as it doesn't contain alive batches after rejecting its only batch.
-        assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(duplicateFile1Key);
+        assertThat(allFilesToDelete(controlPlane)).singleElement().extracting(FileToDelete::objectKey).isEqualTo(duplicateFile1Key);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
             .containsExactly(GetLogInfoResponse.success(0, 50, 0, batchSize * 5));
 
@@ -1798,7 +1808,7 @@ public abstract class AbstractControlPlaneTest {
             CommitBatchResponse.sequenceOutOfOrder(request1)
         );
         // The file must also be deleted.
-        assertThat(controlPlane.getFilesToDelete()).map(FileToDelete::objectKey).containsExactly(duplicateFile1Key, duplicateFile2Key);
+        assertThat(allFilesToDelete(controlPlane)).map(FileToDelete::objectKey).containsExactly(duplicateFile1Key, duplicateFile2Key);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
             .containsExactly(GetLogInfoResponse.success(0, 60, 0, batchSize * 6));
     }
@@ -1814,7 +1824,7 @@ public abstract class AbstractControlPlaneTest {
             .containsExactly(Errors.OUT_OF_ORDER_SEQUENCE_NUMBER, false);
 
         // The second file must be deleted as it doesn't contain alive batches after rejecting its only batch.
-        assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(fileKey);
+        assertThat(allFilesToDelete(controlPlane)).singleElement().extracting(FileToDelete::objectKey).isEqualTo(fileKey);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
             .containsExactly(GetLogInfoResponse.success(0, 0, 0, 0));
     }
@@ -1869,7 +1879,7 @@ public abstract class AbstractControlPlaneTest {
             .containsExactly(Errors.OUT_OF_ORDER_SEQUENCE_NUMBER);
 
         // The second file must be deleted as it doesn't contain alive batches after rejecting its only batch.
-        assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(file1Key);
+        assertThat(allFilesToDelete(controlPlane)).singleElement().extracting(FileToDelete::objectKey).isEqualTo(file1Key);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
             .containsExactly(GetLogInfoResponse.success(0, 11, 0, batchSize));
     }
@@ -1910,7 +1920,7 @@ public abstract class AbstractControlPlaneTest {
             .containsExactly(Errors.INVALID_PRODUCER_EPOCH);
 
         // The second file must be deleted as it doesn't contain alive batches after rejecting its only batch.
-        assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(file1Key);
+        assertThat(allFilesToDelete(controlPlane)).singleElement().extracting(FileToDelete::objectKey).isEqualTo(file1Key);
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
             .containsExactly(GetLogInfoResponse.success(0, 15, 0, batchSize));
     }

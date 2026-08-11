@@ -234,6 +234,14 @@ Under ``inkless.``
   * Valid Values: [1,...]
   * Importance: low
 
+``file.cleaner.max.files.per.cycle``
+  The maximum number of files a single file cleaning cycle may delete, per broker. Bounds both the control-plane query and the object-storage delete volume, so it also paces deletes: the per-broker delete rate is at most this value divided by file.cleaner.interval.ms, and every broker runs its own cleaner. Keep it above the number of files that can be marked between two cycles, otherwise the backlog grows; 0 means unbounded.
+
+  * Type: int
+  * Default: 20000
+  * Valid Values: [0,...]
+  * Importance: low
+
 ``file.cleaner.retention.period.ms``
   The retention period for files marked for deletion.
 

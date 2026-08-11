@@ -147,6 +147,15 @@ public class InklessConfig extends AbstractConfig {
     private static final String FILE_CLEANER_RETENTION_PERIOD_MS_DOC = "The retention period for files marked for deletion.";
     private static final int FILE_CLEANER_RETENTION_PERIOD_MS_DEFAULT = 60 * 1000;  // 1 minute
 
+    public static final String FILE_CLEANER_MAX_FILES_PER_CYCLE_CONFIG = "file.cleaner.max.files.per.cycle";
+    private static final String FILE_CLEANER_MAX_FILES_PER_CYCLE_DOC = "The maximum number of files a single " +
+        "file cleaning cycle may delete, per broker. Bounds both the control-plane query and the " +
+        "object-storage delete volume, so it also paces deletes: the per-broker delete rate is at most this " +
+        "value divided by file.cleaner.interval.ms, and every broker runs its own cleaner. Keep it above the " +
+        "number of files that can be marked between two cycles, otherwise the backlog grows; 0 means " +
+        "unbounded.";
+    private static final int FILE_CLEANER_MAX_FILES_PER_CYCLE_DEFAULT = 20_000;
+
 
     public static final String PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG = "produce.upload.thread.pool.size";
     private static final String PRODUCE_UPLOAD_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently upload files to remote storage";
@@ -378,6 +387,15 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(1),
             ConfigDef.Importance.LOW,
             FILE_CLEANER_RETENTION_PERIOD_MS_DOC
+        );
+
+        configDef.define(
+            FILE_CLEANER_MAX_FILES_PER_CYCLE_CONFIG,
+            ConfigDef.Type.INT,
+            FILE_CLEANER_MAX_FILES_PER_CYCLE_DEFAULT,
+            ConfigDef.Range.atLeast(0),  // 0 = unbounded
+            ConfigDef.Importance.LOW,
+            FILE_CLEANER_MAX_FILES_PER_CYCLE_DOC
         );
 
         configDef.define(
@@ -742,6 +760,10 @@ public class InklessConfig extends AbstractConfig {
 
     public Duration fileCleanerRetentionPeriod() {
         return Duration.ofMillis(getInt(FILE_CLEANER_RETENTION_PERIOD_MS_CONFIG));
+    }
+
+    public int fileCleanerMaxFilesPerCycle() {
+        return getInt(FILE_CLEANER_MAX_FILES_PER_CYCLE_CONFIG);
     }
 
     public Duration crossTierLogStartReportInterval() {

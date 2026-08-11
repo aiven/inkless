@@ -44,6 +44,8 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -52,6 +54,7 @@ import static org.mockito.Mockito.when;
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class FileCleanerMockedTest {
     public static final Duration RETENTION_PERIOD = Duration.ofMinutes(10);
+    public static final int MAX_FILES_PER_CYCLE = 3;
     Time time = new MockTime();
     
     @Mock
@@ -63,8 +66,8 @@ class FileCleanerMockedTest {
 
     @Test
     void empty() throws Exception {
-        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
-        when(controlPlane.getFilesToDelete()).thenReturn(List.of());
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
+        when(controlPlane.getFilesToDelete(any(), anyInt())).thenReturn(List.of());
 
         cleaner.run();
 
@@ -72,11 +75,23 @@ class FileCleanerMockedTest {
     }
 
     @Test
-    void singleWithinRetention() throws Exception {
-        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
+    void passesGracePeriodAndMaxFilesPerCycleToControlPlane() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
+        final var now = TimeUtils.now(time);
+        when(controlPlane.getFilesToDelete(any(), anyInt())).thenReturn(List.of());
+
+        cleaner.run();
+
+        verify(controlPlane, times(1)).getFilesToDelete(eq(now.minus(RETENTION_PERIOD)), eq(MAX_FILES_PER_CYCLE));
+        verify(storageBackend, times(0)).delete(Set.of());
+    }
+
+    @Test
+    void single() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
         final var objectKey = OBJECT_KEY_CREATOR.from("key");
         final var now = TimeUtils.now(time);
-        when(controlPlane.getFilesToDelete())
+        when(controlPlane.getFilesToDelete(any(), anyInt()))
             .thenReturn(List.of(new FileToDelete(objectKey.value(), now.minus(Duration.ofMinutes(15)))));
         when(storageBackend.delete(Set.of(objectKey))).thenReturn(Set.of(objectKey));
 
@@ -88,26 +103,12 @@ class FileCleanerMockedTest {
     }
 
     @Test
-    void singleOutsideRetention() throws Exception {
-        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
-        final var objectKey = OBJECT_KEY_CREATOR.from("key");
-        final var now = TimeUtils.now(time);
-        when(controlPlane.getFilesToDelete())
-            .thenReturn(List.of(new FileToDelete(objectKey.value(), now.minus(Duration.ofMinutes(5)))));
-
-        cleaner.run();
-
-        verify(storageBackend, times(0)).delete(Set.of());
-    }
-
-    @Test
     void multiple() throws Exception {
-        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
         final var objectKeys = List.of(OBJECT_KEY_CREATOR.from("key1"), OBJECT_KEY_CREATOR.create("key3"));
-        when(controlPlane.getFilesToDelete())
+        when(controlPlane.getFilesToDelete(any(), anyInt()))
             .thenReturn(List.of(
                 new FileToDelete(objectKeys.get(0).value(), TimeUtils.now(time).minus(Duration.ofMinutes(15))),
-                new FileToDelete(OBJECT_KEY_CREATOR.create("key2").value(), TimeUtils.now(time).minus(Duration.ofMinutes(5))),
                 new FileToDelete(objectKeys.get(1).value(), TimeUtils.now(time).minus(Duration.ofMinutes(15)))
             ));
         when(storageBackend.delete(new HashSet<>(objectKeys))).thenReturn(new HashSet<>(objectKeys));
@@ -120,11 +121,11 @@ class FileCleanerMockedTest {
 
     @Test
     void dereferencesOnlyKeysConfirmedDeleted() throws Exception {
-        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
         final var deleted = OBJECT_KEY_CREATOR.from("deleted");
         final var throttled = OBJECT_KEY_CREATOR.from("throttled");
         final var now = TimeUtils.now(time);
-        when(controlPlane.getFilesToDelete())
+        when(controlPlane.getFilesToDelete(any(), anyInt()))
             .thenReturn(List.of(
                 new FileToDelete(deleted.value(), now.minus(Duration.ofMinutes(15))),
                 new FileToDelete(throttled.value(), now.minus(Duration.ofMinutes(15)))
@@ -141,10 +142,10 @@ class FileCleanerMockedTest {
 
     @Test
     void skipsControlPlaneWhenNothingDeleted() throws Exception {
-        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
         final var objectKey = OBJECT_KEY_CREATOR.from("key");
         final var now = TimeUtils.now(time);
-        when(controlPlane.getFilesToDelete())
+        when(controlPlane.getFilesToDelete(any(), anyInt()))
             .thenReturn(List.of(new FileToDelete(objectKey.value(), now.minus(Duration.ofMinutes(15)))));
         when(storageBackend.delete(Set.of(objectKey))).thenReturn(Set.of());
 
@@ -157,10 +158,10 @@ class FileCleanerMockedTest {
 
     @Test
     void swallowsStorageFailureWithoutTouchingControlPlane() throws Exception {
-        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
         final var objectKey = OBJECT_KEY_CREATOR.from("key");
         final var now = TimeUtils.now(time);
-        when(controlPlane.getFilesToDelete())
+        when(controlPlane.getFilesToDelete(any(), anyInt()))
             .thenReturn(List.of(new FileToDelete(objectKey.value(), now.minus(Duration.ofMinutes(15)))));
         when(storageBackend.delete(Set.of(objectKey))).thenThrow(new StorageBackendException("boom"));
 
@@ -172,8 +173,8 @@ class FileCleanerMockedTest {
 
     @Test
     void tracksLastSuccessfulCycle() throws Exception {
-        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
-        when(controlPlane.getFilesToDelete()).thenReturn(List.of());
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
+        when(controlPlane.getFilesToDelete(any(), anyInt())).thenReturn(List.of());
 
         assertEquals(-1, cleaner.metrics.lastSuccessfulCleanupTimeMs.get());
 
@@ -185,8 +186,8 @@ class FileCleanerMockedTest {
 
     @Test
     void doesNotTrackFailedCycleAsSuccessful() throws Exception {
-        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
-        when(controlPlane.getFilesToDelete()).thenThrow(new RuntimeException("boom"));
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
+        when(controlPlane.getFilesToDelete(any(), anyInt())).thenThrow(new RuntimeException("boom"));
 
         cleaner.run();
 
