@@ -100,7 +100,7 @@ class InklessConfigTest {
         assertThat(config.produceMaxUploadAttempts()).isEqualTo(3);
         assertThat(config.produceUploadBackoff()).isEqualTo(Duration.ofMillis(10));
         assertThat(config.storage(storageMetrics)).isInstanceOf(ConfigTestStorageBackend.class);
-        assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMinutes(5));
+        assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMinutes(2));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.fileCleanerMaxFilesPerCycle()).isEqualTo(20_000);
         assertThat(config.cacheMaxCount()).isEqualTo(1000);

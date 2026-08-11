@@ -109,7 +109,7 @@ Under ``inkless.``
   * Importance: low
 
 ``consume.batch.coordinate.cache.ttl.ms``
-  Time to live in milliseconds for an entry in the Batch Coordinate cache. The time to live must be <= than half of the value of of file.cleaner.interval.ms.
+  Time to live in milliseconds for an entry in the Batch Coordinate cache. The time to live must be <= half of the value of file.cleaner.retention.period.ms.
 
   * Type: int
   * Default: 5000 (5 seconds)
@@ -227,10 +227,10 @@ Under ``inkless.``
   * Importance: low
 
 ``file.cleaner.interval.ms``
-  The interval with which to clean up files marked for deletion.
+  The interval with which to clean up files marked for deletion. Together with file.cleaner.max.files.per.cycle, this interval sets the rate at which files marked for deletion drain.
 
   * Type: int
-  * Default: 300000 (5 minutes)
+  * Default: 120000 (2 minutes)
   * Valid Values: [1,...]
   * Importance: low
 

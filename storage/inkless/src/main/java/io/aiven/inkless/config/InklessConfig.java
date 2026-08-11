@@ -107,7 +107,7 @@ public class InklessConfig extends AbstractConfig {
 
     public static final String CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_CONFIG = CONSUME_PREFIX + "batch.coordinate.cache.ttl.ms";
     public static final String CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_DOC = "Time to live in milliseconds for an entry in the Batch Coordinate cache. " +
-        "The time to live must be <= than half of the value of of file.cleaner.interval.ms.";
+        "The time to live must be <= half of the value of file.cleaner.retention.period.ms.";
     private static final int CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_DEFAULT = 5000;
 
     public static final String CONSUME_CROSS_TIER_LOG_START_CACHE_ENABLED_CONFIG = CONSUME_PREFIX + "cross.tier.log.start.cache.enabled";
@@ -132,8 +132,10 @@ public class InklessConfig extends AbstractConfig {
     private static final int CONSOLIDATION_CLEANUP_INTERVAL_MS_DEFAULT = RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT;
 
     public static final String FILE_CLEANER_INTERVAL_MS_CONFIG = "file.cleaner.interval.ms";
-    private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion.";
-    private static final int FILE_CLEANER_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
+    private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion. "
+        + "Together with file.cleaner.max.files.per.cycle, this interval sets the rate at which "
+        + "files marked for deletion drain.";
+    private static final int FILE_CLEANER_INTERVAL_MS_DEFAULT = 2 * 60 * 1000;  // 2 minutes
 
     public static final String CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_CONFIG = "cross.tier.log.start.report.interval.ms";
     private static final String CROSS_TIER_LOG_START_REPORT_INTERVAL_MS_DOC = "The interval with which the leader reports " +
