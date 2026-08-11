@@ -259,20 +259,21 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
             // doesn't run, so this flag stays false — but with per-key hedge dedup (hedgeGuards),
             // at most one hedge fires per primary regardless of how many callers have stale TTFB flags.
             final AtomicBoolean firstByteReceived = new AtomicBoolean(false);
+            final AtomicBoolean loadRan = new AtomicBoolean(false);
             final CompletableFuture<FileExtent> primary = cache.computeIfAbsent(
                 request.toCacheKey(),
                 k -> {
+                    loadRan.set(true);
                     final FileExtent fileExtent = fetchFileExtent(objectFetcher, request, firstByteReceived);
                     metrics.recordStorageBytesIn(fileExtent.data().length);
                     return fileExtent;
                 },
                 fetchDataExecutor
             );
-            // A true cache hit returns an already-completed future; the loader runs asynchronously on
-            // fetchDataExecutor, so a cache miss (whether this caller ran the loader or coalesced onto an
-            // in-flight load) is never done at this point. Deciding the hit from isDone() here avoids
-            // counting a coalesced in-flight miss as cache-hit bytes.
-            final boolean alreadyCached = primary.isDone();
+            // This caller running the load means a miss whatever isDone() reports by now: the load may already
+            // have finished on the fetch executor. Only when it did not run does isDone() separate a value that
+            // was already cached from coalescing onto another caller's in-flight load.
+            final boolean alreadyCached = !loadRan.get() && primary.isDone();
             primary.thenAccept(fileExtent -> {
                 metrics.recordDisklessBytesOut(fileExtent.data().length);
                 if (alreadyCached) {

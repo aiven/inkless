@@ -38,6 +38,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -2772,6 +2773,187 @@ public class FetchPlannerTest {
                 true, // isConsolidationFetch
                 metrics
             );
+        }
+    }
+
+    /**
+     * Cache-hit accounting on the hot path. A fetch must count cache-hit bytes only when the range was
+     * already in the cache - never when this caller ran the load, and never when it coalesced onto a load
+     * that another caller had already started.
+     */
+    @Nested
+    class CacheHitAccountingTests {
+        private final byte[] data = "recent-data".getBytes();
+
+        private Map<TopicIdPartition, FindBatchResponse> coordinatesForA() {
+            return Map.of(partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(),
+                    BatchMetadata.of(partition0, 0, data.length, 0, 0, 10, time.milliseconds(),
+                        TimestampType.CREATE_TIME))
+            ), 0, 1));
+        }
+
+        private FileExtent awaitSingleFetch(final FetchPlanner planner) throws Exception {
+            final List<CompletableFuture<FileExtent>> futures = planner.get().stream()
+                .map(FetchPlanner.FetchRequestWithFuture::future)
+                .toList();
+            assertThat(futures).hasSize(1);
+            return futures.get(0).get();
+        }
+
+        /**
+         * The load runs on the fetch executor while the caller decides hit vs miss. A same-thread executor
+         * makes the load finish before the caller can look at the future, which is the ordering a loaded
+         * broker (or CI machine) reaches by chance: a first load must still be a miss.
+         */
+        @Test
+        public void firstLoadIsNotACacheHitWhenTheLoadFinishesBeforeTheCallerObservesTheFuture() throws Exception {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180);
+                 SameThreadExecutorService sameThread = new SameThreadExecutorService()) {
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(data));
+
+                final FetchPlanner planner = createHotPathPlannerWithFetchExecutor(
+                    caffeineCache, coordinatesForA(), sameThread);
+
+                assertThat(awaitSingleFetch(planner).data()).isEqualTo(data);
+
+                verify(metrics).recordStorageBytesIn(data.length);
+                verify(metrics).recordDisklessBytesOut(data.length);
+                verify(metrics, never()).recordCacheHitBytes(any(Long.class));
+            }
+        }
+
+        /** The metric must still fire for a genuine hit: second fetch of the same range, one load. */
+        @Test
+        public void anAlreadyCachedRangeIsCountedAsACacheHitOnce() throws Exception {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180);
+                 SameThreadExecutorService sameThread = new SameThreadExecutorService()) {
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(data));
+
+                awaitSingleFetch(createHotPathPlannerWithFetchExecutor(caffeineCache, coordinatesForA(), sameThread));
+                awaitSingleFetch(createHotPathPlannerWithFetchExecutor(caffeineCache, coordinatesForA(), sameThread));
+
+                verify(metrics, times(1)).recordStorageBytesIn(data.length);
+                verify(metrics, times(2)).recordDisklessBytesOut(data.length);
+                verify(metrics, times(1)).recordCacheHitBytes(data.length);
+            }
+        }
+
+        /**
+         * Coalescing onto another caller's in-flight load is a miss, not a hit: no bytes were served from
+         * the cache. This is the case a "did the loader run?" check alone would misclassify.
+         */
+        @Test
+        public void coalescingOntoAnInFlightLoadIsNotACacheHit() throws Exception {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
+                final CountDownLatch loadStarted = new CountDownLatch(1);
+                final CountDownLatch releaseLoad = new CountDownLatch(1);
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenAnswer(invocation -> {
+                    loadStarted.countDown();
+                    assertThat(releaseLoad.await(10, TimeUnit.SECONDS)).isTrue();
+                    return ByteBuffer.wrap(data);
+                });
+
+                final FetchPlanner first = createHotPathPlannerWithFetchExecutor(
+                    caffeineCache, coordinatesForA(), fetchDataExecutor);
+                final List<CompletableFuture<FileExtent>> firstFutures = first.get().stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
+                assertThat(loadStarted.await(10, TimeUnit.SECONDS)).isTrue();
+
+                // Second caller finds the in-flight future rather than a cached value.
+                final FetchPlanner second = createHotPathPlannerWithFetchExecutor(
+                    caffeineCache, coordinatesForA(), fetchDataExecutor);
+                final List<CompletableFuture<FileExtent>> secondFutures = second.get().stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
+
+                releaseLoad.countDown();
+                assertThat(firstFutures.get(0).get().data()).isEqualTo(data);
+                assertThat(secondFutures.get(0).get().data()).isEqualTo(data);
+
+                verify(metrics, times(1)).recordStorageBytesIn(data.length);
+                verify(metrics, timeout(1000).times(2)).recordDisklessBytesOut(data.length);
+                verify(metrics, never()).recordCacheHitBytes(any(Long.class));
+            }
+        }
+    }
+
+    /**
+     * Hot path only (lagging feature disabled, so every request takes it), with the fetch executor under
+     * the test's control: it decides whether a load completes before or after the caller observes the
+     * future, which is what cache-hit accounting turns on.
+     */
+    private FetchPlanner createHotPathPlannerWithFetchExecutor(
+        final ObjectCache cache,
+        final Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
+        final ExecutorService hotPathFetchExecutor
+    ) {
+        return new FetchPlanner(
+            time,
+            FetchPlannerTest.OBJECT_KEY_CREATOR,
+            keyAlignmentStrategy,
+            cache,
+            fetcher,
+            hotPathFetchExecutor,
+            fetcher,
+            60 * 1000L,
+            null, // no rate limiter
+            null, // lagging feature disabled: always hot path
+            null, // no hedge scheduler
+            0, // TTFB hedging disabled
+            0, // total-time hedging disabled
+            new ConcurrentHashMap<>(),
+            batchCoordinates,
+            false,
+            metrics
+        );
+    }
+
+    /** Runs submitted tasks on the calling thread, so a cache load completes within computeIfAbsent. */
+    private static final class SameThreadExecutorService extends AbstractExecutorService implements AutoCloseable {
+        private volatile boolean shutdown;
+
+        @Override
+        public void execute(final Runnable command) {
+            if (shutdown) {
+                throw new RejectedExecutionException("executor is shut down");
+            }
+            command.run();
+        }
+
+        @Override
+        public void shutdown() {
+            shutdown = true;
+        }
+
+        @Override
+        public List<Runnable> shutdownNow() {
+            shutdown = true;
+            return List.of();
+        }
+
+        @Override
+        public boolean isShutdown() {
+            return shutdown;
+        }
+
+        @Override
+        public boolean isTerminated() {
+            return shutdown;
+        }
+
+        @Override
+        public boolean awaitTermination(final long timeout, final TimeUnit unit) {
+            return true;
+        }
+
+        @Override
+        public void close() {
+            shutdown();
         }
     }
 }
