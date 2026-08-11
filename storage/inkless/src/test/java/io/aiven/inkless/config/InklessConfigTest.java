@@ -110,7 +110,8 @@ class InklessConfigTest {
         assertThat(config.produceUploadThreadPoolSize()).isEqualTo(8);
         assertThat(config.fetchDataThreadPoolSize()).isEqualTo(32);
         assertThat(config.fetchMetadataThreadPoolSize()).isEqualTo(8);
-        assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(1000);
+        assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(2000);
+        assertThat(config.retentionEnforcementInterval()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.consolidationCleanupInterval()).isEqualTo(Duration.ofMinutes(5));
     }
 

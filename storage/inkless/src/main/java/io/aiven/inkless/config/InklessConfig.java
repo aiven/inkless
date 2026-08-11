@@ -124,12 +124,16 @@ public class InklessConfig extends AbstractConfig {
     private static final String RETENTION_ENFORCEMENT_INTERVAL_MS_DOC = "The interval with which to enforce retention policies on a partition. " +
         "This interval is approximate, because each scheduling event is randomized. " +
         "The retention enforcement mechanism also takes into account the total number of brokers in the cluster: " +
-        "the more brokers, the less frequently each one of them enforces retention policy.";
-    private static final int RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
+        "the more brokers, the less frequently each one of them enforces retention policy. " +
+        "Together with retention.enforcement.max.batches.per.request, this bounds the sustained deletion " +
+        "capacity per partition, which must exceed the partition's batch creation rate or retention falls behind.";
+    private static final int RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT = 60 * 1000;  // 1 minute
 
     public static final String CONSOLIDATION_CLEANUP_INTERVAL_MS_CONFIG = "consolidation.cleanup.interval.ms";
     private static final String CONSOLIDATION_CLEANUP_INTERVAL_MS_DOC = "The interval with which to run consolidated diskless WAL pruning on each broker.";
-    private static final int CONSOLIDATION_CLEANUP_INTERVAL_MS_DEFAULT = RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT;
+    // Not derived from RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT: WAL pruning's cost is whole-file scans,
+    // not per-partition boundary scans, so it needs its own cadence.
+    private static final int CONSOLIDATION_CLEANUP_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
 
     public static final String FILE_CLEANER_INTERVAL_MS_CONFIG = "file.cleaner.interval.ms";
     private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion.";
@@ -250,11 +254,14 @@ public class InklessConfig extends AbstractConfig {
     public static final String RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_CONFIG = "retention.enforcement.max.batches.per.request";
     public static final String RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DOC = "The maximum number of batches to delete per partition when enforcing retention. "
         + "A value of 0 means all eligible batches are deleted in one request, which makes the retention boundary "
-        + "scan proportional to the partition depth and can exceed the control-plane socket timeout on very deep "
+        + "scan proportional to the partition depth and can impact control-plane performance on very deep "
         + "partitions. A positive value bounds both the boundary scan and the delete to that many batches per pass, "
         + "so a deep backlog drains over successive enforcement cycles instead of one unbounded request. "
-        + "It should be set above the per-interval expiry rate so retention does not fall behind.";
-    private static final int RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DEFAULT = 1000;
+        + "It should exceed the per-interval batch creation rate: capacity is this value per "
+        + "retention.enforcement.interval.ms. Together, the defaults sustain up to 33 batches/s per "
+        + "partition; a higher batch-row rate needs a proportionally higher value here or a shorter "
+        + "retention.enforcement.interval.ms.";
+    private static final int RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DEFAULT = 2000;
 
     public static final String BATCH_COALESCING_ENABLED_CONFIG = CONTROL_PLANE_PREFIX + "batch.coalescing.enabled";
     public static final String BATCH_COALESCING_ENABLED_DOC = "When true, contiguous same-partition batch runs within a single commit are collapsed "

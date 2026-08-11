@@ -266,18 +266,18 @@ Under ``inkless.``
   * Importance: low
 
 ``retention.enforcement.interval.ms``
-  The interval with which to enforce retention policies on a partition. This interval is approximate, because each scheduling event is randomized. The retention enforcement mechanism also takes into account the total number of brokers in the cluster: the more brokers, the less frequently each one of them enforces retention policy.
+  The interval with which to enforce retention policies on a partition. This interval is approximate, because each scheduling event is randomized. The retention enforcement mechanism also takes into account the total number of brokers in the cluster: the more brokers, the less frequently each one of them enforces retention policy. Together with retention.enforcement.max.batches.per.request, this bounds the sustained deletion capacity per partition, which must exceed the partition's batch creation rate or retention falls behind.
 
   * Type: int
-  * Default: 300000 (5 minutes)
+  * Default: 60000 (1 minute)
   * Valid Values: [1,...]
   * Importance: low
 
 ``retention.enforcement.max.batches.per.request``
-  The maximum number of batches to delete per partition when enforcing retention. A value of 0 means all eligible batches are deleted in one request, which makes the retention boundary scan proportional to the partition depth and can exceed the control-plane socket timeout on very deep partitions. A positive value bounds both the boundary scan and the delete to that many batches per pass, so a deep backlog drains over successive enforcement cycles instead of one unbounded request. It should be set above the per-interval expiry rate so retention does not fall behind.
+  The maximum number of batches to delete per partition when enforcing retention. A value of 0 means all eligible batches are deleted in one request, which makes the retention boundary scan proportional to the partition depth and can impact control-plane performance on very deep partitions. A positive value bounds both the boundary scan and the delete to that many batches per pass, so a deep backlog drains over successive enforcement cycles instead of one unbounded request. It should exceed the per-interval batch creation rate: capacity is this value per retention.enforcement.interval.ms. Together, the defaults sustain up to 33 batches/s per partition; a higher batch-row rate needs a proportionally higher value here or a shorter retention.enforcement.interval.ms.
 
   * Type: int
-  * Default: 1000
+  * Default: 2000
   * Valid Values: [0,...]
   * Importance: low
 
