@@ -18,12 +18,15 @@
 package io.aiven.inkless.delete;
 
 import org.apache.kafka.common.MetricNameTemplate;
+import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.yammer.metrics.core.Histogram;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 public class FileCleanerMetrics {
@@ -40,6 +43,10 @@ public class FileCleanerMetrics {
     static final String FILE_CLEANER_FILES_FAILED_RATE = "FileCleanerFilesFailedRate";
     private static final String FILE_CLEANER_FILES_FAILED_RATE_DOC = "Total number of files the storage backend did "
         + "not confirm deleted; they stay marked for deletion and are retried on a later cycle";
+    static final String LAST_SUCCESSFUL_FILE_CLEANUP_AGE_MS = "LastSuccessfulFileCleanupAgeMs";
+    private static final String LAST_SUCCESSFUL_FILE_CLEANUP_AGE_MS_DOC = "Milliseconds since the last file cleaning "
+        + "cycle completed without error, including cycles that found nothing to delete; -1 if no cycle has "
+        + "completed since startup";
 
     /**
      * This method returns a list of all the metric name templates for the FileCleanerMetrics class.
@@ -51,25 +58,34 @@ public class FileCleanerMetrics {
             new MetricNameTemplate(FILE_CLEANER_RATE, GROUP, FILE_CLEANER_RATE_DOC),
             new MetricNameTemplate(FILE_CLEANER_FILES_RATE, GROUP, FILE_CLEANER_FILES_RATE_DOC),
             new MetricNameTemplate(FILE_CLEANER_ERROR_RATE, GROUP, FILE_CLEANER_ERROR_RATE_DOC),
-            new MetricNameTemplate(FILE_CLEANER_FILES_FAILED_RATE, GROUP, FILE_CLEANER_FILES_FAILED_RATE_DOC)
+            new MetricNameTemplate(FILE_CLEANER_FILES_FAILED_RATE, GROUP, FILE_CLEANER_FILES_FAILED_RATE_DOC),
+            new MetricNameTemplate(LAST_SUCCESSFUL_FILE_CLEANUP_AGE_MS, GROUP, LAST_SUCCESSFUL_FILE_CLEANUP_AGE_MS_DOC)
         );
     }
 
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
         FileCleaner.class.getPackageName(), FileCleaner.class.getSimpleName());
+    private final Time time;
     private final Histogram fileCleanerTotalTime;
     private final LongAdder fileCleanerRate = new LongAdder();
     private final LongAdder fileCleanerFiles = new LongAdder();
     private final LongAdder fileCleanerErrorRate = new LongAdder();
     // package-private for tests, following ClientAzAwarenessMetrics
     final LongAdder fileCleanerFilesFailed = new LongAdder();
+    // package-private for tests, following FileCommitterMetrics
+    final AtomicLong lastSuccessfulCleanupTimeMs = new AtomicLong(-1);
 
-    public FileCleanerMetrics() {
+    public FileCleanerMetrics(final Time time) {
+        this.time = Objects.requireNonNull(time, "time cannot be null");
         fileCleanerTotalTime = metricsGroup.newHistogram(FILE_CLEANER_TOTAL_TIME, true, Map.of());
         metricsGroup.newGauge(FILE_CLEANER_RATE, fileCleanerRate::intValue);
         metricsGroup.newGauge(FILE_CLEANER_FILES_RATE, fileCleanerFiles::intValue);
         metricsGroup.newGauge(FILE_CLEANER_ERROR_RATE, fileCleanerErrorRate::intValue);
         metricsGroup.newGauge(FILE_CLEANER_FILES_FAILED_RATE, fileCleanerFilesFailed::intValue);
+        metricsGroup.newGauge(LAST_SUCCESSFUL_FILE_CLEANUP_AGE_MS, () -> {
+            final long last = lastSuccessfulCleanupTimeMs.get();
+            return last == -1 ? -1L : time.milliseconds() - last;
+        });
     }
 
     public void recordFileCleanerStart() {
@@ -92,11 +108,20 @@ public class FileCleanerMetrics {
         fileCleanerFilesFailed.add(filesSize);
     }
 
+    /**
+     * Marks a cycle as having completed without error. Called for every such cycle, including ones with
+     * no work, so the gauge tracks liveness rather than delete volume.
+     */
+    public void recordFileCleanerCycleSucceeded() {
+        lastSuccessfulCleanupTimeMs.set(time.milliseconds());
+    }
+
     public void close() {
         metricsGroup.removeMetric(FILE_CLEANER_TOTAL_TIME);
         metricsGroup.removeMetric(FILE_CLEANER_RATE);
         metricsGroup.removeMetric(FILE_CLEANER_FILES_RATE);
         metricsGroup.removeMetric(FILE_CLEANER_ERROR_RATE);
         metricsGroup.removeMetric(FILE_CLEANER_FILES_FAILED_RATE);
+        metricsGroup.removeMetric(LAST_SUCCESSFUL_FILE_CLEANUP_AGE_MS);
     }
 }

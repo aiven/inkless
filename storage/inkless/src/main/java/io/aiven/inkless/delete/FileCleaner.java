@@ -80,7 +80,7 @@ public class FileCleaner implements Runnable, Closeable {
         this.storage = storage;
         this.objectKeyCreator = objectKeyCreator;
         this.retentionPeriod = retentionPeriod;
-        this.metrics = new FileCleanerMetrics();
+        this.metrics = new FileCleanerMetrics(time);
 
         // This backoff is needed only for jitter, there's no exponent in it.
         final int noWorkBackoffDuration = 10 * 1000;
@@ -115,6 +115,7 @@ public class FileCleaner implements Runnable, Closeable {
             }
 
             attempts.set(0);
+            metrics.recordFileCleanerCycleSucceeded();
         } catch (final Exception e) {
             metrics.recordFileCleanerError();
             final long backoff = errorBackoff.backoff(attempts.incrementAndGet());

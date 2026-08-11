@@ -236,15 +236,16 @@ FileCleaner metrics
 io.aiven.inkless.delete:type=FileCleaner
 ----------------------------------------
 
-===========================  =================================================================================================================================
-Attribute name               Description                                                                                                                      
-===========================  =================================================================================================================================
-FileCleanerErrorRate         Total number of file cleaning errors                                                                                             
-FileCleanerFilesFailedRate   Total number of files the storage backend did not confirm deleted; they stay marked for deletion and are retried on a later cycle
-FileCleanerFilesRate         Total number of files cleaned                                                                                                    
-FileCleanerRate              Total number of file cleaning cycles started                                                                                     
-FileCleanerTotalTime         Total time spent on a file cleaning cycle in milliseconds                                                                        
-===========================  =================================================================================================================================
+===============================  ==================================================================================================================================================================
+Attribute name                   Description                                                                                                                                                       
+===============================  ==================================================================================================================================================================
+FileCleanerErrorRate             Total number of file cleaning errors                                                                                                                              
+FileCleanerFilesFailedRate       Total number of files the storage backend did not confirm deleted; they stay marked for deletion and are retried on a later cycle                                 
+FileCleanerFilesRate             Total number of files cleaned                                                                                                                                     
+FileCleanerRate                  Total number of file cleaning cycles started                                                                                                                      
+FileCleanerTotalTime             Total time spent on a file cleaning cycle in milliseconds                                                                                                         
+LastSuccessfulFileCleanupAgeMs   Milliseconds since the last file cleaning cycle completed without error, including cycles that found nothing to delete; -1 if no cycle has completed since startup
+===============================  ==================================================================================================================================================================
 
 
 RetentionEnforcer metrics

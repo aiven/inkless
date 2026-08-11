@@ -169,4 +169,27 @@ class FileCleanerMockedTest {
 
         verify(controlPlane, times(0)).deleteFiles(any());
     }
+
+    @Test
+    void tracksLastSuccessfulCycle() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
+        when(controlPlane.getFilesToDelete()).thenReturn(List.of());
+
+        assertEquals(-1, cleaner.metrics.lastSuccessfulCleanupTimeMs.get());
+
+        cleaner.run();
+
+        // A cycle with no work still counts: the gauge answers "is the cleaner running", not "is it deleting".
+        assertEquals(time.milliseconds(), cleaner.metrics.lastSuccessfulCleanupTimeMs.get());
+    }
+
+    @Test
+    void doesNotTrackFailedCycleAsSuccessful() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
+        when(controlPlane.getFilesToDelete()).thenThrow(new RuntimeException("boom"));
+
+        cleaner.run();
+
+        assertEquals(-1, cleaner.metrics.lastSuccessfulCleanupTimeMs.get());
+    }
 }
