@@ -236,14 +236,15 @@ FileCleaner metrics
 io.aiven.inkless.delete:type=FileCleaner
 ----------------------------------------
 
-=====================  =========================================================
-Attribute name         Description                                              
-=====================  =========================================================
-FileCleanerErrorRate   Total number of file cleaning errors                     
-FileCleanerFilesRate   Total number of files cleaned                            
-FileCleanerRate        Total number of file cleaning cycles started             
-FileCleanerTotalTime   Total time spent on a file cleaning cycle in milliseconds
-=====================  =========================================================
+===========================  =================================================================================================================================
+Attribute name               Description                                                                                                                      
+===========================  =================================================================================================================================
+FileCleanerErrorRate         Total number of file cleaning errors                                                                                             
+FileCleanerFilesFailedRate   Total number of files the storage backend did not confirm deleted; they stay marked for deletion and are retried on a later cycle
+FileCleanerFilesRate         Total number of files cleaned                                                                                                    
+FileCleanerRate              Total number of file cleaning cycles started                                                                                     
+FileCleanerTotalTime         Total time spent on a file cleaning cycle in milliseconds                                                                        
+===========================  =================================================================================================================================
 
 
 RetentionEnforcer metrics

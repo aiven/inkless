@@ -42,6 +42,7 @@ import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -83,6 +84,7 @@ class FileCleanerMockedTest {
 
         verify(storageBackend, times(1)).delete(Set.of(objectKey));
         verify(controlPlane, times(1)).deleteFiles(new DeleteFilesRequest(Set.of(objectKey.value())));
+        assertEquals(0, cleaner.metrics.fileCleanerFilesFailed.sum());
     }
 
     @Test
@@ -134,6 +136,7 @@ class FileCleanerMockedTest {
 
         // Only the confirmed key is dereferenced; the throttled one stays for the next cycle.
         verify(controlPlane, times(1)).deleteFiles(new DeleteFilesRequest(Set.of(deleted.value())));
+        assertEquals(1, cleaner.metrics.fileCleanerFilesFailed.sum());
     }
 
     @Test

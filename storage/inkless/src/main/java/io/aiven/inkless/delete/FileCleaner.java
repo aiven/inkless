@@ -132,6 +132,7 @@ public class FileCleaner implements Runnable, Closeable {
         // remaining keys stay marked for deletion and are retried on the next cycle instead of being
         // re-attempted after already being deleted.
         final Set<ObjectKey> deletedKeys = storage.delete(objectKeys);
+        metrics.recordFileCleanerFilesFailed(objectKeyPaths.size() - deletedKeys.size());
         if (deletedKeys.isEmpty()) {
             LOGGER.warn("No files deleted from storage out of {} candidates; retrying next cycle",
                 objectKeyPaths.size());

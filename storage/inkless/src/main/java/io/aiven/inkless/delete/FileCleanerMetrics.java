@@ -37,6 +37,9 @@ public class FileCleanerMetrics {
     private static final String FILE_CLEANER_FILES_RATE_DOC = "Total number of files cleaned";
     static final String FILE_CLEANER_ERROR_RATE = "FileCleanerErrorRate";
     private static final String FILE_CLEANER_ERROR_RATE_DOC = "Total number of file cleaning errors";
+    static final String FILE_CLEANER_FILES_FAILED_RATE = "FileCleanerFilesFailedRate";
+    private static final String FILE_CLEANER_FILES_FAILED_RATE_DOC = "Total number of files the storage backend did "
+        + "not confirm deleted; they stay marked for deletion and are retried on a later cycle";
 
     /**
      * This method returns a list of all the metric name templates for the FileCleanerMetrics class.
@@ -47,7 +50,8 @@ public class FileCleanerMetrics {
             new MetricNameTemplate(FILE_CLEANER_TOTAL_TIME, GROUP, FILE_CLEANER_TOTAL_TIME_DOC),
             new MetricNameTemplate(FILE_CLEANER_RATE, GROUP, FILE_CLEANER_RATE_DOC),
             new MetricNameTemplate(FILE_CLEANER_FILES_RATE, GROUP, FILE_CLEANER_FILES_RATE_DOC),
-            new MetricNameTemplate(FILE_CLEANER_ERROR_RATE, GROUP, FILE_CLEANER_ERROR_RATE_DOC)
+            new MetricNameTemplate(FILE_CLEANER_ERROR_RATE, GROUP, FILE_CLEANER_ERROR_RATE_DOC),
+            new MetricNameTemplate(FILE_CLEANER_FILES_FAILED_RATE, GROUP, FILE_CLEANER_FILES_FAILED_RATE_DOC)
         );
     }
 
@@ -57,12 +61,15 @@ public class FileCleanerMetrics {
     private final LongAdder fileCleanerRate = new LongAdder();
     private final LongAdder fileCleanerFiles = new LongAdder();
     private final LongAdder fileCleanerErrorRate = new LongAdder();
+    // package-private for tests, following ClientAzAwarenessMetrics
+    final LongAdder fileCleanerFilesFailed = new LongAdder();
 
     public FileCleanerMetrics() {
         fileCleanerTotalTime = metricsGroup.newHistogram(FILE_CLEANER_TOTAL_TIME, true, Map.of());
         metricsGroup.newGauge(FILE_CLEANER_RATE, fileCleanerRate::intValue);
         metricsGroup.newGauge(FILE_CLEANER_FILES_RATE, fileCleanerFiles::intValue);
         metricsGroup.newGauge(FILE_CLEANER_ERROR_RATE, fileCleanerErrorRate::intValue);
+        metricsGroup.newGauge(FILE_CLEANER_FILES_FAILED_RATE, fileCleanerFilesFailed::intValue);
     }
 
     public void recordFileCleanerStart() {
@@ -81,10 +88,15 @@ public class FileCleanerMetrics {
         fileCleanerFiles.add(filesSize);
     }
 
+    public void recordFileCleanerFilesFailed(int filesSize) {
+        fileCleanerFilesFailed.add(filesSize);
+    }
+
     public void close() {
         metricsGroup.removeMetric(FILE_CLEANER_TOTAL_TIME);
         metricsGroup.removeMetric(FILE_CLEANER_RATE);
         metricsGroup.removeMetric(FILE_CLEANER_FILES_RATE);
         metricsGroup.removeMetric(FILE_CLEANER_ERROR_RATE);
+        metricsGroup.removeMetric(FILE_CLEANER_FILES_FAILED_RATE);
     }
 }
