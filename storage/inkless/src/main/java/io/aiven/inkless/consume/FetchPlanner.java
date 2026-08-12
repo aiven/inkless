@@ -259,21 +259,23 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
             // doesn't run, so this flag stays false — but with per-key hedge dedup (hedgeGuards),
             // at most one hedge fires per primary regardless of how many callers have stale TTFB flags.
             final AtomicBoolean firstByteReceived = new AtomicBoolean(false);
-            final AtomicBoolean loadRan = new AtomicBoolean(false);
+            // Set by the cache on the calling thread before computeIfAbsent returns when this caller's load
+            // was registered, so it cannot be observed stale the way the load body itself can.
+            final AtomicBoolean loadStarted = new AtomicBoolean(false);
             final CompletableFuture<FileExtent> primary = cache.computeIfAbsent(
                 request.toCacheKey(),
                 k -> {
-                    loadRan.set(true);
                     final FileExtent fileExtent = fetchFileExtent(objectFetcher, request, firstByteReceived);
                     metrics.recordStorageBytesIn(fileExtent.data().length);
                     return fileExtent;
                 },
-                fetchDataExecutor
+                fetchDataExecutor,
+                () -> loadStarted.set(true)
             );
-            // This caller running the load means a miss whatever isDone() reports by now: the load may already
-            // have finished on the fetch executor. Only when it did not run does isDone() separate a value that
+            // This caller starting the load means a miss whatever isDone() reports by now: the load may already
+            // have finished on the fetch executor. Only when it did not start does isDone() separate a value that
             // was already cached from coalescing onto another caller's in-flight load.
-            final boolean alreadyCached = !loadRan.get() && primary.isDone();
+            final boolean alreadyCached = !loadStarted.get() && primary.isDone();
             primary.thenAccept(fileExtent -> {
                 metrics.recordDisklessBytesOut(fileExtent.data().length);
                 if (alreadyCached) {

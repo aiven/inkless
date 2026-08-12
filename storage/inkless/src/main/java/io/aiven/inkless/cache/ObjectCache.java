@@ -38,11 +38,15 @@ public interface ObjectCache extends Cache<CacheKey, FileExtent>, Closeable {
      * @param key the cache key
      * @param load the function to compute the value if absent
      * @param loadExecutor the executor to use for async computation on cache miss
+     * @param onLoadStarted run on the calling thread before this method returns, only when this caller's load
+     *                      was registered. Not run when an entry was present, including when coalescing onto
+     *                      another caller's in-flight load.
      * @return a CompletableFuture that will complete with the cached or computed value
      */
     CompletableFuture<FileExtent> computeIfAbsent(
         CacheKey key,
         Function<CacheKey, FileExtent> load,
-        Executor loadExecutor
+        Executor loadExecutor,
+        Runnable onLoadStarted
     );
 }

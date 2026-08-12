@@ -80,7 +80,8 @@ public final class CaffeineCache implements ObjectCache {
     public CompletableFuture<FileExtent> computeIfAbsent(
         final CacheKey key,
         final Function<CacheKey, FileExtent> load,
-        final Executor loadExecutor
+        final Executor loadExecutor,
+        final Runnable onLoadStarted
     ) {
         // Caffeine's AsyncCache.get() provides atomic cache population per key.
         // When multiple threads concurrently request the same uncached key, the mapping function
@@ -88,6 +89,9 @@ public final class CaffeineCache implements ObjectCache {
         // This guarantees that the load function is called at most once per key for successful operations,
         // preventing duplicate fetch operations from object storage. Failed loads are invalidated and may be retried.
         return cache.get(key, (k, defaultExecutor) -> {
+            // Caffeine invokes this mapping function on the calling thread, and only on a miss, so the
+            // callback runs before get() returns and cannot race with the load thread.
+            onLoadStarted.run();
             // Use the provided executor instead of Caffeine's default executor.
             // This allows us to control which thread pool handles the fetch and blocks there,
             // while Caffeine's internal threads remain unblocked, so cache operations can continue to be served.

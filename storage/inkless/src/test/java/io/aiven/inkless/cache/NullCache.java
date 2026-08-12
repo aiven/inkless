@@ -42,9 +42,11 @@ public class NullCache implements ObjectCache {
     public CompletableFuture<FileExtent> computeIfAbsent(
         CacheKey key,
         Function<CacheKey, FileExtent> load,
-        Executor loadExecutor
+        Executor loadExecutor,
+        Runnable onLoadStarted
     ) {
         // Always a cache miss, compute on executor
+        onLoadStarted.run();
         return CompletableFuture.supplyAsync(() -> load.apply(key), loadExecutor);
     }
 

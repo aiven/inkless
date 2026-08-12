@@ -20,6 +20,11 @@ package io.aiven.inkless.cache;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
@@ -84,6 +89,72 @@ class CaffeineCacheTest {
 
             // Count limit (1) is ignored because bytes limit is configured
             assertThat(cache.size()).isGreaterThan(1);
+        }
+    }
+
+    /**
+     * The hot path classifies a fetch as a cache hit from what {@code computeIfAbsent} reports, so the
+     * miss signal must be visible to the caller as soon as the call returns. Signalling it from the load
+     * body would not be: the load runs on the load executor and may not have started yet, or may already
+     * have completed the future.
+     */
+    @Test
+    void loadStartedCallbackRunsOnTheCallingThreadBeforeReturning() throws Exception {
+        try (CaffeineCache cache = new CaffeineCache(10, 0, 3600, 180)) {
+            final Queue<Runnable> pending = new ConcurrentLinkedQueue<>();
+            final AtomicBoolean loadStarted = new AtomicBoolean(false);
+            final List<Thread> callbackThread = new ArrayList<>();
+
+            final var future = cache.computeIfAbsent(
+                key("a"),
+                k -> extent(10),
+                pending::add,
+                () -> {
+                    callbackThread.add(Thread.currentThread());
+                    loadStarted.set(true);
+                }
+            );
+
+            // The load has not run at all yet, so only a callback invoked by computeIfAbsent itself can
+            // have set the flag.
+            assertThat(loadStarted).isTrue();
+            assertThat(callbackThread).containsExactly(Thread.currentThread());
+            assertThat(future).isNotDone();
+            assertThat(pending).hasSize(1);
+
+            pending.poll().run();
+            assertThat(future.get()).isEqualTo(extent(10));
+        }
+    }
+
+    /**
+     * Coalescing onto an in-flight load must not signal a load start: the caller did not start a load, so
+     * the hot path can tell it apart from an already-cached value by the future not being done.
+     */
+    @Test
+    void loadStartedCallbackDoesNotRunForACoalescedOrCachedLookup() throws Exception {
+        try (CaffeineCache cache = new CaffeineCache(10, 0, 3600, 180)) {
+            final Queue<Runnable> pending = new ConcurrentLinkedQueue<>();
+            final var first = cache.computeIfAbsent(key("a"), k -> extent(10), pending::add, () -> { });
+
+            final AtomicBoolean coalescedLoadStarted = new AtomicBoolean(false);
+            final var coalesced = cache.computeIfAbsent(
+                key("a"), k -> extent(10), pending::add, () -> coalescedLoadStarted.set(true));
+
+            assertThat(coalescedLoadStarted).isFalse();
+            assertThat(coalesced).isSameAs(first).isNotDone();
+            assertThat(pending).hasSize(1);
+
+            pending.poll().run();
+            assertThat(first.get()).isEqualTo(extent(10));
+
+            final AtomicBoolean cachedLoadStarted = new AtomicBoolean(false);
+            final var cached = cache.computeIfAbsent(
+                key("a"), k -> extent(10), pending::add, () -> cachedLoadStarted.set(true));
+
+            assertThat(cachedLoadStarted).isFalse();
+            assertThat(cached).isDone();
+            assertThat(pending).isEmpty();
         }
     }
 
