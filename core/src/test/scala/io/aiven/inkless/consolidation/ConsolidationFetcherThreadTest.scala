@@ -23,18 +23,23 @@ import kafka.cluster.Partition
 import kafka.server._
 import kafka.server.metadata.InklessMetadataView
 import kafka.utils.TestUtils
-import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.compress.Compression
 import org.apache.kafka.common.errors.RecordBatchTooLargeException
 import org.apache.kafka.common.message.FetchResponseData
-import org.apache.kafka.common.record.{BaseRecords, MemoryRecords, SimpleRecord}
+import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.common.requests.FetchRequest
+import org.apache.kafka.common.record.{BaseRecords, MemoryRecords, SimpleRecord, TimestampType}
 import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.server.LeaderEndPoint
 import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.common.InvalidRecordException
+import org.apache.kafka.server.purgatory.DelayedOperationPurgatory
+import org.apache.kafka.server.storage.log.FetchPartitionData
 import org.apache.kafka.storage.internals.log.{LogAppendInfo, UnifiedLog}
+import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, FindBatchResponse}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
@@ -43,7 +48,9 @@ import org.mockito.ArgumentMatchers.{any, anyLong}
 import org.mockito.Mockito.{RETURNS_DEEP_STUBS, doNothing, mock, never, verify, when}
 
 import java.nio.charset.StandardCharsets
-import java.util.Optional
+import java.util
+import java.util.concurrent.CompletableFuture
+import java.util.{Optional, OptionalInt, OptionalLong}
 import scala.jdk.CollectionConverters._
 
 class ConsolidationFetcherThreadTest {
@@ -61,6 +68,90 @@ class ConsolidationFetcherThreadTest {
   def tearDown(): Unit = {
     metrics.close()
     TestUtils.clearYammerMetrics()
+  }
+
+  /**
+   * An empty control-plane response must reach the follower as zero bytes with Errors.NONE, because
+   * validBytes == 0 is what stops AbstractFetcherThread demoting the partition -- so it keeps its place and
+   * is served first next iteration.
+   *
+   * The fragile hop is clampRecordsToSegment: its "at least one batch is always emitted for progress"
+   * applies to trimming a non-empty block and must not become a floor for an empty one.
+   *
+   * Characterization test -- the handler is stubbed, so it passes with or without the request-level grant;
+   * verified non-vacuous by mutation instead. It does not assert the rotation gate, which is upstream code
+   * covered against real SQL by FindBatchesFairnessTest.
+   */
+  @Test
+  def testConsolidationFetchPropagatesEmptyControlPlaneResponseAsZeroBytes(): Unit = {
+    val highWatermark = 100L
+    val topicId = Uuid.randomUuid()
+    val topicIdPartition = new TopicIdPartition(topicId, topicPartition)
+
+    val log = mock(classOf[UnifiedLog])
+    when(log.logStartOffset).thenReturn(0L)
+    when(log.remoteLogEnabled()).thenReturn(false)
+    val partition = mock(classOf[Partition])
+    when(partition.localLogOrException).thenReturn(log)
+    when(partition.topicPartition).thenReturn(topicPartition)
+
+    val replicaManager = mock(classOf[ReplicaManager], RETURNS_DEEP_STUBS)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+    when(replicaManager.crossTierEarliestOffset(topicPartition)).thenReturn(OptionalLong.empty())
+    val purgatory = new DelayedOperationPurgatory[DelayedConsolidationFetch]("ConsolidationFetchTest", 1, 0)
+    when(replicaManager.delayedConsolidationFetchPurgatory).thenReturn(purgatory)
+
+    // The unbudgeted probe reports data, so the delayed op completes and runs the real fetch instead of
+    // parking on minBytes. A real record, not a mock: FindBatchResponse has a success() factory, and a
+    // partial mock would leave batches() returning null the moment tryComplete starts reading it.
+    val probeBatch = new BatchInfo(1L, "probe-object",
+      BatchMetadata.of(topicIdPartition, 0L, 64L * 1024 * 1024, 0L, 9L,
+        System.currentTimeMillis(), System.currentTimeMillis(), TimestampType.CREATE_TIME))
+    val probeResponse = FindBatchResponse.success(util.List.of(probeBatch), 0L, highWatermark)
+    when(replicaManager.findDisklessBatches(any())).thenReturn(Some(util.List.of(probeResponse)))
+
+    // The budgeted fetch served this partition nothing: the aggregate budget went to other partitions.
+    val fetchHandler = mock(classOf[FetchHandler])
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(
+      util.Map.of(topicIdPartition, new FetchPartitionData(
+        Errors.NONE, highWatermark, 0L, MemoryRecords.EMPTY,
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false))
+    ))
+
+    val props = TestUtils.createBrokerConfig(nodeId = 1)
+    val config = KafkaConfig.fromProps(props)
+    val endpoint = new DisklessLeaderEndPoint(
+      new BrokerEndPoint(0, "localhost", 9092),
+      fetchHandler,
+      mock(classOf[FetchOffsetHandler]),
+      replicaManager,
+      config,
+      mock(classOf[ReplicaQuota]),
+      () => MetadataVersion.LATEST_PRODUCTION,
+      () => 1L
+    )
+
+    try {
+      val requestMap = new java.util.LinkedHashMap[TopicPartition, FetchRequest.PartitionData]()
+      requestMap.put(topicPartition, new FetchRequest.PartitionData(topicId, 0L, 0L, 1024 * 1024, Optional.empty()))
+      val builder = FetchRequest.Builder
+        .forReplica(MetadataVersion.LATEST_PRODUCTION.fetchRequestVersion, 1, 1L, 500, 1, requestMap)
+        .setMaxBytes(64 * 1024 * 1024)
+
+      val response = endpoint.fetch(builder)
+
+      val partitionResponse = response.get(topicPartition)
+      assertNotNull(partitionResponse)
+      // Zero bytes, so AbstractFetcherThread computes validBytes == 0 and does not demote the partition.
+      assertEquals(Errors.NONE.code, partitionResponse.errorCode)
+      assertEquals(0, partitionResponse.records.sizeInBytes,
+        "an unserved partition must return no records, so the fetcher's move-to-end rotation can advance it")
+      // The high watermark still comes back, so consolidation lag stays visible while the partition waits.
+      assertEquals(highWatermark, partitionResponse.highWatermark)
+      assertEquals(0L, partitionResponse.logStartOffset)
+    } finally {
+      purgatory.shutdown()
+    }
   }
 
   private def createConsolidationFetcherThread(
