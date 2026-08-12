@@ -1093,7 +1093,6 @@ class ControllerApisTest {
     val controlPlane = mock(classOf[ControlPlane])
     val topic = new CreatePartitionsTopic().setName(topicName).setAssignments(null).setCount(2)
     val result = new CreatePartitionsTopicResult().setName(topicName).setErrorCode(NONE.code())
-    metadataCache.setImage(MetadataImage.EMPTY)
 
     when(controller.createPartitions(any(), ArgumentMatchers.eq(singletonList(topic)), ArgumentMatchers.eq(false)))
       .thenAnswer { _ =>
@@ -1440,7 +1439,6 @@ class ControllerApisTest {
 
   @AfterEach
   def tearDown(): Unit = {
-    metadataCache.setImage(MetadataImage.EMPTY)
     quotasNeverThrottleControllerMutations.shutdown()
     quotasAlwaysThrottleControllerMutations.shutdown()
     if (controllerApis != null && !controllerApis.isClosed)

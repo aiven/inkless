@@ -58,10 +58,16 @@ public class TopicsAndPartitionsCreateJob implements Runnable {
     }
 
     private void runOnce() {
+        final int maxInserts = requests.stream()
+            .mapToInt(CreateTopicAndPartitionsRequest::partitionsToCreate)
+            .sum();
+        if (maxInserts == 0) {
+            return;
+        }
+
         // See how topics are created in ReplicationControlManager.createTopic.
         // It's ordered so that ConfigRecords go after TopicRecord but before PartitionRecord(s).
         // So it means we will see topic configs before any partition.
-
         jooqCtx.transaction((final Configuration conf) -> {
             var insertStep = conf.dsl().insertInto(LOGS,
                 LOGS.TOPIC_ID,
@@ -78,9 +84,6 @@ public class TopicsAndPartitionsCreateJob implements Runnable {
             final int rowsInserted = insertStep.onConflictDoNothing().execute();
 
             // This is not expected to happen, but checking just in case.
-            final int maxInserts = requests.stream()
-                .mapToInt(CreateTopicAndPartitionsRequest::partitionsToCreate)
-                .sum();
             if (rowsInserted < 0 || rowsInserted > maxInserts) {
                 throw new RuntimeException(
                     String.format("Unexpected number of inserted rows: expected max %d, got %d", maxInserts, rowsInserted));

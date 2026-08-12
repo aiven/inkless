@@ -2013,6 +2013,32 @@ public abstract class AbstractControlPlaneTest {
         }
 
         @Test
+        void initMustNotOverwritePartitionThatCarriesData() {
+            final TopicIdPartition topicIdPartition = new TopicIdPartition(NEW_TOPIC_ID, 0, NEW_TOPIC);
+
+            assertThat(controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 0, 0, List.of())
+            ))).containsExactly(InitDisklessLogResponse.success());
+
+            controlPlane.commitFile("a", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(
+                CommitBatchRequest.of(
+                    0, topicIdPartition, 1, 10, 1, 10, 1000, TimestampType.CREATE_TIME)
+            ));
+
+            final var before = controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0)));
+            assertThat(before).containsExactly(GetLogInfoResponse.success(0, 10, 0, 10));
+
+            // A divergent seal must not replace offsets for a partition that already carries diskless data.
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 0, 999, List.of())
+            ));
+
+            assertThat(responses).containsExactly(InitDisklessLogResponse.alreadyInitialized());
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
+                .isEqualTo(before);
+        }
+
+        @Test
         void withProducerStates() {
             final long producerId = 42L;
             final short producerEpoch = 1;

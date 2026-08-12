@@ -23,10 +23,11 @@ import org.apache.kafka.common.Uuid;
  * Request to create control-plane {@code logs} rows for a topic's partitions.
  *
  * <p>{@code numPartitions} is the topic's partition count once the operation completes; rows are created
- * for {@code [firstPartition, numPartitions)}. Topic creation starts at 0, while a partition-count
- * increase starts at the previous count so it does not insert an empty row over a partition that is
- * concurrently switching from classic to diskless (KC-387, see
- * {@code V23__Init_diskless_log_authoritative_seal.sql}).
+ * for {@code [firstPartition, numPartitions)}. Topic creation starts at 0. For a partition-count increase,
+ * {@code firstPartition} comes from an asynchronously published metadata image and may lag controller state.
+ * The narrowed range is therefore a best-effort way to avoid inserting an empty row over a partition that is
+ * concurrently switching from classic to diskless. The guarded upsert in
+ * {@code V23__Init_diskless_log_authoritative_seal.sql} provides the correctness guarantee (KC-387).
  */
 public record CreateTopicAndPartitionsRequest(Uuid topicId,
                                               String topicName,
