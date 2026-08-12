@@ -2545,6 +2545,7 @@ class ReplicaManager(val config: KafkaConfig,
                             _: NotLeaderOrFollowerException |
                             _: UnknownLeaderEpochException |
                             _: FencedLeaderEpochException |
+                            _: OffsetOutOfRangeException |
                             _: ReplicaNotAvailableException |
                             _: KafkaStorageException |
                             _: InconsistentTopicIdException) =>

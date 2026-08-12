@@ -7231,6 +7231,74 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testFollowerFetchAtSealIsolatesOffsetOutOfRangeError(): Unit = {
+    val followerId = 2
+    val sealOffset = 5L
+    val validTopicPartition = new TopicIdPartition(
+      disklessTopicPartition.topicId(), 1, disklessTopicPartition.topic())
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+    )
+    try {
+      val invalidEpochPartition = setupSwitchedLeaderWithOutOfSyncFollower(
+        replicaManager, disklessTopicPartition, followerId, sealOffset)
+      val validPartition = setupSwitchedLeaderWithOutOfSyncFollower(
+        replicaManager, validTopicPartition, followerId, sealOffset)
+      val brokerEpoch = replicaManager.metadataCache.getAliveBrokerEpoch(followerId).get.longValue()
+
+      doReturn(new CompletableFuture[Any]())
+        .when(alterPartitionManager).submit(any(), any())
+      clearInvocations(alterPartitionManager)
+
+      val fetchParams = new FetchParams(
+        followerId, brokerEpoch, 0L, 1, 1024 * 1024, FetchIsolation.LOG_END, Optional.empty())
+      val fetchInfos = Seq(
+        disklessTopicPartition ->
+          new PartitionData(
+            disklessTopicPartition.topicId(),
+            sealOffset,
+            0L,
+            1024 * 1024,
+            Optional.of(invalidEpochPartition.getLeaderEpoch),
+            Optional.of(invalidEpochPartition.getLeaderEpoch + 1)),
+        validTopicPartition ->
+          new PartitionData(
+            validTopicPartition.topicId(),
+            sealOffset,
+            0L,
+            1024 * 1024,
+            Optional.of(validPartition.getLeaderEpoch))
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA,
+        response => responseData = response.toMap)
+
+      assertNotNull(responseData)
+      assertEquals(2, responseData.size)
+
+      val invalidEpochData = responseData(disklessTopicPartition)
+      assertEquals(Errors.OFFSET_OUT_OF_RANGE, invalidEpochData.error)
+      assertEquals(UnifiedLog.UNKNOWN_OFFSET, invalidEpochData.highWatermark)
+      assertEquals(UnifiedLog.UNKNOWN_OFFSET, invalidEpochData.logStartOffset)
+      assertEquals(MemoryRecords.EMPTY, invalidEpochData.records)
+      assertEquals(UnifiedLog.UNKNOWN_OFFSET,
+        invalidEpochPartition.getReplica(followerId).get.stateSnapshot.logEndOffset)
+
+      val validData = responseData(validTopicPartition)
+      assertEquals(Errors.NONE, validData.error)
+      assertEquals(sealOffset, validData.highWatermark)
+      assertEquals(MemoryRecords.EMPTY, validData.records)
+      assertEquals(sealOffset, validPartition.getReplica(followerId).get.stateSnapshot.logEndOffset)
+      verify(alterPartitionManager, times(1)).submit(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testFollowerFetchAtSealReturnsDivergingEpochAndSkipsIsrExpansion(): Unit = {
     val followerId = 2
     val sealOffset = 5L
