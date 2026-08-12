@@ -6423,7 +6423,8 @@ class ReplicaManagerInklessTest {
     brokerId: Int,
     leaderId: Int,
     classicToDisklessStartOffset: Long = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
-    disklessLeaderEpoch: Int = PartitionRegistration.NO_DISKLESS_LEADER_EPOCH
+    disklessLeaderEpoch: Int = PartitionRegistration.NO_DISKLESS_LEADER_EPOCH,
+    followerInIsr: Boolean = true
   ): TopicsDelta = {
     val delta = new TopicsDelta(TopicsImage.EMPTY)
     delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
@@ -6431,7 +6432,7 @@ class ReplicaManagerInklessTest {
       .setPartitionId(0)
       .setTopicId(topicId)
       .setReplicas(util.Arrays.asList(brokerId, leaderId))
-      .setIsr(util.Arrays.asList(brokerId, leaderId))
+      .setIsr(if (followerInIsr) util.Arrays.asList(brokerId, leaderId) else util.Arrays.asList(leaderId))
       .setLeader(leaderId)
       .setLeaderEpoch(0)
       .setPartitionEpoch(0)
@@ -6573,6 +6574,44 @@ class ReplicaManagerInklessTest {
 
       // Nothing to catch up — no fetcher should be added for this partition.
       verify(mockFetcherManager, never()).addFetcherForPartitions(any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaStartsCatchUpFetcherWhenDisklessFollowerAtSealButOutOfIsr(): Unit = {
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager)
+    ))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(
+        replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+
+      val delta = disklessFollowerDelta(
+        topicName, topicId, brokerId, leaderId, followerInIsr = false)
+      replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+      val leaderEndpoint = ClusterImageTest.IMAGE1.broker(leaderId).listeners().get("PLAINTEXT")
+      verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+        topicId = Some(topicId),
+        leader = new BrokerEndPoint(leaderId, leaderEndpoint.host(), leaderEndpoint.port()),
+        currentLeaderEpoch = 0,
+        initOffset = sealOffset
+      )))
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }

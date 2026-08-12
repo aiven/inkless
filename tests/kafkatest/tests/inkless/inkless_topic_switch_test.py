@@ -382,16 +382,17 @@ class InklessClassicToDisklessSwitchTest(Test):
     def _live_cluster_jmx_sum(self, obj_name):
         """Read and sum one JMX gauge across live broker nodes.
 
-        Returns None when no live broker reported the gauge so callers can tell a
-        genuine zero apart from a scrape miss, rather than reading a failed scrape
-        as 0 and passing a wait-for-zero check prematurely.
+        Returns None unless every live broker reported the gauge. Leader-owned
+        gauges such as UnderReplicatedPartitions cannot be treated as zero when
+        the leader's scrape is missing.
         """
         key = "%s:Value" % obj_name
         total = 0.0
-        observed = False
-        for node in self.kafka.nodes:
-            if not self.kafka.pids(node):
-                continue
+        observed_nodes = 0
+        live_nodes = [node for node in self.kafka.nodes if self.kafka.pids(node)]
+        if not live_nodes:
+            return None
+        for node in live_nodes:
             idx = self.kafka.idx(node)
             try:
                 self.kafka.read_jmx_output(idx, node)
@@ -404,9 +405,12 @@ class InklessClassicToDisklessSwitchTest(Test):
             time_to_stats = self.kafka.jmx_stats[idx - 1]
             if time_to_stats:
                 latest = max(time_to_stats.keys())
-                total += time_to_stats[latest].get(key, 0)
-                observed = True
-        return int(total) if observed else None
+                latest_stats = time_to_stats[latest]
+                if key not in latest_stats:
+                    continue
+                total += latest_stats[key]
+                observed_nodes += 1
+        return int(total) if observed_nodes == len(live_nodes) else None
 
     def _wait_for_under_replicated_partitions(self, expected_count, timeout_sec=120):
         def check():
