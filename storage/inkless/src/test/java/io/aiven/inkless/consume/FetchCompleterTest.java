@@ -45,6 +45,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.common.ByteRange;
@@ -138,6 +139,38 @@ public class FetchCompleterTest {
     }
 
     @Test
+    public void testEmptyResponseForLaggingPartitionCarriesLastStableOffset() {
+        // A partition the request budget served nothing: empty batch list, but the fetch offset (0) is
+        // below the high watermark (100), so it still has lag. The empty branch must carry the LSO, or it
+        // reaches the consumer as INVALID_LAST_STABLE_OFFSET and the lastStableOffset >= 0 guard skips
+        // SubscriptionState.updateLastStableOffset, leaving a READ_COMMITTED consumer's lag stale until the
+        // partition wins its rotation turn.
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        int logStartOffset = 0;
+        int highWatermark = 100;
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(Collections.emptyList(), logStartOffset, highWatermark)
+        );
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(),
+            OBJECT_KEY_CREATOR,
+            fetchInfos,
+            coordinates,
+            Collections.emptyList(),
+            durationMs -> {}, metrics
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+        FetchPartitionData data = result.get(partition0);
+        assertThat(data.error).isEqualTo(Errors.NONE);
+        assertThat(data.records).isEqualTo(MemoryRecords.EMPTY);
+        assertThat(data.logStartOffset).isEqualTo(logStartOffset);
+        assertThat(data.highWatermark).isEqualTo(highWatermark);
+        assertThat(data.lastStableOffset).isEqualTo(OptionalLong.of(highWatermark));
+    }
+
+    @Test
     public void testFetchWithoutFiles() {
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
             partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
@@ -184,6 +217,8 @@ public class FetchCompleterTest {
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
         assertThat(data.error).isEqualTo(Errors.OFFSET_OUT_OF_RANGE);
+        // The error path leaves the LSO unset, unlike the empty-but-successful path above.
+        assertThat(data.lastStableOffset).isEqualTo(OptionalLong.empty());
         verify(metrics, times(1)).recordPartitionControlPlaneError();
         // Control-plane errors are distinct from the data-plane storage/corrupt classification.
         verify(metrics, never()).recordPartitionStorageError();

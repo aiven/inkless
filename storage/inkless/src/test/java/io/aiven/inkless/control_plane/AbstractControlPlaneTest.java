@@ -84,6 +84,7 @@ public abstract class AbstractControlPlaneTest {
     }
 
     protected abstract ControlPlaneAndConfigs createControlPlane(final TestInfo testInfo);
+
     protected abstract void tearDownControlPlane() throws IOException;
 
     static void configureControlPlane(ControlPlane controlPlane, Map<String, ?> configs) {
@@ -336,6 +337,29 @@ public abstract class AbstractControlPlaneTest {
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 0)
         );
+    }
+
+    @Test
+    void findBatchesAppliesFetchMaxBytesAcrossTheWholeRequest() {
+        final int batchSize = 100;
+        controlPlane.commitFile("obj-budget", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, 2L * batchSize,
+            List.of(
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 0, 9, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_1, batchSize, batchSize, 0, 9, 1000, TimestampType.CREATE_TIME)
+            ));
+
+        // A budget that exactly one partition can absorb.
+        final List<FindBatchResponse> response = controlPlane.findBatches(
+            List.of(
+                new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize),
+                new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_1, 0, batchSize)
+            ), batchSize, 0);
+
+        assertThat(response).allSatisfy(r -> assertThat(r.errors()).isEqualTo(Errors.NONE));
+        // The grant covers partition 0; partition 1 is past the budget and must return nothing, because that
+        // empty response is what the callers' move-to-end rotations use to serve it first next round. Both
+        // control planes must agree here -- the fetch path's fairness depends on it.
+        assertThat(response).extracting(r -> r.batches().size()).containsExactly(1, 0);
     }
 
     @Test
