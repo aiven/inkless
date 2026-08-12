@@ -170,6 +170,10 @@ class DelayedFetch(
   private def tryCompleteDiskless(fetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]): Option[Long] = {
     var accumulatedSize = 0L
     val fetchPartitionStatusMap = fetchPartitionStatus.asScala
+    // This probe is unbudgeted, unlike the real fetch in onComplete: findDisklessBatches reads the local
+    // batch-coordinate cache (the default) or, with the cache disabled, passes maxBytes = Int.MaxValue to
+    // find_batches. Neither applies a global budget, so request order carries no meaning here -- it is only
+    // on the budgeted path that order decides who gets served, and there the Seq must stay ordered.
     val requests = fetchPartitionStatusMap.map { case (topicIdPartition, fetchStatus) =>
       new FindBatchRequest(topicIdPartition, fetchStatus.startOffsetMetadata.messageOffset, fetchStatus.fetchInfo.maxBytes)
     }
@@ -291,10 +295,14 @@ class DelayedFetch(
       if (disklessRequestsSize > 0) {
         val disklessPercentage = disklessRequestsSize / totalRequestsSize
         val disklessParams = replicaManager.fetchParamsWithNewMaxBytes(params, disklessPercentage)
-        val disklessFetchInfos = disklessFetchPartitionStatus.asScala.map { case (tp, status) =>
-          tp -> status.fetchInfo
-        }
-        replicaManager.fetchDisklessMessages(disklessParams, disklessFetchInfos.toSeq)
+        // Iterator, not `.asScala.map`: a tuple-producing `map` over the wrapped LinkedHashMap rebuilds a
+        // mutable.HashMap and loses the order this status map carries. Order is required by
+        // ReplicaManager.fetchDisklessMessages -- see its javadoc.
+        val disklessFetchInfos =
+          disklessFetchPartitionStatus.asScala.iterator.map { case (tp, status) =>
+            tp -> status.fetchInfo
+          }.toSeq
+        replicaManager.fetchDisklessMessages(disklessParams, disklessFetchInfos)
           .exceptionally((e: Throwable) => {
             logger.warn("Failed to fetch diskless data in delayed fetch, returning per-partition errors", e)
             val error = Errors.forException(e)
@@ -310,7 +318,7 @@ class DelayedFetch(
                 util.OptionalInt.empty(),
                 false
               )
-            }.toSeq
+            }
           })
       } else {
         CompletableFuture.completedFuture(emptyDisklessSeq)
