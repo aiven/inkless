@@ -2508,6 +2508,7 @@ class ReplicaManager(val config: KafkaConfig,
         if (!partitionLookupFailed) {
           val disklessSwitchCompleted = !shouldReadFromUnifiedLog && classicToDisklessStartOffset >= 0
           if (params.isFromFollower && disklessSwitchCompleted) {
+            var fetchError = Errors.NONE
             var divergingEpoch = Optional.empty[FetchResponseData.EpochEndOffset]
             // A recovered follower for a switched partition may already be caught up to the
             // seal offset but still be outside ISR. Record the seal-offset fetch so the normal
@@ -2518,25 +2519,36 @@ class ReplicaManager(val config: KafkaConfig,
                 val requestEpochMatchesLeader =
                   fetchPartitionData.currentLeaderEpoch.toScala.forall(_.intValue() == partition.getLeaderEpoch)
                 if (requestEpochMatchesLeader) {
-                  partition.getReplica(params.replicaId).foreach { _ =>
-                    // Use the classic follower-read validation without returning any records.
-                    val fetchAtSeal = new PartitionData(
-                      fetchPartitionData.topicId,
-                      classicToDisklessStartOffset,
-                      fetchPartitionData.logStartOffset,
-                      0,
-                      fetchPartitionData.currentLeaderEpoch,
-                      fetchPartitionData.lastFetchedEpoch
-                    )
-                    val readInfo = partition.fetchRecords(
-                      fetchParams = params,
-                      fetchPartitionData = fetchAtSeal,
-                      fetchTimeMs = time.milliseconds,
-                      maxBytes = 0,
-                      minOneMessage = false,
-                      updateFetchState = true
-                    )
-                    divergingEpoch = readInfo.divergingEpoch
+                  try {
+                    partition.getReplica(params.replicaId).foreach { _ =>
+                      // Use the classic follower-read validation without returning any records.
+                      val fetchAtSeal = new PartitionData(
+                        fetchPartitionData.topicId,
+                        classicToDisklessStartOffset,
+                        fetchPartitionData.logStartOffset,
+                        0,
+                        fetchPartitionData.currentLeaderEpoch,
+                        fetchPartitionData.lastFetchedEpoch
+                      )
+                      val readInfo = partition.fetchRecords(
+                        fetchParams = params,
+                        fetchPartitionData = fetchAtSeal,
+                        fetchTimeMs = time.milliseconds,
+                        maxBytes = 0,
+                        minOneMessage = false,
+                        updateFetchState = true
+                      )
+                      divergingEpoch = readInfo.divergingEpoch
+                    }
+                  } catch {
+                    case e@(_: UnknownTopicOrPartitionException |
+                            _: NotLeaderOrFollowerException |
+                            _: UnknownLeaderEpochException |
+                            _: FencedLeaderEpochException |
+                            _: ReplicaNotAvailableException |
+                            _: KafkaStorageException |
+                            _: InconsistentTopicIdException) =>
+                      fetchError = Errors.forException(e)
                   }
                 }
               }
@@ -2550,9 +2562,9 @@ class ReplicaManager(val config: KafkaConfig,
             // local data intact and remains able to serve consumer reads from the local log.
             immediateFetchResponses += tp ->
               new FetchPartitionData(
-                Errors.NONE,
-                classicToDisklessStartOffset,
-                0L,
+                fetchError,
+                if (fetchError == Errors.NONE) classicToDisklessStartOffset else UnifiedLog.UNKNOWN_OFFSET,
+                if (fetchError == Errors.NONE) 0L else UnifiedLog.UNKNOWN_OFFSET,
                 MemoryRecords.EMPTY,
                 divergingEpoch,
                 OptionalLong.empty(),

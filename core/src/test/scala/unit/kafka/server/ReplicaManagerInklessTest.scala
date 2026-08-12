@@ -7147,6 +7147,51 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testFollowerFetchAtSealReturnsPartitionErrorWhenBrokerEpochStale(): Unit = {
+    val followerId = 2
+    val sealOffset = 5L
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+    )
+    try {
+      val partition = setupSwitchedLeaderWithOutOfSyncFollower(
+        replicaManager, disklessTopicPartition, followerId, sealOffset)
+      val currentBrokerEpoch = replicaManager.metadataCache.getAliveBrokerEpoch(followerId).get.longValue()
+      val staleBrokerEpoch = currentBrokerEpoch - 1L
+      assertTrue(staleBrokerEpoch >= 0L)
+
+      doReturn(new CompletableFuture[Any]())
+        .when(alterPartitionManager).submit(any(), any())
+      clearInvocations(alterPartitionManager)
+
+      val fetchParams = new FetchParams(
+        followerId, staleBrokerEpoch, 0L, 1, 1024 * 1024, FetchIsolation.LOG_END, Optional.empty())
+      val fetchInfos = Seq(
+        disklessTopicPartition ->
+          new PartitionData(disklessTopicPartition.topicId(), sealOffset, 0L, 1024 * 1024,
+            Optional.of(partition.getLeaderEpoch)))
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA,
+        response => responseData = response.toMap)
+
+      assertNotNull(responseData)
+      val data = responseData(disklessTopicPartition)
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, data.error)
+      assertEquals(UnifiedLog.UNKNOWN_OFFSET, data.highWatermark)
+      assertEquals(UnifiedLog.UNKNOWN_OFFSET, data.logStartOffset)
+      assertEquals(MemoryRecords.EMPTY, data.records)
+      assertEquals(UnifiedLog.UNKNOWN_OFFSET,
+        partition.getReplica(followerId).get.stateSnapshot.logEndOffset)
+      verify(alterPartitionManager, never()).submit(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testFollowerFetchAtSealReturnsDivergingEpochAndSkipsIsrExpansion(): Unit = {
     val followerId = 2
     val sealOffset = 5L
