@@ -355,17 +355,20 @@ class BrokerServer(
       val defaultActionQueue = new DelayedActionQueue
 
       val inklessMetadataView = new InklessMetadataView(metadataCache, () => config.extractLogConfigMap)
-      maybeInklessSharedState = sharedServer.inklessControlPlane.map { controlPlane =>
-        SharedState.initialize(
-          time,
-          config.brokerId,
-          config.inklessConfig,
-          inklessMetadataView,
-          controlPlane,
-          brokerTopicStats,
-          () => logManager.currentDefaultConfig
-        )
-      }
+      maybeInklessSharedState =
+        (sharedServer.inklessControlPlane zip sharedServer.inklessControlPlaneAvailability).map {
+          case (controlPlane, availability) =>
+            SharedState.initialize(
+              time,
+              config.brokerId,
+              config.inklessConfig,
+              inklessMetadataView,
+              controlPlane,
+              availability,
+              brokerTopicStats,
+              () => logManager.currentDefaultConfig
+            )
+        }
       val inklessSharedState = maybeInklessSharedState
 
       initDisklessLogChannelManager = new NodeToControllerChannelManagerImpl(
@@ -636,6 +639,13 @@ class BrokerServer(
       FutureUtils.waitWithLogging(logger.underlying, logIdent,
         "the initial broker metadata update to be published",
         brokerMetadataPublisher.firstPublishFuture , startupDeadline, time)
+
+      // Now that the initial metadata image, including any persisted dynamic
+      // inkless.control.plane.* configuration, has been applied to `config`, it is safe to build
+      // the diskless control plane delegate. Building any earlier would read only the static
+      // server.properties value. This node always has BrokerRole, so config is the same
+      // liveConfig instance SharedServer picked when it constructed the gate.
+      sharedServer.startInklessControlPlane()
 
       // Now that we have loaded some metadata, we can log a reasonably up-to-date broker
       // configuration.  Keep in mind that KafkaConfig.originals is a mutable field that gets set

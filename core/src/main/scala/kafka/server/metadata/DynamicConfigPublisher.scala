@@ -18,6 +18,7 @@
 package kafka.server.metadata
 
 import java.util.Properties
+import java.util.concurrent.CompletableFuture
 import kafka.server.ConfigAdminManager.toLoggableProps
 import kafka.server.{ConfigHandler, KafkaConfig}
 import kafka.utils.Logging
@@ -35,6 +36,15 @@ class DynamicConfigPublisher(
   nodeType: String,
 ) extends Logging with org.apache.kafka.image.publisher.MetadataPublisher {
   logIdent = s"[${name()}] "
+
+  /**
+   * Completes after the first call to `onMetadataUpdate`, whether or not that update carried any
+   * configuration change. A caller that needs `conf` to reflect the persisted dynamic
+   * configuration, such as building a delegate that reads through `conf`, must wait for this
+   * first: `KafkaConfig` only picks up a persisted value once the corresponding `ConfigHandler`
+   * has run, which happens inside `onMetadataUpdate`.
+   */
+  val initialPublishFuture: CompletableFuture[Void] = new CompletableFuture[Void]()
 
   override def name(): String = s"DynamicConfigPublisher $nodeType id=${conf.nodeId}"
 
@@ -133,6 +143,8 @@ class DynamicConfigPublisher(
     } catch {
       case t: Throwable => faultHandler.handleFault("Uncaught exception while " +
         s"publishing dynamic configuration changes from $deltaName", t)
+    } finally {
+      initialPublishFuture.complete(null)
     }
   }
 

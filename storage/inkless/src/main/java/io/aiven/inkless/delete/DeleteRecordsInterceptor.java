@@ -45,6 +45,7 @@ import io.aiven.inkless.common.TopicIdEnricher;
 import io.aiven.inkless.common.TopicTypeCounter;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
 import io.aiven.inkless.control_plane.MetadataView;
@@ -155,6 +156,11 @@ public class DeleteRecordsInterceptor implements Closeable {
                 result.put(request.topicIdPartition().topicPartition(), value);
             }
             responseCallback.accept(result);
+        } catch (final ControlPlaneUnavailableException e) {
+            // KAFKA_STORAGE_ERROR is retriable, unlike the UNKNOWN_SERVER_ERROR an unrecognized
+            // failure gets below.
+            LOGGER.warn("Rejecting diskless delete records: {}", e.getMessage());
+            respondAllWithError(offsetPerPartition, responseCallback, Errors.KAFKA_STORAGE_ERROR);
         } catch (final Exception e) {
             LOGGER.error("Unknown exception", e);
             respondAllWithError(offsetPerPartition, responseCallback, Errors.UNKNOWN_SERVER_ERROR);

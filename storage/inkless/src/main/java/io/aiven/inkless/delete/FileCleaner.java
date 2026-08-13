@@ -38,6 +38,7 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
@@ -134,6 +135,10 @@ public class FileCleaner implements Runnable, Closeable {
 
             attempts.set(0);
             metrics.recordFileCleanerCycleSucceeded();
+        } catch (final ControlPlaneUnavailableException e) {
+            // Let the caller (ReplicaManager.runIfControlPlaneAvailable) catch this and skip
+            // quietly.
+            throw e;
         } catch (final Exception e) {
             metrics.recordFileCleanerError();
             final long backoff = errorBackoff.backoff(attempts.incrementAndGet());
