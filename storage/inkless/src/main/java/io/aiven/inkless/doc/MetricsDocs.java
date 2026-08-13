@@ -34,6 +34,7 @@ import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitorMetricsRegistry;
 import io.aiven.inkless.consume.InklessFetchMetrics;
 import io.aiven.inkless.consume.InklessFetchOffsetMetrics;
+import io.aiven.inkless.control_plane.ControlPlaneAvailabilityMetrics;
 import io.aiven.inkless.control_plane.postgres.PostgresConnectionPoolMetrics;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlaneMetrics;
 import io.aiven.inkless.delete.CrossTierLogStartReporterMetrics;
@@ -104,6 +105,10 @@ public class MetricsDocs {
         out.println(toRstTable("io.aiven.inkless.metadata", ClientAzAwarenessMetrics.all()));
 
         // Control plane metrics
+        printHeading("ControlPlaneAvailability metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.control_plane", ControlPlaneAvailabilityMetrics.all()));
+
         printHeading("PostgresControlPlane metrics");
         out.println();
         out.println(toRstTable("io.aiven.inkless.control_plane.postgres", PostgresControlPlaneMetrics.all()));

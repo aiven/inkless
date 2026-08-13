@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneAvailability;
 import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
@@ -113,6 +114,7 @@ class SharedStateTest {
 
         final SharedState state = SharedState.initialize(
             Time.SYSTEM, 1, config, metadataView, controlPlane,
+            new ControlPlaneAvailability(ControlPlaneAvailability.State.AVAILABLE),
             brokerTopicStats, () -> mock(LogConfig.class)
         );
 
@@ -147,6 +149,7 @@ class SharedStateTest {
 
         final SharedState state = SharedState.initialize(
             Time.SYSTEM, 1, config, metadataView, controlPlane,
+            new ControlPlaneAvailability(ControlPlaneAvailability.State.AVAILABLE),
             brokerTopicStats, () -> mock(LogConfig.class)
         );
 
@@ -187,6 +190,7 @@ class SharedStateTest {
                 config,
                 metadataView,
                 controlPlane,
+                new ControlPlaneAvailability(ControlPlaneAvailability.State.AVAILABLE),
                 brokerTopicStats,
                 () -> mock(LogConfig.class)
         )).isInstanceOf(RuntimeException.class)

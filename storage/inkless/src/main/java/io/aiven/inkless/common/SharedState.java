@@ -46,6 +46,7 @@ import io.aiven.inkless.cache.NullCrossTierLogStartCache;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneAvailability;
 import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.delete.CrossTierLogStartReporter;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
@@ -59,6 +60,7 @@ public final class SharedState implements Closeable {
     private final InklessConfig config;
     private final MetadataView metadata;
     private final ControlPlane controlPlane;
+    private final ControlPlaneAvailability controlPlaneAvailability;
     private final StorageBackend fetchStorage;
     // Separate storage client for lagging consumers to:
     // 1. Isolate connection pool usage (lagging consumers shouldn't exhaust connections for hot path)
@@ -84,6 +86,7 @@ public final class SharedState implements Closeable {
         final InklessConfig config,
         final MetadataView metadata,
         final ControlPlane controlPlane,
+        final ControlPlaneAvailability controlPlaneAvailability,
         final StorageBackend fetchStorage,
         final Optional<ObjectFetcher> maybeLaggingFetchStorage,
         final StorageBackend produceStorage,
@@ -103,6 +106,7 @@ public final class SharedState implements Closeable {
         this.config = config;
         this.metadata = metadata;
         this.controlPlane = controlPlane;
+        this.controlPlaneAvailability = controlPlaneAvailability;
         this.fetchStorage = fetchStorage;
         this.maybeLaggingFetchStorage = maybeLaggingFetchStorage;
         this.produceStorage = produceStorage;
@@ -124,6 +128,7 @@ public final class SharedState implements Closeable {
         InklessConfig config,
         MetadataView metadata,
         ControlPlane controlPlane,
+        ControlPlaneAvailability controlPlaneAvailability,
         BrokerTopicStats brokerTopicStats,
         Supplier<LogConfig> defaultTopicConfigs
     ) {
@@ -180,6 +185,7 @@ public final class SharedState implements Closeable {
                 config,
                 metadata,
                 controlPlane,
+                controlPlaneAvailability,
                 fetchStorage,
                 Optional.<ObjectFetcher>ofNullable(laggingFetchStorage),
                 produceStorage,
@@ -238,6 +244,10 @@ public final class SharedState implements Closeable {
 
     public ControlPlane controlPlane() {
         return controlPlane;
+    }
+
+    public ControlPlaneAvailability controlPlaneAvailability() {
+        return controlPlaneAvailability;
     }
 
     public ObjectKeyCreator objectKeyCreator() {

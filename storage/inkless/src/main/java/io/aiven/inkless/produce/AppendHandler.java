@@ -41,12 +41,14 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.SharedState;
+import io.aiven.inkless.control_plane.ControlPlaneAvailability;
 
 public class AppendHandler implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(AppendHandler.class);
 
     private final Function<String, LogConfig> getLogConfig;
     private final Writer writer;
+    private final ControlPlaneAvailability controlPlaneAvailability;
 
     @DoNotMutate
     @CoverageIgnore
@@ -68,14 +70,18 @@ public class AppendHandler implements Closeable {
                 state.config().produceUploadThreadPoolSize(),
                 state.brokerTopicStats()
             ),
-            state.metadata()::getTopicConfig
+            state.metadata()::getTopicConfig,
+            state.controlPlaneAvailability()
         );
     }
 
     // Visible for tests
-    AppendHandler(final Writer writer, final Function<String, LogConfig> getLogConfig) {
+    AppendHandler(final Writer writer,
+                  final Function<String, LogConfig> getLogConfig,
+                  final ControlPlaneAvailability controlPlaneAvailability) {
         this.getLogConfig = getLogConfig;
         this.writer = writer;
+        this.controlPlaneAvailability = controlPlaneAvailability;
     }
 
     /**
@@ -95,6 +101,18 @@ public class AppendHandler implements Closeable {
             LOGGER.warn("Transactional produce found, rejecting request");
             return CompletableFuture.completedFuture(entriesPerPartition.entrySet().stream().collect(
                 Collectors.toMap(Map.Entry::getKey, ignore -> new PartitionResponse(Errors.INVALID_REQUEST)))
+            );
+        }
+
+        if (!controlPlaneAvailability.isAvailable()) {
+            // Fail before buffering or uploading: an upload here would be paid for and then thrown
+            // away when the commit fails. KAFKA_STORAGE_ERROR is what a failed commit already returns.
+            controlPlaneAvailability.recordGatedCall();
+            LOGGER.warn("Rejecting diskless produce: control plane reported as {}",
+                controlPlaneAvailability.state().configValue());
+            return CompletableFuture.completedFuture(entriesPerPartition.entrySet().stream().collect(
+                Collectors.toMap(Map.Entry::getKey,
+                    ignore -> new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Control plane unavailable")))
             );
         }
 

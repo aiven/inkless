@@ -42,6 +42,7 @@ import org.apache.kafka.server.telemetry.{ClientTelemetry, ClientTelemetryContex
 import org.apache.kafka.server.util.KafkaScheduler
 import org.apache.kafka.storage.internals.log.{CleanerConfig, LogConfig, ProducerStateManagerConfig}
 import org.apache.kafka.test.MockMetricsReporter
+import io.aiven.inkless.control_plane.ControlPlaneAvailability
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.anyString
@@ -517,6 +518,7 @@ class DynamicBrokerConfigTest {
     val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
     val inklessMetadataView = mock(classOf[metadata.InklessMetadataView])
     when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    when(replicaManager.inklessControlPlaneAvailability()).thenReturn(None)
     when(kafkaServer.replicaManager).thenReturn(replicaManager)
 
     val authorizer = new TestAuthorizer
@@ -527,6 +529,86 @@ class DynamicBrokerConfigTest {
     props.put("super.users", "User:admin")
     kafkaServer.config.dynamicConfig.updateBrokerConfig(0, props)
     assertEquals("User:admin", authorizer.superUsers)
+  }
+
+  @Test
+  def testDisklessControlPlaneAvailabilityCatchesUpOnBrokerStartup(): Unit = {
+    // ControlPlaneAvailability is seeded in SharedServer.start(), which runs before the raft
+    // manager even exists, so it can only ever see the static config ("available", the default).
+    // readDynamicBrokerConfigsFromSnapshot then loads a previously persisted dynamic override
+    // (e.g. "offline", set by the management plane before this restart) into KafkaConfig, BEFORE
+    // any reconfigurable is registered -- simulated here via updateDefaultConfig directly, the
+    // same call BrokerServer.startup() makes at that point. Because nothing is registered yet,
+    // this silently updates the tracked currentConfig without ever calling reconfigure() on
+    // anyone. addReconfigurables must catch up by reading that current value directly: relying on
+    // a reconfigure() notification would never work here, since the change already happened
+    // before there was anyone to notify.
+    val props = TestUtils.createBrokerConfig(0, port = 9092)
+    val oldConfig = KafkaConfig.fromProps(props)
+    oldConfig.dynamicConfig.initialize(None)
+
+    val offlineProps = new Properties()
+    offlineProps.put(ServerConfigs.DISKLESS_CONTROL_PLANE_AVAILABILITY_CONFIG, "offline")
+    oldConfig.dynamicConfig.updateDefaultConfig(offlineProps)
+
+    val kafkaServer: KafkaBroker = mock(classOf[kafka.server.KafkaBroker])
+    when(kafkaServer.config).thenReturn(oldConfig)
+    when(kafkaServer.kafkaYammerMetrics).thenReturn(KafkaYammerMetrics.INSTANCE)
+    val metrics: Metrics = mock(classOf[Metrics])
+    when(kafkaServer.metrics).thenReturn(metrics)
+    val quotaManagers: QuotaFactory.QuotaManagers = mock(classOf[QuotaFactory.QuotaManagers])
+    when(quotaManagers.clientQuotaCallbackPlugin).thenReturn(Optional.empty())
+    when(kafkaServer.quotaManagers).thenReturn(quotaManagers)
+    val socketServer: SocketServer = mock(classOf[SocketServer])
+    when(socketServer.reconfigurableConfigs).thenReturn(SocketServer.ReconfigurableConfigs)
+    when(kafkaServer.socketServer).thenReturn(socketServer)
+    val logManager: LogManager = mock(classOf[LogManager])
+    val producerStateManagerConfig: ProducerStateManagerConfig = mock(classOf[ProducerStateManagerConfig])
+    when(logManager.producerStateManagerConfig).thenReturn(producerStateManagerConfig)
+    when(kafkaServer.logManager).thenReturn(logManager)
+    val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
+    val inklessMetadataView = mock(classOf[metadata.InklessMetadataView])
+    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    val availability = new ControlPlaneAvailability(ControlPlaneAvailability.State.AVAILABLE)
+    when(replicaManager.inklessControlPlaneAvailability()).thenReturn(Some(availability))
+    when(kafkaServer.replicaManager).thenReturn(replicaManager)
+    when(kafkaServer.authorizerPlugin).thenReturn(None)
+
+    kafkaServer.config.dynamicConfig.addReconfigurables(kafkaServer)
+
+    assertEquals(ControlPlaneAvailability.State.OFFLINE, availability.state())
+  }
+
+  @Test
+  def testDisklessControlPlaneAvailabilityCatchesUpOnControllerStartup(): Unit = {
+    val props = createCombinedControllerConfig(0, 9092)
+    val oldConfig = KafkaConfig.fromProps(props)
+    oldConfig.dynamicConfig.initialize(None)
+
+    val offlineProps = new Properties()
+    offlineProps.put(ServerConfigs.DISKLESS_CONTROL_PLANE_AVAILABILITY_CONFIG, "offline")
+    oldConfig.dynamicConfig.updateDefaultConfig(offlineProps)
+
+    val controllerServer: ControllerServer = mock(classOf[kafka.server.ControllerServer])
+    when(controllerServer.config).thenReturn(oldConfig)
+    when(controllerServer.kafkaYammerMetrics).thenReturn(KafkaYammerMetrics.INSTANCE)
+    val metrics: Metrics = mock(classOf[Metrics])
+    when(controllerServer.metrics).thenReturn(metrics)
+    val quotaManagers: QuotaFactory.QuotaManagers = mock(classOf[QuotaFactory.QuotaManagers])
+    when(quotaManagers.clientQuotaCallbackPlugin).thenReturn(Optional.empty())
+    when(controllerServer.quotaManagers).thenReturn(quotaManagers)
+    val socketServer: SocketServer = mock(classOf[SocketServer])
+    when(socketServer.reconfigurableConfigs).thenReturn(SocketServer.ReconfigurableConfigs)
+    when(controllerServer.socketServer).thenReturn(socketServer)
+    val sharedServer: SharedServer = mock(classOf[SharedServer])
+    val availability = new ControlPlaneAvailability(ControlPlaneAvailability.State.AVAILABLE)
+    when(sharedServer.inklessControlPlaneAvailability).thenReturn(Some(availability))
+    when(controllerServer.sharedServer).thenReturn(sharedServer)
+    when(controllerServer.authorizerPlugin).thenReturn(None)
+
+    controllerServer.config.dynamicConfig.addReconfigurables(controllerServer)
+
+    assertEquals(ControlPlaneAvailability.State.OFFLINE, availability.state())
   }
 
   private def createCombinedControllerConfig(
@@ -561,6 +643,9 @@ class DynamicBrokerConfigTest {
     val socketServer: SocketServer = mock(classOf[SocketServer])
     when(socketServer.reconfigurableConfigs).thenReturn(SocketServer.ReconfigurableConfigs)
     when(controllerServer.socketServer).thenReturn(socketServer)
+    val sharedServer: SharedServer = mock(classOf[SharedServer])
+    when(sharedServer.inklessControlPlaneAvailability).thenReturn(None)
+    when(controllerServer.sharedServer).thenReturn(sharedServer)
 
     val authorizer = new TestAuthorizer
     val authorizerPlugin: Plugin[Authorizer] = Plugin.wrapInstance(authorizer, null, "authorizer.class.name")
@@ -607,6 +692,9 @@ class DynamicBrokerConfigTest {
     val socketServer: SocketServer = mock(classOf[SocketServer])
     when(socketServer.reconfigurableConfigs).thenReturn(SocketServer.ReconfigurableConfigs)
     when(controllerServer.socketServer).thenReturn(socketServer)
+    val sharedServer: SharedServer = mock(classOf[SharedServer])
+    when(sharedServer.inklessControlPlaneAvailability).thenReturn(None)
+    when(controllerServer.sharedServer).thenReturn(sharedServer)
 
     val authorizer = new TestAuthorizer
     val authorizerPlugin: Plugin[Authorizer] = Plugin.wrapInstance(authorizer, null, "authorizer.class.name")
@@ -1108,6 +1196,25 @@ class DynamicBrokerConfigTest {
     // Reporter implementing neither interface => nothing should be added
     updateReporter(classOf[MockMetricsReporter])
     verifyNoMoreInteractions(telemetryPlugin)
+  }
+
+  @Test
+  def testDisklessControlPlaneAvailabilityIsClusterWideDynamicConfig(): Unit = {
+    assertTrue(DynamicBrokerConfig.AllDynamicConfigs.contains(
+      ServerConfigs.DISKLESS_CONTROL_PLANE_AVAILABILITY_CONFIG))
+    val props = TestUtils.createBrokerConfig(0, port = 8181)
+    val config = KafkaConfig(props)
+    assertEquals("available", config.disklessControlPlaneAvailability)
+    assertEquals("cluster-wide",
+      DynamicBrokerConfig.dynamicConfigUpdateModes.get(
+        ServerConfigs.DISKLESS_CONTROL_PLANE_AVAILABILITY_CONFIG))
+  }
+
+  @Test
+  def testDisklessControlPlaneAvailabilityRejectsUnknownValue(): Unit = {
+    val props = TestUtils.createBrokerConfig(0, port = 8181)
+    props.put(ServerConfigs.DISKLESS_CONTROL_PLANE_AVAILABILITY_CONFIG, "powered_off")
+    assertThrows(classOf[ConfigException], () => KafkaConfig(props))
   }
 }
 

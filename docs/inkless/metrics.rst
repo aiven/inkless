@@ -300,6 +300,20 @@ offline-replicas-routed-around   Rate of requests rerouted around offline replic
 ===============================  ===============================================================================
 
 
+ControlPlaneAvailability metrics
+==================================
+
+io.aiven.inkless.control_plane:type=ControlPlaneAvailability
+------------------------------------------------------------
+
+==========================  =====================================================================================================================
+Attribute name              Description                                                                                                          
+==========================  =====================================================================================================================
+ControlPlaneAvailability    Externally reported availability of the diskless control plane: 0 = available, 1 = initializing, 2 = offline         
+ControlPlaneGatedCallRate   Total number of control-plane calls rejected without contacting the control plane because it was reported unavailable
+==========================  =====================================================================================================================
+
+
 PostgresControlPlane metrics
 ==================================
 
