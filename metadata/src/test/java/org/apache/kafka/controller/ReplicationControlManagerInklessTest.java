@@ -2517,6 +2517,55 @@ public class ReplicationControlManagerInklessTest {
             // ELR must NOT contain broker 2 — ISR ∩ ELR = ∅ invariant (KIP-966).
             assertFalse(Replicas.contains(afterUnfence.elr, 2), "broker 2 must not be in ELR after ISR expansion");
         }
+
+        @Test
+        public void testUnfenceExpandsIsrOfSwitchedPartitionRegardlessOfSeal() {
+            // Characterisation test, NOT an assertion that this is desirable.
+            // expandIsrForDisklessManagedPartitions selects on the diskless.enable config alone, so it
+            // also fires for a *switched* partition whose classicToDisklessStartOffset is committed.
+            // For those the classic prefix below the seal lives only in the replicas' local logs, and
+            // this path re-admits a returning replica without any evidence that its prefix is complete.
+            //
+            // Two consequences, both load-bearing for PR #697:
+            //  - a broker restart heals the ISR of a switched partition on its own, so a
+            //    stop/start system test cannot observe the follower-fetch-driven ISR expansion;
+            //  - the ISR can contain a replica that is missing classic records below the seal.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Start classic, then switch to diskless and commit a seal offset, as the broker-side
+            // InitDisklessLogManager does once the classic log is fully replicated.
+            Uuid topicId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+            ctx.alterTopicConfig("foo", DISKLESS_ENABLE_CONFIG, "true");
+            PartitionChangeRecord sealCommitted = new PartitionChangeRecord()
+                .setTopicId(topicId)
+                .setPartitionId(0);
+            sealCommitted.unknownTaggedFields().add(
+                InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L));
+            ctx.replay(List.of(new ApiMessageAndVersion(sealCommitted, (short) 0)));
+            assertEquals(100L, replication.getPartition(topicId, 0).classicToDisklessStartOffset,
+                "precondition: the partition must be switched with a committed seal");
+
+            ctx.fenceBrokers(2);
+            assertFalse(Replicas.contains(replication.getPartition(topicId, 0).isr, 2),
+                "broker 2 must be out of ISR after fencing");
+
+            ctx.unfenceBrokers(2);
+
+            PartitionRegistration afterUnfence = replication.getPartition(topicId, 0);
+            assertTrue(Replicas.contains(afterUnfence.isr, 2),
+                "broker 2 is re-added to the ISR of a switched partition purely on unfence, with no "
+                    + "follower fetch and no check that its classic prefix below the seal is complete");
+            assertEquals(100L, afterUnfence.classicToDisklessStartOffset,
+                "the seal is untouched, confirming the expansion path never consults it");
+        }
     }
 
     @Nested
