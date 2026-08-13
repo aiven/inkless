@@ -19,6 +19,7 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
@@ -46,6 +47,7 @@ import io.aiven.inkless.control_plane.AdvanceCrossTierLogStartOffsetResponse;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlaneException;
+import io.aiven.inkless.control_plane.ControlPlaneNotConfiguredException;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
@@ -95,11 +97,22 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public void configure(final Map<String, ?> configs) {
-        controlPlaneConfig = new PostgresControlPlaneConfig(configs);
-        LOGGER.info("Configuring PostgresControlPlane");
+        try {
+            controlPlaneConfig = new PostgresControlPlaneConfig(configs);
+            LOGGER.info("Configuring PostgresControlPlane");
 
-        controlPlaneConfig.initializeReadWriteConfigs();
-        LOGGER.info("Initialized read/write configurations");
+            controlPlaneConfig.initializeReadWriteConfigs();
+            LOGGER.info("Initialized read/write configurations");
+        } catch (final ConfigException e) {
+            // The default, read, or write connection string is the only thing this map may
+            // legitimately lack: a dynamic reconfiguration empties it to take the control plane out
+            // of service. originalsWithPrefix strips the read./write. prefix before either
+            // sub-config is parsed, so all three surface under the same unprefixed key name.
+            if (e.getMessage() != null && e.getMessage().contains(PostgresConnectionConfig.CONNECTION_STRING_CONFIG)) {
+                throw new ControlPlaneNotConfiguredException(e.getMessage(), e);
+            }
+            throw e;
+        }
 
         Migrations.migrate(controlPlaneConfig);
         LOGGER.info("Database migrations completed");
@@ -145,19 +158,14 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
         config.setMaximumPoolSize(connectionConfig.maxConnections());
         config.setConnectionTimeout(connectionConfig.connectionPoolTimeoutMs());
-        config.addDataSourceProperty("connectTimeout", Long.toString(timeoutSeconds(connectionConfig.tcpConnectTimeoutMs())));
-        config.addDataSourceProperty("socketTimeout", Long.toString(timeoutSeconds(connectionConfig.socketTimeoutMs())));
-        config.addDataSourceProperty("loginTimeout", Long.toString(timeoutSeconds(connectionConfig.tcpConnectTimeoutMs())));
+        config.addDataSourceProperty("connectTimeout", Long.toString(connectionConfig.tcpConnectTimeoutSeconds()));
+        config.addDataSourceProperty("socketTimeout", Long.toString(connectionConfig.socketTimeoutSeconds()));
+        config.addDataSourceProperty("loginTimeout", Long.toString(connectionConfig.tcpConnectTimeoutSeconds()));
         config.addDataSourceProperty("tcpKeepAlive", "true");
 
         // We're doing interactive transactions.
         config.setAutoCommit(false);
         return config;
-    }
-
-    private static long timeoutSeconds(final long timeoutMs) {
-        // pgjdbc expects whole seconds, so round millisecond config values up.
-        return (timeoutMs - 1L) / 1000L + 1L;
     }
 
     @Override

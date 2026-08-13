@@ -38,7 +38,7 @@ import org.apache.kafka.network.{SocketServer => JSocketServer, SocketServerConf
 import org.apache.kafka.server.DynamicThreadPool
 import org.apache.kafka.server.authorizer._
 import org.apache.kafka.server.common.DirectoryEventHandler
-import org.apache.kafka.server.config.{ReplicationConfigs, ServerConfigs, ServerLogConfigs}
+import org.apache.kafka.server.config.{ReplicationConfigs, ServerConfigs, ServerLogConfigs, DynamicBrokerConfig => JDynamicBrokerConfig}
 import org.apache.kafka.server.log.remote.storage.{RemoteLogManager, RemoteLogManagerConfig}
 import org.apache.kafka.server.metrics.{ClientTelemetryExporterPlugin, KafkaYammerMetrics, MetricConfigs}
 import org.apache.kafka.server.telemetry.{ClientTelemetry, ClientTelemetryContext, ClientTelemetryExporter, ClientTelemetryExporterProvider, ClientTelemetryPayload, ClientTelemetryReceiver}
@@ -520,6 +520,7 @@ class DynamicBrokerConfigTest {
     val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
     val inklessMetadataView = mock(classOf[metadata.InklessMetadataView])
     when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    when(replicaManager.inklessControlPlane()).thenReturn(None)
     when(kafkaServer.replicaManager).thenReturn(replicaManager)
 
     val authorizer = new TestAuthorizer
@@ -564,6 +565,9 @@ class DynamicBrokerConfigTest {
     val socketServer: SocketServer = mock(classOf[SocketServer])
     when(socketServer.reconfigurableConfigs).thenReturn(JSocketServer.RECONFIGURABLE_CONFIGS)
     when(controllerServer.socketServer).thenReturn(socketServer)
+    val sharedServer: SharedServer = mock(classOf[SharedServer])
+    when(sharedServer.inklessControlPlaneGate).thenReturn(None)
+    when(controllerServer.sharedServer).thenReturn(sharedServer)
 
     val authorizer = new TestAuthorizer
     val authorizerPlugin: Plugin[Authorizer] = Plugin.wrapInstance(authorizer, null, "authorizer.class.name")
@@ -610,6 +614,9 @@ class DynamicBrokerConfigTest {
     val socketServer: SocketServer = mock(classOf[SocketServer])
     when(socketServer.reconfigurableConfigs).thenReturn(JSocketServer.RECONFIGURABLE_CONFIGS)
     when(controllerServer.socketServer).thenReturn(socketServer)
+    val sharedServer: SharedServer = mock(classOf[SharedServer])
+    when(sharedServer.inklessControlPlaneGate).thenReturn(None)
+    when(controllerServer.sharedServer).thenReturn(sharedServer)
 
     val authorizer = new TestAuthorizer
     val authorizerPlugin: Plugin[Authorizer] = Plugin.wrapInstance(authorizer, null, "authorizer.class.name")
@@ -1241,6 +1248,45 @@ class DynamicBrokerConfigTest {
     props.put(ShareCoordinatorConfig.CACHED_BUFFER_MAX_BYTES_CONFIG, "5242880")
     config.dynamicConfig.updateDefaultConfig(props)
     assertEquals(5 * 1024 * 1024, config.shareCoordinatorConfig.shareCoordinatorCachedBufferMaxBytes())
+  }
+
+  @Test
+  def testCurrentInklessConfigReflectsDynamicUpdates(): Unit = {
+    val props = TestUtils.createBrokerConfig(0, port = 9092)
+    props.put("inkless.control.plane.connection.string", "jdbc:postgresql://old/db")
+    val config = KafkaConfig.fromProps(props)
+    config.dynamicConfig.initialize(None)
+
+    assertEquals("jdbc:postgresql://old/db",
+      config.currentInklessConfig.controlPlaneConfig.get("connection.string"))
+
+    val update = new Properties()
+    update.put("inkless.control.plane.connection.string", "")
+    config.dynamicConfig.updateDefaultConfig(update)
+
+    assertEquals("",
+      config.currentInklessConfig.controlPlaneConfig.get("connection.string"),
+      "currentInklessConfig must read through to the live config")
+    assertEquals("jdbc:postgresql://old/db",
+      config.inklessConfig.controlPlaneConfig.get("connection.string"),
+      "the cached inklessConfig val is deliberately left stale")
+  }
+
+  @Test
+  def testInklessConnectionStringIsDynamicAndClusterWide(): Unit = {
+    val props = TestUtils.createBrokerConfig(0, port = 8181)
+    props.put("inkless.control.plane.connection.string", "jdbc:postgresql://old/db")
+    val config = KafkaConfig.fromProps(props)
+    config.dynamicConfig.initialize(None)
+
+    val update = new Properties()
+    update.put("inkless.control.plane.connection.string", "")
+
+    // Undeclared inkless.* keys are not in nonDynamicProps, so neither gate rejects them.
+    assertTrue(JDynamicBrokerConfig.nonDynamicConfigs(update).isEmpty)
+    assertTrue(JDynamicBrokerConfig.perBrokerConfigs(update).isEmpty,
+      "the connection string must be updatable cluster-wide")
+    config.dynamicConfig.validate(update, perBrokerConfig = false)
   }
 }
 
