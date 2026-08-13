@@ -4148,7 +4148,10 @@ class ReplicaManager(val config: KafkaConfig,
               val isNewLeaderEpoch = partition.makeFollower(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
               partition.seal()
               changedPartitions.add(partition)
-              val isOutOfIsr = !info.partition.isr.contains(config.brokerId)
+              // A shutting-down broker is not ISR-eligible on the leader (isReplicaIsrEligible), so a
+              // catch-up fetch started here could never complete; the classic branch below stops
+              // fetching in the same situation.
+              val isOutOfIsr = !isInControlledShutdown && !info.partition.isr.contains(config.brokerId)
               if (seal >= 0 && (partition.localLogOrException.highWatermark < seal || isOutOfIsr)) {
                 // Schedule a catch-up fetch when the local HW is below the seal -- either
                 // because we restarted with a stale HW (unclean shutdown) or because we
