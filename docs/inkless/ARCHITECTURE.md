@@ -147,3 +147,44 @@ flowchart LR
 When object data is necessary to serve a request, the broker first checks its local cache.
 If a cache miss occurs (Consumer-0's first request for that data), the broker fetches from object storage and populates its local cache.
 Subsequent requests for the same data (Consumer-1) are served from the local cache with lower latency.
+
+# Taking the control plane out of service
+
+`inkless.control.plane.connection.string` is a dynamic, cluster-wide broker config. Set it
+to an empty value to take the control plane out of service:
+
+```bash
+kafka-configs.sh --bootstrap-server localhost:9092 --alter \
+  --entity-type brokers --entity-default \
+  --add-config inkless.control.plane.connection.string=
+```
+
+Every broker retires its connection pool and fails diskless produce and fetch with
+`KAFKA_STORAGE_ERROR`, a retriable error, without waiting for a connection to time out.
+Background diskless jobs skip their ticks. Classic topics are unaffected. Set the config
+back to a real value, which may point at a different host after a restore, and each broker
+rebuilds the pool in the background. No restart is needed.
+
+Rebuilding runs on a background thread, never on a thread serving a request: it applies
+schema migration and opens connection pools, which against a sick database takes longer
+than any client is willing to wait. Calls that arrive before the new pool is ready keep
+failing with `KAFKA_STORAGE_ERROR` rather than queueing behind it, so a database that
+accepts connections and then stops answering cannot stall the broker's request threads.
+`inkless.control.plane.migration.timeout.ms` bounds how long migration may spend waiting,
+including on the advisory lock another broker holds while it migrates.
+
+A rebuild that fails because the database is unreachable is retried under a backoff, so a
+dead database is not re-dialed once per request. One that fails because the connection
+string is empty is not retried at all: the answer would be the same until the config
+changes again.
+
+Set the value to empty rather than deleting the override. Deleting it restores the address
+from `server.properties`, which is a working connection string.
+
+The `read.` and `write.` connection strings, `inkless.control.plane.read.connection.string`
+and `inkless.control.plane.write.connection.string`, are dynamic in the same way.
+Credentials are not, because otherwise they would be written to the metadata log in plaintext.
+
+The `ControlPlaneAvailability` metric reports `1` while the control plane is available and
+`0` while it isn't. `ControlPlaneGatedCallRate` counts the calls rejected without
+contacting it.

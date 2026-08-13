@@ -18,6 +18,8 @@
 package kafka.server
 
 import com.yammer.metrics.core.{Gauge, Meter, Timer}
+import io.aiven.inkless.control_plane.ControlPlaneAvailability
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException
 import kafka.cluster.PartitionTest.MockPartitionListener
 import kafka.cluster.Partition
 import kafka.log.LogManager
@@ -6139,6 +6141,42 @@ class ReplicaManagerTest {
         KafkaYammerMetrics.defaultRegistry.removeMetric(metricName)
       }
     }
+  }
+
+  @Test
+  def testRunIfControlPlaneAvailableSkipsWhenUnavailable(): Unit = {
+    val availability = new ControlPlaneAvailability()
+    var runs = 0
+
+    // An untried control plane reads as available, so the first tick must not be skipped.
+    ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") { runs += 1 }
+    assertEquals(1, runs)
+
+    availability.markUnavailable(ControlPlaneAvailability.UnavailableReason.NOT_CONFIGURED)
+    ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") { runs += 1 }
+    assertEquals(1, runs)
+
+    availability.markAvailable()
+    ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") { runs += 1 }
+    assertEquals(2, runs)
+
+    availability.close()
+  }
+
+  @Test
+  def testRunIfControlPlaneAvailableCatchesUnavailableExceptionFromBody(): Unit = {
+    val availability = new ControlPlaneAvailability()
+    var attempts = 0
+
+    // The availability reads as available until something is tried, so the body runs and is the
+    // one that discovers the control plane is unavailable.
+    ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") {
+      attempts += 1
+      throw new ControlPlaneUnavailableException("No diskless control plane is configured")
+    }
+    assertEquals(1, attempts)
+
+    availability.close()
   }
 }
 

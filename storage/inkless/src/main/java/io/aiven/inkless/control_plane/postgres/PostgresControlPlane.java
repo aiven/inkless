@@ -145,19 +145,14 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
         config.setMaximumPoolSize(connectionConfig.maxConnections());
         config.setConnectionTimeout(connectionConfig.connectionPoolTimeoutMs());
-        config.addDataSourceProperty("connectTimeout", Long.toString(timeoutSeconds(connectionConfig.tcpConnectTimeoutMs())));
-        config.addDataSourceProperty("socketTimeout", Long.toString(timeoutSeconds(connectionConfig.socketTimeoutMs())));
-        config.addDataSourceProperty("loginTimeout", Long.toString(timeoutSeconds(connectionConfig.tcpConnectTimeoutMs())));
+        config.addDataSourceProperty("connectTimeout", Long.toString(connectionConfig.tcpConnectTimeoutSeconds()));
+        config.addDataSourceProperty("socketTimeout", Long.toString(connectionConfig.socketTimeoutSeconds()));
+        config.addDataSourceProperty("loginTimeout", Long.toString(connectionConfig.tcpConnectTimeoutSeconds()));
         config.addDataSourceProperty("tcpKeepAlive", "true");
 
         // We're doing interactive transactions.
         config.setAutoCommit(false);
         return config;
-    }
-
-    private static long timeoutSeconds(final long timeoutMs) {
-        // pgjdbc expects whole seconds, so round millisecond config values up.
-        return (timeoutMs - 1L) / 1000L + 1L;
     }
 
     @Override

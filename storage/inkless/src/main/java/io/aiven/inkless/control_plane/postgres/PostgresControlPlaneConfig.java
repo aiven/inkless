@@ -31,6 +31,14 @@ public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
         + "same-partition batch runs into a single batches row.";
     private static final boolean BATCH_COALESCING_ENABLED_DEFAULT = true;
 
+    public static final String MIGRATION_TIMEOUT_MS_CONFIG = "migration.timeout.ms";
+    private static final String MIGRATION_TIMEOUT_MS_DOC = "Maximum time in milliseconds that schema migration may "
+        + "spend waiting on the database, applied both to socket reads and to the wait for the migration advisory "
+        + "lock another broker may be holding. Distinct from " + SOCKET_TIMEOUT_MS_CONFIG + ", which bounds ordinary "
+        + "queries: a migration that builds an index on a populated table legitimately runs far longer than a query, "
+        + "so bounding it at the query timeout would kill it part-way through.";
+    private static final long MIGRATION_TIMEOUT_MS_DEFAULT = 300_000;
+
     private PostgresConnectionConfig readConfig;
     private PostgresConnectionConfig writeConfig;
 
@@ -49,11 +57,27 @@ public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
                 BATCH_COALESCING_ENABLED_DEFAULT,
                 ConfigDef.Importance.MEDIUM,
                 BATCH_COALESCING_ENABLED_DOC
+            )
+            .define(
+                MIGRATION_TIMEOUT_MS_CONFIG,
+                ConfigDef.Type.LONG,
+                MIGRATION_TIMEOUT_MS_DEFAULT,
+                ConfigDef.Range.atLeast(1_000),
+                ConfigDef.Importance.LOW,
+                MIGRATION_TIMEOUT_MS_DOC
             );
     }
 
     public boolean batchCoalescingEnabled() {
         return getBoolean(BATCH_COALESCING_ENABLED_CONFIG);
+    }
+
+    public long migrationTimeoutMs() {
+        return getLong(MIGRATION_TIMEOUT_MS_CONFIG);
+    }
+
+    public long migrationTimeoutSeconds() {
+        return timeoutSeconds(migrationTimeoutMs());
     }
 
     public void initializeReadWriteConfigs() {
