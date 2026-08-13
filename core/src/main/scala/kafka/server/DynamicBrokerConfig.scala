@@ -21,6 +21,9 @@ import java.util
 import java.util.{Collections, Properties}
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.locks.ReentrantReadWriteLock
+import io.aiven.inkless.config.InklessConfig
+import io.aiven.inkless.control_plane.{AvailabilityGatedControlPlane, ControlPlaneAvailability}
+import io.aiven.inkless.control_plane.postgres.{PostgresConnectionConfig, PostgresControlPlaneConfig}
 import kafka.log.LogManager
 import kafka.network.DataPlaneAcceptor
 import kafka.server.metadata.InklessMetadataView
@@ -198,6 +201,9 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     addBrokerReconfigurable(new BrokerDynamicThreadPool(kafkaServer))
     addBrokerReconfigurable(new DynamicLogConfig(kafkaServer.logManager, kafkaServer.replicaManager.directoryEventHandler))
     addBrokerReconfigurable(new DynamicInklessLogConfig(kafkaServer.replicaManager.inklessMetadataView()))
+    kafkaServer.replicaManager.inklessControlPlane().foreach { gate =>
+      addBrokerReconfigurable(new DynamicInklessControlPlaneConfig(gate))
+    }
     addBrokerReconfigurable(new DynamicListenerConfig(kafkaServer))
     addBrokerReconfigurable(kafkaServer.socketServer)
     addBrokerReconfigurable(new DynamicProducerStateManagerConfig(kafkaServer.logManager.producerStateManagerConfig))
@@ -225,6 +231,9 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     addBrokerReconfigurable(new ControllerDynamicThreadPool(controller))
     // TODO: addBrokerReconfigurable(new DynamicListenerConfig(controller))
     addBrokerReconfigurable(controller.socketServer)
+    controller.sharedServer.inklessControlPlaneGate.foreach { gate =>
+      addBrokerReconfigurable(new DynamicInklessControlPlaneConfig(gate))
+    }
   }
 
   def addReconfigurable(reconfigurable: Reconfigurable): Unit = {
@@ -637,6 +646,71 @@ class DynamicInklessLogConfig(inklessMetadataView: InklessMetadataView) extends 
 
   override def reconfigure(oldConfig: KafkaConfig, newConfig: KafkaConfig): Unit = {
     inklessMetadataView.reconfigureDefaultLogConfig()
+  }
+}
+
+object DynamicInklessControlPlaneConfig {
+  private val ConnectionStringPrefix = InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX
+
+  // Unprefixed suffixes, matching the keys InklessConfig#controlPlaneConfig returns.
+  private val ConnectionStringKeySuffixes: util.Set[String] = util.Set.of(
+    PostgresConnectionConfig.CONNECTION_STRING_CONFIG,
+    PostgresControlPlaneConfig.READ_CONFIG_PREFIX + PostgresConnectionConfig.CONNECTION_STRING_CONFIG,
+    PostgresControlPlaneConfig.WRITE_CONFIG_PREFIX + PostgresConnectionConfig.CONNECTION_STRING_CONFIG)
+
+  /**
+   * The connection strings the management plane may repoint at runtime. Setting one to an empty
+   * value takes the control plane out of service. Credentials are deliberately absent: these keys
+   * are not declared in `AbstractKafkaConfig.CONFIG_DEF`, so they skip the `Password` encryption
+   * path and would land in the metadata log in plaintext.
+   */
+  val ReconfigurableConfigs: util.Set[String] =
+    ConnectionStringKeySuffixes.asScala.map(ConnectionStringPrefix + _).asJava
+
+  // pgjdbc accepts credentials embedded as a `user=`/`password=` query parameter. That is the only
+  // way a connection string can carry them, so this is what has to stay out of the metadata log.
+  private val EmbeddedCredentialsPattern = java.util.regex.Pattern.compile("(?i)[?&](user|password)=")
+
+  private def embedsCredentials(connectionString: String): Boolean =
+    connectionString != null && EmbeddedCredentialsPattern.matcher(connectionString).find()
+}
+
+class DynamicInklessControlPlaneConfig(gate: AvailabilityGatedControlPlane) extends BrokerReconfigurable with Logging {
+  import DynamicInklessControlPlaneConfig._
+
+  override def reconfigurableConfigs: util.Set[String] = ReconfigurableConfigs
+
+  override def validateReconfiguration(newConfig: KafkaConfig): Unit = {
+    // A malformed non-empty value can't be checked without connecting, and an empty value is the
+    // signal that takes the control plane out of service, so neither can be rejected here.
+    val controlPlaneConfig = newConfig.currentInklessConfig.controlPlaneConfig()
+    ConnectionStringKeySuffixes.forEach { suffix =>
+      val value = controlPlaneConfig.get(suffix)
+      // Connection string is a dynamic config, so it is stored in the metadata log in plaintext.
+      // Reject one that embeds credentials to prevent leaking credentials in the metadata log.
+      if (value != null && embedsCredentials(value.toString)) {
+        throw new ConfigException(
+          ConnectionStringPrefix + suffix,
+          value,
+          "must not embed credentials in the connection string; configure username/password separately")
+      }
+    }
+  }
+
+  override def reconfigure(oldConfig: KafkaConfig, newConfig: KafkaConfig): Unit = {
+    val controlPlaneConfig = newConfig.currentInklessConfig.controlPlaneConfig()
+    // A key that was never set is absent here, not empty: only an explicit empty value is the
+    // takedown signal.
+    val emptied = ConnectionStringKeySuffixes.asScala.exists { suffix =>
+      controlPlaneConfig.containsKey(suffix) && controlPlaneConfig.get(suffix).toString.isEmpty
+    }
+    if (emptied) {
+      info("Control plane connection string emptied: taking control plane out of service")
+      gate.takeOutOfService(ControlPlaneAvailability.UnavailableReason.NOT_CONFIGURED)
+    } else {
+      info("Control plane configuration changed: invalidating control plane gate")
+      gate.invalidate()
+    }
   }
 }
 

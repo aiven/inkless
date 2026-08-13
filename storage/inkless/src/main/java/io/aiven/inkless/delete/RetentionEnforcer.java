@@ -38,6 +38,7 @@ import java.util.Random;
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.EnforceRetentionRequest;
 import io.aiven.inkless.control_plane.EnforceRetentionResponse;
 import io.aiven.inkless.control_plane.MetadataView;
@@ -85,6 +86,10 @@ public class RetentionEnforcer implements Runnable, Closeable {
     public void run() {
         try {
             runUnsafe();
+        } catch (final ControlPlaneUnavailableException e) {
+            // Let the caller (ReplicaManager.runIfControlPlaneAvailable) catch this and skip
+            // quietly, instead of treating it as a retention enforcement failure.
+            throw e;
         } catch (final Exception e) {
             LOGGER.error("Error enforcing retention", e);
         }
@@ -124,6 +129,8 @@ public class RetentionEnforcer implements Runnable, Closeable {
         final List<EnforceRetentionResponse> responses;
         try {
             responses = controlPlane.enforceRetention(requests, maxBatchesPerRequest);
+        } catch (final ControlPlaneUnavailableException e) {
+            throw e;
         } catch (final Exception e) {
             metrics.recordRetentionEnforcementFinishedWithError();
             LOGGER.error("Unexpected error when enforcing retention", e);

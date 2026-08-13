@@ -69,6 +69,7 @@ import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.FileExtent;
@@ -122,6 +123,7 @@ public class ReaderTest {
     private InklessFetchMetrics fetchMetrics;
 
     private final Time time = new MockTime();
+    private final BrokerTopicStats brokerTopicStats = new BrokerTopicStats();
 
     @Test
     public void testReaderEmptyRequests() throws IOException {
@@ -781,6 +783,39 @@ public class ReaderTest {
         }
 
         /**
+         * A reported control-plane outage is not a fetch failure. FetchHandler turns it into a
+         * retriable error, so counting it here would bury real failures under the outage and make
+         * the failure metrics unusable for exactly as long as they matter.
+         */
+        @Test
+        public void testControlPlaneUnavailableRecordsNoFailure() throws IOException {
+            when(controlPlane.findBatches(anyList(), anyInt(), anyInt()))
+                .thenThrow(new ControlPlaneUnavailableException("No diskless control plane is configured"));
+
+            // The rate meters live in a registry shared across tests in this JVM, so measure the delta
+            final long allTopicsBefore = brokerTopicStats.allTopicsStats().failedFetchRequestRate().count();
+            final long topicBefore = brokerTopicStats.topicStats(partition.topic()).failedFetchRequestRate().count();
+
+            try (final var reader = getReader()) {
+                final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, fetchInfos);
+
+                // The exception still reaches FetchHandler unwrapped, which is what lets it recognize it
+                assertThatThrownBy(fetch::join)
+                    .isInstanceOf(CompletionException.class)
+                    .hasCauseInstanceOf(ControlPlaneUnavailableException.class);
+
+                verify(fetchMetrics, never()).fetchFailed();
+                verify(fetchMetrics, never()).findBatchesFailed();
+                verify(fetchMetrics, never()).fileFetchFailed();
+                verify(fetchMetrics, never()).fetchCompleted(any());
+                assertThat(brokerTopicStats.allTopicsStats().failedFetchRequestRate().count())
+                    .isEqualTo(allTopicsBefore);
+                assertThat(brokerTopicStats.topicStats(partition.topic()).failedFetchRequestRate().count())
+                    .isEqualTo(topicBefore);
+            }
+        }
+
+        /**
          * Tests that FileFetchException is properly handled with partial failure support.
          * With partial failure handling, exceptions are caught and converted to empty FileExtents,
          * resulting in KAFKA_STORAGE_ERROR responses that allow consumers to retry.
@@ -918,7 +953,7 @@ public class ReaderTest {
             0, // TTFB hedging disabled
             0, // total-time hedging disabled
             fetchMetrics,
-            new BrokerTopicStats(),
+            brokerTopicStats,
             "inkless-");
     }
 

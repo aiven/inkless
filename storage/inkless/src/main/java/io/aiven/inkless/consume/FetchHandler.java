@@ -34,9 +34,11 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.SharedState;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 
 public class FetchHandler implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FetchHandler.class);
@@ -81,6 +83,17 @@ public class FetchHandler implements Closeable {
         final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> resultFuture = reader.fetch(params, fetchInfos);
         return resultFuture.handle((result, e) -> {
             if (result == null) {
+                final Throwable cause = e instanceof CompletionException ? e.getCause() : e;
+                if (cause instanceof ControlPlaneUnavailableException) {
+                    // AvailabilityGatedControlPlane already recorded the gated call. KAFKA_STORAGE_ERROR
+                    // is retriable, unlike the UNKNOWN_SERVER_ERROR an unrecognized failure gets below.
+                    LOGGER.debug("Rejecting diskless fetch: {}", cause.getMessage());
+                    final var unavailable = new FetchPartitionData(Errors.KAFKA_STORAGE_ERROR, -1, -1,
+                        MemoryRecords.EMPTY, Optional.empty(), OptionalLong.empty(),
+                        Optional.empty(), OptionalInt.empty(), false);
+                    return fetchInfos.keySet().stream()
+                        .collect(Collectors.toMap(k -> k, ignore -> unavailable));
+                }
                 // We don't really expect this future to fail, but in case it does...
                 LOGGER.error("Read future failed", e);
                 final var error = new FetchPartitionData(Errors.UNKNOWN_SERVER_ERROR, -1, -1,

@@ -35,9 +35,11 @@ import io.aiven.inkless.cache.CrossTierLogStartCache;
 import io.aiven.inkless.control_plane.AdvanceCrossTierLogStartOffsetRequest;
 import io.aiven.inkless.control_plane.AdvanceCrossTierLogStartOffsetResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.MetadataView;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
@@ -174,6 +176,22 @@ class CrossTierLogStartReporterTest {
         reporter.run();
 
         // The update is re-buffered for the next flush.
+        assertThat(reporter.pendingView()).containsExactly(java.util.Map.entry(TIDP0, 50L));
+        verify(cache, never()).put(any(), anyLong());
+    }
+
+    @Test
+    void runPropagatesControlPlaneUnavailableExceptionAfterReBuffering() {
+        asConsolidatingDiskless();
+        when(controlPlane.advanceCrossTierLogStartOffset(any()))
+            .thenThrow(new ControlPlaneUnavailableException("No diskless control plane is configured"));
+
+        reporter.enqueue(TP0, 50);
+        // run() rethrows this rather than swallowing it: the caller (ReplicaManager.runIfControlPlaneAvailable)
+        // is the one place that turns it into a quiet skip.
+        assertThrows(ControlPlaneUnavailableException.class, reporter::run);
+
+        // The update is still re-buffered for the next flush.
         assertThat(reporter.pendingView()).containsExactly(java.util.Map.entry(TIDP0, 50L));
         verify(cache, never()).put(any(), anyLong());
     }

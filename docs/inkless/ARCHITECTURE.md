@@ -147,3 +147,31 @@ flowchart LR
 When object data is necessary to serve a request, the broker first checks its local cache.
 If a cache miss occurs (Consumer-0's first request for that data), the broker fetches from object storage and populates its local cache.
 Subsequent requests for the same data (Consumer-1) are served from the local cache with lower latency.
+
+# Taking the control plane out of service
+
+`inkless.control.plane.connection.string` is a dynamic, cluster-wide broker config. Set it
+to an empty value to take the control plane out of service:
+
+```bash
+kafka-configs.sh --bootstrap-server localhost:9092 --alter \
+  --entity-type brokers --entity-default \
+  --add-config inkless.control.plane.connection.string=
+```
+
+Every broker closes its connection pool and fails diskless produce and fetch with
+`KAFKA_STORAGE_ERROR`, a retriable error, without waiting for a connection to time out.
+Background diskless jobs skip their ticks. Classic topics are unaffected. Set the config
+back to a real value, which may point at a different host after a restore, and the next
+diskless call rebuilds the pool. No restart is needed.
+
+Set the value to empty rather than deleting the override. Deleting it restores the address
+from `server.properties`, which is a working connection string.
+
+The `read.` and `write.` connection strings, `inkless.control.plane.read.connection.string`
+and `inkless.control.plane.write.connection.string`, are dynamic in the same way.
+Credentials are not, because otherwise they would be written to the metadata log in plaintext.
+
+The `ControlPlaneAvailability` metric reports `1` while the control plane is available and
+`0` while it isn't. `ControlPlaneGatedCallRate` counts the calls rejected without
+contacting it.

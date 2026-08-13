@@ -42,11 +42,14 @@ import java.util.Optional;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -87,6 +90,21 @@ public class FindBatchesJobTest {
         Map<TopicIdPartition, FindBatchResponse> result = job.get();
 
         assertThat(result).isEqualTo(coordinates);
+    }
+
+    @Test
+    public void propagatesControlPlaneUnavailableException() {
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, maxBatchesPerPartition, durationMs -> {});
+        when(controlPlane.findBatches(anyList(), anyInt(), anyInt()))
+            .thenThrow(new ControlPlaneUnavailableException("No diskless control plane is configured"));
+
+        // FetchHandler matches on this type to answer with a retriable error, so wrapping it in a
+        // FindBatchesException would hide a reported outage behind an UNKNOWN_SERVER_ERROR.
+        assertThatThrownBy(job::get)
+            .isInstanceOf(ControlPlaneUnavailableException.class);
     }
 
 }

@@ -16,6 +16,8 @@
   */
 package kafka.server
 
+import io.aiven.inkless.config.InklessConfig
+import io.aiven.inkless.control_plane.{AvailabilityGatedControlPlane, ControlPlane, ControlPlaneAvailability}
 import kafka.cluster.Partition
 import kafka.integration.KafkaServerTestHarness
 import kafka.server.metadata.InklessMetadataView
@@ -24,7 +26,7 @@ import kafka.utils._
 import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.{Admin, AlterClientQuotasOptions, AlterConfigOp, ConfigEntry}
-import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
+import org.apache.kafka.common.config.{ConfigException, ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors.{InvalidRequestException, UnknownTopicOrPartitionException}
 import org.apache.kafka.common.metrics.Quota
 import org.apache.kafka.common.quota.ClientQuotaAlteration.Op
@@ -863,5 +865,84 @@ class DynamicConfigChangeUnitTest {
     handler.processConfigChanges(kafkaConfig.brokerId.toString, props)
 
     assertEquals(2097152L, consolidationQuota.upperBound)
+  }
+
+  @Test
+  def testInklessControlPlaneConnectionStringChangeInvalidatesTheGate(): Unit = {
+    val invalidations = new java.util.concurrent.atomic.AtomicInteger()
+    val gate = new AvailabilityGatedControlPlane(
+      () => new InklessConfig(java.util.Map.of("control.plane.class",
+        classOf[io.aiven.inkless.control_plane.InMemoryControlPlane].getCanonicalName)),
+      _ => mock(classOf[ControlPlane])) {
+      override def invalidate(): Unit = {
+        invalidations.incrementAndGet()
+        super.invalidate()
+      }
+    }
+
+    val baseProps = TestUtils.createBrokerConfig(0, port = 8181)
+    baseProps.put("inkless.control.plane.connection.string", "jdbc:postgresql://old/db")
+    val oldConfig = KafkaConfig.fromProps(baseProps)
+
+    val newProps = TestUtils.createBrokerConfig(0, port = 8181)
+    newProps.put("inkless.control.plane.connection.string", "jdbc:postgresql://new/db")
+    val newConfig = KafkaConfig.fromProps(newProps)
+
+    val reconfigurable = new DynamicInklessControlPlaneConfig(gate)
+    assertEquals(
+      util.Set.of(
+        "inkless.control.plane.connection.string",
+        "inkless.control.plane.read.connection.string",
+        "inkless.control.plane.write.connection.string"),
+      reconfigurable.reconfigurableConfigs)
+
+    reconfigurable.validateReconfiguration(newConfig)
+    reconfigurable.reconfigure(oldConfig, newConfig)
+
+    assertEquals(1, invalidations.get())
+  }
+
+  @Test
+  def testInklessControlPlaneConnectionStringEmptiedTakesGateOutOfService(): Unit = {
+    val takeOutOfServiceCalls = new java.util.concurrent.atomic.AtomicInteger()
+    val gate = new AvailabilityGatedControlPlane(
+      () => new InklessConfig(java.util.Map.of("control.plane.class",
+        classOf[io.aiven.inkless.control_plane.InMemoryControlPlane].getCanonicalName)),
+      _ => mock(classOf[ControlPlane])) {
+      override def takeOutOfService(reason: ControlPlaneAvailability.UnavailableReason): Unit = {
+        takeOutOfServiceCalls.incrementAndGet()
+        super.takeOutOfService(reason)
+      }
+    }
+
+    val baseProps = TestUtils.createBrokerConfig(0, port = 8181)
+    baseProps.put("inkless.control.plane.connection.string", "jdbc:postgresql://old/db")
+    val oldConfig = KafkaConfig.fromProps(baseProps)
+
+    val newProps = TestUtils.createBrokerConfig(0, port = 8181)
+    newProps.put("inkless.control.plane.connection.string", "")
+    val newConfig = KafkaConfig.fromProps(newProps)
+
+    val reconfigurable = new DynamicInklessControlPlaneConfig(gate)
+    reconfigurable.validateReconfiguration(newConfig)
+    reconfigurable.reconfigure(oldConfig, newConfig)
+
+    assertEquals(1, takeOutOfServiceCalls.get())
+    assertEquals(ControlPlaneAvailability.State.UNAVAILABLE, gate.availability().state())
+  }
+
+  @Test
+  def testInklessControlPlaneConnectionStringRejectsEmbeddedCredentials(): Unit = {
+    val gate = new AvailabilityGatedControlPlane(
+      () => new InklessConfig(java.util.Map.of("control.plane.class",
+        classOf[io.aiven.inkless.control_plane.InMemoryControlPlane].getCanonicalName)),
+      _ => mock(classOf[ControlPlane]))
+
+    val newProps = TestUtils.createBrokerConfig(0, port = 8181)
+    newProps.put("inkless.control.plane.connection.string", "jdbc:postgresql://host/db?user=admin&password=secret")
+    val newConfig = KafkaConfig.fromProps(newProps)
+
+    val reconfigurable = new DynamicInklessControlPlaneConfig(gate)
+    assertThrows(classOf[ConfigException], () => reconfigurable.validateReconfiguration(newConfig))
   }
 }
