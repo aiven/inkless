@@ -38,6 +38,7 @@ import java.util.Map;
 import java.util.Properties;
 
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.EnforceRetentionRequest;
 import io.aiven.inkless.control_plane.MetadataView;
 
@@ -46,6 +47,7 @@ import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_COPY_DISABLE
 import static org.apache.kafka.common.config.TopicConfig.RETENTION_BYTES_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.RETENTION_MS_CONFIG;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -157,6 +159,20 @@ class RetentionEnforcerTest {
             assertThat(requestCaptor.getValue())
                 .map(EnforceRetentionRequest::topicId)
                 .containsExactly(TOPIC_ID_1, TOPIC_ID_2);
+        }
+    }
+
+    @Test
+    void propagatesControlPlaneUnavailableException() throws Exception {
+        when(retentionEnforcementScheduler.getReadyPartitions()).thenReturn(List.of(T0P0));
+        when(metadataView.getTopicConfig(any())).thenReturn(new LogConfig(Map.of()));
+        when(controlPlane.enforceRetention(any(), eq(0)))
+            .thenThrow(new ControlPlaneUnavailableException("No diskless control plane is configured"));
+
+        try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0, false)) {
+            // run() rethrows this rather than swallowing it: the caller (ReplicaManager.runIfControlPlaneAvailable)
+            // is the one place that turns it into a quiet skip.
+            assertThrows(ControlPlaneUnavailableException.class, enforcer::run);
         }
     }
 
