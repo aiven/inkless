@@ -52,7 +52,7 @@ import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
 import org.apache.kafka.common.utils.Time
 import org.apache.kafka.image._
-import org.apache.kafka.metadata.{InitDisklessLogFields, LeaderRecoveryState, PartitionRegistration}
+import org.apache.kafka.metadata.{InitDisklessLogFields, LeaderAndIsr, LeaderRecoveryState, PartitionRegistration}
 import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion}
 import org.apache.kafka.server.config.ServerConfigs
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
@@ -72,7 +72,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
-import org.mockito.{Answers, ArgumentMatchers, MockedConstruction, Mockito}
+import org.mockito.{Answers, ArgumentCaptor, ArgumentMatchers, MockedConstruction, Mockito}
 
 import java.io.File
 import java.net.InetAddress
@@ -7179,7 +7179,10 @@ class ReplicaManagerInklessTest {
       // fetch state at the seal...
       assertEquals(sealOffset, partition.getReplica(followerId).get.stateSnapshot.logEndOffset)
       // ...which drives the normal ISR-expansion path for the now caught-up follower.
-      verify(alterPartitionManager).submit(any(), any())
+      val isrCaptor: ArgumentCaptor[LeaderAndIsr] = ArgumentCaptor.forClass(classOf[LeaderAndIsr])
+      verify(alterPartitionManager).submit(any(), isrCaptor.capture())
+      assertTrue(isrCaptor.getValue.isr.contains(followerId),
+        s"AlterPartition must expand the ISR to include the recovered follower, got ${isrCaptor.getValue.isr}")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }

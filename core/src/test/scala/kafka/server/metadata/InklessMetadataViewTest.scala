@@ -311,6 +311,15 @@ class InklessMetadataViewTest {
     assertFalse(metadataView.isReplicaInIsr(tp, 1))
   }
 
+  @Test
+  def testIsReplicaInIsrReturnsFalseWhenPartitionMissing(): Unit = {
+    val tp = new TopicPartition("switched", 1)
+    // Topic present, but only partition 0 exists in the image. The fetcher consults this per fetch,
+    // so a partition absent from a freshly published image must read as "not in ISR" rather than NPE.
+    stubImageTopic(tp.topic(), util.Map.of(Integer.valueOf(0), partitionRegistration()))
+    assertFalse(metadataView.isReplicaInIsr(tp, 1))
+  }
+
   @Nested
   class TopicConfigCacheTest {
     @Test

@@ -36,6 +36,8 @@ import org.apache.kafka.common.requests.{FetchRequest, FetchResponse}
 import org.apache.kafka.common.utils.{LogContext, Time}
 import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion, OffsetAndEpoch}
+import org.apache.kafka.server.config.ServerConfigs
+import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.ReplicaState
 import org.apache.kafka.server.PartitionFetchState
@@ -827,6 +829,18 @@ class ReplicaFetcherThreadTest {
   }
 
   @Test
+  def shouldEvictConsolidatingPartitionAtSealEvenWhenNotInMetadataIsr(): Unit = {
+    // The consolidating leg of the eviction gate: a consolidating follower hands off to the
+    // consolidation fetcher at the seal and must not wait for ISR to do it.
+    verifyDisklessSwitchEviction(
+      classicToDisklessStartOffset = 100L,
+      logEndOffsetAfterAppend = 100L,
+      expectEviction = true,
+      replicaInIsr = false,
+      consolidating = true)
+  }
+
+  @Test
   def shouldNotEvictPartitionWhenLogEndOffsetBelowClassicToDisklessSealOffset(): Unit = {
     verifyDisklessSwitchEviction(
       classicToDisklessStartOffset = 100L,
@@ -854,9 +868,17 @@ class ReplicaFetcherThreadTest {
     classicToDisklessStartOffset: Long,
     logEndOffsetAfterAppend: Long,
     expectEviction: Boolean,
-    replicaInIsr: Boolean = true
+    replicaInIsr: Boolean = true,
+    consolidating: Boolean = false
   ): Unit = {
     val props = TestUtils.createBrokerConfig(1)
+    if (consolidating) {
+      props.put(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
+      props.put(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
+      props.put(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, "true")
+      props.put(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, "true")
+      props.put(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, "true")
+    }
     val config = KafkaConfig.fromProps(props)
 
     val mockBlockingSend: BlockingSend = mock(classOf[BlockingSend])
@@ -870,13 +892,13 @@ class ReplicaFetcherThreadTest {
 
     val partition: Partition = mock(classOf[Partition])
     when(partition.localLogOrException).thenReturn(log)
-    when(partition.inSyncReplicaIds).thenReturn(Set.empty)
     when(partition.appendRecordsToFollowerOrFutureReplica(any[MemoryRecords], any[Boolean], any[Int]))
       .thenReturn(Some(mock(classOf[LogAppendInfo])))
 
     val inklessMetadataView: InklessMetadataView = mock(classOf[InklessMetadataView])
     when(inklessMetadataView.getClassicToDisklessStartOffset(t1p0)).thenReturn(classicToDisklessStartOffset)
     when(inklessMetadataView.isReplicaInIsr(t1p0, config.brokerId)).thenReturn(replicaInIsr)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(t1p0.topic)).thenReturn(consolidating)
 
     val replicaFetcherManager: ReplicaFetcherManager = mock(classOf[ReplicaFetcherManager])
 
