@@ -15,6 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import os
+import time
 import uuid
 
 from ducktape.cluster.remoteaccount import RemoteCommandError
@@ -122,6 +123,8 @@ class InklessClassicToDisklessSwitchTest(Test):
     }
     SEALED_LEADER_PARTITIONS_JMX_OBJECT = "kafka.server:type=ReplicaManager,name=SealedPartitionsCount"
     UNDER_REPLICATED_PARTITIONS_JMX_OBJECT = "kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions"
+    # JmxTool polls once a second; a sample older than this is a dead scrape, not a reading.
+    JMX_SAMPLE_MAX_AGE_SEC = 15
     INIT_DISKLESS_IN_FLIGHT_PARTITIONS_JMX_OBJECT = _IDLM_OBJ % "InFlightPartitions"
     SWITCH_COMPLETION_JMX_OBJECT_NAMES = [
         SEALED_LEADER_PARTITIONS_JMX_OBJECT,
@@ -382,9 +385,10 @@ class InklessClassicToDisklessSwitchTest(Test):
     def _live_cluster_jmx_sum(self, obj_name):
         """Read and sum one JMX gauge across live broker nodes.
 
-        Returns None unless every live broker reported the gauge. Leader-owned
-        gauges such as UnderReplicatedPartitions cannot be treated as zero when
-        the leader's scrape is missing.
+        Returns None unless every live broker reported a recent sample. Leader-owned
+        gauges such as UnderReplicatedPartitions cannot be treated as zero when the
+        leader's scrape is missing, and read_jmx_output returns silently when JmxTool
+        is not running, so a stale sample must not count as an observation either.
         """
         key = "%s:Value" % obj_name
         total = 0.0
@@ -405,6 +409,8 @@ class InklessClassicToDisklessSwitchTest(Test):
             time_to_stats = self.kafka.jmx_stats[idx - 1]
             if time_to_stats:
                 latest = max(time_to_stats.keys())
+                if time.time() - latest > self.JMX_SAMPLE_MAX_AGE_SEC:
+                    continue
                 latest_stats = time_to_stats[latest]
                 if key not in latest_stats:
                     continue
@@ -412,34 +418,23 @@ class InklessClassicToDisklessSwitchTest(Test):
                 observed_nodes += 1
         return int(total) if observed_nodes == len(live_nodes) else None
 
-    def _wait_for_under_replicated_partitions(self, expected_count, timeout_sec=120):
+    def _wait_for_under_replicated_partitions(self, expected_count, at_least=False, timeout_sec=120):
+        qualifier = "at least " if at_least else ""
+
         def check():
             count = self._live_cluster_jmx_sum(self.UNDER_REPLICATED_PARTITIONS_JMX_OBJECT)
-            self.logger.info("Cluster UnderReplicatedPartitions=%s, expected=%d",
-                             count, expected_count)
-            return count is not None and count == expected_count
+            self.logger.info("Cluster UnderReplicatedPartitions=%s, expected=%s%d",
+                             count, qualifier, expected_count)
+            if count is None:
+                return False
+            return count >= expected_count if at_least else count == expected_count
 
         wait_until(
             check,
             timeout_sec=timeout_sec,
             backoff_sec=2,
-            err_msg="UnderReplicatedPartitions did not become %d within %ds" %
-                    (expected_count, timeout_sec)
-        )
-
-    def _wait_for_under_replicated_partitions_at_least(self, min_count, timeout_sec=120):
-        def check():
-            count = self._live_cluster_jmx_sum(self.UNDER_REPLICATED_PARTITIONS_JMX_OBJECT)
-            self.logger.info("Cluster UnderReplicatedPartitions=%s, expected_at_least=%d",
-                             count, min_count)
-            return count is not None and count >= min_count
-
-        wait_until(
-            check,
-            timeout_sec=timeout_sec,
-            backoff_sec=2,
-            err_msg="UnderReplicatedPartitions did not reach at least %d within %ds" %
-                    (min_count, timeout_sec)
+            err_msg="UnderReplicatedPartitions did not reach %s%d within %ds" %
+                    (qualifier, expected_count, timeout_sec)
         )
 
     # -----------------------------------------------------------------------
@@ -1319,7 +1314,7 @@ class InklessClassicToDisklessSwitchTest(Test):
 
         follower = self._get_follower_nodes(partition=0)[0]
         self._stop_broker(follower, clean_shutdown=False)
-        self._wait_for_under_replicated_partitions_at_least(1)
+        self._wait_for_under_replicated_partitions(1, at_least=True)
 
         self._start_broker(follower)
         self._wait_for_all_partitions_isr_full(num_partitions=1)

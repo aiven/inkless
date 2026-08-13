@@ -2555,7 +2555,8 @@ class ReplicaManager(val config: KafkaConfig,
             // The partition has fully switched to diskless and the follower is asking for an offset at or beyond it.
             // Followers must never replicate diskless records into their local log. Return
             // an empty response with HW clamped to the seal offset so the fetcher loop sees the
-            // partition as caught up and goes idle, rather than treating it as out of range.
+            // partition as caught up rather than out of range. The fetcher keeps polling (with a
+            // backoff) until the controller puts this replica back in ISR.
             // Deliberately pass logStartOffset=0 (a no-op for the follower since
             // maybeIncrementLogStartOffset only ever advances) so the follower keeps its classic
             // local data intact and remains able to serve consumer reads from the local log.
@@ -4153,10 +4154,10 @@ class ReplicaManager(val config: KafkaConfig,
               if (seal >= 0 && (partition.localLogOrException.highWatermark < seal || isOutOfIsr)) {
                 // Schedule a catch-up fetch when the local HW is below the seal -- either
                 // because we restarted with a stale HW (unclean shutdown) or because we
-                // were just added as a replica and have an empty local log. The
-                // ReplicaFetcher self-evicts once the follower has read past the seal.
-                // Also schedule one fetch when this replica is already caught up but out
-                // of ISR, so the leader observes its fetch state and can expand ISR.
+                // were just added as a replica and have an empty local log -- or when we are
+                // already at the seal but out of ISR, so the leader observes our fetch state
+                // and can expand ISR. The ReplicaFetcher self-evicts once the local log has
+                // reached the seal AND the controller has put this replica back in ISR.
                 partitionsToStartFetching.put(tp, partition)
               } else if (seal == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING && isNewLeaderEpoch) {
                 // Switch is in flight: the leader has already sealed its log and
