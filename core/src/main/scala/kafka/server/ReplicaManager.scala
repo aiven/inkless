@@ -2516,41 +2516,39 @@ class ReplicaManager(val config: KafkaConfig,
             // diskless data into the local log.
             if (fetchPartitionData.fetchOffset >= classicToDisklessStartOffset) {
               getPartitionOrError(tp.topicPartition).foreach { partition =>
-                val requestEpochMatchesLeader =
-                  fetchPartitionData.currentLeaderEpoch.toScala.forall(_.intValue() == partition.getLeaderEpoch)
-                if (requestEpochMatchesLeader) {
-                  try {
-                    partition.getReplica(params.replicaId).foreach { _ =>
-                      // Use the classic follower-read validation without returning any records.
-                      val fetchAtSeal = new PartitionData(
-                        fetchPartitionData.topicId,
-                        classicToDisklessStartOffset,
-                        fetchPartitionData.logStartOffset,
-                        0,
-                        fetchPartitionData.currentLeaderEpoch,
-                        fetchPartitionData.lastFetchedEpoch
-                      )
-                      val readInfo = partition.fetchRecords(
-                        fetchParams = params,
-                        fetchPartitionData = fetchAtSeal,
-                        fetchTimeMs = time.milliseconds,
-                        maxBytes = 0,
-                        minOneMessage = false,
-                        updateFetchState = true
-                      )
-                      divergingEpoch = readInfo.divergingEpoch
-                    }
-                  } catch {
-                    case e@(_: UnknownTopicOrPartitionException |
-                            _: NotLeaderOrFollowerException |
-                            _: UnknownLeaderEpochException |
-                            _: FencedLeaderEpochException |
-                            _: OffsetOutOfRangeException |
-                            _: ReplicaNotAvailableException |
-                            _: KafkaStorageException |
-                            _: InconsistentTopicIdException) =>
-                      fetchError = Errors.forException(e)
-                  }
+                try {
+                  // Read at the seal rather than at the request's fetch offset: the leader's classic
+                  // log is frozen there, so recording exactly the seal keeps
+                  // ReplicaState.isCaughtUp's leaderEndOffset == logEndOffset leg true and the
+                  // follower stays caught up without another fetch. maxBytes = 0 runs the classic
+                  // follower-read validation (leader epoch, replica membership, divergence) without
+                  // returning any records.
+                  val fetchAtSeal = new PartitionData(
+                    fetchPartitionData.topicId,
+                    classicToDisklessStartOffset,
+                    fetchPartitionData.logStartOffset,
+                    0,
+                    fetchPartitionData.currentLeaderEpoch,
+                    fetchPartitionData.lastFetchedEpoch
+                  )
+                  divergingEpoch = partition.fetchRecords(
+                    fetchParams = params,
+                    fetchPartitionData = fetchAtSeal,
+                    fetchTimeMs = time.milliseconds,
+                    maxBytes = 0,
+                    minOneMessage = false,
+                    updateFetchState = true
+                  ).divergingEpoch
+                } catch {
+                  case e@(_: UnknownTopicOrPartitionException |
+                          _: NotLeaderOrFollowerException |
+                          _: UnknownLeaderEpochException |
+                          _: FencedLeaderEpochException |
+                          _: OffsetOutOfRangeException |
+                          _: ReplicaNotAvailableException |
+                          _: KafkaStorageException |
+                          _: InconsistentTopicIdException) =>
+                    fetchError = Errors.forException(e)
                 }
               }
             }
