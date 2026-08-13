@@ -51,6 +51,10 @@ class ReplicaFetcherThread(name: String,
   // and should be evicted from this fetcher.
   private[server] val partitionsToEvictAfterDisklessSwitch = mutable.Buffer[TopicPartition]()
 
+  // Partitions at the seal that cannot be evicted yet because the controller has not put this
+  // replica back in ISR. Visible for testing.
+  private[server] val partitionsAwaitingIsrRecovery = mutable.Buffer[TopicPartition]()
+
   override protected def latestEpoch(topicPartition: TopicPartition): Optional[Integer] = {
     replicaMgr.localLogOrException(topicPartition).latestEpoch
   }
@@ -100,6 +104,7 @@ class ReplicaFetcherThread(name: String,
     super.doWork()
     completeDelayedFetchRequests()
     evictFullySwitchedDisklessPartitions()
+    backOffPartitionsAwaitingIsrRecovery()
   }
 
   /**
@@ -168,20 +173,28 @@ class ReplicaFetcherThread(name: String,
     if (shouldRecordReplicationBytesIn)
       brokerTopicStats.updateReplicationBytesIn(records.sizeInBytes)
 
-    // Stop fetching after the switch from classic to diskless is completed: once the controller
-    // has committed a classicToDisklessStartOffset for this partition, our local LEO has reached it,
-    // and this replica is in ISR, the follower is fully caught up to the leader's frozen classic log
-    // and must not keep fetching.
+    // Stop fetching once the switch from classic to diskless is complete: the controller has
+    // committed a classicToDisklessStartOffset, our local LEO has reached it, and the controller has
+    // put this replica back in ISR. A consolidating partition is exempt from the ISR condition
+    // because it hands off to the consolidation fetcher at the seal and must not wait on ISR to do
+    // it.
     val inklessMetadataView = replicaMgr.inklessMetadataView()
     val classicToDisklessStartOffset = inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
-    val isConsolidatingPartition =
+    def isConsolidatingPartition: Boolean =
       brokerConfig.disklessRemoteStorageConsolidationEnabled &&
         inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
     if (shouldEvictFullySwitchedDisklessPartitions &&
         classicToDisklessStartOffset >= 0 &&
-        log.logEndOffset >= classicToDisklessStartOffset &&
-        (isConsolidatingPartition || inklessMetadataView.isReplicaInIsr(topicPartition, brokerConfig.brokerId))) {
-      partitionsToEvictAfterDisklessSwitch += topicPartition
+        log.logEndOffset >= classicToDisklessStartOffset) {
+      if (isConsolidatingPartition || inklessMetadataView.isReplicaInIsr(topicPartition, brokerConfig.brokerId)) {
+        partitionsToEvictAfterDisklessSwitch += topicPartition
+      } else {
+        // The leader answers an at-seal follower fetch from immediateFetchResponses without entering
+        // the fetch purgatory, so the response returns at once with no records and the request's
+        // maxWaitMs is not honoured. Back off explicitly or this re-fetches as fast as the network
+        // allows until the ISR expansion lands.
+        partitionsAwaitingIsrRecovery += topicPartition
+      }
     }
 
     logAppendInfo
@@ -191,6 +204,15 @@ class ReplicaFetcherThread(name: String,
     if (partitionsWithNewHighWatermark.nonEmpty) {
       replicaMgr.completeDelayedFetchRequests(partitionsWithNewHighWatermark.toSeq)
       partitionsWithNewHighWatermark.clear()
+    }
+  }
+
+  // Visible for testing.
+  private[server] def backOffPartitionsAwaitingIsrRecovery(): Unit = {
+    if (partitionsAwaitingIsrRecovery.nonEmpty) {
+      val toDelay = partitionsAwaitingIsrRecovery.toSet
+      partitionsAwaitingIsrRecovery.clear()
+      delayPartitions(toDelay, brokerConfig.replicaFetchBackoffMs.toLong)
     }
   }
 

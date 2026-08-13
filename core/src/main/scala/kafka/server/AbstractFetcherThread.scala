@@ -807,7 +807,7 @@ abstract class AbstractFetcherThread(name: String,
     }
   }
 
-  private def delayPartitions(partitions: Iterable[TopicPartition], delay: Long): Unit = {
+  protected def delayPartitions(partitions: Iterable[TopicPartition], delay: Long): Unit = {
     partitionMapLock.lockInterruptibly()
     try {
       for (partition <- partitions) {

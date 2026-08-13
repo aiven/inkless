@@ -769,6 +769,64 @@ class ReplicaFetcherThreadTest {
   }
 
   @Test
+  def shouldDelayPartitionAtSealWhileMetadataIsrDoesNotContainReplica(): Unit = {
+    val config = KafkaConfig.fromProps(TestUtils.createBrokerConfig(1))
+
+    val mockBlockingSend: BlockingSend = mock(classOf[BlockingSend])
+    when(mockBlockingSend.brokerEndPoint()).thenReturn(brokerEndPoint)
+
+    val log: UnifiedLog = mock(classOf[UnifiedLog])
+    when(log.logEndOffset).thenReturn(100L)
+    when(log.latestEpoch).thenReturn(Optional.of(Int.box(0)))
+    when(log.maybeUpdateHighWatermark(anyLong())).thenReturn(Optional.empty)
+
+    val partition: Partition = mock(classOf[Partition])
+    when(partition.localLogOrException).thenReturn(log)
+    when(partition.appendRecordsToFollowerOrFutureReplica(any[MemoryRecords], any[Boolean], any[Int]))
+      .thenReturn(Some(mock(classOf[LogAppendInfo])))
+
+    val inklessMetadataView: InklessMetadataView = mock(classOf[InklessMetadataView])
+    when(inklessMetadataView.getClassicToDisklessStartOffset(t1p0)).thenReturn(100L)
+    when(inklessMetadataView.isReplicaInIsr(t1p0, config.brokerId)).thenReturn(false)
+
+    val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.getPartitionOrException(any[TopicPartition])).thenReturn(partition)
+    when(replicaManager.localLogOrException(any[TopicPartition])).thenReturn(log)
+    when(replicaManager.brokerTopicStats).thenReturn(new BrokerTopicStats)
+    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    when(replicaManager.replicaFetcherManager).thenReturn(mock(classOf[ReplicaFetcherManager]))
+
+    val thread = createReplicaFetcherThread(
+      name = "replica-fetcher",
+      fetcherId = 0,
+      brokerConfig = config,
+      failedPartitions = failedPartitions,
+      replicaMgr = replicaManager,
+      quota = mock(classOf[ReplicaQuota]),
+      leaderEndpointBlockingSend = mockBlockingSend)
+
+    thread.addPartitions(Map(t1p0 -> InitialFetchState(Some(Uuid.randomUuid()), brokerEndPoint, 0, 100L)))
+    assertFalse(thread.fetchState(t1p0).get.isDelayed, "Partition must start undelayed")
+
+    val partitionData = new FetchResponseData.PartitionData()
+      .setPartitionIndex(t1p0.partition)
+      .setRecords(MemoryRecords.withRecords(Compression.NONE,
+        new SimpleRecord(1000, "foo".getBytes(StandardCharsets.UTF_8))))
+    thread.processPartitionData(t1p0, 100L, Int.MaxValue, partitionData)
+
+    // At the seal but out of ISR: not evictable, so it must be parked instead of re-fetched at once.
+    assertEquals(mutable.Buffer.empty, thread.partitionsToEvictAfterDisklessSwitch)
+    assertEquals(mutable.Buffer(t1p0), thread.partitionsAwaitingIsrRecovery)
+
+    // Drained directly rather than via doWork(), whose fetch attempt against the mocked sender would
+    // fail the partition and delay it for an unrelated reason.
+    thread.backOffPartitionsAwaitingIsrRecovery()
+    assertEquals(mutable.Buffer.empty, thread.partitionsAwaitingIsrRecovery)
+    assertTrue(thread.fetchState(t1p0).get.isDelayed,
+      s"Partition must be delayed after the at-seal fetch, got ${thread.fetchState(t1p0).get}")
+  }
+
+  @Test
   def shouldNotEvictPartitionWhenLogEndOffsetBelowClassicToDisklessSealOffset(): Unit = {
     verifyDisklessSwitchEviction(
       classicToDisklessStartOffset = 100L,
