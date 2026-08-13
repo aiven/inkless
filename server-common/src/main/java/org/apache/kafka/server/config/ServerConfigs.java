@@ -219,6 +219,22 @@ public class ServerConfigs {
         "for consolidation cold-path fetches. 0 (default) means unlimited -- consolidation is internal background work and does not " +
         "need throttling under normal conditions. Set > 0 as a safety valve to bound object storage request rate from consolidation.";
 
+    public static final String DISKLESS_CONTROL_PLANE_AVAILABILITY_CONFIG = "diskless.control.plane.availability";
+    public static final String DISKLESS_CONTROL_PLANE_AVAILABILITY_AVAILABLE = "available";
+    public static final String DISKLESS_CONTROL_PLANE_AVAILABILITY_INITIALIZING = "initializing";
+    public static final String DISKLESS_CONTROL_PLANE_AVAILABILITY_OFFLINE = "offline";
+    public static final String DISKLESS_CONTROL_PLANE_AVAILABILITY_DEFAULT = DISKLESS_CONTROL_PLANE_AVAILABILITY_AVAILABLE;
+    public static final String DISKLESS_CONTROL_PLANE_AVAILABILITY_DOC = "Availability of the diskless control plane " +
+        "(batch coordinator) as reported by the deployment's management plane. " +
+        "\"" + DISKLESS_CONTROL_PLANE_AVAILABILITY_AVAILABLE + "\" (default) means no restriction. " +
+        "\"" + DISKLESS_CONTROL_PLANE_AVAILABILITY_INITIALIZING + "\" means the control plane is starting up and " +
+        "\"" + DISKLESS_CONTROL_PLANE_AVAILABILITY_OFFLINE + "\" means it is intentionally shut down; in both cases " +
+        "diskless control-plane operations fail immediately instead of waiting for a connection timeout, and the " +
+        "periodic diskless background jobs are skipped. This is an externally supplied hint, not a measurement: the " +
+        "broker does not verify it and does not clear it on its own, so whoever sets it is responsible for resetting " +
+        "it to \"" + DISKLESS_CONTROL_PLANE_AVAILABILITY_AVAILABLE + "\" (or deleting it). " +
+        "This config can be updated dynamically.";
+
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG = "classic.remote.storage.force.enable";
     public static final boolean CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT = false;
     public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC = "Force classic topics to be created with remote.storage.enable=true, " +
@@ -317,6 +333,11 @@ public class ServerConfigs {
                 atLeast(0), LOW, DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_DOC)
             .define(DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_CONFIG, INT, DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_DEFAULT,
                 atLeast(0), LOW, DISKLESS_CONSOLIDATION_FETCH_LAGGING_REQUEST_RATE_LIMIT_DOC)
+            .define(DISKLESS_CONTROL_PLANE_AVAILABILITY_CONFIG, STRING, DISKLESS_CONTROL_PLANE_AVAILABILITY_DEFAULT,
+                ConfigDef.ValidString.in(DISKLESS_CONTROL_PLANE_AVAILABILITY_AVAILABLE,
+                    DISKLESS_CONTROL_PLANE_AVAILABILITY_INITIALIZING,
+                    DISKLESS_CONTROL_PLANE_AVAILABILITY_OFFLINE),
+                LOW, DISKLESS_CONTROL_PLANE_AVAILABILITY_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG, BOOLEAN, CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT, LOW,
                 CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC)
             .define(CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG, LIST, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DEFAULT,

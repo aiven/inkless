@@ -20,7 +20,7 @@ import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, Reader}
 import io.aiven.inkless.storage_backend.common.ObjectFetcher
-import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetRequest, AdvanceCrossTierLogStartOffsetResponse, BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, RepairDisklessLogRequest, ListOffsetsRequest => CpListOffsetsRequest}
+import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetRequest, AdvanceCrossTierLogStartOffsetResponse, BatchInfo, ControlPlaneAvailability, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, RepairDisklessLogRequest, ListOffsetsRequest => CpListOffsetsRequest}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.produce.AppendHandler
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, ConsolidationMetrics, ConsolidationReconciler, DelayedConsolidationFetch}
@@ -79,6 +79,7 @@ import org.apache.kafka.server.{ActionQueue, DelayedActionQueue, HostedPartition
 import org.apache.kafka.storage.internals.checkpoint.{LazyOffsetCheckpoints, OffsetCheckpointFile, OffsetCheckpoints}
 import org.apache.kafka.storage.internals.log.{AppendOrigin, FetchDataInfo, FetchPartitionStatus, LeaderHwChange, LogAppendInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogReadInfo, LogReadResult, OffsetResultHolder, RecordValidationException, RecordValidationStats, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog, VerificationGuard}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
+import org.slf4j.LoggerFactory
 
 import java.io.File
 import java.lang.{Long => JLong}
@@ -97,6 +98,8 @@ import scala.jdk.OptionConverters.RichOptional
 import scala.util.control.NonFatal
 
 object ReplicaManager {
+  private val log = LoggerFactory.getLogger(classOf[ReplicaManager])
+
   val HighWatermarkFilename = "replication-offset-checkpoint"
 
   private val LeaderCountMetricName = "LeaderCount"
@@ -182,6 +185,20 @@ object ReplicaManager {
   private[server] def isListOffsetsTimestampUnsupported(timestamp: JLong, version: Short): Boolean = {
     timestamp < 0 &&
       (!timestampMinSupportedVersion.contains(timestamp) || version < timestampMinSupportedVersion(timestamp))
+  }
+
+  /**
+   * Runs a periodic diskless task only while the control plane is reported available.
+   *
+   * Every one of these tasks starts by calling the control plane, so while it is reported
+   * unavailable the tick can only fail. Skipping is quieter than letting each job fail.
+   */
+  def runIfControlPlaneAvailable(availability: ControlPlaneAvailability, task: String)(body: => Unit): Unit = {
+    if (availability.isAvailable) {
+      body
+    } else {
+      log.debug("Skipping {}: control plane reported as {}", task, availability.state().configValue())
+    }
   }
 }
 
@@ -275,6 +292,9 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessRetentionEnforcer: Option[RetentionEnforcer] = inklessSharedState.map(new RetentionEnforcer(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
+
+  def inklessControlPlaneAvailability(): Option[ControlPlaneAvailability] =
+    inklessSharedState.map(_.controlPlaneAvailability())
 
   // --- Diskless Partition Consolidation Fields ---
   private val inklessConsolidatedDisklessLogPruner: Option[ConsolidatedDisklessLogPruner] =
@@ -518,16 +538,31 @@ class ReplicaManager(val config: KafkaConfig,
 
     // Inkless threads
     inklessSharedState.map { sharedState =>
-      scheduler.schedule("inkless-retention-enforcer", () => inklessRetentionEnforcer.foreach(_.run()), config.logInitialTaskDelayMs, 500L)  // the real interval is inside
+      val availability = sharedState.controlPlaneAvailability()
 
-      scheduler.schedule("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run()), sharedState.config().fileCleanerInterval().toMillis, sharedState.config().fileCleanerInterval().toMillis)
+      scheduler.schedule("inkless-retention-enforcer",
+        () => ReplicaManager.runIfControlPlaneAvailable(availability, "inkless-retention-enforcer") {
+          inklessRetentionEnforcer.foreach(_.run())
+        }, config.logInitialTaskDelayMs, 500L)  // the real interval is inside
+
+      scheduler.schedule("inkless-file-cleaner",
+        () => ReplicaManager.runIfControlPlaneAvailable(availability, "inkless-file-cleaner") {
+          inklessFileCleaner.foreach(_.run())
+        }, sharedState.config().fileCleanerInterval().toMillis, sharedState.config().fileCleanerInterval().toMillis)
 
       // The default 30s task delay would leave EARLIEST wrong for up to 30s after every startup.
-      scheduler.schedule("inkless-cross-tier-log-start-reporter", () => sharedState.crossTierLogStartReporter().run(), sharedState.config().crossTierLogStartReportInterval().toMillis, sharedState.config().crossTierLogStartReportInterval().toMillis)
+      scheduler.schedule("inkless-cross-tier-log-start-reporter",
+        () => ReplicaManager.runIfControlPlaneAvailable(availability, "inkless-cross-tier-log-start-reporter") {
+          sharedState.crossTierLogStartReporter().run()
+        }, sharedState.config().crossTierLogStartReportInterval().toMillis,
+        sharedState.config().crossTierLogStartReportInterval().toMillis)
 
       inklessConsolidatedDisklessLogPruner.foreach { pruner =>
-        scheduler.schedule("inkless-consolidated-diskless-log-pruner", () => pruner.run(),
-          sharedState.config.consolidationCleanupInterval.toMillis, sharedState.config.consolidationCleanupInterval.toMillis)
+        scheduler.schedule("inkless-consolidated-diskless-log-pruner",
+          () => ReplicaManager.runIfControlPlaneAvailable(availability, "inkless-consolidated-diskless-log-pruner") {
+            pruner.run()
+          }, sharedState.config.consolidationCleanupInterval.toMillis,
+          sharedState.config.consolidationCleanupInterval.toMillis)
       }
     }
   }
