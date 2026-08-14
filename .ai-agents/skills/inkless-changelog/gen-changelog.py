@@ -4,7 +4,8 @@
 Sources, in order of reliability:
   1. Conventional-commit log (backbone) -- categorized by type/scope.
   2. configs.rst delta                  -- RELIABLE (config keys are stable).
-  3. metrics.rst delta                  -- NOISY, marked REVIEW (see caveat below).
+  3. db/migration additions             -- RELIABLE (migrations are append-only).
+  4. metrics.rst delta                  -- NOISY, marked REVIEW (see caveat below).
 
 Caveat on metrics: docs/inkless/metrics.rst is produced by MetricsDocs.main(),
 a hand-maintained list of metric registries. When a registry is added to that
@@ -32,6 +33,15 @@ TYPE_LABELS = [
 ]
 # Types surfaced in the curated GH-release-notes summary (feat/fix only).
 SUMMARY_TYPES = {"feat", "fix"}
+
+MIGRATIONS_DIR = "storage/inkless/src/main/resources/db/migration"
+# DDL that takes a table-level lock the produce path contends on. CONCURRENTLY variants are
+# reported separately because they do not block writes.
+BLOCKING_DDL = re.compile(
+    r"^\s*(CREATE(?:\s+UNIQUE)?\s+INDEX|DROP\s+INDEX|ALTER\s+TABLE|CLUSTER|VACUUM\s+FULL)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+CONCURRENTLY = re.compile(r"\bCONCURRENTLY\b", re.IGNORECASE)
 
 
 def git(*args):
@@ -97,6 +107,32 @@ def upstream_note(frm, to):
     if synced:
         return "Upstream sync: merged apache/kafka trunk (no base version change)."
     return None
+
+
+def migrations(tag):
+    """Migration filenames present at tag. Flyway files are append-only, so a set diff is enough."""
+    out = git("ls-tree", "--name-only", f"{tag}:{MIGRATIONS_DIR}") or ""
+    return {line.strip() for line in out.splitlines() if line.strip().endswith(".sql")}
+
+
+def migration_note(tag, name):
+    """Operator-impact suffix for a migration, or empty when it only defines functions/types.
+
+    Postgres schema changes reach operators through the lock they take, not through the SQL, so the
+    note
+    names the blocking DDL and whether the migration already avoids the lock.
+    """
+    text = show(tag, f"{MIGRATIONS_DIR}/{name}") or ""
+    # Headers explain the lock and often quote the CONCURRENTLY form operators can run instead;
+    # scanning them would report a lock-taking migration as concurrent.
+    sql = re.sub(r"--[^\n]*", "", text)
+    statements = {" ".join(m.group(1).upper().split()) for m in BLOCKING_DDL.finditer(sql)}
+    if not statements:
+        return ""
+    note = ", ".join(sorted(statements))
+    if CONCURRENTLY.search(sql):
+        return f" -- {note} (CONCURRENTLY)"
+    return f" -- {note}: takes a table-level lock, check the migration header for operator impact"
 
 
 def parse_configs(text):
@@ -206,6 +242,8 @@ def main():
     mb_add, mb_rm = sorted(mb_to - mb_fr), sorted(mb_fr - mb_to)
     ma_add, ma_rm = sorted(ma_to - ma_fr), sorted(ma_fr - ma_to)
 
+    mig_add = sorted(migrations(to) - migrations(frm))
+
     buckets, other = collect_commits(frm, to)
 
     p = print
@@ -235,6 +273,11 @@ def main():
                 p(f"- Added `{c}`")
             for c in ck_rm:
                 p(f"- Removed `{c}`")
+            p("")
+        if mig_add:
+            p("### Postgres schema")
+            for m in mig_add:
+                p(f"- Migration `{m}`{migration_note(to, m)}")
             p("")
         return
 
@@ -271,6 +314,12 @@ def main():
         for a in ma_rm:
             p(f"- metric attr removed: `{a}`")
     p("")
+
+    if mig_add:
+        p("### Postgres schema changes")
+        for m in mig_add:
+            p(f"- migration added: `{m}`{migration_note(to, m)}")
+        p("")
 
 
 if __name__ == "__main__":

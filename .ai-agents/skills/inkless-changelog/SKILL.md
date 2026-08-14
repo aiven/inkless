@@ -18,6 +18,7 @@ Both derive from the same sources; the summary is a filtered subset of the detai
 | --- | --- | --- |
 | Commits | `git log --first-parent --no-merges` between the two tags | High. `--first-parent` excludes upstream commits dragged in by `apache/kafka` merge commits, leaving inkless PR squash-merges. |
 | Config changes | diff of `docs/inkless/configs.rst` between tags | High. Config keys are stable. |
+| Postgres schema changes | filenames added under `storage/inkless/src/main/resources/db/migration` | High. Flyway migrations are append-only, so a set diff is exact. Each entry is annotated with the blocking DDL it runs (`CREATE INDEX`, `ALTER TABLE`, ...) and whether it uses `CONCURRENTLY`; comments are stripped first so a header quoting the concurrent form is not mistaken for one. |
 | Metric changes | diff of `docs/inkless/metrics.rst` between tags | Low. `metrics.rst` is produced by a hand-maintained registry list in `MetricsDocs.main()`, so a delta may be documentation catch-up, not a shipped metric (e.g. the 3->16 mbean jump at 0.39). ALWAYS curate. |
 | Upstream sync | `apache/kafka` merge commits in range + `gradle.properties` version delta | High. Emitted as a blockquote note under the heading when `main`'s Kafka base moves (e.g. 4.1.0 -> 4.2.0-SNAPSHOT at 0.35). |
 
@@ -36,7 +37,7 @@ Both derive from the same sources; the summary is a filtered subset of the detai
    - `--version <N>` -> uses `inkless-release-<N-1>..inkless-release-<N>`.
    - `--from <tag> --to <tag>` -> explicit range.
    - no args -> latest two `inkless-release-*` tags.
-   - `--summary` -> emit only the curated release-notes summary (features + fixes + config changes).
+   - `--summary` -> emit only the curated release-notes summary (features + fixes + config and Postgres schema changes).
 
 3. **Curate the metrics block.** The draft marks metric deltas with a
    `<!-- REVIEW metrics ... -->` comment. Cross-check each entry against the
@@ -44,15 +45,22 @@ Both derive from the same sources; the summary is a filtered subset of the detai
    collapse documentation catch-up into a short note (see the 0.39 entry in
    `CHANGELOG.md` as the reference pattern). Remove the REVIEW comment before publishing.
 
-4. **Prepend the entry** to `docs/inkless/CHANGELOG.md` directly under the
+4. **Check the Postgres schema block.** A control-plane migration that takes a
+   table-level lock is an operator-visible upgrade cost, not an implementation
+   detail: it blocks the produce path for the length of the statement. For each
+   annotated entry, read the migration header and carry its guidance into the entry
+   -- above all whether the DDL can be run `CONCURRENTLY` ahead of the upgrade to
+   avoid the lock.
+
+5. **Prepend the entry** to `docs/inkless/CHANGELOG.md` directly under the
    `---` separator (newest first). Keep the Kafka-version list in the heading
    accurate:
    ```bash
    git tag | grep -E "^inkless-4\.[0-9]+\.[0-9]+-<N>$"
    ```
 
-5. **Produce the GitHub release notes** from `--summary` output. Drop
-   `chore`/`test`/`docs`/`refactor`; keep features, fixes, and config/metric
+6. **Produce the GitHub release notes** from `--summary` output. Drop
+   `chore`/`test`/`docs`/`refactor`; keep features, fixes, and config/metric/Postgres-schema
    changes an operator cares about. Tighten wording; strip PR numbers only if
    the release UI already links them.
 

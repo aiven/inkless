@@ -18,6 +18,12 @@ Entries are generated from git and the auto-generated docs, then curated:
   excludes the individual upstream commits pulled in by `apache/kafka` merge
   commits.
 - **Config changes** are diffed from `docs/inkless/configs.rst` (reliable).
+- **Postgres schema changes** are the Flyway migration files added under
+  `storage/inkless/src/main/resources/db/migration`, annotated with the blocking
+  DDL each one runs. A control-plane migration that takes a table-level lock
+  blocks the produce path while it runs, so the entry carries the migration
+  header's guidance - notably whether the DDL can be run `CONCURRENTLY` before
+  the upgrade instead.
 - **Metric changes** are diffed from `docs/inkless/metrics.rst`. This file is
   produced by a hand-maintained registry list in `MetricsDocs.main()`, so a
   delta can reflect documentation catch-up rather than a newly shipped metric
