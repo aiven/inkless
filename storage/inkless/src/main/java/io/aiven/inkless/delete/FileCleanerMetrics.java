@@ -47,6 +47,9 @@ public class FileCleanerMetrics {
     private static final String LAST_SUCCESSFUL_FILE_CLEANUP_AGE_MS_DOC = "Milliseconds since the last file cleaning "
         + "cycle completed without error, including cycles that found nothing to delete; -1 if no cycle has "
         + "completed since startup";
+    static final String FILE_CLEANER_CYCLE_SATURATED_RATE = "FileCleanerCycleSaturatedRate";
+    private static final String FILE_CLEANER_CYCLE_SATURATED_RATE_DOC = "Total number of file cleaning cycles that "
+        + "hit file.cleaner.max.files.per.cycle, leaving files for the next cycle";
 
     /**
      * This method returns a list of all the metric name templates for the FileCleanerMetrics class.
@@ -59,7 +62,8 @@ public class FileCleanerMetrics {
             new MetricNameTemplate(FILE_CLEANER_FILES_RATE, GROUP, FILE_CLEANER_FILES_RATE_DOC),
             new MetricNameTemplate(FILE_CLEANER_ERROR_RATE, GROUP, FILE_CLEANER_ERROR_RATE_DOC),
             new MetricNameTemplate(FILE_CLEANER_FILES_FAILED_RATE, GROUP, FILE_CLEANER_FILES_FAILED_RATE_DOC),
-            new MetricNameTemplate(LAST_SUCCESSFUL_FILE_CLEANUP_AGE_MS, GROUP, LAST_SUCCESSFUL_FILE_CLEANUP_AGE_MS_DOC)
+            new MetricNameTemplate(LAST_SUCCESSFUL_FILE_CLEANUP_AGE_MS, GROUP, LAST_SUCCESSFUL_FILE_CLEANUP_AGE_MS_DOC),
+            new MetricNameTemplate(FILE_CLEANER_CYCLE_SATURATED_RATE, GROUP, FILE_CLEANER_CYCLE_SATURATED_RATE_DOC)
         );
     }
 
@@ -74,6 +78,7 @@ public class FileCleanerMetrics {
     final LongAdder fileCleanerFilesFailed = new LongAdder();
     // package-private for tests, following FileCommitterMetrics
     final AtomicLong lastSuccessfulCleanupTimeMs = new AtomicLong(-1);
+    final LongAdder fileCleanerCycleSaturated = new LongAdder();
 
     public FileCleanerMetrics(final Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -86,6 +91,7 @@ public class FileCleanerMetrics {
             final long last = lastSuccessfulCleanupTimeMs.get();
             return last == -1 ? -1L : time.milliseconds() - last;
         });
+        metricsGroup.newGauge(FILE_CLEANER_CYCLE_SATURATED_RATE, fileCleanerCycleSaturated::intValue);
     }
 
     public void recordFileCleanerStart() {
@@ -116,6 +122,10 @@ public class FileCleanerMetrics {
         lastSuccessfulCleanupTimeMs.set(time.milliseconds());
     }
 
+    public void recordFileCleanerCycleSaturated() {
+        fileCleanerCycleSaturated.increment();
+    }
+
     public void close() {
         metricsGroup.removeMetric(FILE_CLEANER_TOTAL_TIME);
         metricsGroup.removeMetric(FILE_CLEANER_RATE);
@@ -123,5 +133,6 @@ public class FileCleanerMetrics {
         metricsGroup.removeMetric(FILE_CLEANER_ERROR_RATE);
         metricsGroup.removeMetric(FILE_CLEANER_FILES_FAILED_RATE);
         metricsGroup.removeMetric(LAST_SUCCESSFUL_FILE_CLEANUP_AGE_MS);
+        metricsGroup.removeMetric(FILE_CLEANER_CYCLE_SATURATED_RATE);
     }
 }

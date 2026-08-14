@@ -100,7 +100,15 @@ public class FileCleaner implements Runnable, Closeable {
             final var now = TimeUtils.now(time);
 
             final Instant markedBefore = now.minus(retentionPeriod);
-            final List<FileToDelete> filesToDelete = controlPlane.getFilesToDelete(markedBefore, maxFilesPerCycle);
+            // One row beyond the cap distinguishes a saturated cycle from an exactly-full one. The add
+            // saturates: at MAX_VALUE there is no room for the probe, and overflowing to a negative
+            // limit would read as unbounded and remove the cap the operator asked for.
+            final int queryLimit = maxFilesPerCycle > 0 && maxFilesPerCycle < Integer.MAX_VALUE
+                ? maxFilesPerCycle + 1
+                : maxFilesPerCycle;
+            final List<FileToDelete> fetched = controlPlane.getFilesToDelete(markedBefore, queryLimit);
+            final boolean saturated = maxFilesPerCycle > 0 && fetched.size() > maxFilesPerCycle;
+            final List<FileToDelete> filesToDelete = saturated ? fetched.subList(0, maxFilesPerCycle) : fetched;
             final Set<String> objectKeyPaths = filesToDelete.stream()
                 .map(FileToDelete::objectKey)
                 .collect(Collectors.toSet());
@@ -110,8 +118,8 @@ public class FileCleaner implements Runnable, Closeable {
                 LOGGER.info("No files to delete, sleeping for {}", sleepDuration);
                 time.sleep(sleepMillis);
             } else {
-                final boolean saturated = maxFilesPerCycle > 0 && filesToDelete.size() >= maxFilesPerCycle;
                 if (saturated) {
+                    metrics.recordFileCleanerCycleSaturated();
                     LOGGER.info("Running file cleaner: deleting {} files (per-cycle cap reached, more remain)",
                         objectKeyPaths.size());
                 } else {

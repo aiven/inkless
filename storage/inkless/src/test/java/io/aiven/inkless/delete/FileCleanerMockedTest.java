@@ -28,6 +28,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -45,6 +46,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -82,7 +84,8 @@ class FileCleanerMockedTest {
 
         cleaner.run();
 
-        verify(controlPlane, times(1)).getFilesToDelete(eq(now.minus(RETENTION_PERIOD)), eq(MAX_FILES_PER_CYCLE));
+        // One beyond the cap: the extra row is the saturation probe, not part of the delete budget.
+        verify(controlPlane, times(1)).getFilesToDelete(eq(now.minus(RETENTION_PERIOD)), eq(MAX_FILES_PER_CYCLE + 1));
         verify(storageBackend, times(0)).delete(Set.of());
     }
 
@@ -192,5 +195,64 @@ class FileCleanerMockedTest {
         cleaner.run();
 
         assertEquals(-1, cleaner.metrics.lastSuccessfulCleanupTimeMs.get());
+    }
+
+    @Test
+    void doesNotRecordSaturatedCycleWhenMaxFilesPerCycleReached() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
+        final var now = TimeUtils.now(time);
+        final List<FileToDelete> returned = new ArrayList<>();
+        for (int i = 0; i < MAX_FILES_PER_CYCLE; i++) {
+            returned.add(new FileToDelete(OBJECT_KEY_CREATOR.from("key" + i).value(), now.minus(Duration.ofMinutes(15))));
+        }
+        when(controlPlane.getFilesToDelete(any(), eq(MAX_FILES_PER_CYCLE + 1))).thenReturn(returned);
+
+        cleaner.run();
+
+        assertEquals(0, cleaner.metrics.fileCleanerCycleSaturated.sum());
+        verify(storageBackend).delete(argThat((Set<ObjectKey> keys) -> keys.size() == MAX_FILES_PER_CYCLE));
+    }
+
+    @Test
+    void recordsSaturatedCycleWhenMaxFilesPlusOnePerCycleReached() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
+        final var now = TimeUtils.now(time);
+        final List<FileToDelete> returned = new ArrayList<>();
+        // max + 1 to calculate saturation
+        for (int i = 0; i < MAX_FILES_PER_CYCLE + 1; i++) {
+            returned.add(new FileToDelete(OBJECT_KEY_CREATOR.from("key" + i).value(), now.minus(Duration.ofMinutes(15))));
+        }
+        when(controlPlane.getFilesToDelete(any(), eq(MAX_FILES_PER_CYCLE + 1))).thenReturn(returned);
+
+        cleaner.run();
+
+        assertEquals(1, cleaner.metrics.fileCleanerCycleSaturated.sum());
+        verify(storageBackend).delete(argThat((Set<ObjectKey> keys) -> keys.size() == MAX_FILES_PER_CYCLE));
+    }
+
+    @Test
+    void doesNotOverflowTheProbeAtMaxFilesPerCycleLimit() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, Integer.MAX_VALUE);
+        final var now = TimeUtils.now(time);
+        when(controlPlane.getFilesToDelete(any(), anyInt()))
+            .thenReturn(List.of(new FileToDelete(OBJECT_KEY_CREATOR.from("key").value(), now.minus(Duration.ofMinutes(15)))));
+
+        cleaner.run();
+
+        // A negative limit would read as unbounded in both control planes, removing the cap entirely.
+        verify(controlPlane, times(1)).getFilesToDelete(any(), eq(Integer.MAX_VALUE));
+        assertEquals(0, cleaner.metrics.fileCleanerCycleSaturated.sum());
+    }
+
+    @Test
+    void doesNotRecordSaturatedCycleBelowMaxFilesPerCycle() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
+        final var now = TimeUtils.now(time);
+        when(controlPlane.getFilesToDelete(any(), anyInt()))
+            .thenReturn(List.of(new FileToDelete(OBJECT_KEY_CREATOR.from("key").value(), now.minus(Duration.ofMinutes(15)))));
+
+        cleaner.run();
+
+        assertEquals(0, cleaner.metrics.fileCleanerCycleSaturated.sum());
     }
 }

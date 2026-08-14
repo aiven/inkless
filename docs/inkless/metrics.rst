@@ -239,6 +239,7 @@ io.aiven.inkless.delete:type=FileCleaner
 ===============================  ==================================================================================================================================================================
 Attribute name                   Description                                                                                                                                                       
 ===============================  ==================================================================================================================================================================
+FileCleanerCycleSaturatedRate    Total number of file cleaning cycles that hit file.cleaner.max.files.per.cycle, leaving files for the next cycle                                                  
 FileCleanerErrorRate             Total number of file cleaning errors                                                                                                                              
 FileCleanerFilesFailedRate       Total number of files the storage backend did not confirm deleted; they stay marked for deletion and are retried on a later cycle                                 
 FileCleanerFilesRate             Total number of files cleaned                                                                                                                                     
