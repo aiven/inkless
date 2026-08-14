@@ -91,6 +91,7 @@ import java.util.stream.Collectors
 import scala.collection.{Map, Seq, Set, immutable, mutable}
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters.RichOptional
+import scala.util.control.NonFatal
 
 /*
  * Result metadata of a log append operation on the log
@@ -2515,43 +2516,32 @@ class ReplicaManager(val config: KafkaConfig,
             // ISR expansion path can observe that the follower is caught up without reading
             // diskless data into the local log.
             if (fetchPartitionData.fetchOffset >= classicToDisklessStartOffset) {
-              getPartitionOrError(tp.topicPartition).foreach { partition =>
-                val requestEpochMatchesLeader =
-                  fetchPartitionData.currentLeaderEpoch.toScala.forall(_.intValue() == partition.getLeaderEpoch)
-                if (requestEpochMatchesLeader) {
+              getPartitionOrError(tp.topicPartition) match {
+                case Right(partition) =>
                   try {
-                    partition.getReplica(params.replicaId).foreach { _ =>
-                      // Use the classic follower-read validation without returning any records.
-                      val fetchAtSeal = new PartitionData(
-                        fetchPartitionData.topicId,
-                        classicToDisklessStartOffset,
-                        fetchPartitionData.logStartOffset,
-                        0,
-                        fetchPartitionData.currentLeaderEpoch,
-                        fetchPartitionData.lastFetchedEpoch
-                      )
-                      val readInfo = partition.fetchRecords(
-                        fetchParams = params,
-                        fetchPartitionData = fetchAtSeal,
-                        fetchTimeMs = time.milliseconds,
-                        maxBytes = 0,
-                        minOneMessage = false,
-                        updateFetchState = true
-                      )
-                      divergingEpoch = readInfo.divergingEpoch
-                    }
+                    // Use the classic follower-read validation without returning any records.
+                    val fetchAtSeal = new PartitionData(
+                      fetchPartitionData.topicId,
+                      classicToDisklessStartOffset,
+                      fetchPartitionData.logStartOffset,
+                      0,
+                      fetchPartitionData.currentLeaderEpoch,
+                      fetchPartitionData.lastFetchedEpoch
+                    )
+                    val readInfo = partition.fetchRecords(
+                      fetchParams = params,
+                      fetchPartitionData = fetchAtSeal,
+                      fetchTimeMs = time.milliseconds,
+                      maxBytes = 0,
+                      minOneMessage = false,
+                      updateFetchState = true
+                    )
+                    divergingEpoch = readInfo.divergingEpoch
                   } catch {
-                    case e@(_: UnknownTopicOrPartitionException |
-                            _: NotLeaderOrFollowerException |
-                            _: UnknownLeaderEpochException |
-                            _: FencedLeaderEpochException |
-                            _: OffsetOutOfRangeException |
-                            _: ReplicaNotAvailableException |
-                            _: KafkaStorageException |
-                            _: InconsistentTopicIdException) =>
+                    case NonFatal(e) =>
                       fetchError = Errors.forException(e)
                   }
-                }
+                case Left(error) => fetchError = error
               }
             }
             // The partition has fully switched to diskless and the follower is asking for an offset at or beyond it.
