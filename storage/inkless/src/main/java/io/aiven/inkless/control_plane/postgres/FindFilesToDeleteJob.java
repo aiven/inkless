@@ -61,7 +61,10 @@ public class FindFilesToDeleteJob implements Callable<List<FileToDelete>> {
     }
 
     private List<FileToDelete> runOnce() {
-        // No ORDER BY: served by files_by_state_only_deleting_idx, which stops once `limit` rows are found.
+        // No ORDER BY: the returned rows are all actionable, so any prefix makes progress. The scan is
+        // bounded by files_by_marked_for_deletion_deleting_idx, which covers the grace-period predicate
+        // and lets Postgres stop once `limit` rows are found -- and, since it walks that index, hands
+        // back the oldest first, so files whose deletion is never confirmed are the ones re-served.
         final SelectLimitStep<?> select = jooqCtx.select(
                 FILES.FILE_ID,
                 FILES.OBJECT_KEY,

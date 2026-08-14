@@ -112,13 +112,8 @@ public interface ControlPlane extends Closeable, Configurable {
 
     /**
      * Files that are dereferenced and whose deletion grace period has passed, i.e. those the caller may
-     * physically delete from object storage.
-     * <p>
-     * Both parameters are bounds the implementation MUST enforce: filtering on the caller side does not
-     * help, because the cost of a fully-drained result is already paid by then.
-     * <p>
-     * No ordering is guaranteed. Since {@code markedBefore} is applied here, every returned entry is
-     * actionable, so an arbitrary truncation still makes progress.
+     * physically delete from object storage. Both bounds MUST be applied by the implementation: a caller
+     * that filters afterwards has already paid for the rows it discards. No ordering is guaranteed.
      *
      * @param markedBefore only return files marked for deletion strictly before this instant
      * @param limit        maximum number of files to return; {@code 0} means unbounded
