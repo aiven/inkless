@@ -301,7 +301,34 @@ class DisklessLeaderEndPoint(
       throw Errors.forException(holder.exception().get()).exception()
     }
     val tao: TimestampAndOffset = holder.timestampAndOffset().get()
-    new OffsetAndEpoch(tao.offset, resolveLeaderEpoch(topicPartition, tao))
+    val offset =
+      if (timestamp == ListOffsetsRequest.LATEST_TIMESTAMP)
+        atLeastCommittedSeal(topicPartition, tao.offset)
+      else
+        tao.offset
+    val taoForEpoch =
+      if (offset == tao.offset) tao
+      else new TimestampAndOffset(tao.timestamp, offset, tao.leaderEpoch)
+    new OffsetAndEpoch(offset, resolveLeaderEpoch(topicPartition, taoForEpoch))
+  }
+
+  /**
+   * A control-plane placeholder row reports LATEST 0. If that is below the committed KRaft seal,
+   * treating it as the leader LEO makes the consolidator truncate the classic prefix away (KC-387).
+   * The seal is the first diskless offset, so it is the lowest LATEST that can be correct.
+   */
+  private def atLeastCommittedSeal(topicPartition: TopicPartition, offset: Long): Long = {
+    val seal = replicaManager.classicToDisklessStartOffset(topicPartition)
+    if (seal > 0 && offset < seal) {
+      if (offset > 0) {
+        warn(s"Control-plane offset $offset for $topicPartition is below the committed KRaft seal $seal; using the seal")
+      } else {
+        debug(s"Control-plane LATEST is 0 for $topicPartition, below the committed KRaft seal $seal; using the seal")
+      }
+      seal
+    } else {
+      offset
+    }
   }
 
   /**
@@ -403,7 +430,7 @@ class DisklessLeaderEndPoint(
               .setPartition(tp.partition)
               .setErrorCode(err.code)
           } else {
-            val endOffset = holder.timestampAndOffset().get().offset
+            val endOffset = atLeastCommittedSeal(tp, holder.timestampAndOffset().get().offset)
             tp -> new EpochEndOffset()
               .setPartition(tp.partition)
               .setErrorCode(Errors.NONE.code)

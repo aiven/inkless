@@ -280,6 +280,24 @@ class DisklessLeaderEndPointTest {
   }
 
   @Test
+  def testFetchLatestOffsetBelowSealUsesSealAndDisklessEpoch(): Unit = {
+    val endPoint = listOffsetEndPointWithPlaceholderEpoch(offset = 0L, seal = 150000L, disklessLeaderEpoch = 5)
+    assertEquals(new OffsetAndEpoch(150000L, 5), endPoint.fetchLatestOffset(topicPartition, 3))
+  }
+
+  @Test
+  def testFetchLatestOffsetAtOrAboveSealIsUnchanged(): Unit = {
+    val endPoint = listOffsetEndPointWithPlaceholderEpoch(offset = 200000L, seal = 150000L, disklessLeaderEpoch = 5)
+    assertEquals(new OffsetAndEpoch(200000L, 5), endPoint.fetchLatestOffset(topicPartition, 3))
+  }
+
+  @Test
+  def testFetchLatestOffsetNonEmptyBelowSealUsesSealAndDisklessEpoch(): Unit = {
+    val endPoint = listOffsetEndPointWithPlaceholderEpoch(offset = 10L, seal = 150000L, disklessLeaderEpoch = 5)
+    assertEquals(new OffsetAndEpoch(150000L, 5), endPoint.fetchLatestOffset(topicPartition, 3))
+  }
+
+  @Test
   def testFetchEarliestLocalOffsetUsesEarliestLocalTimestamp(): Unit = {
     verifyListOffsetTimestamp(ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP, _.fetchEarliestLocalOffset(topicPartition, 3))
   }
@@ -577,6 +595,42 @@ class DisklessLeaderEndPointTest {
       .setErrorCode(Errors.NONE.code)
       .setLeaderEpoch(queriedEpoch)
       .setEndOffset(250L)
+    assertEquals(Map(topicPartition -> expected), result)
+  }
+
+  @Test
+  def testFetchEpochEndOffsetsDisklessLeoBelowSealUsesSeal(): Unit = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = replicaManagerMock()
+    val job = mock(classOf[FetchOffsetHandler.Job])
+
+    val holder = new FileRecordsOrError(
+      Optional.empty(),
+      Optional.of(new TimestampAndOffset(0L, 0L, Optional.of(5)))
+    )
+    when(fetchOffsetHandler.createJob()).thenReturn(job)
+    when(job.mustHandle(topicPartition.topic())).thenReturn(true)
+    when(job.add(eqTo(topicPartition), any())).thenReturn(CompletableFuture.completedFuture(holder))
+    when(replicaManager.classicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+    when(replicaManager.disklessLeaderEpoch(topicPartition)).thenReturn(5)
+
+    val endPoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    val queriedEpoch = 5
+    val result = endPoint.fetchEpochEndOffsets(
+      util.Map.of(
+        topicPartition,
+        new OffsetForLeaderPartition()
+          .setPartition(topicPartition.partition)
+          .setLeaderEpoch(queriedEpoch)
+      )
+    ).asScala
+
+    val expected = new EpochEndOffset()
+      .setPartition(topicPartition.partition)
+      .setErrorCode(Errors.NONE.code)
+      .setLeaderEpoch(queriedEpoch)
+      .setEndOffset(100L)
     assertEquals(Map(topicPartition -> expected), result)
   }
 

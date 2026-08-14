@@ -53,7 +53,7 @@ import org.apache.kafka.common.Uuid
 import org.apache.kafka.controller.ControllerRequestContext.requestTimeoutMsToDeadlineNs
 import org.apache.kafka.controller.{Controller, ControllerRequestContext}
 import org.apache.kafka.image.publisher.ControllerRegistrationsPublisher
-import org.apache.kafka.metadata.{BrokerHeartbeatReply, BrokerRegistrationReply}
+import org.apache.kafka.metadata.{BrokerHeartbeatReply, BrokerRegistrationReply, PartitionRegistration}
 import org.apache.kafka.common.security.auth.KafkaPrincipal
 import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.raft.RaftManager
@@ -986,38 +986,100 @@ class ControllerApis(
         CompletableFuture.completedFuture(())
 
       case Some(cp) =>
-        val successfulCreations = (topics.asScala zip results.asScala)
-          // It's OK if we retry creating for already existing topics,
-          // this may save some trouble when Inkless creation failed for some reason and the user retries.
-          .filter { case (_, res) => res.errorCode() == Errors.NONE.code() || res.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code() }
+        val eligibleRequests = (topics.asScala zip results.asScala)
+          // NONE is the first increase. INVALID_PARTITIONS (and TOPIC_ALREADY_EXISTS, copied from
+          // create-topic) is a retry after KRaft already applied, except a decrease, which uses the
+          // same error code and must not write. disklessPartitionCreateRequests drops those.
+          .filter { case (_, res) =>
+            val code = res.errorCode()
+            code == Errors.NONE.code() ||
+              code == Errors.TOPIC_ALREADY_EXISTS.code() ||
+              code == Errors.INVALID_PARTITIONS.code()
+          }
           // In contrast to the topic creation, we only create new partitions to existing topics.
           // Hence, the topics themselves must be in the metadata already, no need to wait.
           .filter { case (req, _) => inklessMetadataView.isDisklessTopic(req.name()) }
-          .map { case (req, _) => req }
-          .toSet
-        val topicNames = successfulCreations.map(_.name()).toList.asJava
+        val topicNames = eligibleRequests.map(_._1.name()).distinct.toList.asJava
         controller.findTopicIds(context, topicNames).thenApply { topicIds =>
-          val createPartitionRequests = successfulCreations.flatMap { req =>
+          val createPartitionRequests = eligibleRequests.flatMap { case (req, res) =>
             val topicName = req.name()
             val topicIdOrError = topicIds.get(topicName)
             if (topicIdOrError.isError) {
               // The chances for this are slim: only when someone concurrently deleted the topic
               // right after the partitions were created in the quorum metadata.
               logger.error("Error finding topic ID for topic {}: partitions will not be created", topicName)
-              None
+              Seq.empty
             } else {
               val topicId = topicIdOrError.result()
-              // The cached range is only usable when it belongs to the topic the controller just mutated.
-              // Otherwise create the full range and rely on init_diskless_log_v1 to resolve overlap (KC-387).
-              val firstPartition = priorTopicStates.get(topicName) match {
-                case Some(state) if state.topicId == topicId => math.min(state.numPartitions, req.count())
-                case _ => 0
-              }
-              Some(new CreateTopicAndPartitionsRequest(topicId, topicName, firstPartition, req.count()))
+              disklessPartitionCreateRequests(topicId, topicName, req.count(), res.errorCode(), priorTopicStates)
             }
+          }.toSet
+          if (createPartitionRequests.nonEmpty) {
+            cp.createTopicAndPartitions(createPartitionRequests.asJava)
           }
-          cp.createTopicAndPartitions(createPartitionRequests.asJava)
         }
+    }
+  }
+
+  /**
+   * Rows to insert after a diskless partition-count change.
+   *
+   * INVALID_PARTITIONS is only a retry when `count` is at least the image's partition count.
+   * A smaller count is a rejected decrease. The published image can lag, so a partition absent from
+   * it is treated as born-diskless; V23 is what actually refuses a placeholder over a switching row
+   * (KC-387).
+   */
+  private def disklessPartitionCreateRequests(
+    topicId: Uuid,
+    topicName: String,
+    count: Int,
+    errorCode: Short,
+    priorTopicStates: Map[String, TopicState]
+  ): Seq[CreateTopicAndPartitionsRequest] = {
+    val retry = errorCode != Errors.NONE.code()
+    if (retry && count < imagePartitionCount(topicId)) {
+      Seq.empty
+    } else {
+      val firstPartition =
+        if (retry) 0
+        else priorTopicStates.get(topicName) match {
+          case Some(state) if state.topicId == topicId => math.min(state.numPartitions, count)
+          case _ => 0
+        }
+      val partitions = bornDisklessPartitions(topicId, count).filter(_ >= firstPartition)
+      contiguousRanges(partitions).map { case (from, until) =>
+        new CreateTopicAndPartitionsRequest(topicId, topicName, from, until)
+      }
+    }
+  }
+
+  private def imagePartitionCount(topicId: Uuid): Int = {
+    Option(metadataCache.currentImage().topics().getTopic(topicId))
+      .map(_.partitions().size())
+      .getOrElse(0)
+  }
+
+  // A partition missing from the image is treated as born-diskless: it was just added, or the
+  // image has not caught up. A lagging image can therefore still classify a switching partition
+  // as born-diskless.
+  private def bornDisklessPartitions(topicId: Uuid, count: Int): Seq[Int] = {
+    val imagePartitions = Option(metadataCache.currentImage().topics().getTopic(topicId))
+      .map(_.partitions())
+      .getOrElse(util.Collections.emptyMap())
+    (0 until count).filter { partition =>
+      val startOffset = Option(imagePartitions.get(partition))
+        .map(_.classicToDisklessStartOffset)
+        .getOrElse(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      startOffset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
+    }
+  }
+
+  private def contiguousRanges(partitions: Seq[Int]): Seq[(Int, Int)] = {
+    partitions.sorted.foldLeft(Vector.empty[(Int, Int)]) { (ranges, partition) =>
+      ranges.lastOption match {
+        case Some((from, until)) if partition == until => ranges.init :+ (from, until + 1)
+        case _ => ranges :+ (partition, partition + 1)
+      }
     }
   }
 

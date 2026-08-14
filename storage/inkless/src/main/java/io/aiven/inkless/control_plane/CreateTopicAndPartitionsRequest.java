@@ -20,14 +20,14 @@ package io.aiven.inkless.control_plane;
 import org.apache.kafka.common.Uuid;
 
 /**
- * Request to create control-plane {@code logs} rows for a topic's partitions.
+ * Request to create control-plane {@code logs} rows for {@code [firstPartition, numPartitions)}.
+ * {@code numPartitions} is the exclusive end of that range, not necessarily the topic's partition
+ * count: a retry that fills holes may emit several such ranges.
  *
- * <p>{@code numPartitions} is the topic's partition count once the operation completes; rows are created
- * for {@code [firstPartition, numPartitions)}. Topic creation starts at 0. For a partition-count increase,
- * {@code firstPartition} comes from an asynchronously published metadata image and may lag controller state.
- * The narrowed range is therefore a best-effort way to avoid inserting an empty row over a partition that is
- * concurrently switching from classic to diskless. The guarded upsert in
- * {@code V23__Init_diskless_log_authoritative_seal.sql} provides the correctness guarantee (KC-387).
+ * Switch-pending and sealed partitions are skipped when the published image already shows them.
+ * A partition missing from the image is still inserted. The guarded upsert in
+ * {@code V23__Init_diskless_log_authoritative_seal.sql} is what actually refuses a zero-offset
+ * placeholder over a switching row (KC-387).
  */
 public record CreateTopicAndPartitionsRequest(Uuid topicId,
                                               String topicName,

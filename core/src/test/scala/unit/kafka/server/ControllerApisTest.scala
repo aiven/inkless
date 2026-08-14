@@ -29,6 +29,7 @@ import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
 import org.apache.kafka.common.memory.MemoryPool
 import org.apache.kafka.common.metadata.{ConfigRecord, PartitionRecord, TopicRecord}
+import org.apache.kafka.metadata.{InitDisklessLogFields, PartitionRegistration}
 import org.apache.kafka.common.message.AlterConfigsRequestData.{AlterConfigsResource => OldAlterConfigsResource, AlterConfigsResourceCollection => OldAlterConfigsResourceCollection, AlterableConfig => OldAlterableConfig, AlterableConfigCollection => OldAlterableConfigCollection}
 import org.apache.kafka.common.message.AlterConfigsResponseData.{AlterConfigsResourceResponse => OldAlterConfigsResourceResponse}
 import org.apache.kafka.common.message.ApiMessageType.ListenerType
@@ -190,16 +191,28 @@ class ControllerApisTest {
     )
   }
 
-  private def setDisklessTopicImage(topicName: String, topicId: Uuid, numPartitions: Int): Unit = {
+  private def setDisklessTopicImage(
+    topicName: String,
+    topicId: Uuid,
+    numPartitions: Int,
+    classicToDisklessStartOffsets: Map[Int, Long] = Map.empty
+  ): Unit = {
     val delta = new MetadataDelta(MetadataImage.EMPTY)
     delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
     (0 until numPartitions).foreach { partition =>
-      delta.replay(new PartitionRecord()
+      val record = new PartitionRecord()
         .setTopicId(topicId)
         .setPartitionId(partition)
         .setReplicas(singletonList(0))
         .setIsr(singletonList(0))
-        .setLeader(0))
+        .setLeader(0)
+      classicToDisklessStartOffsets.get(partition).foreach { startOffset =>
+        if (startOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+          record.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeClassicToDisklessStartOffset(startOffset))
+        }
+      }
+      delta.replay(record)
     }
     delta.replay(new ConfigRecord()
       .setResourceType(ConfigResource.Type.TOPIC.id())
@@ -1110,6 +1123,196 @@ class ControllerApisTest {
 
     verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
       new CreateTopicAndPartitionsRequest(topicId, topicName, 0, 2))))
+  }
+
+  @Test
+  def testCreateDisklessPartitionsRetryInsertsBornDisklessRows(): Unit = {
+    val topicName = "foo"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    val topic = new CreatePartitionsTopic().setName(topicName).setAssignments(null).setCount(4)
+    val result = new CreatePartitionsTopicResult().setName(topicName).setErrorCode(INVALID_PARTITIONS.code())
+    // KRaft already applied the increase; the previous control-plane write is what failed.
+    setDisklessTopicImage(topicName, topicId, 4)
+
+    when(controller.createPartitions(any(), ArgumentMatchers.eq(singletonList(topic)), ArgumentMatchers.eq(false)))
+      .thenReturn(CompletableFuture.completedFuture(singletonList(result)))
+    when(controller.findTopicIds(any(), ArgumentMatchers.eq(singletonList(topicName))))
+      .thenReturn(CompletableFuture.completedFuture(
+        singletonMap(topicName, new ResultOrError[Uuid](topicId))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+
+    val request = new CreatePartitionsRequestData().setValidateOnly(false)
+    request.topics().add(topic)
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+
+    verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
+      new CreateTopicAndPartitionsRequest(topicId, topicName, 0, 4))))
+  }
+
+  @Test
+  def testCreateDisklessPartitionsRetrySkipsSwitchingAndSealedPartitions(): Unit = {
+    val topicName = "foo"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    val topic = new CreatePartitionsTopic().setName(topicName).setAssignments(null).setCount(4)
+    val result = new CreatePartitionsTopicResult().setName(topicName).setErrorCode(INVALID_PARTITIONS.code())
+    setDisklessTopicImage(topicName, topicId, 4, Map(
+      0 -> 100L,
+      1 -> PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
+    ))
+
+    when(controller.createPartitions(any(), ArgumentMatchers.eq(singletonList(topic)), ArgumentMatchers.eq(false)))
+      .thenReturn(CompletableFuture.completedFuture(singletonList(result)))
+    when(controller.findTopicIds(any(), ArgumentMatchers.eq(singletonList(topicName))))
+      .thenReturn(CompletableFuture.completedFuture(
+        singletonMap(topicName, new ResultOrError[Uuid](topicId))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+
+    val request = new CreatePartitionsRequestData().setValidateOnly(false)
+    request.topics().add(topic)
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+
+    verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
+      new CreateTopicAndPartitionsRequest(topicId, topicName, 2, 4))))
+  }
+
+  @Test
+  def testCreateDisklessPartitionsRetryInsertsNonContiguousBornDisklessRanges(): Unit = {
+    val topicName = "foo"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    val topic = new CreatePartitionsTopic().setName(topicName).setAssignments(null).setCount(4)
+    val result = new CreatePartitionsTopicResult().setName(topicName).setErrorCode(INVALID_PARTITIONS.code())
+    setDisklessTopicImage(topicName, topicId, 4, Map(
+      0 -> 100L,
+      2 -> PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
+    ))
+
+    when(controller.createPartitions(any(), ArgumentMatchers.eq(singletonList(topic)), ArgumentMatchers.eq(false)))
+      .thenReturn(CompletableFuture.completedFuture(singletonList(result)))
+    when(controller.findTopicIds(any(), ArgumentMatchers.eq(singletonList(topicName))))
+      .thenReturn(CompletableFuture.completedFuture(
+        singletonMap(topicName, new ResultOrError[Uuid](topicId))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+
+    val request = new CreatePartitionsRequestData().setValidateOnly(false)
+    request.topics().add(topic)
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+
+    verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(Set(
+      new CreateTopicAndPartitionsRequest(topicId, topicName, 1, 2),
+      new CreateTopicAndPartitionsRequest(topicId, topicName, 3, 4)
+    ).asJava))
+  }
+
+  @Test
+  def testCreateDisklessPartitionsRetryDoesNotInsertWhenEveryPartitionIsSwitching(): Unit = {
+    val topicName = "foo"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    val topic = new CreatePartitionsTopic().setName(topicName).setAssignments(null).setCount(2)
+    val result = new CreatePartitionsTopicResult().setName(topicName).setErrorCode(INVALID_PARTITIONS.code())
+    setDisklessTopicImage(topicName, topicId, 2, Map(
+      0 -> PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
+      1 -> 50L
+    ))
+
+    when(controller.createPartitions(any(), ArgumentMatchers.eq(singletonList(topic)), ArgumentMatchers.eq(false)))
+      .thenReturn(CompletableFuture.completedFuture(singletonList(result)))
+    when(controller.findTopicIds(any(), ArgumentMatchers.eq(singletonList(topicName))))
+      .thenReturn(CompletableFuture.completedFuture(
+        singletonMap(topicName, new ResultOrError[Uuid](topicId))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+
+    val request = new CreatePartitionsRequestData().setValidateOnly(false)
+    request.topics().add(topic)
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+
+    verify(controlPlane, never()).createTopicAndPartitions(any())
+  }
+
+  @Test
+  def testCreateDisklessPartitionsSkipsSealedPartitionsWhenPriorStateIsMissing(): Unit = {
+    val topicName = "foo"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    val topic = new CreatePartitionsTopic().setName(topicName).setAssignments(null).setCount(3)
+    val result = new CreatePartitionsTopicResult().setName(topicName).setErrorCode(NONE.code())
+
+    when(controller.createPartitions(any(), ArgumentMatchers.eq(singletonList(topic)), ArgumentMatchers.eq(false)))
+      .thenAnswer { _ =>
+        setDisklessTopicImage(topicName, topicId, 2, Map(0 -> 100L))
+        CompletableFuture.completedFuture(singletonList(result))
+      }
+    when(controller.findTopicIds(any(), ArgumentMatchers.eq(singletonList(topicName))))
+      .thenReturn(CompletableFuture.completedFuture(
+        singletonMap(topicName, new ResultOrError[Uuid](topicId))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+
+    val request = new CreatePartitionsRequestData().setValidateOnly(false)
+    request.topics().add(topic)
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+
+    verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
+      new CreateTopicAndPartitionsRequest(topicId, topicName, 1, 3))))
+  }
+
+  @Test
+  def testCreateDisklessPartitionsDoesNotInsertOnPartitionDecrease(): Unit = {
+    val topicName = "foo"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    val topic = new CreatePartitionsTopic().setName(topicName).setAssignments(null).setCount(2)
+    val result = new CreatePartitionsTopicResult().setName(topicName).setErrorCode(INVALID_PARTITIONS.code())
+    setDisklessTopicImage(topicName, topicId, 4)
+
+    when(controller.createPartitions(any(), ArgumentMatchers.eq(singletonList(topic)), ArgumentMatchers.eq(false)))
+      .thenReturn(CompletableFuture.completedFuture(singletonList(result)))
+    when(controller.findTopicIds(any(), ArgumentMatchers.eq(singletonList(topicName))))
+      .thenReturn(CompletableFuture.completedFuture(
+        singletonMap(topicName, new ResultOrError[Uuid](topicId))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+
+    val request = new CreatePartitionsRequestData().setValidateOnly(false)
+    request.topics().add(topic)
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+
+    verify(controlPlane, never()).createTopicAndPartitions(any())
+  }
+
+  @Test
+  def testCreateDisklessPartitionsSkipsSealedPartitionInNewTailWhenImageCaughtUp(): Unit = {
+    val topicName = "foo"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    val topic = new CreatePartitionsTopic().setName(topicName).setAssignments(null).setCount(4)
+    val result = new CreatePartitionsTopicResult().setName(topicName).setErrorCode(NONE.code())
+    setDisklessTopicImage(topicName, topicId, 2)
+
+    when(controller.createPartitions(any(), ArgumentMatchers.eq(singletonList(topic)), ArgumentMatchers.eq(false)))
+      .thenAnswer { _ =>
+        setDisklessTopicImage(topicName, topicId, 4, Map(2 -> 100L))
+        CompletableFuture.completedFuture(singletonList(result))
+      }
+    when(controller.findTopicIds(any(), ArgumentMatchers.eq(singletonList(topicName))))
+      .thenReturn(CompletableFuture.completedFuture(
+        singletonMap(topicName, new ResultOrError[Uuid](topicId))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+
+    val request = new CreatePartitionsRequestData().setValidateOnly(false)
+    request.topics().add(topic)
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+
+    verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
+      new CreateTopicAndPartitionsRequest(topicId, topicName, 3, 4))))
   }
 
   @Test
