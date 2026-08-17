@@ -31,6 +31,8 @@ import org.apache.kafka.server.storage.log.FetchPartitionData;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -43,8 +45,11 @@ import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.StreamSupport;
 
+import io.aiven.inkless.control_plane.ControlPlaneAvailability;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -54,6 +59,9 @@ public class FetchHandlerTest {
     @Mock
     Reader reader;
 
+    private static final ControlPlaneAvailability AVAILABLE =
+        new ControlPlaneAvailability(ControlPlaneAvailability.State.AVAILABLE);
+
     private final short fetchVersion = ApiMessageType.FETCH.highestSupportedVersion(true);
     private final Uuid inklessUuid = Uuid.randomUuid();
     private final TopicIdPartition topicIdPartition = new TopicIdPartition(inklessUuid, 0, "diskless");
@@ -62,7 +70,7 @@ public class FetchHandlerTest {
     @Test
     public void readerFutureFailed() throws Exception {
         when(reader.fetch(any(), any())).thenReturn(CompletableFuture.failedFuture(new RuntimeException()));
-        try (FetchHandler handler = new FetchHandler(reader)) {
+        try (FetchHandler handler = new FetchHandler(reader, AVAILABLE)) {
             final FetchParams params = new FetchParams(fetchVersion,
                     -1, -1, -1, -1,
                     FetchIsolation.LOG_END, Optional.empty());
@@ -101,7 +109,7 @@ public class FetchHandlerTest {
                 )
         );
         when(reader.fetch(any(), any())).thenReturn(CompletableFuture.completedFuture(value));
-        try (FetchHandler handler = new FetchHandler(reader)) {
+        try (FetchHandler handler = new FetchHandler(reader, AVAILABLE)) {
 
             final FetchParams params = new FetchParams(fetchVersion,
                     -1, -1, -1, -1,
@@ -139,7 +147,7 @@ public class FetchHandlerTest {
             )
         );
         when(reader.fetch(any(), any())).thenReturn(CompletableFuture.completedFuture(value));
-        try (FetchHandler handler = new FetchHandler(reader)) {
+        try (FetchHandler handler = new FetchHandler(reader, AVAILABLE)) {
 
             final FetchParams params = new FetchParams(fetchVersion,
                 -1, -1, -1, -1,
@@ -163,7 +171,7 @@ public class FetchHandlerTest {
 
     @Test
     public void emptyRequest() throws Exception {
-        try (FetchHandler handler = new FetchHandler(reader)) {
+        try (FetchHandler handler = new FetchHandler(reader, AVAILABLE)) {
             final FetchParams params = new FetchParams(fetchVersion,
                 -1, -1, -1, -1,
                 FetchIsolation.LOG_END, Optional.empty());
@@ -173,6 +181,33 @@ public class FetchHandlerTest {
             final var result = handler.handle(params, fetchInfos).get();
 
             assertThat(result).hasSize(0);
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ControlPlaneAvailability.State.class, names = {"INITIALIZING", "OFFLINE"})
+    public void gatedFetchFailsWithARetriableErrorWithoutTouchingTheReader(
+        final ControlPlaneAvailability.State state) throws Exception {
+        try (FetchHandler handler = new FetchHandler(reader, new ControlPlaneAvailability(state))) {
+            final FetchParams params = new FetchParams(fetchVersion,
+                -1, -1, -1, -1,
+                FetchIsolation.LOG_END, Optional.empty());
+
+            final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+                topicIdPartition,
+                new FetchRequest.PartitionData(inklessUuid, 0, 0, 1024, Optional.empty())
+            );
+
+            final var result = handler.handle(params, fetchInfos).get();
+
+            assertThat(result.keySet()).isEqualTo(fetchInfos.keySet());
+            assertThat(result.get(topicIdPartition)).satisfies(data -> {
+                assertThat(data.error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+                assertThat(data.error.exception()).isInstanceOf(
+                    org.apache.kafka.common.errors.RetriableException.class);
+                assertThat(data.records).isSameAs(MemoryRecords.EMPTY);
+            });
+            verifyNoInteractions(reader);
         }
     }
 }
