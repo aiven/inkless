@@ -24,7 +24,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * The availability of the control plane as reported by the deployment's management plane.
@@ -64,6 +66,7 @@ public class ControlPlaneAvailability implements Closeable {
 
     private final AtomicReference<State> state;
     private final ControlPlaneAvailabilityMetrics metrics;
+    private volatile Consumer<State> listener = newState -> { };
 
     public ControlPlaneAvailability(final State initialState) {
         this.state = new AtomicReference<>(initialState);
@@ -83,7 +86,18 @@ public class ControlPlaneAvailability implements Closeable {
         if (previous != newState) {
             LOGGER.warn("Diskless control plane availability changed from {} to {}",
                 previous.configValue(), newState.configValue());
+            listener.accept(newState);
         }
+    }
+
+    /**
+     * Registers a callback invoked synchronously, on the calling thread of {@link #set(State)},
+     * whenever the state actually changes. There is only one listener slot: this is meant for the
+     * single {@link AvailabilityGatedControlPlane} that owns this instance to react to transitions
+     * (e.g. to create or tear down its underlying connection).
+     */
+    public void onChange(final Consumer<State> listener) {
+        this.listener = Objects.requireNonNull(listener);
     }
 
     public void recordGatedCall() {

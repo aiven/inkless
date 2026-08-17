@@ -21,6 +21,9 @@ import org.apache.kafka.common.config.ConfigException;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -72,5 +75,29 @@ class ControlPlaneAvailabilityTest {
         for (final ControlPlaneAvailability.State state : ControlPlaneAvailability.State.values()) {
             assertEquals(state, ControlPlaneAvailability.State.fromConfig(state.configValue()));
         }
+    }
+
+    @Test
+    void onChangeListenerFiresOnTransition() {
+        final ControlPlaneAvailability availability =
+            new ControlPlaneAvailability(ControlPlaneAvailability.State.AVAILABLE);
+        final List<ControlPlaneAvailability.State> seen = new ArrayList<>();
+        availability.onChange(seen::add);
+
+        availability.set(ControlPlaneAvailability.State.OFFLINE);
+
+        assertEquals(List.of(ControlPlaneAvailability.State.OFFLINE), seen);
+    }
+
+    @Test
+    void onChangeListenerDoesNotFireWhenStateIsUnchanged() {
+        final ControlPlaneAvailability availability =
+            new ControlPlaneAvailability(ControlPlaneAvailability.State.AVAILABLE);
+        final List<ControlPlaneAvailability.State> seen = new ArrayList<>();
+        availability.onChange(seen::add);
+
+        availability.set(ControlPlaneAvailability.State.AVAILABLE);
+
+        assertTrue(seen.isEmpty());
     }
 }

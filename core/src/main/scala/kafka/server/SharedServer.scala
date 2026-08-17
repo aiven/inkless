@@ -293,7 +293,7 @@ class SharedServer(
             ControlPlaneAvailability.State.fromConfig(sharedServerConfig.disklessControlPlaneAvailability))
           inklessControlPlaneAvailability = Some(availability)
           inklessControlPlane = Some(new AvailabilityGatedControlPlane(
-            ControlPlane.create(sharedServerConfig.inklessConfig, time), availability))
+            () => ControlPlane.create(sharedServerConfig.inklessConfig, time), availability))
         }
 
         val _raftManager = new KafkaRaftManager[ApiMessageAndVersion](
