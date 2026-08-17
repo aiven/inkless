@@ -2003,6 +2003,69 @@ public class ReplicationControlManagerInklessTest {
         }
 
         @Test
+        public void testUnfenceExpandsIsrOfBornDisklessButNotSwitchedPartitions() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Born diskless: no classic records anywhere, so a returning replica is current by
+            // construction. This is the case handleBrokerUnfenced's expansion exists for.
+            Uuid bornId = ctx.createTestTopic("born-diskless", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0).topicId();
+            // Switched with a committed seal: records below the seal live only in the replicas'
+            // local logs.
+            Uuid switchedId = ctx.createTestTopic("switched",
+                new int[][] {new int[] {0, 1, 2}}, Map.of(), (short) 0).topicId();
+            ctx.alterTopicConfig("switched", DISKLESS_ENABLE_CONFIG, "true");
+            setClassicToDisklessStartOffset(ctx, switchedId, 100L);
+            // Mid-switch: the classic log is not frozen yet, so replicas still replicate classically.
+            Uuid pendingId = ctx.createTestTopic("switch-pending",
+                new int[][] {new int[] {0, 1, 2}}, Map.of(), (short) 0).topicId();
+            ctx.alterTopicConfig("switch-pending", DISKLESS_ENABLE_CONFIG, "true");
+            setClassicToDisklessStartOffset(ctx, pendingId,
+                PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING);
+
+            ctx.fenceBrokers(2);
+            for (Uuid topicId : List.of(bornId, switchedId, pendingId)) {
+                assertFalse(Replicas.contains(replication.getPartition(topicId, 0).isr, 2),
+                    "Broker 2 should leave every ISR on fencing");
+            }
+
+            ctx.unfenceBrokers(2);
+
+            assertTrue(Replicas.contains(replication.getPartition(bornId, 0).isr, 2),
+                "Born-diskless partitions should still expand ISR on unfence");
+            assertFalse(Replicas.contains(replication.getPartition(switchedId, 0).isr, 2),
+                "A switched partition should not regain ISR on unfence alone: the classic prefix "
+                    + "below the seal is only on local logs, so the replica must earn ISR through "
+                    + "AlterPartition once its fetch state reaches the seal");
+            assertFalse(Replicas.contains(replication.getPartition(pendingId, 0).isr, 2),
+                "A partition mid-switch still replicates classically, so AlterPartition covers it");
+            assertEquals(100L,
+                replication.getPartition(switchedId, 0).classicToDisklessStartOffset,
+                "The seal should be untouched by the unfence path");
+        }
+
+        private void setClassicToDisklessStartOffset(
+            ReplicationControlTestContext ctx,
+            Uuid topicId,
+            long classicToDisklessStartOffset
+        ) {
+            PartitionChangeRecord record = new PartitionChangeRecord()
+                .setTopicId(topicId)
+                .setPartitionId(0);
+            record.unknownTaggedFields().add(
+                InitDisklessLogFields.encodeClassicToDisklessStartOffset(classicToDisklessStartOffset));
+            ctx.replay(List.of(new ApiMessageAndVersion(record, (short) 0)));
+        }
+
+        @Test
         public void testAddPartitionsAutoPlacement() {
             MetadataVersion metadataVersion = MetadataVersion.latestTesting();
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
