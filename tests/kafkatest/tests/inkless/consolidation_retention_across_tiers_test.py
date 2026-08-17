@@ -131,7 +131,8 @@ class RetentionReclaimsAcrossTiersTest(Test):
                         "diskless.enable": "true",
                         "remote.storage.enable": "true",
                         "min.insync.replicas": 2,
-                        "segment.bytes": 2097152,
+                        "segment.bytes": 1048576,
+                        "max.message.bytes": 524288,
                         "segment.ms": 5000,
                         # Evict local segments soon after upload so the early prefix
                         # lives only in remote -- retention must then reclaim remote.

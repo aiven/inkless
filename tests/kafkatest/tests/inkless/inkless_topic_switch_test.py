@@ -286,7 +286,7 @@ class InklessClassicToDisklessSwitchTest(Test):
             "configs": {
                 "remote.storage.enable": "true",
                 "min.insync.replicas": 1,
-                "segment.bytes": 2097152,
+                "segment.bytes": 1048576,
                 # Force a roll every 2s regardless of segment fill, so that
                 # produced records flow through closed segments quickly.
                 "segment.ms": 2000,
