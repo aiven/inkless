@@ -22,20 +22,38 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mockito;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 class AvailabilityGatedControlPlaneTest {
     private final ControlPlane delegate = Mockito.mock(ControlPlane.class);
+    private final AtomicInteger factoryInvocations = new AtomicInteger();
 
     private AvailabilityGatedControlPlane gated(final ControlPlaneAvailability.State state) {
-        return new AvailabilityGatedControlPlane(delegate, new ControlPlaneAvailability(state));
+        return gated(new ControlPlaneAvailability(state));
+    }
+
+    private AvailabilityGatedControlPlane gated(final ControlPlaneAvailability availability) {
+        return new AvailabilityGatedControlPlane(
+            () -> {
+                factoryInvocations.incrementAndGet();
+                return delegate;
+            },
+            availability);
     }
 
     @ParameterizedTest
@@ -53,6 +71,8 @@ class AvailabilityGatedControlPlaneTest {
         assertThrows(ControlPlaneException.class, () -> controlPlane.isSafeToDeleteFile("key"));
 
         verifyNoInteractions(delegate);
+        assertEquals(0, factoryInvocations.get(),
+            "the delegate must never be created while the control plane is reported unavailable");
     }
 
     @Test
@@ -66,17 +86,120 @@ class AvailabilityGatedControlPlaneTest {
         verify(delegate).createTopicAndPartitions(Set.of());
         verify(delegate).deleteTopics(Set.of());
         verify(delegate).listOffsets(List.of());
+        assertEquals(1, factoryInvocations.get(), "the delegate must be created only once and reused");
     }
 
     @ParameterizedTest
     @EnumSource(ControlPlaneAvailability.State.class)
-    void lifecycleMethodsAreNeverGated(final ControlPlaneAvailability.State state) throws Exception {
+    void configureIsANoOp(final ControlPlaneAvailability.State state) {
         final AvailabilityGatedControlPlane controlPlane = gated(state);
 
         controlPlane.configure(Map.of());
+
+        verifyNoInteractions(delegate);
+        assertEquals(0, factoryInvocations.get());
+    }
+
+    @Test
+    void closeIsANoOpWhenTheDelegateWasNeverCreated() throws Exception {
+        final AvailabilityGatedControlPlane controlPlane = gated(ControlPlaneAvailability.State.OFFLINE);
+
         controlPlane.close();
 
-        verify(delegate).configure(Map.of());
+        verifyNoInteractions(delegate);
+    }
+
+    @Test
+    void closeClosesTheDelegateOnceCreated() throws Exception {
+        final AvailabilityGatedControlPlane controlPlane = gated(ControlPlaneAvailability.State.AVAILABLE);
+        controlPlane.deleteTopics(Set.of());
+
+        controlPlane.close();
+
         verify(delegate).close();
+    }
+
+    @Test
+    void neverCreatesTheDelegateWhileConstructedUnavailable() {
+        gated(ControlPlaneAvailability.State.OFFLINE);
+        gated(ControlPlaneAvailability.State.INITIALIZING);
+
+        assertEquals(0, factoryInvocations.get());
+    }
+
+    @Test
+    void createsTheDelegateLazilyOnceAvailabilityIsRegained() {
+        final ControlPlaneAvailability availability =
+            new ControlPlaneAvailability(ControlPlaneAvailability.State.INITIALIZING);
+        final AvailabilityGatedControlPlane controlPlane = gated(availability);
+
+        assertEquals(0, factoryInvocations.get());
+
+        availability.set(ControlPlaneAvailability.State.AVAILABLE);
+        controlPlane.deleteTopics(Set.of());
+
+        assertEquals(1, factoryInvocations.get());
+        verify(delegate).deleteTopics(Set.of());
+    }
+
+    @Test
+    void closesTheDelegateWhenBecomingUnavailableAndRecreatesItWhenAvailableAgain() {
+        final ControlPlaneAvailability availability =
+            new ControlPlaneAvailability(ControlPlaneAvailability.State.AVAILABLE);
+        final AvailabilityGatedControlPlane controlPlane = gated(availability);
+        controlPlane.deleteTopics(Set.of());
+        assertEquals(1, factoryInvocations.get());
+
+        availability.set(ControlPlaneAvailability.State.OFFLINE);
+
+        try {
+            verify(delegate).close();
+        } catch (final Exception e) {
+            throw new RuntimeException(e);
+        }
+        assertThrows(ControlPlaneException.class, () -> controlPlane.deleteTopics(Set.of()));
+        assertEquals(1, factoryInvocations.get(), "must not recreate the delegate while still unavailable");
+
+        availability.set(ControlPlaneAvailability.State.AVAILABLE);
+        controlPlane.deleteTopics(Set.of());
+
+        assertEquals(2, factoryInvocations.get(), "must recreate a fresh delegate once available again");
+    }
+
+    @Test
+    void becomingUnavailableDoesNotWaitForInFlightCalls() throws Exception {
+        final CountDownLatch callStarted = new CountDownLatch(1);
+        final CountDownLatch releaseCall = new CountDownLatch(1);
+        when(delegate.listOffsets(List.of())).thenAnswer(invocation -> {
+            callStarted.countDown();
+            assertTrue(releaseCall.await(30, TimeUnit.SECONDS), "the call was never released");
+            return List.of();
+        });
+        final ControlPlaneAvailability availability =
+            new ControlPlaneAvailability(ControlPlaneAvailability.State.AVAILABLE);
+        final AvailabilityGatedControlPlane controlPlane = gated(availability);
+
+        final Thread caller = new Thread(() -> controlPlane.listOffsets(List.of()), "in-flight-call");
+        caller.start();
+        assertTrue(callStarted.await(30, TimeUnit.SECONDS), "the call never reached the delegate");
+
+        assertTimeoutPreemptively(Duration.ofSeconds(5),
+            () -> availability.set(ControlPlaneAvailability.State.OFFLINE),
+            "reporting the control plane unavailable must not block on the in-flight call");
+        verify(delegate).close();
+
+        releaseCall.countDown();
+        caller.join(TimeUnit.SECONDS.toMillis(30));
+    }
+
+    @Test
+    void rejectsCallsOnceClosed() throws Exception {
+        final AvailabilityGatedControlPlane controlPlane = gated(ControlPlaneAvailability.State.AVAILABLE);
+
+        controlPlane.close();
+
+        assertThrows(ControlPlaneException.class, () -> controlPlane.listOffsets(List.of()));
+        verifyNoInteractions(delegate);
+        assertEquals(0, factoryInvocations.get(), "must not create a delegate after close");
     }
 }
