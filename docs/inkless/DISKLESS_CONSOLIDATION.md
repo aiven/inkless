@@ -561,7 +561,7 @@ Broker-level configs live in `ServerConfigs` (no prefix) and `InklessConfig` (un
 
 | Config                                         | Default | Meaning                                                                                                                                                                        |
 | ---------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `diskless.remote.storage.consolidation.enable` | `false` | Enables the consolidation framework. Requires `diskless.allow.from.classic.enable=true`, `diskless.managed.replicas.enable=true`, and `remote.log.storage.system.enable=true`. |
+| `diskless.remote.storage.consolidation.enable` | `false` | Enables the consolidation framework. Requires `diskless.allow.from.classic.enable=true`, `diskless.managed.rf.enable=true`, and `remote.log.storage.system.enable=true`. |
 
 
 Per topic, consolidation runs when `diskless.enable=true` **and**
@@ -574,10 +574,10 @@ born-consolidated topic is created with both.
 | Config                                                        | Default                     | Meaning                                                                                                                    |
 | ------------------------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `diskless.consolidation.num.fetchers`                         | `1`                         | Number of consolidation fetcher threads (parallelism, independent of `num.replica.fetchers`).                              |
-| `diskless.consolidation.fetch.max.bytes`                      | `1 MiB`                     | Max bytes per partition per fetch iteration. Larger values reduce control-plane query frequency.                           |
+| `diskless.consolidation.fetch.max.bytes`                      | `10 MiB`                     | Max bytes per partition per fetch iteration. Larger values reduce control-plane query frequency.                           |
 | `diskless.consolidation.fetch.response.max.bytes`             | `10 MiB`                    | Max total bytes accepted across all partitions in one fetch response.                                                      |
 | `diskless.consolidation.fetch.min.bytes`                      | `1`                         | Min bytes to wait for before returning.                                                                                    |
-| `diskless.consolidation.fetch.max.wait.ms`                    | `500`                       | Max time to wait for `minBytes` when there is little new data.                                                             |
+| `diskless.consolidation.fetch.max.wait.ms`                    | `1000`                       | Max time to wait for `minBytes` when there is little new data.                                                             |
 | `diskless.consolidation.fetch.metadata.thread.pool.size`      | `4`                         | Thread pool for control-plane (batch coordinate) queries.                                                                  |
 | `diskless.consolidation.fetch.data.thread.pool.size`          | `8`                         | Thread pool for object-storage data fetches (also reused by the cold path).                                                |
 | `diskless.consolidation.fetch.find.batches.max.per.partition` | `0` (unlimited)             | Max batch coordinates returned per partition per control-plane query. Larger values improve the coordinate cache hit rate. |
