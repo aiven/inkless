@@ -59,9 +59,10 @@ Upstream Kafka build, test, and tooling commands are in the root
 
 ### Engineering Rules
 
-**MUST**-follow defaults. All docs are under
-[`.ai-agents/rules/`](.ai-agents/rules/).
+**MUST**-follow rules and guidelines for development.
 
-| Topic    | Doc           | When to Load               |
-| -------- | ------------- | -------------------------- |
-| Comments | `comments.md` | Writing or reviewing code. |
+#### Comments
+
+Write self-documenting code. Comments should be rare and explain **why** (a
+non-obvious constraint, workaround, or deliberate deviation), never **what** the
+code does. Match the surrounding comment density and never restate the code.
