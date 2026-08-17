@@ -52,7 +52,7 @@ import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
 import org.apache.kafka.common.utils.Time
 import org.apache.kafka.image._
-import org.apache.kafka.metadata.{InitDisklessLogFields, LeaderRecoveryState, PartitionRegistration}
+import org.apache.kafka.metadata.{InitDisklessLogFields, LeaderAndIsr, LeaderRecoveryState, PartitionRegistration}
 import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion}
 import org.apache.kafka.server.config.ServerConfigs
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
