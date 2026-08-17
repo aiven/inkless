@@ -22,7 +22,7 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager}
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, ListOffsetsRequest => CpListOffsetsRequest, ListOffsetsResponse => CpListOffsetsResponse, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse}
+import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse, ListOffsetsRequest => CpListOffsetsRequest, ListOffsetsResponse => CpListOffsetsResponse}
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.Partition
 import kafka.server.QuotaFactory.QuotaManagers
@@ -7168,8 +7168,6 @@ class ReplicaManagerInklessTest {
       val staleBrokerEpoch = currentBrokerEpoch - 1L
       assertTrue(staleBrokerEpoch >= 0L)
 
-      doReturn(new CompletableFuture[Any]())
-        .when(alterPartitionManager).submit(any(), any())
       clearInvocations(alterPartitionManager)
 
       val fetchParams = new FetchParams(
@@ -7259,7 +7257,10 @@ class ReplicaManagerInklessTest {
       assertEquals(sealOffset, validData.highWatermark)
       assertEquals(MemoryRecords.EMPTY, validData.records)
       assertEquals(sealOffset, validPartition.getReplica(followerId).get.stateSnapshot.logEndOffset)
-      verify(alterPartitionManager, times(1)).submit(any(), any())
+      verify(alterPartitionManager, times(1)).submit(
+        ArgumentMatchers.eq(new org.apache.kafka.server.common.TopicIdPartition(
+          validTopicPartition.topicId(), validTopicPartition.partition())),
+        any())
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
