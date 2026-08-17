@@ -339,7 +339,7 @@ class ReplicaManager(val config: KafkaConfig,
           "inkless-consolidation-",
           true // is consolidating fetch
         )
-        new FetchHandler(reader)
+        new FetchHandler(reader, state.controlPlaneAvailability())
       }
     } else {
       None
