@@ -267,8 +267,7 @@ public class InklessManagedReplicasClusterTest {
             result.all().get(30, TimeUnit.SECONDS);
 
             // Verify managed replicas: RF=2 with replicas on both brokers
-            TopicDescription description = admin.describeTopics(Collections.singletonList(topicName))
-                .allTopicNames().get(30, TimeUnit.SECONDS).get(topicName);
+            TopicDescription description = waitForTopicDescription(admin, topicName);
             TopicPartitionInfo partition = description.partitions().get(0);
             assertEquals(2, partition.replicas().size(),
                 "Expected RF=2 for managed replicas with 2 racks");
