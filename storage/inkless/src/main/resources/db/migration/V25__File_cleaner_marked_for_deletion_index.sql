@@ -8,30 +8,35 @@
 -- as the limit is met, and turns the all-within-grace case into a range scan that ends at the first
 -- non-matching entry.
 --
--- Consequence to be aware of: the returned prefix is now the oldest eligible files rather than
--- arbitrary heap order. Files whose object-store deletion is never confirmed stay marked and stay
--- oldest, so they are retried first every cycle; see ControlPlane#getFilesToDelete.
+-- The now-redundant files_by_state_only_deleting_idx is dropped in V26, deliberately not here: Flyway
+-- runs one migration per transaction, so a DROP that cannot get its lock would roll back this build
+-- with it and the next broker start would redo it.
+--
+-- Consequence to be aware of: the plan now hands back the oldest eligible files first, where it used
+-- to return an arbitrary heap-order prefix. That is an artifact of walking this index, not a contract
+-- guarantee (ControlPlane#getFilesToDelete promises no ordering); see FindFilesToDeleteJob.
 --
 -- OPERATOR IMPACT. The index holds only deleting rows and is therefore small, but building it scans
 -- all of `files` to evaluate the predicate, and Flyway runs each migration inside a transaction,
 -- where CONCURRENTLY is not allowed. So this statement holds ACCESS EXCLUSIVE on `files` for the
--- length of a full scan, blocking the produce commit path.
+-- length of a full scan, blocking the produce commit path. Migrations run in the PostgresControlPlane
+-- constructor, i.e. synchronously during broker startup, so the scan is startup latency and a failure
+-- is a failed start.
 --
--- Both statements are written to be idempotent so the lock can be avoided entirely: run the
--- equivalent DDL concurrently BEFORE upgrading, and this migration becomes a no-op.
+-- The statement is idempotent so the lock can be avoided entirely: run the equivalent DDL
+-- concurrently BEFORE upgrading, and this migration becomes a no-op.
 --
 --   CREATE INDEX CONCURRENTLY IF NOT EXISTS files_by_marked_for_deletion_deleting_idx
 --       ON files (marked_for_deletion_at) WHERE state = 'deleting';
---   DROP INDEX CONCURRENTLY IF EXISTS files_by_state_only_deleting_idx;
 --
 -- CREATE INDEX CONCURRENTLY can leave an INVALID index behind if it fails; check with
 -- `\d files` (or pg_index.indisvalid), drop it, and retry before upgrading, because
 -- CREATE INDEX IF NOT EXISTS below matches on name only and would keep an invalid index.
 --
--- The migration itself deliberately stays non-concurrent: Flyway rolls the whole thing back on
--- failure, so a retry starts clean, whereas a failed concurrent build would leave an invalid index
--- (still maintained on every write) plus a failed history row that blocks every broker start until
--- someone runs flyway repair.
+-- The migration itself deliberately stays non-concurrent: Flyway rolls it back on failure, so a
+-- retry starts clean, whereas a failed concurrent build would leave an invalid index (still
+-- maintained on every write) plus a failed history row that blocks every broker start until someone
+-- runs flyway repair.
 --
 -- Note V24__Table_storage_tuning.sql still names files_by_state_only_deleting_idx when explaining why
 -- lowering fillfactor on `files` would not help. Its conclusion is unchanged -- marked_for_deletion_at
@@ -45,7 +50,3 @@ SET LOCAL lock_timeout = '5s';
 
 CREATE INDEX IF NOT EXISTS files_by_marked_for_deletion_deleting_idx
     ON files (marked_for_deletion_at) WHERE state = 'deleting';
-
--- Superseded: the new index serves `state = 'deleting'` equally well, and the only other query with
--- that predicate (delete_files_v1) is keyed by object_key.
-DROP INDEX IF EXISTS files_by_state_only_deleting_idx;
