@@ -248,39 +248,8 @@ updates are coalesced per partition and flushed once a second, and only strictly
 values are sent.
 
 The configuration and JMX metrics for this feature are listed in
-[Configuration](#configuration) and [Metrics](#metrics). Several system tests exercise
-the earliest offset on a consolidating topic. The two retention tests follow the same
-pattern (drain the born-consolidated pipeline until the early prefix is remote-only and
-the topic earliest is still `0`, then reclaim and assert the earliest advances while a
-contiguous tail survives and the reclaimed remote objects are physically deleted); the
-`DeleteRecords` test targets a switched (hybrid) topic (see below):
-
-- `consolidation_retention_across_tiers_test.py` (`RetentionReclaimsAcrossTiersTest`):
-  time-based reclaim via `retention.ms`.
-- `consolidation_retention_bytes_across_tiers_test.py`
-  (`RetentionBytesReclaimsAcrossTiersTest`): size-based reclaim via `retention.bytes`,
-  driven by the `RemoteLogManager` (not the WAL-only Inkless enforcer). The limit is set
-  to half of the bytes this topic actually shipped to remote, so the boundary lands
-  deterministically inside the produced range regardless of record size.
-- `consolidation_delete_records_across_tiers_test.py` (`DeleteRecordsAcrossTiersTest`):
-  an explicit `DeleteRecords` on a **switched (hybrid)** topic, before an offset inside
-  the tiered classic prefix `[0, seal)`. The receiving broker forwards the local leg to
-  the real KRaft leader (`DisklessDeleteRecordsForwarder`), which advances the log start
-  and the control-plane cross-tier earliest. It guards both **Problem A** and **Problem
-  B** in one run (retention held unset throughout, so only the `DeleteRecords` can move
-  the earliest):
-  - *Problem A* — the client-visible earliest advances off `0` to a single, stable value
-    that is the *same on every broker*, proving `EARLIEST` is served from the
-    broker-agnostic control plane and not from a hash-selected follower's frozen local
-    classic log.
-  - *Problem B* — that value settles at *exactly* the delete boundary (not the seal), and
-    the surviving prefix `[delete_before, seal)` reads back contiguous with the correct
-    content, proving the consolidation cleanup did not over-reclaim the classic prefix.
-    Previously a freshly-elected leader's local `logStartOffset` was pinned at the seal
-    (and only ever increments), so the RLM reclaim floor / become-leader report used the
-    seal; the fix drives both the whole-log start (`DisklessLeaderEndPoint`) and the RLM
-    reclaim floor / become-leader report (`RemoteLogManager`) from the control-plane
-    cross-tier earliest via `ReplicaManager.crossTierEarliestOffset`.
+[Configuration](#configuration) and [Metrics](#metrics). System tests that
+exercise this path are described under [Testing](#testing).
 
 ## Implementation
 
@@ -663,20 +632,30 @@ warning is logged and those offsets have no abort markers).
 cross-boundary reads, concurrent produce during consolidation, classic→diskless→consolidated),
 `InklessConsolidatedDisklessReassignmentTest` (consolidation resumes on a new broker,
 no loss), `InklessTopicTypeSwitcherClusterTest`.
-- **System tests** (`tests/kafkatest/tests/inkless/`):
-`consolidation_pipeline_test.py` (born-consolidated pipeline + WAL prune),
-`consolidation_read_from_remote_after_prune_test.py` (read every record back after
-wiping all local copies), `consolidation_switched_read_from_remote_after_prune_test.py`
-(switched topic durability), `consolidation_dependency_outage_test.py` (object-store /
-control-plane outage during produce), `consolidation_retention_across_tiers_test.py`
-(cross-tier earliest offset after time-based retention reclaim),
-`consolidation_retention_bytes_across_tiers_test.py` (cross-tier earliest offset after
-size-based `retention.bytes` reclaim), and
-`consolidation_delete_records_across_tiers_test.py` (after a `DeleteRecords` into the
-tiered classic prefix of a switched topic: **Problem A** — the client-visible earliest
-advances and is the same on every broker; **Problem B** — it settles at exactly the delete
-boundary and the surviving prefix stays readable, i.e. the classic prefix is not
-over-reclaimed to the seal; both driven by the control-plane cross-tier earliest).
+- **System tests** (ducktape; `tests/kafkatest/tests/inkless/`; see
+  [System Tests](SYSTEM_TESTS.md) to run them). They cover consolidating
+  topics, born-consolidated and switched:
+  - The pipeline: WAL drains into the local log and then to remote, the WAL is
+    pruned, and every acked record is still consumable. Consolidation JMX
+    gauges are asserted along the way.
+  - Durability after local loss: once the prefix is remote-only, wiping every
+    partition directory and restarting still serves the full log from remote,
+    including a switched topic whose offset 0 was written under a classic
+    epoch.
+  - Object-store and control-plane outages during produce: nothing acked is
+    lost; after recovery, lag drains and pruning resumes.
+  - Cross-tier reclaim via `retention.ms` and `retention.bytes`: after the
+    early prefix is remote-only and the topic earliest is still `0`, reclaim
+    advances that earliest, leaves a contiguous surviving tail, and deletes
+    the reclaimed remote objects. Size-based reclaim is the `RemoteLogManager`
+    whole-log path; the Inkless enforcer only sees WAL bytes, which are tiny
+    once the WAL is pruned.
+  - `DeleteRecords` into a switched topic's tiered classic prefix `[0, seal)`:
+    the client-visible earliest moves off `0` to exactly the delete boundary,
+    the same on every broker (served from the control plane), and
+    `[delete_before, seal)` stays readable. The same assertions run across
+    leader failover, a leader that rebuilds from remote, and a
+    born-consolidated topic.
 
 
 
@@ -686,12 +665,3 @@ over-reclaimed to the seal; both driven by the control-plane cross-tier earliest
 migration that produces a consolidating topic; sets `diskless.enable` and  
 `remote.storage.enable` atomically.
 - [Architecture](ARCHITECTURE.md), [Features](FEATURES.md), [Glossary](GLOSSARY.md).
-
-
-
-## Design history
-
-This feature was originally proposed as a design doc with four implementation options. The
-chosen option (a custom `LeaderEndPoint` plugged into the replica-fetcher machinery,
-then called "Option D") is what is implemented above. The rejected alternatives (a continuous segment reader, a queue-based batch extractor, and a split-merge in-memory approach) are documented for historical interest in
-`img/consolidation/design-image-08.png` through `img/consolidation/design-image-12.png`.
