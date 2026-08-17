@@ -7146,7 +7146,7 @@ class ReplicaManagerInklessTest {
       // fetch state at the seal...
       assertEquals(sealOffset, partition.getReplica(followerId).get.stateSnapshot.logEndOffset)
       // ...which drives the normal ISR-expansion path for the now caught-up follower.
-      verify(alterPartitionManager).submit(any(), any())
+      verify(alterPartitionManager).submit(any(), argThat[LeaderAndIsr](_.isr.contains(followerId)))
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
@@ -7168,6 +7168,8 @@ class ReplicaManagerInklessTest {
       val staleBrokerEpoch = currentBrokerEpoch - 1L
       assertTrue(staleBrokerEpoch >= 0L)
 
+      doReturn(new CompletableFuture[Any]())
+        .when(alterPartitionManager).submit(any(), any())
       clearInvocations(alterPartitionManager)
 
       val fetchParams = new FetchParams(
