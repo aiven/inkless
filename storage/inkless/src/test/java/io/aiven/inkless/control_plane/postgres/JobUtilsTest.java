@@ -38,7 +38,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Timeout(10)
 class JobUtilsTest {
 
-    /** Serialization failure / recovery conflict — PostgreSQL uses 40001 for both. */
+    /** Serialization failure / recovery conflict. PostgreSQL uses 40001 for both. */
     private static SQLException recoveryConflict() {
         return new SQLException("canceling statement due to conflict with recovery", "40001");
     }
@@ -52,17 +52,21 @@ class JobUtilsTest {
         final MockTime time = new MockTime();
         final AtomicInteger attempts = new AtomicInteger();
         final AtomicInteger durationCallbacks = new AtomicInteger();
+        final AtomicInteger reportedDurationMs = new AtomicInteger(-1);
         final long startMs = time.milliseconds();
 
         final String result = JobUtils.run(() -> {
             attempts.incrementAndGet();
             return "ok";
-        }, time, ignored -> durationCallbacks.incrementAndGet());
+        }, time, d -> {
+            durationCallbacks.incrementAndGet();
+            reportedDurationMs.set(d.intValue());
+        });
 
         assertThat(result).isEqualTo("ok");
         assertThat(attempts).hasValue(1);
-        // Exactly one metric sample, no backoff on the happy path.
         assertThat(durationCallbacks).hasValue(1);
+        assertThat(reportedDurationMs).hasValue(0);
         assertThat(time.milliseconds()).isEqualTo(startMs);
     }
 
@@ -71,6 +75,8 @@ class JobUtilsTest {
         final MockTime time = new MockTime();
         final AtomicInteger attempts = new AtomicInteger();
         final AtomicInteger durationCallbacks = new AtomicInteger();
+        final AtomicInteger reportedDurationMs = new AtomicInteger(-1);
+        final long startMs = time.milliseconds();
 
         // Reproduces the production incident: the read replica cancels the first attempts with a
         // recovery conflict (SQLState 40001), wrapped exactly as the control plane wraps it, then a
@@ -83,13 +89,17 @@ class JobUtilsTest {
             return "recovered";
         };
 
-        final String result = JobUtils.run(flaky, time, ignored -> durationCallbacks.incrementAndGet());
+        final String result = JobUtils.run(flaky, time, d -> {
+            durationCallbacks.incrementAndGet();
+            reportedDurationMs.set(d.intValue());
+        });
 
         assertThat(result).isEqualTo("recovered");
         assertThat(attempts).hasValue(3);
-        // Guards against metric double-counting (finding #1): even though the job ran 3 times, only
-        // the decisive attempt is reported to the duration callback.
         assertThat(durationCallbacks).hasValue(1);
+        // QueryTime is the whole run, including backoff, so a retry storm shows up as latency.
+        assertThat(reportedDurationMs).hasValue((int) (time.milliseconds() - startMs));
+        assertThat(reportedDurationMs.get()).isGreaterThan(0);
     }
 
     @Test
@@ -138,6 +148,8 @@ class JobUtilsTest {
         final MockTime time = new MockTime();
         final AtomicInteger attempts = new AtomicInteger();
         final AtomicInteger durationCallbacks = new AtomicInteger();
+        final AtomicInteger reportedDurationMs = new AtomicInteger(-1);
+        final long startMs = time.milliseconds();
 
         // Always fails with a retriable error: the caller must observe the unchanged
         // ControlPlaneException contract after retries are exhausted.
@@ -145,13 +157,17 @@ class JobUtilsTest {
             attempts.incrementAndGet();
             throw new ControlPlaneException("Error finding batches",
                 new RuntimeException(recoveryConflict()));
-        }, time, ignored -> durationCallbacks.incrementAndGet()))
+        }, time, d -> {
+            durationCallbacks.incrementAndGet();
+            reportedDurationMs.set(d.intValue());
+        }))
             .isInstanceOf(ControlPlaneException.class)
             .hasMessage("Error finding batches");
 
         assertThat(attempts).hasValue(JobUtils.MAX_ATTEMPTS);
-        // Even on exhaustion the decisive (final) failure is reported exactly once.
         assertThat(durationCallbacks).hasValue(1);
+        assertThat(reportedDurationMs).hasValue((int) (time.milliseconds() - startMs));
+        assertThat(reportedDurationMs.get()).isGreaterThan(0);
     }
 
     @Test
@@ -236,6 +252,16 @@ class JobUtilsTest {
     }
 
     @Test
+    void isRetriableScansSqlExceptionNextException() {
+        // JDBC chains related errors via getNextException(), separate from getCause().
+        final SQLException head = new SQLException("connection closed", "08006");
+        head.setNextException(recoveryConflict());
+
+        assertThat(JobUtils.isRetriable(head)).isTrue();
+        assertThat(JobUtils.isRetriable(new RuntimeException(head))).isTrue();
+    }
+
+    @Test
     void isRetriableHandlesSelfReferentialCauseChain() {
         final SQLException a = new SQLException("a", "23505");
         final SQLException b = new SQLException("b", "23505");
@@ -243,6 +269,16 @@ class JobUtilsTest {
         b.initCause(a);
 
         // Must terminate, not StackOverflow, and report no retriable state.
+        assertThat(JobUtils.isRetriable(a)).isFalse();
+    }
+
+    @Test
+    void isRetriableHandlesSelfReferentialNextExceptionChain() {
+        final SQLException a = new SQLException("a", "23505");
+        final SQLException b = new SQLException("b", "23505");
+        a.setNextException(b);
+        b.setNextException(a);
+
         assertThat(JobUtils.isRetriable(a)).isFalse();
     }
 }

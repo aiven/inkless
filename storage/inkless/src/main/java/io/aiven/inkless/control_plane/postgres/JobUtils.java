@@ -45,34 +45,14 @@ public class JobUtils {
     static final int BACKOFF_MULTIPLIER = 2;
     static final double BACKOFF_JITTER = 0.2;
 
-    /**
-     * Backoff between retries. Uses jitter (a randomized factor in {@code [1 - jitter, 1 + jitter]})
-     * so that many jobs failing against the same struggling standby at once do not retry in lockstep
-     * (thundering herd) and re-collide on the same recovery-conflict window.
-     */
+    // Jittered so concurrent retries against the same standby do not collide in lockstep.
     private static final ExponentialBackoff BACKOFF =
         new ExponentialBackoff(INITIAL_BACKOFF_MS, BACKOFF_MULTIPLIER, MAX_BACKOFF_MS, BACKOFF_JITTER);
 
     /**
-     * PostgreSQL {@code SQLState}s that are safe to retry because they guarantee the transaction did
-     * <em>not</em> commit (the server rolled it back), so replaying the whole transaction cannot
-     * double-apply a write.
-     *
-     * <ul>
-     *   <li>{@code 40001} — {@code serialization_failure}. PostgreSQL also raises this
-     *       ({@code ERRCODE_T_R_SERIALIZATION_FAILURE}) for hot-standby recovery conflicts, in both
-     *       observed forms: the statement cancellation
-     *       ("canceling statement due to conflict with recovery") <em>and</em> the connection
-     *       termination ("terminating connection due to conflict with recovery"). The latter closes
-     *       the JDBC connection, but because {@code readJooqCtx}/{@code writeJooqCtx} are backed by a
-     *       connection pool, the retry transparently obtains a fresh connection.</li>
-     *   <li>{@code 40P01} — {@code deadlock_detected}. The victim transaction is rolled back.</li>
-     * </ul>
-     *
-     * <p>We deliberately do <b>not</b> retry generic connection-loss states (class {@code 08*},
-     * {@code 57P01}) here: a connection dropped <em>during commit</em> leaves the transaction
-     * in-doubt, so blindly replaying a write job could apply it twice. The recovery-conflict family
-     * that motivated this retry logic is fully covered by the rollback-guaranteed states above.
+     * PostgreSQL failures that guarantee transaction rollback and are safe to retry:
+     * {@code 40001} for serialization or recovery conflicts, and {@code 40P01} for deadlocks.
+     * Connection-loss states are excluded because the commit outcome may be unknown.
      */
     private static final Set<String> RETRIABLE_SQL_STATES = Set.of("40001", "40P01");
 
@@ -95,58 +75,39 @@ public class JobUtils {
         }
     }
 
-    /**
-     * Execute {@code callable}, retrying with jittered exponential backoff on transient PostgreSQL
-     * failures (see {@link #RETRIABLE_SQL_STATES}). On exhaustion, or for any non-retriable failure,
-     * the original exception is rethrown so callers observe the unchanged error contract.
-     *
-     * <p>Only the <em>decisive</em> attempt (the one that succeeds, or the final failure) is reported
-     * to {@code durationCallback}. Intermediate retried attempts are timed internally but not
-     * forwarded, so failed-attempt durations do not inflate the latency/rate metrics — exactly when
-     * an operator relies on them during a conflict storm.
-     */
     private static <T> T runWithRetry(final Callable<T> callable, final Time time, final Consumer<Long> durationCallback) throws Exception {
-        // measureDurationMs records the just-finished attempt's duration into this holder (via its
-        // finally block, so it fires on failure too); we forward it to durationCallback only once,
-        // when we stop retrying.
-        final long[] lastAttemptDurationMs = {0L};
-        final Consumer<Long> captureDuration = d -> lastAttemptDurationMs[0] = d;
-
-        for (int attempt = 1; ; attempt++) {
-            try {
-                final T result = TimeUtils.measureDurationMs(time, callable, captureDuration);
-                durationCallback.accept(lastAttemptDurationMs[0]);
-                return result;
-            } catch (final Exception e) {
-                if (attempt >= MAX_ATTEMPTS || !isRetriable(e)) {
-                    // Decisive failure: record its duration once, then propagate unchanged.
-                    durationCallback.accept(lastAttemptDurationMs[0]);
-                    if (attempt > 1) {
-                        LOGGER.warn("Giving up after {} attempts on transient database error", attempt, e);
+        // One sample per run(), covering attempts and backoff, so QueryTime matches client-visible
+        // latency and QueryRate stays one increment per job.
+        return TimeUtils.measureDurationMs(time, () -> {
+            for (int attempt = 1; ; attempt++) {
+                try {
+                    return callable.call();
+                } catch (final Exception e) {
+                    if (attempt >= MAX_ATTEMPTS || !isRetriable(e)) {
+                        if (attempt >= MAX_ATTEMPTS) {
+                            LOGGER.warn("Giving up after {} attempts on transient database error", attempt, e);
+                        }
+                        throw e;
                     }
-                    throw e;
-                }
-                final long backoffMs = BACKOFF.backoff(attempt - 1);
-                LOGGER.warn("Transient database error on attempt {}/{}, retrying in {} ms",
-                    attempt, MAX_ATTEMPTS, backoffMs, e);
-                time.sleep(backoffMs);
-                if (Thread.currentThread().isInterrupted()) {
-                    // Interrupted during backoff (e.g. broker shutdown). Utils.sleep restores the
-                    // interrupt flag but returns normally, so we must check it explicitly: stop
-                    // retrying, keep the flag set, and surface the last error rather than spinning
-                    // through the remaining attempts and delaying shutdown.
-                    durationCallback.accept(lastAttemptDurationMs[0]);
-                    throw e;
+                    final long backoffMs = BACKOFF.backoff(attempt - 1);
+                    LOGGER.debug("Transient database error on attempt {}/{}, retrying in {} ms",
+                        attempt, MAX_ATTEMPTS, backoffMs, e);
+                    time.sleep(backoffMs);
+                    if (Thread.currentThread().isInterrupted()) {
+                        // SystemTime.sleep restores the interrupt flag but returns normally, so
+                        // check it here or the loop would keep retrying through broker shutdown.
+                        throw e;
+                    }
                 }
             }
-        }
+        }, durationCallback);
     }
 
     /**
-     * Returns {@code true} if any throwable in the cause chain (including suppressed throwables) is a
-     * {@link SQLException} whose {@code SQLState} is in {@link #RETRIABLE_SQL_STATES}. The retriable
-     * cause is typically wrapped several layers deep (e.g. {@code ControlPlaneException} ->
-     * {@code DataAccessException} -> {@code PSQLException}), so the whole tree is scanned.
+     * True if any {@link SQLException} in the cause chain, JDBC {@code nextException} chain, or
+     * suppressed throwables has a SQLState in {@link #RETRIABLE_SQL_STATES}. Jobs wrap the JDBC
+     * failure (e.g. {@code ControlPlaneException} -> {@code DataAccessException} ->
+     * {@code PSQLException}), so the argument stays {@link Throwable}.
      */
     static boolean isRetriable(final Throwable throwable) {
         // Identity-based visited set guards against self-referential cause chains.
@@ -158,8 +119,12 @@ public class JobUtils {
             return false;
         }
         if (throwable instanceof SQLException) {
-            final String sqlState = ((SQLException) throwable).getSQLState();
+            final SQLException sqlException = (SQLException) throwable;
+            final String sqlState = sqlException.getSQLState();
             if (sqlState != null && RETRIABLE_SQL_STATES.contains(sqlState)) {
+                return true;
+            }
+            if (hasRetriableCause(sqlException.getNextException(), seen)) {
                 return true;
             }
         }
