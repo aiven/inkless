@@ -49,11 +49,13 @@ import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
+import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.config.ReplicationConfigs;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerConfig;
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
+import org.apache.kafka.storage.internals.log.UnifiedLog;
 import org.apache.kafka.test.TestUtils;
 
 import org.junit.jupiter.api.AfterEach;
@@ -76,11 +78,13 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
@@ -288,6 +292,65 @@ public class InklessConsolidatedDisklessTopicsTest {
         waitUntilTieredDisklessDataPrunedFromControlPlane(topicUuid, beforeConsumeSnapshot);
 
         consumeAndVerify(commonConfigs, recordsToSendAndReceive);
+    }
+
+    @Test
+    public void testSwitchedConsolidatingFollowerRejoinsIsrAfterRestart() throws Exception {
+        numPartitions = 1;
+        final int classicRecords = 10;
+        final int disklessRecords = 20;
+        final long seal = classicRecords;
+        final Map<String, Object> commonConfigs = new HashMap<>();
+        commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            // Phase 1: switch a fully replicated classic prefix to diskless.
+            final Uuid topicId = createClassicTopic(admin, Map.of(0, List.of(0, 1)));
+            produceRecords(commonConfigs, classicRecords, largeValueRecordFactory());
+            switchTopicToConsolidatedDiskless(admin);
+            assertEquals(seal,
+                awaitPartitionHighWatermark(toJavaUuid(topicId), 0, seal, 60_000),
+                "The committed switch seal must match the classic prefix end");
+
+            // Phase 2: require both replicas to consolidate beyond the seal.
+            produceRecords(commonConfigs, disklessRecords, largeValueRecordFactory());
+            final PartitionRegistration initial = waitForKRaftIsrSize(0, 2);
+            final int restartedBrokerId = 1;
+            assertTrue(Arrays.stream(initial.replicas).anyMatch(id -> id == restartedBrokerId),
+                "Broker 1 must host the partition so the test can restart the broker-only node");
+            assertTrue(initial.leader != restartedBrokerId,
+                "Broker 1 must be the follower so the test exercises follower recovery without a leader change");
+
+            TestUtils.waitForCondition(
+                () -> localLogEndOffset(restartedBrokerId).orElse(-1L) > seal,
+                120_000,
+                () -> "Broker " + restartedBrokerId + " must consolidate past seal " + seal
+                    + " before restart; last LEO=" + localLogEndOffset(restartedBrokerId).orElse(-1L));
+            final long leoBeforeRestart = localLogEndOffset(restartedBrokerId).orElseThrow();
+            final int peerBrokerId = 0;
+            TestUtils.waitForCondition(
+                () -> localLogEndOffset(peerBrokerId).orElse(-1L) >= leoBeforeRestart,
+                120_000,
+                () -> "Peer broker must be able to validate diskless LEO " + leoBeforeRestart
+                    + "; last LEO=" + localLogEndOffset(peerBrokerId).orElse(-1L));
+
+            // Phase 3: stop the follower and observe the controller ISR shrink.
+            cluster.brokers().get(restartedBrokerId).shutdown();
+            waitForKRaftIsrSize(peerBrokerId, 1);
+
+            // Phase 4: require leader-observed recovery before consolidation resumes.
+            cluster.brokers().get(restartedBrokerId).startup();
+            waitForKRaftIsrSize(peerBrokerId, 2);
+
+            final long leoAfterRecovery = localLogEndOffset(restartedBrokerId).orElseThrow();
+            assertTrue(leoAfterRecovery >= seal,
+                "Recovered follower must retain the complete classic prefix");
+            assertTrue(leoAfterRecovery >= leoBeforeRestart,
+                "When the leader can validate the diskless epoch, restart must preserve the consolidated suffix");
+        }
+
+        // Phase 5: verify the classic prefix and diskless suffix remain readable.
+        consumeAndVerify(commonConfigs, classicRecords + disklessRecords);
     }
 
     @Test
@@ -856,6 +919,10 @@ public class InklessConsolidatedDisklessTopicsTest {
     }
 
     private Uuid createClassicTopic(Admin admin) throws Exception {
+        return createClassicTopic(admin, null);
+    }
+
+    private Uuid createClassicTopic(Admin admin, Map<Integer, List<Integer>> replicaAssignments) throws Exception {
         // Create the topic as a classic topic by relying on the broker defaults (diskless.enable=false,
         // remote.storage.enable=false). Setting both keys explicitly at creation time — even to false —
         // trips the diskless/remote-storage mutual-exclusion validation, so we deliberately omit them.
@@ -863,7 +930,10 @@ public class InklessConsolidatedDisklessTopicsTest {
             CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_DELETE,
             SEGMENT_BYTES_CONFIG, "1048576"
         );
-        final NewTopic topic = new NewTopic(topicName, numPartitions, (short) -1).configs(classicConfigs);
+        final NewTopic topic = replicaAssignments == null
+            ? new NewTopic(topicName, numPartitions, (short) -1)
+            : new NewTopic(topicName, replicaAssignments);
+        topic.configs(classicConfigs);
         admin.createTopics(Collections.singletonList(topic)).all().get(30, TimeUnit.SECONDS);
 
         final TopicDescription[] descriptionHolder = new TopicDescription[1];
@@ -883,6 +953,29 @@ public class InklessConsolidatedDisklessTopicsTest {
             }
         }, 60_000, () -> "Classic topic should become visible with " + numPartitions + " partitions");
         return descriptionHolder[0].topicId();
+    }
+
+    private PartitionRegistration waitForKRaftIsrSize(int observerBrokerId, int expectedSize)
+        throws InterruptedException {
+        final AtomicReference<PartitionRegistration> lastSeen = new AtomicReference<>();
+        TestUtils.waitForCondition(() -> {
+            final var topic = cluster.brokers().get(observerBrokerId).metadataCache()
+                .currentImage().topics().getTopic(topicName);
+            if (topic == null) {
+                return false;
+            }
+            final PartitionRegistration partition = topic.partitions().get(0);
+            lastSeen.set(partition);
+            return partition != null && partition.isr.length == expectedSize;
+        }, 120_000, () -> "Expected KRaft ISR size " + expectedSize + " for " + topicName
+            + "-0; last observed=" + lastSeen.get());
+        return lastSeen.get();
+    }
+
+    private OptionalLong localLogEndOffset(int brokerId) {
+        final TopicPartition tp = new TopicPartition(topicName, 0);
+        final scala.Option<UnifiedLog> log = cluster.brokers().get(brokerId).logManager().getLog(tp, false);
+        return log.isDefined() ? OptionalLong.of(log.get().logEndOffset()) : OptionalLong.empty();
     }
 
     private void incrementalAlterTopicConfigs(Admin admin, Map<String, String> configs)
