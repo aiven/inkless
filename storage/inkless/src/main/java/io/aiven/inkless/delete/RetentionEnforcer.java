@@ -18,6 +18,7 @@
 package io.aiven.inkless.delete;
 
 import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.internals.log.LogConfig;
 
@@ -34,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.SharedState;
@@ -50,8 +52,8 @@ public class RetentionEnforcer implements Runnable, Closeable {
     private final ControlPlane controlPlane;
     private final RetentionEnforcementScheduler retentionEnforcementScheduler;
     private final int maxBatchesPerRequest;
-
     private final RetentionEnforcerMetrics metrics;
+    private final AtomicBoolean closed = new AtomicBoolean(false);
 
     public RetentionEnforcer(final SharedState sharedState) {
         this(Objects.requireNonNull(sharedState, "sharedState cannot be null").time(),
@@ -83,6 +85,9 @@ public class RetentionEnforcer implements Runnable, Closeable {
 
     @Override
     public void run() {
+        if (closed.get()) {
+            return;
+        }
         try {
             runUnsafe();
         } catch (final Exception e) {
@@ -121,54 +126,69 @@ public class RetentionEnforcer implements Runnable, Closeable {
         LOGGER.info("Enforcing retention for {} partitions", requests.size());
 
         final Instant start = TimeUtils.durationMeasurementNow(time);
-        final List<EnforceRetentionResponse> responses;
-        try {
-            responses = controlPlane.enforceRetention(requests, maxBatchesPerRequest);
-        } catch (final Exception e) {
-            metrics.recordRetentionEnforcementFinishedWithError();
-            LOGGER.error("Unexpected error when enforcing retention", e);
-            throw new RuntimeException(e);
+        long totalBatchesDeleted = 0;
+        long totalBytesDeleted = 0;
+        int partitionsEnforced = 0;
+        // One call per partition creates a shutdown boundary; the control plane already uses one
+        // transaction per partition.
+        for (int i = 0; i < requests.size(); i++) {
+            if (closed.get()) {
+                LOGGER.info("Retention enforcement stopping after {} of {} partitions: enforcer closed",
+                    partitionsEnforced, requests.size());
+                break;
+            }
+            final EnforceRetentionRequest request = requests.get(i);
+            final List<EnforceRetentionResponse> responses;
+            try {
+                responses = controlPlane.enforceRetention(List.of(request), maxBatchesPerRequest);
+            } catch (final Exception e) {
+                metrics.recordRetentionEnforcementFinishedWithError();
+                throw e;
+            }
+            if (!responses.isEmpty()) {
+                final EnforceRetentionResponse response = responses.get(0);
+                logResponse(request, enforcedPartitions.get(i), response);
+                if (response.errors() == Errors.NONE) {
+                    totalBatchesDeleted += response.batchesDeleted();
+                    totalBytesDeleted += response.bytesDeleted();
+                }
+            }
+            partitionsEnforced = i + 1;
         }
         final Instant ended = TimeUtils.durationMeasurementNow(time);
         final long durationMs = Duration.between(start, ended).toMillis();
 
-        long totalBatchesDeleted = 0;
-        long totalBytesDeleted = 0;
-        for (int i = 0; i < responses.size(); i++) {
-            final TopicIdPartition enforcedPartition = enforcedPartitions.get(i);
-            final var request = requests.get(i);
-            final var response = responses.get(i);
-
-            switch (response.errors()) {
-                case NONE -> {
-                    LOGGER.trace("Enforcing retention for {} with retentionBytes={}, retentionMs={} completed successfully. " +
-                            "{} batches and {} bytes deleted, new log start offset: {}",
-                        enforcedPartition.topicPartition(), request.retentionBytes(), request.retentionMs(),
-                        response.batchesDeleted(), response.bytesDeleted(), response.logStartOffset());
-                    totalBatchesDeleted += response.batchesDeleted();
-                    totalBytesDeleted += response.bytesDeleted();
-                }
-
-                case UNKNOWN_TOPIC_OR_PARTITION ->
-                    // When a topic is deleted, each partition may still be attempted once.
-                    // Use debug logging to not pollute the log with this normal behavior.
-                    LOGGER.debug("Enforcing retention for {} with retentionBytes={}, retentionMs={} completed with error: {}",
-                        enforcedPartition.topicPartition(), request.retentionBytes(), request.retentionMs(), response.errors());
-
-                default ->
-                    LOGGER.error("Enforcing retention for {} with retentionBytes={}, retentionMs={} completed with error: {}",
-                        enforcedPartition.topicPartition(), request.retentionBytes(), request.retentionMs(), response.errors());
-            }
-        }
-
         metrics.recordRetentionEnforcementFinishedSuccessfully(durationMs, totalBatchesDeleted, totalBytesDeleted);
 
         LOGGER.info("Enforced retention for {} partitions in {} ms: {} batches, {} bytes deleted",
-            requests.size(), durationMs, totalBatchesDeleted, totalBytesDeleted);
+            partitionsEnforced, durationMs, totalBatchesDeleted, totalBytesDeleted);
+    }
+
+    private void logResponse(final EnforceRetentionRequest request,
+                             final TopicIdPartition enforcedPartition,
+                             final EnforceRetentionResponse response) {
+        switch (response.errors()) {
+            case NONE ->
+                LOGGER.trace("Enforcing retention for {} with retentionBytes={}, retentionMs={} completed successfully. " +
+                        "{} batches and {} bytes deleted, new log start offset: {}",
+                    enforcedPartition.topicPartition(), request.retentionBytes(), request.retentionMs(),
+                    response.batchesDeleted(), response.bytesDeleted(), response.logStartOffset());
+
+            case UNKNOWN_TOPIC_OR_PARTITION ->
+                // A deleted topic's partitions may still be attempted once.
+                LOGGER.debug("Enforcing retention for {} with retentionBytes={}, retentionMs={} completed with error: {}",
+                    enforcedPartition.topicPartition(), request.retentionBytes(), request.retentionMs(), response.errors());
+
+            default ->
+                LOGGER.error("Enforcing retention for {} with retentionBytes={}, retentionMs={} completed with error: {}",
+                    enforcedPartition.topicPartition(), request.retentionBytes(), request.retentionMs(), response.errors());
+        }
     }
 
     @Override
     public void close() throws IOException {
-        metrics.close();
+        if (closed.compareAndSet(false, true)) {
+            metrics.close();
+        }
     }
 }

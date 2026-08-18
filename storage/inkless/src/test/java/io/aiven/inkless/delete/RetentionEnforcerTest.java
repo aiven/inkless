@@ -47,7 +47,9 @@ import static org.apache.kafka.common.config.TopicConfig.RETENTION_MS_CONFIG;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -149,10 +151,41 @@ class RetentionEnforcerTest {
         try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0)) {
             enforcer.run();
 
-            verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
-            assertThat(requestCaptor.getValue())
+            verify(controlPlane, times(2)).enforceRetention(requestCaptor.capture(), eq(0));
+            assertThat(requestCaptor.getAllValues()).allSatisfy(rs -> assertThat(rs).hasSize(1));
+            assertThat(requestCaptor.getAllValues())
+                .flatExtracting(rs -> rs)
                 .map(EnforceRetentionRequest::topicId)
                 .containsExactly(TOPIC_ID_1, TOPIC_ID_2);
         }
     }
+
+    @Test
+    void closeStopsAtPartitionBoundary() throws Exception {
+        when(retentionEnforcementScheduler.getReadyPartitions()).thenReturn(List.of(T0P0, T1P0, T2P0));
+        when(metadataView.getTopicConfig(any())).thenReturn(new LogConfig(Map.of()));
+
+        final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0);
+        when(controlPlane.enforceRetention(any(), eq(0))).thenAnswer(invocation -> {
+            enforcer.close();
+            return List.of();
+        });
+
+        enforcer.run();
+
+        verify(controlPlane, times(1)).enforceRetention(requestCaptor.capture(), eq(0));
+        assertThat(requestCaptor.getValue())
+            .map(EnforceRetentionRequest::topicId).containsExactly(TOPIC_ID_0);
+    }
+
+    @Test
+    void runAfterCloseIsNoOp() throws Exception {
+        final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0);
+        enforcer.close();
+
+        enforcer.run();
+
+        verifyNoInteractions(controlPlane, retentionEnforcementScheduler);
+    }
+
 }
