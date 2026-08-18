@@ -1276,10 +1276,15 @@ class Partition(val topicPartition: TopicPartition,
 
   private def isFollowerOutOfSync(replicaId: Int,
                                   leaderEndOffset: Long,
+                                  leaderEndOffsetCap: Long,
                                   currentTimeMs: Long,
                                   maxLagMs: Long): Boolean = {
     getReplica(replicaId).fold(true) { followerReplica =>
-      !followerReplica.stateSnapshot.isCaughtUp(leaderEndOffset, currentTimeMs, maxLagMs)
+      val followerState = followerReplica.stateSnapshot
+      // A follower recorded at or beyond the ceiling holds everything this leader supplies, so it
+      // cannot lag regardless of when it last fetched.
+      if (leaderEndOffsetCap >= 0 && followerState.logEndOffset >= leaderEndOffsetCap) false
+      else !followerState.isCaughtUp(leaderEndOffset, currentTimeMs, maxLagMs)
     }
   }
 
@@ -1306,7 +1311,8 @@ class Partition(val topicPartition: TopicPartition,
       val logEndOffset = localLogOrException.logEndOffset
       val leaderEndOffset =
         if (leaderEndOffsetCap >= 0) math.min(logEndOffset, leaderEndOffsetCap) else logEndOffset
-      candidateReplicaIds.filter(replicaId => isFollowerOutOfSync(replicaId, leaderEndOffset, currentTimeMs, maxLagMs))
+      candidateReplicaIds.filter(replicaId =>
+        isFollowerOutOfSync(replicaId, leaderEndOffset, leaderEndOffsetCap, currentTimeMs, maxLagMs))
     } else {
       Set.empty
     }
