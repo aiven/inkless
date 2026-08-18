@@ -28,7 +28,6 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -523,11 +522,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final Stream<FileToDelete> candidates = files.values().stream()
             .filter(f -> f.fileState == FileState.DELETING)
             .filter(f -> f.markedForDeletionAt.isBefore(markedBefore))
-            .map(f -> new FileToDelete(f.objectKey, f.markedForDeletionAt))
-            // Oldest first, mirroring the Postgres plane, where the order falls out of
-            // files_by_marked_for_deletion_deleting_idx. Keeps the truncated prefix the same in both,
-            // including the head-of-line case where undeletable keys stay oldest.
-            .sorted(Comparator.comparing(FileToDelete::markedForDeletionAt));
+            .map(f -> new FileToDelete(f.objectKey, f.markedForDeletionAt));
         return (limit > 0 ? candidates.limit(limit) : candidates).toList();
     }
 
