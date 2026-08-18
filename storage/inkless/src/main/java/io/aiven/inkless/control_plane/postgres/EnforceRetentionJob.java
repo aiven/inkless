@@ -62,7 +62,8 @@ public class EnforceRetentionJob implements Callable<List<EnforceRetentionRespon
         if (requests.isEmpty()) {
             return List.of();
         }
-        return JobUtils.run(this::runOnce);
+        // JobUtils must not record duration: runOnce already reports each partition separately.
+        return JobUtils.run(this::runOnce, time, ignored -> { });
     }
 
     private List<EnforceRetentionResponse> runOnce() throws Exception {
