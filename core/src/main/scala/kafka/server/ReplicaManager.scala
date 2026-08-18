@@ -2540,24 +2540,54 @@ class ReplicaManager(val config: KafkaConfig,
               getPartitionOrError(tp.topicPartition) match {
                 case Right(partition) =>
                   try {
-                    // Use the classic follower-read validation without returning any records.
-                    val fetchAtSeal = new PartitionData(
-                      fetchPartitionData.topicId,
-                      classicToDisklessStartOffset,
-                      fetchPartitionData.logStartOffset,
-                      0,
-                      fetchPartitionData.currentLeaderEpoch,
-                      fetchPartitionData.lastFetchedEpoch
-                    )
-                    val readInfo = partition.fetchRecords(
-                      fetchParams = params,
-                      fetchPartitionData = fetchAtSeal,
-                      fetchTimeMs = time.milliseconds,
-                      maxBytes = 0,
-                      minOneMessage = false,
-                      updateFetchState = true
-                    )
-                    divergingEpoch = readInfo.divergingEpoch
+                    // A leader below the seal is rebuilding its classic prefix and cannot safely
+                    // validate an intact follower against its incomplete epoch cache.
+                    val leaderLog = partition.localLogOrException
+                    if (leaderLog.logEndOffset >= classicToDisklessStartOffset) {
+                      if (leaderLog.logStartOffset > classicToDisklessStartOffset &&
+                          fetchPartitionData.fetchOffset < leaderLog.logStartOffset) {
+                        // The classic prefix has expired from the authoritative range, so its epoch
+                        // lineage no longer gates ISR membership. Record the follower's real offset
+                        // after validating leadership, assignment, and broker epoch.
+                        val follower = partition.recordFollowerFetchAfterClassicPrefixExpired(
+                          params, fetchPartitionData, time.milliseconds)
+                        partition.maybeExpandIsrAtSeal(follower, classicToDisklessStartOffset)
+                      } else {
+                        // Use the classic follower-read validation without returning any records.
+                        val validationOffset = if (leaderLog.logStartOffset > classicToDisklessStartOffset) {
+                          fetchPartitionData.fetchOffset
+                        } else {
+                          classicToDisklessStartOffset
+                        }
+                        val fetchAtSeal = new PartitionData(
+                          fetchPartitionData.topicId,
+                          validationOffset,
+                          fetchPartitionData.logStartOffset,
+                          0,
+                          fetchPartitionData.currentLeaderEpoch,
+                          fetchPartitionData.lastFetchedEpoch
+                        )
+                        val readInfo = partition.fetchRecords(
+                          fetchParams = params,
+                          fetchPartitionData = fetchAtSeal,
+                          fetchTimeMs = time.milliseconds,
+                          maxBytes = 0,
+                          minOneMessage = false,
+                          updateFetchState = true
+                        )
+                        divergingEpoch = readInfo.divergingEpoch
+                        if (!divergingEpoch.isPresent) {
+                          // Required: fetchRecords preserves earlier follower state on divergence, so
+                          // admission must depend on this fetch validating successfully.
+                          // Admit on the seal rather than on the generic in-sync check, which compares
+                          // against the leader's local high watermark. A consolidating leader holds that
+                          // watermark at the diskless frontier, so the follower could never reach it.
+                          partition.getReplica(params.replicaId).foreach { follower =>
+                            partition.maybeExpandIsrAtSeal(follower, classicToDisklessStartOffset)
+                          }
+                        }
+                      }
+                    }
                   } catch {
                     case NonFatal(e) =>
                       fetchError = Errors.forException(e)
@@ -3895,7 +3925,7 @@ class ReplicaManager(val config: KafkaConfig,
       case committedSeal =>
         val logEndOffset = partition.localLogOrException.logEndOffset
         if (logEndOffset < committedSeal) false
-        else partition.isLeader || _inklessMetadataView.isReplicaInIsr(tp, config.brokerId)
+        else _inklessMetadataView.isReplicaInIsr(tp, config.brokerId)
     }
   }
 
