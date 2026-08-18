@@ -94,7 +94,7 @@ consumer fetch (offset O, minBytes M)
                |  yes
                +-- synchronous diskless fetch from localLEO
                +-- merge local ++ diskless via ConcatenatedRecords
-               +-- return (high watermark and log start offset taken from the diskless supplement)
+               +-- return (high watermark and last stable offset taken from the diskless supplement)
          |  no (still inside local log, or error)
          +-- return local result
 ```
@@ -371,14 +371,16 @@ The broker registers these under the `io.aiven.inkless.consolidation` group. The
 
 ## Testing
 
-- **Unit**: `ConsolidationFetcherThreadTest`, `ConsolidationReconcilerTest`, `DisklessLeaderEndPointTest`, `ConsolidatedDisklessLogPrunerTest`, `ConsolidationQuotaManagerTest`, `CaffeineCrossTierLogStartCacheTest`, `CrossTierLogStartReporterTest`, `FetchOffsetHandlerTest`, `DisklessFetchOffsetRouterTest`, plus `InklessMetadataViewTest` for `E_d`.
-- **Integration** (`core`): `InklessConsolidatedDisklessTopicsTest` (produce/consume, cross-boundary reads, concurrent produce during consolidation, classic to diskless to consolidated), `InklessConsolidatedDisklessReassignmentTest` (consolidation resumes on a new broker, no loss), `InklessTopicTypeSwitcherClusterTest`.
-- **System tests** (ducktape; `tests/kafkatest/tests/inkless/`). To run them, see [SYSTEM_TESTS.md](SYSTEM_TESTS.md). They cover consolidating topics, born-consolidated and switched:
-  - The pipeline: WAL drains into the local log and then to remote, the WAL is pruned, and every acked record is still consumable. Consolidation JMX gauges are asserted along the way.
-  - Durability after local loss: once the prefix is remote-only, wiping every partition directory and restarting still serves the full log from remote, including a switched topic whose offset 0 was written under a classic epoch.
-  - Object-store and control-plane outages during produce: the cluster doesn't lose an acked record. After recovery, lag drains and pruning resumes.
-  - Cross-tier reclaim via `retention.ms` and `retention.bytes`: after the early prefix is remote-only and the topic earliest is still `0`, reclaim advances that earliest, leaves a contiguous surviving tail, and deletes the reclaimed remote objects. Size-based reclaim is the `RemoteLogManager` whole-log path. The Inkless enforcer only sees WAL bytes, which are tiny once the WAL is pruned.
-  - `DeleteRecords` into a switched topic's tiered classic prefix `[0, seal)`: the client-visible earliest moves off `0` to exactly the delete boundary, the same on every broker (served from the control plane), and `[delete_before, seal)` stays readable. The same assertions run across leader failover, a leader that rebuilds from remote, and a born-consolidated topic.
+Unit tests cover the feature. They include `DeleteRecords` into a switched topic's tiered classic prefix `[0, seal)`, and size-based reclaim via `retention.bytes` on the `RemoteLogManager` whole-log path.
+
+Integration tests cover produce and consume on consolidating topics, reads that cross the local/diskless boundary, concurrent produce during consolidation, a classic-to-diskless-to-consolidated switch, and reassignment that resumes consolidation on a new broker without data loss.
+
+System tests (ducktape) cover born-consolidated and switched consolidating topics. To run them, see [SYSTEM_TESTS.md](SYSTEM_TESTS.md). They cover the following:
+
+- The pipeline: the WAL drains into the local log and then to remote storage, the WAL is pruned, and every acked record is still consumable. Consolidation JMX gauges are asserted along the way.
+- Durability after local loss: once the prefix is remote-only, wiping every partition directory and restarting still serves the full log from remote storage, including a switched topic whose offset 0 was written under a classic epoch.
+- Object-store and control-plane outages during produce: the cluster doesn't lose an acked record. After recovery, lag drains and pruning resumes.
+- Cross-tier reclaim via `retention.ms`: after the early prefix is remote-only and the topic earliest is still `0`, reclaim advances that earliest, leaves a contiguous surviving tail, and deletes the reclaimed remote objects.
 
 ## Related documents
 
