@@ -33,7 +33,7 @@ import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
 import org.apache.kafka.common.record.{MemoryRecords, Records, SimpleRecord}
 import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, ListOffsetsRequest, OffsetsForLeaderEpochResponse}
 import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
-import org.apache.kafka.metadata.LeaderAndIsr
+import org.apache.kafka.metadata.{LeaderAndIsr, PartitionRegistration}
 import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.purgatory.DelayedOperationPurgatory
@@ -294,6 +294,30 @@ class DisklessLeaderEndPointTest {
   @Test
   def testFetchLatestOffsetNonEmptyBelowSealUsesSealAndDisklessEpoch(): Unit = {
     val endPoint = listOffsetEndPointWithPlaceholderEpoch(offset = 10L, seal = 150000L, disklessLeaderEpoch = 5)
+    assertEquals(new OffsetAndEpoch(150000L, 5), endPoint.fetchLatestOffset(topicPartition, 3))
+  }
+
+  @Test
+  def testFetchLatestOffsetSwitchPendingSealIsUnchanged(): Unit = {
+    val endPoint = listOffsetEndPointWithPlaceholderEpoch(
+      offset = 0L,
+      seal = PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
+      disklessLeaderEpoch = PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
+    assertEquals(new OffsetAndEpoch(0L, 0), endPoint.fetchLatestOffset(topicPartition, 3))
+  }
+
+  @Test
+  def testFetchLatestOffsetBornDisklessSealIsUnchanged(): Unit = {
+    val endPoint = listOffsetEndPointWithPlaceholderEpoch(
+      offset = 0L,
+      seal = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+      disklessLeaderEpoch = PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
+    assertEquals(new OffsetAndEpoch(0L, 0), endPoint.fetchLatestOffset(topicPartition, 3))
+  }
+
+  @Test
+  def testFetchLatestOffsetExactlyAtSealIsUnchanged(): Unit = {
+    val endPoint = listOffsetEndPointWithPlaceholderEpoch(offset = 150000L, seal = 150000L, disklessLeaderEpoch = 5)
     assertEquals(new OffsetAndEpoch(150000L, 5), endPoint.fetchLatestOffset(topicPartition, 3))
   }
 
