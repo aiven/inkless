@@ -1,9 +1,8 @@
-# Repository Guide for Agents
+# Repository guide for agents
 
 Guide for agentic coding agents working in the `inkless` repository.
 
-The following requirement levels are used throughout this document to indicate
-the importance of a given rule or guideline:
+This document uses these requirement levels:
 
 | Keyword            | How to treat it          |
 | ------------------ | ------------------------ |
@@ -11,30 +10,30 @@ the importance of a given rule or guideline:
 | SHOULD/RECOMMENDED | deviate only with reason |
 | MAY/OPTIONAL       | use judgment             |
 
-## Repository Structure
+## Repository structure
 
 `inkless` is a fork of Apache Kafka that adds Diskless Topics (KIP-1150). Most
-of the tree is upstream Kafka. Which paths are inkless-owned — and which are
-upstream files carrying inkless edits — is recorded in
-[`INKLESS_OWNERSHIP`](INKLESS_OWNERSHIP). When a task is Inkless-related, work in the
-**OWNED** paths first (`@aiven/inkless`).
+of the tree is upstream Kafka. [`INKLESS_OWNERSHIP`](INKLESS_OWNERSHIP) records
+which paths Inkless owns and which upstream files carry Inkless edits. If the
+task is Inkless-related, work in the `OWNED` paths first (`@aiven/inkless`).
 
-Note that some diskless logic is **interleaved** into upstream broker classes rather
-than confined to an inkless package — e.g. `DisklessFetchOffsetRouter.scala` and
-`InitDisklessLog*.scala` are net-new under `core/src/main/scala/kafka/server/`, and
-`ReplicaManager.scala`/`KafkaConfig.scala`/`BrokerServer.scala` carry heavy inkless
-edits (the dual-owner INTERLEAVED entries in the manifest). Don't assume all inkless
-Scala lives under `io/aiven/inkless/`.
+Some diskless logic is interleaved into upstream broker classes. It isn't
+confined to an Inkless package. For example, `DisklessFetchOffsetRouter.scala`
+and `InitDisklessLog*.scala` are new under `core/src/main/scala/kafka/server/`.
+`ReplicaManager.scala`, `KafkaConfig.scala`, and `BrokerServer.scala` carry
+heavy Inkless edits. Those files are the dual-owner `INTERLEAVED` entries in
+the manifest. Diskless Scala isn't limited to `io/aiven/inkless/`.
 
-Everything else is upstream Kafka. Follow upstream conventions when editing those and
-keep Inkless changes minimal and isolated.
+Everything else is upstream Kafka. Follow upstream conventions when you edit
+those files. Keep Inkless changes minimal and isolated.
 
-## Documentation (Load On-Demand)
+## On-demand documentation
 
-### Inkless Documentation
+### Inkless documentation
 
-Read these only when a task touches the relevant area. All docs are under
-[`docs/inkless/`](docs/inkless/).
+If a task touches the relevant area, read the matching doc. All docs live under
+[`docs/inkless/`](docs/inkless/). This table maps each doc to the question it
+answers:
 
 | Doc                                               | Read it when you need…                                                       |
 | ------------------------------------------------- | ---------------------------------------------------------------------------- |
@@ -53,19 +52,19 @@ Read these only when a task touches the relevant area. All docs are under
 | `FAQ.md`                                          | Common questions.                                                            |
 | `configs.rst`, `topic_configs.rst`, `metrics.rst` | Auto-generated config/metrics reference.                                     |
 
-Upstream Kafka build, test, and tooling commands are in the root
-[`README.md`](README.md). Upstream sync procedures live in
+For upstream Kafka build, test, and tooling commands, see the root
+[README.md](README.md). For upstream sync procedures, see
 [`inkless-sync/`](inkless-sync/).
 
-### Engineering Rules
+## Engineering rules
 
-**MUST**-follow rules and guidelines for development.
+You MUST follow these rules and guidelines during development.
 
-#### Writing style
+### Style
 
-Applies to Inkless-owned docs, PR titles and bodies, commit messages, and
-comments you write. Upstream Kafka files keep upstream style. Do not rewrite
-existing comments or docs only to match this section.
+These rules apply to Inkless-owned docs, PR titles and bodies, commit messages,
+and comments you write. Upstream Kafka files keep upstream style. Do not
+rewrite existing comments or docs only to match this section.
 
 Follow project conventions first, then this section. It is adapted from the
 [Google developer documentation style guide](https://developers.google.com/style).
@@ -73,10 +72,11 @@ If something is not covered here, look it up there. Prefer a clear sentence
 over a strictly compliant one. When you depart from the guide, stay consistent
 in that file or PR.
 
-##### Tone
+#### Tone
 
 Write like a knowledgeable teammate: conversational and direct, not stiff and
-not cute. The job is to give the reader the fact they came for.
+not cute. The job is to give the reader the fact they came for. Follow these
+tone rules:
 
 - MUST use active voice. Name the actor. "The broker retries the job." not
   "The job is retried."
@@ -99,7 +99,9 @@ not cute. The job is to give the reader the fact they came for.
   skip it: "If the partition is diskless, skip ISR expansion." not "Skip ISR
   expansion if the partition is diskless."
 
-##### Grammar and punctuation
+#### Grammar and punctuation
+
+Follow these grammar and punctuation rules:
 
 - MUST use American spelling (`canceled`, not `cancelled`).
 - MUST use the serial comma: "zones, regions, and multi-regions."
@@ -120,7 +122,9 @@ not cute. The job is to give the reader the fact they came for.
 - MUST use one space between sentences.
 - MUST NOT put a period on a heading.
 
-##### Formatting
+#### Formatting
+
+Follow these formatting rules:
 
 - MUST use sentence case for headings and PR section titles: "Test plan" not
   "Test Plan." Task headings start with a bare infinitive ("Add the metric").
@@ -142,7 +146,7 @@ not cute. The job is to give the reader the fact they came for.
   use an acronym as a verb ("Use SSH to log in," not "ssh into").
 - MUST NOT use `&` as a substitute for `and`.
 
-##### Word choices
+#### Word choices
 
 Prefer the precise word. If a term is established Kafka vocabulary (`replica`,
 `ISR`, `leader`, `follower`, `log`, `offset`), keep it.
@@ -164,8 +168,7 @@ Keep a term from the Avoid column when it names an existing identifier in Kafka 
 Inkless rather than describing one. Write that name in backticks, and use the
 preferred word only in prose that is not naming it.
 
-
-##### Commits and pull requests
+#### Commits and pull requests
 
 PR title and body become the squashed commit. Match existing Inkless
 conventional-commit titles:
@@ -182,12 +185,12 @@ The body MUST say why the change exists, not only what files moved. Use
 present tense for the new behavior. Put testing under a sentence-case
 heading. Do not pad the body with "please review" or a recap of the diff.
 
-##### Comments
+#### Comments
 
-Write self-documenting code. Comments SHOULD be rare and explain **why** (a
-non-obvious constraint, workaround, or deliberate deviation), never **what**
-the code does. Match the surrounding comment density and never restate the
-code.
+Write self-documenting code. Comments SHOULD be rare and explain **why** the
+code is this way, not **what** it does. Typical reasons are a non-obvious
+constraint, a workaround, or a deliberate deviation. Match the surrounding
+comment density and never restate the code.
 
 When you do write a comment or a Javadoc/Scaladoc sentence:
 
