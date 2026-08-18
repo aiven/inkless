@@ -120,7 +120,33 @@ class FindFilesToDeleteJobTest {
         assertThat(unbounded.call()).hasSize(3);
     }
 
+    @Test
+    void returnsOnlyEligibleFilesWhenMixed() {
+        final Instant markedBefore = MARKED_FOR_DELETION_AT.plusMillis(1);
+        insertDeletingFile("a2", MARKED_FOR_DELETION_AT);
+        insertDeletingFile("b1", markedBefore);
+        insertDeletingFile("b2", markedBefore.plusMillis(1));
+
+        final FindFilesToDeleteJob unbounded = new FindFilesToDeleteJob(
+            time, pgContainer.getJooqCtx(), markedBefore, 0, duration -> {});
+        assertThat(unbounded.call()).containsExactlyInAnyOrder(
+            // present from test preparation
+            new FileToDelete(OBJECT_KEY, MARKED_FOR_DELETION_AT),
+            new FileToDelete("a2", MARKED_FOR_DELETION_AT)
+        );
+
+        // The limit applies after the grace-period predicate: ineligible rows must not consume slots,
+        // otherwise a backlog of freshly marked files would starve the eligible ones.
+        final FindFilesToDeleteJob bounded = new FindFilesToDeleteJob(
+            time, pgContainer.getJooqCtx(), markedBefore, 2, duration -> {});
+        assertThat(bounded.call()).hasSize(2);
+    }
+
     private void insertDeletingFile(final String objectKey) {
+        insertDeletingFile(objectKey, MARKED_FOR_DELETION_AT);
+    }
+
+    private void insertDeletingFile(final String objectKey, final Instant markedForDeletionAt) {
         // The container's DataSource has autoCommit=false; commit so the job's connection sees the row.
         try (final Connection connection = pgContainer.getDataSource().getConnection()) {
             DSL.using(connection, SQLDialect.POSTGRES).insertInto(FILES,
@@ -128,7 +154,7 @@ class FindFilesToDeleteJobTest {
                 FILES.COMMITTED_AT, FILES.MARKED_FOR_DELETION_AT, FILES.SIZE
             ).values(
                 objectKey, (short) ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT.id, FileReason.PRODUCE, FileStateT.deleting,
-                BROKER_ID, COMMITTED_AT, MARKED_FOR_DELETION_AT, 1000L
+                BROKER_ID, COMMITTED_AT, markedForDeletionAt, 1000L
             ).execute();
             connection.commit();
         } catch (final SQLException e) {
