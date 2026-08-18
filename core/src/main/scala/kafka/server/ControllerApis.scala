@@ -987,14 +987,12 @@ class ControllerApis(
 
       case Some(cp) =>
         val eligibleRequests = (topics.asScala zip results.asScala)
-          // NONE is the first increase. INVALID_PARTITIONS (and TOPIC_ALREADY_EXISTS, copied from
-          // create-topic) is a retry after KRaft already applied, except a decrease, which uses the
-          // same error code and must not write. disklessPartitionCreateRequests drops those.
+          // NONE is the first increase. INVALID_PARTITIONS is a retry after KRaft already applied,
+          // except a decrease, which uses the same error code and must not write.
+          // disklessPartitionCreateRequests drops those.
           .filter { case (_, res) =>
             val code = res.errorCode()
-            code == Errors.NONE.code() ||
-              code == Errors.TOPIC_ALREADY_EXISTS.code() ||
-              code == Errors.INVALID_PARTITIONS.code()
+            code == Errors.NONE.code() || code == Errors.INVALID_PARTITIONS.code()
           }
           // In contrast to the topic creation, we only create new partitions to existing topics.
           // Hence, the topics themselves must be in the metadata already, no need to wait.
