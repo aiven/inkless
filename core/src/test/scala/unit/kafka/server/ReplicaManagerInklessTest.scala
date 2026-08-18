@@ -7034,6 +7034,281 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testApplyDeltaKeepsConsolidatingFollowerAtSealOnClassicFetcherWhileOutsideIsr(): Unit = {
+    val topicName = "switched-consolidating"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager)
+    ))
+    try {
+      // Caught up exactly to the seal, so consolidation would normally take over. Outside ISR it must
+      // stay on the classic fetcher: the consolidation fetcher reads object storage, so the leader
+      // would never observe this replica and nothing would expand ISR.
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+      when(replicaManager.inklessMetadataView().isReplicaInIsr(tp, brokerId)).thenReturn(false)
+
+      val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId, followerInIsr = false)
+      replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+      val captor: ArgumentCaptor[Map[TopicPartition, InitialFetchState]] =
+        ArgumentCaptor.forClass(classOf[Map[TopicPartition, InitialFetchState]])
+      verify(mockFetcherManager).addFetcherForPartitions(captor.capture())
+      assertTrue(captor.getValue.contains(tp),
+        s"Expected the classic fetcher to take $tp, got ${captor.getValue.keySet}")
+      assertEquals(sealOffset, captor.getValue.apply(tp).initOffset,
+        "The classic fetch must resume at the seal so the leader records this replica there")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaSendsConsolidatingFollowerAtSealToConsolidationWhileInIsr(): Unit = {
+    val topicName = "switched-consolidating"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mock, _) =>
+        when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    try {
+      val replicaManager = spy(createReplicaManager(
+        List(topicName),
+        disklessManagedReplicasEnabled = true,
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager)
+      ))
+      try {
+        val mockCfm = consolidationCtor.constructed().get(0)
+        // Same state as the hold-back test, except the replica is in ISR: the leader already has its
+        // evidence, so consolidation takes over.
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().isReplicaInIsr(tp, brokerId)).thenReturn(true)
+
+        val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        verify(mockCfm).removeFetcherForPartitions(Set(tp))
+        val captor: ArgumentCaptor[Map[TopicPartition, InitialFetchState]] =
+          ArgumentCaptor.forClass(classOf[Map[TopicPartition, InitialFetchState]])
+        verify(mockFetcherManager).addFetcherForPartitions(captor.capture())
+        assertFalse(captor.getValue.contains(tp),
+          s"An in-ISR replica at the seal must not stay on the classic fetcher, got ${captor.getValue.keySet}")
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
+  def testApplyDeltaKeepsBelowSealFollowerOnClassicFetcherWhenConsolidationDisabled(): Unit = {
+    val topicName = "switched-consolidating"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any()))
+      .thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    // The switch turns on remote storage by itself, so isConsolidatingDisklessTopic reads true even
+    // with consolidation off on this broker. With it off there is no consolidation fetcher, so a
+    // partition classified as consolidation-bound is handed to nothing and stops replicating.
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = false,
+      consolidatingDisklessTopics = Set(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager)
+    ))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      // High watermark one short of the seal: the leader only learns this replica sits at the seal on
+      // its next fetch, so a catch-up fetch is required for the watermark to reach it.
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset - 1)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+      when(replicaManager.inklessMetadataView().isReplicaInIsr(tp, brokerId)).thenReturn(true)
+
+      val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
+      replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+      val captor: ArgumentCaptor[Map[TopicPartition, InitialFetchState]] =
+        ArgumentCaptor.forClass(classOf[Map[TopicPartition, InitialFetchState]])
+      verify(mockFetcherManager).addFetcherForPartitions(captor.capture())
+      assertTrue(captor.getValue.contains(tp),
+        "A below-seal replica must be scheduled on the classic fetcher when consolidation is off, " +
+          s"or its high watermark never reaches the seal, got ${captor.getValue.keySet}")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaReroutesConsolidatingFollowerToClassicFetcherWhenRemovedFromIsr(): Unit = {
+    val topicName = "switched-consolidating"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mock, _) =>
+        when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    try {
+      val replicaManager = spy(createReplicaManager(
+        List(topicName),
+        disklessManagedReplicasEnabled = true,
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager)
+      ))
+      try {
+        val mockCfm = consolidationCtor.constructed().get(0)
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().isReplicaInIsr(tp, brokerId)).thenReturn(true)
+
+        val initialDelta = disklessFollowerDelta(
+          topicName,
+          topicId,
+          brokerId,
+          leaderId,
+          classicToDisklessStartOffset = sealOffset
+        )
+        val initialImage = imageFromTopics(initialDelta.apply())
+        replicaManager.applyDelta(initialDelta, initialImage)
+        verify(mockCfm).addFetcherForPartitions(argThat[Map[TopicPartition, InitialFetchState]](_.contains(tp)))
+        clearInvocations(mockFetcherManager, mockCfm)
+
+        when(replicaManager.inklessMetadataView().isReplicaInIsr(tp, brokerId)).thenReturn(false)
+        val isrRemovalDelta = new TopicsDelta(initialImage.topics())
+        isrRemovalDelta.replay(new PartitionChangeRecord()
+          .setTopicId(topicId)
+          .setPartitionId(tp.partition)
+          .setIsr(util.Arrays.asList(leaderId)))
+
+        val updatedRegistration = isrRemovalDelta.apply().getTopic(topicId).partitions().get(tp.partition)
+        assertEquals(0, updatedRegistration.leaderEpoch,
+          "Removing a follower from ISR must not change the leader epoch")
+        assertEquals(1, updatedRegistration.partitionEpoch,
+          "Removing a follower from ISR must advance the partition epoch")
+
+        replicaManager.applyDelta(isrRemovalDelta, imageFromTopics(isrRemovalDelta.apply()))
+
+        verify(mockCfm).removeFetcherForPartitions(Set(tp))
+        verify(mockFetcherManager).removeFetcherForPartitions(Set(tp))
+        val captor: ArgumentCaptor[Map[TopicPartition, InitialFetchState]] =
+          ArgumentCaptor.forClass(classOf[Map[TopicPartition, InitialFetchState]])
+        verify(mockFetcherManager).addFetcherForPartitions(captor.capture())
+        assertEquals(sealOffset, captor.getValue.apply(tp).initOffset,
+          "The classic fetch must resume at the existing LEO so the leader can readmit the replica")
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
+  def testApplyDeltaKeepsConsolidatingFollowerPastSealOnClassicFetcherWhileOutsideIsr(): Unit = {
+    val topicName = "switched-consolidating"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+    val leo = sealOffset + 3
+    val disklessLeaderEpoch = 5
+
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mock, _) =>
+        when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    try {
+      val replicaManager = spy(createReplicaManager(
+        List(topicName),
+        disklessManagedReplicasEnabled = true,
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager)
+      ))
+      try {
+        // Already consolidated past the seal and outside ISR. Consolidation sends the leader no fetch,
+        // so taking this replica there would leave it with no admission path at all. It waits on the
+        // classic fetcher instead, starting at its real log end offset so the diskless suffix survives.
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateConsolidatedLocalLogAndCheckpointedHwm(
+          replicaManager, tp, log, sealOffset, leo, disklessLeaderEpoch, hw = sealOffset)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+        when(replicaManager.inklessMetadataView().isReplicaInIsr(tp, brokerId)).thenReturn(false)
+
+        val delta = disklessFollowerDelta(
+          topicName,
+          topicId,
+          brokerId,
+          leaderId,
+          classicToDisklessStartOffset = sealOffset,
+          disklessLeaderEpoch = disklessLeaderEpoch,
+          followerInIsr = false
+        )
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        val captor: ArgumentCaptor[Map[TopicPartition, InitialFetchState]] =
+          ArgumentCaptor.forClass(classOf[Map[TopicPartition, InitialFetchState]])
+        verify(mockFetcherManager).addFetcherForPartitions(captor.capture())
+        assertTrue(captor.getValue.contains(tp),
+          s"A replica past the seal and outside ISR must wait on the classic fetcher, got ${captor.getValue.keySet}")
+        assertEquals(leo, captor.getValue.apply(tp).initOffset,
+          "The fetch must resume at the real log end offset so the consolidated suffix is not discarded")
+        assertEquals(leo, replicaManager.localLogOrException(tp).logEndOffset,
+          "The diskless suffix must survive the routing decision")
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
   def testApplyDeltaDoesNotStartCatchUpFetcherWhenDisklessFollowerHwmAtSealOffset(): Unit = {
     val topicName = "switched-topic"
     val topicId = Uuid.randomUuid()
@@ -9552,8 +9827,8 @@ class ReplicaManagerInklessTest {
   @Test
   def testSwitchedConsolidatingFollowerBelowSealStaysOnClassicFetcher(): Unit = {
     // A switched consolidating follower whose local log is still below the committed seal must
-    // keep replicating the classic prefix via the classic ReplicaFetcher (which self-evicts and
-    // hands off to consolidation once it reaches the seal). It must NOT be routed straight to the
+    // keep replicating the classic prefix via the classic ReplicaFetcher, which hands off to
+    // consolidation once it reaches the seal and is in ISR. It must NOT be routed straight to the
     // consolidation fetcher, otherwise the reconciler would Retry it and, since a follower's only
     // catch-up path is the classic fetcher, it would be stranded without ever reaching the seal.
     val consolidatingTopic = disklessTopicPartition.topic()
