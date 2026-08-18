@@ -2469,6 +2469,14 @@ class ReplicaManager(val config: KafkaConfig,
               // few deleted records may survive until it refreshes.
               val mayServeFromFollowerLocalLog =
                 params.isFromConsumer && !partition.isLeader
+              // On a consolidating leader the local log end offset is the consolidated frontier, well
+              // past the seal, so a follower fetch at the seal would otherwise read the consolidated
+              // suffix from the local log. That ships diskless records over the inter-broker path and
+              // defers ISR admission until the follower matches the frontier. Such a fetch belongs to
+              // the at-seal branch, which answers empty with the high watermark clamped to the seal.
+              val followerAtOrAboveSeal =
+                params.isFromFollower && classicToDisklessStartOffset >= 0 &&
+                  fetchPartitionData.fetchOffset >= classicToDisklessStartOffset
               val crossTierEarliest =
                 if (mayServeFromFollowerLocalLog) crossTierEarliestOffset(tp.topicPartition())
                 else OptionalLong.empty()
@@ -2485,7 +2493,7 @@ class ReplicaManager(val config: KafkaConfig,
                   false
                 )
                 partitionLookupFailed = true
-              } else if (fetchPartitionData.fetchOffset < logEndOffset) {
+              } else if (fetchPartitionData.fetchOffset < logEndOffset && !followerAtOrAboveSeal) {
                 // Local log has data for this offset range — serve from local, track for diskless supplement
                 shouldReadFromUnifiedLog = true
                 // Skip supplement tracking when the fetch offset falls in the tiered-storage range

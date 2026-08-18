@@ -7103,6 +7103,57 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testFollowerFetchAtSealOnConsolidatingLeaderGetsAtSealResponse(): Unit = {
+    val followerId = 2
+    val sealOffset = 5L
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    )
+    try {
+      val partition = setupSwitchedLeaderWithOutOfSyncFollower(
+        replicaManager, disklessTopicPartition, followerId, sealOffset)
+
+      // Consolidation has run on the leader, so its local log end offset is past the seal. Without
+      // the follower-at-or-above-seal exclusion the fetch reads that consolidated suffix from the
+      // local log instead of taking the at-seal branch.
+      val log = partition.localLogOrException
+      log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, 0,
+        new SimpleRecord("consolidated".getBytes, "value".getBytes)), 0)
+      assertTrue(log.logEndOffset > sealOffset, "precondition: leader consolidated past the seal")
+
+      doReturn(new CompletableFuture[Any]())
+        .when(alterPartitionManager).submit(any(), any())
+      clearInvocations(alterPartitionManager)
+
+      val fetchParams = new FetchParams(
+        followerId, -1L, 0L, 1, 1024 * 1024, FetchIsolation.LOG_END, Optional.empty())
+      val fetchInfos = Seq(
+        disklessTopicPartition ->
+          new PartitionData(disklessTopicPartition.topicId(), sealOffset, 0L, 1024 * 1024,
+            Optional.of(partition.getLeaderEpoch)))
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA,
+        response => responseData = response.toMap)
+
+      val data = responseData(disklessTopicPartition)
+      assertEquals(Errors.NONE, data.error)
+      assertEquals(MemoryRecords.EMPTY, data.records,
+        "A follower at the seal must not receive the leader's consolidated records")
+      assertEquals(sealOffset, data.highWatermark,
+        "The high watermark must be clamped to the seal, not the consolidated frontier")
+      assertEquals(sealOffset, partition.getReplica(followerId).get.stateSnapshot.logEndOffset,
+        "The at-seal branch must still record the follower's position so ISR can expand")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testFollowerFetchAtSealRecordsFetchStateAndAllowsIsrExpansionWhenEpochMatches(): Unit = {
     val followerId = 2
     val sealOffset = 5L
