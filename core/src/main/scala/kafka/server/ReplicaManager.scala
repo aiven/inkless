@@ -2532,10 +2532,9 @@ class ReplicaManager(val config: KafkaConfig,
           if (params.isFromFollower && disklessSwitchCompleted) {
             var fetchError = Errors.NONE
             var divergingEpoch = Optional.empty[FetchResponseData.EpochEndOffset]
-            // A recovered follower for a switched partition may already be caught up to the
-            // seal offset but still be outside ISR. Record the seal-offset fetch so the normal
-            // ISR expansion path can observe that the follower is caught up without reading
-            // diskless data into the local log.
+            // A recovered follower for a switched partition may already hold the whole classic
+            // prefix but sit outside ISR. Validate the fetch at the seal so replica state tracks the
+            // follower, without reading diskless data into its local log.
             if (fetchPartitionData.fetchOffset >= classicToDisklessStartOffset) {
               getPartitionOrError(tp.topicPartition) match {
                 case Right(partition) =>
@@ -2603,7 +2602,7 @@ class ReplicaManager(val config: KafkaConfig,
             // The partition has fully switched to diskless and the follower is asking for an offset at or beyond it.
             // Followers must never replicate diskless records into their local log.
             // Empty records and HW at the seal offset make the follower treat the local log as caught up.
-            // ReplicaFetcherThread evicts once this replica is in ISR, or immediately if consolidating.
+            // ReplicaFetcherThread evicts once this replica is in ISR.
             // logStartOffset=0 is a no-op for the follower (maybeIncrementLogStartOffset only ever advances),
             // so classic local data stays in place and can still serve consumer reads.
             immediateFetchResponses += tp ->
@@ -3907,15 +3906,17 @@ class ReplicaManager(val config: KafkaConfig,
    *    fetcher until the controller commits the seal;
    *  - switched (seal >= 0): only consolidate once the local LEO has reached the committed seal, so
    *    that the whole classic prefix has been replicated locally; while below the seal it stays on
-   *    the classic fetcher, which self-evicts and hands off to consolidation at the seal.
+   *    the classic fetcher, which hands off to consolidation once the leader has admitted it back
+   *    to ISR.
    * Non-consolidating topics are never routed to the consolidation fetcher.
    *
-   * A follower sitting exactly at the seal and outside ISR is held back, because the consolidation
-   * fetcher reads object storage and sends no fetch to the leader, so the leader would never observe
-   * the catch-up and nothing would expand ISR. The classic fetcher waits at the seal instead until the
-   * leader records the position, then evicts and hands off. Only LEO == seal qualifies: past the seal
-   * the local latest epoch is the diskless one, which the classic fetcher's divergence check against
-   * the leader's epoch cache is not built for.
+   * A follower at or above the seal and outside ISR is held back, because the consolidation fetcher
+   * reads object storage and sends no fetch to the leader, so the leader would never observe the
+   * catch-up and nothing would expand ISR. The classic fetcher waits instead until the leader admits
+   * the replica back to ISR, then evicts and hands off. A replica that already consolidated past the
+   * seal keeps its diskless suffix while it waits: the fetcher starts at the real log end offset, and
+   * the diskless epoch it reports resolves in the leader's epoch cache whenever the leader has
+   * consolidated at least as far.
    */
   private def isReadyForConsolidation(tp: TopicPartition, partition: Partition): Boolean = {
     if (!_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)) return false
@@ -4305,8 +4306,9 @@ class ReplicaManager(val config: KafkaConfig,
       // A consolidating diskless follower only joins the consolidation fetcher once its local log
       // has replicated the entire classic prefix (LEO >= committed seal). While the switch is still
       // pending or the log is below the seal, it must stay on the classic ReplicaFetcher so it can
-      // catch up from the leader; that fetcher self-evicts at the seal and hands the partition off
-      // to the consolidation reconciler (startConsolidationFetchersForCaughtUpClassicPartitions).
+      // catch up from the leader; that fetcher hands the partition off to the consolidation
+      // reconciler (startConsolidationFetchersForCaughtUpClassicPartitions) once the local log
+      // reaches the seal and the leader has admitted the replica back to ISR.
       // Routing a below-seal/pending partition straight to the reconciler would strand it: the
       // reconciler returns Retry and no classic fetcher would ever bring it up to the seal.
       val (consolidatingDisklessPartitionsToStartFetching, classicPartitionsToStartFetching) = partitionsToStartFetching.partition { case (tp, partition) =>

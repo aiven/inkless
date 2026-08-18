@@ -119,9 +119,10 @@ class ReplicaFetcherThread(name: String,
 
   /**
    * Whether the eviction check in processPartitionData should mark fully-switched partitions
-   * for removal. The classic ReplicaFetcherThread enables this (so it self-evicts at the seal
-   * and hands off to consolidation). The ConsolidationFetcherThread disables it because it
-   * intentionally fetches for already-switched partitions.
+   * for removal. The classic ReplicaFetcherThread enables this, so it hands off to consolidation
+   * once the replica is at the seal and back in ISR.
+   * The ConsolidationFetcherThread disables it because it intentionally fetches for
+   * already-switched partitions.
    */
 
   protected def shouldEvictFullySwitchedDisklessPartitions: Boolean = true
