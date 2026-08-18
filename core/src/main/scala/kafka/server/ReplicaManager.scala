@@ -3239,13 +3239,29 @@ class ReplicaManager(val config: KafkaConfig,
       log.highWatermark
   }
 
-  private def maybeShrinkIsr(): Unit = {
+  // private[server] for testing: otherwise only reachable via the scheduled "isr-expiration" task.
+  private[server] def maybeShrinkIsr(): Unit = {
     trace("Evaluating ISR list of partitions to see which replicas can be removed from the ISR")
 
     // Shrink ISRs for non offline partitions
     allPartitions.forEach { (topicPartition, _) =>
-      if (!_inklessMetadataView.isDisklessTopic(topicPartition.topic()))
+      if (_inklessMetadataView.isDisklessTopic(topicPartition.topic())) {
+        val seal = _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
+        // -1 means "no committed seal": born-diskless, or a switch aborted through
+        // AlterDisklessSwitch. Neither has a classic prefix replicated from this leader, so there
+        // is nothing to fall behind on.
+        if (seal != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+          // Past a committed seal the local log only grows by consolidation, which every replica does
+          // from object storage without fetching from this leader (DisklessLeaderEndPoint), so the
+          // leader's recorded state for a healthy follower stops at the seal. Cap the lag comparison
+          // there, or the whole ISR is shrunk out as the consolidated suffix advances. Nothing
+          // re-expands it either, because expansion also needs a follower fetch.
+          val leaderEndOffsetCap = if (seal >= 0) seal else -1L
+          onlinePartition(topicPartition).foreach(_.maybeShrinkIsr(leaderEndOffsetCap))
+        }
+      } else {
         onlinePartition(topicPartition).foreach(_.maybeShrinkIsr())
+      }
     }
   }
 
@@ -4139,14 +4155,19 @@ class ReplicaManager(val config: KafkaConfig,
           getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
             try {
               val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+              val previousLeaderId = partition.leaderReplicaIdOpt
               val isNewLeaderEpoch = partition.makeFollower(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
               partition.seal()
               changedPartitions.add(partition)
               val isOutOfIsr = !info.partition.isr.contains(config.brokerId)
+              // A new leader resets our recorded fetch state to UNKNOWN (Replica.resetReplicaState),
+              // so without a fetch to re-establish it the lastCaughtUpTimeMs grace period expires and
+              // the leader shrinks us out of ISR.
+              val leaderChanged = previousLeaderId.exists(_ != info.partition.leader)
               // Skip during controlled shutdown: the leader will not expand ISR for a shutting-down
               // broker (isReplicaIsrEligible), and this replica is about to stop serving.
               if (seal >= 0 && !isInControlledShutdown &&
-                (partition.localLogOrException.highWatermark < seal || isOutOfIsr)) {
+                (partition.localLogOrException.highWatermark < seal || isOutOfIsr || leaderChanged)) {
                 // Schedule a catch-up fetch when the local HW is below the seal -- either
                 // because we restarted with a stale HW (unclean shutdown) or because we
                 // were just added as a replica and have an empty local log.

@@ -1220,17 +1220,27 @@ class Partition(val topicPartition: TopicPartition,
     delayedOperations.checkAndCompleteAll()
   }
 
-  def maybeShrinkIsr(): Unit = {
+  /**
+   * @param leaderEndOffsetCap highest offset a follower is expected to reach by fetching from this
+   *                           leader, or -1 for the leader's log end offset. Set below the LEO when
+   *                           part of the local log is replicated out of band and the leader therefore
+   *                           holds no fetch evidence of a healthy follower's progress past that point.
+   *                           Inkless (diskless tiered-storage consolidation): `ReplicaManager` passes
+   *                           the classic-to-diskless seal for a switched partition, because past the
+   *                           seal every replica appends the consolidated suffix from object storage
+   *                           instead of fetching it from this leader.
+   */
+  def maybeShrinkIsr(leaderEndOffsetCap: Long = -1L): Unit = {
     def needsIsrUpdate: Boolean = {
       !partitionState.isInflight && inReadLock(leaderIsrUpdateLock) {
-        needsShrinkIsr()
+        needsShrinkIsr(leaderEndOffsetCap)
       }
     }
 
     if (needsIsrUpdate) {
       val alterIsrUpdateOpt = inWriteLock(leaderIsrUpdateLock) {
         leaderLogIfLocal.flatMap { leaderLog =>
-          val outOfSyncReplicaIds = getOutOfSyncReplicas(replicaLagTimeMaxMs)
+          val outOfSyncReplicaIds = getOutOfSyncReplicas(replicaLagTimeMaxMs, leaderEndOffsetCap)
           partitionState match {
             case currentState: CommittedPartitionState if outOfSyncReplicaIds.nonEmpty =>
               val outOfSyncReplicaLog = outOfSyncReplicaIds.map { replicaId =>
@@ -1260,8 +1270,8 @@ class Partition(val topicPartition: TopicPartition,
     }
   }
 
-  private def needsShrinkIsr(): Boolean = {
-    leaderLogIfLocal.exists { _ => getOutOfSyncReplicas(replicaLagTimeMaxMs).nonEmpty }
+  private def needsShrinkIsr(leaderEndOffsetCap: Long): Boolean = {
+    leaderLogIfLocal.exists { _ => getOutOfSyncReplicas(replicaLagTimeMaxMs, leaderEndOffsetCap).nonEmpty }
   }
 
   private def isFollowerOutOfSync(replicaId: Int,
@@ -1285,13 +1295,17 @@ class Partition(val topicPartition: TopicPartition,
    * is violated, that replica is considered to be out of sync
    *
    * If an ISR update is in-flight, we will return an empty set here
+   *
+   * @param leaderEndOffsetCap see [[maybeShrinkIsr]]
    **/
-  def getOutOfSyncReplicas(maxLagMs: Long): Set[Int] = {
+  def getOutOfSyncReplicas(maxLagMs: Long, leaderEndOffsetCap: Long = -1L): Set[Int] = {
     val current = partitionState
     if (!current.isInflight) {
       val candidateReplicaIds = (current.isr.asScala.map(_.toInt) - localBrokerId).toSet
       val currentTimeMs = time.milliseconds()
-      val leaderEndOffset = localLogOrException.logEndOffset
+      val logEndOffset = localLogOrException.logEndOffset
+      val leaderEndOffset =
+        if (leaderEndOffsetCap >= 0) math.min(logEndOffset, leaderEndOffsetCap) else logEndOffset
       candidateReplicaIds.filter(replicaId => isFollowerOutOfSync(replicaId, leaderEndOffset, currentTimeMs, maxLagMs))
     } else {
       Set.empty
