@@ -4024,13 +4024,23 @@ class ReplicaManager(val config: KafkaConfig,
    *    that the whole classic prefix has been replicated locally; while below the seal it stays on
    *    the classic fetcher, which self-evicts and hands off to consolidation at the seal.
    * Non-consolidating topics are never routed to the consolidation fetcher.
+   *
+   * A follower sitting exactly at the seal and outside ISR is held back, because the consolidation
+   * fetcher reads object storage and sends no fetch to the leader, so the leader would never observe
+   * the catch-up and nothing would expand ISR. The classic fetcher waits at the seal instead until the
+   * leader records the position, then evicts and hands off. Only LEO == seal qualifies: past the seal
+   * the local latest epoch is the diskless one, which the classic fetcher's divergence check against
+   * the leader's epoch cache is not built for.
    */
   private def isReadyForConsolidation(tp: TopicPartition, partition: Partition): Boolean = {
-    if (!_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)) return false
+    if (!consolidationActiveFor(tp.topic)) return false
     _inklessMetadataView.getClassicToDisklessStartOffset(tp) match {
       case PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET => true
       case PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING => false
-      case committedSeal => partition.localLogOrException.logEndOffset >= committedSeal
+      case committedSeal =>
+        val logEndOffset = partition.localLogOrException.logEndOffset
+        if (logEndOffset < committedSeal) false
+        else partition.isLeader || _inklessMetadataView.isReplicaInIsr(tp, config.brokerId)
     }
   }
 
@@ -4282,10 +4292,12 @@ class ReplicaManager(val config: KafkaConfig,
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
       val isConsolidatingDisklessTopic = consolidationActiveFor(tp.topic)
+      // Lazy: a classic follower never reads it, and the consolidating branch below is guarded by
+      // isConsolidatingDisklessTopic, so a diskless follower resolves the seal at most once.
+      lazy val seal = _inklessMetadataView.getClassicToDisklessStartOffset(tp)
       if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
         // Clean up classic-to-diskless switch tracking since only the leader drives classic-to-diskless switch.
         initDisklessLogManager.foreach(_.removePartition(tp))
-        val seal = _inklessMetadataView.getClassicToDisklessStartOffset(tp)
         // Create the Partition (and a local log on the fly if missing) when either:
         //   (a) the broker already has classic data on disk -- typical post-restart case
         //       for a pre-existing replica; or
@@ -4347,15 +4359,20 @@ class ReplicaManager(val config: KafkaConfig,
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
             val isNewLeaderEpoch = partition.makeFollower(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
+            val switchedConsolidatingReplicaOutsideIsr =
+              isConsolidatingDisklessTopic &&
+                seal >= 0 &&
+                !info.partition.isr.contains(config.brokerId)
+
             if (isInControlledShutdown && (info.partition.leader == NO_LEADER ||
               !info.partition.isr.contains(config.brokerId))) {
               // During controlled shutdown, replica with no leaders and replica
               // where this broker is not in the ISR are stopped.
               partitionsToStopFetching.put(tp, false)
-            } else if (isNewLeaderEpoch) {
-              // Invoke the follower transition listeners for the partition.
-              partition.invokeOnBecomingFollowerListeners()
-              // Otherwise, fetcher is restarted if the leader epoch has changed.
+            } else if (isNewLeaderEpoch || switchedConsolidatingReplicaOutsideIsr) {
+              if (isNewLeaderEpoch) {
+                partition.invokeOnBecomingFollowerListeners()
+              }
               partitionsToStartFetching.put(tp, partition)
             }
 
@@ -4408,8 +4425,8 @@ class ReplicaManager(val config: KafkaConfig,
       val (consolidatingDisklessPartitionsToStartFetching, classicPartitionsToStartFetching) = partitionsToStartFetching.partition { case (tp, partition) =>
         isReadyForConsolidation(tp, partition)
       }
-      replicaFetcherManager.removeFetcherForPartitions(classicPartitionsToStartFetching.keySet)
-      consolidationFetcherManager.foreach(_.removeFetcherForPartitions(consolidatingDisklessPartitionsToStartFetching.keySet))
+      replicaFetcherManager.removeFetcherForPartitions(partitionsToStartFetching.keySet)
+      consolidationFetcherManager.foreach(_.removeFetcherForPartitions(partitionsToStartFetching.keySet))
       stateChangeLogger.info(s"Stopped fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
       val listenerName = config.interBrokerListenerName.value
