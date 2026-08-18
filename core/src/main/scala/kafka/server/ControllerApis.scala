@@ -1035,7 +1035,10 @@ class ControllerApis(
     priorTopicStates: Map[String, TopicState]
   ): Seq[CreateTopicAndPartitionsRequest] = {
     val retry = errorCode != Errors.NONE.code()
-    if (retry && count < imagePartitionCount(topicId)) {
+    val imagePartitions = Option(metadataCache.currentImage().topics().getTopic(topicId))
+      .map(_.partitions())
+      .getOrElse(util.Collections.emptyMap[Integer, PartitionRegistration]())
+    if (retry && count < imagePartitions.size()) {
       Seq.empty
     } else {
       val firstPartition =
@@ -1044,26 +1047,20 @@ class ControllerApis(
           case Some(state) if state.topicId == topicId => math.min(state.numPartitions, count)
           case _ => 0
         }
-      val partitions = bornDisklessPartitions(topicId, count).filter(_ >= firstPartition)
+      val partitions = bornDisklessPartitions(imagePartitions, count).filter(_ >= firstPartition)
       contiguousRanges(partitions).map { case (from, until) =>
         new CreateTopicAndPartitionsRequest(topicId, topicName, from, until)
       }
     }
   }
 
-  private def imagePartitionCount(topicId: Uuid): Int = {
-    Option(metadataCache.currentImage().topics().getTopic(topicId))
-      .map(_.partitions().size())
-      .getOrElse(0)
-  }
-
   // A partition missing from the image is treated as born-diskless: it was just added, or the
   // image has not caught up. A lagging image can therefore still classify a switching partition
   // as born-diskless.
-  private def bornDisklessPartitions(topicId: Uuid, count: Int): Seq[Int] = {
-    val imagePartitions = Option(metadataCache.currentImage().topics().getTopic(topicId))
-      .map(_.partitions())
-      .getOrElse(util.Collections.emptyMap())
+  private def bornDisklessPartitions(
+    imagePartitions: util.Map[Integer, PartitionRegistration],
+    count: Int
+  ): Seq[Int] = {
     (0 until count).filter { partition =>
       val startOffset = Option(imagePartitions.get(partition))
         .map(_.classicToDisklessStartOffset)
