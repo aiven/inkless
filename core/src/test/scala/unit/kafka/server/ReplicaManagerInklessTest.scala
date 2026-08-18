@@ -6585,8 +6585,9 @@ class ReplicaManagerInklessTest {
     val topicId = Uuid.randomUuid()
     val tp = new TopicPartition(topicName, 0)
     val brokerId = 1
-    val firstLeaderId = 2
-    val secondLeaderId = 3
+    val previousLeaderId = 0
+    val newLeaderId = 2
+    val sealOffset = 10L
 
     val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
     when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
@@ -6598,20 +6599,26 @@ class ReplicaManagerInklessTest {
     try {
       // Caught up to the seal and in ISR, so steady state needs no fetcher.
       val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
-      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 10L)
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(10L)
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
 
-      val firstDelta = disklessFollowerDelta(topicName, topicId, brokerId, firstLeaderId)
-      replicaManager.applyDelta(firstDelta, imageFromTopics(firstDelta.apply()))
+      val previousLeaderDelta = disklessFollowerDelta(topicName, topicId, brokerId, previousLeaderId)
+      replicaManager.applyDelta(previousLeaderDelta, imageFromTopics(previousLeaderDelta.apply()))
       verify(mockFetcherManager, never()).addFetcherForPartitions(any())
 
       // The leader moves. The new leader reset our recorded fetch state to UNKNOWN, so it holds no
       // evidence we reached the seal; without a fetch it would shrink us out once the lag timeout
       // elapses. A catch-up fetch must be scheduled even though we are caught up and in ISR.
-      val secondDelta = disklessFollowerDelta(topicName, topicId, brokerId, secondLeaderId)
-      replicaManager.applyDelta(secondDelta, imageFromTopics(secondDelta.apply()))
+      val newLeaderDelta = disklessFollowerDelta(topicName, topicId, brokerId, newLeaderId)
+      replicaManager.applyDelta(newLeaderDelta, imageFromTopics(newLeaderDelta.apply()))
 
-      verify(mockFetcherManager, times(1)).addFetcherForPartitions(any())
+      val newLeaderEndpoint = ClusterImageTest.IMAGE1.broker(newLeaderId).listeners().get("PLAINTEXT")
+      verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+        topicId = Some(topicId),
+        leader = new BrokerEndPoint(newLeaderId, newLeaderEndpoint.host(), newLeaderEndpoint.port()),
+        currentLeaderEpoch = 0,
+        initOffset = sealOffset
+      )))
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
