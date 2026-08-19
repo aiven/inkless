@@ -28,7 +28,7 @@ import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
@@ -155,6 +155,8 @@ object ReplicaManager {
   private val AtMinIsrPartitionCountMetricName = "AtMinIsrPartitionCount"
   private val ReassigningPartitionsMetricName = "ReassigningPartitions"
   private val SealedPartitionsCountMetricName = "SealedPartitionsCount"
+  private[server] val DisklessSwitchedReplicasOutsideIsrCountMetricName =
+    "DisklessSwitchedReplicasOutsideIsrCount"
   private val PartitionsWithLateTransactionsCountMetricName = "PartitionsWithLateTransactionsCount"
   private val ProducerIdCountMetricName = "ProducerIdCount"
   private val IsrExpandsPerSecMetricName = "IsrExpandsPerSec"
@@ -174,6 +176,7 @@ object ReplicaManager {
     AtMinIsrPartitionCountMetricName,
     ReassigningPartitionsMetricName,
     SealedPartitionsCountMetricName,
+    DisklessSwitchedReplicasOutsideIsrCountMetricName,
     PartitionsWithLateTransactionsCountMetricName,
     ProducerIdCountMetricName
   )
@@ -438,6 +441,8 @@ class ReplicaManager(val config: KafkaConfig,
   metricsGroup.newGauge(AtMinIsrPartitionCountMetricName, () => atMinIsrPartitionCount)
   metricsGroup.newGauge(ReassigningPartitionsMetricName, () => reassigningPartitionsCount)
   metricsGroup.newGauge(SealedPartitionsCountMetricName, () => sealedPartitionsCount)
+  metricsGroup.newGauge(DisklessSwitchedReplicasOutsideIsrCountMetricName,
+    () => disklessSwitchedReplicasOutsideIsrCount)
   metricsGroup.newGauge(PartitionsWithLateTransactionsCountMetricName, () => lateTransactionsCount)
   metricsGroup.newGauge(ProducerIdCountMetricName, () => producerIdCount)
 
@@ -462,6 +467,14 @@ class ReplicaManager(val config: KafkaConfig,
 
   private def isConsolidatingPartition(partition: Partition): Boolean =
     config.disklessRemoteStorageConsolidationEnabled && _inklessMetadataView.isConsolidatingDisklessTopic(partition.topic)
+
+  private[server] def disklessSwitchedReplicasOutsideIsrCount: Int = onlinePartitionsIterator.count { partition =>
+    val topicPartition = partition.topicPartition
+    val seal = _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
+    seal >= 0L &&
+      partition.log.exists(_.logEndOffset >= seal) &&
+      !_inklessMetadataView.isReplicaInIsr(topicPartition, config.brokerId)
+  }
 
   def recordConsolidationFetchBytesIn(bytes: Long): Unit = consolidationFetchBytesInPerSec.mark(bytes)
 

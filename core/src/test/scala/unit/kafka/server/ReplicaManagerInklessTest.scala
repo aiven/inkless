@@ -8622,6 +8622,54 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testDisklessSwitchedReplicasOutsideIsrCount(): Unit = {
+    val topic = "consolidating-topic"
+    val topicPartition = new TopicPartition(topic, 0)
+    val replicaManager = createReplicaManager(
+      disklessTopics = List(topic),
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(topic),
+    )
+    try {
+      val log = mock(classOf[UnifiedLog])
+      val partition = mock(classOf[Partition])
+      when(partition.topic).thenReturn(topic)
+      when(partition.topicPartition).thenReturn(topicPartition)
+      when(partition.log).thenReturn(Some(log))
+      replicaManager.addOnlinePartition(topicPartition, partition)
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+      when(replicaManager.inklessMetadataView().isReplicaInIsr(topicPartition, 1)).thenReturn(false)
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(topicPartition))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      assertEquals(0, replicaManager.disklessSwitchedReplicasOutsideIsrCount,
+        "a pending switch has no committed seal for ISR recovery")
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+      when(log.logEndOffset).thenReturn(99L)
+      assertEquals(0, replicaManager.disklessSwitchedReplicasOutsideIsrCount,
+        "a replica below the seal is still catching up")
+
+      when(log.logEndOffset).thenReturn(100L)
+      assertEquals(1, replicaManager.disklessSwitchedReplicasOutsideIsrCount,
+        "a replica at the seal and outside ISR is awaiting readmission")
+
+      when(replicaManager.inklessMetadataView().isReplicaInIsr(topicPartition, 1)).thenReturn(true)
+      assertEquals(0, replicaManager.disklessSwitchedReplicasOutsideIsrCount,
+        "ISR admission ends the recovery wait")
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(topicPartition))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      when(replicaManager.inklessMetadataView().isReplicaInIsr(topicPartition, 1)).thenReturn(false)
+      assertEquals(0, replicaManager.disklessSwitchedReplicasOutsideIsrCount,
+        "born-diskless replicas do not have a classic-prefix recovery wait")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testUrpMetricsExcludeConsolidatingDisklessTopicsAcrossStates(): Unit = {
     val consolidatingTopic = "consolidating-topic"
     val classicTopic = "classic-topic"
