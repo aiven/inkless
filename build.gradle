@@ -117,7 +117,7 @@ ext {
   repo = file("$rootDir/.git").isDirectory() ? Grgit.open(currentDir: project.getRootDir()) : null
 
   commitId = determineCommitId()
-  inklessTag = determineInklessTag()
+  resolvedInklessTag = determineInklessTag()
 
   configureJavaCompiler = { name, options, projectPath ->
     // -parameters generates arguments with parameter names in TestInfo#getDisplayName.
@@ -253,9 +253,12 @@ def determineCommitId() {
 //
 // An explicit `inklessTag` gradle property wins, so builds without a git checkout
 // (release packaging from a source tarball) can supply it. It must be read through
-// providers.gradleProperty: `-PinklessTag` lands in the project's `ext` namespace,
-// which `ext { inklessTag = ... }` then overwrites with this very provider, so
-// project.property('inklessTag') would resolve back to the provider itself.
+// providers.gradleProperty, not project.property: `-PinklessTag` lands as an extra
+// property on every project in the build, not only root, so a bare `inklessTag`
+// read from inside a `project(':x') { ... }` block would resolve to that raw,
+// per-project CLI string instead of this function's result. The result is
+// assigned to the differently named `resolvedInklessTag` (see below) precisely so
+// no project ever gets a same-named override and export to collide between.
 //
 // Returned as a lazy Provider using providers.exec (the configuration-cache-safe
 // API) rather than a config-time exec, and evaluated when createVersionFile runs.
@@ -302,7 +305,7 @@ apply from: file('wrapper.gradle')
 // running a build. Used by .github/scripts/test-inkless-tag.sh and by release
 // packaging to check what -PinklessTag resolves to.
 tasks.register('printInklessTag') {
-  def tag = inklessTag
+  def tag = resolvedInklessTag
   doLast {
     println "INKLESS_TAG=${tag.get()}"
   }
@@ -1058,7 +1061,7 @@ project(':server') {
     def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
-    inputs.property "inklessTag", inklessTag
+    inputs.property "inklessTag", resolvedInklessTag
     outputs.file receiptFile
     outputs.cacheIf { true }
 
@@ -1066,7 +1069,7 @@ project(':server') {
       def data = [
         commitId: commitId,
         version: version,
-        inklessTag: inklessTag.get(),
+        inklessTag: resolvedInklessTag.get(),
       ]
 
       receiptFile.parentFile.mkdirs()
@@ -1522,7 +1525,7 @@ project(':group-coordinator:group-coordinator-api') {
     def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
-    inputs.property "inklessTag", inklessTag
+    inputs.property "inklessTag", resolvedInklessTag
     outputs.file receiptFile
     outputs.cacheIf { true }
 
@@ -1530,7 +1533,7 @@ project(':group-coordinator:group-coordinator-api') {
       def data = [
               commitId: commitId,
               version: version,
-              inklessTag: inklessTag.get(),
+              inklessTag: resolvedInklessTag.get(),
       ]
 
       receiptFile.parentFile.mkdirs()
@@ -1997,7 +2000,7 @@ project(':clients') {
     def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
-    inputs.property "inklessTag", inklessTag
+    inputs.property "inklessTag", resolvedInklessTag
     outputs.file receiptFile
     outputs.cacheIf { true }
 
@@ -2005,7 +2008,7 @@ project(':clients') {
       def data = [
         commitId: commitId,
         version: version,
-        inklessTag: inklessTag.get(),
+        inklessTag: resolvedInklessTag.get(),
       ]
 
       receiptFile.parentFile.mkdirs()
@@ -2199,7 +2202,7 @@ project(':raft') {
     def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
-    inputs.property "inklessTag", inklessTag
+    inputs.property "inklessTag", resolvedInklessTag
     outputs.file receiptFile
     outputs.cacheIf { true }
 
@@ -2207,7 +2210,7 @@ project(':raft') {
       def data = [
         commitId: commitId,
         version: version,
-        inklessTag: inklessTag.get(),
+        inklessTag: resolvedInklessTag.get(),
       ]
 
       receiptFile.parentFile.mkdirs()
@@ -2295,7 +2298,7 @@ project(':server-common') {
     def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
-    inputs.property "inklessTag", inklessTag
+    inputs.property "inklessTag", resolvedInklessTag
     outputs.file receiptFile
     outputs.cacheIf { true }
 
@@ -2303,7 +2306,7 @@ project(':server-common') {
       def data = [
               commitId: commitId,
               version: version,
-              inklessTag: inklessTag.get(),
+              inklessTag: resolvedInklessTag.get(),
       ]
 
       receiptFile.parentFile.mkdirs()
@@ -2356,7 +2359,7 @@ project(':storage:storage-api') {
     def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
-    inputs.property "inklessTag", inklessTag
+    inputs.property "inklessTag", resolvedInklessTag
     outputs.file receiptFile
     outputs.cacheIf { true }
 
@@ -2364,7 +2367,7 @@ project(':storage:storage-api') {
       def data = [
               commitId: commitId,
               version: version,
-              inklessTag: inklessTag.get(),
+              inklessTag: resolvedInklessTag.get(),
       ]
 
       receiptFile.parentFile.mkdirs()
@@ -2454,7 +2457,7 @@ project(':storage') {
     def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
-    inputs.property "inklessTag", inklessTag
+    inputs.property "inklessTag", resolvedInklessTag
     outputs.file receiptFile
     outputs.cacheIf { true }
 
@@ -2462,7 +2465,7 @@ project(':storage') {
       def data = [
               commitId: commitId,
               version: version,
-              inklessTag: inklessTag.get(),
+              inklessTag: resolvedInklessTag.get(),
       ]
 
       receiptFile.parentFile.mkdirs()
@@ -2820,7 +2823,7 @@ project(':tools:tools-api') {
     def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
-    inputs.property "inklessTag", inklessTag
+    inputs.property "inklessTag", resolvedInklessTag
     outputs.file receiptFile
     outputs.cacheIf { true }
 
@@ -2828,7 +2831,7 @@ project(':tools:tools-api') {
       def data = [
               commitId: commitId,
               version: version,
-              inklessTag: inklessTag.get(),
+              inklessTag: resolvedInklessTag.get(),
       ]
 
       receiptFile.parentFile.mkdirs()
@@ -3152,14 +3155,14 @@ project(':streams') {
     def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildStreamsVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
-    inputs.property "inklessTag", inklessTag
+    inputs.property "inklessTag", resolvedInklessTag
     outputs.file receiptFile
 
     doLast {
       def data = [
               commitId: commitId,
               version: version,
-              inklessTag: inklessTag.get(),
+              inklessTag: resolvedInklessTag.get(),
       ]
 
       receiptFile.parentFile.mkdirs()
