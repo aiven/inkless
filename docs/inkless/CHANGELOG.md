@@ -41,6 +41,65 @@ Regenerate a draft with the `inkless-changelog` skill (or run it directly):
 
 ---
 
+## 0.47 (Kafka 4.1.2, 4.2.1)
+
+### Features
+- (inkless:metrics) add classic-to-diskless replicas outside ISR gauge (#763)
+- (inkless:retention) shorten the file-cleaner interval to 2 minutes (#745)
+- (inkless:retention) bound the file-cleaner deletion worklist [KC-404] (#743)
+- (inkless:retention) add LastSuccessfulFileCleanupAgeMs (#746)
+- (inkless:control_plane) add pg table auto-vacuum tuning (#747)
+- (inkless:release) add changelog generator and backfill 0.33..0.46 (#713)
+- (inkless:storage) split S3 error metrics by operation (#716)
+- (inkless) enable AZ parsing for generated client IDs (#699)
+- (inkless:metrics) add last-successful-operation age gauges [KC-316] (#735)
+
+### Fixes
+- (inkless:retention) size retention enforcement to keep up with produce (#744)
+- (inkless:test) Adjust date in license (#761)
+- (inkless:storage) bound bulk-delete failure logging [KC-430] (#742)
+- (inkless) repair missing control-plane rows on CreatePartitions retry [KC-420] (#752)
+- (inkless:controller) skip switched partitions in unfence ISR expansion (#754)
+- (inkless:switch) clear under-replicated partitions after classic-to-diskless switch (#697)
+- (inkless) bound error-message size on fetch/commit failure paths (#741)
+- (inkless:storage) drain object-store deletes monotonically under throttling [KC-413] (#715)
+- (inkless:consume) stop counting a fast cache load as a cache hit (#738)
+- (inkless:switch) preserve classic prefix on partition increase during switch [KC-387] (#737)
+- (inkless) refresh cached topic config for diskless topics with a local log (#736)
+- (inkless:build) resolve the inkless release tag without git (#734)
+- (inkless:retention) Limit the size of AWS delete error messages (#733)
+- (inkless:release) run finalize-release on the workflow_call path (#729)
+
+### Tests
+- (inkless:consolidation) retention.bytes cross-tier reclaim system test [KC-332] (#708)
+- (inkless:consolidation) DeleteRecords across tiers e2e test [KC-332] (#712)
+- (inkless) retry describeTopics in produceAndConsumeWithClientAZ (#755)
+- (inkless:consolidation) adjust tests to address failures (#728)
+- (inkless:consume) de-flake recentDataUsesRecentExecutorWithoutRateLimit (#732)
+
+### Docs
+- (inkless:ai) add writing style rules to AGENTS.md (#758)
+
+### Chores
+- (inkless:ai) replace probabilistic rule loading with context injection (#753)
+
+### Other
+- retry transient postgres errors in control plane jobs (#721)
+
+### Config & metric changes
+- config added: `file.cleaner.max.files.per.cycle`, default 20000 -- bounds files deleted per cleaning cycle per broker (#743)
+- config default changed: `file.cleaner.interval.ms` 300000 -> 120000 (5 minutes -> 2 minutes) (#745)
+- config default changed: `retention.enforcement.interval.ms` 300000 -> 60000 (5 minutes -> 1 minute); `retention.enforcement.max.batches.per.request` 1000 -> 2000 -- raises sustained per-partition retention-deletion capacity to keep up with continuous produce (#744)
+- metric mbean added: `s3-client-metrics,operation="{operation}"` with per-operation error-rate/total attrs (configured-timeout, io, other, server, throttling) (#716)
+- metric attrs added: `PostgresControlPlane :: <Query>LastSuccessfulQueryAgeMs` for all 16 tracked queries, and `FileCommitter :: LastSuccessfulFileCommitAgeMs` (#735)
+- metric attrs added: `FileCleaner :: LastSuccessfulFileCleanupAgeMs` (#746), `FileCleaner :: FileCleanerCycleSaturatedRate` (#743), `FileCleaner :: FileCleanerFilesFailedRate` (#715)
+
+### Postgres schema changes
+- `V23__Init_diskless_log_authoritative_seal.sql` -- `CREATE OR REPLACE FUNCTION`, no table lock.
+- `V24__Table_storage_tuning.sql` -- `ALTER TABLE ... SET (...)` storage parameters (autovacuum/fillfactor) on `batches`/`files`/`producer_state`; metadata-only, not a rewrite.
+- `V25__File_cleaner_marked_for_deletion_index.sql` -- `CREATE INDEX` (no `CONCURRENTLY`: Flyway runs each migration in a transaction). Takes `ACCESS EXCLUSIVE` on `files` for a full-table scan, blocking the produce commit path; runs synchronously at broker startup, so the scan adds to startup latency.
+- `V26__Drop_files_by_state_only_deleting_index.sql` -- `DROP INDEX` with a 5s `lock_timeout`, superseding V25's index. Operators can avoid the upgrade-path cost by running `DROP INDEX CONCURRENTLY IF EXISTS files_by_state_only_deleting_idx;` ahead of the upgrade.
+
 ## 0.46 (Kafka 4.1.2, 4.2.1)
 
 ### Features
