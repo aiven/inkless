@@ -39,7 +39,8 @@ class PostgresControlPlaneConfigTest {
                 "max.connections", "11",
                 "connection.pool.timeout.ms", "501",
                 "tcp.connect.timeout.ms", "502",
-                "socket.timeout.ms", "503"
+                "socket.timeout.ms", "503",
+                "batch.coalescing.enabled", "false"
             )
         );
 
@@ -50,6 +51,7 @@ class PostgresControlPlaneConfigTest {
         assertThat(config.connectionPoolTimeoutMs()).isEqualTo(501);
         assertThat(config.tcpConnectTimeoutMs()).isEqualTo(502);
         assertThat(config.socketTimeoutMs()).isEqualTo(503);
+        assertThat(config.batchCoalescingEnabled()).isFalse();
     }
 
     @Test
@@ -69,6 +71,7 @@ class PostgresControlPlaneConfigTest {
         assertThat(config.connectionPoolTimeoutMs()).isEqualTo(5000);
         assertThat(config.tcpConnectTimeoutMs()).isEqualTo(5000);
         assertThat(config.socketTimeoutMs()).isEqualTo(5000);
+        assertThat(config.batchCoalescingEnabled()).isTrue();
 
         // ensure read/write configs are null when not set
         config.initializeReadWriteConfigs();
@@ -107,6 +110,50 @@ class PostgresControlPlaneConfigTest {
             )
         );
         assertThat(config.password()).isNull();
+    }
+
+    @Test
+    void controlPlaneConfigDefIncludesBatchCoalescing() {
+        final var names = PostgresControlPlaneConfig.configDef().names();
+        assertThat(names).contains(
+            PostgresControlPlaneConfig.BATCH_COALESCING_ENABLED_CONFIG,
+            PostgresConnectionConfig.CONNECTION_STRING_CONFIG);
+    }
+
+    @Test
+    void connectionConfigDefExcludesBatchCoalescing() {
+        final var names = PostgresConnectionConfig.connectionConfigDef().names();
+        assertThat(names).contains(PostgresConnectionConfig.CONNECTION_STRING_CONFIG);
+        assertThat(names).doesNotContain(PostgresControlPlaneConfig.BATCH_COALESCING_ENABLED_CONFIG);
+    }
+
+    @Test
+    void readWriteOverridesIgnoreBatchCoalescing() {
+        final Map<String, String> configs = new HashMap<>();
+        configs.putAll(
+            Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "password", "password"
+            )
+        );
+        configs.putAll(
+            Map.of(
+                "read.connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless-read",
+                "read.username", "username-r",
+                "read.password", "password-r",
+                "read." + PostgresControlPlaneConfig.BATCH_COALESCING_ENABLED_CONFIG, "false"
+            )
+        );
+
+        final var config = new PostgresControlPlaneConfig(configs);
+        config.initializeReadWriteConfigs();
+
+        // The read override is parsed with the connection-only def, so batch.coalescing.enabled
+        // is not a known key and never lands in the parsed values.
+        assertThat(config.readConfig()).isNotNull();
+        assertThat(config.readConfig().values()).doesNotContainKey(
+            PostgresControlPlaneConfig.BATCH_COALESCING_ENABLED_CONFIG);
     }
 
     @Test
