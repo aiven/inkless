@@ -90,7 +90,7 @@ expect_eq "no .git and no property falls back to unknown" \
   "unknown" "$(resolve_tag "$EXPORT_DIR")"
 expect_eq "no .git honours -PinklessTag" \
   "inkless-release-9.99" "$(resolve_tag "$EXPORT_DIR" -PinklessTag=inkless-release-9.99)"
-expect_eq "no .git honours -PinklessTag at a subproject's createVersionFile" \
+expect_eq "no .git honors -PinklessTag at a subproject's createVersionFile" \
   "inkless-release-9.99" "$(resolve_tag_via_create_version_file "$EXPORT_DIR" -PinklessTag=inkless-release-9.99)"
 
 echo "== git checkout =="
