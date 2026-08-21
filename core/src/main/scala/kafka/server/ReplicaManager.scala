@@ -2309,8 +2309,8 @@ class ReplicaManager(val config: KafkaConfig,
                             fetchInfos: Seq[(TopicIdPartition, PartitionData)]): CompletableFuture[Seq[(TopicIdPartition, FetchPartitionData)]] = {
     inklessFetchHandler match {
       case Some(handler) =>
+        // fetchInfos.toMap would be a HashMap above 4 entries, whose iteration order ignores insertion.
         val ordered = mutable.LinkedHashMap.from(fetchInfos).asJava
-        fetchInfos.foreach { case (tp, data) => ordered.put(tp, data) }
         handler.handle(params, ordered).thenApply(_.asScala.toSeq)
       case None =>
         if (fetchInfos.nonEmpty)
