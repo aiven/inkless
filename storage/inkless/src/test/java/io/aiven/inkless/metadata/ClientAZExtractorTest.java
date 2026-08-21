@@ -47,7 +47,13 @@ class ClientAZExtractorTest {
         "aaa=bbb,diskless_az=az1",
         "aaa=bbb, diskless_az=az1",
         "diskless_az=az1,aaa=bbb",
-        "diskless_az=az1, aaa=bbb"
+        "aaa=bbb|diskless_az=az1",
+        "aaa=bbb| diskless_az=az1",
+        "diskless_az=az1|aaa=bbb",
+        "diskless_az=az1| aaa=bbb",
+        "aaa=bbb,diskless_az=az1|ccc=ddd",
+        "aaa=bbb|diskless_az=az1,ccc=ddd",
+        "aaa=bbb, ccc=ddd|diskless_az=az1|eee=fff"
     })
     void getClientAZWhenProvided(final String clientId) {
         assertThat(ClientAZExtractor.getClientAZ(clientId)).isEqualTo("az1");
@@ -59,7 +65,12 @@ class ClientAZExtractorTest {
         "aaa=bbb,diskless_az=",
         "aaa=bbb, diskless_az=",
         "diskless_az=,aaa=bbb",
-        "diskless_az=, aaa=bbb"
+        "aaa=bbb|diskless_az=",
+        "aaa=bbb| diskless_az=",
+        "diskless_az=|aaa=bbb",
+        "diskless_az=| aaa=bbb",
+        "aaa=bbb,diskless_az=|ccc=ddd",
+        "aaa=bbb|diskless_az=,ccc=ddd"
     })
     void getClientAZWhenProvidedEmptyValue(final String clientId) {
         assertThat(ClientAZExtractor.getClientAZ(clientId)).isEqualTo("");
@@ -114,6 +125,8 @@ class ClientAZExtractorTest {
             // Progressive stripping removes from the right, so the longest prefix that matches wins.
             arguments("my-app,diskless_az=us-east-1a-suffix", Set.of("us", "us-east", "us-east-1a"), "us-east-1a"),
             arguments("kafka-connect,diskless_az=use1-az2-575969bf-aae2-47c5-98d6-8750ef0536f8", Set.of("use1-az2"), "use1-az2"),
+            arguments("mm-producer,diskless_az=use1-az2|source->target|MirrorSourceConnector-0|replication-consumer", Set.of("use1-az2"), "use1-az2"),
+            arguments("my-app,diskless_az=use1-az2-suffix|source->target|conn|producer", Set.of("use1-az2"), "use1-az2"),
             arguments("my-app,diskless_az=", euWest, ""),
             arguments("my-app,diskless_az=completely-wrong-value", euWest, null),
             arguments("my-app,diskless_az=unknown", euWest, null),

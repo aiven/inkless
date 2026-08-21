@@ -148,13 +148,21 @@ The Inkless broker parses the `client.id` field using a regex pattern:
 ```java
 // From ClientAZExtractor.java
 private static final Pattern CLIENT_AZ_PATTERN = 
-    Pattern.compile("(^|[ ,])diskless_az=(?<az>[^=, ]*)");
+    Pattern.compile("(^|[ ,|])diskless_az=(?<az>[^=,| ]*)");
 ```
 
 This allows flexibility in placement:
 - `diskless_az=us-east-1a` (at start)
 - `my-app,diskless_az=us-east-1a` (after comma)
 - `my-app diskless_az=us-east-1a` (after space)
+- `my-app|diskless_az=us-east-1a` (after pipe)
+
+The pipe (`|`) is both a valid separator and a terminator because MirrorMaker 2
+appends `|<source>-><target>|<connector>|<role>` to any configured `client.id`
+(`MirrorConnectorConfig.addClientId`). Setting `client.id=diskless_az=us-east-1a`
+for a MirrorMaker 2 flow therefore reaches the broker as
+`diskless_az=us-east-1a|source->target|connector|role`, and the parser stops the
+AZ capture at the first pipe.
 
 #### Producer Flow
 
