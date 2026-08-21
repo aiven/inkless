@@ -265,15 +265,6 @@ public class InklessConfig extends AbstractConfig {
         + "retention.enforcement.interval.ms.";
     private static final int RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DEFAULT = 2000;
 
-    public static final String BATCH_COALESCING_ENABLED_CONFIG = CONTROL_PLANE_PREFIX + "batch.coalescing.enabled";
-    public static final String BATCH_COALESCING_ENABLED_DOC = "When true, contiguous same-partition batch runs within a single commit are collapsed "
-        + "into a single row in the batches table via commit_file_v2, reducing control-plane metadata growth "
-        + "for low-throughput producers. "
-        + "Set to true only after all brokers in the cluster have been upgraded to a version that supports "
-        + "reading coalesced rows. "
-        + "Defaults to false for safe rolling upgrades.";
-    private static final boolean BATCH_COALESCING_ENABLED_DEFAULT = false;
-
     public static final String CLIENT_AZ_LISTENER_MAP_CONFIG = "client.az.listener.map";
     private static final String CLIENT_AZ_LISTENER_MAP_DOC = "Cluster-wide mapping from AZ-specific listener aliases to physical "
         + "availability zone (rack) IDs, used for listener-based AZ routing of diskless topic metadata. "
@@ -559,14 +550,6 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(1),
             ConfigDef.Importance.LOW,
             CONSUME_CROSS_TIER_LOG_START_CACHE_TTL_MS_DOC
-        );
-
-        configDef.define(
-            BATCH_COALESCING_ENABLED_CONFIG,
-            ConfigDef.Type.BOOLEAN,
-            BATCH_COALESCING_ENABLED_DEFAULT,
-            ConfigDef.Importance.MEDIUM,
-            BATCH_COALESCING_ENABLED_DOC
         );
 
         configDef.define(
