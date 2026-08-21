@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.delete;
 
-import org.apache.kafka.common.utils.ExponentialBackoff;
 import org.apache.kafka.common.utils.Time;
 
 import org.slf4j.Logger;
@@ -29,8 +28,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Supplier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
@@ -53,13 +51,8 @@ public class FileCleaner implements Runnable, Closeable {
     final Duration retentionPeriod;
     final int maxFilesPerCycle;
     final FileCleanerMetrics metrics;
-    private final ExponentialBackoff errorBackoff = new ExponentialBackoff(100, 2, 60 * 1000, 0.2);
-    private final Supplier<Long> noWorkBackoffSupplier;
 
-    /**
-     * The counter of cleaning attempts.
-     */
-    private final AtomicInteger attempts = new AtomicInteger();
+    private final AtomicBoolean closed = new AtomicBoolean(false);
 
     public FileCleaner(SharedState sharedState) {
         this(
@@ -86,16 +79,14 @@ public class FileCleaner implements Runnable, Closeable {
         this.retentionPeriod = retentionPeriod;
         this.maxFilesPerCycle = maxFilesPerCycle;
         this.metrics = new FileCleanerMetrics(time);
-
-        // This backoff is needed only for jitter, there's no exponent in it.
-        final int noWorkBackoffDuration = 10 * 1000;
-        final var noWorkBackoff = new ExponentialBackoff(noWorkBackoffDuration, 1, noWorkBackoffDuration * 2, 0.2);
-        noWorkBackoffSupplier = () -> noWorkBackoff.backoff(1);
     }
 
 
     @Override
     public void run() {
+        if (closed.get()) {
+            return;
+        }
         try {
             final var now = TimeUtils.now(time);
 
@@ -113,10 +104,10 @@ public class FileCleaner implements Runnable, Closeable {
                 .map(FileToDelete::objectKey)
                 .collect(Collectors.toSet());
             if (objectKeyPaths.isEmpty()) {
-                final long sleepMillis = noWorkBackoffSupplier.get();
-                final Duration sleepDuration = Duration.ofMillis(sleepMillis);
-                LOGGER.info("No files to delete, sleeping for {}", sleepDuration);
-                time.sleep(sleepMillis);
+                LOGGER.debug("No files to delete");
+            } else if (closed.get()) {
+                // Leave marked files for the next cycle instead of starting deletion during shutdown.
+                LOGGER.info("Skipping deletion of {} files: file cleaner closed", objectKeyPaths.size());
             } else {
                 if (saturated) {
                     metrics.recordFileCleanerCycleSaturated();
@@ -132,13 +123,10 @@ public class FileCleaner implements Runnable, Closeable {
                 LOGGER.info("File cleaner deleted {} of {} files", deletedCount, objectKeyPaths.size());
             }
 
-            attempts.set(0);
             metrics.recordFileCleanerCycleSucceeded();
         } catch (final Exception e) {
             metrics.recordFileCleanerError();
-            final long backoff = errorBackoff.backoff(attempts.incrementAndGet());
-            LOGGER.error("Error while deleting files, waiting for {}", Duration.ofMillis(backoff), e);
-            time.sleep(backoff);
+            LOGGER.error("Error while deleting files", e);
         }
     }
 
@@ -170,7 +158,9 @@ public class FileCleaner implements Runnable, Closeable {
 
     @Override
     public void close() throws IOException {
-        // SharedState owns the storage backend lifecycle; only close component metrics here.
-        metrics.close();
+        if (closed.compareAndSet(false, true)) {
+            // SharedState owns the storage backend lifecycle; only close component metrics here.
+            metrics.close();
+        }
     }
 }

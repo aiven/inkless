@@ -43,13 +43,16 @@ import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -255,4 +258,51 @@ class FileCleanerMockedTest {
 
         assertEquals(0, cleaner.metrics.fileCleanerCycleSaturated.sum());
     }
+
+    @Test
+    void noWorkDoesNotSleepOnThread() {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
+        when(controlPlane.getFilesToDelete(any(), anyInt())).thenReturn(List.of());
+
+        final long before = time.milliseconds();
+        cleaner.run();
+        assertEquals(before, time.milliseconds());
+    }
+
+    @Test
+    void errorDoesNotSleepOnThreadOrPropagate() {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
+        when(controlPlane.getFilesToDelete(any(), anyInt())).thenThrow(new RuntimeException("boom"));
+
+        final long before = time.milliseconds();
+        assertDoesNotThrow(cleaner::run);
+        assertEquals(before, time.milliseconds());
+    }
+
+    @Test
+    void runAfterCloseIsNoOp() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
+        cleaner.close();
+
+        cleaner.run();
+
+        verifyNoInteractions(controlPlane, storageBackend);
+    }
+
+    @Test
+    void closeDuringCycleSkipsDeletion() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
+        final var objectKey = OBJECT_KEY_CREATOR.from("key");
+        final var now = TimeUtils.now(time);
+        when(controlPlane.getFilesToDelete(any(), anyInt())).thenAnswer(invocation -> {
+            cleaner.close();
+            return List.of(new FileToDelete(objectKey.value(), now.minus(Duration.ofMinutes(15))));
+        });
+
+        cleaner.run();
+
+        verify(storageBackend, times(0)).delete(anySet());
+        verify(controlPlane, times(0)).deleteFiles(any());
+    }
+
 }

@@ -17,7 +17,7 @@
 package kafka.server
 
 import com.yammer.metrics.core.Meter
-import io.aiven.inkless.common.SharedState
+import io.aiven.inkless.common.{InklessThreadFactory, SharedState}
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, Reader}
 import io.aiven.inkless.storage_backend.common.ObjectFetcher
 import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetRequest, AdvanceCrossTierLogStartOffsetResponse, BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, RepairDisklessLogRequest, ListOffsetsRequest => CpListOffsetsRequest}
@@ -84,7 +84,7 @@ import java.nio.ByteBuffer
 import java.nio.file.{Files, Paths}
 import java.util
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, Future, RejectedExecutionException, TimeUnit}
+import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, Executors, Future, RejectedExecutionException, ScheduledExecutorService, TimeUnit}
 import java.util.{Collections, Optional, OptionalInt, OptionalLong}
 import java.util.function.Consumer
 import java.util.stream.Collectors
@@ -146,6 +146,8 @@ object HostedPartition {
 
 object ReplicaManager {
   val HighWatermarkFilename = "replication-offset-checkpoint"
+
+  private val InklessBackgroundJobShutdownGraceMs = 10000L
 
   private val LeaderCountMetricName = "LeaderCount"
   private val PartitionCountMetricName = "PartitionCount"
@@ -313,6 +315,8 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessRetentionEnforcer: Option[RetentionEnforcer] = inklessSharedState.map(new RetentionEnforcer(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
+  private val inklessBackgroundJobScheduler: Option[ScheduledExecutorService] =
+    inklessSharedState.map(_ => Executors.newScheduledThreadPool(2, new InklessThreadFactory("inkless-background-job-", true)))
 
   // --- Diskless Partition Consolidation Fields ---
   private val inklessConsolidatedDisklessLogPruner: Option[ConsolidatedDisklessLogPruner] =
@@ -522,9 +526,16 @@ class ReplicaManager(val config: KafkaConfig,
 
     // Inkless threads
     inklessSharedState.map { sharedState =>
-      scheduler.schedule("inkless-retention-enforcer", () => inklessRetentionEnforcer.foreach(_.run()), config.logInitialTaskDelayMs, 500L)  // the real interval is inside
+      inklessBackgroundJobScheduler.foreach { bgScheduler =>
+        bgScheduler.scheduleAtFixedRate(
+          () => runInklessBackgroundJob("inkless-retention-enforcer", () => inklessRetentionEnforcer.foreach(_.run())),
+          config.logInitialTaskDelayMs, 500L, TimeUnit.MILLISECONDS)  // the real interval is inside
 
-      scheduler.schedule("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run()), sharedState.config().fileCleanerInterval().toMillis, sharedState.config().fileCleanerInterval().toMillis)
+        val fileCleanerIntervalMs = sharedState.config().fileCleanerInterval().toMillis
+        bgScheduler.scheduleAtFixedRate(
+          () => runInklessBackgroundJob("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run())),
+          fileCleanerIntervalMs, fileCleanerIntervalMs, TimeUnit.MILLISECONDS)
+      }
 
       // The default 30s task delay would leave EARLIEST wrong for up to 30s after every startup.
       scheduler.schedule("inkless-cross-tier-log-start-reporter", () => sharedState.crossTierLogStartReporter().run(), sharedState.config().crossTierLogStartReportInterval().toMillis, sharedState.config().crossTierLogStartReportInterval().toMillis)
@@ -532,6 +543,36 @@ class ReplicaManager(val config: KafkaConfig,
       inklessConsolidatedDisklessLogPruner.foreach { pruner =>
         scheduler.schedule("inkless-consolidated-diskless-log-pruner", () => pruner.run(),
           sharedState.config.consolidationCleanupInterval.toMillis, sharedState.config.consolidationCleanupInterval.toMillis)
+      }
+    }
+  }
+
+  // Scheduled executors cancel a periodic task when its body throws.
+  private def runInklessBackgroundJob(name: String, job: () => Unit): Unit = {
+    try job()
+    catch {
+      // An interrupt here is the shutdown backstop doing its job, not a fault.
+      case _: InterruptedException => Thread.currentThread().interrupt()
+      case t: Throwable => error(s"Uncaught exception in inkless background job '$name'", t)
+    }
+  }
+
+  // Shared state stays open during the grace period. On timeout, bounded shutdown takes priority over
+  // completing an in-flight job.
+  private def shutdownInklessBackgroundJobs(): Unit = {
+    inklessBackgroundJobScheduler.foreach(_.shutdown())
+    inklessRetentionEnforcer.foreach(_.close())
+    inklessFileCleaner.foreach(_.close())
+    inklessBackgroundJobScheduler.foreach { bgScheduler =>
+      try {
+        if (!bgScheduler.awaitTermination(ReplicaManager.InklessBackgroundJobShutdownGraceMs, TimeUnit.MILLISECONDS)) {
+          warn("Inkless background jobs did not stop within the shutdown grace period; interrupting")
+          bgScheduler.shutdownNow()
+        }
+      } catch {
+        case _: InterruptedException =>
+          bgScheduler.shutdownNow()
+          Thread.currentThread().interrupt()
       }
     }
   }
@@ -3398,8 +3439,7 @@ class ReplicaManager(val config: KafkaConfig,
     inklessAppendHandler.foreach(_.close())
     inklessFetchHandler.foreach(_.close())
     inklessFetchOffsetHandler.foreach(_.close())
-    inklessRetentionEnforcer.foreach(_.close())
-    inklessFileCleaner.foreach(_.close())
+    shutdownInklessBackgroundJobs()
     inklessDeleteRecordsInterceptor.foreach(_.close())
     inklessSharedState.foreach(_.close())
     info("Shut down completely")
