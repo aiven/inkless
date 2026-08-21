@@ -2623,12 +2623,14 @@ class ReplicaManager(val config: KafkaConfig,
     def respond(response: Seq[(TopicIdPartition, FetchPartitionData)]): Unit = {
       // Restore the client's original partition identity (see disklessTopicIdOverrides above)
       // before handing the response back to the fetch session/request layer.
-      val restored = response.map { case (backfilledTp, data) =>
-        disklessTopicIdOverrides.get(backfilledTp) match {
-          case Some(originalTp) => originalTp -> data
-          case None => backfilledTp -> data
+      val restored =
+        if (disklessTopicIdOverrides.isEmpty) response
+        else response.map { case (backfilledTp, data) =>
+          disklessTopicIdOverrides.get(backfilledTp) match {
+            case Some(originalTp) => originalTp -> data
+            case None => backfilledTp -> data
+          }
         }
-      }
       responseCallback(restored ++ immediateFetchResponses)
     }
 
