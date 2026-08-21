@@ -130,12 +130,12 @@ Once control-plane initialization succeeds, `InitDisklessLogManager` marks the p
 
 ## Additional Behavior
 
-Followers also seal during the switch. While the switch is pending (`-2`), they keep using the classic fetcher to replicate the frozen classic prefix. After the final start offset is committed, followers continue until their local LEO reaches the committed seal offset, then hand off from the classic prefix.
+Followers also seal during the switch. While the switch is pending (`-2`), they keep using the classic fetcher to replicate the frozen classic prefix. After the final start offset is committed, followers continue until their local LEO reaches the committed seal offset. A follower that reached the seal while outside ISR keeps fetching until the leader admits it back, so a replica never leaves the classic prefix without having proven it holds all of it.
 
-When a broker applies a newly committed seal offset, it reconciles the local classic log:
+When a broker applies a newly committed seal offset, it reconciles the local log:
 
-* if local LEO is above the seal, it truncates to the seal because offsets at and above the seal belong to diskless storage
-* if a leader's local LEO is below the seal, it marks the partition offline because the classic prefix is incomplete
+* If local LEO is above the seal, it preserves a consolidated suffix only when the local epoch cache proves that the suffix belongs to the captured diskless epoch; otherwise, it truncates to the seal.
+* If a leader's local LEO is below the seal, it stays online to rebuild the classic prefix when consolidation and remote storage are available; otherwise, it marks the partition offline.
 
 If leadership changes while the switch is pending, the new leader seals and re-drives the `InitDisklessLog` controller request. If leadership changes after the final offset is committed, the new leader skips the controller step and initializes the control plane directly from metadata.
 
