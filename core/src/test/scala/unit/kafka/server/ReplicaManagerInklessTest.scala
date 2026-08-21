@@ -1628,6 +1628,69 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testFetchFullDisklessTopicWithLegacyRequestPreservesZeroUuidInResponse(): Unit = {
+    // Legacy fetch versions (<13) omit the topic ID, so the request key carries Uuid.ZERO_UUID
+    // while the actual topic has a real ID. The diskless read must resolve the real ID
+    // internally, but the response must echo back the client's original (zero-UUID) key so
+    // fetch-session bookkeeping in KafkaApis/FetchSession can find its request data (KC-353).
+    val zeroUuidTopicIdPartition = new TopicIdPartition(Uuid.ZERO_UUID, disklessTopicPartition.topicPartition())
+    val disklessResponse = Map(disklessTopicPartition ->
+      new FetchPartitionData(
+        Errors.NONE,
+        110L, 100L,
+        RECORDS,
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+    )
+    val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+    val batchMetadata = mock(classOf[BatchMetadata])
+    when(batchMetadata.topicIdPartition()).thenReturn(disklessTopicPartition)
+    val batch = mock(classOf[BatchInfo])
+    when(batch.metadata()).thenReturn(batchMetadata)
+    val findBatchResponse = mock(classOf[FindBatchResponse])
+    when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+    when(findBatchResponse.highWatermark()).thenReturn(110L)
+    when(findBatchResponse.estimatedByteSize(50L)).thenReturn(RECORDS.sizeInBytes())
+    when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+    val cp = mock(classOf[ControlPlane])
+    when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+
+      val fetchParams = new FetchParams(
+        -1, -1L,
+        0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      // Simulate a legacy (v7-v12) fetch request, which never carries topic IDs.
+      val fetchInfos = Seq(
+        zeroUuidTopicIdPartition -> new PartitionData(Uuid.ZERO_UUID, 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+      }
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      // Then the response is keyed with the client's original zero-UUID partition, not the
+      // internally resolved topic ID, even though the diskless read used the resolved ID.
+      assertNotNull(responseData)
+      assertEquals(1, responseData.size)
+      assertEquals(Errors.NONE, responseData(zeroUuidTopicIdPartition).error)
+      verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  @Test
   def testFetchFailDisklessWhenFromReplicaAndUnmanagedReplicas(): Unit = {
     val fetchHandlerCtor = mockFetchHandler(Map.empty)
     // Given a topic partition that is fully diskless (never switched) and managed replicas are disabled
@@ -3782,10 +3845,18 @@ class ReplicaManagerInklessTest {
     }
     replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
 
-    // Response also includes records from the topic without topic id
+    // Response also includes records from the topic without topic id. The response preserves the
+    // client's original zero-UUID partition key for diskless2 (topic id is only resolved
+    // internally for the diskless read), so the fetch session can match the response back to the
+    // request that omitted the topic id (KC-353).
+    val expectedResponse = disklessResponse.map {
+      case (tp, data) if tp == disklessTopicPartition2 =>
+        new TopicIdPartition(Uuid.ZERO_UUID, tp.topicPartition()) -> data
+      case other => other
+    }
     assertNotNull(responseData)
     assertEquals(2, responseData.size)
-    assertEquals(disklessResponse, responseData)
+    assertEquals(expectedResponse, responseData)
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
