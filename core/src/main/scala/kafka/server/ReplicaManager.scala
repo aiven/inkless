@@ -2435,6 +2435,12 @@ class ReplicaManager(val config: KafkaConfig,
     val disklessFetchInfos = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
     val classicFetchInfos = new mutable.ArrayBuffer[(TopicIdPartition, PartitionData)]()
     val immediateFetchResponses = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionData)]()
+    // Legacy fetch versions (<13) omit the topic ID, so the request keys this partition with
+    // Uuid.ZERO_UUID. maybeBackfillDisklessTopicId resolves the real topic ID for the diskless
+    // read below, but the fetch session was built from the original (zero-UUID) request key. Track
+    // the substitution here so respond() can restore the client's original partition identity,
+    // keeping the fetch session lookup (FetchSession.scala) able to find its request data.
+    val disklessTopicIdOverrides = new mutable.HashMap[TopicIdPartition, TopicIdPartition]()
     // Consolidating partitions served from local log that may need a diskless supplement.
     // Maps tp -> logEndOffset (the offset where the diskless supplement should start).
     val consolidatingLocalFetchSupplements = new mutable.HashMap[TopicIdPartition, Long]()
@@ -2587,6 +2593,7 @@ class ReplicaManager(val config: KafkaConfig,
                 maybeBackfillDisklessTopicId(tp) match {
                   case Some(backfilledTp) =>
                     disklessFetchInfos += (backfilledTp -> fetchPartitionData)
+                    if (!backfilledTp.topicId.equals(tp.topicId)) disklessTopicIdOverrides += (backfilledTp -> tp)
                   case None =>
                     error(s"Got null topic id from KRaft metadata for diskless topic ${tp.topic}")
                     immediateFetchResponses += tp -> new FetchPartitionData(
@@ -2626,8 +2633,19 @@ class ReplicaManager(val config: KafkaConfig,
       }
     }
 
-    def respond(response: Seq[(TopicIdPartition, FetchPartitionData)]): Unit =
-      responseCallback(response ++ immediateFetchResponses)
+    def respond(response: Seq[(TopicIdPartition, FetchPartitionData)]): Unit = {
+      // Restore the client's original partition identity (see disklessTopicIdOverrides above)
+      // before handing the response back to the fetch session/request layer.
+      val restored =
+        if (disklessTopicIdOverrides.isEmpty) response
+        else response.map { case (backfilledTp, data) =>
+          disklessTopicIdOverrides.get(backfilledTp) match {
+            case Some(originalTp) => originalTp -> data
+            case None => backfilledTp -> data
+          }
+        }
+      responseCallback(restored ++ immediateFetchResponses)
+    }
 
     if (classicFetchInfos.isEmpty && disklessFetchInfos.isEmpty) {
       respond(Seq.empty)
