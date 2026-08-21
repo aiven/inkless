@@ -164,9 +164,16 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
             return errorResponse(Errors.KAFKA_STORAGE_ERROR);
         }
         if (metadata.errors() != Errors.NONE || metadata.batches().isEmpty()) {
+            // A partition the request budget served nothing still has a real lag,
+            // and dropping the LSO here reaches the consumer as INVALID_LAST_STABLE_OFFSET,
+            // which skips SubscriptionState.updateLastStableOffset.
+            final OptionalLong lastStableOffset;
             if (metadata.errors() != Errors.NONE) {
+                lastStableOffset = OptionalLong.empty();
                 metrics.recordPartitionControlPlaneError();
                 LOGGER.warn("Control-plane findBatches returned {} for partition {}", metadata.errors(), key);
+            } else {
+                lastStableOffset = OptionalLong.of(metadata.highWatermark());
             }
             return new FetchPartitionData(
                 metadata.errors(),
@@ -174,7 +181,7 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
                 metadata.logStartOffset(),
                 MemoryRecords.EMPTY,
                 Optional.empty(),
-                OptionalLong.empty(),
+                lastStableOffset,
                 Optional.empty(),
                 OptionalInt.empty(),
                 false

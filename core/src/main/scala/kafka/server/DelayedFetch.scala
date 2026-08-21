@@ -182,6 +182,10 @@ class DelayedFetch(
   private def tryCompleteDiskless(fetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)]): Option[Long] = {
     var accumulatedSize = 0L
     val fetchPartitionStatusMap = fetchPartitionStatus.toMap
+    // This probe is unbudgeted, unlike the real fetch in onComplete: findDisklessBatches reads the local
+    // batch-coordinate cache (the default) or, with the cache disabled, passes maxBytes = Int.MaxValue to
+    // find_batches. Neither applies a global budget, so request order carries no meaning here -- it is only
+    // on the budgeted path that order decides who gets served, and there the Seq must stay ordered.
     val requests = fetchPartitionStatus.map { case (topicIdPartition, fetchStatus) =>
       new FindBatchRequest(topicIdPartition, fetchStatus.startOffsetMetadata.messageOffset, fetchStatus.fetchInfo.maxBytes)
     }
@@ -322,7 +326,7 @@ class DelayedFetch(
                 util.OptionalInt.empty(),
                 false
               )
-            }.toSeq
+            }
           })
       } else {
         CompletableFuture.completedFuture(emptyDisklessSeq)

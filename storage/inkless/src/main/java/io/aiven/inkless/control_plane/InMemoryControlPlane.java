@@ -273,27 +273,46 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    protected Iterator<FindBatchResponse> findBatchesForExistingPartitions(
+    protected synchronized Iterator<FindBatchResponse> findBatchesForExistingPartitions(
         final Stream<FindBatchRequest> requests,
         final int fetchMaxBytes,
-        // ignored for in-memory implementation
         final int maxBatchesPerPartition
     ) {
-        return requests
-            .map(request -> findBatchesForExistingPartition(request, fetchMaxBytes))
-            .iterator();
+        // Mirrors find_batches_v2: fetchMaxBytes is one budget shared across the whole request,
+        // spent in request order, with a single request-level minOneMessage grant.
+        // Kept deliberately aligned with the SQL -- AbstractControlPlaneTest asserts the same
+        // expectations against both planes, because the diskless fetch path's fairness depends on
+        // a partition past the budget returning *no* batches, and a per-partition budget here
+        // would silently give the opposite answer.
+        //
+        // Synchronized as a whole so the budget is accumulated over one consistent view, matching the SQL
+        // function's single-statement semantics.
+        final List<FindBatchResponse> responses = new ArrayList<>();
+        long globalBytes = 0;
+        for (final FindBatchRequest request : requests.toList()) {
+            final PartitionServed partitionServed =
+                findBatchesForExistingPartition(request, fetchMaxBytes, maxBatchesPerPartition, globalBytes);
+            responses.add(partitionServed.response);
+            globalBytes += partitionServed.bytesSpent;
+        }
+        return responses.iterator();
     }
 
-    private synchronized FindBatchResponse findBatchesForExistingPartition(
+    private record PartitionServed(FindBatchResponse response, long bytesSpent) {
+    }
+
+    private synchronized PartitionServed findBatchesForExistingPartition(
         final FindBatchRequest request,
-        final int fetchMaxBytes
+        final int fetchMaxBytes,
+        final int maxBatchesPerPartition,
+        final long globalBytesAlreadySpent
     ) {
         final LogInfo logInfo = logs.get(request.topicIdPartition());
         final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(request.topicIdPartition());
         // This can't really happen as non-existing partitions should be filtered out earlier.
         if (logInfo == null || coordinates == null) {
             LOGGER.warn("Unexpected non-existing partition {}", request.topicIdPartition());
-            return FindBatchResponse.unknownTopicOrPartition();
+            return new PartitionServed(FindBatchResponse.unknownTopicOrPartition(), 0);
         }
 
         // A fetch below the log start offset is out of range: the requested records have been
@@ -302,26 +321,36 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         if (request.offset() < logInfo.logStartOffset) {
             LOGGER.debug("Offset {} below log start offset {} for {}",
                 request.offset(), logInfo.logStartOffset, request.topicIdPartition());
-            return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
+            return new PartitionServed(FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark), 0);
         }
 
         // if offset requests is > end offset return out-of-range exception, otherwise return empty batch.
         // Similar to {@link LocalLog#read() L490}
         if (request.offset() > logInfo.highWatermark) {
-            return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
+            return new PartitionServed(FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark), 0);
         }
 
-        List<BatchInfo> batches = new ArrayList<>();
-        long totalSize = 0;
-        for (Long batchOffset : coordinates.navigableKeySet().tailSet(request.offset())) {
-            BatchInfo batch = coordinates.get(batchOffset).batchInfo();
+        final List<BatchInfo> batches = new ArrayList<>();
+        long partitionBytes = 0;
+        long globalBytes = globalBytesAlreadySpent;
+        for (final Long batchOffset : coordinates.navigableKeySet().tailSet(request.offset())) {
+            final BatchInfo batch = coordinates.get(batchOffset).batchInfo();
+            // globalBytes == 0 is the request-level grant: it holds only until the first batch anywhere in
+            // the request is admitted. Past that, both budgets must allow the batch, and the crossing batch
+            // is included -- so overshoot is one batch for the whole request.
+            final boolean withinBudget =
+                partitionBytes < request.maxPartitionFetchBytes() && globalBytes < fetchMaxBytes;
+            if (globalBytes != 0 && !withinBudget) {
+                break;
+            }
             batches.add(batch);
-            totalSize += batch.metadata().byteSize();
-            if (totalSize > fetchMaxBytes) {
+            partitionBytes += batch.metadata().byteSize();
+            globalBytes += batch.metadata().byteSize();
+            if (maxBatchesPerPartition > 0 && batches.size() >= maxBatchesPerPartition) {
                 break;
             }
         }
-        return FindBatchResponse.success(batches, logInfo.logStartOffset, logInfo.highWatermark);
+        return new PartitionServed(FindBatchResponse.success(batches, logInfo.logStartOffset, logInfo.highWatermark), partitionBytes);
     }
 
     @Override
