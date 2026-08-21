@@ -346,17 +346,20 @@ class BrokerServer(
       val defaultActionQueue = new DelayedActionQueue
 
       val inklessMetadataView = new InklessMetadataView(metadataCache, () => config.extractLogConfigMap)
-      maybeInklessSharedState = sharedServer.inklessControlPlane.map { controlPlane =>
-        SharedState.initialize(
-          time,
-          config.brokerId,
-          config.inklessConfig,
-          inklessMetadataView,
-          controlPlane,
-          brokerTopicStats,
-          () => logManager.currentDefaultConfig
-        )
-      }
+      maybeInklessSharedState =
+        (sharedServer.inklessControlPlane zip sharedServer.inklessControlPlaneAvailability).map {
+          case (controlPlane, availability) =>
+            SharedState.initialize(
+              time,
+              config.brokerId,
+              config.inklessConfig,
+              inklessMetadataView,
+              controlPlane,
+              availability,
+              brokerTopicStats,
+              () => logManager.currentDefaultConfig
+            )
+        }
       val inklessSharedState = maybeInklessSharedState
 
       initDisklessLogChannelManager = new NodeToControllerChannelManagerImpl(

@@ -75,6 +75,7 @@ import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.consume.FetchHandler;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneAvailability;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
@@ -176,7 +177,8 @@ class FileCleanerIntegrationTest {
         final InklessConfig inklessConfig = new InklessConfig(config);
 
         sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig,
-            metadataView, controlPlane, new BrokerTopicStats(), defaultTopicConfigs);
+            metadataView, controlPlane, new ControlPlaneAvailability(ControlPlaneAvailability.State.AVAILABLE),
+            new BrokerTopicStats(), defaultTopicConfigs);
     }
 
     @AfterEach

@@ -37,11 +37,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.SharedState;
+import io.aiven.inkless.control_plane.ControlPlaneAvailability;
 
 public class FetchHandler implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FetchHandler.class);
 
     private final Reader reader;
+    private final ControlPlaneAvailability controlPlaneAvailability;
 
     public FetchHandler(final SharedState state) {
         this(
@@ -62,12 +64,14 @@ public class FetchHandler implements Closeable {
                 state.config().fetchHedgeTtfbThresholdMs(),
                 state.config().fetchHedgeTotalTimeThresholdMs(),
                 state.config().maxBatchesPerPartitionToFind()
-            )
+            ),
+            state.controlPlaneAvailability()
         );
     }
 
-    public FetchHandler(final Reader reader) {
+    public FetchHandler(final Reader reader, final ControlPlaneAvailability controlPlaneAvailability) {
         this.reader = reader;
+        this.controlPlaneAvailability = controlPlaneAvailability;
     }
 
     public CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> handle(
@@ -76,6 +80,19 @@ public class FetchHandler implements Closeable {
     ) {
         if (fetchInfos.isEmpty()) {
             return CompletableFuture.completedFuture(Map.of());
+        }
+
+        if (!controlPlaneAvailability.isAvailable()) {
+            // Fail before querying the control plane: otherwise this surfaces downstream as a
+            // generic UNKNOWN_SERVER_ERROR (non-retriable), buried in an ERROR-level stack trace.
+            controlPlaneAvailability.recordGatedCall();
+            LOGGER.warn("Rejecting diskless fetch: control plane reported as {}",
+                controlPlaneAvailability.state().configValue());
+            final var error = new FetchPartitionData(Errors.KAFKA_STORAGE_ERROR, -1, -1,
+                MemoryRecords.EMPTY, Optional.empty(), OptionalLong.empty(),
+                Optional.empty(), OptionalInt.empty(), false);
+            return CompletableFuture.completedFuture(
+                fetchInfos.keySet().stream().collect(Collectors.toMap(k -> k, ignore -> error)));
         }
 
         final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> resultFuture = reader.fetch(params, fetchInfos);

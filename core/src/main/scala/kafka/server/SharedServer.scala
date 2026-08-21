@@ -17,7 +17,7 @@
 
 package kafka.server
 
-import io.aiven.inkless.control_plane.ControlPlane
+import io.aiven.inkless.control_plane.{AvailabilityGatedControlPlane, ControlPlane, ControlPlaneAvailability}
 import kafka.metrics.KafkaMetricsReporter
 import kafka.raft.{DefaultExternalKRaftMetrics, KafkaRaftManager}
 import kafka.server.Server.MetricsPrefix
@@ -129,6 +129,7 @@ class SharedServer(
   @volatile private var metadataLoaderMetrics: MetadataLoaderMetrics = _
 
   @volatile var inklessControlPlane: Option[ControlPlane] = None
+  @volatile var inklessControlPlaneAvailability: Option[ControlPlaneAvailability] = None
 
   def clusterId: String = metaPropsEnsemble.clusterId().get()
 
@@ -287,8 +288,13 @@ class SharedServer(
 
         val externalKRaftMetrics = new DefaultExternalKRaftMetrics(Option(brokerMetrics), Option(controllerServerMetrics))
 
-        if (brokerConfig.disklessStorageSystemEnabled)
-          inklessControlPlane = Some(ControlPlane.create(sharedServerConfig.inklessConfig, time))
+        if (brokerConfig.disklessStorageSystemEnabled) {
+          val availability = new ControlPlaneAvailability(
+            ControlPlaneAvailability.State.fromConfig(sharedServerConfig.disklessControlPlaneAvailability))
+          inklessControlPlaneAvailability = Some(availability)
+          inklessControlPlane = Some(new AvailabilityGatedControlPlane(
+            () => ControlPlane.create(sharedServerConfig.inklessConfig, time), availability))
+        }
 
         val _raftManager = new KafkaRaftManager[ApiMessageAndVersion](
           clusterId,
@@ -400,6 +406,7 @@ class SharedServer(
 
       // Inkless
       inklessControlPlane.foreach(Utils.closeQuietly(_, "inkless control plane"))
+      inklessControlPlaneAvailability.foreach(Utils.closeQuietly(_, "inkless control plane availability"))
 
       Utils.closeQuietly(controllerServerMetrics, "controller server metrics")
       controllerServerMetrics = null
