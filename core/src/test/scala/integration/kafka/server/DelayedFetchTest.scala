@@ -34,6 +34,7 @@ import org.junit.jupiter.api.{BeforeEach, Nested, Test}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.{any, anyFloat, anyInt, anyLong}
 import org.mockito.Mockito.{mock, never, times, verify, when}
 
@@ -295,6 +296,56 @@ class DelayedFetchTest {
 
   @Nested
   class Inkless {
+
+    /**
+     * onComplete is the path every pure-diskless fetch takes -- ReplicaManager only answers immediately when
+     * disklessFetchInfos is empty -- so the order it builds here is the one that reaches the control plane.
+     * See ReplicaManager.fetchDisklessMessages's javadoc for why the order matters.
+     *
+     * Eight partitions deliberately: at four or fewer, scala.collection.immutable.Map is Map1..Map4 and
+     * preserves insertion order, so a smaller fixture passes against the bug.
+     */
+    @Test
+    def testOnCompletePreservesDisklessFetchOrder(): Unit = {
+      val topicId = Uuid.randomUuid()
+      val partitions = (0 until 8).map(p => new TopicIdPartition(topicId, p, "diskless-topic"))
+      val fetchOffset = 0L
+      val minBytes = 1
+
+      val fetchParams = new FetchParams(
+        -1, 1, 500L, minBytes, maxBytes, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+
+      val disklessFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      partitions.foreach { tp =>
+        disklessFetchPartitionStatus.put(tp, new FetchPartitionStatus(
+          startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
+          fetchInfo = new FetchRequest.PartitionData(tp.topicId(), fetchOffset, 0L, maxBytes, Optional.of[Integer](10))
+        ))
+      }
+
+      val delayedFetch = new DelayedFetch(
+        params = fetchParams,
+        classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
+        disklessFetchPartitionStatus = disklessFetchPartitionStatus,
+        replicaManager = replicaManager,
+        quota = replicaQuota,
+        responseCallback = _ => ()
+      )
+
+      when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
+      val captor: ArgumentCaptor[Seq[(TopicIdPartition, FetchRequest.PartitionData)]] =
+        ArgumentCaptor.forClass(classOf[Seq[(TopicIdPartition, FetchRequest.PartitionData)]])
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+        .thenReturn(CompletableFuture.completedFuture(Seq.empty[(TopicIdPartition, FetchPartitionData)]))
+      // No readFromLog stub: classicFetchPartitionStatus is empty, so onComplete never enters that branch.
+
+      delayedFetch.onComplete()
+
+      verify(replicaManager).fetchDisklessMessages(any[FetchParams], captor.capture())
+      assertEquals(partitions, captor.getValue.map(_._1),
+        "the rotated order must reach fetchDisklessMessages; find_batches allocates the shared budget in this order")
+    }
 
     @Test
     def testCompletionWhenLogIsTruncated(): Unit = {

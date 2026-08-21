@@ -72,7 +72,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
-import org.mockito.{Answers, ArgumentMatchers, MockedConstruction, Mockito}
+import org.mockito.{Answers, ArgumentCaptor, ArgumentMatchers, MockedConstruction, Mockito}
 
 import java.io.File
 import java.net.InetAddress
@@ -3027,6 +3027,37 @@ class ReplicaManagerInklessTest {
   }
 
   // --- buildConsolidationSupplementFetchInfos unit tests ---
+
+  /**
+   * Supplement requests must follow fetchInfos, not the iteration order of the `supplements` HashMap, because
+   * fetchDisklessMessages requires the rotated order (see its javadoc).
+   *
+   * Eight partitions: enough that the HashMap order differs from insertion order.
+   */
+  @Test
+  def testBuildConsolidationSupplementFetchInfosFollowsFetchInfoOrder(): Unit = {
+    val topicId = Uuid.randomUuid()
+    val partitions = (0 until 8).map(p => new TopicIdPartition(topicId, p, "diskless"))
+    val logEndOffset = 100L
+    val supplements = mutable.HashMap(partitions.map(_ -> logEndOffset): _*)
+    val fetchInfos = partitions.map(tp => tp -> new PartitionData(tp.topicId(), 50L, 0L, 1024, Optional.empty()))
+    val logReadResultMap = new util.HashMap[TopicIdPartition, LogReadResult]()
+    partitions.foreach { tp =>
+      logReadResultMap.put(tp, new LogReadResult(
+        new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), MemoryRecords.EMPTY),
+        Optional.empty(), 0L, 0L, 0L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+      ))
+    }
+
+    val replicaManager = createReplicaManager(List("diskless"))
+    try {
+      val result = replicaManager.buildConsolidationSupplementFetchInfos(supplements, fetchInfos, logReadResultMap)
+      assertEquals(partitions, result.map(_._1),
+        "supplement requests must stay in fetch-session order; find_batches allocates the shared budget in this order")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
 
   @Test
   def testBuildConsolidationSupplementFetchInfosReturnsRequestStartingAtLogEndOffset(): Unit = {
@@ -7881,6 +7912,44 @@ class ReplicaManagerInklessTest {
     when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(topicIdPartition.topicPartition()))
       .thenReturn(sealOffset)
     partition
+  }
+
+  /**
+   * Guards the fetch-session rotation order across the diskless handoff.
+   *
+   * The rotated order the caller passes must survive into the handler -- see this method's javadoc.
+   *
+   * Eight partitions deliberately: at four or fewer, scala.collection.immutable.Map is Map1..Map4 and
+   * preserves insertion order, so a smaller fixture passes against the bug.
+   */
+  @Test
+  def testFetchDisklessMessagesPreservesFetchSessionOrder(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val topicId = Uuid.randomUuid()
+    val replicaManager = createReplicaManager(List("diskless"))
+    try {
+      val fetchParams = new FetchParams(
+        -1, -1L,
+        0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = (0 until 8).map { p =>
+        new TopicIdPartition(topicId, p, "diskless") ->
+          new PartitionData(topicId, 0L, 0L, 1024, Optional.empty())
+      }
+
+      replicaManager.fetchDisklessMessages(fetchParams, fetchInfos).get()
+
+      val captor: ArgumentCaptor[util.Map[TopicIdPartition, PartitionData]] =
+        ArgumentCaptor.forClass(classOf[util.Map[TopicIdPartition, PartitionData]])
+      verify(fetchHandlerCtor.constructed().get(0)).handle(any(), captor.capture())
+      assertEquals(
+        fetchInfos.map(_._1).asJava,
+        new util.ArrayList[TopicIdPartition](captor.getValue.keySet)
+      )
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
   }
 
   private def mockFetchHandler(disklessResponse: Map[TopicIdPartition, FetchPartitionData]) = {

@@ -291,9 +291,9 @@ class ReplicaManager(val config: KafkaConfig,
   // Each completed operation pins a Map[TopicIdPartition, FetchPartitionData] holding fetched records, 
   // bounded per partition by diskless.consolidation.fetch.max.bytes 
   // and in aggregate by diskless.consolidation.fetch.response.max.bytes.
-  // The aggregate bound is best-effort: find_batches always admits each partition's first coordinate,
-  // so a response can overshoot by sum(first-coordinate byte_size). Harmless for correctness (append is
-  // per-partition); a heap-sizing concern only.
+  // The aggregate bound overshoots by at most one coordinate per find_batches call: find_batches admits a first
+  // coordinate unconditionally only until the request has returned something (upstream's request-level
+  // minOneMessage), then holds every later partition to the budget.
   // Without aggressive purging, watch lists accumulate up to ~purgeInterval completed ops worth of records
   // and exhaust the heap.
   val delayedConsolidationFetchPurgatory =
@@ -2295,10 +2295,23 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
+  /**
+   * Serves the diskless leg of a fetch.
+   *
+   * `fetchInfos` order is load-bearing and must already be the caller's rotated order: find_batches spends
+   * the shared fetch.max.bytes in request-array order, and the move-to-end rotations outside this class
+   * (the consumer's SubscriptionState, the broker's fetch session, the fetcher threads' partitionStates)
+   * are what make that order fair across rounds. See the find_batches_v2 header comment for the full
+   * contract. This is the last hop that can preserve the order, so every producer of the Seq handed in
+   * here has to preserve it too.
+   */
   def fetchDisklessMessages(params: FetchParams,
                             fetchInfos: Seq[(TopicIdPartition, PartitionData)]): CompletableFuture[Seq[(TopicIdPartition, FetchPartitionData)]] = {
     inklessFetchHandler match {
-      case Some(handler) => handler.handle(params, fetchInfos.toMap.asJava).thenApply(_.asScala.toSeq)
+      case Some(handler) =>
+        // fetchInfos.toMap would be a HashMap above 4 entries, whose iteration order ignores insertion.
+        val ordered = mutable.LinkedHashMap.from(fetchInfos).asJava
+        handler.handle(params, ordered).thenApply(_.asScala.toSeq)
       case None =>
         if (fetchInfos.nonEmpty)
           error(s"Received diskless fetch request for topics ${fetchInfos.map(_._1.topic()).distinct.mkString(", ")} but diskless fetch handler is not available. " +
@@ -2336,9 +2349,11 @@ class ReplicaManager(val config: KafkaConfig,
       fetchInfos: Seq[(TopicIdPartition, PartitionData)],
       logReadResultMap: util.Map[TopicIdPartition, LogReadResult]
   ): Seq[(TopicIdPartition, PartitionData)] = {
-    val fetchInfoByTp = fetchInfos.toMap
-    supplements.flatMap { case (tp, logEndOffset) =>
-      fetchInfoByTp.get(tp).flatMap { pd =>
+    // Walk fetchInfos, not supplements: fetchInfos carries the rotated order that fetchDisklessMessages
+    // requires (see its javadoc), whereas `supplements` is a mutable.HashMap whose iteration order is
+    // arbitrary and stable for a given partition set.
+    fetchInfos.flatMap { case (tp, pd) =>
+      supplements.get(tp).flatMap { logEndOffset =>
         val readResult = Option(logReadResultMap.get(tp))
         val hasError = readResult.exists(_.error != Errors.NONE)
         val alreadyRead = readResult.map(_.info.records.sizeInBytes).getOrElse(0)
@@ -2363,7 +2378,7 @@ class ReplicaManager(val config: KafkaConfig,
         else
           None
       }
-    }.toSeq
+    }
   }
 
   /**
