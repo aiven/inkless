@@ -52,7 +52,7 @@ public class PostgresConnectionConfig extends AbstractControlPlaneConfig {
         "Maximum time in milliseconds to wait for PostgreSQL socket reads.";
     private static final int SOCKET_TIMEOUT_MS_DEFAULT = 5_000;
 
-    public static ConfigDef configDef() {
+    public static ConfigDef connectionConfigDef() {
         return baseConfigDef()
             .define(
                 CONNECTION_STRING_CONFIG,

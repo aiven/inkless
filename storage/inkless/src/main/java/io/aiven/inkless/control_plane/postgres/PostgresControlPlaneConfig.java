@@ -28,25 +28,28 @@ public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
 
     public static final String BATCH_COALESCING_ENABLED_CONFIG = "batch.coalescing.enabled";
     private static final String BATCH_COALESCING_ENABLED_DOC = "When true, commit_file_v2 is used to collapse contiguous "
-        + "same-partition batch runs into a single batches row. "
-        + "Enable only after all brokers support reading coalesced rows. Defaults to false.";
-    private static final boolean BATCH_COALESCING_ENABLED_DEFAULT = false;
+        + "same-partition batch runs into a single batches row.";
+    private static final boolean BATCH_COALESCING_ENABLED_DEFAULT = true;
 
     private PostgresConnectionConfig readConfig;
     private PostgresConnectionConfig writeConfig;
 
     public PostgresControlPlaneConfig(final Map<?, ?> originals) {
         super(
-            PostgresConnectionConfig.configDef()
-                .define(
-                    BATCH_COALESCING_ENABLED_CONFIG,
-                    ConfigDef.Type.BOOLEAN,
-                    BATCH_COALESCING_ENABLED_DEFAULT,
-                    ConfigDef.Importance.MEDIUM,
-                    BATCH_COALESCING_ENABLED_DOC
-                ),
+            configDef(),
             originals
         );
+    }
+
+    public static ConfigDef configDef() {
+        return PostgresConnectionConfig.connectionConfigDef()
+            .define(
+                BATCH_COALESCING_ENABLED_CONFIG,
+                ConfigDef.Type.BOOLEAN,
+                BATCH_COALESCING_ENABLED_DEFAULT,
+                ConfigDef.Importance.MEDIUM,
+                BATCH_COALESCING_ENABLED_DOC
+            );
     }
 
     public boolean batchCoalescingEnabled() {
@@ -56,12 +59,12 @@ public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
     public void initializeReadWriteConfigs() {
         final Map<String, Object> readConfigs = originalsWithPrefix(READ_CONFIG_PREFIX);
         if (!readConfigs.isEmpty()) {
-            this.readConfig = new PostgresConnectionConfig(configDef(), readConfigs);
+            this.readConfig = new PostgresConnectionConfig(connectionConfigDef(), readConfigs);
         }
 
         final Map<String, Object> writeConfigs = originalsWithPrefix(WRITE_CONFIG_PREFIX);
         if (!writeConfigs.isEmpty()) {
-            this.writeConfig = new PostgresConnectionConfig(configDef(), writeConfigs);
+            this.writeConfig = new PostgresConnectionConfig(connectionConfigDef(), writeConfigs);
         }
     }
 
