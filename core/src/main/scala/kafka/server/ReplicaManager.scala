@@ -3252,13 +3252,29 @@ class ReplicaManager(val config: KafkaConfig,
       log.highWatermark
   }
 
-  private def maybeShrinkIsr(): Unit = {
+  // private[server] for testing: otherwise only reachable via the scheduled "isr-expiration" task.
+  private[server] def maybeShrinkIsr(): Unit = {
     trace("Evaluating ISR list of partitions to see which replicas can be removed from the ISR")
 
     // Shrink ISRs for non offline partitions
     allPartitions.forEach { (topicPartition, _) =>
-      if (!_inklessMetadataView.isDisklessTopic(topicPartition.topic()))
+      if (_inklessMetadataView.isDisklessTopic(topicPartition.topic())) {
+        val seal = _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
+        // -1 means "no committed seal": born-diskless, or a switch aborted through
+        // AlterDisklessSwitch. Neither has a classic prefix replicated from this leader, so there
+        // is nothing to fall behind on.
+        if (seal != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+          // Past a committed seal the local log only grows by consolidation, which every replica does
+          // from object storage without fetching from this leader (DisklessLeaderEndPoint), so the
+          // leader's recorded state for a healthy follower stops at the seal. Cap the lag comparison
+          // there, or the whole ISR is shrunk out as the consolidated suffix advances. Nothing
+          // re-expands it either, because expansion also needs a follower fetch.
+          val leaderEndOffsetCap = if (seal >= 0) seal else -1L
+          onlinePartition(topicPartition).foreach(_.maybeShrinkIsr(leaderEndOffsetCap))
+        }
+      } else {
         onlinePartition(topicPartition).foreach(_.maybeShrinkIsr())
+      }
     }
   }
 
@@ -4128,6 +4144,9 @@ class ReplicaManager(val config: KafkaConfig,
       "local followers.")
     val partitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
+    // Consolidating followers that need one classic fetch to re-establish the new leader's record of
+    // their position. See the diversion below.
+    val consolidationLeaderEvidenceFetch = new mutable.HashSet[TopicPartition]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
       val isConsolidatingDisklessTopic =
@@ -4152,14 +4171,19 @@ class ReplicaManager(val config: KafkaConfig,
           getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
             try {
               val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+              val previousLeaderId = partition.leaderReplicaIdOpt
               val isNewLeaderEpoch = partition.makeFollower(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
               partition.seal()
               changedPartitions.add(partition)
               val isOutOfIsr = !info.partition.isr.contains(config.brokerId)
+              // A new leader resets our recorded fetch state to UNKNOWN (Replica.resetReplicaState),
+              // so without a fetch to re-establish it the lastCaughtUpTimeMs grace period expires and
+              // the leader shrinks us out of ISR.
+              val leaderChanged = previousLeaderId.exists(_ != info.partition.leader)
               // Skip during controlled shutdown: the leader will not expand ISR for a shutting-down
               // broker (isReplicaIsrEligible), and this replica is about to stop serving.
               if (seal >= 0 && !isInControlledShutdown &&
-                (partition.localLogOrException.highWatermark < seal || isOutOfIsr)) {
+                (partition.localLogOrException.highWatermark < seal || isOutOfIsr || leaderChanged)) {
                 // Schedule a catch-up fetch when the local HW is below the seal -- either
                 // because we restarted with a stale HW (unclean shutdown) or because we
                 // were just added as a replica and have an empty local log.
@@ -4196,6 +4220,7 @@ class ReplicaManager(val config: KafkaConfig,
             //   is unavailable. This is required to ensure that we include the partition's
             //   high watermark in the checkpoint file (see KAFKA-1647).
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+            val previousLeaderId = partition.leaderReplicaIdOpt
             val isNewLeaderEpoch = partition.makeFollower(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
             if (isInControlledShutdown && (info.partition.leader == NO_LEADER ||
@@ -4208,6 +4233,9 @@ class ReplicaManager(val config: KafkaConfig,
               partition.invokeOnBecomingFollowerListeners()
               // Otherwise, fetcher is restarted if the leader epoch has changed.
               partitionsToStartFetching.put(tp, partition)
+              if (isConsolidatingDisklessTopic && previousLeaderId.exists(_ != info.partition.leader)) {
+                consolidationLeaderEvidenceFetch.add(tp)
+              }
             }
 
             changedPartitions.add(partition)
@@ -4256,11 +4284,20 @@ class ReplicaManager(val config: KafkaConfig,
       // to the consolidation reconciler (startConsolidationFetchersForCaughtUpClassicPartitions).
       // Routing a below-seal/pending partition straight to the reconciler would strand it: the
       // reconciler returns Retry and no classic fetcher would ever bring it up to the seal.
+      // A consolidation-ready follower is also diverted to the classic fetcher for one round when the
+      // leader changed. Consolidation reads from object storage, so the new leader never sees a fetch
+      // from this replica and keeps the UNKNOWN state that makeLeader installed, which maybeShrinkIsr
+      // removes from ISR once the lag timeout passes. One classic fetch records the position; the
+      // fetcher then self-evicts at the seal and hands the partition back to consolidation.
       val (consolidatingDisklessPartitionsToStartFetching, classicPartitionsToStartFetching) = partitionsToStartFetching.partition { case (tp, partition) =>
-        isReadyForConsolidation(tp, partition)
+        isReadyForConsolidation(tp, partition) && !consolidationLeaderEvidenceFetch.contains(tp)
       }
       replicaFetcherManager.removeFetcherForPartitions(classicPartitionsToStartFetching.keySet)
-      consolidationFetcherManager.foreach(_.removeFetcherForPartitions(consolidatingDisklessPartitionsToStartFetching.keySet))
+      // Diverted partitions keep a consolidation fetcher from the previous leader epoch. Evict it as
+      // well, or both fetchers append to the same log and processPartitionData fails the
+      // fetchOffset == logEndOffset check.
+      consolidationFetcherManager.foreach(_.removeFetcherForPartitions(
+        consolidatingDisklessPartitionsToStartFetching.keySet ++ consolidationLeaderEvidenceFetch))
       stateChangeLogger.info(s"Stopped fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
       val listenerName = config.interBrokerListenerName.value
