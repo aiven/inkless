@@ -194,8 +194,9 @@ class DisklessLeaderEndPoint(
    * enough alone because `find_batches` limits at *coordinate* granularity and always admits the
    * coordinate that crosses `maxBytes`, and a `commit_file_v2` coordinate coalesces many physical batches
    * into one row whose `byte_size` can far exceed `max.message.bytes` (up to `produce.buffer.max.bytes`).
-   * That crossing coordinate, or even the first always-admitted one, can then overflow a small
-   * `segment.bytes` (a supported tuning, e.g. for eager tiering) and fail the append.
+   * That crossing coordinate, or the request's first coordinate (admitted unconditionally by the
+   * request-level minOneMessage grant), can then overflow a small `segment.bytes` (a supported tuning,
+   * e.g. for eager tiering) and fail the append.
    *
    * Re-applying the limit per physical batch keeps the overshoot to one batch. Do not let the serve path
    * emit a larger unit beyond `maxBytes` or this breaks again. Batches with `lastOffset < fetchOffset` are
