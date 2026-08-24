@@ -447,7 +447,8 @@ is_auto_resolvable() {
     # For now, consider .java and .scala files with small conflicts as potentially auto-resolvable
     if [[ "$file" == *.java || "$file" == *.scala ]]; then
         # Count conflict markers
-        local conflicts=$(grep -c "^<<<<<<< " "$file" 2>/dev/null || echo "0")
+        local conflicts
+        conflicts=$(grep -c "^<<<<<<< " "$file" 2>/dev/null) || conflicts=0
         if [[ "$conflicts" -le 3 ]]; then
             return 0
         fi
