@@ -316,8 +316,11 @@ class InklessConfigTest {
         // Default thread pool size
         assertThat(config.fetchLaggingConsumerThreadPoolSize()).isEqualTo(16);
 
-        // Default rate limit
-        assertThat(config.fetchLaggingConsumerRequestRateLimit()).isEqualTo(200);
+        // Default rate limit: disabled (the lagging consumer thread pool governs the steady-state GET rate)
+        assertThat(config.fetchLaggingConsumerRequestRateLimit()).isEqualTo(0);
+
+        // Default per-partition batch cap
+        assertThat(config.maxBatchesPerPartitionToFind()).isEqualTo(1024);
 
         // Default threshold: -1 (auto) should use heuristic: cache TTL
         // Default cache TTL is 60 seconds, so threshold should follow that
@@ -491,17 +494,17 @@ class InklessConfigTest {
 
     @Test
     void laggingConsumerRateLimitExceedsUpperBoundInvalid() {
-        // Test that rate limit exceeding upper bound (10000) is invalid
+        // Test that rate limit exceeding upper bound (1000000) is invalid
         final Map<String, String> config = Map.of(
             "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
             "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
-            "fetch.lagging.consumer.request.rate.limit", "10001"
+            "fetch.lagging.consumer.request.rate.limit", "1000001"
         );
 
         assertThatThrownBy(() -> new InklessConfig(config))
             .isInstanceOf(ConfigException.class)
             .hasMessageContaining("fetch.lagging.consumer.request.rate.limit")
-            .hasMessageContaining("Value must be no more than 10000");
+            .hasMessageContaining("Value must be no more than 1000000");
     }
 
     @Test

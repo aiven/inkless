@@ -47,11 +47,11 @@ Under ``inkless.``
   * Importance: medium
 
 ``fetch.lagging.consumer.request.rate.limit``
-  Maximum requests per second for lagging consumer data fetches. Set to 0 to disable rate limiting. The upper bound of 10000 req/s is a safety limit to prevent misconfiguration. For high-throughput systems, consider the relationship between this rate limit, thread pool size, and storage backend capacity. At the default rate of 200 req/s with ~50ms per request latency, this allows ~10 concurrent requests. Note: hedge requests triggered by slow fetches are exempt from this limit. In the worst case, effective storage GET rate can reach up to 2x this value.
+  Maximum object storage GET requests per second for lagging consumer data fetches. A value of 0 disables the limit; the lagging consumer thread pool (fetch.lagging.consumer.thread.pool.size) then governs the steady-state GET rate at pool size divided by GET latency. Set a positive value to bound the sustained request rate independent of storage latency, for example to cap object storage request cost. The limiter is a token bucket sized to this value, so an idle bucket allows an initial one-second burst up to it before settling to the sustained rate. Note: when a positive limit is set, hedge requests triggered by slow fetches, if enabled, are exempt from it, so the effective GET rate can reach up to 2x the configured value.
 
   * Type: int
-  * Default: 200
-  * Valid Values: [0,...,10000]
+  * Default: 0
+  * Valid Values: [0,...,1000000]
   * Importance: medium
 
 ``fetch.lagging.consumer.threshold.ms``
@@ -180,10 +180,10 @@ Under ``inkless.``
   * Importance: low
 
 ``fetch.find.batches.max.per.partition``
-  The maximum number of batches to find per partition when processing a fetch request. A value of 0 means all available batches are fetched. This is primarily intended for environments where the batches fan-out on fetch requests can overload the control plane back-end.
+  The maximum number of batches to find per partition when processing a fetch request. A value of 0 removes the cap and returns all eligible batches per partition. This is a per-partition batch count, not a byte size. fetch.max.bytes and the consumer's max.partition.fetch.bytes are the byte budgets for a fetch, so this cap bounds the control-plane batch scan and the object GET fan-out when batches are small. The default of 1024 covers a full partition response (about 16 MiB at 16 KiB batches) while capping the scan on deep partitions of many small batches; a deeper backlog drains over successive fetches. Consolidation has separate settings under diskless.consolidation.
 
   * Type: int
-  * Default: 0
+  * Default: 1024
   * Valid Values: [0,...]
   * Importance: low
 
@@ -204,7 +204,7 @@ Under ``inkless.``
   * Importance: low
 
 ``fetch.lagging.consumer.thread.pool.size``
-  Thread pool size for lagging consumer fetch requests (consumers reading old data). Set to 0 to disable the lagging consumer feature (all requests will use the recent data path). The default value of 16 is designed as approximately half of the default fetch.data.thread.pool.size (32), providing sufficient capacity for typical cold storage access patterns while leaving headroom for the hot path. The queue capacity is automatically set to thread.pool.size * 100, providing burst buffering (e.g., 16 threads = 1600 queue capacity ~= 8 seconds buffer at 200 req/s). Tune based on lagging consumer SLA and expected load patterns.
+  Thread pool size for lagging consumer fetch requests (consumers reading old data). Set to 0 to disable the lagging consumer feature (all requests will use the recent data path). The default value of 16 is designed as approximately half of the default fetch.data.thread.pool.size (32), providing sufficient capacity for typical cold storage access patterns while leaving headroom for the hot path. The queue capacity is automatically set to thread.pool.size * 100, providing burst buffering (for example, 16 threads = 1600 queue capacity); the drain time depends on storage latency and load. Tune based on lagging consumer SLA and expected load patterns.
 
   * Type: int
   * Default: 16

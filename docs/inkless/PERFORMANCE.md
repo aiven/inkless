@@ -231,7 +231,7 @@ Inkless implements a two-tier fetch architecture that separates recent data requ
 - For consumers reading data older than the threshold (`inkless.fetch.lagging.consumer.threshold.ms`)
 - Bypasses cache to avoid evicting hot data
 - Dedicated bounded executor pool (`inkless.fetch.lagging.consumer.thread.pool.size`, default: 16 threads)
-- Optional rate limiting (`inkless.fetch.lagging.consumer.request.rate.limit`, default: 200 req/s)
+- Optional rate limiting (`inkless.fetch.lagging.consumer.request.rate.limit`, default: 0, disabled)
 - Separate storage client for resource isolation
 
 **Path selection** is based on data age (batch timestamp), not consumer lag:
@@ -272,19 +272,20 @@ Unlike traditional Kafka where each partition's data is stored contiguously, Ink
 
 #### Broker Configuration
 
-The read path can be tuned using three key broker configurations under the `inkless.` prefix:
+The read path can be tuned using these key broker configurations under the `inkless.` prefix:
 
 | Configuration | Default | Description |
 |---------------|---------|-------------|
 | `fetch.lagging.consumer.thread.pool.size` | 16 | Thread pool size for lagging consumers. Set to **0** to disable the feature entirely. |
 | `fetch.lagging.consumer.threshold.ms` | -1 (auto) | Time threshold (ms) to distinguish recent vs lagging data. `-1` uses cache TTL automatically. Must be ≥ cache lifespan when set explicitly. |
-| `fetch.lagging.consumer.request.rate.limit` | 200 | Maximum requests/second for lagging consumers. Set to **0** to disable rate limiting. |
+| `fetch.lagging.consumer.request.rate.limit` | 0 (disabled) | Maximum object storage GET requests/second for lagging consumers. `0` disables the limit and lets the thread pool govern the GET rate. Set a positive value to bound the sustained request rate (token bucket; an idle bucket allows an initial burst up to the configured value). |
+| `fetch.find.batches.max.per.partition` | 1024 | Maximum batches returned per partition per fetch. Bounds the control-plane scan and object GET fan-out on deep partitions of small batches. `0` removes the cap. Consolidation has separate settings under `diskless.consolidation.*`. |
 
 **Tuning guidance:**
 
 - **Thread pool size**: Default of 16 threads (half of hot path's 32) is suitable for most workloads. Increase for higher lagging consumer concurrency, but be mindful of storage backend capacity.
 - **Threshold**: The `-1` default aligns with cache lifecycle. Set an explicit value (e.g., `120000` for 2 minutes) if you need different lagging consumer classification.
-- **Rate limit**: Default 200 req/s balances throughput with cost control. Adjust based on your object storage budget and capacity requirements.
+- **Rate limit**: Disabled by default. The thread pool bounds the steady-state GET rate at pool size divided by GET latency. Set a positive value to bound the sustained request rate (a token bucket sized to this value, so an idle bucket allows an initial one-second burst up to it). Bandwidth is bounded only by pool concurrency, so raise the thread pool with care.
 
 #### Consumer Configuration
 
