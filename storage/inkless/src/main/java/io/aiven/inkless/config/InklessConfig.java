@@ -189,7 +189,7 @@ public class InklessConfig extends AbstractConfig {
         + "The default value of 16 is designed as approximately half of the default fetch.data.thread.pool.size (32), "
         + "providing sufficient capacity for typical cold storage access patterns while leaving headroom for the hot path. "
         + "The queue capacity is automatically set to thread.pool.size * 100, providing burst buffering "
-        + "(e.g., 16 threads = 1600 queue capacity ~= 8 seconds buffer at 200 req/s). "
+        + "(for example, 16 threads = 1600 queue capacity); the drain time depends on storage latency and load. "
         + "Tune based on lagging consumer SLA and expected load patterns.";
     // Default 16: Designed as half of default fetch.data.thread.pool.size (32), sufficient for typical
     // cold storage access patterns while leaving headroom for hot path. Tune based on lagging consumer SLA.
@@ -212,17 +212,13 @@ public class InklessConfig extends AbstractConfig {
     private static final int FETCH_LAGGING_CONSUMER_THRESHOLD_MS_DEFAULT = -1;
 
     public static final String FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_CONFIG = "fetch.lagging.consumer.request.rate.limit";
-    public static final String FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DOC = "Maximum requests per second for lagging consumer data fetches. "
-        + "Set to 0 to disable rate limiting. "
-        + "The upper bound of 10000 req/s is a safety limit to prevent misconfiguration. For high-throughput systems, "
-        + "consider the relationship between this rate limit, thread pool size, and storage backend capacity. "
-        + "At the default rate of 200 req/s with ~50ms per request latency, this allows ~10 concurrent requests. "
-        + "Note: hedge requests triggered by slow fetches are exempt from this limit. In the worst case, "
-        + "effective storage GET rate can reach up to 2x this value.";
-    // Default 200 req/s: Conservative limit based on typical object storage GET request costs and latency.
-    // At ~50ms per request, 200 req/s = ~10 concurrent requests, balancing throughput with cost control.
-    // Tune based on storage backend capacity and budget constraints.
-    private static final int FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DEFAULT = 200;
+    public static final String FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DOC = "Maximum object storage GET requests per second for lagging consumer data fetches. "
+        + "A value of 0 disables the limit; the lagging consumer thread pool (fetch.lagging.consumer.thread.pool.size) "
+        + "then governs the steady-state GET rate at pool size divided by GET latency. "
+        + "Set a positive value to bound the sustained request rate independent of storage latency, for example to cap object storage request cost. "
+        + "The limiter is a token bucket sized to this value, so an idle bucket allows an initial one-second burst up to it before settling to the sustained rate. "
+        + "Note: when a positive limit is set, hedge requests triggered by slow fetches, if enabled, are exempt from it, so the effective GET rate can reach up to 2x the configured value.";
+    private static final int FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DEFAULT = 0;
 
     public static final String FETCH_HEDGE_TTFB_THRESHOLD_MS_CONFIG = "fetch.hedge.ttfb.threshold.ms";
     public static final String FETCH_HEDGE_TTFB_THRESHOLD_MS_DOC = "Time-to-first-byte threshold in milliseconds to trigger a hedge request. "
@@ -249,9 +245,13 @@ public class InklessConfig extends AbstractConfig {
 
     public static final String FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG = "fetch.find.batches.max.per.partition";
     public static final String FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DOC = "The maximum number of batches to find per partition when processing a fetch request. "
-        + "A value of 0 means all available batches are fetched. "
-        + "This is primarily intended for environments where the batches fan-out on fetch requests can overload the control plane back-end.";
-    private static final int FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DEFAULT = 0;
+        + "A value of 0 removes the cap and returns all eligible batches per partition. "
+        + "This is a per-partition batch count, not a byte size. fetch.max.bytes and the consumer's max.partition.fetch.bytes "
+        + "are the byte budgets for a fetch, so this cap bounds the control-plane batch scan and the object GET fan-out "
+        + "when batches are small. The default of 1024 covers a full partition response (about 16 MiB at 16 KiB batches) while "
+        + "capping the scan on deep partitions of many small batches; a deeper backlog drains over successive fetches. "
+        + "Consolidation has separate settings under diskless.consolidation.";
+    private static final int FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DEFAULT = 1024;
 
     public static final String RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_CONFIG = "retention.enforcement.max.batches.per.request";
     public static final String RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DOC = "The maximum number of batches to delete per partition when enforcing retention. "
@@ -483,9 +483,9 @@ public class InklessConfig extends AbstractConfig {
             FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_CONFIG,
             ConfigDef.Type.INT,
             FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DEFAULT,
-            ConfigDef.Range.between(0, 10000),
-            // Safety limit to prevent misconfiguration. For high-throughput systems,
-            // consider the relationship between this rate limit, thread pool size, and storage backend capacity.
+            ConfigDef.Range.between(0, 1_000_000),
+            // Safety limit to prevent misconfiguration. This is an opt-in hard cap; even at the
+            // ceiling the object storage request cost is bounded and left to the operator to set.
             ConfigDef.Importance.MEDIUM,
             FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DOC
         );

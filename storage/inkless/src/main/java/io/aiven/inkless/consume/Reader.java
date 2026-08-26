@@ -84,8 +84,8 @@ public class Reader implements AutoCloseable {
      * rejects tasks and exceptions propagate to Kafka's error handler.
      *
      * <p>Example: With default 16 threads and multiplier of 100, capacity = 1600 tasks.
-     * At 200 req/s rate limit, this provides ~8 seconds of buffer before rejections occur.
-     * Note: These values are derived from defaults and may differ if configuration is changed.
+     * The buffer drains as fast as the executor completes fetches, which depends on storage latency
+     * and load; request-rate limiting is disabled by default (see fetch.lagging.consumer.request.rate.limit).
      */
     private static final int LAGGING_CONSUMER_QUEUE_MULTIPLIER = 100;
     private final Time time;
