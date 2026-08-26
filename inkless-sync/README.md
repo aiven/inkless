@@ -59,7 +59,7 @@ Context for the agent:
 ### Sync Before New Kafka Version
 
 ```bash
-# Sync to the commit just before a version tag (e.g., before 4.3)
+# Sync to the trunk commit where the 4.3 release branch diverged from trunk
 ./inkless-sync/main-sync.sh --before-version 4.3
 ```
 
@@ -147,7 +147,8 @@ For detailed cherry-pick workflow, conflict resolution patterns, and session tra
 
 ### Phase 1: Preparation
 1. Fetches upstream apache/kafka
-2. Determines sync target (trunk HEAD or before-version)
+2. Determines sync target (trunk HEAD, or trunk's merge base with the
+   `--before-version` release branch)
 3. Generates "inkless manifest" - list of files we've modified
 4. Creates sync branch: `sync/upstream-YYYYMMDD`
 

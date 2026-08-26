@@ -11,7 +11,8 @@
 #
 # Options:
 #   --target <ref>       Git ref to sync to (default: apache/trunk HEAD)
-#   --before-version <v> Find last commit before version tag (e.g., "4.3")
+#   --before-version <v> Sync to the trunk commit where release branch "v"
+#                        (e.g., "4.3") diverged from apache/trunk
 #   --dry-run           Show what would be done without making changes
 #   --help              Show this help message
 #
@@ -161,15 +162,16 @@ phase_prepare() {
 
     # Determine sync target
     if [[ -n "$BEFORE_VERSION" ]]; then
-        log_info "Finding last commit before version ${BEFORE_VERSION}..."
-        # Find the commit just before the version tag
-        if ! tag_exists "${BEFORE_VERSION}"; then
-            log_error "Tag ${BEFORE_VERSION} not found"
+        log_info "Finding trunk commit before version ${BEFORE_VERSION} diverged..."
+        # The release branch (apache/$BEFORE_VERSION) can carry commits that
+        # never land on trunk. Use the merge base with trunk so the sync only
+        # picks up commits that are actually part of trunk history.
+        if ! branch_exists "${APACHE_REMOTE}/${BEFORE_VERSION}"; then
+            log_error "Branch ${APACHE_REMOTE}/${BEFORE_VERSION} not found"
             exit 1
         fi
-        # Get parent of the version tag
-        TARGET=$(git rev-parse "${BEFORE_VERSION}^")
-        log_info "Target: ${TARGET} (parent of ${BEFORE_VERSION})"
+        TARGET=$(git merge-base "${APACHE_REMOTE}/trunk" "${APACHE_REMOTE}/${BEFORE_VERSION}")
+        log_info "Target: ${TARGET} (merge base of ${APACHE_REMOTE}/trunk and ${APACHE_REMOTE}/${BEFORE_VERSION})"
     elif [[ -z "$TARGET" ]]; then
         TARGET="${APACHE_REMOTE}/trunk"
         log_info "Target: ${TARGET} (trunk HEAD)"
@@ -306,7 +308,7 @@ phase_merge() {
     # Attempt merge
     MERGE_MSG="merge: apache/kafka trunk"
     if [[ -n "$BEFORE_VERSION" ]]; then
-        MERGE_MSG="merge: apache/kafka trunk before ${BEFORE_VERSION}"
+        MERGE_MSG="merge: apache/kafka trunk before ${APACHE_REMOTE}/${BEFORE_VERSION} diverged"
     fi
 
     if git merge "$TARGET_COMMIT" -m "$MERGE_MSG" --no-edit --no-ff; then

@@ -105,10 +105,17 @@ get_base_version() {
     echo "$version"
 }
 
-# Check if a tag exists
+# Check if a tag (not a branch) exists
 tag_exists() {
     local tag="$1"
-    git rev-parse "$tag" &> /dev/null
+    git rev-parse --verify --quiet "refs/tags/${tag}" &> /dev/null
+}
+
+# Check if a branch exists, local or remote-tracking (not a tag)
+branch_exists() {
+    local branch="$1"
+    git rev-parse --verify --quiet "refs/heads/${branch}" &> /dev/null \
+        || git rev-parse --verify --quiet "refs/remotes/${branch}" &> /dev/null
 }
 
 # Get commit hash for a tag (dereference annotated tags)
