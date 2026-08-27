@@ -162,7 +162,7 @@ phase_prepare() {
 
     # Determine sync target
     if [[ -n "$BEFORE_VERSION" ]]; then
-        log_info "Finding trunk commit before version ${BEFORE_VERSION} diverged..."
+        log_info "Finding merge base of ${APACHE_REMOTE}/trunk and ${APACHE_REMOTE}/${BEFORE_VERSION}..."
         # The release branch (apache/$BEFORE_VERSION) can carry commits that
         # never land on trunk. Use the merge base with trunk so the sync only
         # picks up commits that are actually part of trunk history.

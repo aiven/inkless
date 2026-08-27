@@ -56,12 +56,18 @@ Context for the agent:
 ./inkless-sync/main-sync.sh
 ```
 
-### Sync Before New Kafka Version
+### Pin main to a release-branch cut
 
 ```bash
-# Sync to the trunk commit where the 4.3 release branch diverged from trunk
+# Last trunk commit that is also on apache/4.3 (4.3.0-SNAPSHOT).
+# Use this to cut inkless-4.3; do not pass 4.4.
 ./inkless-sync/main-sync.sh --before-version 4.3
 ```
+
+`--before-version 4.3` is the merge base of `apache/trunk` and `apache/4.3`, not a
+tag parent. Trunk commits after that cut never landed on `apache/4.3` (or landed
+later as cherry-picks with different SHAs). Merging them into main would put them
+on `inkless-4.3`.
 
 ### Dry Run (Preview)
 
