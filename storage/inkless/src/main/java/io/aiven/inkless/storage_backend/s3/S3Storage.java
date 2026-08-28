@@ -135,7 +135,6 @@ public final class S3Storage extends StorageBackend {
             final GetObjectRequest getRequest = builder.build();
             // for the small 4-8MiB blobs expected here, reading the whole object into memory is more efficient
             // than streaming it via S3ObjectInputStream which has significant overhead per read call
-            // and does not play well with the buffering done in ObjectFetcher.readToByteBuffer()
             final var buffer = s3Client.getObjectAsBytes(getRequest).asByteBuffer();
             return Channels.newChannel(new ByteBufferInputStream(buffer));
         } catch (final AwsServiceException e) {

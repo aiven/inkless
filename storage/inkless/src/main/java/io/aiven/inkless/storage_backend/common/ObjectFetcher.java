@@ -30,14 +30,26 @@ import io.aiven.inkless.common.ObjectKey;
 public interface ObjectFetcher extends Closeable {
 
     /**
-     * Use large enough buffer for reading the blob content to byte buffers to reduce required number
-     * of allocations. Usually default implementations in input streams use 16 KiB buffers. The expectation
-     * of blob sizes from cloud storages are multi-megabyte.
+     * Use a large enough buffer when reading blob content to reduce the number of allocations.
+     * Cloud storage blobs are expected to be multiple megabytes,
+     * while channels may return much less data per read.
      */
     int READ_BUFFER_1MiB = 1024 * 1024;
 
     ReadableByteChannel fetch(ObjectKey key, ByteRange range) throws StorageBackendException, IOException;
 
+    /**
+     * Reads the channel into a single buffer.
+     *
+     * <p>Each scratch buffer is filled before another is allocated.
+     * Otherwise, a channel that returns small amounts of data per read causes
+     * one 1 MiB allocation per read,
+     * which creates unnecessary garbage-collection and out-of-memory pressure.
+     *
+     * <p>A {@code 0}-byte read is not EOF.
+     * The loop retries until {@code tempBuffer} is full or the channel returns {@code -1},
+     * so the channel must eventually return data or EOF.
+     */
     default ByteBuffer readToByteBuffer(final ReadableByteChannel readableByteChannel) throws IOException {
         final ByteBuffer byteBuffer;
         final List<ByteBuffer> buffers = new ArrayList<>(5);
@@ -45,11 +57,13 @@ public interface ObjectFetcher extends Closeable {
         int totalSize = 0;
         do {
             final ByteBuffer tempBuffer = ByteBuffer.allocate(READ_BUFFER_1MiB);
-            readSize = readableByteChannel.read(tempBuffer);
-            if (readSize > 0) {
+            do {
+                readSize = readableByteChannel.read(tempBuffer);
+            } while (readSize >= 0 && tempBuffer.hasRemaining());
+            if (tempBuffer.position() > 0) {
                 buffers.add(tempBuffer);
                 tempBuffer.flip();
-                totalSize += readSize;
+                totalSize += tempBuffer.remaining();
             }
         } while (readSize >= 0);
         byteBuffer = ByteBuffer.allocate(totalSize);
