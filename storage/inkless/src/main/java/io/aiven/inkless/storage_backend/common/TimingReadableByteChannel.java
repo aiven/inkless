@@ -55,7 +55,18 @@ public class TimingReadableByteChannel implements ReadableByteChannel {
     // Not volatile: channel is confined to a single thread within FileFetchJob.doWork().
     private boolean firstByteRecorded;
 
-    public TimingReadableByteChannel(ReadableByteChannel delegate, Time time, Instant startTime, Consumer<Long> ttfbCallback) {
+    /**
+     * Returns a timing decorator that preserves the delegate's {@link SizedReadableByteChannel}
+     * capability, so a sized channel still reaches {@link ObjectFetcher#readToByteBuffer}.
+     */
+    public static TimingReadableByteChannel wrap(ReadableByteChannel delegate, Time time, Instant startTime, Consumer<Long> ttfbCallback) {
+        if (delegate instanceof SizedReadableByteChannel sized) {
+            return new Sized(sized, time, startTime, ttfbCallback);
+        }
+        return new TimingReadableByteChannel(delegate, time, startTime, ttfbCallback);
+    }
+
+    private TimingReadableByteChannel(ReadableByteChannel delegate, Time time, Instant startTime, Consumer<Long> ttfbCallback) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
         this.time = Objects.requireNonNull(time, "time");
         this.startTime = Objects.requireNonNull(startTime, "startTime");
@@ -82,5 +93,19 @@ public class TimingReadableByteChannel implements ReadableByteChannel {
     @Override
     public void close() throws IOException {
         delegate.close();
+    }
+
+    private static final class Sized extends TimingReadableByteChannel implements SizedReadableByteChannel {
+        private final int contentLength;
+
+        private Sized(SizedReadableByteChannel delegate, Time time, Instant startTime, Consumer<Long> ttfbCallback) {
+            super(delegate, time, startTime, ttfbCallback);
+            this.contentLength = delegate.contentLength();
+        }
+
+        @Override
+        public int contentLength() {
+            return contentLength;
+        }
     }
 }

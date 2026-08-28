@@ -39,6 +39,8 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.storage_backend.common.SizedReadableByteChannel;
+import io.aiven.inkless.storage_backend.common.fixtures.RecordingReadChannel;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -179,6 +181,27 @@ public class FileFetchJobTest {
         );
 
         assertThat(fileRanges).containsExactlyInAnyOrderElementsOf(expectedRanges);
+    }
+
+    @Test
+    public void testSizedChannelReachesTheReader() throws Exception {
+        final byte[] array = new byte[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+        final ByteRange range = new ByteRange(0, array.length);
+        final RecordingReadChannel channel = new RecordingReadChannel(array);
+
+        when(fetcher.fetch(objectA, range))
+            .thenReturn(SizedReadableByteChannel.of(channel, array.length));
+        when(fetcher.readToByteBuffer(any())).thenCallRealMethod();
+
+        final FileFetchJob job =
+            new FileFetchJob(time, fetcher, objectA, range, durationMs -> { }, ttfbMs -> { });
+        final FileExtent extent = job.call();
+
+        assertThat(extent.data()).isEqualTo(array);
+        // The job wraps the channel for timing, so the wrapper has to carry the declared length
+        // through to the reader. Without it the destination is a 1 MiB scratch buffer.
+        assertThat(channel.destinations).extracting(ByteBuffer::capacity)
+            .containsExactlyInAnyOrder(array.length, 1);
     }
 
 }

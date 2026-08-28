@@ -42,7 +42,7 @@ class TimingReadableByteChannelTest {
         final Instant startTime = TimeUtils.durationMeasurementNow(time);
         final ReadableByteChannel delegate = Channels.newChannel(new ByteArrayInputStream(new byte[]{1, 2, 3}));
 
-        final TimingReadableByteChannel channel = new TimingReadableByteChannel(delegate, time, startTime, recordedTtfb::set);
+        final TimingReadableByteChannel channel = TimingReadableByteChannel.wrap(delegate, time, startTime, recordedTtfb::set);
 
         // Advance time before first read
         time.sleep(42);
@@ -61,7 +61,7 @@ class TimingReadableByteChannelTest {
         final Instant startTime = TimeUtils.durationMeasurementNow(time);
         final ReadableByteChannel delegate = Channels.newChannel(new ByteArrayInputStream(new byte[]{1, 2, 3, 4}));
 
-        final TimingReadableByteChannel channel = new TimingReadableByteChannel(delegate, time, startTime, ttfb -> callCount.incrementAndGet());
+        final TimingReadableByteChannel channel = TimingReadableByteChannel.wrap(delegate, time, startTime, ttfb -> callCount.incrementAndGet());
 
         time.sleep(10);
         channel.read(ByteBuffer.allocate(2));
@@ -79,7 +79,7 @@ class TimingReadableByteChannelTest {
         // Empty stream returns -1 on read
         final ReadableByteChannel delegate = Channels.newChannel(new ByteArrayInputStream(new byte[0]));
 
-        final TimingReadableByteChannel channel = new TimingReadableByteChannel(delegate, time, startTime, recordedTtfb::set);
+        final TimingReadableByteChannel channel = TimingReadableByteChannel.wrap(delegate, time, startTime, recordedTtfb::set);
 
         time.sleep(10);
         final int bytesRead = channel.read(ByteBuffer.allocate(10));
@@ -89,12 +89,47 @@ class TimingReadableByteChannelTest {
     }
 
     @Test
+    void wrapPreservesContentLength() throws IOException {
+        final MockTime time = new MockTime();
+        final AtomicLong callCount = new AtomicLong(0);
+        final Instant startTime = TimeUtils.durationMeasurementNow(time);
+        final byte[] content = new byte[]{1, 2, 3};
+        final ReadableByteChannel delegate = SizedReadableByteChannel.of(
+            Channels.newChannel(new ByteArrayInputStream(content)), content.length);
+
+        final TimingReadableByteChannel channel =
+            TimingReadableByteChannel.wrap(delegate, time, startTime, ttfb -> callCount.incrementAndGet());
+
+        assertThat(channel).isInstanceOf(SizedReadableByteChannel.class);
+        assertThat(((SizedReadableByteChannel) channel).contentLength()).isEqualTo(3);
+
+        time.sleep(10);
+        channel.read(ByteBuffer.allocate(2));
+        time.sleep(20);
+        channel.read(ByteBuffer.allocate(2));
+
+        assertThat(callCount.get()).isEqualTo(1);
+    }
+
+    @Test
+    void wrapOfUnsizedDelegateIsNotSized() {
+        final MockTime time = new MockTime();
+        final Instant startTime = TimeUtils.durationMeasurementNow(time);
+        final ReadableByteChannel delegate = Channels.newChannel(new ByteArrayInputStream(new byte[]{1}));
+
+        final TimingReadableByteChannel channel =
+            TimingReadableByteChannel.wrap(delegate, time, startTime, ttfb -> {});
+
+        assertThat(channel).isNotInstanceOf(SizedReadableByteChannel.class);
+    }
+
+    @Test
     void delegatesIsOpenAndClose() throws IOException {
         final MockTime time = new MockTime();
         final Instant startTime = TimeUtils.durationMeasurementNow(time);
         final ReadableByteChannel delegate = Channels.newChannel(new ByteArrayInputStream(new byte[]{1}));
 
-        final TimingReadableByteChannel channel = new TimingReadableByteChannel(delegate, time, startTime, ttfb -> {});
+        final TimingReadableByteChannel channel = TimingReadableByteChannel.wrap(delegate, time, startTime, ttfb -> {});
 
         assertThat(channel.isOpen()).isTrue();
         channel.close();

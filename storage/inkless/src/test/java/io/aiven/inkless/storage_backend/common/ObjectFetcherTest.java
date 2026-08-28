@@ -23,16 +23,17 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
 import java.nio.channels.ReadableByteChannel;
-import java.util.Collections;
-import java.util.IdentityHashMap;
-import java.util.Set;
+import java.util.List;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.storage_backend.common.fixtures.RecordingReadChannel;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ObjectFetcherTest {
 
@@ -56,6 +57,14 @@ class ObjectFetcherTest {
         }
     }
 
+    private static byte[] content(final int size) {
+        final byte[] content = new byte[size];
+        for (int i = 0; i < size; i++) {
+            content[i] = (byte) i;
+        }
+        return content;
+    }
+
     static Stream<ReadCase> reads() {
         return Stream.of(
             new ReadCase("empty", 0, 1),
@@ -75,75 +84,119 @@ class ObjectFetcherTest {
     @MethodSource("reads")
     void fillsEachScratchBufferBeforeAllocatingAnother(final ReadCase readCase) throws IOException {
         final byte[] content = content(readCase.contentSize);
-        final CappedReadChannel channel = new CappedReadChannel(content, 8 * 1024);
+        final RecordingReadChannel channel = new RecordingReadChannel(content, 8 * 1024);
 
         final ByteBuffer buffer = FETCHER.readToByteBuffer(channel);
 
         assertThat(buffer.array()).isEqualTo(content);
-        assertThat(channel.scratchBuffers).hasSize(readCase.expectedScratchBuffers);
-        assertThat(channel.scratchBuffers).allMatch(bufferSeen -> bufferSeen.capacity() == ONE_MIB);
+        assertThat(channel.destinations).hasSize(readCase.expectedScratchBuffers);
+        assertThat(channel.destinations).allMatch(bufferSeen -> bufferSeen.capacity() == ONE_MIB);
     }
 
     @Test
     void continuesAfterZeroByteReadThatIsNotEof() throws IOException {
         final byte[] content = content(4);
-        final CappedReadChannel channel = new CappedReadChannel(content, content.length);
+        final RecordingReadChannel channel = new RecordingReadChannel(content, content.length);
         channel.zeroReadsRemaining = 3;
 
         final ByteBuffer buffer = FETCHER.readToByteBuffer(channel);
 
         assertThat(buffer.array()).isEqualTo(content);
         assertThat(channel.readCalls).isEqualTo(5);
-        assertThat(channel.scratchBuffers).hasSize(1);
+        assertThat(channel.destinations).hasSize(1);
     }
 
-    private static byte[] content(final int size) {
-        final byte[] content = new byte[size];
-        for (int i = 0; i < size; i++) {
-            content[i] = (byte) i;
-        }
-        return content;
-    }
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("reads")
+    void sizedChannelReadsIntoOneExactAllocation(final ReadCase readCase) throws IOException {
+        final byte[] content = content(readCase.contentSize);
+        final RecordingReadChannel channel = new RecordingReadChannel(content, 8 * 1024);
 
-    private static final class CappedReadChannel implements ReadableByteChannel {
-        private final byte[] content;
-        private final int maxBytesPerRead;
-        private final Set<ByteBuffer> scratchBuffers = Collections.newSetFromMap(new IdentityHashMap<>());
-        private int position;
-        private int readCalls;
-        private int zeroReadsRemaining;
-        private boolean open = true;
+        final ByteBuffer buffer = FETCHER.readToByteBuffer(
+            SizedReadableByteChannel.of(channel, content.length));
 
-        CappedReadChannel(final byte[] content, final int maxBytesPerRead) {
-            this.content = content;
-            this.maxBytesPerRead = maxBytesPerRead;
-        }
-
-        @Override
-        public int read(final ByteBuffer dst) {
-            readCalls++;
-            scratchBuffers.add(dst);
-            if (zeroReadsRemaining > 0) {
-                zeroReadsRemaining--;
-                return 0;
-            }
-            if (position == content.length) {
-                return -1;
-            }
-            final int readSize = Math.min(Math.min(maxBytesPerRead, dst.remaining()), content.length - position);
-            dst.put(content, position, readSize);
-            position += readSize;
-            return readSize;
-        }
-
-        @Override
-        public boolean isOpen() {
-            return open;
-        }
-
-        @Override
-        public void close() {
-            open = false;
+        assertThat(buffer.array()).isEqualTo(content);
+        // Destination plus the 1-byte over-delivery probe.
+        if (content.length == 0) {
+            assertThat(channel.destinations)
+                .extracting(ByteBuffer::capacity)
+                .containsExactly(1);
+        } else {
+            assertThat(channel.destinations)
+                .extracting(ByteBuffer::capacity)
+                .containsExactlyInAnyOrder(content.length, 1);
         }
     }
+
+    @Test
+    void sizedChannelContinuesAfterZeroByteReadThatIsNotEof() throws IOException {
+        final byte[] content = content(4);
+        final RecordingReadChannel channel = new RecordingReadChannel(content, content.length);
+        channel.zeroReadsRemaining = 3;
+
+        final ByteBuffer buffer = FETCHER.readToByteBuffer(
+            SizedReadableByteChannel.of(channel, content.length));
+
+        assertThat(buffer.array()).isEqualTo(content);
+    }
+
+    @Test
+    void failsWhenSizedChannelUnderDelivers() {
+        try (final RecordingReadChannel channel = new RecordingReadChannel(content(10), 10)) {
+            assertThatThrownBy(() -> FETCHER.readToByteBuffer(SizedReadableByteChannel.of(channel, 20)))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Channel delivered 10 of 20 bytes");
+        }
+    }
+
+    @Test
+    void failsWhenSizedChannelOverDelivers() {
+        try (final RecordingReadChannel channel = new RecordingReadChannel(content(20), 20)) {
+            assertThatThrownBy(() -> FETCHER.readToByteBuffer(SizedReadableByteChannel.of(channel, 10)))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Channel delivered more than 10 bytes");
+        }
+    }
+
+    @Test
+    void rejectsNegativeContentLength() {
+        try (final RecordingReadChannel channel = new RecordingReadChannel(content(1), 1)) {
+            assertThatThrownBy(() -> SizedReadableByteChannel.of(channel, -1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("contentLength cannot be negative: -1");
+        }
+    }
+
+    @Test
+    void closedChannelsRejectReads() throws IOException {
+        final SizedReadableByteChannel overBuffer = SizedReadableByteChannel.of(ByteBuffer.wrap(content(3)));
+        final SizedReadableByteChannel overDelegate =
+            SizedReadableByteChannel.of(new RecordingReadChannel(content(3), 3), 3);
+
+        for (final SizedReadableByteChannel channel : List.of(overBuffer, overDelegate)) {
+            channel.close();
+            assertThatThrownBy(() -> channel.read(ByteBuffer.allocate(1)))
+                .as("read after close on %s", channel)
+                .isInstanceOf(ClosedChannelException.class);
+        }
+    }
+
+    @Test
+    void ofDelegatesIsOpenAndClose() throws IOException {
+        final RecordingReadChannel delegate = new RecordingReadChannel(content(3), 3);
+        final SizedReadableByteChannel channel = SizedReadableByteChannel.of(delegate, 3);
+
+        assertThat(channel.isOpen()).isTrue();
+        channel.close();
+        assertThat(delegate.isOpen()).isFalse();
+        assertThat(channel.isOpen()).isFalse();
+    }
+
+    @Test
+    void ofRejectsNullDelegate() {
+        assertThatThrownBy(() -> SizedReadableByteChannel.of(null, 0))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("delegate cannot be null");
+    }
+
 }

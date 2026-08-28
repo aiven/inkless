@@ -41,17 +41,19 @@ public interface ObjectFetcher extends Closeable {
     /**
      * Reads the channel into a single buffer.
      *
-     * <p>Each scratch buffer is filled before another is allocated.
-     * Otherwise, a channel that returns small amounts of data per read causes
-     * one 1 MiB allocation per read,
-     * which creates unnecessary garbage-collection and out-of-memory pressure.
+     * <p>If the channel is a {@link SizedReadableByteChannel}, the destination is that length.
+     * A mismatch fails the fetch. Otherwise the channel is drained into 1 MiB scratch buffers
+     * that are filled before another is allocated, then copied.
      *
      * <p>A {@code 0}-byte read is not EOF.
-     * The loop retries until {@code tempBuffer} is full or the channel returns {@code -1},
-     * so the channel must eventually return data or EOF.
+     * Both paths retry until the destination is full or the channel returns {@code -1},
+     * so a channel must eventually return data or EOF.
+     * A channel that returns {@code 0} indefinitely never completes the read.
      */
     default ByteBuffer readToByteBuffer(final ReadableByteChannel readableByteChannel) throws IOException {
-        final ByteBuffer byteBuffer;
+        if (readableByteChannel instanceof SizedReadableByteChannel sized) {
+            return readExactly(sized, sized.contentLength());
+        }
         final List<ByteBuffer> buffers = new ArrayList<>(5);
         int readSize;
         int totalSize = 0;
@@ -66,8 +68,27 @@ public interface ObjectFetcher extends Closeable {
                 totalSize += tempBuffer.remaining();
             }
         } while (readSize >= 0);
-        byteBuffer = ByteBuffer.allocate(totalSize);
+        final ByteBuffer byteBuffer = ByteBuffer.allocate(totalSize);
         buffers.forEach(byteBuffer::put);
         return byteBuffer.flip();
+    }
+
+    private static ByteBuffer readExactly(final ReadableByteChannel channel, final int contentLength)
+        throws IOException {
+        final ByteBuffer buffer = ByteBuffer.allocate(contentLength);
+        int readSize = 0;
+        while (buffer.hasRemaining() && readSize >= 0) {
+            readSize = channel.read(buffer);
+        }
+        if (buffer.hasRemaining()) {
+            throw new IOException(
+                "Channel delivered " + buffer.position() + " of " + contentLength + " bytes");
+        }
+        // Only a strictly positive read proves over-delivery.
+        // A 0 means no data is available yet, which is not evidence either way.
+        if (channel.read(ByteBuffer.allocate(1)) > 0) {
+            throw new IOException("Channel delivered more than " + contentLength + " bytes");
+        }
+        return buffer.flip();
     }
 }

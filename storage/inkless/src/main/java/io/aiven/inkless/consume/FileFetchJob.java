@@ -75,7 +75,7 @@ public class FileFetchJob implements Callable<FileExtent> {
 
     private FileExtent doWork() throws IOException, StorageBackendException {
         final var startTime = TimeUtils.durationMeasurementNow(time);
-        try (final var channel = new TimingReadableByteChannel(objectFetcher.fetch(key, range), time, startTime, ttfbCallback)) {
+        try (final var channel = TimingReadableByteChannel.wrap(objectFetcher.fetch(key, range), time, startTime, ttfbCallback)) {
             final ByteBuffer byteBuffer = objectFetcher.readToByteBuffer(channel);
             return createFileExtent(key, range, byteBuffer);
         }
