@@ -149,7 +149,7 @@ public abstract class BaseStorageTest {
     }
 
     @Test
-    void testFetchWithoutRange() throws Exception {
+    protected void testFetchWithoutRange() throws Exception {
         final String content;
         final ByteBuffer fetch;
         try (StorageBackend storage = storage()) {

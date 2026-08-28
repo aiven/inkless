@@ -19,11 +19,10 @@ package io.aiven.inkless.storage_backend.in_memory;
 
 import org.apache.kafka.common.metrics.Metrics;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.channels.Channels;
+import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
 import java.util.Map;
 import java.util.Objects;
@@ -34,6 +33,7 @@ import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.storage_backend.common.InvalidRangeException;
 import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
+import io.aiven.inkless.storage_backend.common.SizedReadableByteChannel;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -86,21 +86,19 @@ public final class InMemoryStorage extends StorageBackend {
             throw new KeyNotFoundException(this, key);
         }
 
+        if (range.empty()) {
+            return SizedReadableByteChannel.empty();
+        }
+
         if (range.offset() >= data.length) {
             throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range + " for blob size " + data.length);
         }
 
-        final int dataSize;
-        if (range.size() > data.length - range.offset()) {
-            dataSize = Math.toIntExact((data.length - range.offset()));
-        }  else {
-            dataSize = Math.toIntExact(Math.min(range.size(), data.length));
-        }
-        final int copyLength = Math.toIntExact(Math.min(range.size(), data.length - 1));
+        final int dataSize = Math.toIntExact(Math.min(range.size(), data.length - range.offset()));
         final byte[] dstData = new byte[dataSize];
-        System.arraycopy(data, range.bufferOffset(), dstData, 0, copyLength);
+        System.arraycopy(data, range.bufferOffset(), dstData, 0, dataSize);
 
-        return Channels.newChannel(new ByteArrayInputStream(dstData));
+        return SizedReadableByteChannel.of(ByteBuffer.wrap(dstData));
     }
 
     @Override

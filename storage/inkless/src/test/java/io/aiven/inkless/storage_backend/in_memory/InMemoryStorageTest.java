@@ -22,22 +22,38 @@ import org.apache.kafka.common.metrics.Metrics;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.Set;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.storage_backend.common.InvalidRangeException;
-import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
+import io.aiven.inkless.storage_backend.common.fixtures.BaseStorageTest;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class InMemoryStorageTest {
+class InMemoryStorageTest extends BaseStorageTest {
     static final PlainObjectKey OBJECT_KEY = PlainObjectKey.create("a", "b");
+
+    @Override
+    protected StorageBackend storage() {
+        return new InMemoryStorage(new Metrics());
+    }
+
+    @Test
+    @Override
+    protected void testFetchWithoutRange() throws Exception {
+        try (StorageBackend storage = storage()) {
+            final byte[] data = "AABBBBAA".getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
+
+            assertThatThrownBy(() -> storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("range cannot be null");
+        }
+    }
 
     @Test
     void fetchNulls() {
@@ -46,9 +62,6 @@ class InMemoryStorageTest {
         assertThatThrownBy(() -> storage.fetch(null, new ByteRange(0, 10)))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("key cannot be null");
-        assertThatThrownBy(() -> storage.fetch(OBJECT_KEY, null))
-            .isInstanceOf(NullPointerException.class)
-            .hasMessage("range cannot be null");
     }
 
     @Test
@@ -63,40 +76,9 @@ class InMemoryStorageTest {
             .hasMessage("keys cannot be null");
     }
 
-    @Test
-    void fetchNonExistent() {
-        final Metrics metrics = new Metrics();
-        final InMemoryStorage storage = new InMemoryStorage(metrics);
-        assertThatThrownBy(() -> storage.fetch(OBJECT_KEY, ByteRange.maxRange()))
-            .isInstanceOf(KeyNotFoundException.class);
-    }
-
-    @Test
-    void uploadAndFetch() throws StorageBackendException, IOException {
-        final Metrics metrics = new Metrics();
-        final InMemoryStorage storage = new InMemoryStorage(metrics);
-        final byte[] data = new byte[10];
-        storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
-
-        final ByteBuffer fetch = storage.readToByteBuffer(storage.fetch(OBJECT_KEY, ByteRange.maxRange()));
-
-        assertThat(fetch.array()).isEqualTo(data);
-    }
-
-    @Test
-    void fetchRanged() throws StorageBackendException, IOException {
-        final Metrics metrics = new Metrics();
-        final InMemoryStorage storage = new InMemoryStorage(metrics);
-        final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
-        storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
-
-        final ByteBuffer fetch1 = storage.readToByteBuffer(storage.fetch(OBJECT_KEY, new ByteRange(1, 2)));
-        assertThat(fetch1.array()).isEqualTo(new byte[]{1, 2});
-
-        final ByteBuffer fetch2 = storage.readToByteBuffer(storage.fetch(OBJECT_KEY, new ByteRange(1, 100)));
-        assertThat(fetch2.array()).isEqualTo(new byte[]{1, 2, 3, 4, 5, 6, 7});
-    }
-
+    /**
+     * The shared fixture asserts the exception type; this pins the message the backend produces.
+     */
     @Test
     void fetchOutsideOfSize() throws StorageBackendException {
         final Metrics metrics = new Metrics();
@@ -107,37 +89,5 @@ class InMemoryStorageTest {
         assertThatThrownBy(() -> storage.fetch(OBJECT_KEY, new ByteRange(8, 1)))
             .isInstanceOf(InvalidRangeException.class)
             .hasMessage("Failed to fetch a/b: Invalid range ByteRange[offset=8, size=1] for blob size 8");
-    }
-
-    @Test
-    void delete() throws StorageBackendException, IOException {
-        final Metrics metrics = new Metrics();
-        final InMemoryStorage storage = new InMemoryStorage(metrics);
-        final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
-        storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
-
-        final ByteBuffer fetch = storage.readToByteBuffer(storage.fetch(OBJECT_KEY, new ByteRange(1, 2)));
-        assertThat(fetch.array()).isEqualTo(new byte[]{1, 2});
-
-        storage.delete(OBJECT_KEY);
-
-        assertThatThrownBy(() -> storage.fetch(OBJECT_KEY, ByteRange.maxRange()))
-            .isInstanceOf(KeyNotFoundException.class);
-    }
-
-    @Test
-    void deleteMany() throws StorageBackendException, IOException {
-        final Metrics metrics = new Metrics();
-        final InMemoryStorage storage = new InMemoryStorage(metrics);
-        final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
-        storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
-
-        final ByteBuffer fetch = storage.readToByteBuffer(storage.fetch(OBJECT_KEY, new ByteRange(1, 2)));
-        assertThat(fetch.array()).isEqualTo(new byte[]{1, 2});
-
-        storage.delete(Set.of(OBJECT_KEY, PlainObjectKey.create("un", "related")));
-
-        assertThatThrownBy(() -> storage.fetch(OBJECT_KEY, ByteRange.maxRange()))
-            .isInstanceOf(KeyNotFoundException.class);
     }
 }
