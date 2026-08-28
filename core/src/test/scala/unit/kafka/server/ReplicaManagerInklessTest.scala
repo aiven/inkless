@@ -3790,6 +3790,7 @@ class ReplicaManagerInklessTest {
       )
 
       @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val hwLagFetchesBefore = yammerMeterCount("ConsolidationHighWatermarkLagFetchRate")
       replicaManager.fetchMessages(
         fetchParams,
         fetchInfos,
@@ -3800,6 +3801,10 @@ class ReplicaManagerInklessTest {
       assertEquals(RECORDS, responseData(disklessTopicPartition).records)
       verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
       verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
+      // The local log holds offset 50 (LEO is 100) but the high watermark does not, so this fetch is
+      // the window the meter exists to make visible.
+      assertEquals(hwLagFetchesBefore + 1L, yammerMeterCount("ConsolidationHighWatermarkLagFetchRate"),
+        "A consumer read routed to Inkless while the local log holds the offset must be recorded")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
       fetchHandlerCtor.close()
@@ -3840,6 +3845,7 @@ class ReplicaManagerInklessTest {
 
       @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
       val localBytesBefore = yammerMeterCount("ConsolidationLocalBytesPerSec")
+      val hwLagFetchesBefore = yammerMeterCount("ConsolidationHighWatermarkLagFetchRate")
       replicaManager.fetchMessages(
         fetchParams,
         fetchInfos,
@@ -3854,6 +3860,8 @@ class ReplicaManagerInklessTest {
       // supplement, so its bytes must stay out of the consolidation meter.
       assertEquals(localBytesBefore, yammerMeterCount("ConsolidationLocalBytesPerSec"),
         "Follower replication bytes must not be recorded as consolidation local bytes")
+      assertEquals(hwLagFetchesBefore, yammerMeterCount("ConsolidationHighWatermarkLagFetchRate"),
+        "A follower reads to LEO, so it is never in the high-watermark-lag window")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
       fetchHandlerCtor.close()
@@ -3968,6 +3976,7 @@ class ReplicaManagerInklessTest {
       )
 
       @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val hwLagFetchesBefore = yammerMeterCount("ConsolidationHighWatermarkLagFetchRate")
       replicaManager.fetchMessages(
         fetchParams,
         fetchInfos,
@@ -3981,6 +3990,59 @@ class ReplicaManagerInklessTest {
       verify(replicaManager, atLeastOnce()).readFromLog(any(), any(), any(), any())
       // Diskless holds nothing below the seal, so neither the read nor a supplement may go there.
       verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+      assertEquals(hwLagFetchesBefore, yammerMeterCount("ConsolidationHighWatermarkLagFetchRate"),
+        "A fetch served from the local log must not count as routed to Inkless")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  // A switch-pending partition serves every offset from the local log, so a fetch above its high
+  // watermark is not routed to Inkless and must not be counted as if it were.
+  @Test
+  def testFetchConsolidatingSwitchPendingDoesNotCountAsHighWatermarkLagRouted(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      stubConsolidatingPartitionWithLocalLeo(
+        replicaManager, localLeo = 100L, localHighWatermark = Some(50L))
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(60L, 0L, 0), MemoryRecords.EMPTY),
+          Optional.empty(), 50L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+        0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition ->
+          new PartitionData(disklessTopicPartition.topicId(), 60L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val hwLagFetchesBefore = yammerMeterCount("ConsolidationHighWatermarkLagFetchRate")
+      replicaManager.fetchMessages(
+        fetchParams,
+        fetchInfos,
+        QuotaFactory.UNBOUNDED_QUOTA,
+        response => responseData = response.toMap)
+
+      waitForFetchResponse(responseData)
+      verify(replicaManager, atLeastOnce()).readFromLog(any(), any(), any(), any())
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+      assertEquals(hwLagFetchesBefore, yammerMeterCount("ConsolidationHighWatermarkLagFetchRate"),
+        "A switch-pending fetch is served locally, so it must not count as routed to Inkless")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
       fetchHandlerCtor.close()
@@ -8079,6 +8141,35 @@ class ReplicaManagerInklessTest {
       stubNonLeaderPartitionForReplicaRead(replicaManager)
 
       assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, readFromLogAsOlderConsumer(replicaManager).error)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // The gauge must see a stalled replica whether or not consumers are reading it, which is what the
+  // fetch-rate meter cannot do once consumers move past the frozen log end offset.
+  @Test
+  def testConsolidationHighWatermarkLagPartitionCountCountsUncommittedLocalData(): Unit = {
+    val topicName = disklessTopicPartition.topic()
+    val tp = disklessTopicPartition.topicPartition()
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(topicName)))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(
+        tp, isNew = true, topicId = Optional.of(disklessTopicPartition.topicId()))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 4L)
+      val partition = replicaManager.createPartition(tp)
+      partition.log = Some(log)
+
+      assertEquals(1, replicaManager.consolidationHighWatermarkLagPartitionCount,
+        "A consolidating partition holding data below its high watermark must be counted")
+
+      log.maybeUpdateHighWatermark(10L)
+      assertEquals(0, replicaManager.consolidationHighWatermarkLagPartitionCount,
+        "Once the high watermark reaches the log end offset the partition can serve what it holds")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }

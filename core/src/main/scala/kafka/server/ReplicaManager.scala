@@ -27,7 +27,7 @@ import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, Consolidat
 import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationHighWatermarkLagFetchRateMetricName, ConsolidationHighWatermarkLagPartitionCountMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.metadata.InklessMetadataView
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
@@ -118,6 +118,9 @@ object ReplicaManager {
   private val ConsolidationSupplementRateMetricName = "ConsolidationSupplementRate"
   private val ConsolidationSupplementBytesPerSecMetricName = "ConsolidationSupplementBytesPerSec"
   private val ConsolidationLocalBytesPerSecMetricName = "ConsolidationLocalBytesPerSec"
+  private val ConsolidationHighWatermarkLagFetchRateMetricName = "ConsolidationHighWatermarkLagFetchRate"
+  private val ConsolidationHighWatermarkLagPartitionCountMetricName =
+    "ConsolidationHighWatermarkLagPartitionCount"
 
   private[server] val GaugeMetricNames = Set(
     LeaderCountMetricName,
@@ -129,6 +132,7 @@ object ReplicaManager {
     ReassigningPartitionsMetricName,
     SealedPartitionsCountMetricName,
     DisklessSwitchedReplicasOutsideIsrCountMetricName,
+    ConsolidationHighWatermarkLagPartitionCountMetricName,
     PartitionsWithLateTransactionsCountMetricName,
     ProducerIdCountMetricName
   )
@@ -140,7 +144,8 @@ object ReplicaManager {
     ConsolidationFetchBytesInPerSecMetricName,
     ConsolidationSupplementRateMetricName,
     ConsolidationSupplementBytesPerSecMetricName,
-    ConsolidationLocalBytesPerSecMetricName
+    ConsolidationLocalBytesPerSecMetricName,
+    ConsolidationHighWatermarkLagFetchRateMetricName
   )
 
   private[server] val MetricNames = GaugeMetricNames.union(MeterMetricNames)
@@ -395,12 +400,26 @@ class ReplicaManager(val config: KafkaConfig,
   metricsGroup.newGauge(SealedPartitionsCountMetricName, () => sealedPartitionsCount)
   metricsGroup.newGauge(DisklessSwitchedReplicasOutsideIsrCountMetricName,
     () => disklessSwitchedReplicasOutsideIsrCount)
+  metricsGroup.newGauge(ConsolidationHighWatermarkLagPartitionCountMetricName,
+    () => consolidationHighWatermarkLagPartitionCount)
   metricsGroup.newGauge(PartitionsWithLateTransactionsCountMetricName, () => lateTransactionsCount)
   metricsGroup.newGauge(ProducerIdCountMetricName, () => producerIdCount)
 
   private def reassigningPartitionsCount: Int = leaderPartitionsIterator.count(_.isReassigning)
 
   private def sealedPartitionsCount: Int = leaderPartitionsIterator.count(_.isSealed)
+
+  /**
+   * Counts consolidating partitions holding data they cannot serve yet, that is a local high
+   * watermark below the local log end offset. Consumer reads of that range go to Inkless, which
+   * costs object-storage traffic, and below a classic-to-diskless seal Inkless has nothing to serve.
+   * Unlike ConsolidationHighWatermarkLagFetchRate this does not depend on consumer traffic, so a
+   * stalled replica stays visible after consumers have moved past its log end offset.
+   */
+  private[server] def consolidationHighWatermarkLagPartitionCount: Int = onlinePartitionsIterator.count { partition =>
+    consolidationActiveFor(partition.topic) &&
+      partition.log.exists(log => log.highWatermark < log.logEndOffset)
+  }
 
   private def lateTransactionsCount: Int = {
     val currentTimeMs = time.milliseconds()
@@ -416,6 +435,8 @@ class ReplicaManager(val config: KafkaConfig,
   private val consolidationSupplementRate: Meter = metricsGroup.newMeter(ConsolidationSupplementRateMetricName, "supplements", TimeUnit.SECONDS)
   private val consolidationSupplementBytesPerSec: Meter = metricsGroup.newMeter(ConsolidationSupplementBytesPerSecMetricName, "bytes", TimeUnit.SECONDS)
   private val consolidationLocalBytesPerSec: Meter = metricsGroup.newMeter(ConsolidationLocalBytesPerSecMetricName, "bytes", TimeUnit.SECONDS)
+  private val consolidationHighWatermarkLagFetchRate: Meter =
+    metricsGroup.newMeter(ConsolidationHighWatermarkLagFetchRateMetricName, "fetches", TimeUnit.SECONDS)
 
   /**
    * Returns true when this broker consolidates the topic: the feature is enabled here and the topic
@@ -2539,8 +2560,14 @@ class ReplicaManager(val config: KafkaConfig,
                   fetchPartitionData.fetchOffset >= localLogStartOffset &&
                   localReadFrontier >= logEndOffset)
                   consolidatingLocalFetchSupplements += (tp -> logEndOffset)
+              } else if (!shouldReadFromUnifiedLog && fetchPartitionData.fetchOffset < logEndOffset) {
+                // The local log holds this offset but cannot serve it, so this read goes to Inkless.
+                // A switch-pending partition is excluded because it was already routed to the local
+                // log above, and a follower cannot reach this branch: its frontier is LEO.
+                consolidationHighWatermarkLagFetchRate.mark()
               }
-              // else: the fetch is at or beyond the frontier for its source, so diskless is authoritative
+              // else: the fetch is at or beyond the frontier and beyond the local log, so diskless
+              // is authoritative
             case Left(error) =>
               warn(s"Error while fetching partition ${tp.topicPartition()} for consolidating diskless topic: $error. " +
                 s"Returning error for the fetch request since we cannot determine if the partition has switched to diskless or not.")
