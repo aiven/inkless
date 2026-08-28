@@ -6682,6 +6682,51 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testApplyDeltaStartsCatchUpFetcherForDisklessFollowerAtSealOnLeaderChange(): Unit = {
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val previousLeaderId = 0
+    val newLeaderId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager)
+    ))
+    try {
+      // Caught up to the seal and in ISR, so steady state needs no fetcher.
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+
+      val previousLeaderDelta = disklessFollowerDelta(topicName, topicId, brokerId, previousLeaderId)
+      replicaManager.applyDelta(previousLeaderDelta, imageFromTopics(previousLeaderDelta.apply()))
+      verify(mockFetcherManager, never()).addFetcherForPartitions(any())
+
+      // The leader moves. The new leader reset our recorded fetch state to UNKNOWN, so it holds no
+      // evidence we reached the seal; without a fetch it would shrink us out once the lag timeout
+      // elapses. A catch-up fetch must be scheduled even though we are caught up and in ISR.
+      val newLeaderDelta = disklessFollowerDelta(topicName, topicId, brokerId, newLeaderId)
+      replicaManager.applyDelta(newLeaderDelta, imageFromTopics(newLeaderDelta.apply()))
+
+      val newLeaderEndpoint = ClusterImageTest.IMAGE1.broker(newLeaderId).listeners().get("PLAINTEXT")
+      verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+        topicId = Some(topicId),
+        leader = new BrokerEndPoint(newLeaderId, newLeaderEndpoint.host(), newLeaderEndpoint.port()),
+        currentLeaderEpoch = 0,
+        initOffset = sealOffset
+      )))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testApplyDeltaStartsCatchUpFetcherWhenDisklessFollowerAtSealButOutOfIsr(): Unit = {
     val topicName = "switched-topic"
     val topicId = Uuid.randomUuid()
@@ -7863,6 +7908,258 @@ class ReplicaManagerInklessTest {
     assertEquals(UnifiedLog.UNKNOWN_OFFSET, data.highWatermark)
     assertEquals(UnifiedLog.UNKNOWN_OFFSET, data.logStartOffset)
     verify(alterPartitionManager, never()).submit(any(), any())
+  }
+
+  @Test
+  def testMaybeShrinkIsrAppliesToSwitchedPartitionsButNotBornDiskless(): Unit = {
+    val followerId = 2
+    val switched = new TopicIdPartition(Uuid.randomUuid(), 0, "switched")
+    val bornDiskless = new TopicIdPartition(Uuid.randomUuid(), 0, "born-diskless")
+    val replicaManager = spy(createReplicaManager(
+      List(switched.topic(), bornDiskless.topic()),
+      topicIdMapping = Map(
+        switched.topic() -> switched.topicId(),
+        bornDiskless.topic() -> bornDiskless.topicId()),
+      disklessManagedReplicasEnabled = true,
+    ))
+    try {
+      doReturn(new CompletableFuture[Any]())
+        .when(alterPartitionManager).submit(any(), any())
+
+      // Identical partitions -- lagging follower in ISR, leader log ending at 5 -- differing only in
+      // what the metadata view reports for the seal.
+      val switchedPartition = setupDisklessLeaderWithLaggingFollowerInIsr(
+        replicaManager, switched, followerId, logEndOffset = 5L, seal = 5L)
+      val bornDisklessPartition = setupDisklessLeaderWithLaggingFollowerInIsr(
+        replicaManager, bornDiskless, followerId, logEndOffset = 5L,
+        seal = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      assertTrue(switchedPartition.inSyncReplicaIds.contains(followerId))
+      assertTrue(bornDisklessPartition.inSyncReplicaIds.contains(followerId))
+      clearInvocations(alterPartitionManager)
+
+      // Push both followers past replica.lag.time.max.ms without either ever fetching.
+      time.sleep(replicaManager.config.replicaLagTimeMaxMs * 2)
+      replicaManager.maybeShrinkIsr()
+
+      // The switched partition still has a classic prefix, so a follower that never reached the seal
+      // must be shrunk out; the born-diskless one has no local log to lag on and is exempt.
+      verify(alterPartitionManager, times(1)).submit(
+        ArgumentMatchers.eq(new org.apache.kafka.server.common.TopicIdPartition(
+          switched.topicId(), switched.partition())),
+        argThat[LeaderAndIsr](!_.isr.contains(followerId)))
+      verify(alterPartitionManager, never()).submit(
+        ArgumentMatchers.eq(new org.apache.kafka.server.common.TopicIdPartition(
+          bornDiskless.topicId(), bornDiskless.partition())),
+        any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaDivertsConsolidatingFollowerToClassicFetcherOnLeaderChange(): Unit = {
+    val topicName = "switched-consolidating"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val previousLeaderId = 2
+    val newLeaderId = 0
+    val seal = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mock, _) =>
+        when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = spy(createReplicaManager(
+        List(topicName),
+        topicIdMapping = Map(topicName -> topicId),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+      ))
+      try {
+        val mockCfm = consolidationCtor.constructed().get(0)
+        // Local log past the seal: the classic prefix is replicated and consolidation has appended
+        // part of the suffix, so the partition is ready for consolidation.
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 12L, hw = 12L)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(seal)
+
+        val firstDelta = createFollowerDelta(topicId, tp, brokerId, previousLeaderId)
+        replicaManager.applyDelta(firstDelta, imageFromTopics(firstDelta.apply()))
+        verify(mockCfm).addFetcherForPartitions(any())
+        // The unconditional call at the end of applyLocalFollowersDelta passes an empty map, so match
+        // on content rather than on the call.
+        verify(mockFetcherManager, never()).addFetcherForPartitions(
+          argThat[Map[TopicPartition, InitialFetchState]](_.nonEmpty))
+        clearInvocations(mockCfm, mockFetcherManager)
+
+        val secondDelta = createFollowerDelta(topicId, tp, brokerId, newLeaderId, leaderEpoch = 1)
+        replicaManager.applyDelta(secondDelta, imageFromTopics(secondDelta.apply()))
+
+        // The new leader holds no record of this follower's position, so it takes one classic fetch
+        // from that leader instead of going straight back to consolidation.
+        val endpoint = ClusterImageTest.IMAGE1.broker(newLeaderId).listeners().get("PLAINTEXT")
+        verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+          topicId = Some(topicId),
+          leader = new BrokerEndPoint(newLeaderId, endpoint.host(), endpoint.port()),
+          currentLeaderEpoch = 1,
+          initOffset = 12L
+        )))
+        // The consolidation fetcher from the previous leader epoch is evicted, so only one fetcher
+        // appends to the local log.
+        verify(mockCfm).removeFetcherForPartitions(Set(tp))
+        verify(mockCfm, never()).addFetcherForPartitions(any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
+  def testMaybeShrinkIsrKeepsConsolidatingFollowerAtSealInIsr(): Unit = {
+    val followerId = 2
+    val switched = new TopicIdPartition(Uuid.randomUuid(), 0, "switched-consolidating")
+    val seal = 5L
+    val replicaManager = spy(createReplicaManager(
+      List(switched.topic()),
+      topicIdMapping = Map(switched.topic() -> switched.topicId()),
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(switched.topic()),
+    ))
+    try {
+      doReturn(new CompletableFuture[Any]())
+        .when(alterPartitionManager).submit(any(), any())
+
+      // Leader log runs past the seal: the consolidation fetcher appends the consolidated suffix on
+      // every replica, including this leader, so its LEO keeps advancing after the switch.
+      val partition = setupDisklessLeaderWithLaggingFollowerInIsr(
+        replicaManager, switched, followerId, logEndOffset = 12L, seal = seal)
+
+      // The follower replicated the whole classic prefix and then handed off to its own consolidation
+      // fetcher, which reads from object storage and never fetches from this leader again -- so the
+      // last state the leader recorded for it stops at the seal.
+      val followerReplica = partition.getReplica(followerId).get
+      partition.updateFollowerFetchState(
+        followerReplica,
+        followerFetchOffsetMetadata = new LogOffsetMetadata(seal),
+        followerStartOffset = 0L,
+        followerFetchTimeMs = time.milliseconds(),
+        leaderEndOffset = seal,
+        brokerEpoch = -1L)
+      assertTrue(partition.inSyncReplicaIds.contains(followerId))
+      clearInvocations(alterPartitionManager)
+
+      time.sleep(replicaManager.config.replicaLagTimeMaxMs * 2)
+      replicaManager.maybeShrinkIsr()
+
+      // Lag is judged against the seal, not the advancing LEO, so a follower that reached the seal
+      // stays in ISR. Judging it against the LEO would shrink every consolidating follower out and
+      // nothing would re-expand: expansion also needs a fetch that never comes.
+      verify(alterPartitionManager, never()).submit(any(), any())
+      assertTrue(partition.inSyncReplicaIds.contains(followerId))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testMaybeShrinkIsrKeepsConsolidatingFollowerRecordedBeyondSealInIsr(): Unit = {
+    val followerId = 2
+    val switched = new TopicIdPartition(Uuid.randomUuid(), 0, "switched-consolidating")
+    val seal = 5L
+    val replicaManager = spy(createReplicaManager(
+      List(switched.topic()),
+      topicIdMapping = Map(switched.topic() -> switched.topicId()),
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(switched.topic()),
+    ))
+    try {
+      doReturn(new CompletableFuture[Any]())
+        .when(alterPartitionManager).submit(any(), any())
+
+      val partition = setupDisklessLeaderWithLaggingFollowerInIsr(
+        replicaManager, switched, followerId, logEndOffset = 12L, seal = seal)
+
+      // A follower diverted to the classic fetcher on a leader change reports its real position,
+      // which consolidation has already carried past the seal.
+      val followerReplica = partition.getReplica(followerId).get
+      partition.updateFollowerFetchState(
+        followerReplica,
+        followerFetchOffsetMetadata = new LogOffsetMetadata(8L),
+        followerStartOffset = 0L,
+        followerFetchTimeMs = time.milliseconds(),
+        leaderEndOffset = 12L,
+        brokerEpoch = -1L)
+      clearInvocations(alterPartitionManager)
+
+      time.sleep(replicaManager.config.replicaLagTimeMaxMs * 2)
+      replicaManager.maybeShrinkIsr()
+
+      // The ceiling caps both sides of the comparison, so a follower recorded beyond the seal counts
+      // as caught up even though the leader's log end offset is higher still.
+      verify(alterPartitionManager, never()).submit(any(), any())
+      assertTrue(partition.inSyncReplicaIds.contains(followerId))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  /**
+   * Leader of a diskless partition with `followerId` inside the ISR and never having fetched, so it
+   * goes out of sync once the clock passes replica.lag.time.max.ms. `seal` is what the metadata view
+   * reports for the partition, which is what decides whether lag-based shrink applies.
+   */
+  private def setupDisklessLeaderWithLaggingFollowerInIsr(replicaManager: ReplicaManager,
+                                                          topicIdPartition: TopicIdPartition,
+                                                          followerId: Int,
+                                                          logEndOffset: Long,
+                                                          seal: Long): Partition = {
+    val leaderId = replicaManager.config.brokerId
+    val topicDelta = new TopicsDelta(TopicsImage.EMPTY)
+    topicDelta.replay(new TopicRecord()
+      .setName(topicIdPartition.topic())
+      .setTopicId(topicIdPartition.topicId()))
+    topicDelta.replay(new PartitionRecord()
+      .setTopicId(topicIdPartition.topicId())
+      .setPartitionId(topicIdPartition.partition())
+      .setLeader(leaderId)
+      .setLeaderEpoch(0)
+      .setPartitionEpoch(0)
+      .setReplicas(List[Integer](leaderId, followerId).asJava)
+      .setIsr(List[Integer](leaderId, followerId).asJava))
+
+    val (partition, _) = replicaManager.getOrCreatePartition(
+      topicIdPartition.topicPartition(),
+      topicDelta,
+      topicIdPartition.topicId()).get
+    partition.makeLeader(
+      partitionRegistration(
+        leaderId,
+        leaderEpoch = 0,
+        isr = Array(leaderId, followerId),
+        partitionEpoch = 0,
+        replicas = Array(leaderId, followerId)),
+      isNew = false,
+      new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava),
+      None)
+
+    val records = (0L until logEndOffset).map { i =>
+      new SimpleRecord(s"key-$i".getBytes, s"value-$i".getBytes)
+    }.toArray
+    val log = partition.localLogOrException
+    log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, 0, records: _*), 0)
+    log.updateHighWatermark(logEndOffset)
+
+    when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(topicIdPartition.topicPartition()))
+      .thenReturn(seal)
+    partition
   }
 
   private def setupSwitchedLeaderWithOutOfSyncFollower(replicaManager: ReplicaManager,
