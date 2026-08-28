@@ -8595,7 +8595,9 @@ class ReplicaManagerInklessTest {
   private val switchedTopicId = Uuid.fromString("YK2ed2GaTH2JpgzUaJ8tgg")
 
   private def setupReplicaManagerWithMockedPurgatories(
-    aliveBrokerIds: Seq[Int]
+    aliveBrokerIds: Seq[Int],
+    mockTimer: MockTimer = new MockTimer(time),
+    fetchPurgatory: Option[DelayedOperationPurgatory[DelayedFetch]] = None
   ): ReplicaManager = {
     val props = TestUtils.createBrokerConfig(0)
     val path1 = TestUtils.tempRelativeDir("data").getAbsolutePath
@@ -8619,9 +8621,10 @@ class ReplicaManagerInklessTest {
     when(metadataCache.getAliveBrokerEpoch(1)).thenReturn(util.Optional.of(0L))
     when(metadataCache.contains(new TopicPartition(switchedTopic, 0))).thenReturn(true)
 
-    val timer = new MockTimer(time)
+    val timer = mockTimer
     val mockProducePurgatory = new DelayedOperationPurgatory[DelayedProduce]("Produce", timer, 0, false)
-    val mockFetchPurgatory = new DelayedOperationPurgatory[DelayedFetch]("Fetch", timer, 0, false)
+    val mockFetchPurgatory = fetchPurgatory.getOrElse(
+      new DelayedOperationPurgatory[DelayedFetch]("Fetch", timer, 0, false))
     val mockDeleteRecordsPurgatory = new DelayedOperationPurgatory[DelayedDeleteRecords]("DeleteRecords", timer, 0, false)
     val mockDelayedRemoteFetchPurgatory = new DelayedOperationPurgatory[DelayedRemoteFetch]("DelayedRemoteFetch", timer, 0, false)
     val mockDelayedRemoteListOffsetsPurgatory = new DelayedOperationPurgatory[DelayedRemoteListOffsets]("RemoteListOffsets", timer, 0, false)
@@ -8718,6 +8721,76 @@ class ReplicaManagerInklessTest {
       val partitionData = new FetchRequest.PartitionData(Uuid.ZERO_UUID, 0L, 0L, 100, Optional.of(0))
       val fetchResult = fetchPartitionAsConsumer(replicaManager, tidp0, partitionData)
       assertEquals(Errors.NONE, fetchResult.assertFired.error)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // DelayedFetch.tryComplete takes the offset snapshot with params.fetchOnlyLeader, which is true for
+  // a consumer that sends no clientMetadata. On the non-leader replica the transformer advertises,
+  // that throws NotLeaderOrFollowerException and force-completes the request as case A, so the
+  // consumer gets an immediate empty response and re-polls instead of waiting out fetch.max.wait.ms.
+  @Test
+  def testParkedOlderClientFetchOnHybridDisklessPartitionWaitsOnNonLeaderReplica(): Unit = {
+    val timer = new MockTimer(time)
+    val fetchPurgatory = new DelayedOperationPurgatory[DelayedFetch]("Fetch", timer, 0, false)
+    val replicaManager = spy(setupReplicaManagerWithMockedPurgatories(
+      aliveBrokerIds = Seq(0, 1), mockTimer = timer, fetchPurgatory = Some(fetchPurgatory)))
+
+    try {
+      val tp0 = new TopicPartition(switchedTopic, 0)
+      val tidp0 = new TopicIdPartition(switchedTopicId, tp0)
+      val offsetCheckpoints = new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava)
+      replicaManager.createPartition(tp0).createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
+
+      val followerDelta = createFollowerDelta(switchedTopicId, tp0, 0, 1)
+      val followerImage = imageFromTopics(followerDelta.apply())
+      replicaManager.applyDelta(followerDelta, followerImage)
+
+      doReturn(true).when(replicaManager).isPartitionSwitchedFromClassicToDiskless(tidp0)
+
+      // minBytes above what the empty local log can serve, and a non-zero maxWait, so the request parks.
+      val result = new CallbackResult[FetchPartitionData]()
+      val params = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, 1, 1000L, 1024, 1024 * 1024,
+        FetchIsolation.HIGH_WATERMARK, Optional.empty())
+      val partitionData = new FetchRequest.PartitionData(Uuid.ZERO_UUID, 0L, 0L, 100, Optional.of(0))
+      replicaManager.fetchMessages(params, Seq(tidp0 -> partitionData), QuotaFactory.UNBOUNDED_QUOTA,
+        responseStatus => result.fire(responseStatus.head._2))
+
+      // Parked, not dropped: the request is in the purgatory and answers when its wait expires.
+      assertEquals(1, fetchPurgatory.watched(),
+        "A parked older-client fetch must be watched on a non-leader replica, not force-completed as case A")
+      assertFalse(result.hasFired)
+
+      timer.advanceClock(1001L)
+      assertEquals(Errors.NONE, result.assertFired.error)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testShareFetchKeepsLeaderOnlyOnHybridDisklessPartition(): Unit = {
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic())))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      // Share fetch sets CONSUMER_REPLICA_ID, so only the shareFetchRequest flag separates it from an
+      // older consumer once clientMetadata is absent.
+      val shareParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L, 0L, 1, 1024,
+        FetchIsolation.HIGH_WATERMARK, Optional.empty(), true)
+      val consumerParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L, 0L, 1, 1024,
+        FetchIsolation.HIGH_WATERMARK, Optional.empty())
+
+      assertFalse(replicaManager.allowsOlderConsumerReplicaRead(disklessTopicPartition, shareParams))
+      assertTrue(replicaManager.allowsOlderConsumerReplicaRead(disklessTopicPartition, consumerParams))
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }

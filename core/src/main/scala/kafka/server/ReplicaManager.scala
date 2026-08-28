@@ -2969,6 +2969,29 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Returns true when a consumer that supplies no `clientMetadata` may read this partition from a
+   * replica that is not the partition leader. Such consumers (pre-KIP-392, no rack) make
+   * `FetchParams.fetchOnlyLeader` true, while the metadata transformer advertises a hash-selected
+   * AZ-local replica as the leader of a diskless topic
+   * (`InklessTopicMetadataTransformer.selectLeaderForManagedReplicas`), so leader-only enforcement
+   * would answer NOT_LEADER_OR_FOLLOWER for the very broker the client was told to use. Switched
+   * partitions need the same override for their classic prefix.
+   *
+   * Every path serving such a fetch must reach the same answer, `DelayedFetch` included: its
+   * offset-snapshot check also runs with `fetchOnlyLeader`, and a `NotLeaderOrFollowerException`
+   * there force-completes the parked request (case A) instead of waiting for the high watermark or
+   * `minBytes`.
+   *
+   * Share fetches are excluded on the flag rather than on convention: they set
+   * `CONSUMER_REPLICA_ID`, so `isFromConsumer` holds, and only `KafkaApis` always supplying
+   * `clientMetadata` keeps them leader-only today.
+   */
+  private[server] def allowsOlderConsumerReplicaRead(tp: TopicIdPartition, params: FetchParams): Boolean = {
+    params.isFromConsumer && params.clientMetadata.isEmpty && !params.shareFetchRequest &&
+      (isPartitionSwitchedFromClassicToDiskless(tp) || isManagedConsolidatingDisklessPartition(tp))
+  }
+
+  /**
    * Read from multiple topic partitions at the given offset up to maxSize bytes
    */
   def readFromLog(
@@ -3035,17 +3058,7 @@ class ReplicaManager(val config: KafkaConfig,
             if (preferredReadReplica.isDefined) OptionalInt.of(preferredReadReplica.get) else OptionalInt.empty(),
             Errors.NONE)
         } else {
-          // The metadata transformer can advertise a managed diskless replica as the AZ-local
-          // virtual leader even when it is not the KRaft leader. Older consumers don't supply
-          // clientMetadata, so Kafka would otherwise enforce leader-only reads after consolidation
-          // makes the local log readable. Switched partitions need the same override for their
-          // classic prefix. Broker-to-broker follower replication and share fetches remain
-          // leader-only.
-          val isOlderConsumer = params.isFromConsumer && params.clientMetadata.isEmpty
-          val allowReplica = !params.fetchOnlyLeader() ||
-            (isOlderConsumer &&
-              (isPartitionSwitchedFromClassicToDiskless(tp) ||
-                isManagedConsolidatingDisklessPartition(tp)))
+          val allowReplica = !params.fetchOnlyLeader() || allowsOlderConsumerReplicaRead(tp, params)
           log = partition.localLogWithEpochOrThrow(fetchInfo.currentLeaderEpoch, !allowReplica)
 
           // Try the read first, this tells us whether we need all of adjustedFetchSize for this partition
