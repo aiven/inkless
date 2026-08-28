@@ -65,6 +65,7 @@ import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -75,6 +76,7 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -498,6 +500,133 @@ public class InklessConsolidatedDisklessTopicsTest {
         // The survivors [7, seal) on each partition are still readable and contiguous across the cut.
         final int survivorsPerPartition = (int) (sealPerPartition - 7);
         consumeAndVerify(commonConfigs, survivorsPerPartition * numPartitions);
+    }
+
+    /**
+     * Diskless never held {@code [0, classicToDisklessStartOffset)}, so a consumer asking for an offset
+     * below the seal must be answered from the classic log or the remote tier. A reply that starts at the
+     * seal instead has silently dropped the range the consumer asked for.
+     *
+     * <p>The read is served by a replica that lost its local data and rebuilt it, which is the reachable
+     * way a replica ends up below the seal: DR, a replaced log directory, or a reassignment target. The
+     * switch itself cannot produce that state, since it is refused while the partition is
+     * under-replicated.
+     *
+     * <p>Recovery of a small prefix outruns any attempt to route a consumer at the replica mid-catch-up,
+     * so this does not observe the high watermark sitting below the seal. The consumer-frontier floors
+     * that cover that window are unit-tested in {@code ReplicaManagerInklessTest}.
+     */
+    @Test
+    public void testWipedReplicaServesBelowSealReadAtRequestedOffset() throws Exception {
+        numPartitions = 1;
+        topicName = "below-seal-catching-up-replica";
+        final TopicPartition tp = new TopicPartition(topicName, 0);
+        final int prefixRecords = 60;
+        final long seal = prefixRecords;
+
+        final Map<String, Object> commonConfigs = new HashMap<>();
+        commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            createClassicTopic(admin);
+            produceRecords(commonConfigs, prefixRecords, largeValueRecordFactory());
+            switchTopicToConsolidatedDiskless(admin);
+
+            // describeTopics reports the transformer-selected leader for a diskless topic, so take
+            // leadership from the KRaft image.
+            final var kraftPartition = cluster.brokers().get(0).metadataCache()
+                .currentImage().topics().getTopic(topicName).partitions().get(0);
+            final int targetBrokerId = kraftPartition.leader == 0 ? 1 : 0;
+            log.info("KRaft leader is {}, wiping follower {}", kraftPartition.leader, targetBrokerId);
+
+            cluster.brokers().get(targetBrokerId).shutdown();
+            cluster.brokers().get(targetBrokerId).awaitShutdown();
+            wipeLocalPartitionData(targetBrokerId, tp);
+            cluster.brokers().get(targetBrokerId).startup();
+
+            // client.rack pins the read to the wiped replica: the transformer advertises the alive
+            // in-AZ replica as leader. auto.offset.reset=none keeps a broker-side out-of-range a test
+            // failure instead of a silent seek elsewhere.
+            final long belowSealOffset = seal - 5;
+            final Map<String, Object> pinnedConfigs = new HashMap<>(commonConfigs);
+            pinnedConfigs.put(ConsumerConfig.CLIENT_RACK_CONFIG, "az" + (targetBrokerId + 1));
+            pinnedConfigs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+            pinnedConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+            pinnedConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, "below-seal-group-" + UUID.randomUUID());
+            pinnedConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "none");
+
+            log.info("Local log state on the recovering replica {} before the read: {}",
+                targetBrokerId, localLogState(targetBrokerId, tp));
+
+            try (var consumer = new KafkaConsumer<String, String>(pinnedConfigs)) {
+                consumer.assign(Collections.singletonList(tp));
+                consumer.seek(tp, belowSealOffset);
+                final AtomicLong firstOffset = new AtomicLong(-1L);
+                TestUtils.waitForCondition(() -> {
+                    final var records = consumer.poll(Duration.ofMillis(500));
+                    if (records.isEmpty()) {
+                        return false;
+                    }
+                    firstOffset.set(records.iterator().next().offset());
+                    return true;
+                }, 120_000, () -> "A below-seal read was never served from the catching-up replica; state="
+                    + localLogState(targetBrokerId, tp));
+                assertEquals(belowSealOffset, firstOffset.get(),
+                    "The below-seal read must resume at the requested offset, not skip to the seal; state="
+                        + localLogState(targetBrokerId, tp));
+            }
+        }
+    }
+
+    /** Simulates the loss of a replica's local data: DR, a replaced log directory, or a fresh target. */
+    private void wipeLocalPartitionData(int brokerId, TopicPartition tp) throws Exception {
+        final String entryPrefix = tp.topic() + " " + tp.partition() + " ";
+        for (String logDir : cluster.brokers().get(brokerId).config().logDirs()) {
+            final Path partitionDir = Path.of(logDir, tp.topic() + "-" + tp.partition());
+            if (Files.isDirectory(partitionDir)) {
+                try (var paths = Files.walk(partitionDir)) {
+                    paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                        try {
+                            Files.delete(path);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    });
+                }
+                log.info("Deleted local partition data at {}", partitionDir);
+            }
+            final Path checkpoint = Path.of(logDir, "replication-offset-checkpoint");
+            if (Files.exists(checkpoint)) {
+                final List<String> lines = Files.readAllLines(checkpoint);
+                final List<String> kept = new ArrayList<>();
+                int entries = 0;
+                for (int i = 0; i < lines.size(); i++) {
+                    if (i < 2) {
+                        kept.add(lines.get(i));
+                    } else if (!lines.get(i).startsWith(entryPrefix)) {
+                        kept.add(lines.get(i));
+                        entries++;
+                    }
+                }
+                if (kept.size() > 1) {
+                    kept.set(1, Integer.toString(entries));
+                }
+                Files.write(checkpoint, kept);
+            }
+        }
+    }
+
+    private record LocalLogState(long logStartOffset, long localLogStartOffset,
+                                 long highWatermark, long logEndOffset) { }
+
+    private LocalLogState localLogState(int brokerId, TopicPartition tp) {
+        final var log = cluster.brokers().get(brokerId).logManager().getLog(tp, false);
+        if (log.isEmpty()) {
+            return null;
+        }
+        final var unifiedLog = log.get();
+        return new LocalLogState(unifiedLog.logStartOffset(), unifiedLog.localLogStartOffset(),
+            unifiedLog.highWatermark(), unifiedLog.logEndOffset());
     }
 
     /**
