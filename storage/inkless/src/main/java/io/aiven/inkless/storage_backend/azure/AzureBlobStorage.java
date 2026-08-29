@@ -20,9 +20,11 @@ package io.aiven.inkless.storage_backend.azure;
 
 import org.apache.kafka.common.metrics.Metrics;
 
+import com.azure.core.util.Context;
 import com.azure.identity.DefaultAzureCredentialBuilder;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
+import com.azure.storage.blob.models.BlobDownloadContentResponse;
 import com.azure.storage.blob.models.BlobErrorCode;
 import com.azure.storage.blob.models.BlobRange;
 import com.azure.storage.blob.models.BlobStorageException;
@@ -40,7 +42,7 @@ import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.channels.Channels;
+import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
 import java.util.HashSet;
 import java.util.Map;
@@ -52,6 +54,7 @@ import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.storage_backend.common.InvalidRangeException;
 import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
+import io.aiven.inkless.storage_backend.common.SizedReadableByteChannel;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import reactor.core.Exceptions;
@@ -172,17 +175,23 @@ public final class AzureBlobStorage extends StorageBackend {
     @Override
     public ReadableByteChannel fetch(final ObjectKey key, final ByteRange range) throws StorageBackendException, IOException {
         try {
-            if (range!= null && range.empty()) {
-                return Channels.newChannel(InputStream.nullInputStream());
+            if (range != null && range.empty()) {
+                return SizedReadableByteChannel.empty();
             }
-            final ReadableByteChannel channel;
-            if (range != null) {
-                channel = Channels.newChannel(blobContainerClient.getBlobClient(key.value()).openInputStream(
-                        new BlobRange(range.offset(), range.size()), null));
-            } else {
-                channel = Channels.newChannel(blobContainerClient.getBlobClient(key.value()).openInputStream());
+            // Downloading the range materializes the exact payload, so its length needs no
+            // clipping against the blob size and nothing has to stage bytes through a stream.
+            final BlobRange blobRange = range == null
+                ? null
+                : new BlobRange(range.offset(), range.size());
+            final BlobDownloadContentResponse response = blobContainerClient.getBlobClient(key.value())
+                .downloadContentWithResponse(null, null, blobRange, false, null, Context.NONE);
+            final ByteBuffer payload = response.getValue().toByteBuffer();
+            if (range != null && !payload.hasRemaining()) {
+                // Azure answers an offset at the blob end with empty content rather than 416, and the
+                // request was for a non-empty range, so nothing but an out-of-range offset explains this.
+                throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range);
             }
-            return channel;
+            return SizedReadableByteChannel.of(payload);
         } catch (final BlobStorageException e) {
             if (e.getStatusCode() == 404) {
                 throw new KeyNotFoundException(this, key, e);

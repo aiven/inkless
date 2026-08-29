@@ -35,13 +35,15 @@ import io.aiven.inkless.TimeUtils;
  *
  * <p>The start time is provided externally so that it can be captured <em>before</em> the storage
  * fetch is initiated (e.g., before {@code ObjectFetcher.fetch()}). This ensures TTFB includes
- * all setup overhead (DNS, TLS, HTTP request, metadata lookup) regardless of whether the backend
- * downloads eagerly (S3) or streams lazily (GCS, Azure).
+ * all setup overhead (DNS, TLS, HTTP request, metadata lookup) whether the backend downloads the
+ * payload inside {@code fetch()} (S3, Azure, in-memory) or streams it on read (GCS).
  *
- * <p><strong>Measurement granularity:</strong> The timestamp is captured <em>after</em>
- * {@code delegate.read(dst)} returns, so the reported TTFB includes the transfer time for the
- * first chunk (typically up to the buffer size), not the precise instant the first byte arrives
- * on the wire. For most storage backends and buffer sizes this difference is negligible.
+ * <p><strong>What the number means:</strong> the timestamp is captured <em>after</em>
+ * {@code delegate.read(dst)} returns, so the reported value includes the transfer that read
+ * triggered, not the instant the first byte arrived on the wire. For a backend that downloads
+ * inside {@code fetch()} the first read returns once the whole payload is already in memory, so
+ * TTFB is effectively whole-fetch time. Only for a streaming backend does it approximate
+ * first-byte latency.
  *
  * <p>The callback is invoked at most once, on the first successful read that returns &gt; 0 bytes.
  * If the channel is closed or exhausted without ever returning data, the callback is never invoked.
