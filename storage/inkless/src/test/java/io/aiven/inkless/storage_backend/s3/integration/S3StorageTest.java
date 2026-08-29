@@ -86,6 +86,7 @@ public class S3StorageTest extends BaseStorageTest {
         return s3Storage;
     }
 
+    @Test
     @Override
     protected void testUploadUndersizedStream() throws IOException {
         try (StorageBackend storage = storage()) {
@@ -102,6 +103,7 @@ public class S3StorageTest extends BaseStorageTest {
     }
 
     @Test
+    @Override
     protected void testUploadOversizeStream() throws IOException {
         try (StorageBackend storage = storage()) {
             final byte[] content = "content".getBytes();

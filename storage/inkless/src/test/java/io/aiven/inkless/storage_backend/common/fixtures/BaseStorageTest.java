@@ -212,6 +212,20 @@ public abstract class BaseStorageTest {
     }
 
     @Test
+    void testFetchWithRangeFromStartLargerThanFileSize() throws Exception {
+        final ByteBuffer fetch;
+        try (StorageBackend storage = storage()) {
+            final String content = "ABC";
+            byte[] data = content.getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
+
+            fetch = storage.readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, 10)));
+        }
+        assertThat(new String(fetch.array())).isEqualTo("ABC");
+    }
+
+    @Test
     protected void testFetchWithRangeOutsideFileSize() throws Exception {
         try (StorageBackend storage = storage()) {
             final String content = "ABC";
