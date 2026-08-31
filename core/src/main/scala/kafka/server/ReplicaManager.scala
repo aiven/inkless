@@ -2526,14 +2526,16 @@ class ReplicaManager(val config: KafkaConfig,
               } else if (fetchPartitionData.fetchOffset < readableFrontier) {
                 shouldReadFromUnifiedLog = true
                 // Track only a fetch that could actually receive a supplement. A follower or
-                // future replica never merges diskless records into a local-log read; a fetch
-                // below localLogStartOffset routes to RemoteLogManager,
+                // future replica never merges diskless records into a local-log read; a
+                // switch-pending partition has no committed seal, so the control plane holds
+                // nothing for it; a fetch below localLogStartOffset routes to RemoteLogManager,
                 // which discards the supplement; and a read that cannot reach LEO is no proof of
                 // exhaustion, which the guard in buildConsolidationSupplementFetchInfos would then
                 // pass on an empty read. Store LEO, since firing from below it would ask object
                 // storage for classic offsets only the local log holds.
                 if (inklessSharedState.isDefined &&
                   params.isFromConsumer &&
+                  classicToDisklessStartOffset != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING &&
                   fetchPartitionData.fetchOffset >= localLogStartOffset &&
                   localReadFrontier >= logEndOffset)
                   consolidatingLocalFetchSupplements += (tp -> logEndOffset)
@@ -2951,12 +2953,19 @@ class ReplicaManager(val config: KafkaConfig,
    * consumer reads must be allowed from its local log. ISR is deliberately not checked here because
    * born-diskless replicas are added to ISR before their local fetch state is ready.
    *
+   * Switch-pending (`-2`) partitions are excluded. Those serve every offset from the local log
+   * because diskless holds nothing until the seal commits, so a fetch above a lagging replica's log
+   * end offset has no diskless path to fall back on and would answer OFFSET_OUT_OF_RANGE for records
+   * the leader still holds. Keeping the leader-only requirement for the seal window makes the
+   * consumer retry until the switch completes instead.
    *
    * Managed replicas are not tested here: `KafkaConfig.validateValues` requires
    * `diskless.managed.replicas.enable` whenever consolidation is enabled.
    */
   private[server] def isManagedConsolidatingDisklessPartition(tp: TopicIdPartition): Boolean = {
-    consolidationActiveFor(tp.topic)
+    consolidationActiveFor(tp.topic) &&
+      _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition) !=
+        PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
   }
 
   /**
