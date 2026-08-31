@@ -2988,22 +2988,11 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
-   * Returns true when a consumer that supplies no `clientMetadata` may read this partition from a
-   * replica that is not the partition leader. Such consumers (pre-KIP-392, no rack) make
-   * `FetchParams.fetchOnlyLeader` true, while the metadata transformer advertises a hash-selected
-   * AZ-local replica as the leader of a diskless topic
-   * (`InklessTopicMetadataTransformer.selectLeaderForManagedReplicas`), so leader-only enforcement
-   * would answer NOT_LEADER_OR_FOLLOWER for the very broker the client was told to use. Switched
-   * partitions need the same override for their classic prefix.
+   * Returns true when a fetch carrying no `clientMetadata` may read this partition from a replica
+   * that is not the partition leader, because the metadata transformer advertised that replica.
    *
-   * Every path serving such a fetch must reach the same answer, `DelayedFetch` included: its
-   * offset-snapshot check also runs with `fetchOnlyLeader`, and a `NotLeaderOrFollowerException`
-   * there force-completes the parked request (case A) instead of waiting for the high watermark or
-   * `minBytes`.
-   *
-   * Share fetches are excluded on the flag rather than on convention: they set
-   * `CONSUMER_REPLICA_ID`, so `isFromConsumer` holds, and only `KafkaApis` always supplying
-   * `clientMetadata` keeps them leader-only today.
+   * `DelayedFetch` must reach the same answer: its offset snapshot also runs with `fetchOnlyLeader`,
+   * and refusing there force-completes the parked request instead of waiting.
    */
   private[server] def allowsOlderConsumerReplicaRead(tp: TopicIdPartition, params: FetchParams): Boolean = {
     params.isFromConsumer && params.clientMetadata.isEmpty && !params.shareFetchRequest &&
