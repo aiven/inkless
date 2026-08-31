@@ -2975,19 +2975,11 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
-   * Returns true for a managed consolidating diskless partition. The metadata transformer may
-   * advertise this broker as the AZ-local virtual leader even when it is not the partition leader, so
-   * consumer reads must be allowed from its local log. ISR is deliberately not checked here because
-   * born-diskless replicas are added to ISR before their local fetch state is ready.
+   * Returns true for a consolidating partition whose switch is not still pending.
+   * ISR is not checked: born-diskless replicas join ISR before their local fetch state is ready.
    *
-   * Switch-pending (`-2`) partitions are excluded. Those serve every offset from the local log
-   * because diskless holds nothing until the seal commits, so a fetch above a lagging replica's log
-   * end offset has no diskless path to fall back on and would answer OFFSET_OUT_OF_RANGE for records
-   * the leader still holds. Keeping the leader-only requirement for the seal window makes the
-   * consumer retry until the switch completes instead.
-   *
-   * Managed replicas are not tested here: `KafkaConfig.validateValues` requires
-   * `diskless.managed.replicas.enable` whenever consolidation is enabled.
+   * Pending partitions are excluded because they have no diskless leg to fall back on, so a replica
+   * read there can answer OFFSET_OUT_OF_RANGE for records the leader holds.
    */
   private[server] def isManagedConsolidatingDisklessPartition(tp: TopicIdPartition): Boolean = {
     consolidationActiveFor(tp.topic) &&
