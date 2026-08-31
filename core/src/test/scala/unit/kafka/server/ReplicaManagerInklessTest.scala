@@ -36,7 +36,7 @@ import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.{DirectoryId, IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.compress.Compression
-import org.apache.kafka.common.errors.UnknownTopicOrPartitionException
+import org.apache.kafka.common.errors.{NotLeaderOrFollowerException, UnknownTopicOrPartitionException}
 import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
 import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
 import org.apache.kafka.common.message.DeleteRecordsResponseData
@@ -67,7 +67,7 @@ import org.apache.kafka.server.util.timer.MockTimer
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.apache.kafka.storage.internals.checkpoint.LazyOffsetCheckpoints
-import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadResult, OffsetResultHolder, UnifiedLog}
+import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadInfo, LogReadResult, OffsetResultHolder, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.junit.jupiter.params.ParameterizedTest
@@ -1786,14 +1786,21 @@ class ReplicaManagerInklessTest {
     }
   }
 
-  private def stubConsolidatingPartitionWithLocalLeo(replicaManager: ReplicaManager, localLeo: Long): Unit = {
-    stubConsolidatingPartitionWithLocalLeoFor(replicaManager, disklessTopicPartition, localLeo)
+  private def stubConsolidatingPartitionWithLocalLeo(replicaManager: ReplicaManager,
+                                                     localLeo: Long,
+                                                     localHighWatermark: Option[Long] = None): Unit = {
+    stubConsolidatingPartitionWithLocalLeoFor(
+      replicaManager, disklessTopicPartition, localLeo, localHighWatermark)
   }
 
-  private def stubConsolidatingPartitionWithLocalLeoFor(replicaManager: ReplicaManager, tp: TopicIdPartition, localLeo: Long): Unit = {
+  private def stubConsolidatingPartitionWithLocalLeoFor(replicaManager: ReplicaManager,
+                                                        tp: TopicIdPartition,
+                                                        localLeo: Long,
+                                                        localHighWatermark: Option[Long] = None): Unit = {
     val mockPartition = mock(classOf[Partition])
     val mockLog = mock(classOf[UnifiedLog])
     when(mockLog.logEndOffset).thenReturn(localLeo)
+    when(mockLog.highWatermark).thenReturn(localHighWatermark.getOrElse(localLeo))
     when(mockPartition.log).thenReturn(Some(mockLog))
     doReturn(Right(mockPartition)).when(replicaManager).getPartitionOrError(
       ArgumentMatchers.eq(tp.topicPartition()))
@@ -1801,14 +1808,16 @@ class ReplicaManagerInklessTest {
 
   // Like stubConsolidatingPartitionWithLocalLeoFor but also pins leadership (the read-path
   // cross-tier-earliest guard only fires for followers) and localLogStartOffset.
-  private def stubConsolidatingPartitionForFollowerReadGuard(replicaManager: ReplicaManager,
-                                                             tp: TopicIdPartition,
-                                                             localLeo: Long,
-                                                             isLeader: Boolean,
-                                                             localLogStartOffset: Long = 0L): Unit = {
+  private def stubConsolidatingPartitionWithLogStart(replicaManager: ReplicaManager,
+                                                     tp: TopicIdPartition,
+                                                     localLeo: Long,
+                                                     isLeader: Boolean,
+                                                     localLogStartOffset: Long = 0L,
+                                                     localHighWatermark: Option[Long] = None): Unit = {
     val mockPartition = mock(classOf[Partition])
     val mockLog = mock(classOf[UnifiedLog])
     when(mockLog.logEndOffset).thenReturn(localLeo)
+    when(mockLog.highWatermark).thenReturn(localHighWatermark.getOrElse(localLeo))
     when(mockLog.localLogStartOffset).thenReturn(localLogStartOffset)
     when(mockPartition.log).thenReturn(Some(mockLog))
     when(mockPartition.isLeader).thenReturn(isLeader)
@@ -1911,7 +1920,7 @@ class ReplicaManagerInklessTest {
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
-      stubConsolidatingPartitionForFollowerReadGuard(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
+      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
 
       // Older consumer: replicaId = -1 and empty clientMetadata.
       val fetchParams = new FetchParams(
@@ -1957,7 +1966,7 @@ class ReplicaManagerInklessTest {
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
-      stubConsolidatingPartitionForFollowerReadGuard(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
+      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
 
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
@@ -2012,7 +2021,7 @@ class ReplicaManagerInklessTest {
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
-      stubConsolidatingPartitionForFollowerReadGuard(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = true)
+      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = true)
 
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
@@ -2065,7 +2074,7 @@ class ReplicaManagerInklessTest {
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
-      stubConsolidatingPartitionForFollowerReadGuard(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
+      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
 
       // Modern consumer: non-empty clientMetadata (rackId present).
       val clientMetadata = new DefaultClientMetadata(
@@ -2117,7 +2126,7 @@ class ReplicaManagerInklessTest {
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
-      stubConsolidatingPartitionForFollowerReadGuard(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
+      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
 
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
@@ -2183,6 +2192,7 @@ class ReplicaManagerInklessTest {
       val mockPartition = mock(classOf[Partition])
       val mockLog = mock(classOf[UnifiedLog])
       when(mockLog.logEndOffset).thenReturn(100L)
+      when(mockLog.highWatermark).thenReturn(100L)
       when(mockPartition.log).thenReturn(Some(mockLog))
       val endOffsetMetadata = new LogOffsetMetadata(100L, 0L, 0)
       when(mockPartition.fetchOffsetSnapshot(any(), any()))
@@ -2273,6 +2283,7 @@ class ReplicaManagerInklessTest {
       val mockPartition = mock(classOf[Partition])
       val mockLog = mock(classOf[UnifiedLog])
       when(mockLog.logEndOffset).thenReturn(100L)
+      when(mockLog.highWatermark).thenReturn(100L)
       when(mockPartition.log).thenReturn(Some(mockLog))
       val endOffsetMetadata = new LogOffsetMetadata(100L, 0L, 0)
       when(mockPartition.fetchOffsetSnapshot(any(), any()))
@@ -2449,6 +2460,7 @@ class ReplicaManagerInklessTest {
       val mockPartition = mock(classOf[Partition])
       val mockLog = mock(classOf[UnifiedLog])
       when(mockLog.logEndOffset).thenReturn(100L)
+      when(mockLog.highWatermark).thenReturn(100L)
       when(mockPartition.log).thenReturn(Some(mockLog))
       val endOffsetMetadata = new LogOffsetMetadata(100L, 0L, 0)
       when(mockPartition.fetchOffsetSnapshot(any(), any()))
@@ -2522,6 +2534,7 @@ class ReplicaManagerInklessTest {
       val mockPartition = mock(classOf[Partition])
       val mockLog = mock(classOf[UnifiedLog])
       when(mockLog.logEndOffset).thenReturn(100L)
+      when(mockLog.highWatermark).thenReturn(100L)
       when(mockPartition.log).thenReturn(Some(mockLog))
       val endOffsetMetadata = new LogOffsetMetadata(100L, 0L, 0)
       when(mockPartition.fetchOffsetSnapshot(any(), any()))
@@ -2648,6 +2661,7 @@ class ReplicaManagerInklessTest {
       val mockPartition = mock(classOf[Partition])
       val mockLog = mock(classOf[UnifiedLog])
       when(mockLog.logEndOffset).thenReturn(100L)
+      when(mockLog.highWatermark).thenReturn(100L)
       when(mockPartition.log).thenReturn(Some(mockLog))
       val endOffsetMetadata = new LogOffsetMetadata(100L, 0L, 0)
       when(mockPartition.fetchOffsetSnapshot(any(), any()))
@@ -2714,6 +2728,7 @@ class ReplicaManagerInklessTest {
       val mockPartition = mock(classOf[Partition])
       val mockLog = mock(classOf[UnifiedLog])
       when(mockLog.logEndOffset).thenReturn(500L)
+      when(mockLog.highWatermark).thenReturn(500L)
       when(mockLog.localLogStartOffset).thenReturn(200L)
       when(mockPartition.log).thenReturn(Some(mockLog))
       val endOffsetMetadata = new LogOffsetMetadata(500L, 0L, 0)
@@ -2832,6 +2847,7 @@ class ReplicaManagerInklessTest {
       val mockPartition = mock(classOf[Partition])
       val mockLog = mock(classOf[UnifiedLog])
       when(mockLog.logEndOffset).thenReturn(localLeo)
+      when(mockLog.highWatermark).thenReturn(localLeo)
       when(mockPartition.log).thenReturn(Some(mockLog))
       // endOffset on a NEWER segment than the fetch offset (480, baseOffset 0) so Case F fires.
       val endOffsetMetadata = new LogOffsetMetadata(localLeo, 500L, 0)
@@ -2949,6 +2965,7 @@ class ReplicaManagerInklessTest {
       val consolidatingPartition = mock(classOf[Partition])
       val consolidatingLog = mock(classOf[UnifiedLog])
       when(consolidatingLog.logEndOffset).thenReturn(100L)
+      when(consolidatingLog.highWatermark).thenReturn(100L)
       when(consolidatingPartition.log).thenReturn(Some(consolidatingLog))
       val consolidatingEndOffset = new LogOffsetMetadata(100L, 0L, 0)
       when(consolidatingPartition.fetchOffsetSnapshot(any(), any()))
@@ -3661,6 +3678,237 @@ class ReplicaManagerInklessTest {
       assertEquals(RECORDS, responseData(disklessTopicPartition).records)
       verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
       verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  @Test
+  def testFetchConsolidatingDisklessBelowLocalLeoButAtHighWatermarkUsesDisklessPath(): Unit = {
+    val disklessResponse = Map(disklessTopicPartition ->
+      new FetchPartitionData(
+        Errors.NONE,
+        110L, 0L,
+        RECORDS,
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+    )
+    val fetchHandlerCtor = mockFetchHandler(disklessResponse)
+    val cp = mock(classOf[ControlPlane])
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      stubConsolidatingPartitionWithLocalLeo(
+        replicaManager, localLeo = 100L, localHighWatermark = Some(50L))
+
+      val fetchParams = new FetchParams(
+        -1, -1L,
+        0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition ->
+          new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      replicaManager.fetchMessages(
+        fetchParams,
+        fetchInfos,
+        QuotaFactory.UNBOUNDED_QUOTA,
+        response => responseData = response.toMap)
+
+      waitForFetchResponse(responseData)
+      assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+      verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+      verify(fetchHandlerCtor.constructed().get(0), times(1)).handle(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  @Test
+  def testFetchConsolidatingFollowerBelowLeoAtHighWatermarkReadsFromUnifiedLog(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    ))
+    try {
+      // Never switched, so the seal floor cannot decide the routing: only the follower's LEO
+      // frontier keeps this read on the local log.
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      stubConsolidatingPartitionWithLocalLeo(
+        replicaManager, localLeo = 100L, localHighWatermark = Some(50L))
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), RECORDS),
+          Optional.empty(), 50L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      val fetchParams = new FetchParams(
+        1, -1L,
+        0L, 1, 1024, FetchIsolation.LOG_END, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition ->
+          new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val localBytesBefore = yammerMeterCount("ConsolidationLocalBytesPerSec")
+      replicaManager.fetchMessages(
+        fetchParams,
+        fetchInfos,
+        QuotaFactory.UNBOUNDED_QUOTA,
+        response => responseData = response.toMap)
+
+      waitForFetchResponse(responseData)
+      assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+      verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+      // Replication traffic is not a consumer consolidation local read: a follower never receives a
+      // supplement, so its bytes must stay out of the consolidation meter.
+      assertEquals(localBytesBefore, yammerMeterCount("ConsolidationLocalBytesPerSec"),
+        "Follower replication bytes must not be recorded as consolidation local bytes")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  // The diskless pruner deletes batches up to highestOffsetInRemoteStorage, so
+  // [logStartOffset, localLogStartOffset) exists only in the remote tier. A high watermark
+  // restored below that range (missing or stale checkpoint) must not route those offsets to
+  // diskless, which answers OFFSET_OUT_OF_RANGE for them: the local read has to run so it can
+  // throw OffsetOutOfRangeException and reach RemoteLogManager.
+  @Test
+  def testFetchConsolidatingTieredRangeAboveHighWatermarkReadsFromUnifiedLog(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      stubConsolidatingPartitionWithLogStart(
+        replicaManager, disklessTopicPartition, localLeo = 500L, isLeader = true,
+        localLogStartOffset = 200L, localHighWatermark = Some(0L))
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), RECORDS),
+          Optional.empty(), 0L, 0L, 500L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+        0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition ->
+          new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      replicaManager.fetchMessages(
+        fetchParams,
+        fetchInfos,
+        QuotaFactory.UNBOUNDED_QUOTA,
+        response => responseData = response.toMap)
+
+      waitForFetchResponse(responseData)
+      assertEquals(RECORDS, responseData(disklessTopicPartition).records)
+      verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  // Diskless never held [0, classicToDisklessStartOffset), so a consumer fetching the classic prefix
+  // of a switched partition must stay on the local read path even when this replica's high watermark
+  // has not caught up: routing it to diskless would answer OFFSET_OUT_OF_RANGE for records the log
+  // holds. The response is empty until the high watermark advances, and DelayedFetch returns it
+  // immediately (case F, fetch offset beyond the isolation bound), so the consumer re-fetches rather
+  // than waiting out fetch.max.wait.ms. The supplement must stay off: a read stopped at the high
+  // watermark is no proof that the local log is exhausted.
+  @Test
+  def testFetchConsolidatingBelowSealAboveHighWatermarkStaysLocalWithoutSupplement(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val timer = new MockTimer(time)
+    val fetchPurgatory = new DelayedOperationPurgatory[DelayedFetch]("Fetch", timer, 0, false)
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      delayedFetchPurgatory = Some(fetchPurgatory),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      val mockPartition = mock(classOf[Partition])
+      val mockLog = mock(classOf[UnifiedLog])
+      when(mockLog.logEndOffset).thenReturn(100L)
+      when(mockLog.highWatermark).thenReturn(50L)
+      when(mockPartition.log).thenReturn(Some(mockLog))
+      when(mockPartition.isLeader).thenReturn(true)
+      val hwMetadata = new LogOffsetMetadata(50L, 0L, 0)
+      val endOffsetMetadata = new LogOffsetMetadata(100L, 0L, 0)
+      when(mockPartition.fetchOffsetSnapshot(any(), any()))
+        .thenReturn(new LogOffsetSnapshot(0L, endOffsetMetadata, hwMetadata, hwMetadata))
+      doReturn(Right(mockPartition)).when(replicaManager)
+        .getPartitionOrError(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+      doReturn(mockPartition).when(replicaManager)
+        .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+
+      // A HIGH_WATERMARK read at an offset above the high watermark returns no records.
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(60L, 0L, 0), MemoryRecords.EMPTY),
+          Optional.empty(), 50L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+        30000L, 1024, 1024 * 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition ->
+          new PartitionData(disklessTopicPartition.topicId(), 60L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      replicaManager.fetchMessages(
+        fetchParams,
+        fetchInfos,
+        QuotaFactory.UNBOUNDED_QUOTA,
+        response => responseData = response.toMap)
+
+      waitForFetchResponse(responseData)
+      assertEquals(Errors.NONE, responseData(disklessTopicPartition).error)
+      assertEquals(0, responseData(disklessTopicPartition).records.sizeInBytes,
+        "A below-seal read above the high watermark has nothing committed to return yet")
+      verify(replicaManager, atLeastOnce()).readFromLog(any(), any(), any(), any())
+      // Diskless holds nothing below the seal, so neither the read nor a supplement may go there.
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
     } finally {
       replicaManager.shutdown(checkpointHW = false)
       fetchHandlerCtor.close()
@@ -7638,6 +7886,108 @@ class ReplicaManagerInklessTest {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
         .thenReturn(100L)
       assertTrue(replicaManager.isPartitionSwitchedFromClassicToDiskless(disklessTopicPartition))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testIsManagedConsolidatingDisklessPartitionTrueForConsolidatingTopic(): Unit = {
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()))
+    try {
+      assertTrue(replicaManager.isManagedConsolidatingDisklessPartition(disklessTopicPartition))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testIsManagedConsolidatingDisklessPartitionFalseForNonConsolidatingTopic(): Unit = {
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true)
+    try {
+      assertFalse(replicaManager.isManagedConsolidatingDisklessPartition(disklessTopicPartition))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // Stubs a non-leader partition whose local log is only reachable with requireLeader = false, so a
+  // read that keeps the leader-only requirement surfaces as NOT_LEADER_OR_FOLLOWER.
+  private def stubNonLeaderPartitionForReplicaRead(replicaManager: ReplicaManager): Unit = {
+    val mockPartition = mock(classOf[Partition])
+    val mockLog = mock(classOf[UnifiedLog])
+    when(mockPartition.topicId).thenReturn(Some(disklessTopicPartition.topicId()))
+    when(mockPartition.isLeader).thenReturn(false)
+    when(mockPartition.localLogWithEpochOrThrow(any(), ArgumentMatchers.eq(true)))
+      .thenThrow(new NotLeaderOrFollowerException("Broker is not the leader for this partition"))
+    when(mockPartition.localLogWithEpochOrThrow(any(), ArgumentMatchers.eq(false)))
+      .thenReturn(mockLog)
+    when(mockPartition.fetchRecords(any(), any(), anyLong(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean()))
+      .thenReturn(new LogReadInfo(
+        new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), RECORDS),
+        Optional.empty(), 100L, 0L, 100L, 100L))
+    doReturn(mockPartition).when(replicaManager)
+      .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+  }
+
+  private def readFromLogAsOlderConsumer(replicaManager: ReplicaManager): LogReadResult = {
+    val fetchParams = new FetchParams(
+      FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+      0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+    )
+    val fetchInfos = Seq(
+      disklessTopicPartition ->
+        new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+    )
+    replicaManager.readFromLog(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, readFromPurgatory = false)
+      .head._2
+  }
+
+  // The behavior the predicate exists for: AZ routing points a pre-KIP-392 consumer (no
+  // clientMetadata, so no preferred-read-replica negotiation) at a replica that is not the
+  // partition leader, and the read must be authorized against that replica's local log.
+  @Test
+  def testReadFromLogAllowsReplicaConsumerReadOnManagedConsolidatingPartition(): Unit = {
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic())))
+    try {
+      // Never switched, so only isManagedConsolidatingDisklessPartition can grant the override.
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      stubNonLeaderPartitionForReplicaRead(replicaManager)
+
+      val result = readFromLogAsOlderConsumer(replicaManager)
+
+      assertEquals(Errors.NONE, result.error)
+      assertEquals(RECORDS, result.info.records)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testReadFromLogKeepsLeaderOnlyWhenConsolidationDisabled(): Unit = {
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = false,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic())))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      stubNonLeaderPartitionForReplicaRead(replicaManager)
+
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, readFromLogAsOlderConsumer(replicaManager).error)
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }

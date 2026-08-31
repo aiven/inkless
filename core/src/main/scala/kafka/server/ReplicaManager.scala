@@ -2466,7 +2466,34 @@ class ReplicaManager(val config: KafkaConfig,
         if (consolidationActiveFor(tp.topic)) {
           getPartitionOrError(tp.topicPartition) match {
             case Right(partition) =>
-              val logEndOffset = partition.log.map(_.logEndOffset).getOrElse(0L)
+              // Deref partition.log once: it is swapped on log recreation and dir change, so
+              // separate derefs can mix offsets from two different logs. The offsets below are still
+              // read one at a time, and the consolidation fetcher can append between them. Read the
+              // high watermark before LEO so that skew can only fail the supplement gate below, never
+              // pass it on a stale anchor.
+              val localLog = partition.log
+              val localHighWatermark = localLog.map(_.highWatermark).getOrElse(0L)
+              val logEndOffset = localLog.map(_.logEndOffset).getOrElse(0L)
+              val localLogStartOffset = localLog.map(_.localLogStartOffset).getOrElse(0L)
+              // Where the local read stops. Consumers are bounded by the high watermark because an
+              // AZ-local replica may have appended data which is not fetchable yet. Followers and
+              // future replicas are bounded by LEO, since LOG_END isolation permits them to
+              // replicate the uncommitted suffix. A read_committed consumer stops at the last stable
+              // offset instead, which this does not model: diskless carries no transactional data and
+              // the switch aborts undecided transactions, so no consolidating partition has an
+              // LSO below its high watermark. Derive the bound from params.isolation if that changes.
+              val localReadFrontier =
+                if (params.isFromConsumer) localHighWatermark else logEndOffset
+              // Two ranges must stay on the local read path even when they sit above the isolation
+              // frontier, because diskless cannot answer them: [logStartOffset, localLogStartOffset)
+              // lives only in the remote tier once ConsolidatedDisklessLogPruner has pruned the
+              // diskless batches, and [0, classicToDisklessStartOffset) is the classic prefix the
+              // control plane never held. Both switch sentinels are negative, so a partition that
+              // never switched keeps the frontier at the isolation bound. Without a local log there
+              // is nothing to read locally and diskless is authoritative for the whole range.
+              val readableFrontier =
+                if (localLog.isEmpty) 0L
+                else Math.max(Math.max(localReadFrontier, localLogStartOffset), classicToDisklessStartOffset)
               // A follower's local logStartOffset stays frozen at the switch. DeleteRecords and
               // retention advance only the real leader's log start and the control-plane cross-tier
               // earliest, never a follower's. With managed replicas the metadata transformer routes
@@ -2496,17 +2523,22 @@ class ReplicaManager(val config: KafkaConfig,
                   false
                 )
                 partitionLookupFailed = true
-              } else if (fetchPartitionData.fetchOffset < logEndOffset) {
-                // Local log has data for this offset range — serve from local, track for diskless supplement
+              } else if (fetchPartitionData.fetchOffset < readableFrontier) {
                 shouldReadFromUnifiedLog = true
-                // Skip supplement tracking when the fetch offset falls in the tiered-storage range
-                // (below localLogStartOffset). The read will route to RemoteLogManager and the
-                // supplement data would be discarded by processRemoteFetches anyway.
-                val localLogStartOffset = partition.log.map(_.localLogStartOffset).getOrElse(0L)
-                if (inklessSharedState.isDefined && fetchPartitionData.fetchOffset >= localLogStartOffset)
+                // Track only a fetch that could actually receive a supplement. A follower or
+                // future replica never merges diskless records into a local-log read; a fetch
+                // below localLogStartOffset routes to RemoteLogManager,
+                // which discards the supplement; and a read that cannot reach LEO is no proof of
+                // exhaustion, which the guard in buildConsolidationSupplementFetchInfos would then
+                // pass on an empty read. Store LEO, since firing from below it would ask object
+                // storage for classic offsets only the local log holds.
+                if (inklessSharedState.isDefined &&
+                  params.isFromConsumer &&
+                  fetchPartitionData.fetchOffset >= localLogStartOffset &&
+                  localReadFrontier >= logEndOffset)
                   consolidatingLocalFetchSupplements += (tp -> logEndOffset)
               }
-              // else: consumer is at or beyond consolidation frontier, diskless-only
+              // else: the fetch is at or beyond the frontier for its source, so diskless is authoritative
             case Left(error) =>
               warn(s"Error while fetching partition ${tp.topicPartition()} for consolidating diskless topic: $error. " +
                 s"Returning error for the fetch request since we cannot determine if the partition has switched to diskless or not.")
@@ -2914,6 +2946,20 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Returns true for a managed consolidating diskless partition. The metadata transformer may
+   * advertise this broker as the AZ-local virtual leader even when it is not the partition leader, so
+   * consumer reads must be allowed from its local log. ISR is deliberately not checked here because
+   * born-diskless replicas are added to ISR before their local fetch state is ready.
+   *
+   *
+   * Managed replicas are not tested here: `KafkaConfig.validateValues` requires
+   * `diskless.managed.replicas.enable` whenever consolidation is enabled.
+   */
+  private[server] def isManagedConsolidatingDisklessPartition(tp: TopicIdPartition): Boolean = {
+    consolidationActiveFor(tp.topic)
+  }
+
+  /**
    * Read from multiple topic partitions at the given offset up to maxSize bytes
    */
   def readFromLog(
@@ -2980,17 +3026,17 @@ class ReplicaManager(val config: KafkaConfig,
             if (preferredReadReplica.isDefined) OptionalInt.of(preferredReadReplica.get) else OptionalInt.empty(),
             Errors.NONE)
         } else {
-          // For partitions that were switched from classic to diskless and still have classic
-          // local/remote data to read (classicToDisklessStartOffset >= 0), relax the leader-only
-          // requirement so any in-sync replica can serve the classic portion of the read. This is
-          // scoped to older consumer fetches that don't supply clientMetadata (pre-KIP-392 / no
-          // rackId), which would otherwise get NOT_LEADER_OR_FOLLOWER on a non-leader broker.
-          // Broker-to-broker follower replication and share fetches are intentionally excluded.
-          // The check is ordered so that the metadata lookup is only performed when the override
-          // could actually apply.
+          // The metadata transformer can advertise a managed diskless replica as the AZ-local
+          // virtual leader even when it is not the KRaft leader. Older consumers don't supply
+          // clientMetadata, so Kafka would otherwise enforce leader-only reads after consolidation
+          // makes the local log readable. Switched partitions need the same override for their
+          // classic prefix. Broker-to-broker follower replication and share fetches remain
+          // leader-only.
           val isOlderConsumer = params.isFromConsumer && params.clientMetadata.isEmpty
           val allowReplica = !params.fetchOnlyLeader() ||
-            (isOlderConsumer && isPartitionSwitchedFromClassicToDiskless(tp))
+            (isOlderConsumer &&
+              (isPartitionSwitchedFromClassicToDiskless(tp) ||
+                isManagedConsolidatingDisklessPartition(tp)))
           log = partition.localLogWithEpochOrThrow(fetchInfo.currentLeaderEpoch, !allowReplica)
 
           // Try the read first, this tells us whether we need all of adjustedFetchSize for this partition
