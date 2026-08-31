@@ -43,6 +43,7 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
@@ -111,6 +112,7 @@ import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENAB
 import static org.apache.kafka.common.config.TopicConfig.SEGMENT_BYTES_CONFIG;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
 public class InklessConsolidatedDisklessTopicsTest {
@@ -627,6 +629,73 @@ public class InklessConsolidatedDisklessTopicsTest {
         final var unifiedLog = log.get();
         return new LocalLogState(unifiedLog.logStartOffset(), unifiedLog.localLogStartOffset(),
             unifiedLog.highWatermark(), unifiedLog.logEndOffset());
+    }
+
+    /**
+     * A consumer that negotiates Fetch below v11 must be able to read a consolidated diskless partition
+     * from a replica that is not the KRaft leader.
+     *
+     * <p>The broker attaches client metadata to a fetch only from v11 onward, and without it
+     * {@code FetchParams.fetchOnlyLeader} is true, so the local read is refused on a non-leader replica.
+     * AZ-aware metadata advertises exactly such a replica as the leader, so before this branch a
+     * pre-v11 consumer got NOT_LEADER_OR_FOLLOWER, refreshed metadata, was pointed back at the same
+     * replica, and never progressed - while reporting no error on either side.
+     *
+     * <p>No Kafka client can reproduce this any more: every current client negotiates v11 or later. The
+     * request is built by hand for that reason.
+     */
+    @Test
+    public void testPreKip392ConsumerReadsConsolidatedPartitionFromReplica() throws Exception {
+        numPartitions = 1;
+        topicName = "pre-kip-392-consolidated-read";
+        final TopicPartition tp = new TopicPartition(topicName, 0);
+        final int recordCount = 20;
+
+        final Map<String, Object> commonConfigs = new HashMap<>();
+        commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            final NewTopic topic = new NewTopic(topicName, numPartitions, (short) -1).configs(Map.of(
+                DISKLESS_ENABLE_CONFIG, "true",
+                REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true",
+                CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_DELETE,
+                SEGMENT_BYTES_CONFIG, "1048576"));
+            admin.createTopics(Collections.singletonList(topic)).all().get(30, TimeUnit.SECONDS);
+        }
+        produceRecords(commonConfigs, recordCount, largeValueRecordFactory());
+
+        // Consolidation has to have copied the range into the local log and committed it, or the fetch
+        // routes to Inkless and never reaches the leader-only check.
+        final AtomicReference<LocalLogState> stateRef = new AtomicReference<>();
+        TestUtils.waitForCondition(() -> {
+            for (int brokerId : new int[] {0, 1}) {
+                final LocalLogState state = localLogState(brokerId, tp);
+                if (state == null || state.highWatermark <= 0) {
+                    return false;
+                }
+            }
+            return true;
+        }, 120_000, () -> "Both replicas must consolidate and commit the range before the fetch; broker 0="
+            + localLogState(0, tp) + " broker 1=" + localLogState(1, tp));
+
+        final var kraftPartition = cluster.brokers().get(0).metadataCache()
+            .currentImage().topics().getTopic(topicName).partitions().get(0);
+        final int targetBrokerId = kraftPartition.leader == 0 ? 1 : 0;
+        stateRef.set(localLogState(targetBrokerId, tp));
+        log.info("KRaft leader is {}, fetching at Fetch v10 from replica {} with state {}",
+            kraftPartition.leader, targetBrokerId, stateRef.get());
+
+        // An offset the replica holds locally and has committed.
+        final long fetchOffset = stateRef.get().localLogStartOffset;
+        final PreKip392FetchClient.Reply reply = PreKip392FetchClient.fetch(
+            cluster.brokers().get(targetBrokerId), topicName, 0, fetchOffset, (short) 10);
+
+        assertEquals(Errors.NONE, reply.error(),
+            "A pre-v11 consumer must be allowed to read a consolidated partition from a non-leader "
+                + "replica; state=" + localLogState(targetBrokerId, tp));
+        assertTrue(reply.recordCount() > 0, "The reply must carry records, got " + reply);
+        assertEquals(fetchOffset, reply.firstOffset(),
+            "The reply must start at the requested offset, not skip ahead");
     }
 
     /**
