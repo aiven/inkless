@@ -59,6 +59,7 @@ public class GcsStorage extends StorageBackend {
     private String bucketName;
     private ReloadableCredentialsProvider credentialsProvider;
     private StorageOptions.Builder storageOptionsBuilder;
+    private final MetricCollector metricCollector;
 
     // needed for reflection based instantiation
     public GcsStorage() {
@@ -67,11 +68,11 @@ public class GcsStorage extends StorageBackend {
 
     public GcsStorage(final Metrics metrics) {
         super(metrics);
+        this.metricCollector = new MetricCollector(metrics);
     }
 
     @Override
     public void configure(final Map<String, ?> configs) {
-        final MetricCollector metricCollector = new MetricCollector(metrics);
         final GcsStorageConfig config = new GcsStorageConfig(configs);
         this.bucketName = config.bucketName();
 
@@ -136,6 +137,7 @@ public class GcsStorage extends StorageBackend {
             // all-or-nothing: on success every key is gone (idempotent), and on failure we delete
             // nothing and let the FileCleaner cycle retry the whole set.
             storage.delete(ids);
+            metricCollector.recordBatchDeleteObjects(keys.size());
             return Set.copyOf(keys);
         } catch (final BaseServiceException e) {
             throw new StorageBackendException("Failed to delete " + keys.size() + " keys", e);

@@ -38,6 +38,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.io.ByteArrayInputStream;
 import java.nio.channels.ReadableByteChannel;
 import java.util.Map;
+import java.util.Set;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
@@ -102,6 +103,15 @@ public class GcsStorageMetricsTest {
         }
         storage.delete(key);
 
+        final Set<ObjectKey> batchDeleteKeys = Set.of(
+            new TestObjectKey("batch-delete-1"),
+            new TestObjectKey("batch-delete-2")
+        );
+        for (final ObjectKey batchDeleteKey : batchDeleteKeys) {
+            storage.upload(batchDeleteKey, new ByteArrayInputStream(data), data.length);
+        }
+        storage.delete(batchDeleteKeys);
+
         assertThat(getMetric("object-metadata-get-rate").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
@@ -118,7 +128,7 @@ public class GcsStorageMetricsTest {
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
         assertThat(getMetric("object-delete-total").metricValue())
-            .isEqualTo(1.0);
+            .isEqualTo(3.0);
     }
 
     private KafkaMetric getMetric(String metricName) {
