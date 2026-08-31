@@ -104,7 +104,13 @@ class DelayedFetch(
           // Go directly to the check for Case G if the message offsets are the same. If the log segment
           // has just rolled, then the high watermark offset will remain the same but be on the old segment,
           // which would incorrectly be seen as an instance of Case F.
-          if (fetchOffset.messageOffset > endOffset.messageOffset) {
+          if (fetchOffset.messageOffset > endOffset.messageOffset &&
+            replicaManager.isBelowSealAndAheadOfLocalLog(topicIdPartition.topicPartition,
+              fetchOffset.messageOffset, offsetSnapshot.logEndOffset.messageOffset)) {
+            // Not case F: the offset is below the seal and this replica has not replicated that far,
+            // so the read already answered empty. Completing now would return it at once and the
+            // consumer would re-fetch in a loop.
+          } else if (fetchOffset.messageOffset > endOffset.messageOffset) {
             // Case F, this can happen when the new fetch operation is on a truncated leader
             debug(s"Satisfying fetch $this since it is fetching later segments of partition $topicIdPartition.")
             return forceComplete()

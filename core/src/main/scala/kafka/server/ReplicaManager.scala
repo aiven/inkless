@@ -2564,23 +2564,21 @@ class ReplicaManager(val config: KafkaConfig,
                 partitionLookupFailed = true
               } else if (fetchPartitionData.fetchOffset < readableFrontier) {
                 shouldReadFromUnifiedLog = true
-                // A floor put this read on the local path, but this replica has not replicated that
-                // far, so the read answers OFFSET_OUT_OF_RANGE and the consumer resets. Followers are
-                // excluded: a follower legitimately asks for its own LEO on a leader below the seal.
+                // Same population as isBelowSealAndAheadOfLocalLog: inside this branch only the seal
+                // can have raised the frontier. Keep the two in step. Marked here, not in the
+                // carve-out, since DelayedFetch re-reads on completion and would count twice.
+                // Followers ask for their own LEO on a leader below the seal, so they are excluded.
                 if (params.isFromConsumer && fetchPartitionData.fetchOffset >= logEndOffset)
                   disklessSwitchedPrefixMissingFetchRate.mark()
-                // Track only a fetch that could actually receive a supplement. A follower or
-                // future replica never merges diskless records into a local-log read; a
-                // switch-pending partition has no committed seal, so the control plane holds
-                // nothing for it; a fetch below localLogStartOffset routes to RemoteLogManager,
-                // which discards the supplement; and a read that cannot reach LEO is no proof of
-                // exhaustion, which the guard in buildConsolidationSupplementFetchInfos would then
-                // pass on an empty read. Store LEO, since firing from below it would ask object
-                // storage for classic offsets only the local log holds.
+                // Only a consumer read that starts inside the local log and reaches its end can take
+                // a supplement. Outside that window the anchor asks object storage for classic
+                // offsets, or an empty read passes the exhaustion guard in
+                // buildConsolidationSupplementFetchInfos. A pending switch has no committed seal.
                 if (inklessSharedState.isDefined &&
                   params.isFromConsumer &&
                   classicToDisklessStartOffset != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING &&
                   fetchPartitionData.fetchOffset >= localLogStartOffset &&
+                  fetchPartitionData.fetchOffset < logEndOffset &&
                   localReadFrontier >= logEndOffset)
                   consolidatingLocalFetchSupplements += (tp -> logEndOffset)
               } else if (!shouldReadFromUnifiedLog && fetchPartitionData.fetchOffset < logEndOffset) {
@@ -3011,6 +3009,17 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Returns true when this offset sits below the classic-to-diskless seal and beyond what this replica
+   * has replicated: the leader holds it and this replica will, so the fetch waits rather than being
+   * answered or refused. Used by both halves of that decision, the read and the purgatory.
+   */
+  private[server] def isBelowSealAndAheadOfLocalLog(tp: TopicPartition,
+                                                    fetchOffset: Long,
+                                                    localLogEndOffset: Long): Boolean =
+    fetchOffset >= localLogEndOffset &&
+      fetchOffset < _inklessMetadataView.getClassicToDisklessStartOffset(tp)
+
+  /**
    * Returns true when a fetch carrying no `clientMetadata` may read this partition from a replica
    * that is not the partition leader, because the metadata transformer advertised that replica.
    *
@@ -3229,6 +3238,21 @@ class ReplicaManager(val config: KafkaConfig,
           OptionalLong.of(log.lastStableOffset),
           Errors.NONE)
       }
+    } else if (params.isFromConsumer && log != null &&
+      isBelowSealAndAheadOfLocalLog(tp.topicPartition, offset, log.logEndOffset)) {
+      // The leader holds this offset and this replica will: the seal never exceeds the leader's log
+      // end offset. Out of range would reset the consumer over a range missing only here, so answer
+      // empty and let the fetch wait. DelayedFetch skips case F on the same condition.
+      new LogReadResult(
+        new FetchDataInfo(new LogOffsetMetadata(offset), MemoryRecords.EMPTY),
+        Optional.empty(),
+        log.highWatermark,
+        log.logStartOffset,
+        log.logEndOffset,
+        fetchInfo.logStartOffset,
+        fetchTimeMs,
+        OptionalLong.of(log.lastStableOffset),
+        Errors.NONE)
     } else {
       new LogReadResult(Errors.forException(exception))
     }

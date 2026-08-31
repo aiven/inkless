@@ -36,7 +36,7 @@ import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.{DirectoryId, IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.compress.Compression
-import org.apache.kafka.common.errors.{NotLeaderOrFollowerException, UnknownTopicOrPartitionException}
+import org.apache.kafka.common.errors.{NotLeaderOrFollowerException, OffsetOutOfRangeException, UnknownTopicOrPartitionException}
 import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
 import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
 import org.apache.kafka.common.message.DeleteRecordsResponseData
@@ -8230,6 +8230,80 @@ class ReplicaManagerInklessTest {
       verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
       assertEquals(missingBefore + 1L, yammerMeterCount("DisklessSwitchedPrefixMissingFetchRate"),
         "A below-seal read this replica cannot serve must be recorded")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  // A below-seal offset this replica has not replicated yet is valid on the leader, so answering
+  // OFFSET_OUT_OF_RANGE would reset the consumer over a range that is only missing here. The fetch
+  // must wait for this replica instead: empty, and parked rather than answered at once.
+  @Test
+  def testFetchConsolidatingBelowSealAboveLeoWaitsInsteadOfResetting(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val timer = new MockTimer(time)
+    val fetchPurgatory = new DelayedOperationPurgatory[DelayedFetch]("Fetch", timer, 0, false)
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      delayedFetchPurgatory = Some(fetchPurgatory),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      // The real read path runs here: a fetch at 55 against a log that ends at 10 throws
+      // OffsetOutOfRangeException, and the carve-out turns it into an empty successful read.
+      val mockPartition = mock(classOf[Partition])
+      val mockLog = mock(classOf[UnifiedLog])
+      when(mockLog.logEndOffset).thenReturn(10L)
+      when(mockLog.highWatermark).thenReturn(10L)
+      when(mockLog.logStartOffset).thenReturn(0L)
+      when(mockLog.lastStableOffset).thenReturn(10L)
+      when(mockLog.remoteLogEnabled()).thenReturn(false)
+      when(mockPartition.log).thenReturn(Some(mockLog))
+      when(mockPartition.topicId).thenReturn(Some(disklessTopicPartition.topicId()))
+      when(mockPartition.isLeader).thenReturn(true)
+      when(mockPartition.localLogWithEpochOrThrow(any(), anyBoolean())).thenReturn(mockLog)
+      when(mockPartition.fetchRecords(any(), any(), anyLong(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean()))
+        .thenThrow(new OffsetOutOfRangeException("Received request for offset 55 but we only have up to 10"))
+      val endOffsetMetadata = new LogOffsetMetadata(10L, 0L, 0)
+      when(mockPartition.fetchOffsetSnapshot(any(), any()))
+        .thenReturn(new LogOffsetSnapshot(0L, endOffsetMetadata, endOffsetMetadata, endOffsetMetadata))
+      doReturn(Right(mockPartition)).when(replicaManager)
+        .getPartitionOrError(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+      doReturn(mockPartition).when(replicaManager)
+        .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+
+      val maxWaitMs = 30000L
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+        maxWaitMs, 1024, 1024 * 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition ->
+          new PartitionData(disklessTopicPartition.topicId(), 55L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      replicaManager.fetchMessages(
+        fetchParams,
+        fetchInfos,
+        QuotaFactory.UNBOUNDED_QUOTA,
+        response => responseData = response.toMap)
+
+      assertEquals(1, fetchPurgatory.watched(),
+        "The fetch must wait for this replica to catch up, not be answered at once")
+      assertNull(responseData)
+
+      timer.advanceClock(maxWaitMs + 1)
+      waitForFetchResponse(responseData)
+      assertEquals(Errors.NONE, responseData(disklessTopicPartition).error,
+        "A below-seal offset missing only on this replica must not reset the consumer")
+      assertEquals(0, responseData(disklessTopicPartition).records.sizeInBytes)
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
     } finally {
       replicaManager.shutdown(checkpointHW = false)
       fetchHandlerCtor.close()
