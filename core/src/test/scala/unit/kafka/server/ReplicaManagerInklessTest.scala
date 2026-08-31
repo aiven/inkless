@@ -8033,7 +8033,7 @@ class ReplicaManagerInklessTest {
       disklessRemoteStorageConsolidationEnabled = true,
       consolidatingDisklessTopics = Set(disklessTopicPartition.topic()))
     try {
-      assertTrue(replicaManager.isManagedConsolidatingDisklessPartition(disklessTopicPartition))
+      assertTrue(replicaManager.isManagedConsolidatingDisklessPartition(disklessTopicPartition.topicPartition()))
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
@@ -8046,7 +8046,7 @@ class ReplicaManagerInklessTest {
       disklessManagedReplicasEnabled = true,
       disklessRemoteStorageConsolidationEnabled = true)
     try {
-      assertFalse(replicaManager.isManagedConsolidatingDisklessPartition(disklessTopicPartition))
+      assertFalse(replicaManager.isManagedConsolidatingDisklessPartition(disklessTopicPartition.topicPartition()))
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
@@ -8065,7 +8065,7 @@ class ReplicaManagerInklessTest {
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
-      assertFalse(replicaManager.isManagedConsolidatingDisklessPartition(disklessTopicPartition))
+      assertFalse(replicaManager.isManagedConsolidatingDisklessPartition(disklessTopicPartition.topicPartition()))
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
@@ -8166,6 +8166,16 @@ class ReplicaManagerInklessTest {
 
       assertEquals(1, replicaManager.consolidationHighWatermarkLagPartitionCount,
         "A consolidating partition holding data below its high watermark must be counted")
+
+      // A pending switch serves every offset locally and waits for its high watermark, so the same
+      // lag carries no object-storage cost and must not be counted.
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      assertEquals(0, replicaManager.consolidationHighWatermarkLagPartitionCount,
+        "A switch-pending partition must not be counted")
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      assertEquals(1, replicaManager.consolidationHighWatermarkLagPartitionCount)
 
       log.maybeUpdateHighWatermark(10L)
       assertEquals(0, replicaManager.consolidationHighWatermarkLagPartitionCount,

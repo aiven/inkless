@@ -410,14 +410,13 @@ class ReplicaManager(val config: KafkaConfig,
   private def sealedPartitionsCount: Int = leaderPartitionsIterator.count(_.isSealed)
 
   /**
-   * Counts consolidating partitions holding data they cannot serve yet, that is a local high
-   * watermark below the local log end offset. Consumer reads of that range go to Inkless, which
-   * costs object-storage traffic, and below a classic-to-diskless seal Inkless has nothing to serve.
-   * Unlike ConsolidationHighWatermarkLagFetchRate this does not depend on consumer traffic, so a
-   * stalled replica stays visible after consumers have moved past its log end offset.
+   * Counts consolidating partitions whose local high watermark sits below their local log end
+   * offset, so a consumer read of that range goes to Inkless.
+   * Unlike ConsolidationHighWatermarkLagFetchRate this does not depend on consumer traffic,
+   * so a stalled replica stays visible after consumers have moved past its log end offset.
    */
   private[server] def consolidationHighWatermarkLagPartitionCount: Int = onlinePartitionsIterator.count { partition =>
-    consolidationActiveFor(partition.topic) &&
+    isManagedConsolidatingDisklessPartition(partition.topicPartition) &&
       partition.log.exists(log => log.highWatermark < log.logEndOffset)
   }
 
@@ -2981,9 +2980,9 @@ class ReplicaManager(val config: KafkaConfig,
    * Pending partitions are excluded because they have no diskless leg to fall back on, so a replica
    * read there can answer OFFSET_OUT_OF_RANGE for records the leader holds.
    */
-  private[server] def isManagedConsolidatingDisklessPartition(tp: TopicIdPartition): Boolean = {
+  private[server] def isManagedConsolidatingDisklessPartition(tp: TopicPartition): Boolean = {
     consolidationActiveFor(tp.topic) &&
-      _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition) !=
+      _inklessMetadataView.getClassicToDisklessStartOffset(tp) !=
         PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
   }
 
@@ -2996,7 +2995,8 @@ class ReplicaManager(val config: KafkaConfig,
    */
   private[server] def allowsOlderConsumerReplicaRead(tp: TopicIdPartition, params: FetchParams): Boolean = {
     params.isFromConsumer && params.clientMetadata.isEmpty && !params.shareFetchRequest &&
-      (isPartitionSwitchedFromClassicToDiskless(tp) || isManagedConsolidatingDisklessPartition(tp))
+      (isPartitionSwitchedFromClassicToDiskless(tp) ||
+        isManagedConsolidatingDisklessPartition(tp.topicPartition))
   }
 
   /**
