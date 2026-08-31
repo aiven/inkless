@@ -8185,6 +8185,97 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // Viktor's review case on #774: seal 100, this replica at LEO 10, consumer at 55. The seal floor puts
+  // the read on the local path, which cannot serve 55, so the consumer resets. The meter is the only
+  // record that it happened.
+  @Test
+  def testFetchConsolidatingBelowSealAboveLeoRecordsMissingPrefix(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 10L)
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(55L, 0L, 0), MemoryRecords.EMPTY),
+          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty(), Errors.OFFSET_OUT_OF_RANGE
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+        0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition ->
+          new PartitionData(disklessTopicPartition.topicId(), 55L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val missingBefore = yammerMeterCount("DisklessSwitchedPrefixMissingFetchRate")
+      replicaManager.fetchMessages(
+        fetchParams,
+        fetchInfos,
+        QuotaFactory.UNBOUNDED_QUOTA,
+        response => responseData = response.toMap)
+
+      waitForFetchResponse(responseData)
+      verify(replicaManager, atLeastOnce()).readFromLog(any(), any(), any(), any())
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+      assertEquals(missingBefore + 1L, yammerMeterCount("DisklessSwitchedPrefixMissingFetchRate"),
+        "A below-seal read this replica cannot serve must be recorded")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  @Test
+  def testDisklessSwitchedPrefixLagMeasuresWhatTheReplicaHasNotReplicated(): Unit = {
+    val tp = disklessTopicPartition.topicPartition()
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic())))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(
+        tp, isNew = true, topicId = Optional.of(disklessTopicPartition.topicId()))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 5L, hw = 5L)
+      val partition = replicaManager.createPartition(tp)
+      partition.log = Some(log)
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(10L)
+      assertEquals(5L, replicaManager.disklessSwitchedPrefixLag,
+        "The lag is the records below the seal this replica has not replicated")
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(7L)
+      assertEquals(2L, replicaManager.disklessSwitchedPrefixLag,
+        "It falls as the replica catches up, which is what shows progress")
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(5L)
+      assertEquals(0L, replicaManager.disklessSwitchedPrefixLag,
+        "A replica that reached the seal holds the whole prefix")
+
+      // A consolidated suffix puts LEO past the seal; the lag must not go negative.
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(3L)
+      assertEquals(0L, replicaManager.disklessSwitchedPrefixLag)
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      assertEquals(0L, replicaManager.disklessSwitchedPrefixLag,
+        "A partition that never switched has no classic prefix to miss")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
   @Test
   def testApplyDeltaSkipsPartitionForDisklessTopicWithoutLocalLog(): Unit = {
     val topicName = "fully-diskless-topic"

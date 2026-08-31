@@ -27,7 +27,7 @@ import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, Consolidat
 import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationHighWatermarkLagFetchRateMetricName, ConsolidationHighWatermarkLagPartitionCountMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationHighWatermarkLagFetchRateMetricName, ConsolidationHighWatermarkLagPartitionCountMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, DisklessSwitchedPrefixLagMetricName, DisklessSwitchedPrefixMissingFetchRateMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.metadata.InklessMetadataView
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
@@ -121,6 +121,9 @@ object ReplicaManager {
   private val ConsolidationHighWatermarkLagFetchRateMetricName = "ConsolidationHighWatermarkLagFetchRate"
   private val ConsolidationHighWatermarkLagPartitionCountMetricName =
     "ConsolidationHighWatermarkLagPartitionCount"
+  private[server] val DisklessSwitchedPrefixLagMetricName = "DisklessSwitchedPrefixLag"
+  private val DisklessSwitchedPrefixMissingFetchRateMetricName =
+    "DisklessSwitchedPrefixMissingFetchRate"
 
   private[server] val GaugeMetricNames = Set(
     LeaderCountMetricName,
@@ -133,6 +136,7 @@ object ReplicaManager {
     SealedPartitionsCountMetricName,
     DisklessSwitchedReplicasOutsideIsrCountMetricName,
     ConsolidationHighWatermarkLagPartitionCountMetricName,
+    DisklessSwitchedPrefixLagMetricName,
     PartitionsWithLateTransactionsCountMetricName,
     ProducerIdCountMetricName
   )
@@ -145,7 +149,8 @@ object ReplicaManager {
     ConsolidationSupplementRateMetricName,
     ConsolidationSupplementBytesPerSecMetricName,
     ConsolidationLocalBytesPerSecMetricName,
-    ConsolidationHighWatermarkLagFetchRateMetricName
+    ConsolidationHighWatermarkLagFetchRateMetricName,
+    DisklessSwitchedPrefixMissingFetchRateMetricName
   )
 
   private[server] val MetricNames = GaugeMetricNames.union(MeterMetricNames)
@@ -402,6 +407,7 @@ class ReplicaManager(val config: KafkaConfig,
     () => disklessSwitchedReplicasOutsideIsrCount)
   metricsGroup.newGauge(ConsolidationHighWatermarkLagPartitionCountMetricName,
     () => consolidationHighWatermarkLagPartitionCount)
+  metricsGroup.newGauge(DisklessSwitchedPrefixLagMetricName, () => disklessSwitchedPrefixLag)
   metricsGroup.newGauge(PartitionsWithLateTransactionsCountMetricName, () => lateTransactionsCount)
   metricsGroup.newGauge(ProducerIdCountMetricName, () => producerIdCount)
 
@@ -420,6 +426,17 @@ class ReplicaManager(val config: KafkaConfig,
       partition.log.exists(log => log.highWatermark < log.logEndOffset)
   }
 
+  /**
+   * Records below the classic-to-diskless seal that this broker's replicas have not replicated.
+   * Zero means every replica here holds its prefix; a value that stops falling is a replica that has
+   * stopped catching up. A partition rebuilding from the remote tier and one whose prefix is gone look
+   * the same: telling them apart needs the tier's coverage of [0, seal).
+   */
+  private[server] def disklessSwitchedPrefixLag: Long = onlinePartitionsIterator.map { partition =>
+    val seal = _inklessMetadataView.getClassicToDisklessStartOffset(partition.topicPartition)
+    if (seal < 0L) 0L else partition.log.map(log => Math.max(0L, seal - log.logEndOffset)).getOrElse(0L)
+  }.sum
+
   private def lateTransactionsCount: Int = {
     val currentTimeMs = time.milliseconds()
     leaderPartitionsIterator.count(_.hasLateTransaction(currentTimeMs))
@@ -436,6 +453,8 @@ class ReplicaManager(val config: KafkaConfig,
   private val consolidationLocalBytesPerSec: Meter = metricsGroup.newMeter(ConsolidationLocalBytesPerSecMetricName, "bytes", TimeUnit.SECONDS)
   private val consolidationHighWatermarkLagFetchRate: Meter =
     metricsGroup.newMeter(ConsolidationHighWatermarkLagFetchRateMetricName, "fetches", TimeUnit.SECONDS)
+  private val disklessSwitchedPrefixMissingFetchRate: Meter =
+    metricsGroup.newMeter(DisklessSwitchedPrefixMissingFetchRateMetricName, "fetches", TimeUnit.SECONDS)
 
   /**
    * Returns true when this broker consolidates the topic: the feature is enabled here and the topic
@@ -2545,6 +2564,11 @@ class ReplicaManager(val config: KafkaConfig,
                 partitionLookupFailed = true
               } else if (fetchPartitionData.fetchOffset < readableFrontier) {
                 shouldReadFromUnifiedLog = true
+                // A floor put this read on the local path, but this replica has not replicated that
+                // far, so the read answers OFFSET_OUT_OF_RANGE and the consumer resets. Followers are
+                // excluded: a follower legitimately asks for its own LEO on a leader below the seal.
+                if (params.isFromConsumer && fetchPartitionData.fetchOffset >= logEndOffset)
+                  disklessSwitchedPrefixMissingFetchRate.mark()
                 // Track only a fetch that could actually receive a supplement. A follower or
                 // future replica never merges diskless records into a local-log read; a
                 // switch-pending partition has no committed seal, so the control plane holds
