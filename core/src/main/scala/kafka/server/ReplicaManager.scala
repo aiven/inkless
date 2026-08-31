@@ -417,8 +417,13 @@ class ReplicaManager(val config: KafkaConfig,
   private val consolidationSupplementBytesPerSec: Meter = metricsGroup.newMeter(ConsolidationSupplementBytesPerSecMetricName, "bytes", TimeUnit.SECONDS)
   private val consolidationLocalBytesPerSec: Meter = metricsGroup.newMeter(ConsolidationLocalBytesPerSecMetricName, "bytes", TimeUnit.SECONDS)
 
-  private def isConsolidatingPartition(partition: Partition): Boolean =
-    config.disklessRemoteStorageConsolidationEnabled && _inklessMetadataView.isConsolidatingDisklessTopic(partition.topic)
+  /**
+   * Returns true when this broker consolidates the topic: the feature is enabled here and the topic
+   * is diskless with remote storage. Says nothing about the switch phase, so a topic whose switch is
+   * still `CLASSIC_TO_DISKLESS_SWITCH_PENDING` already reads as consolidating.
+   */
+  private def consolidationActiveFor(topic: String): Boolean =
+    config.disklessRemoteStorageConsolidationEnabled && _inklessMetadataView.isConsolidatingDisklessTopic(topic)
 
   private[server] def disklessSwitchedReplicasOutsideIsrCount: Int = onlinePartitionsIterator.count { partition =>
     val topicPartition = partition.topicPartition
@@ -431,15 +436,15 @@ class ReplicaManager(val config: KafkaConfig,
   def recordConsolidationFetchBytesIn(bytes: Long): Unit = consolidationFetchBytesInPerSec.mark(bytes)
 
   def underReplicatedPartitionCount: Int = leaderPartitionsIterator.count { partition =>
-    partition.isUnderReplicated && !isConsolidatingPartition(partition)
+    partition.isUnderReplicated && !consolidationActiveFor(partition.topic)
   }
 
   def underMinIsrPartitionCount: Int = leaderPartitionsIterator.count { partition =>
-    partition.isUnderMinIsr && !isConsolidatingPartition(partition)
+    partition.isUnderMinIsr && !consolidationActiveFor(partition.topic)
   }
 
   def atMinIsrPartitionCount: Int = leaderPartitionsIterator.count { partition =>
-    partition.isAtMinIsr && !isConsolidatingPartition(partition)
+    partition.isAtMinIsr && !consolidationActiveFor(partition.topic)
   }
 
   def startHighWatermarkCheckPointThread(): Unit = {
@@ -2458,10 +2463,7 @@ class ReplicaManager(val config: KafkaConfig,
         val classicToDisklessStartOffset = _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition())
         // partitions with switching in progress should always serve from local log
         var shouldReadFromUnifiedLog = classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
-        val isConsolidatingPartition =
-          _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic) &&
-            config.disklessRemoteStorageConsolidationEnabled
-        if (isConsolidatingPartition) {
+        if (consolidationActiveFor(tp.topic)) {
           getPartitionOrError(tp.topicPartition) match {
             case Right(partition) =>
               val logEndOffset = partition.log.map(_.logEndOffset).getOrElse(0L)
@@ -3760,7 +3762,7 @@ class ReplicaManager(val config: KafkaConfig,
                 stateChangeLogger.info(s"Stale high watermark detected: advanced high watermark to seal offset $seal for " +
                   s"switched leader partition $tp")
               } else if (log.logEndOffset < seal) {
-                if (isConsolidatingPartition(partition) && log.remoteLogEnabled()) {
+                if (consolidationActiveFor(partition.topic) && log.remoteLogEnabled()) {
                   // The leader's local classic prefix was lost (full local-storage wipe / DR).
                   // [0, seal) lives in the remote tier, so leave the partition online and let the
                   // ConsolidationReconciler arm consolidation at the current LEO: the first fetch
@@ -3840,8 +3842,7 @@ class ReplicaManager(val config: KafkaConfig,
   private def hasConsolidatedDisklessSuffixFromSeal(tp: TopicPartition,
                                                     log: UnifiedLog,
                                                     seal: Long): Boolean = {
-    if (!config.disklessRemoteStorageConsolidationEnabled ||
-        !_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)) {
+    if (!consolidationActiveFor(tp.topic)) {
       return false
     }
 
@@ -4019,9 +4020,7 @@ class ReplicaManager(val config: KafkaConfig,
     val consolidatingDisklessPartitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     localLeaders.foreachEntry { (tp, info) =>
       val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic())
-      val isConsolidatingDisklessTopic =
-        config.disklessRemoteStorageConsolidationEnabled &&
-          _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
+      val isConsolidatingDisklessTopic = consolidationActiveFor(tp.topic)
       val existingPartition = onlinePartition(tp)
       // A pending classic-to-diskless switch must always seal+register below, even for a
       // consolidating topic (where isConsolidatingDisklessTopic is already true), or the
@@ -4154,9 +4153,7 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
-      val isConsolidatingDisklessTopic =
-        config.disklessRemoteStorageConsolidationEnabled &&
-          _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
+      val isConsolidatingDisklessTopic = consolidationActiveFor(tp.topic)
       if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
         // Clean up classic-to-diskless switch tracking since only the leader drives classic-to-diskless switch.
         initDisklessLogManager.foreach(_.removePartition(tp))
