@@ -110,6 +110,40 @@ git commit -m "sync(test): [description]"
 - Complete session file
 - Note any learnings
 
+#### Step 10: Merge the sync PR (10 min)
+
+A sync PR shows **Merging is blocked** with **Commits must have verified signatures**, and the
+merge-commit button is missing. Two rules in the `main` ruleset cause this. Turn both off for the
+merge, then restore them.
+
+Why each one fires:
+
+- **Require signed commits**: upstream Apache commits are occasionally unsigned. Signing one rewrites
+  its SHA, which destroys the merge base with `apache/kafka` and makes every later sync conflict, so
+  the rule has to come off instead. To see which commits are at fault, open the PR's **Commits** tab
+  and look for the **Unverified** badge. Expect a small number out of several hundred, all upstream.
+- **Require linear history**: this forbids the merge commit, so no merge-commit button appears. The
+  ruleset's own merge-method list still shows **Merge**, which is misleading. Linear history
+  overrides it.
+
+To unblock the merge:
+
+1. Go to **Settings > Rules > Rulesets** and open the ruleset targeting the default branch (`main`).
+2. Under **Rules**, clear **Require signed commits** and **Require linear history**, then choose
+   **Save changes**.
+3. Go to **Settings > General > Pull Requests** and confirm **Allow merge commits** is checked. This
+   toggle is separate from the ruleset, and both have to be right before the button appears.
+4. Reload the PR. It now reads **This branch has no conflicts with the base branch**.
+5. Choose **Create a merge commit** from the merge dropdown. Squash and rebase flatten the upstream
+   commits and drop the `merge:` commit, which breaks the merge base the next sync reads.
+
+After the merge, return to the ruleset and re-check **Require signed commits** and **Require linear
+history**. Leaving the signature rule off also drops the check on Inkless-authored work.
+
+A repository admin can merge through **Require signed commits** using the ruleset's bypass list
+instead of clearing the rule for everyone. That is the narrower lever, and worth setting up if
+unsigned upstream commits keep appearing.
+
 ## File-by-File Playbook
 
 ### ReplicaManager.scala
