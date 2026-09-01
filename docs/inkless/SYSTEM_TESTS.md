@@ -7,6 +7,15 @@ Unlike the JUnit integration tests (`./gradlew :storage:inkless:integrationTest`
 
 The broker properties template (`tests/kafkatest/services/kafka/templates/kafka.properties`) is preconfigured to connect to Postgres at `postgres:5432` and MinIO at `storage:9000` on the `ducknet` Docker network.
 
+## Running in CI
+
+The `Inkless System Tests` workflow runs the suite on weekdays at 02:00 UTC, and on demand
+from **Actions > Inkless System Tests > Run workflow**. A manual run takes a `test-target`
+to narrow the suite; a scheduled run uses `tests/kafkatest/tests/inkless/`.
+
+No other workflow covers these tests. `inkless.yml` and `ci.yml` run JUnit suites only, so a
+failure here is the sole signal that multi-broker behavior regressed.
+
 ## Prerequisites
 
 - Docker installed and running
