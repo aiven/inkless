@@ -3,6 +3,10 @@
 name: Inkless System Tests
 
 on:
+  # Weekdays at 02:00 UTC. The 00:00 slot and the weekend belong to the `ci.yml` cron,
+  # and the ducker cluster is too heavy to run alongside a full build.
+  schedule:
+    - cron: '0 2 * * 1-5'
   workflow_dispatch:
     inputs:
       test-target:
@@ -12,7 +16,9 @@ on:
         type: string
 
 concurrency:
-  group: inkless-system-tests-${{ github.ref }}
+  # Keyed on the event so a scheduled run and a manual investigation on the same ref
+  # don't cancel each other; repeated runs of the same kind still supersede.
+  group: inkless-system-tests-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
@@ -22,7 +28,11 @@ jobs:
   inkless-system-tests:
     name: Inkless system tests
     runs-on: ubuntu-latest
-    timeout-minutes: 200
+    # Stays above the 300m ducker run so the inner `timeout` fires first, yielding exit 124
+    # and leaving the archive and cleanup steps to run. Also 10 minutes off GitHub's 360m
+    # ceiling for hosted runners, so there is no room for another bump: if the suite outgrows
+    # this, split the ducktape target across jobs.
+    timeout-minutes: 350
 
     steps:
       - name: Checkout code
@@ -77,7 +87,7 @@ jobs:
         run: |
           set +e
           test_target="${REQUESTED_TEST_TARGET:-${DEFAULT_TEST_TARGET}}"
-          timeout 180m bash tests/docker/ducker-ak test "$test_target" -- --test-runner-timeout 7200000
+          timeout 300m bash tests/docker/ducker-ak test "$test_target" -- --test-runner-timeout 7200000
           exitcode="$?"
           echo "exitcode=$exitcode" >> "$GITHUB_OUTPUT"
 

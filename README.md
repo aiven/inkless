@@ -11,6 +11,13 @@
 
 Inkless for Apache Kafka
 ===
+
+[![Inkless CI](https://github.com/aiven/inkless/actions/workflows/inkless.yml/badge.svg?branch=main&event=push)](https://github.com/aiven/inkless/actions/workflows/inkless.yml?query=event%3Apush+branch%3Amain)
+[![CI](https://github.com/aiven/inkless/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/aiven/inkless/actions/workflows/ci.yml?query=event%3Apush+branch%3Amain)
+[![Inkless System Tests](https://github.com/aiven/inkless/actions/workflows/inkless-system-tests.yml/badge.svg?branch=main&event=schedule)](https://github.com/aiven/inkless/actions/workflows/inkless-system-tests.yml?query=event%3Aschedule+branch%3Amain)
+
+`Inkless CI` runs the diskless JUnit suites on every pull request, `CI` runs the full upstream Kafka suite on `main`, and `Inkless System Tests` runs the ducktape suite on a schedule. The two badges above this section track `apache/kafka` trunk, not this fork.
+
 See [Inkless](docs/inkless/README.md) specific documentation.
 
 Inkless is not supposed to be a long-term fork. We don't accept patches. The code is open exclusively for information purposes. We actively work on contributing these changes to Apache Kafka, see [KIP-1150: Diskless Topics](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1150%3A+Diskless+Topics).
