@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
 import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -30,6 +31,7 @@ import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.storage_backend.common.InvalidRangeException;
 import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
+import io.aiven.inkless.storage_backend.common.SizedReadableByteChannel;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -149,7 +151,7 @@ public abstract class BaseStorageTest {
     }
 
     @Test
-    void testFetchWithoutRange() throws Exception {
+    protected void testFetchWithoutRange() throws Exception {
         final String content;
         final ByteBuffer fetch;
         try (StorageBackend storage = storage()) {
@@ -209,6 +211,65 @@ public abstract class BaseStorageTest {
                 storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 10)));
         }
         assertThat(new String(fetch.array())).isEqualTo("C");
+    }
+
+    @Test
+    void testFetchWithRangeFromStartLargerThanFileSize() throws Exception {
+        final ByteBuffer fetch;
+        try (StorageBackend storage = storage()) {
+            final String content = "ABC";
+            byte[] data = content.getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
+
+            fetch = storage.readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, 10)));
+        }
+        assertThat(new String(fetch.array())).isEqualTo("ABC");
+    }
+
+    @Test
+    void testFetchWithMaxRange() throws Exception {
+        final ByteBuffer fetch;
+        try (StorageBackend storage = storage()) {
+            final byte[] data = "ABC".getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
+
+            fetch = storage.readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, ByteRange.maxRange()));
+        }
+        assertThat(new String(fetch.array())).isEqualTo("ABC");
+    }
+
+    @Test
+    void testFetchDeclaresContentLength() throws Exception {
+        try (StorageBackend storage = storage()) {
+            final byte[] data = "ABC".getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
+
+            assertDeclaredContentLength(storage, new ByteRange(0, data.length), data.length);
+            // Clipped ranges are where each backend's own length arithmetic runs.
+            assertDeclaredContentLength(storage, new ByteRange(0, 10), 3);
+            assertDeclaredContentLength(storage, new ByteRange(2, 10), 1);
+            // An empty range short-circuits ahead of the bounds check, so an offset past the end
+            // is still an empty read rather than an out-of-range failure.
+            assertDeclaredContentLength(storage, new ByteRange(0, 0), 0);
+            assertDeclaredContentLength(storage, new ByteRange(5, 0), 0);
+        }
+    }
+
+    private void assertDeclaredContentLength(
+        final StorageBackend storage,
+        final ByteRange range,
+        final int expectedLength
+    ) throws Exception {
+        try (ReadableByteChannel channel = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, range)) {
+            assertThat(channel)
+                .as("fetch(%s) must declare its content length", range)
+                .isInstanceOf(SizedReadableByteChannel.class);
+            assertThat(((SizedReadableByteChannel) channel).contentLength())
+                .as("declared content length for %s", range)
+                .isEqualTo(expectedLength);
+        }
     }
 
     @Test

@@ -32,7 +32,6 @@ import com.groupcdg.pitest.annotations.CoverageIgnore;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.util.Map;
 import java.util.Objects;
@@ -43,18 +42,12 @@ import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.storage_backend.common.InvalidRangeException;
 import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
+import io.aiven.inkless.storage_backend.common.SizedReadableByteChannel;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 @CoverageIgnore  // tested on integration level
 public class GcsStorage extends StorageBackend {
-    /**
-     * The file extent max size is 16 MiB. Most files are few megabytes but usually over 2 MiB.
-     * Good value here is to allow most files to be fetched in single chunk. Worst case is to load
-     * the file in two chunks.
-     */
-    private static final int READER_8MB_CHUNK_SIZE = 1024 * 1024 * 8;
-
     private volatile Storage storage;
     private String bucketName;
     private ReloadableCredentialsProvider credentialsProvider;
@@ -148,7 +141,7 @@ public class GcsStorage extends StorageBackend {
     public ReadableByteChannel fetch(ObjectKey key, ByteRange range) throws StorageBackendException, IOException {
         try {
             if (range != null && range.empty()) {
-                return Channels.newChannel(InputStream.nullInputStream());
+                return SizedReadableByteChannel.empty();
             }
 
             final Blob blob = getBlob(key);
@@ -157,13 +150,20 @@ public class GcsStorage extends StorageBackend {
                 throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range + " for blob size " + blob.getSize());
             }
 
+            final long contentLength = range == null
+                ? blob.getSize()
+                : Math.min(range.size(), blob.getSize() - range.offset());
+
             final ReadChannel reader = blob.reader();
-            reader.setChunkSize(READER_8MB_CHUNK_SIZE);
+            // A chunk size of 0 makes the client read straight into the destination buffer.
+            // Any positive size stages a second buffer of that size first,
+            // and the caller already allocates a destination the size of the whole payload.
+            reader.setChunkSize(0);
             if (range != null) {
                 reader.limit(range.endOffset() + 1);
                 reader.seek(range.offset());
             }
-            return reader;
+            return SizedReadableByteChannel.of(reader, Math.toIntExact(contentLength));
         } catch (final IOException e) {
             throw new StorageBackendException("Failed to fetch " + key, e);
         } catch (final BaseServiceException e) {

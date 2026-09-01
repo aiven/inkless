@@ -28,18 +28,11 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.io.ByteArrayInputStream;
-
-import io.aiven.inkless.common.ByteRange;
-import io.aiven.inkless.storage_backend.common.InvalidRangeException;
-import io.aiven.inkless.storage_backend.common.ObjectUploader;
-import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.storage_backend.common.fixtures.BaseStorageTest;
 import io.aiven.inkless.storage_backend.common.fixtures.TestUtils;
 
 import static io.aiven.inkless.storage_backend.azure.integration.AzuriteBlobStorageUtils.azuriteContainer;
 import static io.aiven.inkless.storage_backend.azure.integration.AzuriteBlobStorageUtils.connectionString;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
 abstract class AzureBlobStorageTest extends BaseStorageTest {
@@ -62,18 +55,5 @@ abstract class AzureBlobStorageTest extends BaseStorageTest {
     void setUp(final TestInfo testInfo) {
         azureContainerName = TestUtils.testNameToBucketName(testInfo);
         blobServiceClient.createBlobContainer(azureContainerName);
-    }
-
-    @Override
-    protected void testFetchWithRangeOutsideFileSize() throws StorageBackendException {
-        // For some reason, Azure (or only Azurite) considers range 3-5 valid for a 3-byte blob,
-        // so the generic test fails.
-        final String content = "ABC";
-        ObjectUploader objectUploader = storage();
-        byte[] data = content.getBytes();
-        objectUploader.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
-
-        assertThatThrownBy(() -> storage().fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(4, 6)))
-            .isInstanceOf(InvalidRangeException.class);
     }
 }
