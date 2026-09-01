@@ -28,7 +28,7 @@ import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationHighWatermarkLagFetchRateMetricName, ConsolidationHighWatermarkLagPartitionCountMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, DisklessSwitchedPrefixLagMetricName, DisklessSwitchedPrefixMissingFetchRateMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
@@ -166,6 +166,12 @@ object ReplicaManager {
   private val ConsolidationSupplementRateMetricName = "ConsolidationSupplementRate"
   private val ConsolidationSupplementBytesPerSecMetricName = "ConsolidationSupplementBytesPerSec"
   private val ConsolidationLocalBytesPerSecMetricName = "ConsolidationLocalBytesPerSec"
+  private val ConsolidationHighWatermarkLagFetchRateMetricName = "ConsolidationHighWatermarkLagFetchRate"
+  private val ConsolidationHighWatermarkLagPartitionCountMetricName =
+    "ConsolidationHighWatermarkLagPartitionCount"
+  private[server] val DisklessSwitchedPrefixLagMetricName = "DisklessSwitchedPrefixLag"
+  private val DisklessSwitchedPrefixMissingFetchRateMetricName =
+    "DisklessSwitchedPrefixMissingFetchRate"
 
   private[server] val GaugeMetricNames = Set(
     LeaderCountMetricName,
@@ -177,6 +183,8 @@ object ReplicaManager {
     ReassigningPartitionsMetricName,
     SealedPartitionsCountMetricName,
     DisklessSwitchedReplicasOutsideIsrCountMetricName,
+    ConsolidationHighWatermarkLagPartitionCountMetricName,
+    DisklessSwitchedPrefixLagMetricName,
     PartitionsWithLateTransactionsCountMetricName,
     ProducerIdCountMetricName
   )
@@ -188,7 +196,9 @@ object ReplicaManager {
     ConsolidationFetchBytesInPerSecMetricName,
     ConsolidationSupplementRateMetricName,
     ConsolidationSupplementBytesPerSecMetricName,
-    ConsolidationLocalBytesPerSecMetricName
+    ConsolidationLocalBytesPerSecMetricName,
+    ConsolidationHighWatermarkLagFetchRateMetricName,
+    DisklessSwitchedPrefixMissingFetchRateMetricName
   )
 
   private[server] val MetricNames = GaugeMetricNames.union(MeterMetricNames)
@@ -443,12 +453,37 @@ class ReplicaManager(val config: KafkaConfig,
   metricsGroup.newGauge(SealedPartitionsCountMetricName, () => sealedPartitionsCount)
   metricsGroup.newGauge(DisklessSwitchedReplicasOutsideIsrCountMetricName,
     () => disklessSwitchedReplicasOutsideIsrCount)
+  metricsGroup.newGauge(ConsolidationHighWatermarkLagPartitionCountMetricName,
+    () => consolidationHighWatermarkLagPartitionCount)
+  metricsGroup.newGauge(DisklessSwitchedPrefixLagMetricName, () => disklessSwitchedPrefixLag)
   metricsGroup.newGauge(PartitionsWithLateTransactionsCountMetricName, () => lateTransactionsCount)
   metricsGroup.newGauge(ProducerIdCountMetricName, () => producerIdCount)
 
   private def reassigningPartitionsCount: Int = leaderPartitionsIterator.count(_.isReassigning)
 
   private def sealedPartitionsCount: Int = leaderPartitionsIterator.count(_.isSealed)
+
+  /**
+   * Counts consolidating partitions whose local high watermark sits below their local log end
+   * offset, so a consumer read of that range goes to Inkless.
+   * Unlike ConsolidationHighWatermarkLagFetchRate this does not depend on consumer traffic,
+   * so a stalled replica stays visible after consumers have moved past its log end offset.
+   */
+  private[server] def consolidationHighWatermarkLagPartitionCount: Int = onlinePartitionsIterator.count { partition =>
+    isManagedConsolidatingDisklessPartition(partition.topicPartition) &&
+      partition.log.exists(log => log.highWatermark < log.logEndOffset)
+  }
+
+  /**
+   * Records below the classic-to-diskless seal that this broker's replicas have not replicated.
+   * Zero means every replica here holds its prefix; a value that stops falling is a replica that has
+   * stopped catching up. A partition rebuilding from the remote tier and one whose prefix is gone look
+   * the same: telling them apart needs the tier's coverage of [0, seal).
+   */
+  private[server] def disklessSwitchedPrefixLag: Long = onlinePartitionsIterator.map { partition =>
+    val seal = _inklessMetadataView.getClassicToDisklessStartOffset(partition.topicPartition)
+    if (seal < 0L) 0L else partition.log.map(log => Math.max(0L, seal - log.logEndOffset)).getOrElse(0L)
+  }.sum
 
   private def lateTransactionsCount: Int = {
     val currentTimeMs = time.milliseconds()
@@ -464,9 +499,18 @@ class ReplicaManager(val config: KafkaConfig,
   private val consolidationSupplementRate: Meter = metricsGroup.newMeter(ConsolidationSupplementRateMetricName, "supplements", TimeUnit.SECONDS)
   private val consolidationSupplementBytesPerSec: Meter = metricsGroup.newMeter(ConsolidationSupplementBytesPerSecMetricName, "bytes", TimeUnit.SECONDS)
   private val consolidationLocalBytesPerSec: Meter = metricsGroup.newMeter(ConsolidationLocalBytesPerSecMetricName, "bytes", TimeUnit.SECONDS)
+  private val consolidationHighWatermarkLagFetchRate: Meter =
+    metricsGroup.newMeter(ConsolidationHighWatermarkLagFetchRateMetricName, "fetches", TimeUnit.SECONDS)
+  private val disklessSwitchedPrefixMissingFetchRate: Meter =
+    metricsGroup.newMeter(DisklessSwitchedPrefixMissingFetchRateMetricName, "fetches", TimeUnit.SECONDS)
 
-  private def isConsolidatingPartition(partition: Partition): Boolean =
-    config.disklessRemoteStorageConsolidationEnabled && _inklessMetadataView.isConsolidatingDisklessTopic(partition.topic)
+  /**
+   * Returns true when this broker consolidates the topic: the feature is enabled here and the topic
+   * is diskless with remote storage. Says nothing about the switch phase, so a topic whose switch is
+   * still `CLASSIC_TO_DISKLESS_SWITCH_PENDING` already reads as consolidating.
+   */
+  private def consolidationActiveFor(topic: String): Boolean =
+    config.disklessRemoteStorageConsolidationEnabled && _inklessMetadataView.isConsolidatingDisklessTopic(topic)
 
   private[server] def disklessSwitchedReplicasOutsideIsrCount: Int = onlinePartitionsIterator.count { partition =>
     val topicPartition = partition.topicPartition
@@ -479,15 +523,15 @@ class ReplicaManager(val config: KafkaConfig,
   def recordConsolidationFetchBytesIn(bytes: Long): Unit = consolidationFetchBytesInPerSec.mark(bytes)
 
   def underReplicatedPartitionCount: Int = leaderPartitionsIterator.count { partition =>
-    partition.isUnderReplicated && !isConsolidatingPartition(partition)
+    partition.isUnderReplicated && !consolidationActiveFor(partition.topic)
   }
 
   def underMinIsrPartitionCount: Int = leaderPartitionsIterator.count { partition =>
-    partition.isUnderMinIsr && !isConsolidatingPartition(partition)
+    partition.isUnderMinIsr && !consolidationActiveFor(partition.topic)
   }
 
   def atMinIsrPartitionCount: Int = leaderPartitionsIterator.count { partition =>
-    partition.isAtMinIsr && !isConsolidatingPartition(partition)
+    partition.isAtMinIsr && !consolidationActiveFor(partition.topic)
   }
 
   def startHighWatermarkCheckPointThread(): Unit = {
@@ -2470,13 +2514,37 @@ class ReplicaManager(val config: KafkaConfig,
         val classicToDisklessStartOffset = _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition())
         // partitions with switching in progress should always serve from local log
         var shouldReadFromUnifiedLog = classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
-        val isConsolidatingPartition =
-          _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic) &&
-            config.disklessRemoteStorageConsolidationEnabled
-        if (isConsolidatingPartition) {
+        if (consolidationActiveFor(tp.topic)) {
           getPartitionOrError(tp.topicPartition) match {
             case Right(partition) =>
-              val logEndOffset = partition.log.map(_.logEndOffset).getOrElse(0L)
+              // Deref partition.log once: it is swapped on log recreation and dir change, so
+              // separate derefs can mix offsets from two different logs. The offsets below are still
+              // read one at a time, and the consolidation fetcher can append between them. Read the
+              // high watermark before LEO so that skew can only fail the supplement gate below, never
+              // pass it on a stale anchor.
+              val localLog = partition.log
+              val localHighWatermark = localLog.map(_.highWatermark).getOrElse(0L)
+              val logEndOffset = localLog.map(_.logEndOffset).getOrElse(0L)
+              val localLogStartOffset = localLog.map(_.localLogStartOffset).getOrElse(0L)
+              // Where the local read stops. Consumers are bounded by the high watermark because an
+              // AZ-local replica may have appended data which is not fetchable yet. Followers and
+              // future replicas are bounded by LEO, since LOG_END isolation permits them to
+              // replicate the uncommitted suffix. A read_committed consumer stops at the last stable
+              // offset instead, which this does not model: diskless carries no transactional data and
+              // the switch aborts undecided transactions, so no consolidating partition has an
+              // LSO below its high watermark. Derive the bound from params.isolation if that changes.
+              val localReadFrontier =
+                if (params.isFromConsumer) localHighWatermark else logEndOffset
+              // Two ranges must stay on the local read path even when they sit above the isolation
+              // frontier, because diskless cannot answer them: [logStartOffset, localLogStartOffset)
+              // lives only in the remote tier once ConsolidatedDisklessLogPruner has pruned the
+              // diskless batches, and [0, classicToDisklessStartOffset) is the classic prefix the
+              // control plane never held. Both switch sentinels are negative, so a partition that
+              // never switched keeps the frontier at the isolation bound. Without a local log there
+              // is nothing to read locally and diskless is authoritative for the whole range.
+              val readableFrontier =
+                if (localLog.isEmpty) 0L
+                else Math.max(Math.max(localReadFrontier, localLogStartOffset), classicToDisklessStartOffset)
               // A follower's local logStartOffset stays frozen at the switch. DeleteRecords and
               // retention advance only the real leader's log start and the control-plane cross-tier
               // earliest, never a follower's. With managed replicas the metadata transformer routes
@@ -2506,17 +2574,33 @@ class ReplicaManager(val config: KafkaConfig,
                   false
                 )
                 partitionLookupFailed = true
-              } else if (fetchPartitionData.fetchOffset < logEndOffset) {
-                // Local log has data for this offset range — serve from local, track for diskless supplement
+              } else if (fetchPartitionData.fetchOffset < readableFrontier) {
                 shouldReadFromUnifiedLog = true
-                // Skip supplement tracking when the fetch offset falls in the tiered-storage range
-                // (below localLogStartOffset). The read will route to RemoteLogManager and the
-                // supplement data would be discarded by processRemoteFetches anyway.
-                val localLogStartOffset = partition.log.map(_.localLogStartOffset).getOrElse(0L)
-                if (inklessSharedState.isDefined && fetchPartitionData.fetchOffset >= localLogStartOffset)
+                // Same population as isBelowSealAndAheadOfLocalLog: inside this branch only the seal
+                // can have raised the frontier. Keep the two in step. Marked here, not in the
+                // carve-out, since DelayedFetch re-reads on completion and would count twice.
+                // Followers ask for their own LEO on a leader below the seal, so they are excluded.
+                if (params.isFromConsumer && fetchPartitionData.fetchOffset >= logEndOffset)
+                  disklessSwitchedPrefixMissingFetchRate.mark()
+                // Only a consumer read that starts inside the local log and reaches its end can take
+                // a supplement. Outside that window the anchor asks object storage for classic
+                // offsets, or an empty read passes the exhaustion guard in
+                // buildConsolidationSupplementFetchInfos. A pending switch has no committed seal.
+                if (inklessSharedState.isDefined &&
+                  params.isFromConsumer &&
+                  classicToDisklessStartOffset != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING &&
+                  fetchPartitionData.fetchOffset >= localLogStartOffset &&
+                  fetchPartitionData.fetchOffset < logEndOffset &&
+                  localReadFrontier >= logEndOffset)
                   consolidatingLocalFetchSupplements += (tp -> logEndOffset)
+              } else if (!shouldReadFromUnifiedLog && fetchPartitionData.fetchOffset < logEndOffset) {
+                // The local log holds this offset but cannot serve it, so this read goes to Inkless.
+                // A switch-pending partition is excluded because it was already routed to the local
+                // log above, and a follower cannot reach this branch: its frontier is LEO.
+                consolidationHighWatermarkLagFetchRate.mark()
               }
-              // else: consumer is at or beyond consolidation frontier, diskless-only
+              // else: the fetch is at or beyond the frontier and beyond the local log, so diskless
+              // is authoritative
             case Left(error) =>
               warn(s"Error while fetching partition ${tp.topicPartition()} for consolidating diskless topic: $error. " +
                 s"Returning error for the fetch request since we cannot determine if the partition has switched to diskless or not.")
@@ -2924,6 +3008,43 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Returns true for a consolidating partition whose switch is not still pending.
+   * ISR is not checked: born-diskless replicas join ISR before their local fetch state is ready.
+   *
+   * Pending partitions are excluded because they have no diskless leg to fall back on, so a replica
+   * read there can answer OFFSET_OUT_OF_RANGE for records the leader holds.
+   */
+  private[server] def isManagedConsolidatingDisklessPartition(tp: TopicPartition): Boolean = {
+    consolidationActiveFor(tp.topic) &&
+      _inklessMetadataView.getClassicToDisklessStartOffset(tp) !=
+        PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
+  }
+
+  /**
+   * Returns true when this offset sits below the classic-to-diskless seal and beyond what this replica
+   * has replicated: the leader holds it and this replica will, so the fetch waits rather than being
+   * answered or refused. Used by both halves of that decision, the read and the purgatory.
+   */
+  private[server] def isBelowSealAndAheadOfLocalLog(tp: TopicPartition,
+                                                    fetchOffset: Long,
+                                                    localLogEndOffset: Long): Boolean =
+    fetchOffset >= localLogEndOffset &&
+      fetchOffset < _inklessMetadataView.getClassicToDisklessStartOffset(tp)
+
+  /**
+   * Returns true when a fetch carrying no `clientMetadata` may read this partition from a replica
+   * that is not the partition leader, because the metadata transformer advertised that replica.
+   *
+   * `DelayedFetch` must reach the same answer: its offset snapshot also runs with `fetchOnlyLeader`,
+   * and refusing there force-completes the parked request instead of waiting.
+   */
+  private[server] def allowsOlderConsumerReplicaRead(tp: TopicIdPartition, params: FetchParams): Boolean = {
+    params.isFromConsumer && params.clientMetadata.isEmpty && !params.shareFetchRequest &&
+      (isPartitionSwitchedFromClassicToDiskless(tp) ||
+        isManagedConsolidatingDisklessPartition(tp.topicPartition))
+  }
+
+  /**
    * Read from multiple topic partitions at the given offset up to maxSize bytes
    */
   def readFromLog(
@@ -2990,17 +3111,7 @@ class ReplicaManager(val config: KafkaConfig,
             if (preferredReadReplica.isDefined) OptionalInt.of(preferredReadReplica.get) else OptionalInt.empty(),
             Errors.NONE)
         } else {
-          // For partitions that were switched from classic to diskless and still have classic
-          // local/remote data to read (classicToDisklessStartOffset >= 0), relax the leader-only
-          // requirement so any in-sync replica can serve the classic portion of the read. This is
-          // scoped to older consumer fetches that don't supply clientMetadata (pre-KIP-392 / no
-          // rackId), which would otherwise get NOT_LEADER_OR_FOLLOWER on a non-leader broker.
-          // Broker-to-broker follower replication and share fetches are intentionally excluded.
-          // The check is ordered so that the metadata lookup is only performed when the override
-          // could actually apply.
-          val isOlderConsumer = params.isFromConsumer && params.clientMetadata.isEmpty
-          val allowReplica = !params.fetchOnlyLeader() ||
-            (isOlderConsumer && isPartitionSwitchedFromClassicToDiskless(tp))
+          val allowReplica = !params.fetchOnlyLeader() || allowsOlderConsumerReplicaRead(tp, params)
           log = partition.localLogWithEpochOrThrow(fetchInfo.currentLeaderEpoch, !allowReplica)
 
           // Try the read first, this tells us whether we need all of adjustedFetchSize for this partition
@@ -3139,6 +3250,21 @@ class ReplicaManager(val config: KafkaConfig,
           OptionalLong.of(log.lastStableOffset),
           Errors.NONE)
       }
+    } else if (params.isFromConsumer && log != null &&
+      isBelowSealAndAheadOfLocalLog(tp.topicPartition, offset, log.logEndOffset)) {
+      // The leader holds this offset and this replica will: the seal never exceeds the leader's log
+      // end offset. Out of range would reset the consumer over a range missing only here, so answer
+      // empty and let the fetch wait. DelayedFetch skips case F on the same condition.
+      new LogReadResult(
+        new FetchDataInfo(new LogOffsetMetadata(offset), MemoryRecords.EMPTY),
+        Optional.empty(),
+        log.highWatermark,
+        log.logStartOffset,
+        log.logEndOffset,
+        fetchInfo.logStartOffset,
+        fetchTimeMs,
+        OptionalLong.of(log.lastStableOffset),
+        Errors.NONE)
     } else {
       new LogReadResult(Errors.forException(exception))
     }
@@ -3769,7 +3895,7 @@ class ReplicaManager(val config: KafkaConfig,
                 stateChangeLogger.info(s"Stale high watermark detected: advanced high watermark to seal offset $seal for " +
                   s"switched leader partition $tp")
               } else if (log.logEndOffset < seal) {
-                if (isConsolidatingPartition(partition) && log.remoteLogEnabled()) {
+                if (consolidationActiveFor(partition.topic) && log.remoteLogEnabled()) {
                   // The leader's local classic prefix was lost (full local-storage wipe / DR).
                   // [0, seal) lives in the remote tier, so leave the partition online and let the
                   // ConsolidationReconciler arm consolidation at the current LEO: the first fetch
@@ -3849,8 +3975,7 @@ class ReplicaManager(val config: KafkaConfig,
   private def hasConsolidatedDisklessSuffixFromSeal(tp: TopicPartition,
                                                     log: UnifiedLog,
                                                     seal: Long): Boolean = {
-    if (!config.disklessRemoteStorageConsolidationEnabled ||
-        !_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)) {
+    if (!consolidationActiveFor(tp.topic)) {
       return false
     }
 
@@ -4028,9 +4153,7 @@ class ReplicaManager(val config: KafkaConfig,
     val consolidatingDisklessPartitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     localLeaders.foreachEntry { (tp, info) =>
       val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic())
-      val isConsolidatingDisklessTopic =
-        config.disklessRemoteStorageConsolidationEnabled &&
-          _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
+      val isConsolidatingDisklessTopic = consolidationActiveFor(tp.topic)
       val existingPartition = onlinePartition(tp)
       // A pending classic-to-diskless switch must always seal+register below, even for a
       // consolidating topic (where isConsolidatingDisklessTopic is already true), or the
@@ -4163,9 +4286,7 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
-      val isConsolidatingDisklessTopic =
-        config.disklessRemoteStorageConsolidationEnabled &&
-          _inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)
+      val isConsolidatingDisklessTopic = consolidationActiveFor(tp.topic)
       if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
         // Clean up classic-to-diskless switch tracking since only the leader drives classic-to-diskless switch.
         initDisklessLogManager.foreach(_.removePartition(tp))

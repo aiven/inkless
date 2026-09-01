@@ -75,6 +75,8 @@ class DelayedFetch(
    * Case H: A diverging epoch was found, return response to trigger truncation
    * Upon completion, should return whatever data is available for each valid partition
    */
+  private val replicaReadAllowed = mutable.Map.empty[TopicIdPartition, Boolean]
+
   override def tryComplete(): Boolean = {
     var accumulatedSize = 0L
     classicFetchPartitionStatus.forEach { (topicIdPartition, fetchStatus) =>
@@ -83,7 +85,15 @@ class DelayedFetch(
       try {
         if (fetchOffset != LogOffsetMetadata.UNKNOWN_OFFSET_METADATA) {
           val partition = replicaManager.getPartitionOrException(topicIdPartition.topicPartition)
-          val offsetSnapshot = partition.fetchOffsetSnapshot(fetchLeaderEpoch, params.fetchOnlyLeader)
+          // An older consumer authorized to read this partition from a non-leader replica must not
+          // be force-completed as case A here: the read itself was allowed, so the snapshot has to
+          // agree or the request stops waiting for the data it was parked for. The answer cannot
+          // change while this request is parked, and every tryComplete runs under the operation's
+          // lock, so it is resolved once per partition instead of on every completion attempt.
+          val fetchOnlyFromLeader = params.fetchOnlyLeader &&
+            !replicaReadAllowed.getOrElseUpdate(topicIdPartition,
+              replicaManager.allowsOlderConsumerReplicaRead(topicIdPartition, params))
+          val offsetSnapshot = partition.fetchOffsetSnapshot(fetchLeaderEpoch, fetchOnlyFromLeader)
 
           val endOffset = params.isolation match {
             case FetchIsolation.LOG_END => offsetSnapshot.logEndOffset
@@ -94,7 +104,13 @@ class DelayedFetch(
           // Go directly to the check for Case G if the message offsets are the same. If the log segment
           // has just rolled, then the high watermark offset will remain the same but be on the old segment,
           // which would incorrectly be seen as an instance of Case F.
-          if (fetchOffset.messageOffset > endOffset.messageOffset) {
+          if (fetchOffset.messageOffset > endOffset.messageOffset &&
+            replicaManager.isBelowSealAndAheadOfLocalLog(topicIdPartition.topicPartition,
+              fetchOffset.messageOffset, offsetSnapshot.logEndOffset.messageOffset)) {
+            // Not case F: the offset is below the seal and this replica has not replicated that far,
+            // so the read already answered empty. Completing now would return it at once and the
+            // consumer would re-fetch in a loop.
+          } else if (fetchOffset.messageOffset > endOffset.messageOffset) {
             // Case F, this can happen when the new fetch operation is on a truncated leader
             debug(s"Satisfying fetch $this since it is fetching later segments of partition $topicIdPartition.")
             return forceComplete()
@@ -114,36 +130,36 @@ class DelayedFetch(
             }
           }
 
-            // Case H: If truncation has caused diverging epoch while this request was in purgatory, return to trigger truncation
-            fetchStatus.fetchInfo.lastFetchedEpoch.ifPresent { fetchEpoch =>
-              val epochEndOffset = partition.lastOffsetForLeaderEpoch(fetchLeaderEpoch, fetchEpoch, fetchOnlyFromLeader = false)
-              if (epochEndOffset.errorCode != Errors.NONE.code()
-                || epochEndOffset.endOffset == UNDEFINED_EPOCH_OFFSET
-                || epochEndOffset.leaderEpoch == UNDEFINED_EPOCH) {
-                debug(s"Could not obtain last offset for leader epoch for partition $topicIdPartition, epochEndOffset=$epochEndOffset.")
-                return forceComplete()
-              } else if (epochEndOffset.leaderEpoch < fetchEpoch || epochEndOffset.endOffset < fetchStatus.fetchInfo.fetchOffset) {
-                debug(s"Satisfying fetch $this since it has diverging epoch requiring truncation for partition " +
-                  s"$topicIdPartition epochEndOffset=$epochEndOffset fetchEpoch=$fetchEpoch fetchOffset=${fetchStatus.fetchInfo.fetchOffset}.")
-                return forceComplete()
-              }
+          // Case H: If truncation has caused diverging epoch while this request was in purgatory, return to trigger truncation
+          fetchStatus.fetchInfo.lastFetchedEpoch.ifPresent { fetchEpoch =>
+            val epochEndOffset = partition.lastOffsetForLeaderEpoch(fetchLeaderEpoch, fetchEpoch, fetchOnlyFromLeader = false)
+            if (epochEndOffset.errorCode != Errors.NONE.code()
+              || epochEndOffset.endOffset == UNDEFINED_EPOCH_OFFSET
+              || epochEndOffset.leaderEpoch == UNDEFINED_EPOCH) {
+              debug(s"Could not obtain last offset for leader epoch for partition $topicIdPartition, epochEndOffset=$epochEndOffset.")
+              return forceComplete()
+            } else if (epochEndOffset.leaderEpoch < fetchEpoch || epochEndOffset.endOffset < fetchStatus.fetchInfo.fetchOffset) {
+              debug(s"Satisfying fetch $this since it has diverging epoch requiring truncation for partition " +
+                s"$topicIdPartition epochEndOffset=$epochEndOffset fetchEpoch=$fetchEpoch fetchOffset=${fetchStatus.fetchInfo.fetchOffset}.")
+              return forceComplete()
             }
           }
-        } catch {
-          case _: NotLeaderOrFollowerException =>  // Case A or Case B
-            debug(s"Broker is no longer the leader or follower of $topicIdPartition, satisfy $this immediately")
-            return forceComplete()
-          case _: UnknownTopicOrPartitionException => // Case C
-            debug(s"Broker no longer knows of partition $topicIdPartition, satisfy $this immediately")
-            return forceComplete()
-          case _: KafkaStorageException => // Case D
-            debug(s"Partition $topicIdPartition is in an offline log directory, satisfy $this immediately")
-            return forceComplete()
-          case _: FencedLeaderEpochException => // Case E
-            debug(s"Broker is the leader of partition $topicIdPartition, but the requested epoch " +
-              s"$fetchLeaderEpoch is fenced by the latest leader epoch, satisfy $this immediately")
-            return forceComplete()
         }
+      } catch {
+        case _: NotLeaderOrFollowerException =>  // Case A or Case B
+          debug(s"Broker is no longer the leader or follower of $topicIdPartition, satisfy $this immediately")
+          return forceComplete()
+        case _: UnknownTopicOrPartitionException => // Case C
+          debug(s"Broker no longer knows of partition $topicIdPartition, satisfy $this immediately")
+          return forceComplete()
+        case _: KafkaStorageException => // Case D
+          debug(s"Partition $topicIdPartition is in an offline log directory, satisfy $this immediately")
+          return forceComplete()
+        case _: FencedLeaderEpochException => // Case E
+          debug(s"Broker is the leader of partition $topicIdPartition, but the requested epoch " +
+            s"$fetchLeaderEpoch is fenced by the latest leader epoch, satisfy $this immediately")
+          return forceComplete()
+      }
     }
 
     tryCompleteDiskless(disklessFetchPartitionStatus) match {
