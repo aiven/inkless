@@ -21,7 +21,7 @@ package io.aiven.inkless.storage_backend.gcs;
 import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.metrics.Sensor;
-import org.apache.kafka.common.metrics.stats.CumulativeCount;
+import org.apache.kafka.common.metrics.stats.CumulativeSum;
 import org.apache.kafka.common.metrics.stats.Rate;
 
 import com.google.api.client.http.*;
@@ -116,8 +116,15 @@ public class MetricCollector {
     ) {
         final Sensor sensor = metrics.sensor(name);
         sensor.add(metrics.metricInstance(rateMetricName), new Rate());
-        sensor.add(metrics.metricInstance(totalMetricName), new CumulativeCount());
+        sensor.add(metrics.metricInstance(totalMetricName), new CumulativeSum());
         return sensor;
+    }
+
+    void recordBatchDeleteObjects(final int objectCount) {
+        // The response interceptor sees only the outer batch request, whose path doesn't identify its operations.
+        if (objectCount > 0) {
+            deleteObjectRequests.record(objectCount);
+        }
     }
 
     private final MetricResponseInterceptor metricResponseInterceptor = new MetricResponseInterceptor();
