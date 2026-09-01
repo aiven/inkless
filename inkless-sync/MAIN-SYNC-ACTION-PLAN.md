@@ -112,6 +112,11 @@ git commit -m "sync(test): [description]"
 
 #### Step 10: Merge the sync PR (10 min)
 
+**A repository admin has to merge a sync PR.** Both settings this step changes, the `main` ruleset
+and the repository's merge options, are admin-only. The `maintain` role can't reach them. If you
+ran the sync and aren't an admin, take the PR to review as usual and then hand the merge to an
+admin. Ask internally who currently holds the role.
+
 A sync PR shows **Merging is blocked** with **Commits must have verified signatures**, and the
 merge-commit button is missing. Two rules in the `main` ruleset cause this. Turn both off for the
 merge, then restore them.
