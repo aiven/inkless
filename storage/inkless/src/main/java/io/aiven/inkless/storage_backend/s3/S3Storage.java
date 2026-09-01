@@ -18,7 +18,6 @@
 package io.aiven.inkless.storage_backend.s3;
 
 import org.apache.kafka.common.metrics.Metrics;
-import org.apache.kafka.common.utils.ByteBufferInputStream;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
@@ -27,7 +26,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -42,6 +40,7 @@ import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.storage_backend.common.InvalidRangeException;
 import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
+import io.aiven.inkless.storage_backend.common.SizedReadableByteChannel;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
@@ -123,7 +122,7 @@ public final class S3Storage extends StorageBackend {
     public ReadableByteChannel fetch(final ObjectKey key, final ByteRange range) throws StorageBackendException, IOException {
         try {
             if (range != null && range.empty()) {
-                return Channels.newChannel(InputStream.nullInputStream());
+                return SizedReadableByteChannel.empty();
             }
 
             var builder = GetObjectRequest.builder()
@@ -133,11 +132,10 @@ public final class S3Storage extends StorageBackend {
                 builder = builder.range(formatRange(range));
             }
             final GetObjectRequest getRequest = builder.build();
-            // for the small 4-8MiB blobs expected here, reading the whole object into memory is more efficient
-            // than streaming it via S3ObjectInputStream which has significant overhead per read call
-            // and does not play well with the buffering done in ObjectFetcher.readToByteBuffer()
-            final var buffer = s3Client.getObjectAsBytes(getRequest).asByteBuffer();
-            return Channels.newChannel(new ByteBufferInputStream(buffer));
+            // Materializing the 4-8 MiB blobs expected here beats streaming them,
+            // which carries significant per-read overhead.
+            // S3 clips the range to the object, so the response is already the exact payload.
+            return SizedReadableByteChannel.of(s3Client.getObjectAsBytes(getRequest).asByteBuffer());
         } catch (final AwsServiceException e) {
             if (e.statusCode() == 404) {
                 throw new KeyNotFoundException(this, key, e);
