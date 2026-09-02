@@ -153,6 +153,7 @@ public class GcsStorage extends StorageBackend {
             final long contentLength = range == null
                 ? blob.getSize()
                 : Math.min(range.size(), blob.getSize() - range.offset());
+            final int length = SizedReadableByteChannel.exactLength(key, contentLength);
 
             final ReadChannel reader = blob.reader();
             // A chunk size of 0 makes the client read straight into the destination buffer.
@@ -163,7 +164,7 @@ public class GcsStorage extends StorageBackend {
                 reader.limit(range.endOffset() + 1);
                 reader.seek(range.offset());
             }
-            return SizedReadableByteChannel.of(reader, SizedReadableByteChannel.exactLength(key, contentLength));
+            return SizedReadableByteChannel.of(reader, length);
         } catch (final IOException e) {
             throw new StorageBackendException("Failed to fetch " + key, e);
         } catch (final BaseServiceException e) {
