@@ -23,6 +23,8 @@ import java.nio.channels.ClosedChannelException;
 import java.nio.channels.ReadableByteChannel;
 import java.util.Objects;
 
+import io.aiven.inkless.common.ObjectKey;
+
 /**
  * A channel that knows how many bytes it delivers before EOF.
  *
@@ -91,6 +93,20 @@ public interface SizedReadableByteChannel extends ReadableByteChannel {
                 open = false;
             }
         };
+    }
+
+    /**
+     * Narrows a backend's own {@code long} length to the {@code int} this contract requires.
+     *
+     * @throws StorageBackendException if it does not fit, rather than the unchecked
+     *         {@code ArithmeticException} {@code Math.toIntExact} would raise
+     */
+    static int exactLength(final ObjectKey key, final long contentLength) throws StorageBackendException {
+        if (contentLength < 0 || contentLength > Integer.MAX_VALUE) {
+            throw new StorageBackendException("Failed to fetch " + key + ": content length "
+                + contentLength + " is outside the 0.." + Integer.MAX_VALUE + " bytes a single fetch can hold");
+        }
+        return (int) contentLength;
     }
 
     /**
