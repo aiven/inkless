@@ -92,7 +92,7 @@ gh pr create --base inkless-4.0 --title "Sync inkless-4.0 to upstream 4.0.1"
 
 ### Version Files
 
-These files need the `-inkless` suffix pattern:
+These files need the `inkless` suffix pattern:
 
 #### gradle.properties
 ```properties
@@ -100,9 +100,8 @@ version=4.0.1-inkless
 ```
 
 #### tests/kafkatest/__init__.py
-This value must stay PEP 440 (https://peps.python.org/pep-0440/) compliant: `setuptools`
-parses it with `packaging.version.Version`, which rejects a bare `-inkless`/`.inkless`
-suffix. Use `+inkless` as a local version label instead.
+This value must stay PEP 440 (https://peps.python.org/pep-0440/) compliant:
+Use `+inkless` as a local version label instead.
 ```python
 __version__ = '4.0.1+inkless'
 ```
@@ -202,7 +201,7 @@ git push -u origin inkless-4.0-sync-4.0.1
 
 Most common scenario:
 
-1. Resolve version files with `-inkless` pattern
+1. Resolve version files with `inkless` pattern
 2. Commit merge
 3. Verify build
 
