@@ -147,7 +147,7 @@ Common conflict areas when syncing release branches:
 | `docs/js/templateData.js` | Version strings | Use inkless version pattern |
 | `committer-tools/kafka-merge-pr.py` | DEFAULT_FIX_VERSION | Use inkless version |
 | `gradle/dependencies.gradle` | Dependency changes | Add new upstream deps, verify inkless deps are used |
-| `streams/quickstart/*.pom` | Maven versions | Use `{version}-inkless` (matches `gradle.properties` exactly) |
+| `streams/quickstart/**/pom.xml` | Maven versions | Use `{version}-inkless` (matches `gradle.properties` exactly) |
 | `*.scala` / `*.java` | Import organization | Accept upstream, remove duplicates |
 | `.gitignore` | Inkless-specific entries | Keep both inkless and upstream |
 

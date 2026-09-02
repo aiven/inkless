@@ -66,8 +66,7 @@ For each config file (gradle.properties, build.gradle, etc.):
 3. Test with `./gradlew tasks` to verify Gradle works
 
 Also check the auxiliary version files that `:verifyVersionConsistency` enforces
-against `gradle.properties`: `tests/kafkatest/__init__.py` (must use the PEP 440
-`+inkless` local version label, not a bare `.inkless`/`-inkless` suffix),
+against `gradle.properties`: `tests/kafkatest/__init__.py` (PEP 440; use `{X.Y.Z}.dev0+inkless` for `-SNAPSHOT`, otherwise `{X.Y.Z}+inkless`; never `.inkless`/`-inkless`),
 `tests/kafkatest/version.py`, `committer-tools/kafka-merge-pr.py`, and the
 `streams/quickstart/*.pom` files (must match `gradle.properties` exactly). Run
 `./gradlew verifyVersionConsistency` to confirm.
