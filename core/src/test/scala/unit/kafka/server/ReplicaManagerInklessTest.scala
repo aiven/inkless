@@ -22,7 +22,7 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager}
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse, ListOffsetsRequest => CpListOffsetsRequest, ListOffsetsResponse => CpListOffsetsResponse}
+import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FileToDelete, FindBatchResponse, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse, ListOffsetsRequest => CpListOffsetsRequest, ListOffsetsResponse => CpListOffsetsResponse}
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.Partition
 import kafka.server.QuotaFactory.QuotaManagers
@@ -8473,6 +8473,62 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  @Test
+  def testShutdownWaitsForInFlightBackgroundJobBeforeClosingSharedState(): Unit = {
+    // Regression guard for the ordering inside ReplicaManager#shutdown: shutdownInklessBackgroundJobs()
+    // must run to completion (join the background executor) before inklessSharedState.foreach(_.close())
+    // runs. A reorder that closes the shared state first would let a job still in flight observe closed
+    // storage/control-plane resources. Component tests on FileCleaner/RetentionEnforcer only cover their
+    // own cooperative stop flag; they don't exercise ReplicaManager's shutdown sequencing at all, so they
+    // pass unchanged even if this order is swapped back.
+    val controlPlane = mock(classOf[ControlPlane])
+    val jobEntered = new CountDownLatch(1)
+    val releaseJob = new CountDownLatch(1)
+    when(controlPlane.getFilesToDelete(any(), anyInt())).thenAnswer { _ =>
+      jobEntered.countDown()
+      assertTrue(releaseJob.await(10, TimeUnit.SECONDS), "test never released the blocked background job")
+      util.List.of[FileToDelete]()
+    }
+
+    var sharedState: SharedState = null
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      // Fire the file cleaner almost immediately instead of waiting out the 5-minute default.
+      extraInklessConfig = Map(InklessConfig.FILE_CLEANER_INTERVAL_MS_CONFIG -> Integer.valueOf(1)),
+      sharedStateHook = ss => sharedState = ss,
+    )
+    replicaManager.startup()
+
+    assertTrue(jobEntered.await(10, TimeUnit.SECONDS), "background file cleaner job never started")
+
+    val shutdownThread = new Thread(() => replicaManager.shutdown(checkpointHW = false), "shutdown-test-thread")
+    shutdownThread.start()
+    try {
+      // Poll for the shutdown thread's stack to contain both frames, not just TIMED_WAITING: several
+      // earlier shutdown steps (purgatory shutdown, other timed waits) can park the thread too, and a
+      // bare thread-state check would let the test release the job before shutdown actually reaches
+      // this join, defeating the regression guard.
+      waitUntilTrue(() => isBlockedInInklessBackgroundJobsAwaitTermination(shutdownThread),
+        "shutdown thread never parked inside shutdownInklessBackgroundJobs' awaitTermination")
+
+      verify(controlPlane, times(1)).getFilesToDelete(any(), anyInt())
+      verify(sharedState, never()).close()
+    } finally {
+      releaseJob.countDown()
+      shutdownThread.join(TimeUnit.SECONDS.toMillis(10))
+    }
+
+    assertFalse(shutdownThread.isAlive, "shutdown did not complete after the background job was released")
+    verify(sharedState, times(1)).close()
+  }
+
+  private def isBlockedInInklessBackgroundJobsAwaitTermination(thread: Thread): Boolean = {
+    val stack = thread.getStackTrace
+    stack.exists(_.getMethodName == "awaitTermination") &&
+      stack.exists(e => e.getClassName == classOf[ReplicaManager].getName && e.getMethodName == "shutdownInklessBackgroundJobs")
+  }
+
   private def setupHybridLeaderPartition(replicaManager: ReplicaManager,
                                          topicIdPartition: TopicIdPartition,
                                          localEndOffset: Long): Partition = {
@@ -8688,7 +8744,11 @@ class ReplicaManagerInklessTest {
     initDisklessLogManager: Option[InitDisklessLogManager] = None,
     delayedFetchPurgatory: Option[DelayedOperationPurgatory[DelayedFetch]] = None,
     defaultLogConfig: Option[LogConfig] = None,
-    crossTierLogStartCache: Option[CrossTierLogStartCache] = None
+    crossTierLogStartCache: Option[CrossTierLogStartCache] = None,
+    extraInklessConfig: Map[String, AnyRef] = Map.empty,
+    // Runs after all internal SharedState stubbing, so a test can capture the mock instance (for
+    // example, to verify close() ordering) without duplicating the stubbing above.
+    sharedStateHook: SharedState => Unit = _ => ()
   ): ReplicaManager = {
     val props = TestUtils.createBrokerConfig(1, logDirCount = 2)
     if (disklessManagedReplicasEnabled || disklessRemoteStorageConsolidationEnabled) {
@@ -8715,6 +8775,7 @@ class ReplicaManagerInklessTest {
     val inklessConfigMap = new util.HashMap[String, Object]()
     // Disable lagging consumer feature — not relevant for these tests
     inklessConfigMap.put("fetch.lagging.consumer.thread.pool.size", Integer.valueOf(0))
+    extraInklessConfig.foreach { case (k, v) => inklessConfigMap.put(k, v) }
     when(sharedState.config()).thenReturn(new InklessConfig(inklessConfigMap))
     when(sharedState.controlPlane()).thenReturn(controlPlane.getOrElse(mock(classOf[ControlPlane])))
     when(sharedState.maybeLaggingFetchStorage()).thenReturn(Optional.empty())
@@ -8738,6 +8799,7 @@ class ReplicaManagerInklessTest {
       when(inklessMetadata.isRemoteStorageEnabled(t)).thenReturn(true)
     }
     when(sharedState.metadata()).thenReturn(inklessMetadata)
+    sharedStateHook(sharedState)
 
     val logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size)
 
