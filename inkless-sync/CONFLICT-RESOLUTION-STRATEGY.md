@@ -26,6 +26,8 @@ Files that are 100% inkless-specific and don't exist in upstream:
 | `build.gradle` | Keep inkless module config (`:storage:inkless`), accept upstream plugin versions |
 | `gradle/dependencies.gradle` | Add inkless dependencies (assertj, testcontainers) to upstream |
 | `settings.gradle` | Verify `storage:inkless` module is included |
+| `tests/kafkatest/__init__.py` | `__version__` must be PEP 440 (https://peps.python.org/pep-0440/) compliant: use `{version}+inkless` (the `+inkless` local version label), never a bare `.inkless`/`-inkless` suffix |
+| `tests/kafkatest/version.py`, `committer-tools/kafka-merge-pr.py`, `streams/quickstart/*.pom` | Must match `gradle.properties` exactly (for example `4.3.0-inkless-SNAPSHOT`); the `:verifyVersionConsistency` Gradle task enforces this |
 
 **Resolution**: Manual review required - merge both sets of changes.
 

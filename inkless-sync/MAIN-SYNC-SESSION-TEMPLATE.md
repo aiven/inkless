@@ -46,6 +46,10 @@ git diff --name-only --diff-filter=U
 | | gradle.properties | | |
 | | build.gradle | | |
 | | gradle/dependencies.gradle | | |
+| | tests/kafkatest/__init__.py | PEP 440 local version label: `{version}+inkless` | |
+| | tests/kafkatest/version.py | Must match `gradle.properties` exactly | |
+| | committer-tools/kafka-merge-pr.py | Must match `gradle.properties` exactly | |
+| | streams/quickstart/*.pom | Must match `gradle.properties` exactly | |
 
 ### Core Files with Inkless Modifications
 | # | File | Inkless Additions Needed | Status |
@@ -111,6 +115,7 @@ make test
   - [ ] `storage/inkless/src/main/java/io/aiven/inkless/InklessWriter.java`
   - [ ] `docs/inkless/README.md`
 - [ ] Version preserved in `gradle.properties`
+- [ ] `./gradlew verifyVersionConsistency` passes
 
 ### Comparison with Previous Sync
 ```bash

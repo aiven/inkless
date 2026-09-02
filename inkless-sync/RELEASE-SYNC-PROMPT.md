@@ -79,14 +79,14 @@ Please help me execute this release sync process.
 
 Files that need `-inkless` suffix:
 - `gradle.properties` → `version=4.0.1-inkless`
-- `tests/kafkatest/__init__.py` → `__version__ = '4.0.1.inkless'`
-- `tests/kafkatest/version.py` → `DEV_VERSION = KafkaVersion("4.0.1-inkless-SNAPSHOT")`
+- `tests/kafkatest/__init__.py` → `__version__ = '4.0.1+inkless'` (PEP 440 local version label; a bare `.inkless`/`-inkless` suffix fails `packaging.version.Version` parsing in CI)
+- `tests/kafkatest/version.py` → `DEV_VERSION = KafkaVersion("4.0.1-inkless")` (must match `gradle.properties` exactly; verified by the `:verifyVersionConsistency` Gradle task)
 - `docs/js/templateData.js` → `"fullDotVersion": "4.0.1-inkless"`
 - `committer-tools/kafka-merge-pr.py` → `DEFAULT_FIX_VERSION = "4.0.1-inkless"`
 
-### POM Files (Keep Upstream Version)
+### POM files (use the `-inkless` version)
 
-These files use standard Apache Kafka versioning:
+These files must match `gradle.properties` exactly (`:verifyVersionConsistency` enforces this):
 - `streams/quickstart/pom.xml`
 - `streams/quickstart/java/pom.xml`
 - `streams/quickstart/java/src/main/resources/archetype-resources/pom.xml`
