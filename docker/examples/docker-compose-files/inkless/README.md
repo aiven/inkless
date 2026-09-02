@@ -12,7 +12,7 @@ See the [Quickstart guide](../../../../docs/inkless/QUICKSTART.md#dockerized-dem
 | `make gcs-local`        | Fake GCS server                                   |
 | `make azure-local`      | Azurite Azure-compatible storage                  |
 | `make s3-aws`           | Real AWS S3 (requires AWS credentials)            |
-| `make ts-unification`   | Diskless tiered storage unification               |
+| `make ts-unification`   | TS unification (managed replicas, switch, consolidation) |
 | `make destroy`          | Manual cleanup (run after stopping the demo)      |
 
 ## Image version
@@ -29,7 +29,7 @@ See [Releases](../../../../docs/inkless/RELEASES.md#docker-images) for all avail
 
 ## Diskless Tiered Storage Unification
 
-Test classic-to-diskless switch and tiered storage unification features. The Inkless image bundles the
+Test the TS unification features: managed replicas, classic-to-diskless switch, and TS consolidation. The Inkless image bundles the
 [Aiven Tiered Storage plugin](https://github.com/Aiven-Open/tiered-storage-for-apache-kafka) (v1.1.1) —
 no local plugin build required.
 

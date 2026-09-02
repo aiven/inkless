@@ -45,6 +45,7 @@ Read these only when a task touches the relevant area. All docs are under
 | `QUICKSTART.md`                                   | To run Inkless via Docker or locally.                                        |
 | `PERFORMANCE.md`                                  | Producer/consumer tuning guidance.                                           |
 | `CLASSIC_TO_DISKLESS_SWITCH.md`                   | To work on switching classic topics to diskless.                             |
+| `DISKLESS_CONSOLIDATION.md`                       | TS consolidation, it distills WAL segments into classic logs.                |
 | `CLIENT-BROKER-AZ-ALIGNMENT.md`                   | Multi-AZ deployment and cost optimization.                                   |
 | `CREATE-TOPICS-INTERCEPTORS.md`                   | The interceptors on the `CREATE_TOPIC` path.                                 |
 | `VERSIONING-STRATEGY.md`                          | The version format and release workflow.                                     |

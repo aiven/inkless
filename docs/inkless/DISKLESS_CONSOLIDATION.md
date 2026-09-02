@@ -1,10 +1,12 @@
 # Tiered storage consolidation
 
-Tiered storage consolidation (TS consolidation, internally "TS unification") distills diskless Write-Ahead Log (WAL) segments into classic Kafka log segments and tiers them to remote storage. The result is a *consolidated diskless topic* (CDT): a topic that writes through the diskless fast path and reads like a tiered topic. The diskless WAL is a temporary buffer, not long-term storage.
+Tiered storage consolidation (TS consolidation) distills diskless Write-Ahead Log (WAL) segments into classic Kafka log segments and tiers them to remote storage. The result is a *consolidated diskless topic* (CDT): a topic that writes through the diskless fast path and reads like a tiered topic. The diskless WAL is a temporary buffer, not long-term storage.
 
-A consolidated diskless topic has both `diskless.enable=true` and `remote.storage.enable=true`. The classic-to-diskless switch sets both atomically. For more information, see [CLASSIC_TO_DISKLESS_SWITCH.md](CLASSIC_TO_DISKLESS_SWITCH.md). A switched or born-consolidated topic is therefore always consolidating.
+Internally, **TS unification** is the umbrella for three features: [managed replicas](FEATURES.md#managed-replicas), the [classic-to-diskless switch](CLASSIC_TO_DISKLESS_SWITCH.md), and TS consolidation. This document is the consolidation piece.
 
-The broker gates the feature behind `diskless.remote.storage.consolidation.enable`. That flag also requires `diskless.allow.from.classic.enable=true`, managed replicas, and `remote.log.storage.system.enable=true`.
+A consolidated diskless topic has both `diskless.enable=true` and `remote.storage.enable=true`. Origin and consolidation are separate. A *born-diskless* topic is created with `diskless.enable=true` and consolidates only if it is also created with `remote.storage.enable=true`. A *born-classic* topic consolidates after the [classic-to-diskless switch](CLASSIC_TO_DISKLESS_SWITCH.md), which sets both flags atomically, so a switched topic is always consolidating.
+
+The broker gates the feature behind `diskless.remote.storage.consolidation.enable`, which currently defaults to `false`. That flag also requires `diskless.allow.from.classic.enable=true`, managed replicas, and `remote.log.storage.system.enable=true`. Consolidation will be the default going forward.
 
 ## Motivation
 
@@ -37,13 +39,11 @@ The better shape matches the Kafka replica-fetcher model. A leader replica handl
 
 ### Consolidation pipeline
 
-Without consolidation, the diskless coordinator stores WAL segments in object storage. They remain there until `log.local.retention.ms` elapses, then the broker deletes them.
+Without consolidation, diskless WAL segments are stored in object storage. They remain there until `log.local.retention.ms` elapses, then the broker deletes them.
 
 With consolidation, a fetcher reads the oldest batches from the diskless WAL, in insertion order so ordering is preserved, and appends them to a per-partition `UnifiedLog` through the `Partition` class. The `RemoteLogManager` copies those local segments to remote storage the same way it does for a classic tiered topic. After remote storage confirms a batch, the pruner deletes the matching WAL data.
 
-The fetcher splits interleaved WAL files into per-partition local segments. The `RemoteLogManager` then tiers those segments to remote storage.
-
-The consolidation pipeline is a specialized replica-fetcher. It pulls from the diskless tier (object storage and the control plane) instead of from a leader broker. For the component breakdown, see [Implementation](#implementation).
+The fetcher splits interleaved WAL files into per-partition local segments. The `RemoteLogManager` then tiers those segments to remote storage. For the component breakdown, see [Implementation](#implementation).
 
 ### Log continuity
 
@@ -113,14 +113,14 @@ Followers must never replicate diskless records into their local log. When a par
 
 ### Cross-tier log start offset
 
-On a born-consolidated topic, the earliest readable offset eventually lives only in the remote tier: the diskless WAL is pruned and local segments are evicted, yet `ListOffsets(EARLIEST)` must still point at real data. When `retention.ms` expires the oldest remote segments, only the partition's classic leader observes the earliest offset advancing. Its `RemoteLogManager` raises `UnifiedLog.logStartOffset` as it deletes them. That value is broker-local. Followers fetch from the diskless WAL and never learn it, and the control plane's `log_start_offset` tracks only the WAL prune frontier, not the remote-retention frontier.
+On a consolidating born-diskless topic, the earliest readable offset eventually lives only in the remote tier: the diskless WAL is pruned and local segments are evicted, yet `ListOffsets(EARLIEST)` must still point at real data. When `retention.ms` expires the oldest remote segments, only the partition's classic leader observes the earliest offset advancing. Its `RemoteLogManager` raises `UnifiedLog.logStartOffset` as it deletes them. That value is broker-local. Followers fetch from the diskless WAL and never learn it, and the control plane's `log_start_offset` tracks only the WAL prune frontier, not the remote-retention frontier.
 
 Without this feature, `ListOffsets(EARLIEST_TIMESTAMP)` (`--time -2`) served by any non-leader broker returned a stale `0`, pointing consumers at data that no longer exists. `EARLIEST_LOCAL_TIMESTAMP` (`--time -4`) is intentionally unaffected: it must keep returning the diskless WAL log start.
 
 The leader is the only participant that knows the cross-tier earliest offset, but any broker must be able to serve it. The control plane is the source of truth, with a short-TTL cache:
 
-- **Write path (leader).** `CrossTierLogStartReporter` buffers per-partition updates, drops non-advancing ones, coalesces, and flushes to the control plane once a second. On success it writes through to the cache. The `RemoteLogManager` callback in `BrokerServer`/`ReplicaManager` triggers it on the leader. It is a no-op for non-consolidating and classic topics, and for strictly negative offsets. `0` is meaningful and is reported: it is the cross-tier earliest of a freshly-tiered born-consolidated topic whose WAL prune frontier has advanced above it.
-- **Read path (any broker).** `FetchOffsetHandler` serves `EARLIEST` on a consolidating diskless topic through the `CrossTierLogStartCache` first. On a miss it queries the control plane and populates the cache. `DisklessFetchOffsetRouter` routes `EARLIEST` for every consolidating partition (born-consolidated and switched alike) to this control-plane leg, never to the broker-local classic log. That routing is required under managed replicas. `InklessTopicMetadataTransformer` advertises a hash-selected replica (usually a follower) as the partition leader, and a follower's local classic log start is frozen at the switch. Serving `EARLIEST` from that local start would pin the client-visible earliest at a stale value, for example `0` after a `DeleteRecords` the follower never applied. The control-plane value is broker-agnostic, so every broker returns the same cross-tier earliest. Non-consolidating switched partitions keep serving `EARLIEST` from the classic leg while it still owns the pre-switch prefix.
+- **Write path (leader).** `CrossTierLogStartReporter` buffers per-partition updates, drops non-advancing ones, coalesces, and flushes to the control plane once a second. On success it writes through to the cache. The `RemoteLogManager` callback in `BrokerServer`/`ReplicaManager` triggers it on the leader. It is a no-op for non-consolidating and classic topics, and for strictly negative offsets. `0` is meaningful and is reported: it is the cross-tier earliest of a freshly-tiered consolidating born-diskless topic whose WAL prune frontier has advanced above it.
+- **Read path (any broker).** `FetchOffsetHandler` serves `EARLIEST` on a consolidating diskless topic through the `CrossTierLogStartCache` first. On a miss it queries the control plane and populates the cache. `DisklessFetchOffsetRouter` routes `EARLIEST` for every consolidating partition (born-diskless and switched alike) to this control-plane leg, never to the broker-local classic log. That routing is required under managed replicas. `InklessTopicMetadataTransformer` advertises a hash-selected replica (usually a follower) as the partition leader, and a follower's local classic log start is frozen at the switch. Serving `EARLIEST` from that local start would pin the client-visible earliest at a stale value, for example `0` after a `DeleteRecords` the follower never applied. The control-plane value is broker-agnostic, so every broker returns the same cross-tier earliest. Non-consolidating switched partitions keep serving `EARLIEST` from the classic leg while it still owns the pre-switch prefix.
 - **Whole-log start and reclaim floor (leader).** The same control-plane value is the authoritative whole-log start and remote-retention reclaim floor for a consolidating partition, not the broker-local `UnifiedLog.logStartOffset`. On a freshly-elected leader whose classic prefix was already evicted, the leadership rebuild pins the local log start at the seal, and that start can only increment. Using it would over-reclaim the remote classic prefix `[earliest, seal)` and reject reads of that prefix as out-of-range. `DisklessLeaderEndPoint` therefore reports `min(X, localLogStart)` as the whole-log start, so a read of the surviving prefix redirects to the remote tier and the tier-state rebuild restarts at `X`. `RemoteLogManager` uses `X` as the log-start-breach reclaim floor and the become-leader report. Both go through `ReplicaManager.crossTierEarliestOffset`, where `X` is `COALESCE(remote_log_start_offset, log_start_offset)`. This runs on the `RemoteLogManager` leader, which under managed replicas differs from the broker that served a `DeleteRecords`, so a broker-agnostic source is mandatory.
 - **Cache.** Caffeine-backed with a TTL and a monotonic `put` (a `Null` implementation disables it); owned by `SharedState`. A stale entry can only ever be too low (the safe direction), so it only delays when a retention advance becomes visible off-leader.
 - **Storage.** The value is kept in `logs.remote_log_start_offset` (migration `V16`), advanced only forward via `advance_cross_tier_log_start_offset_v1`. `list_offsets_v1` (migration `V17`) returns it for `EARLIEST`, while `EARLIEST_LOCAL` keeps returning `log_start_offset`.
@@ -233,7 +233,7 @@ The reconciler runs per partition before a fetcher is armed. It enforces the `di
 ```mermaid
 flowchart TD
     start([Partition becomes online]) --> seal{classicToDisklessStartOffset?}
-    seal -- "NO_CLASSIC_TO_DISKLESS_START_OFFSET\n(born-diskless / born-consolidated)" --> ready[Ready: arm at initialFetchOffset]
+    seal -- "NO_CLASSIC_TO_DISKLESS_START_OFFSET\n(born-diskless)" --> ready[Ready: arm at initialFetchOffset]
     seal -- "SWITCH_PENDING" --> retry[Retry: classic switch in progress]
     seal -- "seal >= 0" --> remote{remote.storage.enable?}
     remote -- "off" --> failed[Failed: invariant violation\nsee DisklessWithoutRemoteStorageCount]
@@ -319,7 +319,7 @@ Broker-level configs live in `ServerConfigs` (no prefix) and `InklessConfig` (un
 | ---------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `diskless.remote.storage.consolidation.enable` | `false` | Enables the consolidation framework. Requires `diskless.allow.from.classic.enable=true`, `diskless.managed.rf.enable=true`, and `remote.log.storage.system.enable=true`. |
 
-Per topic, consolidation runs when `diskless.enable=true` and `remote.storage.enable=true`. The classic-to-diskless switch sets both atomically. A born-consolidated topic is created with both.
+Per topic, consolidation runs when `diskless.enable=true` and `remote.storage.enable=true`. The classic-to-diskless switch sets both atomically. A born-diskless topic consolidates when it is created with both.
 
 ### Consolidation fetcher tuning
 
@@ -375,7 +375,7 @@ Unit tests cover the feature. They include `DeleteRecords` into a switched topic
 
 Integration tests cover produce and consume on consolidating topics, reads that cross the local/diskless boundary, concurrent produce during consolidation, a classic-to-diskless-to-consolidated switch, and reassignment that resumes consolidation on a new broker without data loss.
 
-System tests (ducktape) cover born-consolidated and switched consolidating topics. To run them, see [SYSTEM_TESTS.md](SYSTEM_TESTS.md). They cover the following:
+System tests (ducktape) cover consolidating born-diskless topics and switched topics. To run them, see [SYSTEM_TESTS.md](SYSTEM_TESTS.md). They cover the following:
 
 - The pipeline: the WAL drains into the local log and then to remote storage, the WAL is pruned, and every acked record is still consumable. Consolidation JMX gauges are asserted along the way.
 - Durability after local loss: once the prefix is remote-only, wiping every partition directory and restarting still serves the full log from remote storage, including a switched topic whose offset 0 was written under a classic epoch.
@@ -384,5 +384,6 @@ System tests (ducktape) cover born-consolidated and switched consolidating topic
 
 ## Related documents
 
+- [FEATURES.md](FEATURES.md#managed-replicas): Managed replicas, the replica-assignment piece of TS unification.
 - [CLASSIC_TO_DISKLESS_SWITCH.md](CLASSIC_TO_DISKLESS_SWITCH.md): The classic-to-diskless migration that produces a consolidating topic. Sets `diskless.enable` and `remote.storage.enable` atomically.
-- [ARCHITECTURE.md](ARCHITECTURE.md), [FEATURES.md](FEATURES.md), [GLOSSARY.md](GLOSSARY.md).
+- [ARCHITECTURE.md](ARCHITECTURE.md), [GLOSSARY.md](GLOSSARY.md).

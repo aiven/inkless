@@ -35,6 +35,8 @@ See [Releases](RELEASES.md) for active versions and release history.
 - [Features](FEATURES.md) - Currently supported features, API compatibility, and [managed replicas](FEATURES.md#managed-replicas)
 
 ### Feature Deep-Dives
+Internally, **TS unification** is the umbrella for [managed replicas](FEATURES.md#managed-replicas), classic-to-diskless switch, and TS consolidation.
+
 - [Tiered Storage Consolidation](DISKLESS_CONSOLIDATION.md) - Consolidating diskless WAL segments into tiered Kafka log segments
 - [Classic to Diskless Switch](CLASSIC_TO_DISKLESS_SWITCH.md) - Migrating classic topics to diskless (and consolidated) topics
 - [CREATE_TOPIC interceptors](CREATE-TOPICS-INTERCEPTORS.md) - Intercepting topic creation (e.g. forced diskless/classic)
