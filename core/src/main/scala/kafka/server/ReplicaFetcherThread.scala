@@ -20,8 +20,9 @@ package kafka.server
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.requests.FetchResponse
 import org.apache.kafka.server.common.OffsetAndEpoch
+import org.apache.kafka.server.util.LockUtils
 import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogStartOffsetIncrementReason}
-import org.apache.kafka.server.LeaderEndPoint
+import org.apache.kafka.server.{LeaderEndPoint, PartitionFetchState}
 
 import java.util.Optional
 import scala.collection.mutable
@@ -81,6 +82,17 @@ class ReplicaFetcherThread(name: String,
       leaderEndOffset != 0
   }
 
+  // Never hold partitionMapLock across replicaFetcherManager or consolidationFetcherManager calls:
+  // their monitors lead back to this thread. replicaAlterLogDirsManager reaches a different thread.
+  override def removePartitions(
+    topicPartitions: scala.collection.Set[TopicPartition]
+  ): scala.collection.Map[TopicPartition, PartitionFetchState] =
+    LockUtils.inLock(partitionMapLock, () => {
+      val removed = super.removePartitions(topicPartitions)
+      partitionsAwaitingIsrRecovery --= topicPartitions
+      removed
+    })
+
   override def initiateShutdown(): Boolean = {
     val justShutdown = super.initiateShutdown()
     if (justShutdown) {
@@ -119,9 +131,10 @@ class ReplicaFetcherThread(name: String,
 
   /**
    * Whether the eviction check in processPartitionData should mark fully-switched partitions
-   * for removal. The classic ReplicaFetcherThread enables this (so it self-evicts at the seal
-   * and hands off to consolidation). The ConsolidationFetcherThread disables it because it
-   * intentionally fetches for already-switched partitions.
+   * for removal. The classic ReplicaFetcherThread enables this, so it hands off to consolidation
+   * once the replica is at the seal and back in ISR.
+   * The ConsolidationFetcherThread disables it because it intentionally fetches for
+   * already-switched partitions.
    */
 
   protected def shouldEvictFullySwitchedDisklessPartitions: Boolean = true
@@ -183,23 +196,24 @@ class ReplicaFetcherThread(name: String,
     if (shouldRecordReplicationBytesIn)
       brokerTopicStats.updateReplicationBytesIn(records.sizeInBytes)
 
-    // Stop fetching once the switch is complete: seal is committed, local LEO has reached it,
-    // and this replica is in ISR. A consolidating partition evicts without waiting for ISR so
-    // it can hand off to the consolidation fetcher.
+    // Stop fetching once the switch is complete: the seal is committed, the local log end offset has
+    // reached it, and this replica is in ISR.
     val inklessMetadataView = replicaMgr.inklessMetadataView()
     val classicToDisklessStartOffset = inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
-    def isConsolidatingPartition: Boolean =
-      brokerConfig.disklessRemoteStorageConsolidationEnabled &&
-        inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
     if (shouldEvictFullySwitchedDisklessPartitions &&
         classicToDisklessStartOffset >= 0 &&
         log.logEndOffset >= classicToDisklessStartOffset) {
-      if (isConsolidatingPartition || inklessMetadataView.isReplicaInIsr(topicPartition, brokerConfig.brokerId)) {
+      if (inklessMetadataView.isReplicaInIsr(topicPartition, brokerConfig.brokerId)) {
         partitionsToEvictAfterDisklessSwitch += topicPartition
       } else {
-        // The leader answers this fetch from immediateFetchResponses and does not park it
-        // in the fetch purgatory, so maxWaitMs is ignored. Delay here or we re-fetch at
-        // network rate until the ISR expansion lands.
+        // A replica outside ISR keeps fetching until the leader observes the catch-up. The leader
+        // records the offset carried by the fetch request, not the log end offset after the append,
+        // so it sees this replica at the seal only on the following fetch.
+        // A consolidating partition waits here too: once it hands off, the consolidation fetcher
+        // reads object storage and sends no fetch to the leader, so no other path expands ISR.
+        // The leader answers this fetch from `immediateFetchResponses` and does not park it in the
+        // fetch purgatory, so `maxWaitMs` is ignored. Delay here to avoid refetching at network rate
+        // until the ISR expansion lands.
         partitionsAwaitingIsrRecovery += topicPartition
       }
     }
@@ -217,9 +231,12 @@ class ReplicaFetcherThread(name: String,
   // Visible for testing. Must run from doWork, not processPartitionData: processFetchRequest
   // overwrites fetch state right after processPartitionData and would drop an inline delay.
   private[server] def backOffPartitionsAwaitingIsrRecovery(): Unit = {
-    if (partitionsAwaitingIsrRecovery.nonEmpty) {
-      val toDelay = partitionsAwaitingIsrRecovery.toSet
+    val toDelay = LockUtils.inLock(partitionMapLock, () => {
+      val pending = partitionsAwaitingIsrRecovery.toSet
       partitionsAwaitingIsrRecovery.clear()
+      pending
+    })
+    if (toDelay.nonEmpty) {
       delayPartitions(toDelay, brokerConfig.replicaFetchBackoffMs.toLong)
     }
   }
