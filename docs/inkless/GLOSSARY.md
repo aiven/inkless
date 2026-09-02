@@ -32,15 +32,27 @@ A local in-memory cache (Caffeine) on each broker that stores the metadata of re
 **Batch Index**
 Another term for the Batch Coordinator's storage layer. In the PostgreSQL implementation, this refers to the database tables that store batch coordinates.
 
+**Born-Classic Topic**
+A topic created with `diskless.enable=false`. It stores data on local broker disks and may use classic tiered storage. It can later become diskless through the [Classic-to-Diskless Switch](#classic-to-diskless-switch). Contrast with [Born-Diskless Topic](#born-diskless-topic).
+
+**Born-Diskless Topic**
+A topic created with `diskless.enable=true`. It has no classic prefix and no seal (`classicToDisklessStartOffset` is unset). Consolidation is a separate property: a born-diskless topic consolidates only when it also has `remote.storage.enable=true`. Older text sometimes called that combination "born-consolidated"; use *born-diskless* for origin and *consolidating* (or [CDT](#consolidated-diskless-topic-cdt)) for the storage mode. Contrast with a [Switched Topic](#switched-topic), which started as [born-classic](#born-classic-topic).
+
 ---
 
 ## C
 
 **Classic Topics**
-Standard Apache Kafka topics that store data on local broker disks with replication. Contrasted with diskless topics.
+Standard Apache Kafka topics that store data on local broker disks with replication. Contrasted with diskless topics. See also [Born-Classic Topic](#born-classic-topic).
+
+**Classic-to-Diskless Switch**
+The protocol that migrates a classic topic to diskless storage by sealing the local log and initializing a diskless log from the committed seal. One of the three features under [TS Unification](#ts-unification--tiered-storage-unification). See [CLASSIC_TO_DISKLESS_SWITCH.md](./CLASSIC_TO_DISKLESS_SWITCH.md).
 
 **Cold Path**
 The fetch processing path for lagging consumer requests (data older than the threshold). Bypasses cache to avoid evicting hot data, uses a dedicated bounded executor pool with optional rate limiting, and a separate storage client for resource isolation. See also: [Hot Path](#hot-path).
+
+**Consolidated Diskless Topic (CDT)**
+A topic with both `diskless.enable=true` and `remote.storage.enable=true`. Writes go through the diskless WAL; [TS Consolidation](#ts-consolidation--tiered-storage-consolidation) rewrites those WAL segments into classic Kafka log segments and tiers them to remote storage. A CDT is either a [born-diskless](#born-diskless-topic) topic created with remote storage, or a [switched](#switched-topic) topic. See [DISKLESS_CONSOLIDATION.md](./DISKLESS_CONSOLIDATION.md).
 
 **Control Plane**
 The metadata management layer in Inkless, responsible for coordinating batch commits and lookups. See also: [Batch Coordinator](#batch-coordinator).
@@ -50,7 +62,7 @@ The metadata management layer in Inkless, responsible for coordinating batch com
 ## D
 
 **Diskless Topics**
-Topics configured with `diskless.enable=true` that store data in object storage instead of on local broker disks. The core feature of Inkless.
+Topics configured with `diskless.enable=true` that store data in object storage instead of on local broker disks. The core feature of Inkless. See also [Born-Diskless Topic](#born-diskless-topic).
 
 **`diskless_az`**
 A marker embedded in the `client.id` configuration to communicate the client's availability zone to brokers. Format: `client.id=<app>,diskless_az=<rack>` where `<rack>` matches the broker's `broker.rack` value. See [CLIENT-BROKER-AZ-ALIGNMENT.md](./CLIENT-BROKER-AZ-ALIGNMENT.md) for details.
@@ -84,7 +96,7 @@ Unlike traditional Kafka where a partition leader handles all writes and most re
 ## M
 
 **Managed Replicas**
-Diskless topics created with `diskless.managed.rf.enable=true` use real KRaft-managed replicas with rack-aware placement. These replicas are metadata-only — there is no inter-broker data replication (data remains in object storage). Unlike legacy RF=1 diskless topics, managed replicas provide deterministic replica assignments, standard Kafka tooling compatibility, and a foundation for future topic migration (Classic <-> Diskless). ISR membership for managed replicas is liveness-gated (not lag-gated) since data is in object storage. See [FEATURES.md](./FEATURES.md#managed-replicas) for details.
+Diskless topics created with `diskless.managed.rf.enable=true` use real KRaft-managed replicas with rack-aware placement. These replicas are metadata-only — there is no inter-broker data replication (data remains in object storage). Unlike legacy RF=1 diskless topics, managed replicas provide deterministic replica assignments, standard Kafka tooling compatibility, and a foundation for topic migration (Classic <-> Diskless). ISR membership for managed replicas is liveness-gated (not lag-gated) since data is in object storage. One of the three features under [TS Unification](#ts-unification--tiered-storage-unification). See [FEATURES.md](./FEATURES.md#managed-replicas) for details.
 
 **Mixed Cluster**
 A Kafka cluster containing both classic topics (using local disk storage) and diskless topics (using object storage).
@@ -135,12 +147,21 @@ A PostgreSQL read replica used to scale batch coordinate lookups. Configured via
 **Storage Backend**
 The object storage implementation (S3, GCS, or Azure Blob). Configured via `inkless.storage.backend.class`.
 
+**Switched Topic**
+A [born-classic](#born-classic-topic) topic that completed the [classic-to-diskless switch](#classic-to-diskless-switch). The seal splits the log: classic prefix `[0, seal)`, diskless region `[seal, LEO)`. The switch sets `diskless.enable` and `remote.storage.enable` together, so a switched topic is always a [CDT](#consolidated-diskless-topic-cdt).
+
 ---
 
 ## T
 
 **Tail Consumer**
 A consumer reading recent data from near the "tail" (end) of the log. Tail consumers benefit from cache hits and the hot path. The opposite of a [Lagging Consumer](#lagging-consumer--trailing-consumer).
+
+**TS Consolidation** / **Tiered Storage Consolidation**
+The pipeline that rewrites diskless WAL segments into classic Kafka log segments and tiers them to remote storage. One of the three features under [TS Unification](#ts-unification--tiered-storage-unification). See [DISKLESS_CONSOLIDATION.md](./DISKLESS_CONSOLIDATION.md).
+
+**TS Unification** / **Tiered Storage Unification**
+Internal umbrella name for [Managed Replicas](#managed-replicas), the [Classic-to-Diskless Switch](#classic-to-diskless-switch), and [TS Consolidation](#ts-consolidation--tiered-storage-consolidation). TS unification is not a synonym for TS consolidation.
 
 ---
 

@@ -2,6 +2,8 @@
 
 This document describes the implementation flow for switching a classic Kafka topic to diskless storage. The switch is driven by metadata records: the controller first marks each partition as switch-pending, the leader seals the local classic log and asks the controller to commit the final start offset, then the broker initializes the diskless log on the control plane from the committed metadata.
 
+Internally, the switch is one of the three features under **TS unification**, together with [managed replicas](FEATURES.md#managed-replicas) and [TS consolidation](DISKLESS_CONSOLIDATION.md).
+
 ## Requirements and Guarantees
 
 The switch protocol is designed with the following guarantees and constraints:
