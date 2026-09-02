@@ -149,7 +149,7 @@ If not specified above, features are untested and assumed to be inoperable.
 
 ## Managed Replicas
 
-Diskless topics can optionally use **managed replicas** — real KRaft-managed replicas with rack-aware placement. These replicas are metadata-only: they provide deterministic broker assignment and leadership, but there is no inter-broker data replication (data remains in object storage). This is controlled by the `diskless.managed.rf.enable` server configuration.
+Diskless topics can optionally use **managed replicas** — real KRaft-managed replicas with rack-aware placement. These replicas are metadata-only: they provide deterministic broker assignment and leadership, but there is no inter-broker data replication (data remains in object storage). This is controlled by the `diskless.managed.rf.enable` server configuration. Internally, managed replicas are one of the three features under **TS unification**, together with the [classic-to-diskless switch](CLASSIC_TO_DISKLESS_SWITCH.md) and [TS consolidation](DISKLESS_CONSOLIDATION.md).
 
 ### Activation
 
