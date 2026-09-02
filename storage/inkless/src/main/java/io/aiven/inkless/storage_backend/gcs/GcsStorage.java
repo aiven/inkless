@@ -163,7 +163,7 @@ public class GcsStorage extends StorageBackend {
                 reader.limit(range.endOffset() + 1);
                 reader.seek(range.offset());
             }
-            return SizedReadableByteChannel.of(reader, Math.toIntExact(contentLength));
+            return SizedReadableByteChannel.of(reader, SizedReadableByteChannel.exactLength(key, contentLength));
         } catch (final IOException e) {
             throw new StorageBackendException("Failed to fetch " + key, e);
         } catch (final BaseServiceException e) {
