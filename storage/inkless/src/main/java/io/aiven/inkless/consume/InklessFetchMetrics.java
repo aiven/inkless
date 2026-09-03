@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.ObjectCache;
@@ -62,6 +63,12 @@ public class InklessFetchMetrics {
     private static final String FETCH_FIRST_BYTE_TIME_DOC = "Time until the first byte is received from storage in milliseconds";
     private static final String FETCH_FILE_TIME = "FetchFileTime";
     private static final String FETCH_FILE_TIME_DOC = "Time spent fetching a file from storage in milliseconds";
+    private static final String FETCH_QUEUE_TIME = "FetchQueueTime";
+    private static final String FETCH_QUEUE_TIME_DOC = "Time one object fetch waited in its thread pool queue before its job started, in milliseconds. "
+        + "Excludes the transfer (FetchFileTime) and any rate-limit wait (LaggingConsumerRateLimitWaitTime), both measured after the job starts.";
+    private static final String FETCH_DATA_TIME = "FetchDataTime";
+    private static final String FETCH_DATA_TIME_DOC = "Time a fetch request spent collecting the object ranges it needs, in milliseconds, from the moment the fetch plan is handed back until the last of its fetches completes. "
+        + "One sample per request, not per object; not recorded when the request had nothing to fetch.";
     private static final String FETCH_COMPLETION_TIME = "FetchCompletionTime";
     private static final String FETCH_COMPLETION_TIME_DOC = "Time spent completing the fetch response assembly in milliseconds";
     private static final String FETCH_RATE = "FetchRate";
@@ -82,6 +89,17 @@ public class InklessFetchMetrics {
     private static final String FETCH_OBJECTS_PER_FETCH_COUNT_DOC = "Number of storage objects accessed per fetch request";
     private static final String FETCH_RESPONSE_SIZE = "FetchResponseSize";
     private static final String FETCH_RESPONSE_SIZE_DOC = "Total bytes returned to the caller in each fetch response, recorded for every fetch (0 when no data was served, e.g. a caught-up long-poll or an all-error response).";
+    private static final String FETCH_RECENT_OBJECT_BYTES = "FetchRecentObjectBytes";
+    private static final String FETCH_RECENT_OBJECT_BYTES_DOC = "Bytes of object data one fetch request held in ranges that live in the object cache, summed over the request. "
+        + "Recorded only for requests that held at least one, including the request that loaded it, since the cache owns the entry either way.";
+    private static final String FETCH_LAGGING_OBJECT_BYTES = "FetchLaggingObjectBytes";
+    private static final String FETCH_LAGGING_OBJECT_BYTES_DOC = "Bytes of object data one fetch request held from cache-bypassing (cold) fetches, summed over the request. "
+        + "No other request holds them, the request holds all of them until it completes, and nothing caps the total.";
+    private static final String IN_FLIGHT_LAGGING_OBJECT_BYTES = "InFlightLaggingObjectBytes";
+    private static final String IN_FLIGHT_LAGGING_OBJECT_BYTES_DOC = "Bytes of cache-bypassing (cold) object data held right now by the requests this metrics group serves: the buffer of every running download plus every payload that arrived and is still held. "
+        + "Jobs waiting in a queue and jobs rejected at submission hold nothing and are not counted.";
+    private static final String IN_FLIGHT_LAGGING_OBJECT_BYTES_MAX = "InFlightLaggingObjectBytesMax";
+    private static final String IN_FLIGHT_LAGGING_OBJECT_BYTES_MAX_DOC = "Highest value InFlightLaggingObjectBytes has reached since broker start, to catch spikes shorter than the scrape interval. Never resets";
     private static final String PARTITION_PARTIAL_FETCH_RATE = "PartitionPartialFetchRate";
     private static final String PARTITION_PARTIAL_FETCH_RATE_DOC = "Rate of partition responses that were truncated mid-batch-list due to a missing extent or validation failure on a trailing batch. Successful prefix is returned to the consumer; the trailing batches are dropped.";
     private static final String PARTITION_STORAGE_ERROR_RATE = "PartitionStorageErrorRate";
@@ -141,6 +159,8 @@ public class InklessFetchMetrics {
             new MetricNameTemplate(CACHE_SIZE, GROUP, CACHE_SIZE_DOC),
             new MetricNameTemplate(FETCH_FIRST_BYTE_TIME, GROUP, FETCH_FIRST_BYTE_TIME_DOC),
             new MetricNameTemplate(FETCH_FILE_TIME, GROUP, FETCH_FILE_TIME_DOC),
+            new MetricNameTemplate(FETCH_QUEUE_TIME, GROUP, FETCH_QUEUE_TIME_DOC),
+            new MetricNameTemplate(FETCH_DATA_TIME, GROUP, FETCH_DATA_TIME_DOC),
             new MetricNameTemplate(FETCH_COMPLETION_TIME, GROUP, FETCH_COMPLETION_TIME_DOC),
             new MetricNameTemplate(FETCH_RATE, GROUP, FETCH_RATE_DOC),
             new MetricNameTemplate(FETCH_ERROR_RATE, GROUP, FETCH_ERROR_RATE_DOC),
@@ -151,6 +171,10 @@ public class InklessFetchMetrics {
             new MetricNameTemplate(FETCH_BATCHES_PER_FETCH_COUNT, GROUP, FETCH_BATCHES_PER_FETCH_COUNT_DOC),
             new MetricNameTemplate(FETCH_OBJECTS_PER_FETCH_COUNT, GROUP, FETCH_OBJECTS_PER_FETCH_COUNT_DOC),
             new MetricNameTemplate(FETCH_RESPONSE_SIZE, GROUP, FETCH_RESPONSE_SIZE_DOC),
+            new MetricNameTemplate(FETCH_RECENT_OBJECT_BYTES, GROUP, FETCH_RECENT_OBJECT_BYTES_DOC),
+            new MetricNameTemplate(FETCH_LAGGING_OBJECT_BYTES, GROUP, FETCH_LAGGING_OBJECT_BYTES_DOC),
+            new MetricNameTemplate(IN_FLIGHT_LAGGING_OBJECT_BYTES, GROUP, IN_FLIGHT_LAGGING_OBJECT_BYTES_DOC),
+            new MetricNameTemplate(IN_FLIGHT_LAGGING_OBJECT_BYTES_MAX, GROUP, IN_FLIGHT_LAGGING_OBJECT_BYTES_MAX_DOC),
             new MetricNameTemplate(PARTITION_PARTIAL_FETCH_RATE, GROUP, PARTITION_PARTIAL_FETCH_RATE_DOC),
             new MetricNameTemplate(PARTITION_STORAGE_ERROR_RATE, GROUP, PARTITION_STORAGE_ERROR_RATE_DOC),
             new MetricNameTemplate(PARTITION_CORRUPT_RECORD_RATE, GROUP, PARTITION_CORRUPT_RECORD_RATE_DOC),
@@ -184,6 +208,8 @@ public class InklessFetchMetrics {
     private final Meter cacheMisses;
     private final Histogram fetchFirstByteTimeHistogram;
     private final Histogram fetchFileTimeHistogram;
+    private final Histogram fetchQueueTimeHistogram;
+    private final Histogram fetchDataTimeHistogram;
     private final Histogram fetchCompletionTimeHistogram;
     private final Meter fetchRate;
     private final Meter fetchErrorRate;
@@ -194,6 +220,12 @@ public class InklessFetchMetrics {
     private final Histogram fetchBatchesSizeHistogram;
     private final Histogram fetchObjectsSizeHistogram;
     private final Histogram fetchResponseSizeHistogram;
+    private final Histogram fetchRecentObjectBytesHistogram;
+    private final Histogram fetchLaggingObjectBytesHistogram;
+    private final AtomicLong inFlightLaggingObjectBytes = new AtomicLong();
+    private final AtomicLong inFlightLaggingObjectBytesMax = new AtomicLong();
+    private final Gauge<Long> inFlightLaggingObjectBytesGauge;
+    private final Gauge<Long> inFlightLaggingObjectBytesMaxGauge;
     private final Meter partitionPartialFetchRate;
     private final Meter partitionStorageErrorRate;
     private final Meter partitionCorruptRecordRate;
@@ -227,6 +259,8 @@ public class InklessFetchMetrics {
         cacheMisses = metricsGroup.newMeter(CACHE_MISS_COUNT, "misses", TimeUnit.SECONDS, Map.of());
         fetchFirstByteTimeHistogram = metricsGroup.newHistogram(FETCH_FIRST_BYTE_TIME, true, Map.of());
         fetchFileTimeHistogram = metricsGroup.newHistogram(FETCH_FILE_TIME, true, Map.of());
+        fetchQueueTimeHistogram = metricsGroup.newHistogram(FETCH_QUEUE_TIME, true, Map.of());
+        fetchDataTimeHistogram = metricsGroup.newHistogram(FETCH_DATA_TIME, true, Map.of());
         fetchCompletionTimeHistogram = metricsGroup.newHistogram(FETCH_COMPLETION_TIME, true, Map.of());
         fetchRate = metricsGroup.newMeter(FETCH_RATE, "fetches", TimeUnit.SECONDS, Map.of());
         fetchErrorRate = metricsGroup.newMeter(FETCH_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
@@ -237,6 +271,10 @@ public class InklessFetchMetrics {
         fetchBatchesSizeHistogram = metricsGroup.newHistogram(FETCH_BATCHES_PER_FETCH_COUNT, true, Map.of());
         fetchObjectsSizeHistogram = metricsGroup.newHistogram(FETCH_OBJECTS_PER_FETCH_COUNT, true, Map.of());
         fetchResponseSizeHistogram = metricsGroup.newHistogram(FETCH_RESPONSE_SIZE, true, Map.of());
+        fetchRecentObjectBytesHistogram = metricsGroup.newHistogram(FETCH_RECENT_OBJECT_BYTES, true, Map.of());
+        fetchLaggingObjectBytesHistogram = metricsGroup.newHistogram(FETCH_LAGGING_OBJECT_BYTES, true, Map.of());
+        inFlightLaggingObjectBytesGauge = metricsGroup.newGauge(IN_FLIGHT_LAGGING_OBJECT_BYTES, inFlightLaggingObjectBytes::get);
+        inFlightLaggingObjectBytesMaxGauge = metricsGroup.newGauge(IN_FLIGHT_LAGGING_OBJECT_BYTES_MAX, inFlightLaggingObjectBytesMax::get);
         partitionPartialFetchRate = metricsGroup.newMeter(PARTITION_PARTIAL_FETCH_RATE, "partitions", TimeUnit.SECONDS, Map.of());
         partitionStorageErrorRate = metricsGroup.newMeter(PARTITION_STORAGE_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
         partitionCorruptRecordRate = metricsGroup.newMeter(PARTITION_CORRUPT_RECORD_RATE, "errors", TimeUnit.SECONDS, Map.of());
@@ -298,6 +336,35 @@ public class InklessFetchMetrics {
         fetchFileTimeHistogram.update(durationMs);
     }
 
+    public void fetchQueueFinished(final long durationMs) {
+        fetchQueueTimeHistogram.update(durationMs);
+    }
+
+    public void fetchDataFinished(final long durationMs) {
+        fetchDataTimeHistogram.update(durationMs);
+    }
+
+    /** Bytes one request held from the object cache. Call only when the request served such an extent. */
+    public void recordRecentObjectBytes(final long bytes) {
+        fetchRecentObjectBytesHistogram.update(bytes);
+    }
+
+    /** Bytes one request held from cache-bypassing fetches. Call only when the request made such a fetch. */
+    public void recordLaggingObjectBytes(final long bytes) {
+        fetchLaggingObjectBytesHistogram.update(bytes);
+    }
+
+    /**
+     * Adjusts the count of cache-bypassing object bytes held by the requests this group serves.
+     * Pass a negative delta to release. The max only tracks growth, so it is updated on charges.
+     */
+    public void addInFlightLaggingObjectBytes(final long delta) {
+        final long inFlight = inFlightLaggingObjectBytes.addAndGet(delta);
+        if (delta > 0) {
+            inFlightLaggingObjectBytesMax.accumulateAndGet(inFlight, Math::max);
+        }
+    }
+
     public void fetchCompletionFinished(final long duration) {
         fetchCompletionTimeHistogram.update(duration);
     }
@@ -340,6 +407,12 @@ public class InklessFetchMetrics {
         metricsGroup.removeMetric(FETCH_BATCHES_PER_FETCH_COUNT);
         metricsGroup.removeMetric(FETCH_OBJECTS_PER_FETCH_COUNT);
         metricsGroup.removeMetric(FETCH_RESPONSE_SIZE);
+        metricsGroup.removeMetric(FETCH_QUEUE_TIME);
+        metricsGroup.removeMetric(FETCH_DATA_TIME);
+        metricsGroup.removeMetric(FETCH_RECENT_OBJECT_BYTES);
+        metricsGroup.removeMetric(FETCH_LAGGING_OBJECT_BYTES);
+        metricsGroup.removeMetric(IN_FLIGHT_LAGGING_OBJECT_BYTES);
+        metricsGroup.removeMetric(IN_FLIGHT_LAGGING_OBJECT_BYTES_MAX);
         metricsGroup.removeMetric(PARTITION_PARTIAL_FETCH_RATE);
         metricsGroup.removeMetric(PARTITION_STORAGE_ERROR_RATE);
         metricsGroup.removeMetric(PARTITION_CORRUPT_RECORD_RATE);
@@ -442,7 +515,7 @@ public class InklessFetchMetrics {
      *
      * In this case, backpressure is applied: the consumer receives an error response
      * and backs off via fetch purgatory.
-     * Metric: LaggingConsumerRejectedRate
+     * Metric: LaggingConsumerRequestRejectedRate
      *
      * High rejection rate indicates:
      * - Sustained lagging consumer load exceeding capacity
