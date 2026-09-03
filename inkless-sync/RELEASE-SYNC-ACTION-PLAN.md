@@ -88,6 +88,23 @@ git push -u origin inkless-4.0-sync-4.0.1
 gh pr create --base inkless-4.0 --title "Sync inkless-4.0 to upstream 4.0.1"
 ```
 
+### Step 9: Merge as a fast-forward
+
+GitHub's merge button always creates a merge, squash, or rebase commit, so don't use
+it here. Fast-forward `inkless-4.0` locally and push directly; GitHub marks the PR as
+merged once the base branch contains its commits:
+
+```bash
+git checkout inkless-4.0
+git pull
+git merge --ff-only inkless-4.0-sync-4.0.1
+git push origin inkless-4.0
+```
+
+A fast-forward merge keeps the sync's merge commit as the tip of `inkless-4.0`,
+instead of wrapping it in another merge commit, so the release branch history
+matches the sync branch exactly.
+
 ## Conflict Resolution Playbook
 
 ### Version Files

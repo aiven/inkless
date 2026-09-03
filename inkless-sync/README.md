@@ -8,6 +8,9 @@ The sync process follows the [Versioning Strategy](../docs/inkless/VERSIONING-ST
 - Uses **merge commits** (not rebase) for velocity
 - Preserves inkless-specific features and configurations
 - Creates structured commits for different types of adaptations
+- Merges release-sync PRs into the release branch as a **fast-forward** (no extra
+  merge, squash, or rebase commit), so the release branch history matches the sync
+  branch exactly; see [RELEASE-SYNC-GUIDE.md](RELEASE-SYNC-GUIDE.md) for the commands
 
 ## AI-Assisted Sync (Recommended)
 

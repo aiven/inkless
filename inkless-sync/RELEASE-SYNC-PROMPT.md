@@ -68,6 +68,19 @@ I need to sync the inkless release branch with an upstream Apache Kafka release.
 
 10. **Push**: When verified, push the sync branch for PR review
 
+11. **Merge as a fast-forward**: Don't use GitHub's merge button, since it always
+    creates a merge, squash, or rebase commit. Instead, fast-forward the release
+    branch locally and push directly:
+    ```bash
+    git checkout inkless-4.0
+    git pull
+    git merge --ff-only inkless-4.0-sync-4.0.1
+    git push origin inkless-4.0
+    ```
+    GitHub marks the PR as merged once `inkless-4.0` contains its commits. This keeps
+    the sync's merge commit as the tip of `inkless-4.0` instead of wrapping it in
+    another merge commit.
+
 Please help me execute this release sync process.
 ````
 
