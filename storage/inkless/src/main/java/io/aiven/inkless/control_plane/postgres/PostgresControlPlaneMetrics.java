@@ -36,7 +36,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
 
     private static final List<String> QUERY_NAMES = List.of(
         "FindBatches", "GetLogs", "CommitFile",
-        "TopicCreate", "TopicDelete", "FilesDelete", "ListOffsets",
+        "TopicCreate", "TopicDelete", "PurgeDeletedLogs", "FilesDelete", "ListOffsets",
         "DeleteRecords", "EnforceRetention", "GetFilesToDelete",
         "SafeDeleteFileCheck",
         "GetLogInfo", "InitDisklessLog", "GetProducerState",
@@ -71,6 +71,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
     final QueryMetrics commitFileMetrics = new QueryMetrics("CommitFile");
     private final QueryMetrics topicCreateMetrics = new QueryMetrics("TopicCreate");
     private final QueryMetrics topicDeleteMetrics = new QueryMetrics("TopicDelete");
+    private final QueryMetrics purgeDeletedLogsMetrics = new QueryMetrics("PurgeDeletedLogs");
     private final QueryMetrics fileDeleteMetrics = new QueryMetrics("FilesDelete");
     private final QueryMetrics listOffsetsMetrics = new QueryMetrics("ListOffsets");
     private final QueryMetrics deleteRecordsMetrics = new QueryMetrics("DeleteRecords");
@@ -103,6 +104,10 @@ public class PostgresControlPlaneMetrics implements Closeable {
 
     public void onTopicDeleteCompleted(Long duration) {
         topicDeleteMetrics.record(duration);
+    }
+
+    public void onPurgeDeletedLogsCompleted(Long duration) {
+        purgeDeletedLogsMetrics.record(duration);
     }
 
     public void onTopicCreateCompleted(Long duration) {
@@ -168,6 +173,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
         commitFileMetrics.remove();
         topicCreateMetrics.remove();
         topicDeleteMetrics.remove();
+        purgeDeletedLogsMetrics.remove();
         fileDeleteMetrics.remove();
         listOffsetsMetrics.remove();
         deleteRecordsMetrics.remove();

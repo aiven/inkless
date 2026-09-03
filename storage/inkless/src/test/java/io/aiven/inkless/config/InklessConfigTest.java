@@ -51,6 +51,8 @@ class InklessConfigTest {
         configs.put("inkless.storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName());
         configs.put("inkless.file.cleaner.interval.ms", "100");
         configs.put("inkless.file.cleaner.retention.period.ms", "200");
+        configs.put("inkless.topic.purger.interval.ms", "150");
+        configs.put("inkless.topic.purger.max.batches.per.cycle", "25");
         configs.put("inkless.consume.cache.max.count", "100");
         configs.put("inkless.consume.cache.max.bytes", "1048576");
         configs.put("inkless.consume.cache.expiration.lifespan.sec", "200");
@@ -72,6 +74,8 @@ class InklessConfigTest {
         assertThat(config.storage(storageMetrics)).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
+        assertThat(config.topicPurgerInterval()).isEqualTo(Duration.ofMillis(150));
+        assertThat(config.topicPurgerMaxBatchesPerCycle()).isEqualTo(25);
         assertThat(config.cacheMaxCount()).isEqualTo(100);
         assertThat(config.cacheMaxBytes()).isEqualTo(1048576L);
         assertThat(config.cacheExpirationLifespanSec()).isEqualTo(200);
@@ -103,6 +107,8 @@ class InklessConfigTest {
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMinutes(2));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.fileCleanerMaxFilesPerCycle()).isEqualTo(20_000);
+        assertThat(config.topicPurgerInterval()).isEqualTo(Duration.ofMinutes(1));
+        assertThat(config.topicPurgerMaxBatchesPerCycle()).isEqualTo(20_000);
         assertThat(config.cacheMaxCount()).isEqualTo(1000);
         assertThat(config.cacheMaxBytes()).isEqualTo(0L);
         assertThat(config.cacheExpirationLifespanSec()).isEqualTo(60);
@@ -128,6 +134,8 @@ class InklessConfigTest {
         configs.put("storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName());
         configs.put("file.cleaner.interval.ms", "100");
         configs.put("file.cleaner.retention.period.ms", "200");
+        configs.put("topic.purger.interval.ms", "150");
+        configs.put("topic.purger.max.batches.per.cycle", "25");
         configs.put("consume.cache.max.count", "100");
         configs.put("consume.cache.max.bytes", "1048576");
         configs.put("consume.cache.expiration.lifespan.sec", "200");
@@ -153,6 +161,8 @@ class InklessConfigTest {
         assertThat(config.storage(storageMetrics)).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
+        assertThat(config.topicPurgerInterval()).isEqualTo(Duration.ofMillis(150));
+        assertThat(config.topicPurgerMaxBatchesPerCycle()).isEqualTo(25);
         assertThat(config.cacheMaxCount()).isEqualTo(100);
         assertThat(config.cacheMaxBytes()).isEqualTo(1048576L);
         assertThat(config.cacheExpirationLifespanSec()).isEqualTo(200);
@@ -212,6 +222,30 @@ class InklessConfigTest {
         assertThatThrownBy(() -> new InklessConfig(config))
             .isInstanceOf(ConfigException.class)
             .hasMessage("Invalid value 0 for configuration produce.max.upload.attempts: Value must be at least 1");
+    }
+
+    @Test
+    void topicPurgerIntervalZero() {
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "topic.purger.interval.ms", "0"
+        );
+        assertThatThrownBy(() -> new InklessConfig(config))
+            .isInstanceOf(ConfigException.class)
+            .hasMessage("Invalid value 0 for configuration topic.purger.interval.ms: Value must be at least 1");
+    }
+
+    @Test
+    void topicPurgerMaxBatchesPerCycleNegative() {
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "topic.purger.max.batches.per.cycle", "-1"
+        );
+        assertThatThrownBy(() -> new InklessConfig(config))
+            .isInstanceOf(ConfigException.class)
+            .hasMessage("Invalid value -1 for configuration topic.purger.max.batches.per.cycle: Value must be at least 0");
     }
 
     @Test

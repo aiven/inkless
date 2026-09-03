@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -62,6 +63,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfoInternal>> batches = new HashMap<>();
     // The key is the ID.
     private final HashMap<TopicIdPartition, TreeMap<Long, LatestProducerState>> producers = new HashMap<>();
+    // Same order as purge_deleted_logs_v1: older deleted_at first, then topic_id, partition.
+    private static final Comparator<Map.Entry<TopicIdPartition, LogInfo>> DELETED_LOG_ORDER =
+        Comparator.comparing((Map.Entry<TopicIdPartition, LogInfo> e) -> e.getValue().deletedAt)
+            .thenComparing(e -> e.getKey().topicId())
+            .thenComparingInt(e -> e.getKey().partition());
 
     private InMemoryControlPlaneConfig controlPlaneConfig;
 
@@ -98,6 +104,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             final LogInfo existingLog = logs.get(topicIdPartition);
             // Mirrors the guarded upsert in V23__Init_diskless_log_authoritative_seal.sql: a seal overwrites
             // a row that is still an empty placeholder, anything else is already initialized.
+            // A soft-deleted row must not be resurrected.
+            if (existingLog != null && existingLog.deletedAt != null) {
+                responses.add(InitDisklessLogResponse.alreadyInitialized());
+                continue;
+            }
             final boolean sealAdvancesPlaceholder = existingLog != null
                 && existingLog.highWatermark == 0
                 && existingLog.disklessStartOffset == 0
@@ -140,7 +151,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             final TopicIdPartition topicIdPartition = new TopicIdPartition(
                 request.topicId(), request.partition(), request.topicName());
 
-            final LogInfo existingLog = logs.get(topicIdPartition);
+            final LogInfo existingLog = liveLog(topicIdPartition);
             if (existingLog != null) {
                 existingLog.disklessStartOffset = request.disklessStartOffset();
                 responses.add(new RepairDisklessLogResponse(true));
@@ -184,7 +195,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final CommitBatchRequest request
     ) {
         final TopicIdPartition topicIdPartition = request.topicIdPartition();
-        final LogInfo logInfo = logs.get(topicIdPartition);
+        final LogInfo logInfo = liveLog(topicIdPartition);
         final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(topicIdPartition);
         // This can't really happen as non-existing partitions should be filtered out earlier.
         if (logInfo == null || coordinates == null) {
@@ -307,7 +318,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final int maxBatchesPerPartition,
         final long globalBytesAlreadySpent
     ) {
-        final LogInfo logInfo = logs.get(request.topicIdPartition());
+        final LogInfo logInfo = liveLog(request.topicIdPartition());
         final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(request.topicIdPartition());
         // This can't really happen as non-existing partitions should be filtered out earlier.
         if (logInfo == null || coordinates == null) {
@@ -361,7 +372,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     private DeleteRecordsResponse deleteRecordsForPartition(final DeleteRecordsRequest request) {
-        final LogInfo logInfo = logs.get(request.topicIdPartition());
+        final LogInfo logInfo = liveLog(request.topicIdPartition());
         final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(request.topicIdPartition());
         // This can't really happen as non-existing partitions should be filtered out earlier.
         if (logInfo == null || coordinates == null) {
@@ -398,22 +409,98 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     public synchronized void deleteTopics(final Set<Uuid> topicIds) {
         // There may be some non-diskless topics there, but they should be no-op.
 
-        final List<TopicIdPartition> partitionsToDelete = logs.keySet().stream()
-            .filter(tidp -> topicIds.contains(tidp.topicId()))
+        final Instant now = TimeUtils.now(time);
+        final List<TopicIdPartition> partitionsToDelete = logs.entrySet().stream()
+            .filter(e -> topicIds.contains(e.getKey().topicId()))
+            .filter(e -> e.getValue().deletedAt == null)
+            .map(Map.Entry::getKey)
             .toList();
         for (final TopicIdPartition topicIdPartition : partitionsToDelete) {
             LOGGER.info("Deleting {}", topicIdPartition);
-            logs.remove(topicIdPartition);
-            final TreeMap<Long, BatchInfoInternal> coordinates = batches.remove(topicIdPartition);
-            if (coordinates == null) {
+            logs.get(topicIdPartition).deletedAt = now;
+        }
+    }
+
+    @Override
+    public synchronized PurgeDeletedLogsResponse purgeDeletedLogs(final int maxBatches) {
+        if (logs.values().stream().noneMatch(logInfo -> logInfo.deletedAt != null)) {
+            return PurgeDeletedLogsResponse.empty();
+        }
+
+        final Instant now = TimeUtils.now(time);
+        long remaining = maxBatches > 0 ? maxBatches : Long.MAX_VALUE;
+        long batchesDeleted = 0;
+        int logsPurged = 0;
+        int filesMarked = 0;
+
+        Stream<TopicIdPartition> emptyDeleted = logs.entrySet().stream()
+            .filter(e -> e.getValue().deletedAt != null)
+            .filter(e -> {
+                final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(e.getKey());
+                return coordinates == null || coordinates.isEmpty();
+            })
+            .sorted(DELETED_LOG_ORDER)
+            .map(Map.Entry::getKey);
+        if (maxBatches > 0) {
+            emptyDeleted = emptyDeleted.limit(maxBatches);
+        }
+        for (final TopicIdPartition tidp : emptyDeleted.toList()) {
+            logs.remove(tidp);
+            batches.remove(tidp);
+            producers.remove(tidp);
+            logsPurged++;
+        }
+
+        Stream<TopicIdPartition> deletedWithBatches = logs.entrySet().stream()
+            .filter(e -> e.getValue().deletedAt != null)
+            .filter(e -> {
+                final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(e.getKey());
+                return coordinates != null && !coordinates.isEmpty();
+            })
+            .sorted(DELETED_LOG_ORDER)
+            .map(Map.Entry::getKey);
+        if (maxBatches > 0) {
+            deletedWithBatches = deletedWithBatches.limit(maxBatches);
+        }
+
+        for (final TopicIdPartition tidp : deletedWithBatches.toList()) {
+            if (remaining <= 0) {
+                break;
+            }
+            final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(tidp);
+            if (coordinates == null || coordinates.isEmpty()) {
                 continue;
             }
-
-            for (final var entry : coordinates.entrySet()) {
-                final BatchInfoInternal batchInfoInternal = entry.getValue();
-                batchInfoInternal.fileInfo().deleteBatch(batchInfoInternal.batchInfo, TimeUtils.now(time));
+            final List<Long> keys = new ArrayList<>(coordinates.keySet());
+            Collections.sort(keys);
+            int taken = 0;
+            for (final long key : keys) {
+                if (taken >= remaining) {
+                    break;
+                }
+                final BatchInfoInternal removed = coordinates.remove(key);
+                if (removed == null) {
+                    continue;
+                }
+                final boolean alreadyDeleting = removed.fileInfo().fileState == FileState.DELETING;
+                removed.fileInfo().deleteBatch(removed.batchInfo, now);
+                if (!alreadyDeleting && removed.fileInfo().fileState == FileState.DELETING) {
+                    filesMarked++;
+                }
+                batchesDeleted++;
+                taken++;
+            }
+            remaining -= taken;
+            if (coordinates.isEmpty()) {
+                logs.remove(tidp);
+                batches.remove(tidp);
+                producers.remove(tidp);
+                logsPurged++;
             }
         }
+
+        final boolean moreRemain = logs.values().stream().anyMatch(logInfo -> logInfo.deletedAt != null);
+        return new PurgeDeletedLogsResponse(batchesDeleted, logsPurged, filesMarked, moreRemain);
     }
 
     @Override
@@ -538,7 +625,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         // Direct O(1) lookup like listOffset: the caller (ReplicaManager) passes a fully-formed
         // TopicIdPartition. This differs from advanceCrossTierLogStartOffset, whose request has no topic
         // name and so must fall back to the O(n) findTopicIdPartition scan.
-        final LogInfo logInfo = logs.get(topicIdPartition);
+        final LogInfo logInfo = liveLog(topicIdPartition);
         if (logInfo == null) {
             return OptionalLong.empty();
         }
@@ -570,7 +657,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     private ListOffsetsResponse listOffset(ListOffsetsRequest request) {
-        final LogInfo logInfo = logs.get(request.topicIdPartition());
+        final LogInfo logInfo = liveLog(request.topicIdPartition());
 
         if (logInfo == null) {
             LOGGER.warn("Unexpected non-existing partition {}", request.topicIdPartition());
@@ -746,10 +833,18 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     private TopicIdPartition findTopicIdPartition(final Uuid topicId, final int partition) {
-        return logs.keySet()
-            .stream().filter(tidp -> topicId.equals(tidp.topicId()) && partition == tidp.partition())
+        return logs.entrySet()
+            .stream()
+            .filter(e -> e.getValue().deletedAt == null)
+            .map(Map.Entry::getKey)
+            .filter(tidp -> topicId.equals(tidp.topicId()) && partition == tidp.partition())
             .findFirst()
             .orElse(null);
+    }
+
+    private LogInfo liveLog(final TopicIdPartition topicIdPartition) {
+        final LogInfo logInfo = logs.get(topicIdPartition);
+        return logInfo == null || logInfo.deletedAt != null ? null : logInfo;
     }
 
     // Effective timestamp of the oldest retained batch (smallest last-offset key == batch at logStartOffset),
@@ -773,6 +868,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         // Maintained purely for parity with the Postgres control plane so the enforceRetention short-circuit
         // behaves identically across backends.
         Long earliestBatchTimestamp = null;
+        Instant deletedAt = null;
     }
 
     private static class FileInfo {

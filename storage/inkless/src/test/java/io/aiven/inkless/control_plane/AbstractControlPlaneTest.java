@@ -467,10 +467,14 @@ public abstract class AbstractControlPlaneTest {
         time.sleep(1001);  // advance time
         controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID, Uuid.ONE_UUID));
 
-        // objectKey2 is kept alive by the second topic, which isn't deleted
-        assertThat(allFilesToDelete(controlPlane)).containsExactlyInAnyOrder(
-            new FileToDelete(objectKey1, TimeUtils.now(time))
-        );
+        // Soft-delete fences the topic immediately; batches and files stay until purge.
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.unknownTopicOrPartition());
+        assertThat(controlPlane.findBatches(
+            List.of(new FindBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 0, Integer.MAX_VALUE)),
+            Integer.MAX_VALUE, 0
+        )).containsExactly(FindBatchResponse.unknownTopicOrPartition());
+        assertThat(allFilesToDelete(controlPlane)).isEmpty();
 
         final List<FindBatchResponse> findBatchResponsesAfterDelete = controlPlane.findBatches(findBatchRequests, Integer.MAX_VALUE, 0
         );
@@ -478,12 +482,234 @@ public abstract class AbstractControlPlaneTest {
 
         // Nothing happens as it's idempotent.
         controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID, Uuid.ONE_UUID));
+        assertThat(allFilesToDelete(controlPlane)).isEmpty();
+
+        final PurgeDeletedLogsResponse purge = controlPlane.purgeDeletedLogs(0);
+        assertThat(purge.moreRemain()).isFalse();
+        assertThat(purge.batchesDeleted()).isPositive();
+
+        // objectKey2 is kept alive by the second topic, which isn't deleted
         assertThat(allFilesToDelete(controlPlane)).containsExactlyInAnyOrder(
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );
+    }
 
+    @Test
+    void deleteTopicPurgeIsCapped() {
+        controlPlane.commitFile("a1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 100, 0, 0, 1000, TimestampType.CREATE_TIME)
+            ));
+        controlPlane.commitFile("a2", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 100, 0, 0, 1000, TimestampType.CREATE_TIME)
+            ));
+        controlPlane.commitFile("a3", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 100, 0, 0, 1000, TimestampType.CREATE_TIME)
+            ));
+
+        controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID));
         assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
             .containsExactly(GetLogInfoResponse.unknownTopicOrPartition());
+
+        final PurgeDeletedLogsResponse first = controlPlane.purgeDeletedLogs(1);
+        assertThat(first.batchesDeleted()).isEqualTo(1);
+        assertThat(first.moreRemain()).isTrue();
+        assertThat(allFilesToDelete(controlPlane)).hasSize(1);
+
+        final PurgeDeletedLogsResponse rest = controlPlane.purgeDeletedLogs(0);
+        assertThat(rest.batchesDeleted()).isEqualTo(2);
+        assertThat(rest.moreRemain()).isFalse();
+        assertThat(allFilesToDelete(controlPlane)).hasSize(3);
+    }
+
+    @Test
+    void deleteTopicPurgeIsFirstInFirstOut() {
+        // newerId sorts before olderId on topic_id, so UUID order would drain the later delete first.
+        final Uuid olderId = new Uuid(90, 90);
+        final Uuid newerId = new Uuid(10, 90);
+        final TopicIdPartition older = new TopicIdPartition(olderId, 0, "fifo-older");
+        final TopicIdPartition newer = new TopicIdPartition(newerId, 0, "fifo-newer");
+        controlPlane.createTopicAndPartitions(Set.of(
+            new CreateTopicAndPartitionsRequest(olderId, "fifo-older", 1),
+            new CreateTopicAndPartitionsRequest(newerId, "fifo-newer", 1)
+        ));
+        controlPlane.commitFile("fifo-older", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, older, 1, 100, 0, 0, 1000, TimestampType.CREATE_TIME)
+            ));
+        controlPlane.commitFile("fifo-newer-1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, newer, 1, 100, 0, 0, 1000, TimestampType.CREATE_TIME)
+            ));
+        controlPlane.commitFile("fifo-newer-2", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, newer, 1, 100, 0, 0, 1000, TimestampType.CREATE_TIME)
+            ));
+
+        controlPlane.deleteTopics(Set.of(olderId));
+        time.sleep(1000);
+        controlPlane.deleteTopics(Set.of(newerId));
+
+        final PurgeDeletedLogsResponse first = controlPlane.purgeDeletedLogs(1);
+        assertThat(first.batchesDeleted()).isEqualTo(1);
+        assertThat(first.logsPurged()).isEqualTo(1);
+        assertThat(first.moreRemain()).isTrue();
+
+        final PurgeDeletedLogsResponse rest = controlPlane.purgeDeletedLogs(0);
+        assertThat(rest.batchesDeleted()).isEqualTo(2);
+        assertThat(rest.logsPurged()).isEqualTo(1);
+        assertThat(rest.moreRemain()).isFalse();
+    }
+
+    @Test
+    void deleteTopicFencesCommit() {
+        controlPlane.commitFile("a1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 0, 0, 1000, TimestampType.CREATE_TIME)
+            ));
+
+        controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID));
+
+        final List<CommitBatchResponse> commitAfterDelete = controlPlane.commitFile(
+            "after-delete", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 0, 0, 1000, TimestampType.CREATE_TIME)
+            ));
+        assertThat(commitAfterDelete).containsExactly(
+            CommitBatchResponse.of(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
+        );
+    }
+
+    @Test
+    void deleteTopicFencesRemainingApis() {
+        controlPlane.commitFile("fence-readers", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, 100, 0, 9, 1000, TimestampType.CREATE_TIME)
+            ));
+        assertThat(controlPlane.advanceCrossTierLogStartOffset(List.of(
+            new AdvanceCrossTierLogStartOffsetRequest(EXISTING_TOPIC_1_ID, 0, 5)
+        ))).containsExactly(AdvanceCrossTierLogStartOffsetResponse.success(5));
+        assertThat(controlPlane.getCrossTierLogStart(EXISTING_TOPIC_1_ID_PARTITION_0)).hasValue(5);
+
+        controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID));
+
+        assertThat(controlPlane.listOffsets(List.of(
+            new ListOffsetsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, LATEST_TIMESTAMP)
+        ))).containsExactly(ListOffsetsResponse.unknownTopicOrPartition(EXISTING_TOPIC_1_ID_PARTITION_0));
+        assertThat(controlPlane.deleteRecords(List.of(
+            new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 3)
+        ))).containsExactly(DeleteRecordsResponse.unknownTopicOrPartition());
+        assertThat(controlPlane.enforceRetention(List.of(
+            new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, 0, 0)
+        ), 0)).containsExactly(EnforceRetentionResponse.unknownTopicOrPartition());
+        assertThat(controlPlane.getCrossTierLogStart(EXISTING_TOPIC_1_ID_PARTITION_0)).isEmpty();
+        assertThat(controlPlane.advanceCrossTierLogStartOffset(List.of(
+            new AdvanceCrossTierLogStartOffsetRequest(EXISTING_TOPIC_1_ID, 0, 8)
+        ))).containsExactly(AdvanceCrossTierLogStartOffsetResponse.unknownTopicOrPartition());
+        assertThat(controlPlane.repairDisklessLog(List.of(
+            new RepairDisklessLogRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, 0, 50)
+        ))).containsExactly(new RepairDisklessLogResponse(false));
+        assertThat(controlPlane.pruneDisklessLogs(List.of(
+            new PruneDisklessLogsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 9)
+        ))).containsExactly(new PruneDisklessLogsResponse(
+            EXISTING_TOPIC_1_ID_PARTITION_0, -1, PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION));
+    }
+
+    @Test
+    void purgeDeletedLogsIsNoOpWhenNothingDeleted() {
+        assertThat(controlPlane.purgeDeletedLogs(0)).isEqualTo(PurgeDeletedLogsResponse.empty());
+    }
+
+    @Test
+    void deleteTopicEmptyLogPurgeIsCapped() {
+        final Uuid topicId = new Uuid(30, 30);
+        controlPlane.createTopicAndPartitions(Set.of(
+            new CreateTopicAndPartitionsRequest(topicId, "empty-many", 5)
+        ));
+        controlPlane.deleteTopics(Set.of(topicId));
+
+        final PurgeDeletedLogsResponse first = controlPlane.purgeDeletedLogs(2);
+        assertThat(first.logsPurged()).isEqualTo(2);
+        assertThat(first.batchesDeleted()).isZero();
+        assertThat(first.moreRemain()).isTrue();
+
+        final PurgeDeletedLogsResponse rest = controlPlane.purgeDeletedLogs(0);
+        assertThat(rest.logsPurged()).isEqualTo(3);
+        assertThat(rest.moreRemain()).isFalse();
+    }
+
+    @Test
+    void deleteTopicPurgeRemovesProducerState() {
+        final long deletedProducerId = 42L;
+        final long keptProducerId = 99L;
+        final short producerEpoch = 1;
+        final int baseSequence = 0;
+        final int lastSequence = 9;
+        final long batchMaxTimestamp = 5000;
+        controlPlane.commitFile("pid-deleted", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, 100, 0, lastSequence,
+                    batchMaxTimestamp, TimestampType.CREATE_TIME, deletedProducerId, producerEpoch, baseSequence, lastSequence)
+            ));
+        controlPlane.commitFile("pid-kept", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.idempotent(0, EXISTING_TOPIC_2_ID_PARTITION_0, 0, 100, 0, lastSequence,
+                    batchMaxTimestamp, TimestampType.CREATE_TIME, keptProducerId, producerEpoch, baseSequence, lastSequence)
+            ));
+        assertThat(controlPlane.getProducerState(List.of(new GetProducerStateRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetProducerStateResponse.success(List.of(
+                new GetProducerStateResponse.ProducerStateEntry(
+                    deletedProducerId, producerEpoch, baseSequence, lastSequence, 0, batchMaxTimestamp)
+            )));
+
+        controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID));
+        assertThat(controlPlane.purgeDeletedLogs(0).moreRemain()).isFalse();
+
+        // Recreate the same topic id so a leaked producer_state row would show up on the live path.
+        // getProducerState after delete is fenced on deleted_at, so it cannot prove the row is gone.
+        controlPlane.createTopicAndPartitions(Set.of(
+            new CreateTopicAndPartitionsRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, EXISTING_TOPIC_1_PARTITIONS)
+        ));
+        assertThat(controlPlane.getProducerState(List.of(new GetProducerStateRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetProducerStateResponse.success(List.of()));
+        assertThat(controlPlane.getProducerState(List.of(new GetProducerStateRequest(EXISTING_TOPIC_2_ID, 0))))
+            .containsExactly(GetProducerStateResponse.success(List.of(
+                new GetProducerStateResponse.ProducerStateEntry(
+                    keptProducerId, producerEpoch, baseSequence, lastSequence, 0, batchMaxTimestamp)
+            )));
+    }
+
+    @Test
+    void deleteTopicPurgeRemovesProducerStateFromEmptyLog() {
+        final Uuid topicId = new Uuid(40, 40);
+        final String topic = "empty-with-pid";
+        final long producerId = 42L;
+        final short producerEpoch = 1;
+        final int baseSequence = 5;
+        final int lastSequence = 9;
+        final long assignedOffset = 99;
+        final long batchMaxTimestamp = 5000;
+        controlPlane.initDisklessLog(List.of(
+            new InitDisklessLogRequest(topicId, topic, 0, 0, 100,
+                List.of(new InitDisklessLogProducerState(
+                    producerId, producerEpoch, baseSequence, lastSequence, assignedOffset, batchMaxTimestamp)))
+        ));
+        assertThat(controlPlane.getProducerState(List.of(new GetProducerStateRequest(topicId, 0))))
+            .containsExactly(GetProducerStateResponse.success(List.of(
+                new GetProducerStateResponse.ProducerStateEntry(
+                    producerId, producerEpoch, baseSequence, lastSequence, assignedOffset, batchMaxTimestamp)
+            )));
+
+        controlPlane.deleteTopics(Set.of(topicId));
+        assertThat(controlPlane.purgeDeletedLogs(0).logsPurged()).isEqualTo(1);
+
+        controlPlane.createTopicAndPartitions(Set.of(
+            new CreateTopicAndPartitionsRequest(topicId, topic, 1)
+        ));
+        assertThat(controlPlane.getProducerState(List.of(new GetProducerStateRequest(topicId, 0))))
+            .containsExactly(GetProducerStateResponse.success(List.of()));
     }
 
     @Test
@@ -1394,6 +1620,7 @@ public abstract class AbstractControlPlaneTest {
 
         time.sleep(1001);  // advance time
         controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID, Uuid.ONE_UUID));
+        assertThat(controlPlane.purgeDeletedLogs(0).moreRemain()).isFalse();
 
         // objectKey2 is kept alive by the second topic, which isn't deleted
         assertThat(allFilesToDelete(controlPlane)).containsExactly(
@@ -1989,6 +2216,18 @@ public abstract class AbstractControlPlaneTest {
                 new InitDisklessLogRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, 0, 0, 0, List.of())
             ));
             assertThat(responses).containsExactly(InitDisklessLogResponse.alreadyInitialized());
+        }
+
+        @Test
+        void softDeletedLogIsNotResurrected() {
+            controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID));
+
+            final var responses = controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, 0, 50, 50, List.of())
+            ));
+            assertThat(responses).containsExactly(InitDisklessLogResponse.alreadyInitialized());
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                .containsExactly(GetLogInfoResponse.unknownTopicOrPartition());
         }
 
         // KC-387: a partition-count increase during a classic->diskless switch inserts a logs row for the
