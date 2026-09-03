@@ -21,6 +21,7 @@ import java.util
 import java.util.{Collections, Properties}
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.locks.ReentrantReadWriteLock
+import io.aiven.inkless.control_plane.ControlPlaneAvailability
 import kafka.log.LogManager
 import kafka.network.DataPlaneAcceptor
 import kafka.server.metadata.InklessMetadataView
@@ -198,6 +199,10 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     addBrokerReconfigurable(new BrokerDynamicThreadPool(kafkaServer))
     addBrokerReconfigurable(new DynamicLogConfig(kafkaServer.logManager, kafkaServer.replicaManager.directoryEventHandler))
     addBrokerReconfigurable(new DynamicInklessLogConfig(kafkaServer.replicaManager.inklessMetadataView()))
+    kafkaServer.replicaManager.inklessControlPlaneAvailability().foreach { availability =>
+      addBrokerReconfigurable(new DynamicDisklessControlPlaneConfig(availability))
+      catchUpDisklessControlPlaneAvailability(availability)
+    }
     addBrokerReconfigurable(new DynamicListenerConfig(kafkaServer))
     addBrokerReconfigurable(kafkaServer.socketServer)
     addBrokerReconfigurable(new DynamicProducerStateManagerConfig(kafkaServer.logManager.producerStateManagerConfig))
@@ -225,6 +230,34 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     addBrokerReconfigurable(new ControllerDynamicThreadPool(controller))
     // TODO: addBrokerReconfigurable(new DynamicListenerConfig(controller))
     addBrokerReconfigurable(controller.socketServer)
+    controller.sharedServer.inklessControlPlaneAvailability.foreach { availability =>
+      addBrokerReconfigurable(new DynamicDisklessControlPlaneConfig(availability))
+      catchUpDisklessControlPlaneAvailability(availability)
+    }
+  }
+
+  /**
+   * `availability` is seeded in `SharedServer.start()`, which runs before the raft manager is even
+   * constructed, so its initial value can only ever reflect the static config. Dynamic broker
+   * configs (e.g. a previously persisted "offline", set by the management plane before this
+   * restart) are only loaded into `KafkaConfig` afterwards, during broker/controller startup, and
+   * `addBrokerReconfigurable` never retroactively invokes `reconfigure()` for a value that was
+   * already resolved before registration.
+   *
+   * That earlier load (`readDynamicBrokerConfigsFromSnapshot`, run before any reconfigurable is
+   * registered) already updates this class's own `currentConfig` even though there is nothing yet
+   * to notify. By the time a later, genuine config-change delta arrives, `currentConfig` already
+   * matches it, so no diff is left to detect and `reconfigure()` never fires either. The value is
+   * silently lost on every restart, forever, unless read directly here.
+   *
+   * Deliberately reads `currentKafkaConfig` (this class's own live state), NOT
+   * `kafkaServer.config`/`controller.config`: those are the original, per-process `KafkaConfig`
+   * instance, whose `val disklessControlPlaneAvailability` field is cached once at construction
+   * and never refreshed by a dynamic update (only `get`/`values`/`originals`-style methods are
+   * redirected to the current config; plain `val`s are not).
+   */
+  private def catchUpDisklessControlPlaneAvailability(availability: ControlPlaneAvailability): Unit = {
+    availability.set(ControlPlaneAvailability.State.fromConfig(currentKafkaConfig.disklessControlPlaneAvailability))
   }
 
   def addReconfigurable(reconfigurable: Reconfigurable): Unit = {
@@ -637,6 +670,20 @@ class DynamicInklessLogConfig(inklessMetadataView: InklessMetadataView) extends 
 
   override def reconfigure(oldConfig: KafkaConfig, newConfig: KafkaConfig): Unit = {
     inklessMetadataView.reconfigureDefaultLogConfig()
+  }
+}
+
+class DynamicDisklessControlPlaneConfig(availability: ControlPlaneAvailability) extends BrokerReconfigurable {
+
+  override def reconfigurableConfigs: util.Set[String] = util.Set.of(ServerConfigs.DISKLESS_CONTROL_PLANE_AVAILABILITY_CONFIG)
+
+  override def validateReconfiguration(newConfig: KafkaConfig): Unit = {
+    // Throws ConfigException on an unknown value, which aborts the update before it is applied.
+    ControlPlaneAvailability.State.fromConfig(newConfig.disklessControlPlaneAvailability)
+  }
+
+  override def reconfigure(oldConfig: KafkaConfig, newConfig: KafkaConfig): Unit = {
+    availability.set(ControlPlaneAvailability.State.fromConfig(newConfig.disklessControlPlaneAvailability))
   }
 }
 

@@ -18,6 +18,7 @@
 package kafka.server
 
 import com.yammer.metrics.core.{Gauge, Meter, Timer}
+import io.aiven.inkless.control_plane.ControlPlaneAvailability
 import kafka.cluster.PartitionTest.MockPartitionListener
 import kafka.cluster.Partition
 import kafka.log.LogManager
@@ -6139,6 +6140,18 @@ class ReplicaManagerTest {
         KafkaYammerMetrics.defaultRegistry.removeMetric(metricName)
       }
     }
+  }
+
+  @Test
+  def testRunIfControlPlaneAvailableSkipsWhenGated(): Unit = {
+    val availability = new ControlPlaneAvailability(ControlPlaneAvailability.State.OFFLINE)
+    var ran = false
+    ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") { ran = true }
+    assertFalse(ran)
+
+    availability.set(ControlPlaneAvailability.State.AVAILABLE)
+    ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") { ran = true }
+    assertTrue(ran)
   }
 }
 

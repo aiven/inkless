@@ -82,7 +82,8 @@ public class DynamicBrokerConfig {
             GroupCoordinatorConfig.RECONFIGURABLE_CONFIGS,
             DynamicQuotaConfig.RECONFIGURABLE_CONFIGS,
             ShareCoordinatorConfig.RECONFIGURABLE_CONFIGS,
-            List.of(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_CONFIG))
+            List.of(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_CONFIG),
+            List.of(ServerConfigs.DISKLESS_CONTROL_PLANE_AVAILABILITY_CONFIG))
         .flatMap(Collection::stream)
         .collect(Collectors.toUnmodifiableSet());
 

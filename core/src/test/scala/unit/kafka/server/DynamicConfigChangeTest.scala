@@ -16,6 +16,7 @@
   */
 package kafka.server
 
+import io.aiven.inkless.control_plane.ControlPlaneAvailability
 import kafka.cluster.Partition
 import kafka.integration.KafkaServerTestHarness
 import kafka.server.metadata.InklessMetadataView
@@ -863,5 +864,21 @@ class DynamicConfigChangeUnitTest {
     handler.processConfigChanges(kafkaConfig.brokerId.toString, props)
 
     assertEquals(2097152L, consolidationQuota.upperBound)
+  }
+
+  @Test
+  def testDisklessControlPlaneAvailabilityUpdatedDynamically(): Unit = {
+    val availability = new ControlPlaneAvailability(ControlPlaneAvailability.State.AVAILABLE)
+    val oldConfig = KafkaConfig.fromProps(TestUtils.createBrokerConfig(0, port = 8181))
+    val props = TestUtils.createBrokerConfig(0, port = 8181)
+    props.put(ServerConfigs.DISKLESS_CONTROL_PLANE_AVAILABILITY_CONFIG, "offline")
+    val newConfig = KafkaConfig.fromProps(props)
+
+    val reconfigurable = new DynamicDisklessControlPlaneConfig(availability)
+    reconfigurable.validateReconfiguration(newConfig)
+    reconfigurable.reconfigure(oldConfig, newConfig)
+
+    assertEquals(ControlPlaneAvailability.State.OFFLINE, availability.state())
+    assertFalse(availability.isAvailable())
   }
 }
