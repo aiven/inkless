@@ -36,6 +36,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -55,6 +56,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
@@ -89,6 +91,7 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -141,6 +144,13 @@ public class ReaderTest {
 
     @Nested
     class AllOfFileExtentsTests {
+        private CompletableFuture<List<FileExtentResult>> allOfFileExtents(
+            final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures
+        ) {
+            return Reader.allOfFileExtents(
+                requestsWithFutures, time, fetchMetrics, new Reader.InFlightObjectBytes(fetchMetrics));
+        }
+
         /**
          * Tests that allOfFileExtents preserves the original input order regardless of completion order.
          */
@@ -170,20 +180,23 @@ public class ReaderTest {
             final List<FetchPlanner.FetchRequestWithFuture> orderedRequests = List.of(
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(objectKeyA, range, 0L, false),
-                    futureA
+                    futureA,
+                    false
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(objectKeyB, range, 0L, false),
-                    futureB
+                    futureB,
+                    false
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(objectKeyC, range, 0L, false),
-                    futureC
+                    futureC,
+                    false
                 )
             );
 
             // Call allOfFileExtents
-            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(orderedRequests);
+            final CompletableFuture<List<FileExtentResult>> resultFuture = allOfFileExtents(orderedRequests);
 
             // Verify result order is preserved as A, B, C (not C, B, A which was the completion order)
             final List<FileExtentResult> result = resultFuture.join();
@@ -207,12 +220,13 @@ public class ReaderTest {
             final List<FetchPlanner.FetchRequestWithFuture> requests = List.of(
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(testObjectKey, range, 0L, false),
-                    incompleteFuture
+                    incompleteFuture,
+                    false
                 )
             );
 
             // Call allOfFileExtents - this should return immediately without blocking
-            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(requests);
+            final CompletableFuture<List<FileExtentResult>> resultFuture = allOfFileExtents(requests);
 
             // Verify the result is not yet complete (proves non-blocking behavior)
             assertThat(resultFuture).isNotCompleted();
@@ -256,20 +270,23 @@ public class ReaderTest {
             final List<FetchPlanner.FetchRequestWithFuture> mixedRequests = List.of(
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(hotKey1, range, 0L, false),
-                    successFuture1
+                    successFuture1,
+                    false
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(hotKey2, range, 0L, false),
-                    failedFuture
+                    failedFuture,
+                    false
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(hotKey2, range, 0L, false),
-                    successFuture2
+                    successFuture2,
+                    false
                 )
             );
 
             // Call allOfFileExtents
-            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(mixedRequests);
+            final CompletableFuture<List<FileExtentResult>> resultFuture = allOfFileExtents(mixedRequests);
 
             // Verify the result completes successfully (no exception propagation)
             assertThat(resultFuture).succeedsWithin(java.time.Duration.ofSeconds(1));
@@ -322,20 +339,23 @@ public class ReaderTest {
             final List<FetchPlanner.FetchRequestWithFuture> allFailedRequests = List.of(
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(key1, range, 0L, false),
-                    failedFuture1
+                    failedFuture1,
+                    false
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(key2, range, 0L, false),
-                    failedFuture2
+                    failedFuture2,
+                    false
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(key3, range, 0L, false),
-                    failedFuture3
+                    failedFuture3,
+                    false
                 )
             );
 
             // Call allOfFileExtents
-            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(allFailedRequests);
+            final CompletableFuture<List<FileExtentResult>> resultFuture = allOfFileExtents(allFailedRequests);
 
             // Verify the result completes successfully (no exception propagation)
             assertThat(resultFuture).succeedsWithin(java.time.Duration.ofSeconds(1));
@@ -381,24 +401,28 @@ public class ReaderTest {
             final List<FetchPlanner.FetchRequestWithFuture> mixedRequests = List.of(
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(successKey, range, 0L, false),
-                    successFuture
+                    successFuture,
+                    false
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(failKey1, range, 0L, false),
-                    rejectedExecutionFuture
+                    rejectedExecutionFuture,
+                    false
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(failKey2, range, 0L, false),
-                    storageBackendFuture
+                    storageBackendFuture,
+                    false
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(failKey3, range, 0L, false),
-                    genericFuture
+                    genericFuture,
+                    false
                 )
             );
 
             // Call allOfFileExtents
-            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(mixedRequests);
+            final CompletableFuture<List<FileExtentResult>> resultFuture = allOfFileExtents(mixedRequests);
 
             // Verify the result completes successfully
             assertThat(resultFuture).succeedsWithin(java.time.Duration.ofSeconds(1));
@@ -445,24 +469,28 @@ public class ReaderTest {
             final List<FetchPlanner.FetchRequestWithFuture> orderedRequests = List.of(
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(key1, range, 0L, false),
-                    future1
+                    future1,
+                    false
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(key2, range, 0L, false),
-                    future2
+                    future2,
+                    false
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(key3, range, 0L, false),
-                    future3
+                    future3,
+                    false
                 ),
                 new FetchPlanner.FetchRequestWithFuture(
                     new FetchPlanner.ObjectFetchRequest(key4, range, 0L, false),
-                    future4
+                    future4,
+                    false
                 )
             );
 
             // Call allOfFileExtents
-            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(orderedRequests);
+            final CompletableFuture<List<FileExtentResult>> resultFuture = allOfFileExtents(orderedRequests);
 
             final List<FileExtentResult> result = resultFuture.join();
 
@@ -477,6 +505,171 @@ public class ReaderTest {
             assertThat(((FileExtentResult.Success) result.get(2)).extent().object()).isEqualTo(key3.value());
 
             assertThat(result.get(3)).isInstanceOf(FileExtentResult.Failure.class);
+        }
+
+        @Test
+        public void testRecordsExtentBytesPerProvenance() {
+            final ObjectKey cachedKey = PlainObjectKey.create("prefix", "cached-object");
+            final ObjectKey coldKey = PlainObjectKey.create("prefix", "cold-object");
+
+            final List<FetchPlanner.FetchRequestWithFuture> requests = List.of(
+                requestWithExtent(cachedKey, 10, true),
+                requestWithExtent(coldKey, 30, false)
+            );
+
+            allOfFileExtents(requests).join();
+
+            verify(fetchMetrics).recordRecentObjectBytes(10L);
+            verify(fetchMetrics).recordLaggingObjectBytes(30L);
+            // Only the cache-bypassing extent counts against the broker-wide in-flight budget
+            verify(fetchMetrics).addInFlightLaggingObjectBytes(30L);
+        }
+
+        @Test
+        public void testRecordsOnlyThePathThatContributed() {
+            final ObjectKey cachedKey = PlainObjectKey.create("prefix", "cached-object");
+
+            allOfFileExtents(List.of(requestWithExtent(cachedKey, 10, true))).join();
+
+            verify(fetchMetrics).recordRecentObjectBytes(10L);
+            verify(fetchMetrics, never()).recordLaggingObjectBytes(anyLong());
+            verify(fetchMetrics, never()).addInFlightLaggingObjectBytes(anyLong());
+        }
+
+        @Test
+        public void testFailedExtentCountsNoBytes() {
+            final ObjectKey successKey = PlainObjectKey.create("prefix", "success-object");
+            final ObjectKey failedKey = PlainObjectKey.create("prefix", "failed-object");
+            final CompletableFuture<FileExtent> failing = new CompletableFuture<>();
+
+            final CompletableFuture<List<FileExtentResult>> phase = allOfFileExtents(List.of(
+                requestWithExtent(successKey, 20, false),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(failedKey, new ByteRange(0, 40), 0L, true),
+                    failing,
+                    false
+                )
+            ));
+            failing.completeExceptionally(new StorageBackendException("S3 error"));
+            phase.join();
+
+            // Nothing arrived, so this request holds nothing for it: only the successful payload counts
+            verify(fetchMetrics).addInFlightLaggingObjectBytes(20L);
+            verify(fetchMetrics).recordLaggingObjectBytes(20L);
+        }
+
+        /** A job the pool rejected never ran, so no buffer ever existed and nothing arrived. */
+        @Test
+        public void testJobRejectedAtSubmissionIsNeverCharged() {
+            final ObjectKey rejectedKey = PlainObjectKey.create("prefix", "rejected-object");
+
+            allOfFileExtents(List.of(
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(rejectedKey, new ByteRange(0, 40), 0L, true),
+                    CompletableFuture.failedFuture(new RejectedExecutionException("queue full")),
+                    false
+                )
+            )).join();
+
+            verify(fetchMetrics, never()).addInFlightLaggingObjectBytes(anyLong());
+        }
+
+        /** A caught-up consumer plans nothing to fetch; a 0 ms sample would drag the percentiles down. */
+        @Test
+        public void testEmptyPlanRecordsNoPhaseSample() {
+            allOfFileExtents(List.of()).join();
+
+            verify(fetchMetrics, never()).fetchDataFinished(anyLong());
+        }
+
+        @Test
+        public void testPhaseDurationSpansTheSlowestExtent() {
+            final ByteRange range = new ByteRange(0, 10);
+            final ObjectKey fastKey = PlainObjectKey.create("prefix", "fast-object");
+            final ObjectKey slowKey = PlainObjectKey.create("prefix", "slow-object");
+            final CompletableFuture<FileExtent> slowFuture = new CompletableFuture<>();
+
+            final List<FetchPlanner.FetchRequestWithFuture> requests = List.of(
+                requestWithExtent(fastKey, 10, false),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(slowKey, range, 0L, true),
+                    slowFuture,
+                    false
+                )
+            );
+
+            final CompletableFuture<List<FileExtentResult>> resultFuture = allOfFileExtents(requests);
+            ((MockTime) time).sleep(5);
+            // One extent is in already, so the phase must not have been timed yet
+            verify(fetchMetrics, never()).fetchDataFinished(anyLong());
+
+            slowFuture.complete(FileFetchJob.createFileExtent(slowKey, range, ByteBuffer.allocate(10)));
+            resultFuture.join();
+
+            // The whole 5ms the slow extent took, not the fast one's zero
+            verify(fetchMetrics).fetchDataFinished(5L);
+        }
+
+        /** Requested range and payload match, which is the cold path's normal case. */
+        private FetchPlanner.FetchRequestWithFuture requestWithExtent(
+            final ObjectKey objectKey,
+            final int dataSize,
+            final boolean cacheResident
+        ) {
+            return requestWithExtent(objectKey, new ByteRange(0, dataSize), dataSize, cacheResident);
+        }
+
+        private FetchPlanner.FetchRequestWithFuture requestWithExtent(
+            final ObjectKey objectKey,
+            final ByteRange requestedRange,
+            final int dataSize,
+            final boolean cacheResident
+        ) {
+            final FileExtent extent =
+                FileFetchJob.createFileExtent(objectKey, requestedRange, ByteBuffer.allocate(dataSize));
+            return new FetchPlanner.FetchRequestWithFuture(
+                new FetchPlanner.ObjectFetchRequest(objectKey, requestedRange, 0L, !cacheResident),
+                CompletableFuture.completedFuture(extent),
+                cacheResident
+            );
+        }
+    }
+
+    @Nested
+    class InFlightObjectBytesTests {
+        @Test
+        public void testReleaseSubtractsEverythingCharged() {
+            final Reader.InFlightObjectBytes inFlight = new Reader.InFlightObjectBytes(fetchMetrics);
+
+            inFlight.charge(10);
+            inFlight.charge(20);
+            inFlight.release();
+
+            verify(fetchMetrics).addInFlightLaggingObjectBytes(10L);
+            verify(fetchMetrics).addInFlightLaggingObjectBytes(20L);
+            verify(fetchMetrics).addInFlightLaggingObjectBytes(-30L);
+            verifyNoMoreInteractions(fetchMetrics);
+        }
+
+        @Test
+        public void testReleaseIsIdempotent() {
+            final Reader.InFlightObjectBytes inFlight = new Reader.InFlightObjectBytes(fetchMetrics);
+
+            inFlight.charge(10);
+            inFlight.release();
+            inFlight.release();
+
+            verify(fetchMetrics).addInFlightLaggingObjectBytes(10L);
+            verify(fetchMetrics).addInFlightLaggingObjectBytes(-10L);
+            verifyNoMoreInteractions(fetchMetrics);
+        }
+
+        @Test
+        public void testReleaseWithoutChargesTouchesNothing() {
+            new Reader.InFlightObjectBytes(fetchMetrics).release();
+
+            // A request served entirely from the cache is the common case; it must not write the gauge
+            verifyNoInteractions(fetchMetrics);
         }
     }
 
@@ -703,6 +896,112 @@ public class ReaderTest {
             fetchMetrics,
             new BrokerTopicStats(),
             "inkless-");
+    }
+
+    /**
+     * The in-flight gauge is charged from many threads and released once, from the fetch response's
+     * completion. Nothing but the shape of the future chain keeps those two in order, so assert the
+     * net through a real fetch: a later stage that settles the response early would leak the gauge
+     * upward while every unit test still passed.
+     */
+    @Nested
+    class InFlightGaugeTests {
+        private static final long LAGGING_THRESHOLD_MS = 1000;
+
+        private final Uuid topicId = Uuid.randomUuid();
+        private final TopicIdPartition partition = new TopicIdPartition(topicId, 0, "test-topic");
+        private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition,
+            new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        private final MemoryRecords records =
+            MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord((byte[]) null));
+
+        private ExecutorService metadataExecutor;
+        private ExecutorService fetchDataExecutor;
+        private ExecutorService laggingFetchDataExecutor;
+
+        @BeforeEach
+        public void setup() {
+            metadataExecutor = Executors.newSingleThreadExecutor();
+            fetchDataExecutor = Executors.newSingleThreadExecutor();
+            laggingFetchDataExecutor = Executors.newSingleThreadExecutor();
+        }
+
+        @AfterEach
+        public void cleanup() {
+            metadataExecutor.shutdown();
+            fetchDataExecutor.shutdown();
+            laggingFetchDataExecutor.shutdown();
+        }
+
+        @Test
+        public void testGaugeNetsToZeroAfterAColdFetch() throws Exception {
+            givenAnOldBatch();
+            final ReadableByteChannel channel = mock(ReadableByteChannel.class);
+            when(objectFetcher.fetch(any(), any())).thenReturn(channel);
+            when(objectFetcher.readToByteBuffer(any())).thenReturn(records.buffer());
+
+            try (final var reader = laggingReader()) {
+                reader.fetch(fetchParams, fetchInfos).join();
+            }
+
+            assertThat(chargedBytes()).isNotEmpty().satisfies(charges ->
+                assertThat(charges.stream().mapToLong(Long::longValue).sum()).isZero());
+        }
+
+        @Test
+        public void testGaugeNetsToZeroWhenTheFetchFails() throws Exception {
+            givenAnOldBatch();
+            when(objectFetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
+                .thenThrow(new StorageBackendException("Storage backend error"));
+
+            try (final var reader = laggingReader()) {
+                reader.fetch(fetchParams, fetchInfos).join();
+            }
+
+            assertThat(chargedBytes()).isNotEmpty().satisfies(charges ->
+                assertThat(charges.stream().mapToLong(Long::longValue).sum()).isZero());
+        }
+
+        private List<Long> chargedBytes() {
+            final ArgumentCaptor<Long> charges = ArgumentCaptor.forClass(Long.class);
+            verify(fetchMetrics, atLeastOnce()).addInFlightLaggingObjectBytes(charges.capture());
+            return charges.getAllValues();
+        }
+
+        private void givenAnOldBatch() {
+            final long oldTimestamp = time.milliseconds() - (LAGGING_THRESHOLD_MS * 2);
+            when(controlPlane.findBatches(any(), anyInt(), anyInt())).thenReturn(List.of(
+                FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, "object-key",
+                        BatchMetadata.of(partition, 0, records.sizeInBytes(), 0, 0, oldTimestamp,
+                            oldTimestamp, TimestampType.CREATE_TIME))
+                ), 0L, 1L)));
+        }
+
+        private Reader laggingReader() {
+            return new Reader(
+                time,
+                OBJECT_KEY_CREATOR,
+                KEY_ALIGNMENT_STRATEGY,
+                OBJECT_CACHE,
+                controlPlane,
+                objectFetcher,
+                0,
+                metadataExecutor,
+                fetchDataExecutor,
+                objectFetcher,
+                LAGGING_THRESHOLD_MS,
+                0, // rate limiting disabled
+                laggingFetchDataExecutor,
+                null, // no hedge scheduler
+                0, // TTFB hedging disabled
+                0, // total-time hedging disabled
+                fetchMetrics,
+                new BrokerTopicStats(),
+                "inkless-");
+        }
     }
 
     @Nested

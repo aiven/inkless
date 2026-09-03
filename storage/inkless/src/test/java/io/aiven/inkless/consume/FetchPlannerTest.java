@@ -27,6 +27,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -34,6 +35,7 @@ import org.mockito.quality.Strictness;
 
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
+import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -49,10 +51,12 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.cache.CaffeineCache;
@@ -76,13 +80,17 @@ import io.github.bucket4j.Bucket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -1230,6 +1238,13 @@ public class FetchPlannerTest {
                     // One request on each path
                     verify(metrics).recordRecentDataRequest();
                     verify(metrics).recordLaggingConsumerRequest();
+
+                    // Provenance travels with each request, so consumers of the result do not re-derive it
+                    assertThat(requestsWithFutures)
+                        .extracting(r -> r.request().objectKey(), FetchPlanner.FetchRequestWithFuture::cacheResident)
+                        .containsExactlyInAnyOrder(
+                            tuple(OBJECT_KEY_A, true),
+                            tuple(OBJECT_KEY_B, false));
                 }
             }
 
@@ -2664,6 +2679,8 @@ public class FetchPlannerTest {
                 // once by the regular planner that populated the cache, once by the consolidation hit.
                 verify(metrics, times(2)).recordRecentDataRequest();
                 verify(metrics, never()).recordLaggingConsumerRequest();
+                // The peeked extent is a shared cache entry, so it is reported as cache-served
+                assertThat(results.get(0).cacheResident()).isTrue();
             }
         }
 
@@ -2699,6 +2716,8 @@ public class FetchPlannerTest {
                 // A cache miss is a true cold fetch, counted as a lagging request, not recent data.
                 verify(metrics).recordLaggingConsumerRequest();
                 verify(metrics, never()).recordRecentDataRequest();
+                // Nothing wrote the extent to the cache, so no other request can hold it
+                assertThat(results.get(0).cacheResident()).isFalse();
             }
         }
 
@@ -2883,6 +2902,246 @@ public class FetchPlannerTest {
     }
 
     /**
+     * The in-flight gauge has to follow the buffer, not the job: a download that has started holds a
+     * buffer, a job still queued holds nothing, and a hedge holds a second one alongside the primary.
+     */
+    @Nested
+    class InFlightChargeTests {
+        private final byte[] data = "cold-data".getBytes();
+
+        private Map<TopicIdPartition, FindBatchResponse> coldCoordinates() {
+            final long oldTimestamp = time.milliseconds() - 120_000L;
+            return Map.of(partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(),
+                    BatchMetadata.of(partition0, 0, data.length, 0, 0, 10, oldTimestamp, TimestampType.CREATE_TIME))
+            ), 0, 1));
+        }
+
+        @Test
+        public void testTheBufferIsChargedForTheLengthOfTheTransferOnly() throws Exception {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180);
+                 SameThreadExecutorService sameThread = new SameThreadExecutorService()) {
+                final Map<TopicIdPartition, FindBatchResponse> coordinates = coldCoordinates();
+                final long requestedRange = requestedRangeOf(caffeineCache, coordinates);
+
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenAnswer(invocation -> {
+                    // Mid-transfer: the buffer exists, so the gauge must already carry it
+                    verify(metrics).addInFlightLaggingObjectBytes(requestedRange);
+                    verify(metrics, never()).addInFlightLaggingObjectBytes(-requestedRange);
+                    return ByteBuffer.wrap(data);
+                });
+
+                final FetchPlanner planner = createFetchPlannerWithCustomThreshold(
+                    keyAlignmentStrategy, caffeineCache, coordinates, 60 * 1000L, sameThread, null);
+                planner.get().get(0).future().get(5, TimeUnit.SECONDS);
+
+                // The buffer is gone once the transfer ends; what survives is charged by the caller
+                verify(metrics).addInFlightLaggingObjectBytes(-requestedRange);
+            }
+        }
+
+        @Test
+        public void testAQueuedJobIsNotCharged() throws Exception {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180)) {
+                final ExecutorService neverRuns = mock(ExecutorService.class);
+                final FetchPlanner planner = createFetchPlannerWithCustomThreshold(
+                    keyAlignmentStrategy, caffeineCache, coldCoordinates(), 60 * 1000L, neverRuns, null);
+
+                planner.get();
+
+                // The job is queued, not running: no buffer exists yet
+                verify(metrics).recordLaggingConsumerRequest();
+                verify(metrics, never()).addInFlightLaggingObjectBytes(anyLong());
+                verifyNoInteractions(fetcher);
+            }
+        }
+
+        /**
+         * A hedge is a second buffer that lives alongside the primary's: the loser is never cancelled,
+         * so both are real until each finishes. Both must be charged, and both released.
+         */
+        @Test
+        public void testAHedgeChargesItsOwnBufferAndReleasesIt() throws Exception {
+            final CountDownLatch primaryBlocked = new CountDownLatch(1);
+            final CountDownLatch releasePrimary = new CountDownLatch(1);
+            final CountDownLatch hedgeStarted = new CountDownLatch(1);
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = coldCoordinates();
+
+            when(fetcher.fetch(any(), any())).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any()))
+                .thenAnswer(invocation -> {
+                    primaryBlocked.countDown();
+                    assertThat(releasePrimary.await(10, TimeUnit.SECONDS)).isTrue();
+                    return ByteBuffer.wrap(data);
+                })
+                .thenAnswer(invocation -> {
+                    hedgeStarted.countDown();
+                    return ByteBuffer.wrap(data);
+                });
+
+            final ScheduledExecutorService hedgeTimers = Executors.newSingleThreadScheduledExecutor();
+            final ExecutorService twoThreads = Executors.newFixedThreadPool(2);
+            try {
+                final FetchPlanner planner = new FetchPlanner(
+                    time,
+                    OBJECT_KEY_CREATOR,
+                    keyAlignmentStrategy,
+                    new NullCache(),
+                    fetcher,
+                    fetchDataExecutor,
+                    fetcher,
+                    60 * 1000L,
+                    null, // no rate limiter
+                    twoThreads,
+                    hedgeTimers,
+                    0,  // TTFB hedging disabled
+                    50, // total-time hedging
+                    new ConcurrentHashMap<>(),
+                    coordinates,
+                    false,
+                    metrics
+                );
+                final long range = planner.planJobs(coordinates).get(0).byteRange().size();
+
+                final List<FetchPlanner.FetchRequestWithFuture> results = planner.get();
+                assertThat(primaryBlocked.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(hedgeStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+                // Two transfers are running, so two buffers are charged
+                verify(metrics, timeout(5000).times(2)).addInFlightLaggingObjectBytes(range);
+                results.get(0).future().get(5, TimeUnit.SECONDS);
+
+                releasePrimary.countDown();
+                // ...and both are released, the loser included, once each transfer ends
+                verify(metrics, timeout(5000).times(2)).addInFlightLaggingObjectBytes(-range);
+            } finally {
+                releasePrimary.countDown();
+                twoThreads.shutdownNow();
+                hedgeTimers.shutdownNow();
+            }
+        }
+
+        private long requestedRangeOf(
+            final ObjectCache cache,
+            final Map<TopicIdPartition, FindBatchResponse> coordinates
+        ) {
+            return createFetchPlannerWithCustomThreshold(
+                keyAlignmentStrategy, cache, coordinates, 60 * 1000L, laggingFetchDataExecutor, null)
+                .planJobs(coordinates).get(0).byteRange().size();
+        }
+    }
+
+    /**
+     * Queue wait is the half of a slow fetch that per-object timers cannot show: requests arriving faster
+     * than a pool drains them look exactly like slow storage in FetchDataTime alone.
+     */
+    @Nested
+    class QueueTimeTests {
+        private final byte[] data = "queued-data".getBytes();
+
+        private Map<TopicIdPartition, FindBatchResponse> coordinates(final long timestamp) {
+            return Map.of(partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(),
+                    BatchMetadata.of(partition0, 0, data.length, 0, 0, 10, timestamp, TimestampType.CREATE_TIME))
+            ), 0, 1));
+        }
+
+        @Test
+        public void hotPathRecordsTheWaitBeforeTheCacheLoadRuns() throws Exception {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180);
+                 SameThreadExecutorService delayed =
+                     new SameThreadExecutorService(() -> ((MockTime) time).sleep(7))) {
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(data));
+
+                final FetchPlanner planner = createHotPathPlannerWithFetchExecutor(
+                    caffeineCache, coordinates(time.milliseconds()), delayed);
+                planner.get().get(0).future().get(5, TimeUnit.SECONDS);
+
+                verify(metrics).fetchQueueFinished(7L);
+            }
+        }
+
+        /**
+         * Queue wait and rate-limit wait are separate meters, and the split only holds while the queue
+         * clock is read before the limiter runs. Pin the order, not just the value.
+         */
+        @Test
+        public void coldPathRecordsTheWaitSeparatelyFromRateLimiting() throws Exception {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180);
+                 SameThreadExecutorService delayed =
+                     new SameThreadExecutorService(() -> ((MockTime) time).sleep(11))) {
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(data));
+
+                final Bucket rateLimiter = Bucket.builder()
+                    .addLimit(limit -> limit.capacity(10).refillGreedy(10, Duration.ofSeconds(1)))
+                    .build();
+
+                final FetchPlanner planner = createFetchPlannerWithCustomThreshold(
+                    keyAlignmentStrategy, caffeineCache, coordinates(time.milliseconds() - 120_000L),
+                    60 * 1000L, delayed, rateLimiter
+                );
+                planner.get().get(0).future().get(5, TimeUnit.SECONDS);
+
+                verify(metrics).recordLaggingConsumerRequest();
+                // Only the queue wait, and read before the limiter: moving the call after
+                // applyRateLimit() would fold the limiter's wait into this sample
+                verify(metrics).fetchQueueFinished(11L);
+                final InOrder inOrder = inOrder(metrics);
+                inOrder.verify(metrics).fetchQueueFinished(11L);
+                inOrder.verify(metrics).recordRateLimitWaitTime(anyLong());
+            }
+        }
+
+        /**
+         * The cache does synchronous lookup and bookkeeping before it hands the load to the executor,
+         * and that is not queue wait. Capturing the clock before computeIfAbsent would report cache
+         * contention as pool saturation.
+         */
+        @Test
+        public void hotPathExcludesTheCacheLookupFromTheWait() throws Exception {
+            final ObjectCache lookupTakesTime = mock(ObjectCache.class);
+            when(lookupTakesTime.computeIfAbsent(any(), any(), any(), any())).thenAnswer(invocation -> {
+                final CacheKey key = invocation.getArgument(0);
+                final Function<CacheKey, FileExtent> load = invocation.getArgument(1);
+                final Runnable onLoadStarted = invocation.getArgument(3);
+                ((MockTime) time).sleep(5);   // cache lookup and bookkeeping
+                onLoadStarted.run();          // the load is handed to the executor here
+                ((MockTime) time).sleep(3);   // queued
+                return CompletableFuture.completedFuture(load.apply(key));
+            });
+            when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+            when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(data));
+
+            final FetchPlanner planner = createHotPathPlannerWithFetchExecutor(
+                lookupTakesTime, coordinates(time.milliseconds()), fetchDataExecutor);
+            planner.get().get(0).future().get(5, TimeUnit.SECONDS);
+
+            verify(metrics).fetchQueueFinished(3L);
+        }
+
+        @Test
+        public void aCacheHitQueuesForNothing() throws Exception {
+            try (CaffeineCache caffeineCache = new CaffeineCache(100, 0, 3600, 180);
+                 SameThreadExecutorService sameThread = new SameThreadExecutorService()) {
+                when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(mock(ReadableByteChannel.class));
+                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(data));
+
+                final Map<TopicIdPartition, FindBatchResponse> recent = coordinates(time.milliseconds());
+                createHotPathPlannerWithFetchExecutor(caffeineCache, recent, sameThread)
+                    .get().get(0).future().get(5, TimeUnit.SECONDS);
+                // The second fetch is served from the cache, so no job is submitted for it
+                createHotPathPlannerWithFetchExecutor(caffeineCache, recent, sameThread)
+                    .get().get(0).future().get(5, TimeUnit.SECONDS);
+
+                verify(metrics, times(1)).fetchQueueFinished(anyLong());
+            }
+        }
+    }
+
+    /**
      * Hot path only (lagging feature disabled, so every request takes it), with the fetch executor under
      * the test's control: it decides whether a load completes before or after the caller observes the
      * future, which is what cache-hit accounting turns on.
@@ -2916,12 +3175,23 @@ public class FetchPlannerTest {
     /** Runs submitted tasks on the calling thread, so a cache load completes within computeIfAbsent. */
     private static final class SameThreadExecutorService extends AbstractExecutorService implements AutoCloseable {
         private volatile boolean shutdown;
+        private final Runnable beforeRun;
+
+        private SameThreadExecutorService() {
+            this(() -> { });
+        }
+
+        // Stands in for queueing: the hook runs on submission, before the task itself
+        private SameThreadExecutorService(final Runnable beforeRun) {
+            this.beforeRun = beforeRun;
+        }
 
         @Override
         public void execute(final Runnable command) {
             if (shutdown) {
                 throw new RejectedExecutionException("executor is shut down");
             }
+            beforeRun.run();
             command.run();
         }
 
