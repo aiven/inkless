@@ -77,6 +77,21 @@ class GcsStorageTest extends BaseStorageTest {
     }
 
     @Test
+    @Override
+    protected void testUploadOversizeStream() throws Exception {
+        try (StorageBackend storage = storage()) {
+            final byte[] content = "content".getBytes();
+            final long expectedLength = content.length - 1;
+
+            // The direct upload path reads the declared length, so the surplus is reported by the
+            // trailing-byte probe instead of by the size check.
+            assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), expectedLength))
+                    .isInstanceOf(StorageBackendException.class)
+                    .hasMessage("Object key created with incorrect length, input stream has remaining content");
+        }
+    }
+
+    @Test
     void deletesSpanningMultipleBatches() throws Exception {
         // More than one batch, with a partial last one, so the chunking loop's bounds and the
         // accumulation of confirmed keys across batches are both exercised.

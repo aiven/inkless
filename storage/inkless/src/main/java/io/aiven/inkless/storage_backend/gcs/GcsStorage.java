@@ -64,6 +64,13 @@ public class GcsStorage extends StorageBackend {
     // files then costs 400 round trips, well inside file.cleaner.interval.ms.
     private static final int MAX_DELETE_BATCH_SIZE = 50;
 
+    // A single-request upload saves the round trip a resumable session spends on initiate, but it
+    // buffers the object into one array and cannot stream, so its cost per megabyte is higher. The
+    // measured break-even is near 2 MiB and this sits deliberately below it rather than at it, so
+    // the win holds even if the crossing point shifts. Raising it without re-measuring makes large
+    // uploads slower, not faster.
+    private static final int DIRECT_UPLOAD_MAX_SIZE = 1024 * 1024;
+
     private volatile Storage storage;
     private String bucketName;
     private ReloadableCredentialsProvider credentialsProvider;
@@ -115,11 +122,21 @@ public class GcsStorage extends StorageBackend {
         }
         try {
             final BlobInfo blobInfo = BlobInfo.newBuilder(this.bucketName, key.value()).build();
-            Blob blob = storage.createFrom(blobInfo, inputStream);
+            final Blob blob;
+            if (length <= DIRECT_UPLOAD_MAX_SIZE) {
+                blob = storage.create(blobInfo, inputStream.readNBytes((int) length));
+            } else {
+                blob = storage.createFrom(blobInfo, inputStream);
+            }
             long transferred = blob.getSize();
             if (transferred != length) {
                 throw new StorageBackendException(
                         "Object " + key + " created with incorrect length " + transferred + " instead of " + length);
+            }
+            int remaining = inputStream.read(new byte[]{1});
+            if (remaining != -1) {
+                throw new StorageBackendException(
+                        "Object " + key + " created with incorrect length, input stream has remaining content");
             }
         } catch (final IOException | BaseServiceException e) {
             if (isTimeout(e)) {
