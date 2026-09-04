@@ -35,5 +35,5 @@ public class Indexes {
 
     public static final Index BATCHES_BY_FILE = Internal.createIndex(DSL.name("batches_by_file"), Batches.BATCHES, new OrderField[] { Batches.BATCHES.FILE_ID }, false);
     public static final Index FILES_BY_MARKED_FOR_DELETION_DELETING_IDX = Internal.createIndex(DSL.name("files_by_marked_for_deletion_deleting_idx"), Files.FILES, new OrderField[] { Files.FILES.MARKED_FOR_DELETION_AT }, false);
-    public static final Index LOGS_BY_DELETED_AT_IDX = Internal.createIndex(DSL.name("logs_by_deleted_at_idx"), Logs.LOGS, new OrderField[] { Logs.LOGS.DELETED_AT }, false);
+    public static final Index LOGS_BY_DELETED_AT_IDX = Internal.createIndex(DSL.name("logs_by_deleted_at_idx"), Logs.LOGS, new OrderField[] { Logs.LOGS.DELETED_AT, Logs.LOGS.TOPIC_ID, Logs.LOGS.PARTITION }, false);
 }

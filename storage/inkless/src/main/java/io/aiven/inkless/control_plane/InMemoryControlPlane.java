@@ -433,42 +433,24 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         int logsPurged = 0;
         int filesMarked = 0;
 
-        Stream<TopicIdPartition> emptyDeleted = logs.entrySet().stream()
+        Stream<TopicIdPartition> window = logs.entrySet().stream()
             .filter(e -> e.getValue().deletedAt != null)
-            .filter(e -> {
-                final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(e.getKey());
-                return coordinates == null || coordinates.isEmpty();
-            })
             .sorted(DELETED_LOG_ORDER)
             .map(Map.Entry::getKey);
         if (maxBatches > 0) {
-            emptyDeleted = emptyDeleted.limit(maxBatches);
-        }
-        for (final TopicIdPartition tidp : emptyDeleted.toList()) {
-            logs.remove(tidp);
-            batches.remove(tidp);
-            producers.remove(tidp);
-            logsPurged++;
+            window = window.limit(maxBatches);
         }
 
-        Stream<TopicIdPartition> deletedWithBatches = logs.entrySet().stream()
-            .filter(e -> e.getValue().deletedAt != null)
-            .filter(e -> {
-                final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(e.getKey());
-                return coordinates != null && !coordinates.isEmpty();
-            })
-            .sorted(DELETED_LOG_ORDER)
-            .map(Map.Entry::getKey);
-        if (maxBatches > 0) {
-            deletedWithBatches = deletedWithBatches.limit(maxBatches);
-        }
-
-        for (final TopicIdPartition tidp : deletedWithBatches.toList()) {
-            if (remaining <= 0) {
-                break;
-            }
+        for (final TopicIdPartition tidp : window.toList()) {
             final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(tidp);
             if (coordinates == null || coordinates.isEmpty()) {
+                logs.remove(tidp);
+                batches.remove(tidp);
+                producers.remove(tidp);
+                logsPurged++;
+                continue;
+            }
+            if (remaining <= 0) {
                 continue;
             }
             final List<Long> keys = new ArrayList<>(coordinates.keySet());

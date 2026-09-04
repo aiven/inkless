@@ -564,6 +564,35 @@ public abstract class AbstractControlPlaneTest {
     }
 
     @Test
+    void deleteTopicPurgeWindowDoesNotPickNewerEmptyLogs() {
+        final Uuid olderId = new Uuid(91, 91);
+        final Uuid newerId = new Uuid(11, 91);
+        final TopicIdPartition older = new TopicIdPartition(olderId, 0, "window-older");
+        controlPlane.createTopicAndPartitions(Set.of(
+            new CreateTopicAndPartitionsRequest(olderId, "window-older", 1),
+            new CreateTopicAndPartitionsRequest(newerId, "window-newer-empty", 1)
+        ));
+        controlPlane.commitFile("window-older", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, older, 1, 100, 0, 0, 1000, TimestampType.CREATE_TIME)
+            ));
+
+        controlPlane.deleteTopics(Set.of(olderId));
+        time.sleep(1000);
+        controlPlane.deleteTopics(Set.of(newerId));
+
+        final PurgeDeletedLogsResponse first = controlPlane.purgeDeletedLogs(1);
+        assertThat(first.batchesDeleted()).isEqualTo(1);
+        assertThat(first.logsPurged()).isEqualTo(1);
+        assertThat(first.moreRemain()).isTrue();
+
+        final PurgeDeletedLogsResponse rest = controlPlane.purgeDeletedLogs(1);
+        assertThat(rest.batchesDeleted()).isZero();
+        assertThat(rest.logsPurged()).isEqualTo(1);
+        assertThat(rest.moreRemain()).isFalse();
+    }
+
+    @Test
     void deleteTopicFencesCommit() {
         controlPlane.commitFile("a1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
             List.of(

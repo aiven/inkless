@@ -10,8 +10,10 @@
 ALTER TABLE logs
 ADD COLUMN deleted_at TIMESTAMP WITH TIME ZONE;
 
+-- topic_id, partition so ORDER BY deleted_at, topic_id, partition LIMIT n is an
+-- index scan. One DELETE_TOPICS stamps every partition with the same time.
 CREATE INDEX logs_by_deleted_at_idx
-    ON logs (deleted_at)
+    ON logs (deleted_at, topic_id, partition)
     WHERE deleted_at IS NOT NULL;
 
 -- The old delete_topic_v1 dropped logs without touching producer_state. Those
@@ -85,53 +87,35 @@ BEGIN
         file_id BIGINT PRIMARY KEY
     ) ON COMMIT DROP;
 
-    -- Drop empty deleted logs without spending the batch budget. The same per-cycle
-    -- cap still applies: a wide empty topic (many partitions, no batches) must not
-    -- take an unbounded number of row locks in one transaction. Leftovers keep
-    -- more_remain true for the next cycle. 0 / NULL means unbounded.
-    -- deleted_at first so logs_by_deleted_at_idx drives the scan and older deletes go first.
-    FOR l_log IN
-        SELECT topic_id, partition
-        FROM logs
-        WHERE deleted_at IS NOT NULL
-            AND NOT EXISTS (
-                SELECT 1
-                FROM batches b
-                WHERE b.topic_id = logs.topic_id
-                    AND b.partition = logs.partition
-            )
-        ORDER BY deleted_at, topic_id, partition
-        LIMIT (CASE WHEN arg_max_batches > 0 THEN arg_max_batches END)
-        FOR UPDATE SKIP LOCKED
-    LOOP
-        DELETE FROM producer_state
-        WHERE topic_id = l_log.topic_id
-            AND partition = l_log.partition;
-        DELETE FROM logs
-        WHERE topic_id = l_log.topic_id
-            AND partition = l_log.partition;
-        l_logs_purged := l_logs_purged + 1;
-    END LOOP;
-
+    -- Lock the oldest N deleted logs, then classify. 0 means unbounded.
     l_remaining := CASE WHEN arg_max_batches > 0 THEN arg_max_batches::bigint ELSE NULL END;
 
-    -- LIMIT is the batch budget: one batch per log is the worst case. Without it the planner
-    -- can sort every soft-deleted log before the first DELETE.
     FOR l_log IN
         SELECT topic_id, partition
         FROM logs
         WHERE deleted_at IS NOT NULL
-            AND EXISTS (
-                SELECT 1
-                FROM batches b
-                WHERE b.topic_id = logs.topic_id
-                    AND b.partition = logs.partition
-            )
         ORDER BY deleted_at, topic_id, partition
         LIMIT (CASE WHEN arg_max_batches > 0 THEN arg_max_batches END)
         FOR UPDATE SKIP LOCKED
     LOOP
-        EXIT WHEN l_remaining IS NOT NULL AND l_remaining <= 0;
+        IF NOT EXISTS (
+            SELECT 1
+            FROM batches
+            WHERE topic_id = l_log.topic_id
+                AND partition = l_log.partition
+            LIMIT 1
+        ) THEN
+            DELETE FROM producer_state
+            WHERE topic_id = l_log.topic_id
+                AND partition = l_log.partition;
+            DELETE FROM logs
+            WHERE topic_id = l_log.topic_id
+                AND partition = l_log.partition;
+            l_logs_purged := l_logs_purged + 1;
+            CONTINUE;
+        END IF;
+
+        CONTINUE WHEN l_remaining IS NOT NULL AND l_remaining <= 0;
 
         -- Same shape as enforce_retention_v2: probe the (cap+1)-th last_offset (index-only
         -- on the covering index), then range-delete. Selecting batch_id and deleting by
