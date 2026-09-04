@@ -47,6 +47,7 @@ If not specified above, features are untested and assumed to be inoperable.
     - when `diskless.managed.rf.enable=true`: any valid RF is accepted — RF=-1 resolves to `default.replication.factor`, explicit RF values (1, 2, 3, ...) are accepted, and placement uses standard rack-aware assignment;
     - manual replica assignments are accepted only when `diskless.managed.rf.enable=true` (rejected in legacy mode).
 - `DELETE_TOPICS`
+    - the response returns after the controller stamps the diskless logs deleted. Brokers drain batches in the background. Objects stay until that drain finishes and FileCleaner passes `file.cleaner.retention.period.ms`. Size `topic.purger.max.batches.per.cycle` and `topic.purger.interval.ms` for the drain rate you want.
 - `DELETE_RECORDS`
 - `OFFSET_FOR_LEADER_EPOCH`
 - `DESCRIBE_CONFIGS`

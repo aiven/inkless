@@ -162,6 +162,24 @@ public class InklessConfig extends AbstractConfig {
         "unbounded.";
     private static final int FILE_CLEANER_MAX_FILES_PER_CYCLE_DEFAULT = 20_000;
 
+    public static final String TOPIC_PURGER_INTERVAL_MS_CONFIG = "topic.purger.interval.ms";
+    private static final String TOPIC_PURGER_INTERVAL_MS_DOC = "The interval with which to drain batches from "
+        + "soft-deleted diskless logs. DELETE_TOPICS returns after the controller stamps the logs. This "
+        + "interval and topic.purger.max.batches.per.cycle set how fast brokers reclaim those rows. Every "
+        + "broker runs its own purger.";
+    private static final int TOPIC_PURGER_INTERVAL_MS_DEFAULT = 60 * 1000;  // 1 minute
+
+    public static final String TOPIC_PURGER_MAX_BATCHES_PER_CYCLE_CONFIG = "topic.purger.max.batches.per.cycle";
+    private static final String TOPIC_PURGER_MAX_BATCHES_PER_CYCLE_DOC = "The maximum number of batches a single "
+        + "topic purge cycle may delete, per broker. The same bound applies to empty soft-deleted logs dropped "
+        + "in that cycle. The per-broker drain rate is at most this value divided by "
+        + "topic.purger.interval.ms, and every broker runs its own purger. With the defaults that is 20000 "
+        + "batches per broker per minute. A deleted topic's objects stay until the purger marks the files and "
+        + "FileCleaner passes file.cleaner.retention.period.ms. Each cycle is one transaction. 0 drains every "
+        + "remaining batch in that transaction and holds back autovacuum on the control-plane database until "
+        + "it commits. Use 0 only in tests or a maintenance window.";
+    private static final int TOPIC_PURGER_MAX_BATCHES_PER_CYCLE_DEFAULT = 20_000;
+
 
     public static final String PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG = "produce.upload.thread.pool.size";
     private static final String PRODUCE_UPLOAD_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently upload files to remote storage";
@@ -396,6 +414,24 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(0),  // 0 = unbounded
             ConfigDef.Importance.LOW,
             FILE_CLEANER_MAX_FILES_PER_CYCLE_DOC
+        );
+
+        configDef.define(
+            TOPIC_PURGER_INTERVAL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            TOPIC_PURGER_INTERVAL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            TOPIC_PURGER_INTERVAL_MS_DOC
+        );
+
+        configDef.define(
+            TOPIC_PURGER_MAX_BATCHES_PER_CYCLE_CONFIG,
+            ConfigDef.Type.INT,
+            TOPIC_PURGER_MAX_BATCHES_PER_CYCLE_DEFAULT,
+            ConfigDef.Range.atLeast(0),  // 0 = unbounded
+            ConfigDef.Importance.LOW,
+            TOPIC_PURGER_MAX_BATCHES_PER_CYCLE_DOC
         );
 
         configDef.define(
@@ -756,6 +792,14 @@ public class InklessConfig extends AbstractConfig {
 
     public int fileCleanerMaxFilesPerCycle() {
         return getInt(FILE_CLEANER_MAX_FILES_PER_CYCLE_CONFIG);
+    }
+
+    public Duration topicPurgerInterval() {
+        return Duration.ofMillis(getInt(TOPIC_PURGER_INTERVAL_MS_CONFIG));
+    }
+
+    public int topicPurgerMaxBatchesPerCycle() {
+        return getInt(TOPIC_PURGER_MAX_BATCHES_PER_CYCLE_CONFIG);
     }
 
     public Duration crossTierLogStartReportInterval() {

@@ -147,9 +147,29 @@ class DeleteTopicJobTest {
             TOPIC_ID_0, TOPIC_ID_1, nonexistentTopicId
         ), durationCallback).run();
 
+        // Soft-delete keeps the rows; only deleted_at is stamped.
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
+            .anySatisfy(log -> {
+                assertThat(log.getTopicId()).isEqualTo(TOPIC_ID_0);
+                assertThat(log.getDeletedAt()).isEqualTo(topicsDeletedAt);
+            })
+            .anySatisfy(log -> {
+                assertThat(log.getTopicId()).isEqualTo(TOPIC_ID_1);
+                assertThat(log.getDeletedAt()).isEqualTo(topicsDeletedAt);
+            })
+            .anySatisfy(log -> {
+                assertThat(log.getTopicId()).isEqualTo(TOPIC_ID_2);
+                assertThat(log.getDeletedAt()).isNull();
+            });
+        assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).isNotEmpty();
+        assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
+            .allSatisfy(file -> assertThat(file.getState()).isEqualTo(FileStateT.uploaded));
+
+        new PurgeDeletedLogsJob(time, pgContainer.getJooqCtx(), 0, durationCallback).call();
+
         // The logs of the deleted topics must be gone, i.e. only TOPIC_2 remains.
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactly(
-            new LogsRecord(TOPIC_ID_2, 0, TOPIC_2, 0L, 24L, (long) file2Batch2Size + file3Batch3Size, 0L, null, 1000L)
+            new LogsRecord(TOPIC_ID_2, 0, TOPIC_2, 0L, 24L, (long) file2Batch2Size + file3Batch3Size, 0L, null, 1000L, null)
         );
 
         // The batches of the deleted topics must be gone, i.e. only TOPIC_2 remains.

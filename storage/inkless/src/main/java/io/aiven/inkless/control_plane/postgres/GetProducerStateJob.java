@@ -97,7 +97,8 @@ public class GetProducerStateJob implements Callable<List<GetProducerStateRespon
                     PRODUCER_STATE.BATCH_MAX_TIMESTAMP
                 ).from(requestsTable)
                 .leftJoin(LOGS).on(LOGS.TOPIC_ID.eq(requestsTable.field(REQUEST_TOPIC_ID))
-                    .and(LOGS.PARTITION.eq(requestsTable.field(REQUEST_PARTITION))))
+                    .and(LOGS.PARTITION.eq(requestsTable.field(REQUEST_PARTITION)))
+                    .and(LOGS.DELETED_AT.isNull()))
                 .leftJoin(PRODUCER_STATE).on(
                     PRODUCER_STATE.TOPIC_ID.eq(LOGS.TOPIC_ID)
                         .and(PRODUCER_STATE.PARTITION.eq(LOGS.PARTITION)))

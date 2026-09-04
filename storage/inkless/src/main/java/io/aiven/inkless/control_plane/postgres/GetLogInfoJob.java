@@ -85,7 +85,8 @@ public class GetLogInfoJob implements Callable<List<GetLogInfoResponse>> {
                     LOGS.BYTE_SIZE
                 ).from(requestsTable)
                 .leftJoin(LOGS).on(LOGS.TOPIC_ID.eq(requestsTable.field(REQUEST_TOPIC_ID))
-                    .and(LOGS.PARTITION.eq(requestsTable.field(REQUEST_PARTITION))));
+                    .and(LOGS.PARTITION.eq(requestsTable.field(REQUEST_PARTITION)))
+                    .and(LOGS.DELETED_AT.isNull()));
 
             final List<GetLogInfoResponse> responses = new ArrayList<>();
             try (final var cursor = select.fetchSize(1000).fetchLazy()) {

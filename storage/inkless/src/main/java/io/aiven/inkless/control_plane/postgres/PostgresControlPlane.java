@@ -65,6 +65,7 @@ import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.PruneDisklessLogsRequest;
 import io.aiven.inkless.control_plane.PruneDisklessLogsResponse;
+import io.aiven.inkless.control_plane.PurgeDeletedLogsResponse;
 import io.aiven.inkless.control_plane.RepairDisklessLogRequest;
 import io.aiven.inkless.control_plane.RepairDisklessLogResponse;
 
@@ -218,6 +219,17 @@ public class PostgresControlPlane extends AbstractControlPlane {
     public void deleteTopics(final Set<Uuid> topicIds) {
         final DeleteTopicJob job = new DeleteTopicJob(time, jobsJooqCtx, topicIds, pgMetrics::onTopicDeleteCompleted);
         job.run();
+    }
+
+    @Override
+    public PurgeDeletedLogsResponse purgeDeletedLogs(final int maxBatches) {
+        try {
+            final PurgeDeletedLogsJob job = new PurgeDeletedLogsJob(
+                time, jobsJooqCtx, maxBatches, pgMetrics::onPurgeDeletedLogsCompleted);
+            return job.call();
+        } catch (final Exception e) {
+            throw new ControlPlaneException("Failed to purge deleted logs", e);
+        }
     }
 
     @Override

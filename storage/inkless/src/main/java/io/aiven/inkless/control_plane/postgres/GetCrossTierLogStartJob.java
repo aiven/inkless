@@ -63,6 +63,7 @@ public class GetCrossTierLogStartJob implements Callable<OptionalLong> {
                 .from(LOGS)
                 .where(LOGS.TOPIC_ID.eq(topicIdPartition.topicId()))
                 .and(LOGS.PARTITION.eq(topicIdPartition.partition()))
+                .and(LOGS.DELETED_AT.isNull())
                 .fetchOne(LOGS.REMOTE_LOG_START_OFFSET);
             return value == null ? OptionalLong.empty() : OptionalLong.of(value);
         });
