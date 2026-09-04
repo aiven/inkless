@@ -31,6 +31,7 @@ import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -49,6 +50,8 @@ class GcsStorageConfigTest {
         final GcsStorageConfig config = new GcsStorageConfig(configs);
         assertThat(config.bucketName()).isEqualTo(bucketName);
         assertThat(config.endpointUrl()).isNull();
+        assertThat(config.connectTimeout()).isEqualTo(Duration.ofSeconds(2));
+        assertThat(config.readTimeout()).isEqualTo(Duration.ofSeconds(1));
 
         final GoogleCredentials mockCredentials = GoogleCredentials.newBuilder().build();
         try (final MockedStatic<GoogleCredentials> googleCredentialsMockedStatic =
@@ -56,6 +59,28 @@ class GcsStorageConfigTest {
             googleCredentialsMockedStatic.when(GoogleCredentials::getApplicationDefault).thenReturn(mockCredentials);
             assertThat(config.reloadableCredentials().getCredentials()).isSameAs(mockCredentials);
         }
+    }
+
+    @Test
+    void timeouts() {
+        final GcsStorageConfig config = new GcsStorageConfig(Map.of(
+            "gcs.bucket.name", "b1",
+            "gcs.credentials.default", "true",
+            "gcs.connect.timeout", 500L,
+            "gcs.read.timeout", 2000L));
+        assertThat(config.connectTimeout()).isEqualTo(Duration.ofMillis(500));
+        assertThat(config.readTimeout()).isEqualTo(Duration.ofMillis(2000));
+    }
+
+    @Test
+    void invalidReadTimeout() {
+        assertThatThrownBy(() -> new GcsStorageConfig(
+            Map.of(
+                "gcs.bucket.name", "bucket",
+                "gcs.read.timeout", 0L)
+        ))
+            .isInstanceOf(ConfigException.class)
+            .hasMessage("Invalid value 0 for configuration gcs.read.timeout: Value must be at least 1");
     }
 
     @Test

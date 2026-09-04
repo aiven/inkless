@@ -24,6 +24,7 @@ import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.types.Password;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Map;
 
 import io.aiven.inkless.common.config.validators.NonEmptyPassword;
@@ -36,6 +37,19 @@ public class GcsStorageConfig extends AbstractConfig {
     static final String GCS_ENDPOINT_URL_CONFIG = "gcs.endpoint.url";
     private static final String GCS_ENDPOINT_URL_DOC = "Custom GCS endpoint URL. "
         + "To be used with custom GCS-compatible backends.";
+
+    static final String GCS_CONNECT_TIMEOUT_CONFIG = "gcs.connect.timeout";
+    private static final String GCS_CONNECT_TIMEOUT_DOC = "GCS connection establishment timeout in milliseconds.";
+    private static final long GCS_CONNECT_TIMEOUT_DEFAULT = 2_000;
+
+    static final String GCS_READ_TIMEOUT_CONFIG = "gcs.read.timeout";
+    private static final String GCS_READ_TIMEOUT_DOC = "GCS response read timeout in milliseconds. "
+        + "Bounds each socket read of a response, not the whole request: connection setup is bounded "
+        + "by gcs.connect.timeout, request-body writes are not covered, and a response that arrives "
+        + "in several reads can take longer. A timed out read is retried by the GCS client for a read "
+        + "operation, but not for an upload, whose attempts are bounded by "
+        + "inkless.produce.max.upload.attempts.";
+    private static final long GCS_READ_TIMEOUT_DEFAULT = 1_000;
 
     static final String GCP_CREDENTIALS_JSON_CONFIG = "gcs.credentials.json";
     static final String GCP_CREDENTIALS_PATH_CONFIG = "gcs.credentials.path";
@@ -69,6 +83,20 @@ public class GcsStorageConfig extends AbstractConfig {
                 new ValidUrl(),
                 ConfigDef.Importance.LOW,
                 GCS_ENDPOINT_URL_DOC)
+            .define(
+                GCS_CONNECT_TIMEOUT_CONFIG,
+                ConfigDef.Type.LONG,
+                GCS_CONNECT_TIMEOUT_DEFAULT,
+                ConfigDef.Range.between(1, Integer.MAX_VALUE),
+                ConfigDef.Importance.LOW,
+                GCS_CONNECT_TIMEOUT_DOC)
+            .define(
+                GCS_READ_TIMEOUT_CONFIG,
+                ConfigDef.Type.LONG,
+                GCS_READ_TIMEOUT_DEFAULT,
+                ConfigDef.Range.between(1, Integer.MAX_VALUE),
+                ConfigDef.Importance.LOW,
+                GCS_READ_TIMEOUT_DOC)
             .define(
                 GCP_CREDENTIALS_JSON_CONFIG,
                 ConfigDef.Type.PASSWORD,
@@ -118,6 +146,18 @@ public class GcsStorageConfig extends AbstractConfig {
 
     String endpointUrl() {
         return getString(GCS_ENDPOINT_URL_CONFIG);
+    }
+
+    Duration connectTimeout() {
+        return getDuration(GCS_CONNECT_TIMEOUT_CONFIG);
+    }
+
+    Duration readTimeout() {
+        return getDuration(GCS_READ_TIMEOUT_CONFIG);
+    }
+
+    private Duration getDuration(final String key) {
+        return Duration.ofMillis(getLong(key));
     }
 
     /**

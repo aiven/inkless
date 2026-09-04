@@ -112,6 +112,8 @@ object-get-rate                   Rate of get object operations
 object-get-total                  Total number of get object operations                              
 object-metadata-get-rate          Rate of get object metadata operations                             
 object-metadata-get-total         Total number of get object metadata operations                     
+object-upload-rate                Rate of single request object upload operations                    
+object-upload-total               Total number of single request object upload operations            
 resumable-chunk-upload-rate       Rate of upload chunk operations as part of resumable upload        
 resumable-chunk-upload-total      Total number of upload chunk operations as part of resumable upload
 resumable-upload-initiate-rate    Rate of initiate resumable upload operations                       

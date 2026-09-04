@@ -39,6 +39,10 @@ public class MetricRegistry {
     static final String OBJECT_DELETE_RATE = OBJECT_DELETE + "-rate";
     static final String OBJECT_DELETE_TOTAL = OBJECT_DELETE + "-total";
     static final String OBJECT_DELETE_DOC = "delete object operations";
+    static final String OBJECT_UPLOAD = "object-upload";
+    static final String OBJECT_UPLOAD_RATE = OBJECT_UPLOAD + "-rate";
+    static final String OBJECT_UPLOAD_TOTAL = OBJECT_UPLOAD + "-total";
+    static final String OBJECT_UPLOAD_DOC = "single request object upload operations";
     static final String RESUMABLE_UPLOAD_INITIATE = "resumable-upload-initiate";
     static final String RESUMABLE_UPLOAD_INITIATE_RATE = RESUMABLE_UPLOAD_INITIATE + "-rate";
     static final String RESUMABLE_UPLOAD_INITIATE_TOTAL = RESUMABLE_UPLOAD_INITIATE + "-total";
@@ -81,6 +85,16 @@ public class MetricRegistry {
         METRIC_GROUP,
         TOTAL_DOC_PREFIX + OBJECT_DELETE_DOC
     );
+    static final MetricNameTemplate OBJECT_UPLOAD_RATE_METRIC_NAME = new MetricNameTemplate(
+        OBJECT_UPLOAD_RATE,
+        METRIC_GROUP,
+        RATE_DOC_PREFIX + OBJECT_UPLOAD_DOC
+    );
+    static final MetricNameTemplate OBJECT_UPLOAD_TOTAL_METRIC_NAME = new MetricNameTemplate(
+        OBJECT_UPLOAD_TOTAL,
+        METRIC_GROUP,
+        TOTAL_DOC_PREFIX + OBJECT_UPLOAD_DOC
+    );
     static final MetricNameTemplate RESUMABLE_UPLOAD_INITIATE_RATE_METRIC_NAME = new MetricNameTemplate(
         RESUMABLE_UPLOAD_INITIATE_RATE,
         METRIC_GROUP,
@@ -110,6 +124,8 @@ public class MetricRegistry {
             OBJECT_GET_TOTAL_METRIC_NAME,
             OBJECT_DELETE_RATE_METRIC_NAME,
             OBJECT_DELETE_TOTAL_METRIC_NAME,
+            OBJECT_UPLOAD_RATE_METRIC_NAME,
+            OBJECT_UPLOAD_TOTAL_METRIC_NAME,
             RESUMABLE_UPLOAD_INITIATE_RATE_METRIC_NAME,
             RESUMABLE_UPLOAD_INITIATE_TOTAL_METRIC_NAME,
             RESUMABLE_CHUNK_UPLOAD_RATE_METRIC_NAME,

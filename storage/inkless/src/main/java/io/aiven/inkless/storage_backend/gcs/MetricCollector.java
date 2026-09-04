@@ -40,6 +40,9 @@ import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_GET_TOT
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_METADATA_GET;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_METADATA_GET_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_METADATA_GET_TOTAL_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_UPLOAD;
+import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_UPLOAD_RATE_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_UPLOAD_TOTAL_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.RESUMABLE_CHUNK_UPLOAD;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.RESUMABLE_CHUNK_UPLOAD_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.RESUMABLE_CHUNK_UPLOAD_TOTAL_METRIC_NAME;
@@ -76,6 +79,7 @@ public class MetricCollector {
     private final Metrics metrics;
     private final Sensor getObjectMetadataRequests;
     private final Sensor deleteObjectRequests;
+    private final Sensor uploadObjectRequests;
     private final Sensor resumableUploadInitiateRequests;
     private final Sensor resumableChunkUploadRequests;
     private final Sensor getObjectRequests;
@@ -96,6 +100,11 @@ public class MetricCollector {
             OBJECT_DELETE,
             OBJECT_DELETE_RATE_METRIC_NAME,
             OBJECT_DELETE_TOTAL_METRIC_NAME
+        );
+        uploadObjectRequests = createSensor(
+            OBJECT_UPLOAD,
+            OBJECT_UPLOAD_RATE_METRIC_NAME,
+            OBJECT_UPLOAD_TOTAL_METRIC_NAME
         );
         resumableUploadInitiateRequests = createSensor(
             RESUMABLE_UPLOAD_INITIATE,
@@ -150,11 +159,15 @@ public class MetricCollector {
                 }
             } else if (OBJECT_UPLOAD_PATH_PATTERN.matcher(url.getRawPath()).matches()) {
                 // Object upload operations.
-                if (request.getRequestMethod().equals(HttpMethods.POST)
-                    && url.getFirst("uploadType").equals("resumable")) {
-                    resumableUploadInitiateRequests.record();
+                final boolean resumable = "resumable".equals(url.getFirst("uploadType"));
+                if (request.getRequestMethod().equals(HttpMethods.POST)) {
+                    if (resumable) {
+                        resumableUploadInitiateRequests.record();
+                    } else {
+                        uploadObjectRequests.record();
+                    }
                 } else if (request.getRequestMethod().equals(HttpMethods.PUT)
-                    && url.getFirst("uploadType").equals("resumable")
+                    && resumable
                     && url.containsKey("upload_id")) {
                     resumableChunkUploadRequests.record();
                 }
