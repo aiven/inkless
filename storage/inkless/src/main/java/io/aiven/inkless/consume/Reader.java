@@ -31,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +47,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
@@ -460,6 +462,7 @@ public class Reader implements AutoCloseable {
     ) {
         final Instant startAt = TimeUtils.durationMeasurementNow(time);
         fetchMetrics.fetchStarted(fetchInfos.size());
+        final InFlightObjectBytes inFlight = new InFlightObjectBytes(fetchMetrics);
 
         // Find Batches (metadataExecutor): Query control plane to find which storage objects contain the requested data
         final var batchCoordinates = CompletableFuture.supplyAsync(
@@ -502,7 +505,8 @@ public class Reader implements AutoCloseable {
             })
             // Fetch Data (dataExecutor): Flatten list of futures into single future with all results
             // Actual remote fetches happen on dataExecutor only when cache misses
-            .thenCompose(Reader::allOfFileExtents)
+            .thenCompose(requestsWithFutures ->
+                allOfFileExtents(requestsWithFutures, time, fetchMetrics, inFlight))
             // Complete Fetch (completing thread): Combine fetched data with batch coordinates to build final response
             // Runs on whichever thread completes last (typically dataExecutor thread)
             .thenCombine(batchCoordinates, (fileExtents, coordinates) ->
@@ -517,6 +521,7 @@ public class Reader implements AutoCloseable {
                 ).get()
             )
             .whenComplete((topicIdPartitionFetchPartitionDataMap, throwable) -> {
+                inFlight.release();
                 // Mark broker side fetch metrics
                 if (throwable != null) {
                     LOGGER.warn("Fetch failed", throwable);
@@ -565,11 +570,21 @@ public class Reader implements AutoCloseable {
      * proper grouping and ordering when processing results.
      *
      * @param requestsWithFutures the list of fetch requests paired with their futures
+     * @param time                clock for the phase duration
+     * @param metrics             records the phase duration and the extent bytes it collected
+     * @param inFlight            accrues this request's share of the broker-wide in-flight object bytes
      * @return a future that completes with a list of file extent results in the same order as the input
      */
     static CompletableFuture<List<FileExtentResult>> allOfFileExtents(
-        List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures
+        List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures,
+        Time time,
+        InklessFetchMetrics metrics,
+        InFlightObjectBytes inFlight
     ) {
+        // The phase spans futures, so measure from here rather than wrapping a call.
+        final Instant startAt = TimeUtils.durationMeasurementNow(time);
+        final AtomicLong recentBytes = new AtomicLong();
+        final AtomicLong laggingBytes = new AtomicLong();
         // Handle each future individually to support partial failures.
         // Convert exceptions to Failure results so successful partitions still get their data.
         final List<CompletableFuture<FileExtentResult>> handledFutures = requestsWithFutures.stream()
@@ -594,6 +609,14 @@ public class Reader implements AutoCloseable {
                         // FileExtent.object() returns String, we need to create ObjectKey from it
                         // For Success, we can use the request's objectKey since it matches
                         final ByteRange byteRange = new ByteRange(extent.range().offset(), extent.range().length());
+                        if (requestWithFuture.cacheResident()) {
+                            recentBytes.addAndGet(extent.data().length);
+                        } else {
+                            laggingBytes.addAndGet(extent.data().length);
+                            // The download's own buffer was charged by FetchPlanner while it ran; from
+                            // here the payload is what this request holds, until it completes
+                            inFlight.charge(extent.data().length);
+                        }
                         return new FileExtentResult.Success(request.objectKey(), byteRange, extent);
                     }
                 });
@@ -605,10 +628,59 @@ public class Reader implements AutoCloseable {
             // The thenApply callback runs on whichever thread completes the last file
             // extent future (typically a dataExecutor thread or metadataExecutor when data is cached).
             // The join() calls are safe because all futures are already completed when this callback executes.
-            .thenApply(v ->
-                handledFutures.stream()
+            .thenApply(v -> {
+                // Same rule for all three: only sample what happened, so a deployment of caught-up
+                // consumers - whose plans are empty - does not bury the distributions under zeros.
+                if (!requestsWithFutures.isEmpty()) {
+                    metrics.fetchDataFinished(
+                        Duration.between(startAt, TimeUtils.durationMeasurementNow(time)).toMillis());
+                }
+                if (recentBytes.get() > 0) {
+                    metrics.recordRecentObjectBytes(recentBytes.get());
+                }
+                if (laggingBytes.get() > 0) {
+                    metrics.recordLaggingObjectBytes(laggingBytes.get());
+                }
+                return handledFutures.stream()
                     .map(CompletableFuture::join)
-                    .toList());
+                    .toList();
+            });
+    }
+
+    /**
+     * The payloads one fetch request holds from cache-bypassing fetches, charged to the in-flight
+     * gauge as each arrives and returned when the request completes. The download buffers themselves
+     * are charged by {@code FetchPlanner} for the length of each transfer, which is the only window in
+     * which they exist.
+     *
+     * <p>Charging needs no mutual exclusion with the release, because every charge happens before the
+     * fetch response completes: the extent futures are wrapped so none of them fails, so
+     * {@link #allOfFileExtents} completes only once each charge has run, and the response cannot
+     * complete before that. A stage that settles the response early - a timeout, or a short circuit on
+     * the first failure - would break that ordering and leak the gauge upward, so release exactly once,
+     * from the response's own completion.
+     */
+    static final class InFlightObjectBytes {
+        private final InklessFetchMetrics metrics;
+        private final AtomicLong charged = new AtomicLong();
+
+        InFlightObjectBytes(final InklessFetchMetrics metrics) {
+            this.metrics = metrics;
+        }
+
+        void charge(final long bytes) {
+            charged.addAndGet(bytes);
+            metrics.addInFlightLaggingObjectBytes(bytes);
+        }
+
+        void release() {
+            // Zeroing keeps a second call from subtracting the same total twice, which would drive the
+            // gauge negative for the rest of its life
+            final long total = charged.getAndSet(0);
+            if (total > 0) {
+                metrics.addInFlightLaggingObjectBytes(-total);
+            }
+        }
     }
 
     @Override

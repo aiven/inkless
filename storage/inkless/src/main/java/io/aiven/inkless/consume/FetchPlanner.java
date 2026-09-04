@@ -21,6 +21,8 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -35,6 +37,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -245,11 +248,11 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
 
     private List<FetchRequestWithFuture> submitAllRequests(final List<ObjectFetchRequest> requests) {
         return requests.stream()
-            .map(request -> new FetchRequestWithFuture(request, submitSingleRequest(request)))
+            .map(this::submitSingleRequest)
             .collect(Collectors.toList());
     }
 
-    private CompletableFuture<FileExtent> submitSingleRequest(final ObjectFetchRequest request) {
+    private FetchRequestWithFuture submitSingleRequest(final ObjectFetchRequest request) {
         if (!request.lagging() && !isConsolidationFetch) {
             // Hot path: up-to-date consumers use cache + recentDataExecutor
             // Do not use this path when it is a consolidation fetch request
@@ -262,15 +265,23 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
             // Set by the cache on the calling thread before computeIfAbsent returns when this caller's load
             // was registered, so it cannot be observed stale the way the load body itself can.
             final AtomicBoolean loadStarted = new AtomicBoolean(false);
+            // Taken in the registration callback, which the cache runs on this thread at the moment the
+            // load is handed to the executor: capturing before computeIfAbsent would fold the cache
+            // lookup into the queue wait.
+            final AtomicReference<Instant> submittedAt = new AtomicReference<>();
             final CompletableFuture<FileExtent> primary = cache.computeIfAbsent(
                 request.toCacheKey(),
                 k -> {
+                    recordQueueTime(submittedAt.get());
                     final FileExtent fileExtent = fetchFileExtent(objectFetcher, request, firstByteReceived);
                     metrics.recordStorageBytesIn(fileExtent.data().length);
                     return fileExtent;
                 },
                 fetchDataExecutor,
-                () -> loadStarted.set(true)
+                () -> {
+                    loadStarted.set(true);
+                    submittedAt.set(TimeUtils.durationMeasurementNow(time));
+                }
             );
             // This caller starting the load means a miss whatever isDone() reports by now: the load may already
             // have finished on the fetch executor. Only when it did not start does isDone() separate a value that
@@ -283,8 +294,12 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                 }
             });
             // Hot path: no rate limiting, timers start immediately (completedFuture runs thenRun inline).
-            return withHedge(primary, objectFetcher, request, fetchDataExecutor, firstByteReceived,
-                CompletableFuture.completedFuture(null));
+            return new FetchRequestWithFuture(
+                request,
+                withHedge(primary, objectFetcher, request, fetchDataExecutor, false, firstByteReceived,
+                    CompletableFuture.completedFuture(null)),
+                true
+            );
         } else {
             // Consolidation recent data: check cache without writing on miss.
             // Hot data may already be cached by a regular consumer fetch — reuse it for free.
@@ -303,7 +318,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                         // RecentDataRequestRate covers cache-hit peeks,
                         // LaggingConsumerRequestRate covers only true cold fetches below.
                         metrics.recordRecentDataRequest();
-                        return CompletableFuture.completedFuture(cached);
+                        return new FetchRequestWithFuture(request, CompletableFuture.completedFuture(cached), true);
                     }
                 } catch (final CompletionException | CancellationException e) {
                     // cache.get() joins an in-flight future.
@@ -325,7 +340,10 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                 // Signal that defers hedge timer scheduling until the actual fetch starts (after rate limiting).
                 // This prevents hedges from firing while the primary is waiting for a rate limit token.
                 final CompletableFuture<Void> fetchStarted = new CompletableFuture<>();
+                final Instant submittedAt = TimeUtils.durationMeasurementNow(time);
                 final CompletableFuture<FileExtent> primary = CompletableFuture.supplyAsync(() -> {
+                        // Measured before rate limiting, which is metered separately and happens on this thread
+                        recordQueueTime(submittedAt);
                         // Apply rate limiting if configured (rate limit > 0)
                         if (laggingRateLimiter != null) {
                             applyRateLimit(); // InterruptedException here is wrapped in FetchException
@@ -333,7 +351,8 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                         // Signal that rate limiting is done and the fetch is starting.
                         // Hedge timers begin counting from this point.
                         fetchStarted.complete(null);
-                        final FileExtent fileExtent = fetchFileExtent(laggingObjectFetcher, request, firstByteReceived);
+                        final FileExtent fileExtent = chargeWhileFetching(request,
+                            () -> fetchFileExtent(laggingObjectFetcher, request, firstByteReceived));
                         metrics.recordStorageLaggingBytesIn(fileExtent.data().length);
                         metrics.recordDisklessBytesOut(fileExtent.data().length);
                         return fileExtent;
@@ -360,8 +379,12 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                     }
                 });
                 // Cold path: timers deferred until fetchStarted completes (after rate limiting).
-                return withHedge(primary, laggingObjectFetcher, request, laggingFetchDataExecutor, firstByteReceived,
-                    fetchStarted);
+                return new FetchRequestWithFuture(
+                    request,
+                    withHedge(primary, laggingObjectFetcher, request, laggingFetchDataExecutor, true,
+                        firstByteReceived, fetchStarted),
+                    false
+                );
             } catch (final RejectedExecutionException e) {
                 // Sync rejection (executor shut down or queue full at submission) - return failed future
                 // instead of propagating exception. This allows allOfFileExtents to handle the failure
@@ -369,7 +392,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                 // (hot path) can still succeed.
                 // Metrics recorded here since the task never executes (vs async rejection tracked in whenComplete).
                 metrics.recordLaggingConsumerRejection();
-                return CompletableFuture.failedFuture(e);
+                return new FetchRequestWithFuture(request, CompletableFuture.failedFuture(e), false);
             }
         }
     }
@@ -399,6 +422,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         final ObjectFetcher fetcher,
         final ObjectFetchRequest request,
         final ExecutorService executor,
+        final boolean cacheBypassing,
         final AtomicBoolean firstByteReceived,
         final CompletableFuture<Void> fetchStarted
     ) {
@@ -434,7 +458,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                 if (hedgeTtfbThresholdMs > 0) {
                     timers.add(hedgeScheduler.schedule(() -> {
                         if (!primary.isDone() && !firstByteReceived.get()) {
-                            tryFireHedge(hedgeFired, primary, fetcher, request, executor,
+                            tryFireHedge(hedgeFired, primary, fetcher, request, executor, cacheBypassing,
                                 metrics::recordHedgeTtfbTriggered);
                         }
                     }, hedgeTtfbThresholdMs, TimeUnit.MILLISECONDS));
@@ -444,7 +468,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                 if (hedgeTotalTimeThresholdMs > 0) {
                     timers.add(hedgeScheduler.schedule(() -> {
                         if (!primary.isDone()) {
-                            tryFireHedge(hedgeFired, primary, fetcher, request, executor,
+                            tryFireHedge(hedgeFired, primary, fetcher, request, executor, cacheBypassing,
                                 metrics::recordHedgeTotalTimeTriggered);
                         }
                     }, hedgeTotalTimeThresholdMs, TimeUnit.MILLISECONDS));
@@ -485,6 +509,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         final ObjectFetcher fetcher,
         final ObjectFetchRequest request,
         final ExecutorService executor,
+        final boolean cacheBypassing,
         final Runnable triggerMetric
     ) {
         // There is a small race between the timer's !primary.isDone() check and this CAS —
@@ -497,8 +522,11 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
             metrics.recordHedgeRequest();
             triggerMetric.run();
             try {
+                final Supplier<FileExtent> fetch = () -> fetchFileExtent(fetcher, request);
+                // A hedge allocates a second buffer that lives alongside the primary's: the loser is
+                // never cancelled, so both are real until each finishes.
                 final CompletableFuture<FileExtent> hedge = CompletableFuture.supplyAsync(
-                    () -> fetchFileExtent(fetcher, request), executor
+                    cacheBypassing ? () -> chargeWhileFetching(request, fetch) : fetch, executor
                 );
                 hedge.whenComplete((value, error) -> {
                     if (error == null && primary.complete(value)) {
@@ -532,6 +560,22 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                     throw new FetchException("Rate limit wait interrupted for lagging consumer", e);
                 }
             }, metrics::recordRateLimitWaitTime);
+    }
+
+    // Charged here, not at submission: a queued job holds no buffer yet.
+    private FileExtent chargeWhileFetching(final ObjectFetchRequest request, final Supplier<FileExtent> fetch) {
+        final long bytes = request.byteRange().size();
+        metrics.addInFlightLaggingObjectBytes(bytes);
+        try {
+            return fetch.get();
+        } finally {
+            metrics.addInFlightLaggingObjectBytes(-bytes);
+        }
+    }
+
+    private void recordQueueTime(final Instant submittedAt) {
+        metrics.fetchQueueFinished(
+            Duration.between(submittedAt, TimeUtils.durationMeasurementNow(time)).toMillis());
     }
 
     /**
@@ -633,6 +677,14 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
     /**
      * Pairs an ObjectFetchRequest with its corresponding CompletableFuture.
      * This allows preserving request information (object key, range) even when the fetch fails.
+     *
+     * @param cacheResident true if the extent lives in the object cache, so concurrent requests share
+     *                      it. A hot-path miss counts as resident: {@code computeIfAbsent} registers
+     *                      the entry before the load runs.
      */
-    public record FetchRequestWithFuture(ObjectFetchRequest request, CompletableFuture<FileExtent> future) {}
+    public record FetchRequestWithFuture(
+        ObjectFetchRequest request,
+        CompletableFuture<FileExtent> future,
+        boolean cacheResident
+    ) {}
 }

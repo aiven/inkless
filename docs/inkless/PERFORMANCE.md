@@ -317,14 +317,73 @@ Four metrics track hot/cold path behavior:
 |--------|------|-------------|
 | `RecentDataRequestRate` | Meter | Hot path request rate (recent data) |
 | `LaggingConsumerRequestRate` | Meter | Cold path request rate (all lagging requests) |
-| `LaggingConsumerRejectedRate` | Meter | Rejection events (queue full or executor shutdown) |
-| `LaggingRateLimitWaitTime` | Histogram | Rate limit wait times |
+| `LaggingConsumerRequestRejectedRate` | Meter | Rejection events (queue full or executor shutdown) |
+| `LaggingConsumerRateLimitWaitTime` | Histogram | Rate limit wait times |
 
 **What to watch:**
 
-- **High `LaggingConsumerRejectedRate`**: Consider increasing thread pool size or rate limit
-- **High `LaggingRateLimitWaitTime`**: Indicates rate limiting is actively throttling requests (expected behavior under load)
+- **High `LaggingConsumerRequestRejectedRate`**: Consider increasing thread pool size or rate limit
+- **High `LaggingConsumerRateLimitWaitTime`**: Indicates rate limiting is actively throttling requests (expected behavior under load)
 - **Ratio of recent vs lagging requests**: Helps understand workload patterns and tune thresholds
+
+#### Fetch data phase metrics
+
+A consumer fetch has four stages: find batches, plan, wait for every object fetch, assemble the
+response. The wait is usually most of the latency, and these metrics break it down.
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `FetchDataTime` | Histogram | Whole wait, per request: plan handed back until the last fetch completes |
+| `FetchQueueTime` | Histogram | Per object: wait in the pool queue before its job started |
+| `FetchFileTime` | Histogram | Per object: the transfer itself |
+| `LaggingConsumerRateLimitWaitTime` | Histogram | Per cold object: wait for a rate-limit token |
+
+`FetchDataTime` is one sample per request while the other three sample one object each, so compare
+their shapes rather than their values:
+
+- **`FetchDataTime` high, `FetchQueueTime` flat**: storage is slow. Look at `FetchFileTime` and
+  `FetchFirstByteTime`, and at throttling on the object-store side.
+- **`FetchDataTime` high, `FetchQueueTime` high, `FetchFileTime` healthy**: fetches arrive faster than
+  the pools drain them. The levers are `inkless.consume.fetch.data.thread.pool.size`,
+  `inkless.consume.fetch.lagging.consumer.thread.pool.size`, fewer objects per fetch, or admission
+  control. Check `LaggingConsumerRequestRejectedRate` too, since a full queue rejects rather than queues.
+
+Two boundaries worth knowing. `FetchQueueTime` starts when the fetch is submitted, which happens while
+the plan stage is still running, so a sample can slightly exceed the `FetchDataTime` it explains; the
+difference is bounded by `FetchPlanTime`. And no sample is recorded for an object served from the
+cache, for a caller that joins another caller's in-flight load, or for a hedged retry — the loader's
+own sample carries that wait.
+
+#### Fetch memory metrics
+
+These size heap headroom for the read path, and they split by who owns the bytes.
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `FetchRecentObjectBytes` | Histogram | Per request: bytes held in ranges that live in the object cache |
+| `FetchLaggingObjectBytes` | Histogram | Per request: bytes held from cache-bypassing (cold) fetches |
+| `InFlightLaggingObjectBytes` | Gauge | Cold bytes held right now: running download buffers plus arrived payloads |
+| `InFlightLaggingObjectBytesMax` | Gauge | High-water mark of the above; never resets |
+
+The split matters because only one population is unbounded. Cache-resident bytes are shared between
+concurrent requests and the cache decides when they go; cold bytes belong to one request until it
+completes, and nothing caps their total — the pools limit how many downloads run at once, not how many
+bytes are held. `InFlightLaggingObjectBytes` is therefore the number to watch for heap headroom, and
+its max catches spikes shorter than the scrape interval.
+
+Caveats:
+
+- A queued job holds nothing and is not counted; neither is a job the pool rejected at submission.
+- A hedged retry on the cold path *is* counted, since its buffer lives alongside the primary's until each finishes. A hot-path hedge loads into the cache, so it belongs to the other population and is not counted here.
+- Each payload is counted once. The S3 and Azure clients materialize the response before it is copied
+  into the extent, so during that copy the payload is briefly resident twice and the gauge shows one of
+  the two. The copy is a memory-to-memory move of at most `inkless.produce.buffer.max.bytes`, so the
+  discrepancy is bounded by that times the number of transfers copying at the same instant; size heap
+  headroom with a factor rather than expecting the gauge to model per-backend copies. GCS reads
+  straight into the extent and does not double.
+- The gauges are per metrics group. Consumer fetches report under `InklessFetchMetrics` and
+  consolidation fetches under `ConsolidationFetchMetrics`, so total cold-read memory on a broker is the
+  sum of both.
 
 #### Why Hot/Cold Separation Matters
 
