@@ -82,6 +82,20 @@ public class PurgeDeletedLogsResponseV1Record extends UDTRecordImpl<PurgeDeleted
         return (Boolean) get(3);
     }
 
+    /**
+     * Setter for <code>purge_deleted_logs_response_v1.cap_reached</code>.
+     */
+    public void setCapReached(Boolean value) {
+        set(4, value);
+    }
+
+    /**
+     * Getter for <code>purge_deleted_logs_response_v1.cap_reached</code>.
+     */
+    public Boolean getCapReached() {
+        return (Boolean) get(4);
+    }
+
     // -------------------------------------------------------------------------
     // Constructors
     // -------------------------------------------------------------------------
@@ -96,13 +110,14 @@ public class PurgeDeletedLogsResponseV1Record extends UDTRecordImpl<PurgeDeleted
     /**
      * Create a detached, initialised PurgeDeletedLogsResponseV1Record
      */
-    public PurgeDeletedLogsResponseV1Record(Long batchesDeleted, Integer logsPurged, Integer filesMarked, Boolean moreRemain) {
+    public PurgeDeletedLogsResponseV1Record(Long batchesDeleted, Integer logsPurged, Integer filesMarked, Boolean moreRemain, Boolean capReached) {
         super(PurgeDeletedLogsResponseV1.PURGE_DELETED_LOGS_RESPONSE_V1);
 
         setBatchesDeleted(batchesDeleted);
         setLogsPurged(logsPurged);
         setFilesMarked(filesMarked);
         setMoreRemain(moreRemain);
+        setCapReached(capReached);
         resetChangedOnNotNull();
     }
 }

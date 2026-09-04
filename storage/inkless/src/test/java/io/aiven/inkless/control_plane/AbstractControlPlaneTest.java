@@ -516,11 +516,13 @@ public abstract class AbstractControlPlaneTest {
         final PurgeDeletedLogsResponse first = controlPlane.purgeDeletedLogs(1);
         assertThat(first.batchesDeleted()).isEqualTo(1);
         assertThat(first.moreRemain()).isTrue();
+        assertThat(first.capReached()).isTrue();
         assertThat(allFilesToDelete(controlPlane)).hasSize(1);
 
         final PurgeDeletedLogsResponse rest = controlPlane.purgeDeletedLogs(0);
         assertThat(rest.batchesDeleted()).isEqualTo(2);
         assertThat(rest.moreRemain()).isFalse();
+        assertThat(rest.capReached()).isFalse();
         assertThat(allFilesToDelete(controlPlane)).hasSize(3);
     }
 
@@ -556,11 +558,13 @@ public abstract class AbstractControlPlaneTest {
         assertThat(first.batchesDeleted()).isEqualTo(1);
         assertThat(first.logsPurged()).isEqualTo(1);
         assertThat(first.moreRemain()).isTrue();
+        assertThat(first.capReached()).isTrue();
 
         final PurgeDeletedLogsResponse rest = controlPlane.purgeDeletedLogs(0);
         assertThat(rest.batchesDeleted()).isEqualTo(2);
         assertThat(rest.logsPurged()).isEqualTo(1);
         assertThat(rest.moreRemain()).isFalse();
+        assertThat(rest.capReached()).isFalse();
     }
 
     @Test
@@ -585,11 +589,13 @@ public abstract class AbstractControlPlaneTest {
         assertThat(first.batchesDeleted()).isEqualTo(1);
         assertThat(first.logsPurged()).isEqualTo(1);
         assertThat(first.moreRemain()).isTrue();
+        assertThat(first.capReached()).isTrue();
 
         final PurgeDeletedLogsResponse rest = controlPlane.purgeDeletedLogs(1);
         assertThat(rest.batchesDeleted()).isZero();
         assertThat(rest.logsPurged()).isEqualTo(1);
         assertThat(rest.moreRemain()).isFalse();
+        assertThat(rest.capReached()).isFalse();
     }
 
     @Test
@@ -663,10 +669,12 @@ public abstract class AbstractControlPlaneTest {
         assertThat(first.logsPurged()).isEqualTo(2);
         assertThat(first.batchesDeleted()).isZero();
         assertThat(first.moreRemain()).isTrue();
+        assertThat(first.capReached()).isTrue();
 
         final PurgeDeletedLogsResponse rest = controlPlane.purgeDeletedLogs(0);
         assertThat(rest.logsPurged()).isEqualTo(3);
         assertThat(rest.moreRemain()).isFalse();
+        assertThat(rest.capReached()).isFalse();
     }
 
     @Test

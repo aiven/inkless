@@ -64,7 +64,8 @@ class PurgeDeletedLogsJob implements Callable<PurgeDeletedLogsResponse> {
                     PurgeDeletedLogsResponseV1.BATCHES_DELETED,
                     PurgeDeletedLogsResponseV1.LOGS_PURGED,
                     PurgeDeletedLogsResponseV1.FILES_MARKED,
-                    PurgeDeletedLogsResponseV1.MORE_REMAIN
+                    PurgeDeletedLogsResponseV1.MORE_REMAIN,
+                    PurgeDeletedLogsResponseV1.CAP_REACHED
                 ).from(PURGE_DELETED_LOGS_V1.call(now, maxBatches))
                     .fetchInto(PurgeDeletedLogsResponseV1Record.class);
                 if (rows.size() != 1) {
@@ -75,7 +76,8 @@ class PurgeDeletedLogsJob implements Callable<PurgeDeletedLogsResponse> {
                     record.getBatchesDeleted(),
                     record.getLogsPurged(),
                     record.getFilesMarked(),
-                    Boolean.TRUE.equals(record.getMoreRemain())
+                    Boolean.TRUE.equals(record.getMoreRemain()),
+                    Boolean.TRUE.equals(record.getCapReached())
                 );
             } catch (final RuntimeException e) {
                 throw new ControlPlaneException("Error purging deleted logs", e);

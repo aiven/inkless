@@ -67,6 +67,11 @@ public class PurgeDeletedLogsResponseV1 extends UDTImpl<PurgeDeletedLogsResponse
     public static final UDTField<PurgeDeletedLogsResponseV1Record, Boolean> MORE_REMAIN = createField(DSL.name("more_remain"), SQLDataType.BOOLEAN, PURGE_DELETED_LOGS_RESPONSE_V1, "");
 
     /**
+     * The attribute <code>purge_deleted_logs_response_v1.cap_reached</code>.
+     */
+    public static final UDTField<PurgeDeletedLogsResponseV1Record, Boolean> CAP_REACHED = createField(DSL.name("cap_reached"), SQLDataType.BOOLEAN, PURGE_DELETED_LOGS_RESPONSE_V1, "");
+
+    /**
      * No further instances allowed
      */
     private PurgeDeletedLogsResponseV1() {

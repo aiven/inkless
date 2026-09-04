@@ -53,7 +53,8 @@ CREATE TYPE purge_deleted_logs_response_v1 AS (
     batches_deleted BIGINT,
     logs_purged INT,
     files_marked INT,
-    more_remain BOOLEAN
+    more_remain BOOLEAN,
+    cap_reached BOOLEAN
 );
 
 CREATE FUNCTION purge_deleted_logs_v1(
@@ -70,6 +71,8 @@ DECLARE
     l_remaining BIGINT;
     l_deleted_this_log BIGINT;
     l_boundary offset_nullable_t;
+    l_window_locked INT := 0;
+    l_cap_reached BOOLEAN := FALSE;
 BEGIN
     -- The partial index answers this probe. Without it, an idle cluster can walk
     -- logs_pkey filtering deleted_at on every live row, which is the produce hot path.
@@ -78,7 +81,7 @@ BEGIN
         FROM logs
         WHERE deleted_at IS NOT NULL
     ) THEN
-        RETURN NEXT (0, 0, 0, FALSE)::purge_deleted_logs_response_v1;
+        RETURN NEXT (0, 0, 0, FALSE, FALSE)::purge_deleted_logs_response_v1;
         RETURN;
     END IF;
 
@@ -98,6 +101,7 @@ BEGIN
         LIMIT (CASE WHEN arg_max_batches > 0 THEN arg_max_batches END)
         FOR UPDATE SKIP LOCKED
     LOOP
+        l_window_locked := l_window_locked + 1;
         IF NOT EXISTS (
             SELECT 1
             FROM batches
@@ -210,7 +214,16 @@ BEGIN
     )
     INTO l_more_remain;
 
-    RETURN NEXT (l_batches_deleted, l_logs_purged, l_files_marked, l_more_remain)::purge_deleted_logs_response_v1;
+    -- Window LIMIT and batch budget are the two caps. logs_purged mixes empty
+    -- drops with logs emptied by a drain, so it is not a cap signal.
+    l_cap_reached := l_more_remain
+        AND arg_max_batches > 0
+        AND (
+            l_window_locked >= arg_max_batches
+            OR l_remaining <= 0
+        );
+
+    RETURN NEXT (l_batches_deleted, l_logs_purged, l_files_marked, l_more_remain, l_cap_reached)::purge_deleted_logs_response_v1;
 END;
 $$
 ;

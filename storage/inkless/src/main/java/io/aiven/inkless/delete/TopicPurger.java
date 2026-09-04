@@ -81,9 +81,7 @@ public class TopicPurger implements Runnable, Closeable {
                 LOGGER.info("No purge work this cycle, sleeping for {}", Duration.ofMillis(sleepMillis));
                 time.sleep(sleepMillis);
             } else {
-                final boolean saturated = maxBatchesPerCycle > 0
-                    && result.moreRemain()
-                    && result.batchesDeleted() >= maxBatchesPerCycle;
+                final boolean saturated = result.capReached();
                 if (saturated) {
                     metrics.recordTopicPurgerCycleSaturated();
                     LOGGER.info("Running topic purger: deleted {} batches, purged {} logs, marked {} files "

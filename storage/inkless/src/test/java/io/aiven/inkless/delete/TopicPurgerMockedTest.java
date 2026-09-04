@@ -68,7 +68,7 @@ class TopicPurgerMockedTest {
         final var purger = new TopicPurger(time, controlPlane, MAX_BATCHES_PER_CYCLE);
         // Another broker holds the deleted rows (SKIP LOCKED miss): moreRemain is cluster-wide.
         when(controlPlane.purgeDeletedLogs(MAX_BATCHES_PER_CYCLE))
-            .thenReturn(new PurgeDeletedLogsResponse(0, 0, 0, true));
+            .thenReturn(new PurgeDeletedLogsResponse(0, 0, 0, true, false));
 
         final long beforeMs = time.milliseconds();
         purger.run();
@@ -83,7 +83,7 @@ class TopicPurgerMockedTest {
     void workAndSaturation() {
         final var purger = new TopicPurger(time, controlPlane, MAX_BATCHES_PER_CYCLE);
         when(controlPlane.purgeDeletedLogs(MAX_BATCHES_PER_CYCLE))
-            .thenReturn(new PurgeDeletedLogsResponse(3, 0, 1, true));
+            .thenReturn(new PurgeDeletedLogsResponse(3, 0, 1, true, true));
 
         purger.run();
 
@@ -94,10 +94,22 @@ class TopicPurgerMockedTest {
     }
 
     @Test
+    void emptyLogCapSaturates() {
+        final var purger = new TopicPurger(time, controlPlane, MAX_BATCHES_PER_CYCLE);
+        when(controlPlane.purgeDeletedLogs(MAX_BATCHES_PER_CYCLE))
+            .thenReturn(new PurgeDeletedLogsResponse(0, MAX_BATCHES_PER_CYCLE, 0, true, true));
+
+        purger.run();
+
+        assertEquals(1, purger.metrics.topicPurgerCycleSaturated.intValue());
+        assertEquals(1, purger.metrics.topicPurgerWorkRemain.get());
+    }
+
+    @Test
     void unboundedDoesNotSaturate() {
         final var purger = new TopicPurger(time, controlPlane, 0);
         when(controlPlane.purgeDeletedLogs(0))
-            .thenReturn(new PurgeDeletedLogsResponse(10, 2, 3, false));
+            .thenReturn(new PurgeDeletedLogsResponse(10, 2, 3, false, false));
 
         purger.run();
 

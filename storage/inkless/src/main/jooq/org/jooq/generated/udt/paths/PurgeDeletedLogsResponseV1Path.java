@@ -58,6 +58,11 @@ public class PurgeDeletedLogsResponseV1Path<R extends Record, T> extends UDTPath
      */
     public final UDTField<PurgeDeletedLogsResponseV1Record, Boolean> MORE_REMAIN = Internal.createUDTPathField(DSL.name("more_remain"), SQLDataType.BOOLEAN, this, "", UDTField.class);
 
+    /**
+     * The attribute <code>purge_deleted_logs_response_v1.cap_reached</code>.
+     */
+    public final UDTField<PurgeDeletedLogsResponseV1Record, Boolean> CAP_REACHED = Internal.createUDTPathField(DSL.name("cap_reached"), SQLDataType.BOOLEAN, this, "", UDTField.class);
+
     public PurgeDeletedLogsResponseV1Path(Name name, DataType<T> type, RecordQualifier<R> qualifier, Comment comment, Binding<?, T> binding) {
         super(name, type, qualifier, PurgeDeletedLogsResponseV1.PURGE_DELETED_LOGS_RESPONSE_V1, comment, binding);
     }

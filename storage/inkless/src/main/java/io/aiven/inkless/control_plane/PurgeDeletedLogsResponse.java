@@ -25,15 +25,18 @@ package io.aiven.inkless.control_plane;
  * @param filesMarked    files newly marked for deletion because they became empty
  * @param moreRemain     true if any soft-deleted log is still present after this call,
  *                       including rows another broker holds with {@code SKIP LOCKED}
+ * @param capReached     true if {@code moreRemain} and this call hit the window
+ *                       {@code LIMIT} or the batch budget
  */
 public record PurgeDeletedLogsResponse(
     long batchesDeleted,
     int logsPurged,
     int filesMarked,
-    boolean moreRemain
+    boolean moreRemain,
+    boolean capReached
 ) {
     public static PurgeDeletedLogsResponse empty() {
-        return new PurgeDeletedLogsResponse(0, 0, 0, false);
+        return new PurgeDeletedLogsResponse(0, 0, 0, false, false);
     }
 
     /**

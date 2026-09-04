@@ -129,6 +129,7 @@ class PurgeDeletedLogsJobTest {
             new PurgeDeletedLogsJob(time, pgContainer.getJooqCtx(), 1, durationCallback).call();
         assertThat(first.batchesDeleted()).isEqualTo(1);
         assertThat(first.moreRemain()).isTrue();
+        assertThat(first.capReached()).isTrue();
         assertThat(first.filesMarked()).isEqualTo(1);
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).hasSize(1);
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).hasSize(2);
@@ -137,6 +138,7 @@ class PurgeDeletedLogsJobTest {
             new PurgeDeletedLogsJob(time, pgContainer.getJooqCtx(), 0, durationCallback).call();
         assertThat(rest.batchesDeleted()).isEqualTo(2);
         assertThat(rest.moreRemain()).isFalse();
+        assertThat(rest.capReached()).isFalse();
         assertThat(rest.logsPurged()).isEqualTo(1);
         assertThat(rest.filesMarked()).isEqualTo(2);
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).isEmpty();
@@ -230,6 +232,7 @@ class PurgeDeletedLogsJobTest {
         assertThat(first.logsPurged()).isEqualTo(2);
         assertThat(first.batchesDeleted()).isZero();
         assertThat(first.moreRemain()).isTrue();
+        assertThat(first.capReached()).isTrue();
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .filteredOn(log -> topicId.equals(log.getTopicId()))
             .hasSize(3);
@@ -238,6 +241,7 @@ class PurgeDeletedLogsJobTest {
             new PurgeDeletedLogsJob(time, pgContainer.getJooqCtx(), 0, durationCallback).call();
         assertThat(rest.logsPurged()).isEqualTo(3);
         assertThat(rest.moreRemain()).isFalse();
+        assertThat(rest.capReached()).isFalse();
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .noneMatch(log -> topicId.equals(log.getTopicId()));
     }
@@ -372,7 +376,8 @@ class PurgeDeletedLogsJobTest {
             PurgeDeletedLogsResponseV1.BATCHES_DELETED,
             PurgeDeletedLogsResponseV1.LOGS_PURGED,
             PurgeDeletedLogsResponseV1.FILES_MARKED,
-            PurgeDeletedLogsResponseV1.MORE_REMAIN
+            PurgeDeletedLogsResponseV1.MORE_REMAIN,
+            PurgeDeletedLogsResponseV1.CAP_REACHED
         ).from(PURGE_DELETED_LOGS_V1.call(TimeUtils.now(time), 0))
             .fetchInto(PurgeDeletedLogsResponseV1Record.class);
         assertThat(rows).hasSize(1);
@@ -381,7 +386,8 @@ class PurgeDeletedLogsJobTest {
             record.getBatchesDeleted(),
             record.getLogsPurged(),
             record.getFilesMarked(),
-            Boolean.TRUE.equals(record.getMoreRemain())
+            Boolean.TRUE.equals(record.getMoreRemain()),
+            Boolean.TRUE.equals(record.getCapReached())
         );
     }
 

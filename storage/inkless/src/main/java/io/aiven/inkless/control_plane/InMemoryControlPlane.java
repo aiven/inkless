@@ -441,7 +441,9 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             window = window.limit(maxBatches);
         }
 
+        int windowLocked = 0;
         for (final TopicIdPartition tidp : window.toList()) {
+            windowLocked++;
             final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(tidp);
             if (coordinates == null || coordinates.isEmpty()) {
                 logs.remove(tidp);
@@ -482,7 +484,10 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         }
 
         final boolean moreRemain = logs.values().stream().anyMatch(logInfo -> logInfo.deletedAt != null);
-        return new PurgeDeletedLogsResponse(batchesDeleted, logsPurged, filesMarked, moreRemain);
+        final boolean capReached = moreRemain
+            && maxBatches > 0
+            && (windowLocked >= maxBatches || remaining <= 0);
+        return new PurgeDeletedLogsResponse(batchesDeleted, logsPurged, filesMarked, moreRemain, capReached);
     }
 
     @Override
