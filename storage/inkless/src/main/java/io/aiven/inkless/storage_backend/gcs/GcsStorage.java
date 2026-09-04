@@ -30,9 +30,16 @@ import com.google.cloud.storage.Storage;
 import com.google.cloud.storage.StorageOptions;
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.SocketTimeoutException;
 import java.nio.channels.ReadableByteChannel;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -45,9 +52,18 @@ import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.SizedReadableByteChannel;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
+import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
 
 @CoverageIgnore  // tested on integration level
 public class GcsStorage extends StorageBackend {
+    private static final Logger LOGGER = LoggerFactory.getLogger(GcsStorage.class);
+
+    // The client splits a delete into HTTP batches of at most 100 sub-requests, and the server has to
+    // process every sub-request before it answers, so the response wait grows with the batch. Half the
+    // client's maximum keeps that wait clear of gcs.read.timeout; a default cleaner cycle of 20000
+    // files then costs 400 round trips, well inside file.cleaner.interval.ms.
+    private static final int MAX_DELETE_BATCH_SIZE = 50;
+
     private volatile Storage storage;
     private String bucketName;
     private ReloadableCredentialsProvider credentialsProvider;
@@ -70,6 +86,8 @@ public class GcsStorage extends StorageBackend {
         this.bucketName = config.bucketName();
 
         final HttpTransportOptions.Builder httpTransportOptionsBuilder = HttpTransportOptions.newBuilder();
+        httpTransportOptionsBuilder.setConnectTimeout((int) config.connectTimeout().toMillis());
+        httpTransportOptionsBuilder.setReadTimeout((int) config.readTimeout().toMillis());
 
         // Create reloadable credentials provider
         this.credentialsProvider = config.reloadableCredentials();
@@ -104,8 +122,24 @@ public class GcsStorage extends StorageBackend {
                         "Object " + key + " created with incorrect length " + transferred + " instead of " + length);
             }
         } catch (final IOException | BaseServiceException e) {
+            if (isTimeout(e)) {
+                throw new StorageBackendTimeoutException("Timed out to upload " + key, e);
+            }
             throw new StorageBackendException("Failed to upload " + key, e);
         }
+    }
+
+    // The GCS client wraps the originating SocketTimeoutException in a BaseServiceException, so the
+    // whole cause chain is inspected.
+    private static boolean isTimeout(final Throwable e) {
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof SocketTimeoutException) {
+                return true;
+            }
+            cause = cause.getCause() == cause ? null : cause.getCause();
+        }
+        return false;
     }
 
     @Override
@@ -113,28 +147,44 @@ public class GcsStorage extends StorageBackend {
         try {
             storage.delete(this.bucketName, key.value());
         } catch (final BaseServiceException e) {
+            if (isTimeout(e)) {
+                throw new StorageBackendTimeoutException("Timed out to delete " + key, e);
+            }
             throw new StorageBackendException("Failed to delete " + key, e);
         }
     }
 
     @Override
     public Set<ObjectKey> delete(final Set<ObjectKey> keys) throws StorageBackendException {
-        try {
-            final Set<BlobId> ids = keys.stream()
-                    .map(k -> BlobId.of(this.bucketName,k.value()))
-                    .collect(Collectors.toSet());
+        final List<ObjectKey> objectKeys = new ArrayList<>(keys);
+        final Set<ObjectKey> deleted = new HashSet<>();
 
-            // storage.delete returns a List<Boolean> of deleted-vs-already-absent, but a genuine
-            // failure surfaces as a thrown BaseServiceException rather than a per-blob flag, so we
-            // cannot extract a confirmed-deleted subset the way the S3 backend does. This stays
-            // all-or-nothing: on success every key is gone (idempotent), and on failure we delete
-            // nothing and let the FileCleaner cycle retry the whole set.
-            storage.delete(ids);
-            metricCollector.recordBatchDeleteObjects(keys.size());
-            return Set.copyOf(keys);
-        } catch (final BaseServiceException e) {
-            throw new StorageBackendException("Failed to delete " + keys.size() + " keys", e);
+        for (int i = 0; i < objectKeys.size(); i += MAX_DELETE_BATCH_SIZE) {
+            final List<ObjectKey> batch = objectKeys.subList(
+                i,
+                Math.min(i + MAX_DELETE_BATCH_SIZE, objectKeys.size())
+            );
+            final Set<BlobId> ids = batch.stream()
+                    .map(k -> BlobId.of(this.bucketName, k.value()))
+                    .collect(Collectors.toSet());
+            try {
+                // storage.delete returns a List<Boolean> of deleted-vs-already-absent, but a genuine
+                // failure surfaces as a thrown BaseServiceException rather than a per-blob flag, so a
+                // batch stays all-or-nothing: on success every key in it is gone (idempotent), and on
+                // failure none of it is confirmed.
+                storage.delete(ids);
+            } catch (final BaseServiceException e) {
+                // Deletion is idempotent, so stopping here is safe: the keys left unconfirmed stay
+                // marked for deletion and the next FileCleaner cycle retries them.
+                LOGGER.warn("Batch delete failed after {} of {} keys, stopping the pass",
+                    deleted.size(), objectKeys.size(), e);
+                break;
+            }
+            deleted.addAll(batch);
+            metricCollector.recordBatchDeleteObjects(batch.size());
         }
+
+        return deleted;
     }
 
     @Override
@@ -165,6 +215,9 @@ public class GcsStorage extends StorageBackend {
             }
             return SizedReadableByteChannel.of(reader, SizedReadableByteChannel.exactLength(key, contentLength));
         } catch (final IOException e) {
+            if (isTimeout(e)) {
+                throw new StorageBackendTimeoutException("Timed out to fetch " + key, e);
+            }
             throw new StorageBackendException("Failed to fetch " + key, e);
         } catch (final BaseServiceException e) {
             if (e.getCode() == 404) {
@@ -173,6 +226,11 @@ public class GcsStorage extends StorageBackend {
             } else if (e.getCode() == 416) {
                 // https://cloud.google.com/storage/docs/json_api/v1/status-codes#416_Requested_Range_Not_Satisfiable
                 throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range, e);
+            } else if (isTimeout(e)) {
+                // Reaches only the metadata request. The body is streamed from the channel this
+                // method returns, so a stall mid-download surfaces to the caller as a plain
+                // IOException; ReadableByteChannel.read cannot throw StorageBackendException.
+                throw new StorageBackendTimeoutException("Timed out to fetch " + key, e);
             } else {
                 throw new StorageBackendException("Failed to fetch " + key, e);
             }

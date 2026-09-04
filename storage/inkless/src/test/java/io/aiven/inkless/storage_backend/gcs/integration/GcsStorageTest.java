@@ -27,17 +27,30 @@ import com.google.cloud.storage.StorageOptions;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.io.ByteArrayInputStream;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
+import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.storage_backend.common.fixtures.BaseStorageTest;
+import io.aiven.inkless.storage_backend.common.fixtures.TestObjectKey;
 import io.aiven.inkless.storage_backend.common.fixtures.TestUtils;
 import io.aiven.inkless.storage_backend.gcs.GcsStorage;
 import io.aiven.testcontainers.fakegcsserver.FakeGcsServerContainer;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
 class GcsStorageTest extends BaseStorageTest {
@@ -61,6 +74,28 @@ class GcsStorageTest extends BaseStorageTest {
     void setUp(final TestInfo testInfo) {
         bucketName = TestUtils.testNameToBucketName(testInfo);
         storage.create(BucketInfo.newBuilder(bucketName).build());
+    }
+
+    @Test
+    void deletesSpanningMultipleBatches() throws Exception {
+        // More than one batch, with a partial last one, so the chunking loop's bounds and the
+        // accumulation of confirmed keys across batches are both exercised.
+        try (StorageBackend storage = storage()) {
+            final Set<ObjectKey> keys = IntStream.range(0, 101)
+                .mapToObj(i -> (ObjectKey) new TestObjectKey("batched-" + i))
+                .collect(Collectors.toSet());
+            final byte[] data = "test".getBytes();
+            for (final ObjectKey key : keys) {
+                storage.upload(key, new ByteArrayInputStream(data), data.length);
+            }
+
+            assertThat(storage.delete(keys)).containsExactlyInAnyOrderElementsOf(keys);
+
+            for (final ObjectKey key : keys) {
+                assertThatThrownBy(() -> storage.fetch(key, ByteRange.maxRange()))
+                    .isInstanceOf(KeyNotFoundException.class);
+            }
+        }
     }
 
     @Override
