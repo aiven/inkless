@@ -219,6 +219,7 @@ class FileCleanerIntegrationTest {
             assertThat(files1).size().isGreaterThan(1000);
 
             controlPlane.deleteTopics(Set.of(TOPIC_ID_0, TOPIC_ID_1));
+            controlPlane.purgeDeletedLogs(0);
 
             time.sleep(Duration.ofSeconds(2).toMillis());
 
