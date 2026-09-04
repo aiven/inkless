@@ -21,7 +21,7 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, Reader}
 import io.aiven.inkless.storage_backend.common.ObjectFetcher
 import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetRequest, AdvanceCrossTierLogStartOffsetResponse, BatchInfo, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, RepairDisklessLogRequest, ListOffsetsRequest => CpListOffsetsRequest}
-import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
+import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer, TopicPurger}
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.PartitionListener
 import kafka.controller.StateChangeLogger
@@ -330,6 +330,7 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessRetentionEnforcer: Option[RetentionEnforcer] = inklessSharedState.map(new RetentionEnforcer(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
+  private val inklessTopicPurger: Option[TopicPurger] = inklessSharedState.map(new TopicPurger(_))
 
   // --- Diskless Partition Consolidation Fields ---
   private val inklessConsolidatedDisklessLogPruner: Option[ConsolidatedDisklessLogPruner] =
@@ -577,6 +578,8 @@ class ReplicaManager(val config: KafkaConfig,
       scheduler.schedule("inkless-retention-enforcer", () => inklessRetentionEnforcer.foreach(_.run()), config.logInitialTaskDelayMs, 500L)  // the real interval is inside
 
       scheduler.schedule("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run()), sharedState.config().fileCleanerInterval().toMillis, sharedState.config().fileCleanerInterval().toMillis)
+
+      scheduler.schedule("inkless-topic-purger", () => inklessTopicPurger.foreach(_.run()), sharedState.config().topicPurgerInterval().toMillis, sharedState.config().topicPurgerInterval().toMillis)
 
       // The default 30s task delay would leave EARLIEST wrong for up to 30s after every startup.
       scheduler.schedule("inkless-cross-tier-log-start-reporter", () => sharedState.crossTierLogStartReporter().run(), sharedState.config().crossTierLogStartReportInterval().toMillis, sharedState.config().crossTierLogStartReportInterval().toMillis)
@@ -3944,6 +3947,7 @@ class ReplicaManager(val config: KafkaConfig,
     inklessFetchOffsetHandler.foreach(_.close())
     inklessRetentionEnforcer.foreach(_.close())
     inklessFileCleaner.foreach(_.close())
+    inklessTopicPurger.foreach(_.close())
     inklessDeleteRecordsInterceptor.foreach(_.close())
     inklessSharedState.foreach(_.close())
     info("Shut down completely")

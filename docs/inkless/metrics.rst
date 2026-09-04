@@ -249,6 +249,27 @@ LastSuccessfulFileCleanupAgeMs   Milliseconds since the last file cleaning cycle
 ===============================  ==================================================================================================================================================================
 
 
+TopicPurger metrics
+==================================
+
+io.aiven.inkless.delete:type=TopicPurger
+----------------------------------------
+
+==============================  ============================================================================================================================================================================================================================================================================
+Attribute name                  Description                                                                                                                                                                                                                                                                 
+==============================  ============================================================================================================================================================================================================================================================================
+LastSuccessfulTopicPurgeAgeMs   Milliseconds since the last topic purge cycle completed without error, including cycles that found nothing to purge; -1 if no cycle has completed since startup. This stays fresh while a backlog remains, so pair it with TopicPurgerWorkRemain and TopicPurgerBatchesRate.
+TopicPurgerBatchesRate          Total number of batches deleted from soft-deleted logs                                                                                                                                                                                                                      
+TopicPurgerCycleSaturatedRate   Total number of topic purge cycles that hit topic.purger.max.batches.per.cycle, leaving work for the next cycle                                                                                                                                                             
+TopicPurgerErrorRate            Total number of topic purge errors                                                                                                                                                                                                                                          
+TopicPurgerFilesMarkedRate      Total number of files marked for deletion by topic purge                                                                                                                                                                                                                    
+TopicPurgerLogsRate             Total number of soft-deleted logs fully purged                                                                                                                                                                                                                              
+TopicPurgerRate                 Total number of topic purge cycles started                                                                                                                                                                                                                                  
+TopicPurgerTotalTime            Total time spent on a topic purge cycle in milliseconds                                                                                                                                                                                                                     
+TopicPurgerWorkRemain           1 if the last successful topic purge cycle left soft-deleted logs, including rows another broker holds; 0 otherwise                                                                                                                                                         
+==============================  ============================================================================================================================================================================================================================================================================
+
+
 RetentionEnforcer metrics
 ==================================
 
@@ -348,6 +369,9 @@ InitDisklessLogQueryTime                           Time spent executing the Init
 ListOffsetsLastSuccessfulQueryAgeMs                Milliseconds since the last successful ListOffsets query completed; -1 if no query has succeeded since startup             
 ListOffsetsQueryRate                               Total number of ListOffsets queries executed                                                                               
 ListOffsetsQueryTime                               Time spent executing the ListOffsets query in milliseconds                                                                 
+PurgeDeletedLogsLastSuccessfulQueryAgeMs           Milliseconds since the last successful PurgeDeletedLogs query completed; -1 if no query has succeeded since startup        
+PurgeDeletedLogsQueryRate                          Total number of PurgeDeletedLogs queries executed                                                                          
+PurgeDeletedLogsQueryTime                          Time spent executing the PurgeDeletedLogs query in milliseconds                                                            
 RepairDisklessLogLastSuccessfulQueryAgeMs          Milliseconds since the last successful RepairDisklessLog query completed; -1 if no query has succeeded since startup       
 RepairDisklessLogQueryRate                         Total number of RepairDisklessLog queries executed                                                                         
 RepairDisklessLogQueryTime                         Time spent executing the RepairDisklessLog query in milliseconds                                                           

@@ -274,6 +274,22 @@ Under ``inkless.``
   * Valid Values: [0,...]
   * Importance: low
 
+``topic.purger.interval.ms``
+  The interval with which to drain batches from soft-deleted diskless logs. DELETE_TOPICS returns after the controller stamps the logs. This interval and topic.purger.max.batches.per.cycle set how fast brokers reclaim those rows. Every broker runs its own purger.
+
+  * Type: int
+  * Default: 60000 (1 minute)
+  * Valid Values: [1,...]
+  * Importance: low
+
+``topic.purger.max.batches.per.cycle``
+  The maximum number of batches a single topic purge cycle may delete, per broker. The same bound applies to empty soft-deleted logs dropped in that cycle. The per-broker drain rate is at most this value divided by topic.purger.interval.ms, and every broker runs its own purger. With the defaults that is 20000 batches per broker per minute. A deleted topic's objects stay until the purger marks the files and FileCleaner passes file.cleaner.retention.period.ms. Each cycle is one transaction. 0 drains every remaining batch in that transaction and holds back autovacuum on the control-plane database until it commits. Use 0 only in tests or a maintenance window.
+
+  * Type: int
+  * Default: 20000
+  * Valid Values: [0,...]
+  * Importance: low
+
 
 
 -----------------

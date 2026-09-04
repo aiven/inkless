@@ -26,6 +26,7 @@ import org.jooq.SQLDialect;
 import org.jooq.generated.tables.records.BatchesRecord;
 import org.jooq.generated.tables.records.FilesRecord;
 import org.jooq.generated.tables.records.LogsRecord;
+import org.jooq.generated.tables.records.ProducerStateRecord;
 import org.jooq.impl.DSL;
 import org.jooq.impl.TableImpl;
 
@@ -37,6 +38,7 @@ import java.util.stream.Collectors;
 import static org.jooq.generated.Tables.BATCHES;
 import static org.jooq.generated.Tables.FILES;
 import static org.jooq.generated.Tables.LOGS;
+import static org.jooq.generated.Tables.PRODUCER_STATE;
 import static org.jooq.impl.DSL.asterisk;
 
 public class DBUtils {
@@ -50,6 +52,10 @@ public class DBUtils {
 
     static Set<BatchesRecord> getAllBatches(final HikariDataSource hikariDataSource) {
         return getAll(hikariDataSource, BATCHES, BatchesRecord.class);
+    }
+
+    static Set<ProducerStateRecord> getAllProducerState(final HikariDataSource hikariDataSource) {
+        return getAll(hikariDataSource, PRODUCER_STATE, ProducerStateRecord.class);
     }
 
     private static <T extends Record> Set<T> getAll(final HikariDataSource hikariDataSource,

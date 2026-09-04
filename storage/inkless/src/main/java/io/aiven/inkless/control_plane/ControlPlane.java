@@ -82,6 +82,16 @@ public interface ControlPlane extends Closeable, Configurable {
 
     void deleteTopics(Set<Uuid> topicIds);
 
+    /**
+     * Drain batches belonging to soft-deleted logs, mark newly empty files, and drop logs that have
+     * no remaining batches.
+     *
+     * @param maxBatches maximum batches to delete this call, and the cap on empty
+     *                   soft-deleted logs dropped this call; {@code 0} means unbounded
+     * @return how much work this call did
+     */
+    PurgeDeletedLogsResponse purgeDeletedLogs(int maxBatches);
+
     List<EnforceRetentionResponse> enforceRetention(List<EnforceRetentionRequest> requests, int maxBatchesPerRequest);
 
     /**
