@@ -145,6 +145,8 @@ class DeleteFilesJobTest {
             TOPIC_ID_0, TOPIC_ID_1, nonexistentTopicId
         ), durationCallback).run();
 
+        new PurgeDeletedLogsJob(time, pgContainer.getJooqCtx(), 0, durationCallback).call();
+
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).map(BatchesRecord::getTopicId).containsExactlyInAnyOrder(TOPIC_ID_2, TOPIC_ID_2);
 
         // File 1 must be `deleting` because it contained only data from the deleted TOPIC_0.
