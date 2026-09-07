@@ -32,6 +32,8 @@ import java.util.Map;
 import java.util.Set;
 
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
+import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
 import io.aiven.inkless.storage_backend.common.fixtures.TestObjectKey;
 import io.aiven.inkless.storage_backend.gcs.GcsStorage;
@@ -50,11 +52,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class GcsErrorHandlingTest {
     private static final String BUCKET_NAME = "test-bucket";
     private static final String BATCH_BOUNDARY = "batch_boundary";
-    private final GcsStorage storage = new GcsStorage(new Metrics());
+    private static final byte[] DATA = "content".getBytes();
+    private final Metrics metrics = new Metrics();
+    private final GcsStorage storage = new GcsStorage(metrics);
 
     @AfterEach
     void tearDown() throws Exception {
         storage.close();
+        metrics.close();
     }
 
     @Test
@@ -62,12 +67,49 @@ class GcsErrorHandlingTest {
         configure(wmRuntimeInfo, 1L);
         stubFor(any(anyUrl()).willReturn(aResponse().withFixedDelay(100)));
 
-        final byte[] data = "content".getBytes();
-        assertThatThrownBy(() -> storage.upload(new TestObjectKey("key"), new ByteArrayInputStream(data), data.length))
+        assertThatThrownBy(() -> upload())
             .isExactlyInstanceOf(StorageBackendTimeoutException.class)
             .hasMessage("Timed out to upload key")
             // The client wraps the socket timeout, so this pins the cause-chain walk in isTimeout.
             .hasRootCauseInstanceOf(SocketTimeoutException.class);
+    }
+
+    @Test
+    void uploadThrottled(final WireMockRuntimeInfo wmRuntimeInfo) {
+        configure(wmRuntimeInfo, 10_000L);
+        stubFor(any(anyUrl()).willReturn(aResponse().withStatus(429)));
+
+        assertThatThrownBy(() -> upload()).isExactlyInstanceOf(StorageBackendException.class);
+        assertThat(errorTotal("throttling-errors")).isEqualTo(1.0);
+    }
+
+    @Test
+    void uploadServerError(final WireMockRuntimeInfo wmRuntimeInfo) {
+        configure(wmRuntimeInfo, 10_000L);
+        stubFor(any(anyUrl()).willReturn(aResponse().withStatus(500)));
+
+        assertThatThrownBy(() -> upload()).isExactlyInstanceOf(StorageBackendException.class);
+        assertThat(errorTotal("server-errors")).isEqualTo(1.0);
+    }
+
+    @Test
+    void fetchMissingKeyCountsAsOtherError(final WireMockRuntimeInfo wmRuntimeInfo) {
+        configure(wmRuntimeInfo, 10_000L);
+        stubFor(any(anyUrl()).willReturn(aResponse().withStatus(404)));
+
+        assertThatThrownBy(() -> storage.fetch(new TestObjectKey("key"), null))
+            .isInstanceOf(KeyNotFoundException.class);
+        assertThat(errorTotal("other-errors")).isEqualTo(1.0);
+    }
+
+    @Test
+    void batchDeleteRequestFailureIsCounted(final WireMockRuntimeInfo wmRuntimeInfo) throws Exception {
+        configure(wmRuntimeInfo, 10_000L);
+        stubFor(post(urlPathEqualTo("/batch/storage/v1")).willReturn(aResponse().withStatus(503)));
+
+        // The batch request bypasses the client's retry loop, so this pins the caller-side count.
+        assertThat(storage.delete(Set.of(new TestObjectKey("key1"), new TestObjectKey("key2")))).isEmpty();
+        assertThat(errorTotal("throttling-errors")).isEqualTo(1.0);
     }
 
     @Test
@@ -120,6 +162,14 @@ class GcsErrorHandlingTest {
             + "Content-Type: application/json; charset=UTF-8\r\n"
             + "\r\n"
             + "{\"error\":{\"code\":" + code + ",\"message\":\"failed\"}}\r\n";
+    }
+
+    private void upload() throws Exception {
+        storage.upload(new TestObjectKey("key"), new ByteArrayInputStream(DATA), DATA.length);
+    }
+
+    private double errorTotal(final String sensor) {
+        return (double) metrics.metric(metrics.metricName(sensor + "-total", "gcs-client-metrics")).metricValue();
     }
 
     private void configure(final WireMockRuntimeInfo wmRuntimeInfo, final long readTimeoutMs) {

@@ -204,6 +204,7 @@ public class GcsStorage extends StorageBackend {
                 // The request itself failed, so no sub-request was applied. Deletion is idempotent, so
                 // stopping here is safe: the keys left unconfirmed stay marked for deletion and the
                 // next FileCleaner cycle retries them.
+                metricCollector.recordBatchRequestFailure(e);
                 LOGGER.warn("Batch delete request failed after {} of {} keys, stopping the pass",
                     deleted.size(), objectKeys.size(), e);
                 break;

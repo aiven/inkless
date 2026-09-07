@@ -24,7 +24,13 @@ import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.CumulativeSum;
 import org.apache.kafka.common.metrics.stats.Rate;
 
-import com.google.api.client.http.*;
+import com.google.api.client.http.GenericUrl;
+import com.google.api.client.http.HttpMethods;
+import com.google.api.client.http.HttpRequest;
+import com.google.api.client.http.HttpRequestInitializer;
+import com.google.api.client.http.HttpResponse;
+import com.google.api.client.http.HttpResponseInterceptor;
+import com.google.cloud.BaseServiceException;
 import com.google.cloud.ServiceOptions;
 import com.google.cloud.http.HttpTransportOptions;
 import com.groupcdg.pitest.annotations.CoverageIgnore;
@@ -43,12 +49,21 @@ import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_METADAT
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_UPLOAD;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_UPLOAD_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_UPLOAD_TOTAL_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OTHER_ERRORS;
+import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OTHER_ERRORS_RATE_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OTHER_ERRORS_TOTAL_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.RESUMABLE_CHUNK_UPLOAD;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.RESUMABLE_CHUNK_UPLOAD_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.RESUMABLE_CHUNK_UPLOAD_TOTAL_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.RESUMABLE_UPLOAD_INITIATE;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.RESUMABLE_UPLOAD_INITIATE_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.RESUMABLE_UPLOAD_INITIATE_TOTAL_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.SERVER_ERRORS;
+import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.SERVER_ERRORS_RATE_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.SERVER_ERRORS_TOTAL_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.THROTTLING_ERRORS;
+import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.THROTTLING_ERRORS_RATE_METRIC_NAME;
+import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.THROTTLING_ERRORS_TOTAL_METRIC_NAME;
 
 @CoverageIgnore  // tested on integration level
 public class MetricCollector {
@@ -83,6 +98,9 @@ public class MetricCollector {
     private final Sensor resumableUploadInitiateRequests;
     private final Sensor resumableChunkUploadRequests;
     private final Sensor getObjectRequests;
+    private final Sensor throttlingErrors;
+    private final Sensor serverErrors;
+    private final Sensor otherErrors;
 
     public MetricCollector(final Metrics metrics) {
         this.metrics = metrics;
@@ -116,6 +134,21 @@ public class MetricCollector {
             RESUMABLE_CHUNK_UPLOAD_RATE_METRIC_NAME,
             RESUMABLE_CHUNK_UPLOAD_TOTAL_METRIC_NAME
         );
+        throttlingErrors = createSensor(
+            THROTTLING_ERRORS,
+            THROTTLING_ERRORS_RATE_METRIC_NAME,
+            THROTTLING_ERRORS_TOTAL_METRIC_NAME
+        );
+        serverErrors = createSensor(
+            SERVER_ERRORS,
+            SERVER_ERRORS_RATE_METRIC_NAME,
+            SERVER_ERRORS_TOTAL_METRIC_NAME
+        );
+        otherErrors = createSensor(
+            OTHER_ERRORS,
+            OTHER_ERRORS_RATE_METRIC_NAME,
+            OTHER_ERRORS_TOTAL_METRIC_NAME
+        );
     }
 
     private Sensor createSensor(
@@ -129,10 +162,29 @@ public class MetricCollector {
         return sensor;
     }
 
+    // The client builds the batch request without the request initializer, so the response interceptor
+    // never sees it; its caller reports both its operations and its failure.
     void recordBatchDeleteObjects(final int objectCount) {
-        // The response interceptor sees only the outer batch request, whose path doesn't identify its operations.
         if (objectCount > 0) {
             deleteObjectRequests.record(objectCount);
+        }
+    }
+
+    void recordBatchRequestFailure(final BaseServiceException error) {
+        if (error.getCode() != BaseServiceException.UNKNOWN_CODE) {
+            recordResponseStatus(error.getCode());
+        }
+    }
+
+    private void recordResponseStatus(final int statusCode) {
+        // 503 counts as throttling, as it does for S3's SlowDown: GCS returns it under load and asks
+        // the client to back off rather than reporting a fault.
+        if (statusCode == 429 || statusCode == 503) {
+            throttlingErrors.record();
+        } else if (statusCode >= 500) {
+            serverErrors.record();
+        } else if (statusCode >= 400) {
+            otherErrors.record();
         }
     }
 
@@ -142,6 +194,8 @@ public class MetricCollector {
 
         @Override
         public void interceptResponse(final HttpResponse response) {
+            recordResponseStatus(response.getStatusCode());
+
             final HttpRequest request = response.getRequest();
             final GenericUrl url = request.getUrl();
 

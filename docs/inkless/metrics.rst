@@ -103,22 +103,28 @@ GcsStorage metrics
 io.aiven.inkless.storage:type=gcs-client-metrics
 ------------------------------------------------
 
-================================  ===================================================================
-Attribute name                    Description                                                        
-================================  ===================================================================
-object-delete-rate                Rate of delete object operations                                   
-object-delete-total               Total number of delete object operations                           
-object-get-rate                   Rate of get object operations                                      
-object-get-total                  Total number of get object operations                              
-object-metadata-get-rate          Rate of get object metadata operations                             
-object-metadata-get-total         Total number of get object metadata operations                     
-object-upload-rate                Rate of single request object upload operations                    
-object-upload-total               Total number of single request object upload operations            
-resumable-chunk-upload-rate       Rate of upload chunk operations as part of resumable upload        
-resumable-chunk-upload-total      Total number of upload chunk operations as part of resumable upload
-resumable-upload-initiate-rate    Rate of initiate resumable upload operations                       
-resumable-upload-initiate-total   Total number of initiate resumable upload operations               
-================================  ===================================================================
+================================  ========================================================================================
+Attribute name                    Description                                                                             
+================================  ========================================================================================
+object-delete-rate                Rate of delete object operations                                                        
+object-delete-total               Total number of delete object operations                                                
+object-get-rate                   Rate of get object operations                                                           
+object-get-total                  Total number of get object operations                                                   
+object-metadata-get-rate          Rate of get object metadata operations                                                  
+object-metadata-get-total         Total number of get object metadata operations                                          
+object-upload-rate                Rate of single request object upload operations                                         
+object-upload-total               Total number of single request object upload operations                                 
+other-errors-rate                 Rate of other errors (non-2xx responses other than throttling and server errors)        
+other-errors-total                Total number of other errors (non-2xx responses other than throttling and server errors)
+resumable-chunk-upload-rate       Rate of upload chunk operations as part of resumable upload                             
+resumable-chunk-upload-total      Total number of upload chunk operations as part of resumable upload                     
+resumable-upload-initiate-rate    Rate of initiate resumable upload operations                                            
+resumable-upload-initiate-total   Total number of initiate resumable upload operations                                    
+server-errors-rate                Rate of server errors (other 5xx responses)                                             
+server-errors-total               Total number of server errors (other 5xx responses)                                     
+throttling-errors-rate            Rate of throttling errors (429 and 503 responses)                                       
+throttling-errors-total           Total number of throttling errors (429 and 503 responses)                               
+================================  ========================================================================================
 
 
 InklessFetch metrics
