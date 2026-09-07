@@ -46,9 +46,12 @@ public class GcsStorageConfig extends AbstractConfig {
     private static final String GCS_READ_TIMEOUT_DOC = "GCS response read timeout in milliseconds. "
         + "Bounds each socket read of a response, not the whole request: connection setup is bounded "
         + "by gcs.connect.timeout, request-body writes are not covered, and a response that arrives "
-        + "in several reads can take longer. A timed out read is retried by the GCS client for a read "
-        + "operation, but not for an upload, whose attempts are bounded by "
-        + "inkless.produce.max.upload.attempts.";
+        + "in several reads can take longer. Whether a timed out read ends the operation depends on "
+        + "how the GCS client classifies the request. A read and a resumable upload's chunk write are "
+        + "idempotent, so the client retries them under its own retry budget and this value bounds an "
+        + "attempt rather than the operation. A single-request upload and a resumable session initiate "
+        + "are not retried, so for those it bounds the attempt that "
+        + "inkless.produce.max.upload.attempts then counts.";
     private static final long GCS_READ_TIMEOUT_DEFAULT = 1_000;
 
     static final String GCP_CREDENTIALS_JSON_CONFIG = "gcs.credentials.json";

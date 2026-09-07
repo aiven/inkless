@@ -27,6 +27,8 @@ import com.google.cloud.storage.Blob;
 import com.google.cloud.storage.BlobId;
 import com.google.cloud.storage.BlobInfo;
 import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageBatch;
+import com.google.cloud.storage.StorageBatchResult;
 import com.google.cloud.storage.StorageOptions;
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
@@ -39,11 +41,12 @@ import java.net.SocketTimeoutException;
 import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.TreeMap;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
@@ -63,6 +66,9 @@ public class GcsStorage extends StorageBackend {
     // client's maximum keeps that wait clear of gcs.read.timeout; a default cleaner cycle of 20000
     // files then costs 400 round trips, well inside file.cleaner.interval.ms.
     private static final int MAX_DELETE_BATCH_SIZE = 50;
+
+    // https://cloud.google.com/storage/docs/retry-strategy#client-libraries
+    private static final Set<Integer> THROTTLE_RESPONSE_CODES = Set.of(429, 503);
 
     // A single-request upload saves the round trip a resumable session spends on initiate, but it
     // buffers the object into one array and cannot stream, so its cost per megabyte is higher. The
@@ -175,30 +181,56 @@ public class GcsStorage extends StorageBackend {
     public Set<ObjectKey> delete(final Set<ObjectKey> keys) throws StorageBackendException {
         final List<ObjectKey> objectKeys = new ArrayList<>(keys);
         final Set<ObjectKey> deleted = new HashSet<>();
+        // Count the failures by response code instead of logging one line per key: a pass that fails
+        // for every key repeats on every FileCleaner cycle, so per-key lines grow with the worklist.
+        final Map<Integer, Integer> failuresByCode = new TreeMap<>();
 
         for (int i = 0; i < objectKeys.size(); i += MAX_DELETE_BATCH_SIZE) {
             final List<ObjectKey> batch = objectKeys.subList(
                 i,
                 Math.min(i + MAX_DELETE_BATCH_SIZE, objectKeys.size())
             );
-            final Set<BlobId> ids = batch.stream()
-                    .map(k -> BlobId.of(this.bucketName, k.value()))
-                    .collect(Collectors.toSet());
+            // Storage.delete(Iterable) collapses a failed sub-request into the same false its callback
+            // uses for an absent blob, which loses the distinction this method has to return. Driving
+            // the batch keeps it: a result carries true or false, and a failure throws.
+            final StorageBatch storageBatch = storage.batch();
+            final Map<ObjectKey, StorageBatchResult<Boolean>> results = new LinkedHashMap<>();
+            for (final ObjectKey key : batch) {
+                results.put(key, storageBatch.delete(BlobId.of(this.bucketName, key.value())));
+            }
             try {
-                // storage.delete returns a List<Boolean> of deleted-vs-already-absent, but a genuine
-                // failure surfaces as a thrown BaseServiceException rather than a per-blob flag, so a
-                // batch stays all-or-nothing: on success every key in it is gone (idempotent), and on
-                // failure none of it is confirmed.
-                storage.delete(ids);
+                storageBatch.submit();
             } catch (final BaseServiceException e) {
-                // Deletion is idempotent, so stopping here is safe: the keys left unconfirmed stay
-                // marked for deletion and the next FileCleaner cycle retries them.
-                LOGGER.warn("Batch delete failed after {} of {} keys, stopping the pass",
+                // The request itself failed, so no sub-request was applied. Deletion is idempotent, so
+                // stopping here is safe: the keys left unconfirmed stay marked for deletion and the
+                // next FileCleaner cycle retries them.
+                LOGGER.warn("Batch delete request failed after {} of {} keys, stopping the pass",
                     deleted.size(), objectKeys.size(), e);
                 break;
             }
-            deleted.addAll(batch);
-            metricCollector.recordBatchDeleteObjects(batch.size());
+            int confirmed = 0;
+            for (final var result : results.entrySet()) {
+                try {
+                    // Called to throw on a failed sub-request. The result is ignored: deleted (true) and
+                    // already absent (false) both leave the key gone.
+                    result.getValue().get();
+                    deleted.add(result.getKey());
+                    confirmed++;
+                } catch (final BaseServiceException e) {
+                    failuresByCode.merge(e.getCode(), 1, Integer::sum);
+                }
+            }
+            metricCollector.recordBatchDeleteObjects(confirmed);
+        }
+
+        if (!failuresByCode.isEmpty()) {
+            // Throttling is backpressure the next FileCleaner cycle retries; any other code needs an
+            // operator, so it must not sit at INFO while the worklist stops draining.
+            if (THROTTLE_RESPONSE_CODES.containsAll(failuresByCode.keySet())) {
+                LOGGER.info("Delete failures by response code {}", failuresByCode);
+            } else {
+                LOGGER.warn("Delete failures by response code {}", failuresByCode);
+            }
         }
 
         return deleted;
