@@ -46,14 +46,6 @@ public class InklessFetchMetrics {
     private static final String FIND_BATCHES_TIME_DOC = "Time spent finding batch coordinates in the control plane in milliseconds";
     private static final String FETCH_PLAN_TIME = "FetchPlanTime";
     private static final String FETCH_PLAN_TIME_DOC = "Time spent creating the fetch plan in milliseconds";
-    private static final String CACHE_QUERY_TIME = "CacheQueryTime";
-    private static final String CACHE_QUERY_TIME_DOC = "Time spent querying the object cache in milliseconds";
-    private static final String CACHE_STORE_TIME = "CacheStoreTime";
-    private static final String CACHE_STORE_TIME_DOC = "Time spent storing entries in the object cache in milliseconds";
-    private static final String CACHE_HIT_COUNT = "CacheHitCount";
-    private static final String CACHE_HIT_COUNT_DOC = "Rate of cache hits per second";
-    private static final String CACHE_MISS_COUNT = "CacheMissCount";
-    private static final String CACHE_MISS_COUNT_DOC = "Rate of cache misses per second";
     private static final String CACHE_ENTRY_SIZE = "CacheEntrySize";
     private static final String CACHE_ENTRY_SIZE_DOC = "Size of individual cache entries in bytes";
     private static final String CACHE_SIZE = "CacheSize";
@@ -133,10 +125,6 @@ public class InklessFetchMetrics {
             new MetricNameTemplate(FETCH_TOTAL_TIME, GROUP, FETCH_TOTAL_TIME_DOC),
             new MetricNameTemplate(FIND_BATCHES_TIME, GROUP, FIND_BATCHES_TIME_DOC),
             new MetricNameTemplate(FETCH_PLAN_TIME, GROUP, FETCH_PLAN_TIME_DOC),
-            new MetricNameTemplate(CACHE_QUERY_TIME, GROUP, CACHE_QUERY_TIME_DOC),
-            new MetricNameTemplate(CACHE_STORE_TIME, GROUP, CACHE_STORE_TIME_DOC),
-            new MetricNameTemplate(CACHE_HIT_COUNT, GROUP, CACHE_HIT_COUNT_DOC),
-            new MetricNameTemplate(CACHE_MISS_COUNT, GROUP, CACHE_MISS_COUNT_DOC),
             new MetricNameTemplate(CACHE_ENTRY_SIZE, GROUP, CACHE_ENTRY_SIZE_DOC),
             new MetricNameTemplate(CACHE_SIZE, GROUP, CACHE_SIZE_DOC),
             new MetricNameTemplate(FETCH_FIRST_BYTE_TIME, GROUP, FETCH_FIRST_BYTE_TIME_DOC),
@@ -176,12 +164,8 @@ public class InklessFetchMetrics {
     private final Histogram fetchTimeHistogram;
     private final Histogram findBatchesTimeHistogram;
     private final Histogram fetchPlanTimeHistogram;
-    private final Histogram cacheQueryTimeHistogram;
-    private final Histogram cacheStoreTimeHistogram;
     private final Histogram cacheEntrySize;
     private final Gauge<Long> cacheSize;
-    private final Meter cacheHits;
-    private final Meter cacheMisses;
     private final Histogram fetchFirstByteTimeHistogram;
     private final Histogram fetchFileTimeHistogram;
     private final Histogram fetchCompletionTimeHistogram;
@@ -221,10 +205,6 @@ public class InklessFetchMetrics {
         fetchTimeHistogram = metricsGroup.newHistogram(FETCH_TOTAL_TIME, true, Map.of());
         findBatchesTimeHistogram = metricsGroup.newHistogram(FIND_BATCHES_TIME, true, Map.of());
         fetchPlanTimeHistogram = metricsGroup.newHistogram(FETCH_PLAN_TIME, true, Map.of());
-        cacheQueryTimeHistogram = metricsGroup.newHistogram(CACHE_QUERY_TIME, true, Map.of());
-        cacheStoreTimeHistogram = metricsGroup.newHistogram(CACHE_STORE_TIME, true, Map.of());
-        cacheHits = metricsGroup.newMeter(CACHE_HIT_COUNT, "hits", TimeUnit.SECONDS, Map.of());
-        cacheMisses = metricsGroup.newMeter(CACHE_MISS_COUNT, "misses", TimeUnit.SECONDS, Map.of());
         fetchFirstByteTimeHistogram = metricsGroup.newHistogram(FETCH_FIRST_BYTE_TIME, true, Map.of());
         fetchFileTimeHistogram = metricsGroup.newHistogram(FETCH_FILE_TIME, true, Map.of());
         fetchCompletionTimeHistogram = metricsGroup.newHistogram(FETCH_COMPLETION_TIME, true, Map.of());
@@ -270,22 +250,6 @@ public class InklessFetchMetrics {
         fetchPlanTimeHistogram.update(durationMs);
     }
 
-    public void cacheQueryFinished(final long durationMs) {
-        cacheQueryTimeHistogram.update(durationMs);
-    }
-
-    public void cacheStoreFinished(final long durationMs) {
-        cacheStoreTimeHistogram.update(durationMs);
-    }
-
-    public void cacheHit(final boolean hit) {
-        if (hit) {
-            cacheHits.mark();
-        } else {
-            cacheMisses.mark();
-        }
-    }
-
     public void cacheEntrySize(final int size) {
         cacheEntrySize.update(size);
     }
@@ -323,10 +287,6 @@ public class InklessFetchMetrics {
         metricsGroup.removeMetric(FETCH_FIRST_BYTE_TIME);
         metricsGroup.removeMetric(FETCH_FILE_TIME);
         metricsGroup.removeMetric(FETCH_PLAN_TIME);
-        metricsGroup.removeMetric(CACHE_QUERY_TIME);
-        metricsGroup.removeMetric(CACHE_STORE_TIME);
-        metricsGroup.removeMetric(CACHE_HIT_COUNT);
-        metricsGroup.removeMetric(CACHE_MISS_COUNT);
         metricsGroup.removeMetric(CACHE_SIZE);
         metricsGroup.removeMetric(CACHE_ENTRY_SIZE);
         metricsGroup.removeMetric(FIND_BATCHES_TIME);
