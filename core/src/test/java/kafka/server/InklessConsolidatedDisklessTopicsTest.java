@@ -81,7 +81,9 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableSet;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -1171,26 +1173,27 @@ public class InklessConsolidatedDisklessTopicsTest {
 
         try (var consumer = new KafkaConsumer<String, String>(consumerConfigs)) {
             consumer.subscribe(Collections.singletonList(topicName));
-            var offsetsByPartition = new HashMap<TopicPartition, List<Long>>();
-            var consumedCount = new AtomicLong(0);
+            // Collect distinct offsets. A subscribed consumer can legally be re-delivered records it
+            // has already seen: a rebalance before the first auto-commit resets the partition to the
+            // earliest offset, so the stream restarts at 0. Counting raw deliveries would then both
+            // satisfy the wait early and make a contiguity check over delivery order fail.
+            var offsetsByPartition = new HashMap<TopicPartition, NavigableSet<Long>>();
             TestUtils.waitForCondition(() -> {
                 var records = consumer.poll(Duration.ofMillis(1000));
-                records.forEach(r -> {
-                    var tp = new TopicPartition(r.topic(), r.partition());
-                    offsetsByPartition.computeIfAbsent(tp, __ -> new ArrayList<>()).add(r.offset());
-                });
-                consumedCount.addAndGet(records.count());
-                return consumedCount.get() >= expectedTotalRecords;
+                records.forEach(r -> offsetsByPartition
+                    .computeIfAbsent(new TopicPartition(r.topic(), r.partition()), __ -> new TreeSet<>())
+                    .add(r.offset()));
+                return distinctOffsetCount(offsetsByPartition) >= expectedTotalRecords;
             }, 60_000, "Not all records have been consumed");
-            // Monotonicity + no gaps per partition
-            offsetsByPartition.forEach((tp, offsets) -> {
-                for (int i = 1; i < offsets.size(); i++) {
-                    long prev = offsets.get(i - 1);
-                    long cur = offsets.get(i);
-                    assertEquals(prev + 1, cur, "Offset gap or reordering for " + tp);
-                }
-            });
+            // No gaps per partition: the distinct offsets form one unbroken run.
+            offsetsByPartition.forEach((tp, offsets) ->
+                assertEquals(offsets.last() - offsets.first() + 1, offsets.size(),
+                    "Offset gap for " + tp + " over " + offsets.first() + ".." + offsets.last()));
         }
+    }
+
+    private static int distinctOffsetCount(Map<TopicPartition, NavigableSet<Long>> offsetsByPartition) {
+        return offsetsByPartition.values().stream().mapToInt(Set::size).sum();
     }
 
     private static int countObjectsWithPrefix(S3Client s3, String bucket, String prefix) {
