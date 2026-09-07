@@ -92,7 +92,7 @@ gh pr create --base inkless-4.0 --title "Sync inkless-4.0 to upstream 4.0.1"
 
 ### Version Files
 
-These files need the `-inkless` suffix pattern:
+These files need the `inkless` suffix pattern:
 
 #### gradle.properties
 ```properties
@@ -100,13 +100,17 @@ version=4.0.1-inkless
 ```
 
 #### tests/kafkatest/__init__.py
+This value must stay PEP 440 (https://peps.python.org/pep-0440/) compliant:
+Use `+inkless` as a local version label instead.
 ```python
-__version__ = '4.0.1.inkless'
+__version__ = '4.0.1+inkless'
 ```
 
 #### tests/kafkatest/version.py
+Must match `gradle.properties` exactly (verified by the `:verifyVersionConsistency`
+Gradle task); don't add an extra `-SNAPSHOT` suffix on top of `-inkless`.
 ```python
-DEV_VERSION = KafkaVersion("4.0.1-inkless-SNAPSHOT")
+DEV_VERSION = KafkaVersion("4.0.1-inkless")
 ```
 
 #### docs/js/templateData.js
@@ -124,16 +128,17 @@ var context={
 DEFAULT_FIX_VERSION = "4.0.1-inkless"
 ```
 
-### POM Files (Keep Upstream Version)
+### POM files (use the `-inkless` version)
 
-These files use standard Apache Kafka versioning for Maven Central compatibility:
+These files must match `gradle.properties` exactly; the `:verifyVersionConsistency`
+Gradle task enforces this:
 
 - `streams/quickstart/pom.xml`
 - `streams/quickstart/java/pom.xml`
 - `streams/quickstart/java/src/main/resources/archetype-resources/pom.xml`
 
 ```xml
-<version>4.0.1</version>  <!-- NOT 4.0.1-inkless -->
+<version>4.0.1-inkless</version>
 ```
 
 ### Dependencies (gradle/dependencies.gradle)
@@ -196,7 +201,7 @@ git push -u origin inkless-4.0-sync-4.0.1
 
 Most common scenario:
 
-1. Resolve version files with `-inkless` pattern
+1. Resolve version files with `inkless` pattern
 2. Commit merge
 3. Verify build
 

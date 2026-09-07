@@ -91,6 +91,13 @@ For each config file (gradle.properties, build.gradle, gradle/dependencies.gradl
    - Keeps inkless module configuration
    - Accepts upstream dependency/plugin versions
 
+Also check auxiliary version files enforced by `:verifyVersionConsistency`:
+- `tests/kafkatest/__init__.py`: `__version__` must stay PEP 440 compliant. Use `{X.Y.Z}.dev0+inkless` when `gradle.properties` ends with `-SNAPSHOT`, otherwise use `{X.Y.Z}+inkless`; never a bare `.inkless`/`-inkless` suffix.
+- `tests/kafkatest/version.py`, `committer-tools/kafka-merge-pr.py`, and
+  `streams/quickstart/*.pom`: must match `gradle.properties` exactly.
+
+Run `./gradlew verifyVersionConsistency` to confirm before moving on.
+
 Wait for approval before applying changes.
 ```
 

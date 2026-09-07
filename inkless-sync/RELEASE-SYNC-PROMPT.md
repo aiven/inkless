@@ -45,7 +45,7 @@ I need to sync the inkless release branch with an upstream Apache Kafka release.
 6. **Resolve conflicts**: When conflicts occur, resolve them following these patterns:
    - **Version files**: Use `{upstream_version}-inkless` pattern (e.g., `4.0.1-inkless`)
    - **gradle/dependencies.gradle**: Add upstream new deps, verify inkless deps are actually used
-   - **streams/quickstart POMs**: Keep upstream version (no -inkless suffix)
+   - **streams/quickstart POMs**: Keep upstream version (no `inkless` suffix)
    - **Test files**: Accept upstream changes, keep inkless-specific code
    - **.gitignore**: Keep both inkless and upstream entries
 
@@ -77,16 +77,16 @@ Please help me execute this release sync process.
 
 ### Version Files
 
-Files that need `-inkless` suffix:
+Files that need `inkless` suffix:
 - `gradle.properties` → `version=4.0.1-inkless`
-- `tests/kafkatest/__init__.py` → `__version__ = '4.0.1.inkless'`
-- `tests/kafkatest/version.py` → `DEV_VERSION = KafkaVersion("4.0.1-inkless-SNAPSHOT")`
+- `tests/kafkatest/__init__.py` → `__version__ = '4.0.1+inkless'` (PEP 440 local version label)
+- `tests/kafkatest/version.py` → `DEV_VERSION = KafkaVersion("4.0.1-inkless")` (must match `gradle.properties` exactly; verified by the `:verifyVersionConsistency` Gradle task)
 - `docs/js/templateData.js` → `"fullDotVersion": "4.0.1-inkless"`
 - `committer-tools/kafka-merge-pr.py` → `DEFAULT_FIX_VERSION = "4.0.1-inkless"`
 
-### POM Files (Keep Upstream Version)
+### POM files (use the `-inkless` version)
 
-These files use standard Apache Kafka versioning:
+These files must match `gradle.properties` exactly (`:verifyVersionConsistency` enforces this):
 - `streams/quickstart/pom.xml`
 - `streams/quickstart/java/pom.xml`
 - `streams/quickstart/java/src/main/resources/archetype-resources/pom.xml`

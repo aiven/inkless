@@ -142,18 +142,18 @@ Common conflict areas when syncing release branches:
 | File | Reason | Resolution |
 |------|--------|------------|
 | `gradle.properties` | Version changes | Use `{version}-inkless` pattern |
-| `tests/kafkatest/__init__.py` | Version changes | Use `{version}.inkless` pattern |
-| `tests/kafkatest/version.py` | DEV_VERSION | Use `{version}-inkless-SNAPSHOT` |
+| `tests/kafkatest/__init__.py` | Version changes | Use `{version}+inkless` (PEP 440 local version label) |
+| `tests/kafkatest/version.py` | DEV_VERSION | Use `{version}-inkless` (matches `gradle.properties` exactly) |
 | `docs/js/templateData.js` | Version strings | Use inkless version pattern |
 | `committer-tools/kafka-merge-pr.py` | DEFAULT_FIX_VERSION | Use inkless version |
 | `gradle/dependencies.gradle` | Dependency changes | Add new upstream deps, verify inkless deps are used |
-| `streams/quickstart/*.pom` | Maven versions | Keep upstream version (no -inkless) |
+| `streams/quickstart/**/pom.xml` | Maven versions | Use `{version}-inkless` (matches `gradle.properties` exactly) |
 | `*.scala` / `*.java` | Import organization | Accept upstream, remove duplicates |
 | `.gitignore` | Inkless-specific entries | Keep both inkless and upstream |
 
 ### Conflict Resolution Patterns
 
-#### Version Files (use `-inkless` suffix)
+#### Version Files (use `inkless` suffix)
 
 ```properties
 # gradle.properties
@@ -162,10 +162,14 @@ version=4.0.1-inkless
 
 ```python
 # tests/kafkatest/__init__.py
-__version__ = '4.0.1.inkless'
+# This value must stay PEP 440 (https://peps.python.org/pep-0440/) compliant:
+# Use "+inkless" as a local version label.
+__version__ = '4.0.1+inkless'
 
 # tests/kafkatest/version.py
-DEV_VERSION = KafkaVersion("4.0.1-inkless-SNAPSHOT")
+# Must match gradle.properties exactly (verified by the ':verifyVersionConsistency'
+# Gradle task); don't add an extra "-SNAPSHOT" suffix on top of "-inkless".
+DEV_VERSION = KafkaVersion("4.0.1-inkless")
 ```
 
 ```javascript
@@ -178,11 +182,12 @@ var context={
 };
 ```
 
-#### POM Files (keep upstream version)
+#### POM files (use the `-inkless` version)
 
-The `streams/quickstart` POMs use standard Apache versioning for Maven Central compatibility:
+The `streams/quickstart` POMs must match `gradle.properties` exactly; the
+`:verifyVersionConsistency` Gradle task enforces this:
 ```xml
-<version>4.0.1</version>  <!-- NOT 4.0.1-inkless -->
+<version>4.0.1-inkless</version>
 ```
 
 #### Dependencies (merge and verify)
