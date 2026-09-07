@@ -222,7 +222,7 @@ public class InklessFetchMetrics {
         partitionCorruptRecordRate = metricsGroup.newMeter(PARTITION_CORRUPT_RECORD_RATE, "errors", TimeUnit.SECONDS, Map.of());
         partitionControlPlaneErrorRate = metricsGroup.newMeter(PARTITION_CONTROL_PLANE_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
         cacheEntrySize = metricsGroup.newHistogram(CACHE_ENTRY_SIZE, true, Map.of());
-        cacheSize = metricsGroup.newGauge(CACHE_SIZE, () -> cache.size());
+        cacheSize = metricsGroup.newGauge(CACHE_SIZE, cache::size);
         recentDataRequestRate = metricsGroup.newMeter(RECENT_DATA_REQUEST_RATE, "requests", TimeUnit.SECONDS, Map.of());
         laggingConsumerRequestRate = metricsGroup.newMeter(LAGGING_CONSUMER_REQUEST_RATE, "requests", TimeUnit.SECONDS, Map.of());
         laggingConsumerRejectedRate = metricsGroup.newMeter(LAGGING_CONSUMER_REQUEST_REJECTED_RATE, "rejections", TimeUnit.SECONDS, Map.of());
@@ -400,11 +400,11 @@ public class InklessFetchMetrics {
      * This typically corresponds to:
      * - RejectedExecutionException: Queue full (AbortPolicy triggered)
      *
-     * In this case, backpressure is applied: the consumer receives an error response
+     * <p>In this case, backpressure is applied: the consumer receives an error response
      * and backs off via fetch purgatory.
      * Metric: LaggingConsumerRejectedRate
      *
-     * High rejection rate indicates:
+     * <p>High rejection rate indicates:
      * - Sustained lagging consumer load exceeding capacity
      * - May need to increase fetch.lagging.consumer.thread.pool.size
      * - Or increase fetch.lagging.consumer.request.rate.limit
