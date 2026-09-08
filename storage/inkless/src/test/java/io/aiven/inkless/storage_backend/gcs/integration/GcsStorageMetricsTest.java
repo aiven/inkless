@@ -54,7 +54,10 @@ import static org.assertj.core.api.InstanceOfAssertFactories.DOUBLE;
 @Testcontainers
 public class GcsStorageMetricsTest {
     private static final String GCS_CLIENT_METRICS = "gcs-client-metrics";
-    private static final int RESUMABLE_UPLOAD_CHUNK_SIZE = 256 * 1024;
+    // Below the backend's direct-upload threshold, so these uploads take the single-request path.
+    private static final int DIRECT_UPLOAD_SIZE = 256 * 1024;
+    // Above it, so the upload falls back to a resumable session.
+    private static final int RESUMABLE_UPLOAD_SIZE = 1024 * 1024 + 1;
 
     @Container
     static final FakeGcsServerContainer GCS_SERVER = new FakeGcsServerContainer();
@@ -82,7 +85,6 @@ public class GcsStorageMetricsTest {
         final Map<String, Object> configs = Map.of(
             "gcs.bucket.name", bucketName,
             "gcs.endpoint.url", GCS_SERVER.url(),
-            "gcs.resumable.upload.chunk.size", Integer.toString(RESUMABLE_UPLOAD_CHUNK_SIZE),
             "gcs.credentials.default", "false"
         );
         storage.configure(configs);
@@ -90,7 +92,7 @@ public class GcsStorageMetricsTest {
 
     @Test
     void metricsShouldBeReported() throws Exception {
-        final byte[] data = new byte[RESUMABLE_UPLOAD_CHUNK_SIZE + 1];
+        final byte[] data = new byte[DIRECT_UPLOAD_SIZE];
 
         final ObjectKey key = new TestObjectKey("x");
 
@@ -129,6 +131,31 @@ public class GcsStorageMetricsTest {
             .isGreaterThan(0.0);
         assertThat(getMetric("object-delete-total").metricValue())
             .isEqualTo(3.0);
+
+        // All three uploads are under the direct-upload threshold, so they are counted here and the
+        // resumable counters stay at zero.
+        assertThat(getMetric("object-upload-rate").metricValue())
+            .asInstanceOf(DOUBLE)
+            .isGreaterThan(0.0);
+        assertThat(getMetric("object-upload-total").metricValue())
+            .isEqualTo(3.0);
+        assertThat(getMetric("resumable-upload-initiate-total").metricValue())
+            .isEqualTo(0.0);
+        assertThat(getMetric("resumable-chunk-upload-total").metricValue())
+            .isEqualTo(0.0);
+    }
+
+    @Test
+    void uploadAboveThresholdIsCountedAsResumable() throws Exception {
+        storage.upload(new TestObjectKey("big"), new ByteArrayInputStream(new byte[RESUMABLE_UPLOAD_SIZE]), RESUMABLE_UPLOAD_SIZE);
+
+        assertThat(getMetric("resumable-upload-initiate-total").metricValue())
+            .isEqualTo(1.0);
+        assertThat(getMetric("resumable-chunk-upload-total").metricValue())
+            .asInstanceOf(DOUBLE)
+            .isGreaterThan(0.0);
+        assertThat(getMetric("object-upload-total").metricValue())
+            .isEqualTo(0.0);
     }
 
     private KafkaMetric getMetric(String metricName) {
