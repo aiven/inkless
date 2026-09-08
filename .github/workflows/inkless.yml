@@ -282,7 +282,12 @@ jobs:
           THREAD_DUMP_URL: ${{ steps.thread-dump-upload-artifact.outputs.artifact-url }}
           GRADLE_TEST_EXIT_CODE: ${{ steps.junit-test.outputs.exitcode }}
         run: |
-          python .github/scripts/junit.py --path build/junit-xml >> $GITHUB_STEP_SUMMARY
+          # Export the catalog here so parameterized display names are checked on
+          # PRs. Kafka CI's Collate Test Catalog job is the only other caller of
+          # --export-test-catalog, and it does not run on PRs targeting main.
+          python .github/scripts/junit.py \
+           --path build/junit-xml \
+           --export-test-catalog ./test-catalog >> $GITHUB_STEP_SUMMARY
       - name: Archive Build Scan
         if: always()
         uses: actions/upload-artifact@v4
