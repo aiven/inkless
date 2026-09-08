@@ -92,7 +92,11 @@ def clean_test_name(test_name: str) -> str:
     cleaned = test_name.strip("\"").rstrip("()")
     m = method_matcher.match(cleaned)
     if m is None:
-        raise ValueError(f"Could not parse test name '{test_name}'. Expected a valid Java method name.")
+        # Custom @ParameterizedTest display names (for example "{0}") aren't
+        # required to look like a Java method name at all, so fall back to
+        # using the cleaned display name as-is instead of failing the whole
+        # catalog export.
+        return cleaned
     else:
         return m.group(1)
 
