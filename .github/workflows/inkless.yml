@@ -101,13 +101,13 @@ jobs:
           compression-level: 9
           if-no-files-found: ignore
       - name: Annotate checkstyle errors
-        # Avoid duplicate annotations, only run on java 21
+        # Avoid duplicate annotations, only run on java 25
         if: failure()
         run: python .github/scripts/checkstyle.py
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
       # - name: Annotate Rat errors
-      #   # Avoid duplicate annotations, only run on java 21
+      #   # Avoid duplicate annotations, only run on java 25
       #   if: failure()
       #   run: python .github/scripts/rat.py
       #   env:
@@ -283,14 +283,6 @@ jobs:
           GRADLE_TEST_EXIT_CODE: ${{ steps.junit-test.outputs.exitcode }}
         run: |
           python .github/scripts/junit.py --path build/junit-xml >> $GITHUB_STEP_SUMMARY
-      - name: Archive Test Catalog
-        if: ${{ always() && matrix.java == '21' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-catalog
-          path: test-catalog
-          compression-level: 9
-          if-no-files-found: ignore
       - name: Archive Build Scan
         if: always()
         uses: actions/upload-artifact@v4
