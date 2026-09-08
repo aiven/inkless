@@ -5,7 +5,7 @@
 Before sending data to the Diskless topic, the producer will request topic metadata from the Kafka broker.
 Given that Diskless topics are not replicated, and have no leaders, the metadata will return any broker in the cluster;
 or find brokers within the same availability zone (AZ) if the client has included the AZ within the `client.id` property
-following the pattern `client.id=...,diskless_az=<AZ>`. 
+following the pattern `client.id=...,diskless_az=<AZ>`.
 
 When writing to Diskless topics, the following stages are involved when a Produce request is received:
 
@@ -23,7 +23,7 @@ e.g. for AWS S3 the upload latency depends on the segment size, with observed P9
 Committing batches to the Batch Coordinator depends on the batches per commit, and observed P99 latences for the PG implementation are around ~10-20ms.
 
 For brokers to saturate the rotation and trigger faster uploads to increase throughput, concurrent producer requests are needed.
-At the moment, this can only be achieved by using multiple producers and partitions, 
+At the moment, this can only be achieved by using multiple producers and partitions,
 as the current implementation of the Kafka producer does not support concurrent requests from the same producer,
 and a single request size is limited to the number of partitions: # partitions * max.message.size (1MiB default).
 
@@ -32,7 +32,7 @@ and a single request size is limited to the number of partitions: # partitions *
 > Without any tuning, the producer will be able to create up to 1MiB request (default `max.request.size`) per request.
 > and it will depend on how many partitions are available to the producer to get to that size
 > based on the batch.size: batch.size * partitions = request size.
-> 
+>
 > Considering the latencies of the Inkless pipeline, the throuhgput will be bound to 4 request per second
 > as the WAL buffer is not saturated and will rotate every 250ms (default `inkless.produce.commit.interval.ms`).
 
@@ -56,11 +56,11 @@ In this case, with 8 partitions to write to, the producer will be able to send u
 > We have plans to improve this in the future by splitting the request into multiple WAL segments,
 > but this is not yet implemented.
 
-Having low concurrency (e.g. 1 producer per AZ) could lead to higher latencies, 
+Having low concurrency (e.g. 1 producer per AZ) could lead to higher latencies,
 as the producer will wait for the linger.ms time before sending the request;
 and a single request per producer will be processed by the broker at a time.
 
-With default settings, a single producer, writing to a single partition will have a very low throughput and high latencies, 
+With default settings, a single producer, writing to a single partition will have a very low throughput and high latencies,
 as it will only be able to send a single request at a time:
 
 ```yaml
@@ -76,7 +76,7 @@ subscriptionsPerTopic: 1
 consumerPerSubscription: 12
 ```
 
-The producer will be bound to a maximum request size of 1 batch (16KiB by default) per request, 
+The producer will be bound to a maximum request size of 1 batch (16KiB by default) per request,
 with a request rate of 4 requests per second in average:
 
 ![](./img/request-rate-1.png)
@@ -89,7 +89,7 @@ And the latencies will pile up trying to achieve the requested throughput of 10M
 > These graphs show 3 producers (one per AZ) writing to a cluster of 3 brokers (one per AZ as well),
 > which effectively means a single producer per broker.
 
-So, unless your throughput is _very_ low, you will need to increase the number of partitions, 
+So, unless your throughput is _very_ low, you will need to increase the number of partitions,
 and producer concurrency to achieve the desired throughput and latencies.
 
 > [!IMPORTANT]
@@ -159,7 +159,7 @@ For instance, to achieve 120MiB/s, we can increase the number of producers to 4 
 Even with lower produce latency as there are more producers writing to the same broker, rotating files faster, and uploading more data concurrently.
 
 > [!NOTE]
-> It is still early days for the Inkless implementation, and the performance numbers are only examples of how the tuning parameters and concurrency affect latency. 
+> It is still early days for the Inkless implementation, and the performance numbers are only examples of how the tuning parameters and concurrency affect latency.
 > Improvements are under active research and development.
 
 ## Read path
@@ -191,25 +191,28 @@ Consumer fetch performance is heavily influenced by caching. Inkless implements 
 
 Inkless achieves per-AZ cache locality through **deterministic partition assignment** and **AZ-aware metadata routing**, not a distributed cache. Each broker maintains its own independent local cache (Caffeine), and the system ensures clients in the same AZ consistently connect to the same broker for a given partition.
 
-| Property         | How It Works                                                                      |
-|------------------|-----------------------------------------------------------------------------------|
-| Cache per broker | Each broker has an independent local Caffeine cache                               |
-| AZ locality      | Metadata routing directs clients to brokers in their AZ                           |
-| Partition affinity | Deterministic hash ensures same partition maps to same broker within an AZ      |
-| Result           | Clients in the same AZ hit the same broker's cache for a given partition          |
+| Property           | How It Works                                                               |
+| ------------------ | -------------------------------------------------------------------------- |
+| Cache per broker   | Each broker has an independent local Caffeine cache                        |
+| AZ locality        | Metadata routing directs clients to brokers in their AZ                    |
+| Partition affinity | Deterministic hash ensures same partition maps to same broker within an AZ |
+| Result             | Clients in the same AZ hit the same broker's cache for a given partition   |
 
 **Optimal scenario**: When all clients (producers and consumers) are configured with the same `diskless_az` value matching their broker's `broker.rack`:
+
 - Producers write to a deterministically-assigned broker in their AZ, populating that broker's local cache
 - Consumers read from the same broker (same partition maps to same broker), benefiting from cache hits
 - With sufficient cache capacity, **all recent data can be served from memory**
 - Object storage GET requests are minimized, significantly reducing costs
 
 **Multi-AZ scenario**: When clients are distributed across AZs:
+
 - Each AZ has its own set of brokers, each with independent local caches
 - A consumer in AZ-A reading data produced in AZ-B will incur a cache miss (different broker)
 - Cross-AZ data transfer costs apply in addition to object storage costs
 
 **Recommendations for cost optimization**:
+
 1. Configure all clients with appropriate `diskless_az` in their `client.id`
 2. Size the cache (`inkless.consume.cache.max.count`) to hold your hot working set
 3. Adjust cache TTL (`inkless.consume.cache.expiration.lifespan.sec`) based on your consumer lag patterns
@@ -222,12 +225,14 @@ See [CLIENT-BROKER-AZ-ALIGNMENT.md](CLIENT-BROKER-AZ-ALIGNMENT.md) for detailed 
 Inkless implements a two-tier fetch architecture that separates recent data requests from lagging consumer requests:
 
 **Hot Path** (recent data):
+
 - Uses the object cache for fast repeated access
 - Dedicated executor pool (`inkless.fetch.data.thread.pool.size`, default: 32 threads)
 - Low latency, typically served from cache
 - No rate limiting
 
 **Cold Path** (lagging consumers):
+
 - For consumers reading data older than the threshold (`inkless.fetch.lagging.consumer.threshold.ms`)
 - Bypasses cache to avoid evicting hot data
 - Dedicated bounded executor pool (`inkless.fetch.lagging.consumer.thread.pool.size`, default: 16 threads)
@@ -235,6 +240,7 @@ Inkless implements a two-tier fetch architecture that separates recent data requ
 - Separate storage client for resource isolation
 
 **Path selection** is based on data age (batch timestamp), not consumer lag:
+
 - Data newer than threshold → hot path (with cache)
 - Data older than threshold → cold path (bypasses cache)
 - Default threshold (`-1`) uses cache TTL, ensuring data stays "recent" while potentially in cache
@@ -250,6 +256,7 @@ client.id=<custom_id>,diskless_az=<rack>
 ```
 
 Where `<rack>` matches the `broker.rack` configuration. This ensures:
+
 - Consumers fetch from deterministically-assigned brokers in the same availability zone
 - Cache hits are served from the broker's local cache (same broker handles same partition)
 - Cross-AZ data transfer costs are minimized as latest records are served from memory; no remote storage GET issued.
@@ -265,6 +272,7 @@ Where `<rack>` matches the `broker.rack` configuration. This ensures:
 ### Read Amplification
 
 Unlike traditional Kafka where each partition's data is stored contiguously, Inkless stores data from multiple partitions in the same object. This can lead to read amplification when:
+
 - Reading from a single partition requires fetching objects containing data from multiple partitions
 - The `inkless.consume.cache.block.bytes` setting controls the granularity of fetches (default 16 MiB blocks)
 
@@ -274,12 +282,12 @@ Unlike traditional Kafka where each partition's data is stored contiguously, Ink
 
 The read path can be tuned using these key broker configurations under the `inkless.` prefix:
 
-| Configuration | Default | Description |
-|---------------|---------|-------------|
-| `fetch.lagging.consumer.thread.pool.size` | 16 | Thread pool size for lagging consumers. Set to **0** to disable the feature entirely. |
-| `fetch.lagging.consumer.threshold.ms` | -1 (auto) | Time threshold (ms) to distinguish recent vs lagging data. `-1` uses cache TTL automatically. Must be ≥ cache lifespan when set explicitly. |
+| Configuration                               | Default      | Description                                                                                                                                                                                                                                                                        |
+| ------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fetch.lagging.consumer.thread.pool.size`   | 16           | Thread pool size for lagging consumers. Set to **0** to disable the feature entirely.                                                                                                                                                                                              |
+| `fetch.lagging.consumer.threshold.ms`       | -1 (auto)    | Time threshold (ms) to distinguish recent vs lagging data. `-1` uses cache TTL automatically. Must be ≥ cache lifespan when set explicitly.                                                                                                                                        |
 | `fetch.lagging.consumer.request.rate.limit` | 0 (disabled) | Maximum object storage GET requests/second for lagging consumers. `0` disables the limit and lets the thread pool govern the GET rate. Set a positive value to bound the sustained request rate (token bucket; an idle bucket allows an initial burst up to the configured value). |
-| `fetch.find.batches.max.per.partition` | 1024 | Maximum batches returned per partition per fetch. Bounds the control-plane scan and object GET fan-out on deep partitions of small batches. `0` removes the cap. Consolidation has separate settings under `diskless.consolidation.*`. |
+| `fetch.find.batches.max.per.partition`      | 1024         | Maximum batches returned per partition per fetch. Bounds the control-plane scan and object GET fan-out on deep partitions of small batches. `0` removes the cap. Consolidation has separate settings under `diskless.consolidation.*`.                                             |
 
 **Tuning guidance:**
 
@@ -301,6 +309,7 @@ fetch.max.wait.ms=5000          # 5 seconds - allow time to accumulate data
 **Why throughput-oriented configuration?**
 
 Unlike traditional Kafka where data is read from local disk, Inkless reads involve:
+
 - Object storage requests (when cache misses occur)
 - Per-request costs regardless of data size
 - Higher baseline latency (~100-200ms for object storage vs ~1-10ms for local disk)
@@ -313,18 +322,96 @@ Large batch fetches amortize these costs and latencies across more data. Whether
 
 Four metrics track hot/cold path behavior:
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `RecentDataRequestRate` | Meter | Hot path request rate (recent data) |
-| `LaggingConsumerRequestRate` | Meter | Cold path request rate (all lagging requests) |
-| `LaggingConsumerRejectedRate` | Meter | Rejection events (queue full or executor shutdown) |
-| `LaggingRateLimitWaitTime` | Histogram | Rate limit wait times |
+| Metric                               | Type      | Description                                        |
+| ------------------------------------ | --------- | -------------------------------------------------- |
+| `RecentDataRequestRate`              | Meter     | Hot path request rate (recent data)                |
+| `LaggingConsumerRequestRate`         | Meter     | Cold path request rate (all lagging requests)      |
+| `LaggingConsumerRequestRejectedRate` | Meter     | Rejection events (queue full or executor shutdown) |
+| `LaggingConsumerRateLimitWaitTime`   | Histogram | Rate limit wait times                              |
 
 **What to watch:**
 
-- **High `LaggingConsumerRejectedRate`**: Consider increasing thread pool size or rate limit
-- **High `LaggingRateLimitWaitTime`**: Indicates rate limiting is actively throttling requests (expected behavior under load)
+- **High `LaggingConsumerRequestRejectedRate`**: Consider increasing thread pool size or rate limit
+- **High `LaggingConsumerRateLimitWaitTime`**: Indicates rate limiting is actively throttling requests (expected behavior under load)
 - **Ratio of recent vs lagging requests**: Helps understand workload patterns and tune thresholds
+
+#### Fetch data phase metrics
+
+A consumer fetch has four stages: find batches, plan, wait for every object fetch, assemble the
+response. The wait is usually most of the latency, and these metrics break it down.
+
+| Metric                             | Type      | Description                                                              |
+| ---------------------------------- | --------- | ------------------------------------------------------------------------ |
+| `FetchDataTime`                    | Histogram | Whole wait, per request: plan handed back until the last fetch completes |
+| `FetchQueueTime`                   | Histogram | Per object: wait in the pool queue before its job started                |
+| `FetchFileTime`                    | Histogram | Per object: the transfer itself                                          |
+| `LaggingConsumerRateLimitWaitTime` | Histogram | Per cold object: wait for a rate-limit token                             |
+
+`FetchDataTime` is one sample per request while the other three sample one object each, so compare
+their shapes rather than their values. It also covers queue wait, rate-limit wait and transfer
+together, so when it is high, rule out the limiter before reading the other two. Rate limiting is off
+by default, so skip that step unless `fetch.lagging.consumer.request.rate.limit` is set:
+
+- **`LaggingConsumerRateLimitWaitTime` non-trivial**: the limiter is the bottleneck, and it can look
+  like either signature below. It delays its own fetch, and it blocks a cold-path worker after that
+  job's queue sample is taken, so later jobs queue behind it. Raise or disable the limit before
+  touching pool sizes.
+
+With the limiter ruled out:
+
+- **`FetchQueueTime` flat**: the time is in the transfer. Look at `FetchFileTime`,
+  `FetchFirstByteTime`, and throttling on the object-store side.
+- **`FetchQueueTime` high, `FetchFileTime` healthy**: fetches arrive faster than the pools drain them.
+  The levers are `fetch.data.thread.pool.size` and `fetch.lagging.consumer.thread.pool.size` (both
+  under the `inkless.` prefix), fewer objects per fetch, or admission control. Check
+  `LaggingConsumerRequestRejectedRate` too, since a full queue rejects rather than queues.
+
+Two things to know about `FetchQueueTime`:
+
+- **A sample can exceed the `FetchDataTime` it belongs to**, by at most `FetchPlanTime`. The queue
+  clock starts when a fetch is submitted, and `FetchDataTime` starts once every fetch of the request
+  has been submitted.
+- **Four cases record nothing**: an object served from the cache, a caller that joined another
+  caller's in-flight load, a hedged retry, and a job the pool rejected at submission - which is the one
+  to remember, since it shows up alongside `LaggingConsumerRequestRejectedRate` exactly when the queue
+  is deepest. Only a fetch that ran is sampled, so the count is per fetch job rather than per waiting
+  caller.
+
+#### Fetch memory metrics
+
+These size heap headroom for the read path.
+
+| Metric                          | Type      | Description                                                               |
+| ------------------------------- | --------- | ------------------------------------------------------------------------- |
+| `FetchLaggingObjectBytes`       | Histogram | Per request: bytes held from cache-bypassing (cold) fetches               |
+| `InFlightLaggingObjectBytes`    | Gauge     | Cold bytes held right now: running download buffers plus arrived payloads |
+| `InFlightLaggingObjectBytesMax` | Gauge     | High-water mark of the above; never resets                                |
+
+All three cover cold, cache-bypassing bytes only, because those are the ones nothing caps: they belong
+to one request until it completes, and the pools limit how many downloads run at once rather than how
+many bytes are held. Bytes in cache-resident ranges are excluded — the cache bounds them, and
+`CacheSize`, `CacheEntrySize` and `CacheHitBytesPerSec` already size that side.
+`InFlightLaggingObjectBytes` is the number to watch for heap headroom, and its max catches spikes
+shorter than the scrape interval.
+
+What the gauge counts, and what it misses:
+
+- **Counted:** a cold hedge. Both the primary's and the hedge's buffers are counted while both run,
+  because the loser is never cancelled. A hot-path hedge loads into the cache, so it is not counted.
+- **Not counted:** a job that is queued, or that the pool rejected. Neither has allocated a buffer.
+- **Undercounts by one payload per copying transfer, on S3 and Azure.** Both clients materialize the
+  response, and it is then copied into the extent; the gauge counts one of the two copies. The margin is
+  one object per transfer that is copying at that instant, so with 16 cold threads and typical 8 MiB
+  objects it is around 128 MiB. Treat that as typical rather than a ceiling:
+  `inkless.produce.buffer.max.bytes` is best effort, and a single produce request larger than it lands
+  in one object. GCS does not copy.
+- **Undercounts one payload briefly after each transfer.** A transfer's buffer is released when it
+  ends and its payload is counted when the request receives it, one callback later - microseconds,
+  usually. A fetch that finishes while the request is still submitting its other fetches waits longer,
+  until submission ends, bounded by `FetchPlanTime`. A peak that exists only inside that window is
+  missed, including by the max.
+- **Counts one metrics group, not the broker.** Consumer fetches report under `InklessFetchMetrics`,
+  consolidation fetches under `ConsolidationFetchMetrics`. Add both for a broker total.
 
 #### Why Hot/Cold Separation Matters
 
