@@ -27,16 +27,26 @@ import com.google.cloud.storage.Blob;
 import com.google.cloud.storage.BlobId;
 import com.google.cloud.storage.BlobInfo;
 import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageBatch;
+import com.google.cloud.storage.StorageBatchResult;
 import com.google.cloud.storage.StorageOptions;
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.SocketTimeoutException;
 import java.nio.channels.ReadableByteChannel;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.TreeMap;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
@@ -45,9 +55,28 @@ import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.SizedReadableByteChannel;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
+import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
 
 @CoverageIgnore  // tested on integration level
 public class GcsStorage extends StorageBackend {
+    private static final Logger LOGGER = LoggerFactory.getLogger(GcsStorage.class);
+
+    // The client splits a delete into HTTP batches of at most 100 sub-requests, and the server has to
+    // process every sub-request before it answers, so the response wait grows with the batch. Half the
+    // client's maximum keeps that wait clear of gcs.read.timeout; a default cleaner cycle of 20000
+    // files then costs 400 round trips, well inside file.cleaner.interval.ms.
+    private static final int MAX_DELETE_BATCH_SIZE = 50;
+
+    // https://cloud.google.com/storage/docs/retry-strategy#client-libraries
+    private static final Set<Integer> THROTTLE_RESPONSE_CODES = Set.of(429, 503);
+
+    // A single-request upload saves the round trip a resumable session spends on initiate, but it
+    // buffers the object into one array and cannot stream, so its cost per megabyte is higher. The
+    // measured break-even is near 2 MiB and this sits deliberately below it rather than at it, so
+    // the win holds even if the crossing point shifts. Raising it without re-measuring makes large
+    // uploads slower, not faster.
+    private static final int DIRECT_UPLOAD_MAX_SIZE = 1024 * 1024;
+
     private volatile Storage storage;
     private String bucketName;
     private ReloadableCredentialsProvider credentialsProvider;
@@ -70,6 +99,8 @@ public class GcsStorage extends StorageBackend {
         this.bucketName = config.bucketName();
 
         final HttpTransportOptions.Builder httpTransportOptionsBuilder = HttpTransportOptions.newBuilder();
+        httpTransportOptionsBuilder.setConnectTimeout((int) config.connectTimeout().toMillis());
+        httpTransportOptionsBuilder.setReadTimeout((int) config.readTimeout().toMillis());
 
         // Create reloadable credentials provider
         this.credentialsProvider = config.reloadableCredentials();
@@ -97,15 +128,41 @@ public class GcsStorage extends StorageBackend {
         }
         try {
             final BlobInfo blobInfo = BlobInfo.newBuilder(this.bucketName, key.value()).build();
-            Blob blob = storage.createFrom(blobInfo, inputStream);
+            final Blob blob;
+            if (length <= DIRECT_UPLOAD_MAX_SIZE) {
+                blob = storage.create(blobInfo, inputStream.readNBytes((int) length));
+            } else {
+                blob = storage.createFrom(blobInfo, inputStream);
+            }
             long transferred = blob.getSize();
             if (transferred != length) {
                 throw new StorageBackendException(
                         "Object " + key + " created with incorrect length " + transferred + " instead of " + length);
             }
+            int remaining = inputStream.read(new byte[]{1});
+            if (remaining != -1) {
+                throw new StorageBackendException(
+                        "Object " + key + " created with incorrect length, input stream has remaining content");
+            }
         } catch (final IOException | BaseServiceException e) {
+            if (isTimeout(e)) {
+                throw new StorageBackendTimeoutException("Timed out to upload " + key, e);
+            }
             throw new StorageBackendException("Failed to upload " + key, e);
         }
+    }
+
+    // The GCS client wraps the originating SocketTimeoutException in a BaseServiceException, so the
+    // whole cause chain is inspected.
+    private static boolean isTimeout(final Throwable e) {
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof SocketTimeoutException) {
+                return true;
+            }
+            cause = cause.getCause() == cause ? null : cause.getCause();
+        }
+        return false;
     }
 
     @Override
@@ -113,28 +170,71 @@ public class GcsStorage extends StorageBackend {
         try {
             storage.delete(this.bucketName, key.value());
         } catch (final BaseServiceException e) {
+            if (isTimeout(e)) {
+                throw new StorageBackendTimeoutException("Timed out to delete " + key, e);
+            }
             throw new StorageBackendException("Failed to delete " + key, e);
         }
     }
 
     @Override
     public Set<ObjectKey> delete(final Set<ObjectKey> keys) throws StorageBackendException {
-        try {
-            final Set<BlobId> ids = keys.stream()
-                    .map(k -> BlobId.of(this.bucketName,k.value()))
-                    .collect(Collectors.toSet());
+        final List<ObjectKey> objectKeys = new ArrayList<>(keys);
+        final Set<ObjectKey> deleted = new HashSet<>();
+        // Count the failures by response code instead of logging one line per key: a pass that fails
+        // for every key repeats on every FileCleaner cycle, so per-key lines grow with the worklist.
+        final Map<Integer, Integer> failuresByCode = new TreeMap<>();
 
-            // storage.delete returns a List<Boolean> of deleted-vs-already-absent, but a genuine
-            // failure surfaces as a thrown BaseServiceException rather than a per-blob flag, so we
-            // cannot extract a confirmed-deleted subset the way the S3 backend does. This stays
-            // all-or-nothing: on success every key is gone (idempotent), and on failure we delete
-            // nothing and let the FileCleaner cycle retry the whole set.
-            storage.delete(ids);
-            metricCollector.recordBatchDeleteObjects(keys.size());
-            return Set.copyOf(keys);
-        } catch (final BaseServiceException e) {
-            throw new StorageBackendException("Failed to delete " + keys.size() + " keys", e);
+        for (int i = 0; i < objectKeys.size(); i += MAX_DELETE_BATCH_SIZE) {
+            final List<ObjectKey> batch = objectKeys.subList(
+                i,
+                Math.min(i + MAX_DELETE_BATCH_SIZE, objectKeys.size())
+            );
+            // Storage.delete(Iterable) collapses a failed sub-request into the same false its callback
+            // uses for an absent blob, which loses the distinction this method has to return. Driving
+            // the batch keeps it: a result carries true or false, and a failure throws.
+            final StorageBatch storageBatch = storage.batch();
+            final Map<ObjectKey, StorageBatchResult<Boolean>> results = new LinkedHashMap<>();
+            for (final ObjectKey key : batch) {
+                results.put(key, storageBatch.delete(BlobId.of(this.bucketName, key.value())));
+            }
+            try {
+                storageBatch.submit();
+            } catch (final BaseServiceException e) {
+                // The request itself failed, so no sub-request was applied. Deletion is idempotent, so
+                // stopping here is safe: the keys left unconfirmed stay marked for deletion and the
+                // next FileCleaner cycle retries them.
+                metricCollector.recordBatchRequestFailure(e);
+                LOGGER.warn("Batch delete request failed after {} of {} keys, stopping the pass",
+                    deleted.size(), objectKeys.size(), e);
+                break;
+            }
+            int confirmed = 0;
+            for (final var result : results.entrySet()) {
+                try {
+                    // Called to throw on a failed sub-request. The result is ignored: deleted (true) and
+                    // already absent (false) both leave the key gone.
+                    result.getValue().get();
+                    deleted.add(result.getKey());
+                    confirmed++;
+                } catch (final BaseServiceException e) {
+                    failuresByCode.merge(e.getCode(), 1, Integer::sum);
+                }
+            }
+            metricCollector.recordBatchDeleteObjects(confirmed);
         }
+
+        if (!failuresByCode.isEmpty()) {
+            // Throttling is backpressure the next FileCleaner cycle retries; any other code needs an
+            // operator, so it must not sit at INFO while the worklist stops draining.
+            if (THROTTLE_RESPONSE_CODES.containsAll(failuresByCode.keySet())) {
+                LOGGER.info("Delete failures by response code {}", failuresByCode);
+            } else {
+                LOGGER.warn("Delete failures by response code {}", failuresByCode);
+            }
+        }
+
+        return deleted;
     }
 
     @Override
@@ -166,6 +266,9 @@ public class GcsStorage extends StorageBackend {
             }
             return SizedReadableByteChannel.of(reader, length);
         } catch (final IOException e) {
+            if (isTimeout(e)) {
+                throw new StorageBackendTimeoutException("Timed out to fetch " + key, e);
+            }
             throw new StorageBackendException("Failed to fetch " + key, e);
         } catch (final BaseServiceException e) {
             if (e.getCode() == 404) {
@@ -174,6 +277,11 @@ public class GcsStorage extends StorageBackend {
             } else if (e.getCode() == 416) {
                 // https://cloud.google.com/storage/docs/json_api/v1/status-codes#416_Requested_Range_Not_Satisfiable
                 throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range, e);
+            } else if (isTimeout(e)) {
+                // Reaches only the metadata request. The body is streamed from the channel this
+                // method returns, so a stall mid-download surfaces to the caller as a plain
+                // IOException; ReadableByteChannel.read cannot throw StorageBackendException.
+                throw new StorageBackendTimeoutException("Timed out to fetch " + key, e);
             } else {
                 throw new StorageBackendException("Failed to fetch " + key, e);
             }
