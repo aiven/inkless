@@ -583,12 +583,28 @@ Under ``inkless.storage.``
   * Valid Values: non-empty string
   * Importance: medium
 
+``gcs.connect.timeout``
+  GCS connection establishment timeout in milliseconds.
+
+  * Type: long
+  * Default: 2000
+  * Valid Values: [1,...,2147483647]
+  * Importance: low
+
 ``gcs.endpoint.url``
   Custom GCS endpoint URL. To be used with custom GCS-compatible backends.
 
   * Type: string
   * Default: null
   * Valid Values: Valid URL as defined in rfc2396
+  * Importance: low
+
+``gcs.read.timeout``
+  GCS response read timeout in milliseconds. Bounds each socket read of a response, not the whole request: connection setup is bounded by gcs.connect.timeout, request-body writes are not covered, and a response that arrives in several reads can take longer. Whether a timed out read ends the operation depends on how the GCS client classifies the request. A read and a resumable upload's chunk write are idempotent, so the client retries them under its own retry budget and this value bounds an attempt rather than the operation. A single-request upload and a resumable session initiate are not retried, so for those it bounds the attempt that inkless.produce.max.upload.attempts then counts.
+
+  * Type: long
+  * Default: 1000
+  * Valid Values: [1,...,2147483647]
   * Importance: low
 
 
