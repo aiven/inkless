@@ -55,8 +55,9 @@ class S3ClientBuilderTest {
         assertThat(clientConfiguration.endpointOverride()).isNotPresent();
         assertThat(clientConfiguration.overrideConfiguration().metricPublishers())
             .allSatisfy(metricPublisher -> assertThat(metricPublisher).isInstanceOf(MetricCollector.class));
-        assertThat(clientConfiguration.overrideConfiguration().apiCallTimeout()).isEmpty();
-        assertThat(clientConfiguration.overrideConfiguration().apiCallAttemptTimeout()).isEmpty();
+        assertThat(clientConfiguration.overrideConfiguration().apiCallTimeout()).hasValue(Duration.ofMillis(2000));
+        assertThat(clientConfiguration.overrideConfiguration().apiCallAttemptTimeout())
+            .hasValue(Duration.ofMillis(1000));
 
         final AttributeMap resolvedOptions = getInternalHttpClientResolvedOptions(s3Client);
         assertThat(resolvedOptions.get(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES)).isFalse();
@@ -78,8 +79,9 @@ class S3ClientBuilderTest {
         assertThat(clientConfiguration.endpointOverride()).hasValue(URI.create("http://minio"));
         assertThat(clientConfiguration.overrideConfiguration().metricPublishers())
             .allSatisfy(metricPublisher -> assertThat(metricPublisher).isInstanceOf(MetricCollector.class));
-        assertThat(clientConfiguration.overrideConfiguration().apiCallTimeout()).isEmpty();
-        assertThat(clientConfiguration.overrideConfiguration().apiCallAttemptTimeout()).isEmpty();
+        assertThat(clientConfiguration.overrideConfiguration().apiCallTimeout()).hasValue(Duration.ofMillis(2000));
+        assertThat(clientConfiguration.overrideConfiguration().apiCallAttemptTimeout())
+            .hasValue(Duration.ofMillis(1000));
         assertThat(clientConfiguration.credentialsProvider()).isInstanceOf(DefaultCredentialsProvider.class);
         assertThat(clientConfiguration.overrideConfiguration().metricPublishers()).hasSize(1);
         assertThat(clientConfiguration.overrideConfiguration().metricPublishers()).element(0)
@@ -107,8 +109,9 @@ class S3ClientBuilderTest {
         final var clientConfiguration = s3Client.serviceClientConfiguration();
         assertThat(clientConfiguration.region()).isEqualTo(TEST_REGION);
         assertThat(clientConfiguration.endpointOverride()).hasValue(URI.create("http://minio"));
-        assertThat(clientConfiguration.overrideConfiguration().apiCallTimeout()).isEmpty();
-        assertThat(clientConfiguration.overrideConfiguration().apiCallAttemptTimeout()).isEmpty();
+        assertThat(clientConfiguration.overrideConfiguration().apiCallTimeout()).hasValue(Duration.ofMillis(2000));
+        assertThat(clientConfiguration.overrideConfiguration().apiCallAttemptTimeout())
+            .hasValue(Duration.ofMillis(1000));
         assertThat(clientConfiguration.credentialsProvider()).isInstanceOf(customCredentialsProvider);
         assertThat(clientConfiguration.overrideConfiguration().metricPublishers()).hasSize(1);
         assertThat(clientConfiguration.overrideConfiguration().metricPublishers()).element(0)
@@ -141,8 +144,9 @@ class S3ClientBuilderTest {
         assertThat(clientConfiguration.endpointOverride()).hasValue(URI.create("http://minio"));
         assertThat(clientConfiguration.overrideConfiguration().metricPublishers())
             .allSatisfy(metricPublisher -> assertThat(metricPublisher).isInstanceOf(MetricCollector.class));
-        assertThat(clientConfiguration.overrideConfiguration().apiCallTimeout()).isEmpty();
-        assertThat(clientConfiguration.overrideConfiguration().apiCallAttemptTimeout()).isEmpty();
+        assertThat(clientConfiguration.overrideConfiguration().apiCallTimeout()).hasValue(Duration.ofMillis(2000));
+        assertThat(clientConfiguration.overrideConfiguration().apiCallAttemptTimeout())
+            .hasValue(Duration.ofMillis(1000));
 
         final AttributeMap resolvedOptions = getInternalHttpClientResolvedOptions(s3Client);
         assertThat(resolvedOptions.get(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES)).isTrue();
