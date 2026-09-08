@@ -67,7 +67,7 @@ public class MetricRegistry {
     static final String OTHER_ERRORS = "other-errors";
     static final String OTHER_ERRORS_RATE = OTHER_ERRORS + "-rate";
     static final String OTHER_ERRORS_TOTAL = OTHER_ERRORS + "-total";
-    static final String OTHER_ERRORS_DOC = "other errors (non-2xx responses other than throttling and server errors)";
+    static final String OTHER_ERRORS_DOC = "other errors (4xx responses other than 429)";
 
     private static final String RATE_DOC_PREFIX = "Rate of ";
     private static final String TOTAL_DOC_PREFIX = "Total number of ";

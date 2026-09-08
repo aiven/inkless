@@ -30,11 +30,13 @@ import com.google.api.client.http.HttpRequest;
 import com.google.api.client.http.HttpRequestInitializer;
 import com.google.api.client.http.HttpResponse;
 import com.google.api.client.http.HttpResponseInterceptor;
+import com.google.api.client.http.HttpUnsuccessfulResponseHandler;
 import com.google.cloud.BaseServiceException;
 import com.google.cloud.ServiceOptions;
 import com.google.cloud.http.HttpTransportOptions;
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
+import java.io.IOException;
 import java.util.regex.Pattern;
 
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_DELETE;
@@ -162,8 +164,8 @@ public class MetricCollector {
         return sensor;
     }
 
-    // The client builds the batch request without the request initializer, so the response interceptor
-    // never sees it; its caller reports both its operations and its failure.
+    // The client builds the batch request without the request initializer, so the metric handlers
+    // never see it; its caller reports both its operations and its failure.
     void recordBatchDeleteObjects(final int objectCount) {
         if (objectCount > 0) {
             deleteObjectRequests.record(objectCount);
@@ -190,12 +192,37 @@ public class MetricCollector {
 
     private final MetricResponseInterceptor metricResponseInterceptor = new MetricResponseInterceptor();
 
+    private class MetricUnsuccessfulResponseHandler implements HttpUnsuccessfulResponseHandler {
+        private final HttpUnsuccessfulResponseHandler delegate;
+
+        private MetricUnsuccessfulResponseHandler(final HttpUnsuccessfulResponseHandler delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public boolean handleResponse(
+            final HttpRequest request,
+            final HttpResponse response,
+            final boolean supportsRetry
+        ) throws IOException {
+            recordResponseStatus(response.getStatusCode());
+            if (delegate == null) {
+                return false;
+            }
+            try {
+                return delegate.handleResponse(request, response, supportsRetry);
+            } finally {
+                // The credentials handler reinstalls itself after refreshing a token. Restore this
+                // wrapper so a later failed response from the same request is also counted.
+                request.setUnsuccessfulResponseHandler(this);
+            }
+        }
+    }
+
     private class MetricResponseInterceptor implements HttpResponseInterceptor {
 
         @Override
         public void interceptResponse(final HttpResponse response) {
-            recordResponseStatus(response.getStatusCode());
-
             final HttpRequest request = response.getRequest();
             final GenericUrl url = request.getUrl();
 
@@ -236,6 +263,8 @@ public class MetricCollector {
                 final var superInitializer = super.getHttpRequestInitializer(serviceOptions);
                 return request -> {
                     superInitializer.initialize(request);
+                    request.setUnsuccessfulResponseHandler(
+                        new MetricUnsuccessfulResponseHandler(request.getUnsuccessfulResponseHandler()));
                     request.setResponseInterceptor(metricResponseInterceptor);
                 };
             }
