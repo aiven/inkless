@@ -4419,7 +4419,7 @@ class ReplicaManager(val config: KafkaConfig,
             case e: KafkaStorageException =>
               stateChangeLogger.error(s"Unable to start fetching $tp " +
                 s"with topic ID ${info.topicId} due to a storage error ${e.getMessage}", e)
-              if (_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic))
+              if (isConsolidatingDisklessTopic)
                 consolidationFetcherManager.foreach(_.addFailedPartition(tp))
               else
                 replicaFetcherManager.addFailedPartition(tp)
@@ -4432,7 +4432,7 @@ class ReplicaManager(val config: KafkaConfig,
             case e: Throwable =>
               stateChangeLogger.error(s"Unable to start fetching $tp " +
                 s"with topic ID ${info.topicId} due to ${e.getClass.getSimpleName}", e)
-              if (_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic))
+              if (isConsolidatingDisklessTopic)
                 consolidationFetcherManager.foreach(_.addFailedPartition(tp))
               else
                 replicaFetcherManager.addFailedPartition(tp)
