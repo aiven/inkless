@@ -692,16 +692,16 @@ Under ``inkless.storage.``
   AWS S3 API call attempt (single retry) timeout in milliseconds
 
   * Type: long
-  * Default: null
-  * Valid Values: null or [1,...,9223372036854775807]
+  * Default: 1000
+  * Valid Values: [1,...]
   * Importance: low
 
 ``s3.api.call.timeout``
   AWS S3 API call timeout in milliseconds, including all retries
 
   * Type: long
-  * Default: null
-  * Valid Values: null or [1,...,9223372036854775807]
+  * Default: 2000
+  * Valid Values: [1,...]
   * Importance: low
 
 ``s3.endpoint.url``

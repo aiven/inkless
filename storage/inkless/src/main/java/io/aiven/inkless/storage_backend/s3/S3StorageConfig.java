@@ -28,7 +28,6 @@ import java.time.Duration;
 import java.util.Map;
 
 import io.aiven.inkless.common.config.validators.NonEmptyPassword;
-import io.aiven.inkless.common.config.validators.Null;
 import io.aiven.inkless.common.config.validators.Subclass;
 import io.aiven.inkless.common.config.validators.ValidUrl;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -58,9 +57,11 @@ public class S3StorageConfig extends AbstractConfig {
     private static final String S3_API_CALL_TIMEOUT_CONFIG = "s3.api.call.timeout";
     private static final String S3_API_CALL_TIMEOUT_DOC = "AWS S3 API call timeout in milliseconds, "
         + "including all retries";
+    private static final long S3_API_CALL_TIMEOUT_DEFAULT = 2_000;
     private static final String S3_API_CALL_ATTEMPT_TIMEOUT_CONFIG = "s3.api.call.attempt.timeout";
     private static final String S3_API_CALL_ATTEMPT_TIMEOUT_DOC = "AWS S3 API call attempt "
         + "(single retry) timeout in milliseconds";
+    private static final long S3_API_CALL_ATTEMPT_TIMEOUT_DEFAULT = 1_000;
     public static final String AWS_CREDENTIALS_PROVIDER_CLASS_CONFIG = "aws.credentials.provider.class";
     private static final String AWS_CREDENTIALS_PROVIDER_CLASS_DOC = "AWS credentials provider. "
         + "If not set, AWS SDK uses the default "
@@ -132,15 +133,15 @@ public class S3StorageConfig extends AbstractConfig {
             .define(
                 S3_API_CALL_TIMEOUT_CONFIG,
                 ConfigDef.Type.LONG,
-                null,
-                Null.or(ConfigDef.Range.between(1, Long.MAX_VALUE)),
+                S3_API_CALL_TIMEOUT_DEFAULT,
+                atLeast(1),
                 ConfigDef.Importance.LOW,
                 S3_API_CALL_TIMEOUT_DOC)
             .define(
                 S3_API_CALL_ATTEMPT_TIMEOUT_CONFIG,
                 ConfigDef.Type.LONG,
-                null,
-                Null.or(ConfigDef.Range.between(1, Long.MAX_VALUE)),
+                S3_API_CALL_ATTEMPT_TIMEOUT_DEFAULT,
+                atLeast(1),
                 ConfigDef.Importance.LOW,
                 S3_API_CALL_ATTEMPT_TIMEOUT_DOC)
             .define(
