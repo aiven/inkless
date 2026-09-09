@@ -164,8 +164,10 @@ public class MetricCollector {
         return sensor;
     }
 
-    // The client builds the batch request without the request initializer, so the metric handlers
-    // never see it; its caller reports both its operations and its failure.
+    // The client builds the outer batch request without the request initializer, so the metric
+    // handlers don't see its response or successful sub-responses. The unsuccessful-response
+    // handler does see failed sub-responses; the caller reports submitted operations and outer
+    // request failures.
     void recordBatchDeleteObjects(final int objectCount) {
         if (objectCount > 0) {
             deleteObjectRequests.record(objectCount);
@@ -190,6 +192,15 @@ public class MetricCollector {
         }
     }
 
+    private static boolean isAbsentBatchDelete(final HttpRequest request, final HttpResponse response) {
+        // BatchUnparsedResponse attaches a synthetic request to each sub-response and passes the
+        // original request separately. GCS treats a missing object as a successful idempotent delete,
+        // so this case shouldn't count as a provider error.
+        return response.getStatusCode() == 404
+            && HttpMethods.DELETE.equals(request.getRequestMethod())
+            && response.getRequest() != request;
+    }
+
     private final MetricResponseInterceptor metricResponseInterceptor = new MetricResponseInterceptor();
 
     private class MetricUnsuccessfulResponseHandler implements HttpUnsuccessfulResponseHandler {
@@ -205,7 +216,9 @@ public class MetricCollector {
             final HttpResponse response,
             final boolean supportsRetry
         ) throws IOException {
-            recordResponseStatus(response.getStatusCode());
+            if (!isAbsentBatchDelete(request, response)) {
+                recordResponseStatus(response.getStatusCode());
+            }
             if (delegate == null) {
                 return false;
             }
