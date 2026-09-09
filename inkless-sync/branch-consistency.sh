@@ -116,8 +116,9 @@ is_excluded_commit() {
         return 0
     fi
 
-    # Exclude sync-specific commits (main-trunk sync related)
-    if [[ "$commit_msg" =~ ^(sync\(|fix\(sync\)|docs\(sync\)|refactor\(sync\)) ]]; then
+    # Exclude sync fix-ups and sync-tooling commits. Release branches never read
+    # inkless-sync/: the sync guides copy main's copy into the worktree.
+    if [[ "$commit_msg" =~ ^(sync\(|[a-z]+\((sync|inkless-sync|inkless:sync|inkless:release-sync)\)) ]]; then
         return 0
     fi
 
