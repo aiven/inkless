@@ -47,14 +47,6 @@ public class InklessFetchMetrics {
     private static final String FIND_BATCHES_TIME_DOC = "Time spent finding batch coordinates in the control plane in milliseconds";
     private static final String FETCH_PLAN_TIME = "FetchPlanTime";
     private static final String FETCH_PLAN_TIME_DOC = "Time spent creating the fetch plan in milliseconds";
-    private static final String CACHE_QUERY_TIME = "CacheQueryTime";
-    private static final String CACHE_QUERY_TIME_DOC = "Time spent querying the object cache in milliseconds";
-    private static final String CACHE_STORE_TIME = "CacheStoreTime";
-    private static final String CACHE_STORE_TIME_DOC = "Time spent storing entries in the object cache in milliseconds";
-    private static final String CACHE_HIT_COUNT = "CacheHitCount";
-    private static final String CACHE_HIT_COUNT_DOC = "Rate of cache hits per second";
-    private static final String CACHE_MISS_COUNT = "CacheMissCount";
-    private static final String CACHE_MISS_COUNT_DOC = "Rate of cache misses per second";
     private static final String CACHE_ENTRY_SIZE = "CacheEntrySize";
     private static final String CACHE_ENTRY_SIZE_DOC = "Size of individual cache entries in bytes";
     private static final String CACHE_SIZE = "CacheSize";
@@ -148,10 +140,6 @@ public class InklessFetchMetrics {
             new MetricNameTemplate(FETCH_TOTAL_TIME, GROUP, FETCH_TOTAL_TIME_DOC),
             new MetricNameTemplate(FIND_BATCHES_TIME, GROUP, FIND_BATCHES_TIME_DOC),
             new MetricNameTemplate(FETCH_PLAN_TIME, GROUP, FETCH_PLAN_TIME_DOC),
-            new MetricNameTemplate(CACHE_QUERY_TIME, GROUP, CACHE_QUERY_TIME_DOC),
-            new MetricNameTemplate(CACHE_STORE_TIME, GROUP, CACHE_STORE_TIME_DOC),
-            new MetricNameTemplate(CACHE_HIT_COUNT, GROUP, CACHE_HIT_COUNT_DOC),
-            new MetricNameTemplate(CACHE_MISS_COUNT, GROUP, CACHE_MISS_COUNT_DOC),
             new MetricNameTemplate(CACHE_ENTRY_SIZE, GROUP, CACHE_ENTRY_SIZE_DOC),
             new MetricNameTemplate(CACHE_SIZE, GROUP, CACHE_SIZE_DOC),
             new MetricNameTemplate(FETCH_FIRST_BYTE_TIME, GROUP, FETCH_FIRST_BYTE_TIME_DOC),
@@ -196,12 +184,8 @@ public class InklessFetchMetrics {
     private final Histogram fetchTimeHistogram;
     private final Histogram findBatchesTimeHistogram;
     private final Histogram fetchPlanTimeHistogram;
-    private final Histogram cacheQueryTimeHistogram;
-    private final Histogram cacheStoreTimeHistogram;
     private final Histogram cacheEntrySize;
     private final Gauge<Long> cacheSize;
-    private final Meter cacheHits;
-    private final Meter cacheMisses;
     private final Histogram fetchFirstByteTimeHistogram;
     private final Histogram fetchFileTimeHistogram;
     private final Histogram fetchQueueTimeHistogram;
@@ -248,10 +232,6 @@ public class InklessFetchMetrics {
         fetchTimeHistogram = metricsGroup.newHistogram(FETCH_TOTAL_TIME, true, Map.of());
         findBatchesTimeHistogram = metricsGroup.newHistogram(FIND_BATCHES_TIME, true, Map.of());
         fetchPlanTimeHistogram = metricsGroup.newHistogram(FETCH_PLAN_TIME, true, Map.of());
-        cacheQueryTimeHistogram = metricsGroup.newHistogram(CACHE_QUERY_TIME, true, Map.of());
-        cacheStoreTimeHistogram = metricsGroup.newHistogram(CACHE_STORE_TIME, true, Map.of());
-        cacheHits = metricsGroup.newMeter(CACHE_HIT_COUNT, "hits", TimeUnit.SECONDS, Map.of());
-        cacheMisses = metricsGroup.newMeter(CACHE_MISS_COUNT, "misses", TimeUnit.SECONDS, Map.of());
         fetchFirstByteTimeHistogram = metricsGroup.newHistogram(FETCH_FIRST_BYTE_TIME, true, Map.of());
         fetchFileTimeHistogram = metricsGroup.newHistogram(FETCH_FILE_TIME, true, Map.of());
         fetchQueueTimeHistogram = metricsGroup.newHistogram(FETCH_QUEUE_TIME, true, Map.of());
@@ -274,7 +254,7 @@ public class InklessFetchMetrics {
         partitionCorruptRecordRate = metricsGroup.newMeter(PARTITION_CORRUPT_RECORD_RATE, "errors", TimeUnit.SECONDS, Map.of());
         partitionControlPlaneErrorRate = metricsGroup.newMeter(PARTITION_CONTROL_PLANE_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
         cacheEntrySize = metricsGroup.newHistogram(CACHE_ENTRY_SIZE, true, Map.of());
-        cacheSize = metricsGroup.newGauge(CACHE_SIZE, () -> cache.size());
+        cacheSize = metricsGroup.newGauge(CACHE_SIZE, cache::size);
         recentDataRequestRate = metricsGroup.newMeter(RECENT_DATA_REQUEST_RATE, "requests", TimeUnit.SECONDS, Map.of());
         laggingConsumerRequestRate = metricsGroup.newMeter(LAGGING_CONSUMER_REQUEST_RATE, "requests", TimeUnit.SECONDS, Map.of());
         laggingConsumerRejectedRate = metricsGroup.newMeter(LAGGING_CONSUMER_REQUEST_REJECTED_RATE, "rejections", TimeUnit.SECONDS, Map.of());
@@ -300,22 +280,6 @@ public class InklessFetchMetrics {
 
     public void fetchPlanFinished(final long durationMs) {
         fetchPlanTimeHistogram.update(durationMs);
-    }
-
-    public void cacheQueryFinished(final long durationMs) {
-        cacheQueryTimeHistogram.update(durationMs);
-    }
-
-    public void cacheStoreFinished(final long durationMs) {
-        cacheStoreTimeHistogram.update(durationMs);
-    }
-
-    public void cacheHit(final boolean hit) {
-        if (hit) {
-            cacheHits.mark();
-        } else {
-            cacheMisses.mark();
-        }
     }
 
     public void cacheEntrySize(final int size) {
@@ -379,10 +343,6 @@ public class InklessFetchMetrics {
         metricsGroup.removeMetric(FETCH_FIRST_BYTE_TIME);
         metricsGroup.removeMetric(FETCH_FILE_TIME);
         metricsGroup.removeMetric(FETCH_PLAN_TIME);
-        metricsGroup.removeMetric(CACHE_QUERY_TIME);
-        metricsGroup.removeMetric(CACHE_STORE_TIME);
-        metricsGroup.removeMetric(CACHE_HIT_COUNT);
-        metricsGroup.removeMetric(CACHE_MISS_COUNT);
         metricsGroup.removeMetric(CACHE_SIZE);
         metricsGroup.removeMetric(CACHE_ENTRY_SIZE);
         metricsGroup.removeMetric(FIND_BATCHES_TIME);
@@ -501,11 +461,11 @@ public class InklessFetchMetrics {
      * This typically corresponds to:
      * - RejectedExecutionException: Queue full (AbortPolicy triggered)
      *
-     * In this case, backpressure is applied: the consumer receives an error response
+     * <p>In this case, backpressure is applied: the consumer receives an error response
      * and backs off via fetch purgatory.
      * Metric: LaggingConsumerRequestRejectedRate
      *
-     * High rejection rate indicates:
+     * <p>High rejection rate indicates:
      * - Sustained lagging consumer load exceeding capacity
      * - May need to increase fetch.lagging.consumer.thread.pool.size
      * - Or increase fetch.lagging.consumer.request.rate.limit
