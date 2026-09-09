@@ -209,19 +209,17 @@ public class GcsStorage extends StorageBackend {
                     deleted.size(), objectKeys.size(), e);
                 break;
             }
-            int confirmed = 0;
             for (final var result : results.entrySet()) {
                 try {
                     // Called to throw on a failed sub-request. The result is ignored: deleted (true) and
                     // already absent (false) both leave the key gone.
                     result.getValue().get();
                     deleted.add(result.getKey());
-                    confirmed++;
                 } catch (final BaseServiceException e) {
                     failuresByCode.merge(e.getCode(), 1, Integer::sum);
                 }
             }
-            metricCollector.recordBatchDeleteObjects(confirmed);
+            metricCollector.recordBatchDeleteObjects(results.size());
         }
 
         if (!failuresByCode.isEmpty()) {

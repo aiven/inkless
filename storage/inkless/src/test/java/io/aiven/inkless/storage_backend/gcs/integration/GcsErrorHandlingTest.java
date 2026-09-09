@@ -80,7 +80,7 @@ class GcsErrorHandlingTest {
         stubFor(any(anyUrl()).willReturn(aResponse().withStatus(429)));
 
         assertThatThrownBy(() -> upload()).isExactlyInstanceOf(StorageBackendException.class);
-        assertThat(errorTotal("throttling-errors")).isEqualTo(1.0);
+        assertThat(metricTotal("throttling-errors")).isEqualTo(1.0);
     }
 
     @Test
@@ -89,7 +89,7 @@ class GcsErrorHandlingTest {
         stubFor(any(anyUrl()).willReturn(aResponse().withStatus(500)));
 
         assertThatThrownBy(() -> upload()).isExactlyInstanceOf(StorageBackendException.class);
-        assertThat(errorTotal("server-errors")).isEqualTo(1.0);
+        assertThat(metricTotal("server-errors")).isEqualTo(1.0);
     }
 
     @Test
@@ -99,7 +99,7 @@ class GcsErrorHandlingTest {
 
         assertThatThrownBy(() -> storage.fetch(new TestObjectKey("key"), null))
             .isInstanceOf(KeyNotFoundException.class);
-        assertThat(errorTotal("other-errors")).isEqualTo(1.0);
+        assertThat(metricTotal("other-errors")).isEqualTo(1.0);
     }
 
     @Test
@@ -109,7 +109,7 @@ class GcsErrorHandlingTest {
 
         // The batch request bypasses the client's retry loop, so this pins the caller-side count.
         assertThat(storage.delete(Set.of(new TestObjectKey("key1"), new TestObjectKey("key2")))).isEmpty();
-        assertThat(errorTotal("throttling-errors")).isEqualTo(1.0);
+        assertThat(metricTotal("throttling-errors")).isEqualTo(1.0);
     }
 
     @Test
@@ -123,6 +123,8 @@ class GcsErrorHandlingTest {
         // Size is what matters: a pass that confirmed all three would dereference two live files, and
         // an unmatched stub would confirm none.
         assertThat(storage.delete(keys)).hasSize(1).isSubsetOf(keys);
+        assertThat(metricTotal("other-errors")).isEqualTo(2.0);
+        assertThat(metricTotal("object-delete")).isEqualTo(3.0);
     }
 
     @Test
@@ -133,6 +135,8 @@ class GcsErrorHandlingTest {
         // A 404 leaves nothing to delete, so both keys are confirmed and stop being retried.
         final Set<ObjectKey> keys = Set.of(new TestObjectKey("key1"), new TestObjectKey("key2"));
         assertThat(storage.delete(keys)).isEqualTo(keys);
+        assertThat(metricTotal("other-errors")).isZero();
+        assertThat(metricTotal("object-delete")).isEqualTo(2.0);
     }
 
     /**
@@ -168,7 +172,7 @@ class GcsErrorHandlingTest {
         storage.upload(new TestObjectKey("key"), new ByteArrayInputStream(DATA), DATA.length);
     }
 
-    private double errorTotal(final String sensor) {
+    private double metricTotal(final String sensor) {
         return (double) metrics.metric(metrics.metricName(sensor + "-total", "gcs-client-metrics")).metricValue();
     }
 
