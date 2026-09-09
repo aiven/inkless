@@ -309,17 +309,16 @@ class DelayedFetchTest {
         -1, 1, 500L, minBytes, maxBytes, FetchIsolation.HIGH_WATERMARK, Optional.empty()
       )
 
-      val disklessFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
-      partitions.foreach { tp =>
-        disklessFetchPartitionStatus.put(tp, new FetchPartitionStatus(
+      val disklessFetchPartitionStatus = partitions.map { tp =>
+        tp -> new FetchPartitionStatus(
           startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
           fetchInfo = new FetchRequest.PartitionData(tp.topicId(), fetchOffset, 0L, maxBytes, Optional.of[Integer](10))
-        ))
+        )
       }
 
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
-        classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
+        classicFetchPartitionStatus = Seq.empty,
         disklessFetchPartitionStatus = disklessFetchPartitionStatus,
         replicaManager = replicaManager,
         quota = replicaQuota,

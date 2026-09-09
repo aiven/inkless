@@ -65,7 +65,7 @@ import org.apache.kafka.server.util.timer.MockTimer
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.apache.kafka.storage.internals.checkpoint.LazyOffsetCheckpoints
-import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadInfo, LogReadResult, OffsetResultHolder, UnifiedLog}
+import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadInfo, OffsetResultHolder, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.junit.jupiter.params.ParameterizedTest
@@ -2462,7 +2462,7 @@ class ReplicaManagerInklessTest {
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
           new FetchDataInfo(new LogOffsetMetadata(99L, 0L, 0), localFileRecords),
-          Optional.empty(), 100L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+          Optional.empty(), 100L, 0L, 100L, 0L, 0L, OptionalLong.empty()
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
 
@@ -3134,7 +3134,7 @@ class ReplicaManagerInklessTest {
     partitions.foreach { tp =>
       logReadResultMap.put(tp, new LogReadResult(
         new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), MemoryRecords.EMPTY),
-        Optional.empty(), 0L, 0L, 0L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+        Optional.empty(), 0L, 0L, 0L, 0L, 0L, OptionalLong.empty()
       ))
     }
 
@@ -3828,7 +3828,7 @@ class ReplicaManagerInklessTest {
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
           new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), RECORDS),
-          Optional.empty(), 50L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+          Optional.empty(), 50L, 0L, 100L, 0L, 0L, OptionalLong.empty()
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
 
@@ -3889,7 +3889,7 @@ class ReplicaManagerInklessTest {
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
           new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), RECORDS),
-          Optional.empty(), 0L, 0L, 500L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+          Optional.empty(), 0L, 0L, 500L, 0L, 0L, OptionalLong.empty()
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
 
@@ -3960,7 +3960,7 @@ class ReplicaManagerInklessTest {
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
           new FetchDataInfo(new LogOffsetMetadata(60L, 0L, 0), MemoryRecords.EMPTY),
-          Optional.empty(), 50L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+          Optional.empty(), 50L, 0L, 100L, 0L, 0L, OptionalLong.empty()
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
 
@@ -4015,7 +4015,7 @@ class ReplicaManagerInklessTest {
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
           new FetchDataInfo(new LogOffsetMetadata(60L, 0L, 0), MemoryRecords.EMPTY),
-          Optional.empty(), 50L, 0L, 100L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+          Optional.empty(), 50L, 0L, 100L, 0L, 0L, OptionalLong.empty()
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
 
@@ -8197,7 +8197,8 @@ class ReplicaManagerInklessTest {
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
           new FetchDataInfo(new LogOffsetMetadata(55L, 0L, 0), MemoryRecords.EMPTY),
-          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty(), Errors.OFFSET_OUT_OF_RANGE
+          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty(),
+          Optional.of[Throwable](new OffsetOutOfRangeException("below the replica log start"))
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
 
