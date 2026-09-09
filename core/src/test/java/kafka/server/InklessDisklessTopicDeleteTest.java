@@ -32,6 +32,7 @@ import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
+import org.apache.kafka.common.utils.LogCaptureAppender;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.test.TestUtils;
@@ -50,10 +51,8 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
@@ -64,6 +63,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlane;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlaneConfig;
+import io.aiven.inkless.delete.TopicPurger;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.storage_backend.s3.S3StorageConfig;
 import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
@@ -137,7 +137,7 @@ public class InklessDisklessTopicDeleteTest {
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.PRODUCE_BUFFER_MAX_BYTES_CONFIG, Integer.toString(PRODUCE_BUFFER_MAX_BYTES))
             // Drain and object delete must finish inside the wait windows below. The batch-coordinate
             // cache TTL must stay at most half of file.cleaner.retention.period.ms. Cap the purger so
-            // the test can observe leftover batches between cycles.
+            // a single cycle cannot finish the drain.
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.TOPIC_PURGER_INTERVAL_MS_CONFIG, "1000")
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.TOPIC_PURGER_MAX_BATCHES_PER_CYCLE_CONFIG, Integer.toString(MAX_BATCHES_PER_CYCLE))
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.FILE_CLEANER_INTERVAL_MS_CONFIG, "1000")
@@ -185,20 +185,23 @@ public class InklessDisklessTopicDeleteTest {
             assertEquals(NUM_PARTITIONS, beforeDelete.logCount(), "Every partition must have a log row");
             assertEquals(0, beforeDelete.deletedLogCount(), "Live logs must not be stamped deleted");
 
-            admin.deleteTopics(Collections.singletonList(TOPIC_NAME)).all().get(30, TimeUnit.SECONDS);
+            try (LogCaptureAppender appender = LogCaptureAppender.createAndRegister(TopicPurger.class)) {
+                admin.deleteTopics(Collections.singletonList(TOPIC_NAME)).all().get(30, TimeUnit.SECONDS);
 
-            final ControlPlaneSnapshot afterDelete = readControlPlaneSnapshot(topicId);
-            log.info("Control plane snapshot immediately after delete: {}", afterDelete);
-            if (afterDelete.logCount() > 0) {
-                assertEquals(afterDelete.logCount(), afterDelete.deletedLogCount(),
-                    "DELETE_TOPICS must stamp logs.deleted_at rather than drop the rows");
+                final ControlPlaneSnapshot afterDelete = readControlPlaneSnapshot(topicId);
+                log.info("Control plane snapshot immediately after delete: {}", afterDelete);
+                if (afterDelete.logCount() > 0) {
+                    assertEquals(afterDelete.logCount(), afterDelete.deletedLogCount(),
+                        "DELETE_TOPICS must stamp logs.deleted_at rather than drop the rows");
+                }
+                assertTrue(afterDelete.batchCount() >= MIN_BATCHES_FOR_MULTI_CYCLE,
+                    "DELETE_TOPICS must return before TopicPurger drains the batches, got "
+                        + afterDelete.batchCount());
+
+                waitUntilPurged(topicId);
+                assertSaturatedAcrossMultipleCycles(appender, afterDelete.batchCount());
             }
-            assertTrue(afterDelete.batchCount() >= MIN_BATCHES_FOR_MULTI_CYCLE,
-                "DELETE_TOPICS must return before TopicPurger drains the batches, got "
-                    + afterDelete.batchCount());
-
             waitUntilTopicGone(admin);
-            waitUntilPurgedAcrossMultipleCycles(topicId, afterDelete.batchCount());
         }
 
         try (S3Client s3 = s3Container.getS3Client()) {
@@ -275,40 +278,32 @@ public class InklessDisklessTopicDeleteTest {
         }, 60_000, () -> "Topic must disappear from Kafka metadata after DELETE_TOPICS");
     }
 
-    /**
-     * Polls until the control-plane rows are gone and requires a leftover batch count in between.
-     * With {@code topic.purger.max.batches.per.cycle} capped, one cycle cannot finish the drain.
-     */
-    private void waitUntilPurgedAcrossMultipleCycles(Uuid topicId, long batchesAtDelete) throws InterruptedException {
-        final List<Long> observedBatchCounts = new ArrayList<>();
-        observedBatchCounts.add(batchesAtDelete);
+    private void waitUntilPurged(Uuid topicId) throws InterruptedException {
         final AtomicReference<ControlPlaneSnapshot> last = new AtomicReference<>();
-        boolean sawPartialDrain = false;
-        final long deadline = System.currentTimeMillis() + 90_000;
-
-        while (System.currentTimeMillis() < deadline) {
+        TestUtils.waitForCondition(() -> {
             ControlPlaneSnapshot snapshot = readControlPlaneSnapshot(topicId);
-            last.set(snapshot);
-            long batches = snapshot.batchCount();
-            if (observedBatchCounts.get(observedBatchCounts.size() - 1) != batches) {
-                observedBatchCounts.add(batches);
+            ControlPlaneSnapshot previous = last.getAndSet(snapshot);
+            if (previous == null || !previous.equals(snapshot)) {
                 log.info("TopicPurger progress: {}", snapshot);
             }
-            if (batches > 0 && batches < batchesAtDelete) {
-                sawPartialDrain = true;
-            }
-            if (snapshot.isFullyPurged()) {
-                break;
-            }
-            Thread.sleep(100);
-        }
+            return snapshot.isFullyPurged();
+        }, 90_000, () -> "TopicPurger must drop logs, batches, and producer_state; last seen: " + last.get());
+    }
 
-        assertTrue(last.get() != null && last.get().isFullyPurged(),
-            "TopicPurger must drop logs, batches, and producer_state; last seen: " + last.get()
-                + "; batch counts: " + observedBatchCounts);
-        assertTrue(sawPartialDrain,
-            "TopicPurger must drain batches across multiple cycles (max "
-                + MAX_BATCHES_PER_CYCLE + " per cycle); observed batch counts: " + observedBatchCounts);
+    /**
+     * One cycle cannot finish the drain: each broker deletes at most
+     * {@code topic.purger.max.batches.per.cycle} batches. Count saturated cycles from TopicPurger
+     * logs instead of a {@code COUNT(*)} poll, which can miss leftovers between 1s ticks.
+     */
+    private static void assertSaturatedAcrossMultipleCycles(LogCaptureAppender appender, long batchesAtDelete) {
+        long saturated = appender.getMessages().stream()
+            .filter(message -> message.contains("per-cycle cap reached"))
+            .count();
+        assertTrue(saturated >= batchesAtDelete - NUM_BROKERS,
+            "TopicPurger must hit the per-cycle cap across multiple cycles (max "
+                + MAX_BATCHES_PER_CYCLE + " per cycle); saturated=" + saturated
+                + " batchesAtDelete=" + batchesAtDelete
+                + " messages=" + appender.getMessages());
     }
 
     private record ControlPlaneSnapshot(

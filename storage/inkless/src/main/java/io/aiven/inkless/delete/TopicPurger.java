@@ -27,7 +27,6 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.SharedState;
@@ -42,8 +41,11 @@ public class TopicPurger implements Runnable, Closeable {
     final int maxBatchesPerCycle;
     final TopicPurgerMetrics metrics;
     private final ExponentialBackoff errorBackoff = new ExponentialBackoff(100, 2, 60 * 1000, 0.2);
-    private final Supplier<Long> noWorkBackoffSupplier;
     private final AtomicInteger attempts = new AtomicInteger();
+    // KafkaScheduler uses scheduleAtFixedRate. Sleeping inside run() queues missed ticks, and
+    // the next work cycle bursts past topic.purger.max.batches.per.cycle / interval. Skip the
+    // tick until this time instead.
+    private volatile long nextEligibleMs;
 
     public TopicPurger(SharedState sharedState) {
         this(
@@ -61,14 +63,13 @@ public class TopicPurger implements Runnable, Closeable {
         this.controlPlane = controlPlane;
         this.maxBatchesPerCycle = maxBatchesPerCycle;
         this.metrics = new TopicPurgerMetrics(time);
-
-        final int noWorkBackoffDuration = 10 * 1000;
-        final var noWorkBackoff = new ExponentialBackoff(noWorkBackoffDuration, 1, noWorkBackoffDuration * 2, 0.2);
-        noWorkBackoffSupplier = () -> noWorkBackoff.backoff(1);
     }
 
     @Override
     public void run() {
+        if (time.milliseconds() < nextEligibleMs) {
+            return;
+        }
         try {
             metrics.recordTopicPurgerStart();
             final PurgeDeletedLogsResponse result = TimeUtils.measureDurationMs(time,
@@ -77,9 +78,7 @@ public class TopicPurger implements Runnable, Closeable {
 
             metrics.recordTopicPurgerWorkRemain(result.moreRemain());
             if (result.isEmpty()) {
-                final long sleepMillis = noWorkBackoffSupplier.get();
-                LOGGER.info("No purge work this cycle, sleeping for {}", Duration.ofMillis(sleepMillis));
-                time.sleep(sleepMillis);
+                LOGGER.debug("No purge work this cycle");
             } else {
                 final boolean saturated = result.capReached();
                 if (saturated) {
@@ -95,12 +94,13 @@ public class TopicPurger implements Runnable, Closeable {
             }
 
             attempts.set(0);
+            nextEligibleMs = 0L;
             metrics.recordTopicPurgerCycleSucceeded();
         } catch (final Exception e) {
             metrics.recordTopicPurgerError();
             final long backoff = errorBackoff.backoff(attempts.incrementAndGet());
-            LOGGER.error("Error while purging deleted logs, waiting for {}", Duration.ofMillis(backoff), e);
-            time.sleep(backoff);
+            nextEligibleMs = time.milliseconds() + backoff;
+            LOGGER.error("Error while purging deleted logs, retrying after {}", Duration.ofMillis(backoff), e);
         }
     }
 

@@ -31,7 +31,6 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.PurgeDeletedLogsResponse;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -54,6 +53,7 @@ class TopicPurgerMockedTest {
 
         assertEquals(-1, purger.metrics.lastSuccessfulPurgeTimeMs.get());
 
+        final long beforeMs = time.milliseconds();
         purger.run();
 
         verify(controlPlane, times(1)).purgeDeletedLogs(eq(MAX_BATCHES_PER_CYCLE));
@@ -61,10 +61,11 @@ class TopicPurgerMockedTest {
         assertEquals(time.milliseconds(), purger.metrics.lastSuccessfulPurgeTimeMs.get());
         assertEquals(0, purger.metrics.topicPurgerCycleSaturated.intValue());
         assertEquals(0, purger.metrics.topicPurgerWorkRemain.get());
+        assertEquals(beforeMs, time.milliseconds());
     }
 
     @Test
-    void noWorkIsIdleEvenWhenMoreRemain() {
+    void noWorkDoesNotSleepWhenMoreRemain() {
         final var purger = new TopicPurger(time, controlPlane, MAX_BATCHES_PER_CYCLE);
         // Another broker holds the deleted rows (SKIP LOCKED miss): moreRemain is cluster-wide.
         when(controlPlane.purgeDeletedLogs(MAX_BATCHES_PER_CYCLE))
@@ -73,7 +74,7 @@ class TopicPurgerMockedTest {
         final long beforeMs = time.milliseconds();
         purger.run();
 
-        assertTrue(time.milliseconds() > beforeMs);
+        assertEquals(beforeMs, time.milliseconds());
         assertEquals(0, purger.metrics.topicPurgerCycleSaturated.intValue());
         assertEquals(1, purger.metrics.topicPurgerWorkRemain.get());
         assertEquals(time.milliseconds(), purger.metrics.lastSuccessfulPurgeTimeMs.get());
@@ -118,7 +119,7 @@ class TopicPurgerMockedTest {
     }
 
     @Test
-    void doesNotTrackFailedCycleAsSuccessful() {
+    void errorBackoffSkipsTicksUntilEligible() {
         final var purger = new TopicPurger(time, controlPlane, MAX_BATCHES_PER_CYCLE);
         when(controlPlane.purgeDeletedLogs(MAX_BATCHES_PER_CYCLE))
             .thenThrow(new RuntimeException("purge failed"))
@@ -126,8 +127,16 @@ class TopicPurgerMockedTest {
 
         purger.run();
         assertEquals(-1, purger.metrics.lastSuccessfulPurgeTimeMs.get());
+        verify(controlPlane, times(1)).purgeDeletedLogs(eq(MAX_BATCHES_PER_CYCLE));
 
         purger.run();
+        assertEquals(-1, purger.metrics.lastSuccessfulPurgeTimeMs.get());
+        verify(controlPlane, times(1)).purgeDeletedLogs(eq(MAX_BATCHES_PER_CYCLE));
+
+        // First error backoff is 100 * 2^1 * [0.8, 1.2] ms. Jump past the max.
+        time.sleep(1_000);
+        purger.run();
         assertEquals(time.milliseconds(), purger.metrics.lastSuccessfulPurgeTimeMs.get());
+        verify(controlPlane, times(2)).purgeDeletedLogs(eq(MAX_BATCHES_PER_CYCLE));
     }
 }
