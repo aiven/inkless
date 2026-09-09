@@ -37,6 +37,7 @@ import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.test.TestUtils;
 
+import org.apache.logging.log4j.Level;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -186,6 +187,7 @@ public class InklessDisklessTopicDeleteTest {
             assertEquals(0, beforeDelete.deletedLogCount(), "Live logs must not be stamped deleted");
 
             try (LogCaptureAppender appender = LogCaptureAppender.createAndRegister(TopicPurger.class)) {
+                appender.setClassLogger(TopicPurger.class, Level.INFO);
                 admin.deleteTopics(Collections.singletonList(TOPIC_NAME)).all().get(30, TimeUnit.SECONDS);
 
                 final ControlPlaneSnapshot afterDelete = readControlPlaneSnapshot(topicId);
@@ -291,19 +293,24 @@ public class InklessDisklessTopicDeleteTest {
     }
 
     /**
-     * One cycle cannot finish the drain: each broker deletes at most
-     * {@code topic.purger.max.batches.per.cycle} batches. Count saturated cycles from TopicPurger
-     * logs instead of a {@code COUNT(*)} poll, which can miss leftovers between 1s ticks.
+     * Every deleting cycle but the last hits the cap: {@code capReached} requires {@code moreRemain}.
+     * Two brokers can share the last pair of batches, so the floor is {@code batchesAtDelete - 1}
+     * (one finishing cycle), not {@code batchesAtDelete - NUM_BROKERS}.
      */
-    private static void assertSaturatedAcrossMultipleCycles(LogCaptureAppender appender, long batchesAtDelete) {
-        long saturated = appender.getMessages().stream()
-            .filter(message -> message.contains("per-cycle cap reached"))
-            .count();
-        assertTrue(saturated >= batchesAtDelete - NUM_BROKERS,
-            "TopicPurger must hit the per-cycle cap across multiple cycles (max "
-                + MAX_BATCHES_PER_CYCLE + " per cycle); saturated=" + saturated
+    private static void assertSaturatedAcrossMultipleCycles(LogCaptureAppender appender, long batchesAtDelete)
+            throws InterruptedException {
+        final long expected = batchesAtDelete - 1;
+        TestUtils.waitForCondition(() -> countSaturated(appender) >= expected, 10_000,
+            () -> "TopicPurger must hit the per-cycle cap on every cycle but the last (max "
+                + MAX_BATCHES_PER_CYCLE + " per cycle); saturated=" + countSaturated(appender)
                 + " batchesAtDelete=" + batchesAtDelete
                 + " messages=" + appender.getMessages());
+    }
+
+    private static long countSaturated(LogCaptureAppender appender) {
+        return appender.getMessages().stream()
+            .filter(message -> message.contains(TopicPurger.CAP_REACHED_LOG_FRAGMENT))
+            .count();
     }
 
     private record ControlPlaneSnapshot(
