@@ -3230,7 +3230,7 @@ class ReplicaManager(val config: KafkaConfig,
         fetchInfo.logStartOffset,
         fetchTimeMs,
         OptionalLong.of(log.lastStableOffset),
-        Errors.NONE)
+        Optional.empty[Throwable]())
     } else {
       createLogReadResult(exception)
     }
