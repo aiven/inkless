@@ -613,8 +613,6 @@ subprojects {
   // were not run, but instead were restored via FROM-CACHE. See KAFKA-17479 for more details.
   def copyTestXml = tasks.register('copyTestXml') {
     onlyIf("Environment GITHUB_ACTIONS is set") { isGithubActions }
-    onlyIf("Project '${project.name}:test' has sources") { ! test.state.noSource }
-    onlyIf("Task '${project.name}:test' did work") { test.state.didWork }
 
     ext {
       output = project.findProperty("kafka.test.xml.output.dir")
@@ -627,11 +625,23 @@ subprojects {
     doLast {
       def moduleDirPath = projectToJUnitXmlPath(project)
       def dest = rootProject.layout.buildDirectory.dir("junit-xml/${moduleDirPath}/${output}").get().asFile
-      println "Copy JUnit XML for ${project.name} to $dest"
-      ant.copy(todir: "$dest") {
-	ant.fileset(dir: "${test.reports.junitXml.entryPoint}") {
-	  ant.include(name: "**/*.xml")
-	}
+      // Copy every Test task that actually ran, not only `test`. Inkless CI's
+      // integrationTest failures otherwise never land in build/junit-xml, so
+      // junit.py reports 0 results. Skip FROM-CACHE/no-source tasks (KAFKA-17479).
+      tasks.withType(Test).each { testTask ->
+        if (testTask.state.noSource || !testTask.state.didWork) {
+          return
+        }
+        def xmlDir = testTask.reports.junitXml.entryPoint
+        if (!xmlDir.exists()) {
+          return
+        }
+        println "Copy JUnit XML for ${project.name}:${testTask.name} to $dest"
+        ant.copy(todir: "$dest") {
+          ant.fileset(dir: "${xmlDir}") {
+            ant.include(name: "**/*.xml")
+          }
+        }
       }
     }
   }
@@ -715,6 +725,8 @@ subprojects {
         maxFailures = userMaxTestRetryFailures
       }
     }
+
+    finalizedBy("copyTestXml")
   }
 
   task unitTest(type: Test, dependsOn: compileJava) {
