@@ -62,8 +62,8 @@ class S3StorageConfigTest {
         assertThat(config.checksumCheckEnabled()).isFalse();
         assertThat(config.region()).isEqualTo(TEST_REGION);
         assertThat(config.s3ServiceEndpoint()).isNull();
-        assertThat(config.apiCallTimeout()).isNull();
-        assertThat(config.apiCallAttemptTimeout()).isNull();
+        assertThat(config.apiCallTimeout()).isEqualTo(Duration.ofMillis(2000));
+        assertThat(config.apiCallAttemptTimeout()).isEqualTo(Duration.ofMillis(1000));
     }
 
     // - Credential provider scenarios
@@ -85,8 +85,8 @@ class S3StorageConfigTest {
         assertThat(config.httpMaxConnections()).isEqualTo(150);
         assertThat(config.region()).isEqualTo(TEST_REGION);
         assertThat(config.s3ServiceEndpoint()).extracting(URI::getHost).isEqualTo("minio");
-        assertThat(config.apiCallTimeout()).isNull();
-        assertThat(config.apiCallAttemptTimeout()).isNull();
+        assertThat(config.apiCallTimeout()).isEqualTo(Duration.ofMillis(2000));
+        assertThat(config.apiCallAttemptTimeout()).isEqualTo(Duration.ofMillis(1000));
     }
 
     //   - With provider
@@ -110,8 +110,8 @@ class S3StorageConfigTest {
         assertThat(config.credentialsProvider()).isInstanceOf(customCredentialsProvider);
         assertThat(config.region()).isEqualTo(TEST_REGION);
         assertThat(config.s3ServiceEndpoint()).extracting(URI::getHost).isEqualTo("minio");
-        assertThat(config.apiCallTimeout()).isNull();
-        assertThat(config.apiCallAttemptTimeout()).isNull();
+        assertThat(config.apiCallTimeout()).isEqualTo(Duration.ofMillis(2000));
+        assertThat(config.apiCallAttemptTimeout()).isEqualTo(Duration.ofMillis(1000));
     }
 
     //   - With static credentials
@@ -148,8 +148,8 @@ class S3StorageConfigTest {
         assertThat(awsCredentials.secretAccessKey()).isEqualTo(password);
         assertThat(config.region()).isEqualTo(TEST_REGION);
         assertThat(config.s3ServiceEndpoint()).extracting(URI::getHost).isEqualTo("minio");
-        assertThat(config.apiCallTimeout()).isNull();
-        assertThat(config.apiCallAttemptTimeout()).isNull();
+        assertThat(config.apiCallTimeout()).isEqualTo(Duration.ofMillis(2000));
+        assertThat(config.apiCallAttemptTimeout()).isEqualTo(Duration.ofMillis(1000));
     }
 
     @Test
