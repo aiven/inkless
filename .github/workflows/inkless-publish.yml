@@ -66,7 +66,7 @@ jobs:
     steps:
       - name: Checkout (for tag discovery on push trigger)
         if: github.event_name == 'push'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -157,7 +157,7 @@ jobs:
           fi
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ matrix.kafka_tag }}
           persist-credentials: false
@@ -186,10 +186,10 @@ jobs:
           echo "tarball_name=$(basename "$TARBALL")"    >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -212,7 +212,7 @@ jobs:
 
       - name: Upload distribution artifact (amd64 only to avoid duplicates)
         if: matrix.arch == 'amd64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-${{ steps.parse-build.outputs.kafka_version }}-${{ steps.parse-build.outputs.inkless_version }}
           path: ${{ steps.dist-info.outputs.tarball }}
@@ -249,10 +249,10 @@ jobs:
           fi
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -308,7 +308,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout (for Docker build from main release tag)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: inkless-release-${{ needs.prepare.outputs.inkless_version }}
           # Full history + tags so the changelog generator can diff this release
@@ -326,10 +326,10 @@ jobs:
         run: make build_release
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -363,7 +363,7 @@ jobs:
             "${IMAGE_NAME}:latest-arm64"
 
       - name: Download all distribution artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           pattern: dist-*
