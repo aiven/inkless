@@ -96,9 +96,9 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
     val consolidatingDisklessPartitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     topicPartitions.foreach { tp =>
       // Only diskless topics may be handed to the consolidation fetcher.
-      // The sole caller (ReplicaFetcherThread self-eviction, via ReplicaManager) selects partitions by
-      // seal state (committed seal + local LEO caught up), not by whether the topic is diskless,
-      // so this gate is where that precondition is established.
+      // The sole caller (ReplicaFetcherThread hand-off, via ReplicaManager) selects partitions by
+      // seal state and local LEO, not by whether the topic is diskless, so this gate is where that
+      // precondition is established.
       // Under the diskless+remote-storage invariant, a diskless topic is always consolidating.
       if (inklessMetadataView.isDisklessTopic(tp.topic) && switchedReplicaMayConsolidate(tp)) {
         replicaManager.onlinePartition(tp).foreach(partition => consolidatingDisklessPartitionsToStartFetching.put(tp, partition))
@@ -112,7 +112,7 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
    * True if the partition never switched; for a switched partition, true only while this replica
    * is in ISR.
    *
-   * The caller queues the hand-off on the classic fetcher thread and cannot hold partitionMapLock
+   * The caller queues the hand-off on the classic fetcher thread and cannot hold `partitionMapLock`
    * across the fetcher-manager call, so an ISR-shrink delta can land in between and leave the
    * queued decision stale. A replica that consolidates outside ISR sends no fetch to the leader,
    * so nothing would readmit it.

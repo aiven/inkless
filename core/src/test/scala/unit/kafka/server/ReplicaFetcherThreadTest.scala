@@ -874,7 +874,7 @@ class ReplicaFetcherThreadTest {
 
     f.thread.processPartitionData(t1p0, 100L, Int.MaxValue, f.partitionData)
 
-    // Queued for back-off rather than eviction. Assert before doWork, which drains the buffer.
+    // Queued for back-off rather than eviction. Assert before `doWork`, which drains the buffer.
     assertEquals(mutable.Buffer(t1p0), f.thread.partitionsAwaitingIsrRecovery)
     assertEquals(mutable.Buffer.empty, f.thread.partitionsToEvictAfterDisklessSwitch)
     verify(f.replicaFetcherManager, times(0)).removeFetcherForPartitions(any())
@@ -930,7 +930,7 @@ class ReplicaFetcherThreadTest {
   @Test
   def shouldNotEvictWhenIsrShrinksAfterTheBufferDrains(): Unit = {
     // The buffer is already drained when the ISR delta lands, so clearing it on removal cannot
-    // help. partitionMapLock cannot cover the fetcher-manager calls, so the eviction re-reads ISR
+    // help. `partitionMapLock` cannot cover the fetcher-manager calls, so the eviction re-reads ISR
     // instead: removing it here would leave the replica with no fetcher at all.
     val f = consolidatingFollowerAtSeal(replicaInIsr = true)
 

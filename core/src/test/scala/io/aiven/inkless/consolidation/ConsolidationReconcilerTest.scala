@@ -331,7 +331,7 @@ class ConsolidationReconcilerTest {
 
   @Test
   def testStartConsolidationFetchersForCaughtUpClassicPartitionsSkipsSwitchedReplicaOutsideIsr(): Unit = {
-    // The classic fetcher queues the hand-off and cannot hold partitionMapLock across the
+    // The classic fetcher queues the hand-off and cannot hold `partitionMapLock` across the
     // fetcher-manager call, so its decision can be stale by the time it lands here. Enforce ISR
     // membership at the point of effect: consolidating outside ISR sends no fetch to the leader,
     // so nothing would readmit the replica.

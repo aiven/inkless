@@ -7138,7 +7138,7 @@ class ReplicaManagerInklessTest {
     val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
     when(mockFetcherManager.removeFetcherForPartitions(any()))
       .thenReturn(Map.empty[TopicPartition, PartitionFetchState])
-    // The switch turns on remote storage by itself, so isConsolidatingDisklessTopic reads true even
+    // The switch turns on remote storage by itself, so `isConsolidatingDisklessTopic` reads true even
     // with consolidation off on this broker. With it off there is no consolidation fetcher, so a
     // partition classified as consolidation-bound is handed to nothing and stops replicating.
     val replicaManager = spy(createReplicaManager(
@@ -7887,7 +7887,7 @@ class ReplicaManagerInklessTest {
       log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, 7,
         new SimpleRecord("consolidated".getBytes, "value".getBytes)), 7)
       assertTrue(log.logEndOffset > sealOffset, "precondition: leader consolidated past the seal")
-      // The leader runs its own consolidation fetcher, whose maybeUpdateHighWatermark sets the local
+      // The leader runs its own consolidation fetcher, whose `maybeUpdateHighWatermark` sets the local
       // high watermark to the diskless frontier directly, bypassing the ISR-minimum logic.
       log.updateHighWatermark(log.logEndOffset)
 
@@ -8130,7 +8130,7 @@ class ReplicaManagerInklessTest {
       consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
     )
     try {
-      // fetchRecords runs no divergence check when the request carries no epoch, so an absent epoch
+      // `fetchRecords` runs no divergence check when the request carries no epoch, so an absent epoch
       // must not count as a validated prefix.
       val partition = setupSwitchedLeaderWithOutOfSyncFollower(
         replicaManager, disklessTopicPartition, followerId, sealOffset)

@@ -1062,7 +1062,7 @@ class Partition(val topicPartition: TopicPartition,
             None
         }
       })
-      // Submitted outside the lock, as maybeExpandIsr does: completion may increment the high
+      // Submitted outside the lock, as `maybeExpandIsr` does: completion may increment the high
       // watermark and complete delayed operations.
       alterIsrUpdateOpt.foreach(submitAlterPartition)
     }

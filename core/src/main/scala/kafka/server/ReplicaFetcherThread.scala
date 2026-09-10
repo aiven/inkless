@@ -106,8 +106,8 @@ class ReplicaFetcherThread(name: String,
       leaderEndOffset != 0
   }
 
-  // Never hold partitionMapLock across replicaFetcherManager or consolidationFetcherManager calls:
-  // their monitors lead back to this thread. replicaAlterLogDirsManager reaches a different thread.
+  // Never hold `partitionMapLock` across `replicaFetcherManager` or `consolidationFetcherManager` calls:
+  // their monitors lead back to this thread. `replicaAlterLogDirsManager` reaches a different thread.
   override def removePartitions(
     topicPartitions: scala.collection.Set[TopicPartition]
   ): scala.collection.Map[TopicPartition, PartitionFetchState] =
@@ -159,9 +159,10 @@ class ReplicaFetcherThread(name: String,
 
   /**
    * Whether the eviction check in processPartitionData should mark fully-switched partitions
-   * for removal. The classic ReplicaFetcherThread enables this (so it self-evicts at the seal
-   * and hands off to consolidation). The ConsolidationFetcherThread disables it because it
-   * intentionally fetches for already-switched partitions.
+   * for removal. The classic ReplicaFetcherThread enables this, so it hands off to consolidation
+   * once the replica is at the seal and back in ISR.
+   * The ConsolidationFetcherThread disables it because it intentionally fetches for
+   * already-switched partitions.
    */
 
   protected def shouldEvictFullySwitchedDisklessPartitions: Boolean = true
@@ -261,7 +262,7 @@ class ReplicaFetcherThread(name: String,
     LockUtils.inLock[Exception](partitionMapLock, () => {
       if (partitionsAwaitingIsrRecovery.nonEmpty) {
         // Delay inside the lock so a remove and re-add cannot pass this backoff to the re-added
-        // partition. partitionMapLock is reentrant and delayPartitions reaches no fetcher manager.
+        // partition. `partitionMapLock` is reentrant and `delayPartitions` reaches no fetcher manager.
         delayPartitions(partitionsAwaitingIsrRecovery.toSet, brokerConfig.replicaFetchBackoffMs.toLong)
         partitionsAwaitingIsrRecovery.clear()
       }
@@ -270,14 +271,14 @@ class ReplicaFetcherThread(name: String,
 
   // Visible for testing.
   private[server] def evictFullySwitchedDisklessPartitions(): Unit = {
-    // Drain under the lock, since removePartitions discards queued evictions from other threads.
-    // The manager calls stay outside it, per the note on removePartitions.
+    // Drain under the lock, since `removePartitions` discards queued evictions from other threads.
+    // The manager calls stay outside it, per the note on `removePartitions`.
     val toEvict = LockUtils.inLock(partitionMapLock, () => {
       val pending = partitionsToEvictAfterDisklessSwitch.toSet
       partitionsToEvictAfterDisklessSwitch.clear()
       pending
     })
-    // Re-read ISR after the drain. partitionMapLock cannot cover the manager calls below, so an
+    // Re-read ISR after the drain. `partitionMapLock` cannot cover the manager calls below, so an
     // ISR-shrink delta can land here and re-add the partition to this fetcher; removing it again
     // right after would strand it. The reconciler re-checks as well, so a delta landing after
     // this filter cannot start consolidation outside ISR.
