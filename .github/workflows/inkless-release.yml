@@ -13,7 +13,7 @@
 #
 # Prerequisites (must be done before triggering this workflow):
 #   - All target inkless commits are merged to main
-#   - Active release branches (inkless-4.1, inkless-4.2, ...) have been updated
+#   - Active release branches (inkless-4.1, inkless-4.2, inkless-4.3, ...) have been updated
 #     with those commits via the cherry-pick sync process
 #   - No pending cherry-picks on active branches (validated in step 2)
 #

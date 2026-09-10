@@ -41,6 +41,69 @@ Regenerate a draft with the `inkless-changelog` skill (or run it directly):
 
 ---
 
+## 0.48 (Kafka 4.1.2, 4.2.1, 4.3.1)
+
+> Upstream sync: main development base moved to Kafka 4.3.0-SNAPSHOT (from 4.2.0-SNAPSHOT), Scala 2.13.17 -> 2.13.18. `inkless-4.3` (Kafka 4.3.1) ships its first release with this increment.
+
+### Features
+- (inkless:storage) default S3 API call timeouts to 2s and 1s (#791)
+- (inkless:consume) measure the fetch data phase and its queueing [KC-446] (#784)
+- (inkless:storage) bound and shorten the GCS upload path (#783)
+- (inkless:delete) soft-delete diskless topics and purge in the background [KC-349] (#782)
+- (inkless:consume) default the lagging request-rate limit off, cap batches per partition (#769)
+- (inkless:control-plane) enable batch coalescing by default (#766)
+
+### Fixes
+- (inkless:storage) count retried GCS error responses (#789)
+- (inkless:ci) copy integrationTest JUnit XML into build/junit-xml (#793)
+- (inkless:delete) do not sleep inside the topic purger tick [KC-349] (#792)
+- (inkless:release) exclude sync-tooling commits from the branch-consistency gate (#794)
+- (inkless:ci) update Inkless CI workflow and JUnit catalog parsing (#788)
+- (inkless:gcs) narrow fetch length before opening the reader (#781)
+- (inkless:storage) report an oversized fetch as a storage failure [KC-481] (#778)
+- (inkless:consume) size fetch buffers to the payload [KC-481] (#772)
+- (inkless:consume) serve consumer reads from a lagging AZ replica [KC-461] (#774)
+- (inkless:gcs) count batch object deletions in metrics [KC-483] (#775)
+- (inkless-sync) use trunk merge base for --before-version (#770)
+- (inkless-sync) avoid arithmetic error in conflict count check (#768)
+- (inkless:control_plane) make the diskless fetch budget fair across partitions [KC-407] (#750)
+- (inkless:fetch) preserve legacy fetch request partition identity in response [KC-353] (#762)
+- (inkless:metadata) accept pipe as a client.id AZ separator (#767)
+- (inkless:build) stop reusing `inklessTag` as both the override key and the resolved value [KC-384] (#765)
+
+### Refactors
+- (inkless:consume) drop four never-recorded fetch metrics (#787)
+
+### Tests
+- (inkless:consolidation) tolerate re-delivery in the consume check (#785)
+
+### Docs
+- (inkless:sync) align sync guides with PEP 440 version-consistency fixes (#780)
+- (inkless:consolidation) Diskless Consolidation documentation (#702)
+- (inkless:sync) add sync PR merge steps to main-sync plan (#776)
+- (inkless:release) add 0.47 changelog entry (#764)
+
+### Chores
+- (inkless:ci) drop nightly workflow, schedule system tests instead (#777)
+
+### Other
+- (ci) extend inkless system tests timeout to 3 hours (#773)
+
+### Config & metric changes
+- config added: `inkless.topic.purger.interval.ms`, default 60000 (1 minute); `inkless.topic.purger.max.batches.per.cycle`, default 20000 -- pace the background purge of soft-deleted diskless logs, per broker (#782)
+- config added: `inkless.storage.gcs.connect.timeout`, default 2000; `inkless.storage.gcs.read.timeout`, default 1000 -- bound each GCS request attempt; previously only the google-cloud client defaults (20s/20s) applied (#783)
+- config default changed: `inkless.storage.s3.api.call.timeout` null -> 2000; `inkless.storage.s3.api.call.attempt.timeout` null -> 1000 -- hung S3 calls fail fast instead of relying on the AWS SDK's unbounded defaults (#791)
+- config default changed: `inkless.fetch.lagging.consumer.request.rate.limit` 200 -> 0 (off); `inkless.fetch.find.batches.max.per.partition` 0 -> 1024 -- the lagging consumer thread pool governs GET rate, and the consumer's `fetch.max.bytes` drives per-fetch fan-out (#769)
+- config default changed: `inkless.control.plane.batch.coalescing.enabled` false -> true; the key now documents under the control-plane section of `configs.rst` (the duplicate `InklessConfig` define never fed behavior) (#766)
+- metric mbean added: `io.aiven.inkless.delete:type=TopicPurger` with `TopicPurgerRate`, `TopicPurgerBatchesRate`, `TopicPurgerLogsRate`, `TopicPurgerFilesMarkedRate`, `TopicPurgerErrorRate`, `TopicPurgerCycleSaturatedRate`, `TopicPurgerTotalTime`, `TopicPurgerWorkRemain`, `LastSuccessfulTopicPurgeAgeMs`; `PostgresControlPlane :: PurgeDeletedLogsQueryRate`, `PurgeDeletedLogsQueryTime`, `PurgeDeletedLogsLastSuccessfulQueryAgeMs` (#782)
+- metric attrs added: `InklessFetchMetrics :: FetchQueueTime`, `FetchDataTime`, `FetchLaggingObjectBytes`, `InFlightLaggingObjectBytes`, `InFlightLaggingObjectBytesMax` (#784)
+- metric attrs added: `gcs-client-metrics :: object-upload-rate/total`, `server-errors-rate/total`, `throttling-errors-rate/total`, `other-errors-rate/total` (#783); retried error responses count toward the error attrs (#789)
+- metric attrs removed: `InklessFetchMetrics :: CacheHitCount`, `CacheMissCount`, `CacheQueryTime`, `CacheStoreTime` -- nothing ever recorded them, so no live series disappears (#787)
+
+### Postgres schema changes
+- `V27__Find_batches_request_level_min_one_message.sql` -- `CREATE OR REPLACE FUNCTION find_batches_v2`, no table lock (#750).
+- `V28__Soft_delete_logs.sql` -- `ALTER TABLE logs ADD COLUMN deleted_at` (nullable, no default: catalog-only) and `CREATE INDEX logs_by_deleted_at_idx` (partial, no `CONCURRENTLY`: Flyway runs each migration in a transaction). Both take `ACCESS EXCLUSIVE` on `logs`, which the produce commit path locks per row, so commits wait for the migration; `logs` holds one row per diskless partition, so the scan is short. Also deletes `producer_state` rows orphaned by the old `delete_topic_v1` (row locks only) and adds `purge_deleted_logs_v1`. The index cannot be pre-built because the column does not exist before the migration (#782).
+
 ## 0.47 (Kafka 4.1.2, 4.2.1)
 
 ### Features
