@@ -55,8 +55,32 @@ class ReplicaFetcherThread(name: String,
   // At the seal but not yet in metadata ISR, so we cannot evict. Visible for testing.
   private[server] val partitionsAwaitingIsrRecovery = mutable.Buffer[TopicPartition]()
 
+  /**
+   * Returns the epoch this follower offers the leader for the divergence check.
+   *
+   * A switched follower at or above the seal offers the epoch of its last classic record instead of
+   * its latest epoch. Above the seal the latest epoch is the diskless one, stamped on records that
+   * came from object storage rather than from this leader, so checking it proves the suffix resolves
+   * in the leader's cache and says nothing about the classic prefix. The prefix is what ISR
+   * membership vouches for, and the boundary epoch is what the leader can check against its own
+   * history. Below the seal, or once the prefix has left the local log, the latest epoch applies.
+   *
+   * Only the classic fetcher does this. The consolidation fetcher inherits this method, and its
+   * endpoint answers any epoch below the diskless one with the seal, so offering the boundary epoch
+   * there would truncate the consolidated suffix on every start.
+   */
   override protected def latestEpoch(topicPartition: TopicPartition): Optional[Integer] = {
-    replicaMgr.localLogOrException(topicPartition).latestEpoch
+    val log = replicaMgr.localLogOrException(topicPartition)
+    if (!shouldEvictFullySwitchedDisklessPartitions) return log.latestEpoch
+    val inklessMetadataView = replicaMgr.inklessMetadataView()
+    if (!inklessMetadataView.isDisklessTopic(topicPartition.topic)) return log.latestEpoch
+    val seal = inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
+    if (seal > 0 && log.logEndOffset >= seal && log.logStartOffset < seal) {
+      val boundaryEpoch = log.leaderEpochCache.epochForOffset(seal - 1)
+      if (boundaryEpoch.isPresent) Optional.of(Integer.valueOf(boundaryEpoch.getAsInt)) else log.latestEpoch
+    } else {
+      log.latestEpoch
+    }
   }
 
   override protected def logStartOffset(topicPartition: TopicPartition): Long = {
