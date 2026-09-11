@@ -27,8 +27,9 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -57,13 +58,18 @@ import static org.jooq.generated.Tables.BATCHES;
  * swept across where the requested timestamp falls in the partition: at the start (first row matches),
  * near the end (most rows rejected), and past the end (every row rejected, nothing returned).
  *
- * <p>A/B usage: run without the timestamp index to capture the baseline, apply the index migration, re-run,
- * and compare the printed tables and plans. The tell is whether us/call for the past-the-end case and for
- * MAX_TIMESTAMP stays flat with depth (index range scan) or grows linearly (per-row function evaluation).
+ * <p>The same seeded workload runs against three schema variants, each in its own database: V28 (the
+ * baseline: no timestamp index, {@code ORDER BY batch_id LIMIT 1} lookups), V29 (the index alone), and V30
+ * (index plus the {@code MIN(base_offset)} rewrite). Compare the printed tables and plans across variants.
+ * The tell is whether us/call for the past-the-end and at-90% cases stays flat with depth (index range scan)
+ * or grows linearly (a walk with the predicate as a filter). Statistics are gathered after every seed step,
+ * because without them the planner never sees the plans production runs.
  */
 @Tag("benchmark")
 @Testcontainers
 class ListOffsetsTimestampScanBenchmarkTest {
+    /** Flyway version of the first migration that rewrites the lookups as MIN(base_offset). */
+    static final int MIN_OFFSET_LOOKUP_VERSION = 30;
     @Container
     static final InklessPostgreSQLContainer pgContainer = PostgreSQLTestContainer.container();
 
@@ -82,7 +88,6 @@ class ListOffsetsTimestampScanBenchmarkTest {
     @BeforeEach
     void setUp(final TestInfo testInfo) {
         pgContainer.createDatabase(testInfo);
-        pgContainer.migrate();
     }
 
     @AfterEach
@@ -90,12 +95,15 @@ class ListOffsetsTimestampScanBenchmarkTest {
         pgContainer.tearDown();
     }
 
-    @Test
-    void benchmarkTimestampBranches() {
+    @ParameterizedTest(name = "schema V{0}")
+    @ValueSource(strings = {"28", "29", "30"})
+    void benchmarkTimestampBranches(final String schemaVersion) {
+        pgContainer.migrate(schemaVersion);
+        final boolean minOffsetLookup = Integer.parseInt(schemaVersion) >= MIN_OFFSET_LOOKUP_VERSION;
         final TopicIdPartition partition = createSinglePartitionTopic();
 
         final StringBuilder out = new StringBuilder();
-        out.append(String.format("%n== list_offsets_v1 timestamp branches: us/call vs retained batches ==%n"));
+        out.append(String.format("%n== schema V%s: list_offsets_v1 timestamp branches: us/call vs retained batches ==%n", schemaVersion));
         out.append(String.format("ts@start: first row matches. ts@90%%: 10%% of rows match. ts@end+1: no row matches.%n%n"));
         out.append(String.format("%12s | %12s | %12s | %12s | %12s%n",
             "depth (rows)", "MAX_TS", "ts@start", "ts@90%", "ts@end+1"));
@@ -117,9 +125,9 @@ class ListOffsetsTimestampScanBenchmarkTest {
         System.out.println(out);
 
         explainMaxTimestamp(partition);
-        explainTimestampLookup(partition, BASE_TIMESTAMP + committed + 1, "past the end");
-        explainTimestampLookup(partition, BASE_TIMESTAMP + committed * 9 / 10, "at 90%");
-        explainTimestampLookup(partition, BASE_TIMESTAMP, "at the start");
+        explainTimestampLookup(partition, BASE_TIMESTAMP + committed + 1, "past the end", minOffsetLookup);
+        explainTimestampLookup(partition, BASE_TIMESTAMP + committed * 9 / 10, "at 90%", minOffsetLookup);
+        explainTimestampLookup(partition, BASE_TIMESTAMP, "at the start", minOffsetLookup);
         printPlannerStatistics();
     }
 
@@ -178,12 +186,16 @@ class ListOffsetsTimestampScanBenchmarkTest {
         plan.forEach(row -> System.out.println(row.get(0)));
     }
 
-    private void explainTimestampLookup(final TopicIdPartition p, final long timestamp, final String label) {
+    private void explainTimestampLookup(final TopicIdPartition p, final long timestamp, final String label,
+                                        final boolean minOffsetLookup) {
         final org.jooq.Result<?> plan = pgContainer.getJooqCtx().fetch(
             "EXPLAIN (ANALYZE, BUFFERS) "
-                + "SELECT MIN(base_offset) "
+                + (minOffsetLookup
+                    ? "SELECT MIN(base_offset) "
+                    : "SELECT batch_timestamp(timestamp_type, batch_max_timestamp, log_append_timestamp), base_offset ")
                 + "FROM batches WHERE topic_id = {0} AND partition = {1} "
-                + "  AND batch_timestamp(timestamp_type, batch_max_timestamp, log_append_timestamp) >= {2}",
+                + "  AND batch_timestamp(timestamp_type, batch_max_timestamp, log_append_timestamp) >= {2}"
+                + (minOffsetLookup ? "" : " ORDER BY batch_id LIMIT 1"),
             DSL.val(p.topicId(), BATCHES.TOPIC_ID.getDataType()),
             DSL.val(p.partition(), BATCHES.PARTITION.getDataType()),
             DSL.val(timestamp, BATCHES.BATCH_MAX_TIMESTAMP.getDataType()));
