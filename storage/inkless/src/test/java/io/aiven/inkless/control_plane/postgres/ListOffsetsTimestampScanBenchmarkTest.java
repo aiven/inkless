@@ -105,7 +105,8 @@ class ListOffsetsTimestampScanBenchmarkTest {
         for (final long targetDepth : DEPTH_CHECKPOINTS) {
             committed += seedUntil(partition, committed, targetDepth);
             // Autovacuum does not run inside the checkpoint loop; give the planner current statistics.
-            pgContainer.getJooqCtx().execute("ANALYZE batches");
+            // The pool has autocommit off, so a bare execute() would be rolled back on connection return.
+            pgContainer.getJooqCtx().transaction(conf -> DSL.using(conf).execute("ANALYZE batches"));
             final double maxTs = measure(partition, MAX_TIMESTAMP);
             final double atStart = measure(partition, BASE_TIMESTAMP);
             final double at90 = measure(partition, BASE_TIMESTAMP + committed * 9 / 10);
@@ -117,7 +118,25 @@ class ListOffsetsTimestampScanBenchmarkTest {
 
         explainMaxTimestamp(partition);
         explainTimestampLookup(partition, BASE_TIMESTAMP + committed + 1, "past the end");
+        explainTimestampLookup(partition, BASE_TIMESTAMP + committed * 9 / 10, "at 90%");
         explainTimestampLookup(partition, BASE_TIMESTAMP, "at the start");
+        printPlannerStatistics();
+    }
+
+    /**
+     * Row estimates in the plans depend on these. Without statistics the planner assumed a ~10-row partition
+     * and chose plans that do not survive a real ANALYZE, so the plans above are only meaningful if
+     * pg_stats has rows for batches and the timestamp index expression.
+     */
+    private void printPlannerStatistics() {
+        System.out.println("\n== planner statistics ==");
+        pgContainer.getJooqCtx().fetch(
+            "SELECT relname, reltuples, relpages FROM pg_class WHERE relname IN ('batches', 'batches_by_timestamp_idx')")
+            .forEach(row -> System.out.println(row.get(0) + " reltuples=" + row.get(1) + " relpages=" + row.get(2)));
+        pgContainer.getJooqCtx().fetch(
+            "SELECT tablename, attname, n_distinct FROM pg_stats "
+                + "WHERE tablename IN ('batches', 'batches_by_timestamp_idx') ORDER BY 1, 2")
+            .forEach(row -> System.out.println("pg_stats " + row.get(0) + "." + row.get(1) + " n_distinct=" + row.get(2)));
     }
 
     private double measure(final TopicIdPartition partition, final long timestamp) {
@@ -162,10 +181,9 @@ class ListOffsetsTimestampScanBenchmarkTest {
     private void explainTimestampLookup(final TopicIdPartition p, final long timestamp, final String label) {
         final org.jooq.Result<?> plan = pgContainer.getJooqCtx().fetch(
             "EXPLAIN (ANALYZE, BUFFERS) "
-                + "SELECT batch_timestamp(timestamp_type, batch_max_timestamp, log_append_timestamp), base_offset "
+                + "SELECT MIN(base_offset) "
                 + "FROM batches WHERE topic_id = {0} AND partition = {1} "
-                + "  AND batch_timestamp(timestamp_type, batch_max_timestamp, log_append_timestamp) >= {2} "
-                + "ORDER BY batch_id LIMIT 1",
+                + "  AND batch_timestamp(timestamp_type, batch_max_timestamp, log_append_timestamp) >= {2}",
             DSL.val(p.topicId(), BATCHES.TOPIC_ID.getDataType()),
             DSL.val(p.partition(), BATCHES.PARTITION.getDataType()),
             DSL.val(timestamp, BATCHES.BATCH_MAX_TIMESTAMP.getDataType()));
