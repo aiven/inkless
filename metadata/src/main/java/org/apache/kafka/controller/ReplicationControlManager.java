@@ -2822,6 +2822,8 @@ public class ReplicationControlManager {
             // replica set with rack-aware placement, and because the data lives in object storage a
             // replica-set resize is immediate and safe (no inter-broker catch-up). Honor the
             // KIP-860 allow-RF-change flag for managed diskless topics, exactly like classic topics.
+            // The resize is only immediate for born-diskless partitions; a switched one still has a
+            // classic prefix to replicate, so it stages the change (see changePartitionReassignment).
             boolean rfChangeAllowedForTopic =
                 !isDisklessTopic(topic.name()) || isDisklessManagedReplicasEnabled;
             boolean effectiveRFChange = allowRFChange && rfChangeAllowedForTopic;
@@ -2961,7 +2963,14 @@ public class ReplicationControlManager {
             new PartitionReassignmentReplicas(currentAssignment, targetAssignment);
 
         String topicName = topics.get(tp.topicId()).name;
-        boolean isDiskless = isDisklessTopic(topicName);
+        // Only born-diskless partitions take the one-step path below. A partition switched from classic
+        // still has records under classicToDisklessStartOffset in the replicas' local logs, so a target
+        // replica is not interchangeable and has to earn ISR through the staged path.
+        // -1 means "no committed seal", which also covers a switch aborted via AlterDisklessSwitch --
+        // that partition keeps a classic prefix, but every other seal reader already routes it as
+        // born-diskless, so the prefix is unreachable regardless of ISR membership.
+        boolean isBornDiskless = isDisklessTopic(topicName) &&
+            part.classicToDisklessStartOffset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET;
 
         PartitionChangeBuilder builder = new PartitionChangeBuilder(
             part,
@@ -2973,7 +2982,7 @@ public class ReplicationControlManager {
             featureControl.isElrFeatureEnabled()
         );
 
-        if (isDiskless) {
+        if (isBornDiskless) {
             // Diskless: data is in object storage, no replica sync needed.
             // Apply target replicas directly — skip the staged adding/removing process
             // (no addingReplicas/removingReplicas). This is safe because:
