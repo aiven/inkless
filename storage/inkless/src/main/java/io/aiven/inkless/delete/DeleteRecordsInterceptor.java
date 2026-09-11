@@ -31,8 +31,10 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -41,6 +43,7 @@ import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.common.TopicIdEnricher;
 import io.aiven.inkless.common.TopicTypeCounter;
+import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
@@ -50,17 +53,31 @@ import static org.apache.kafka.common.requests.DeleteRecordsResponse.INVALID_LOW
 
 public class DeleteRecordsInterceptor implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(DeleteRecordsInterceptor.class);
+    private static final String THREAD_NAME_PREFIX = "inkless-delete-records";
+    // DeleteRecords is an admin operation with a low arrival rate; no config for the pool size.
+    private static final int THREAD_POOL_SIZE = 2;
+    private static final int QUEUE_CAPACITY = 200;
 
     private final ControlPlane controlPlane;
     private final MetadataView metadataView;
     private final ExecutorService executorService;
     private final TopicTypeCounter topicTypeCounter;
+    private final ThreadPoolMonitor threadPoolMonitor;
 
     public DeleteRecordsInterceptor(final SharedState state) {
         this(
-            state.controlPlane(), 
-            state.metadata(), 
-            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-delete-records", false))
+            state.controlPlane(),
+            state.metadata(),
+            new ThreadPoolExecutor(
+                THREAD_POOL_SIZE,
+                THREAD_POOL_SIZE,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(QUEUE_CAPACITY),
+                new InklessThreadFactory(THREAD_NAME_PREFIX, false),
+                // Reject instead of CallerRunsPolicy: the caller is a request handler thread.
+                new ThreadPoolExecutor.AbortPolicy()
+            )
         );
     }
 
@@ -74,6 +91,9 @@ public class DeleteRecordsInterceptor implements Closeable {
         this.executorService = executorService;
         this.metadataView = metadataView;
         this.topicTypeCounter = new TopicTypeCounter(metadataView);
+        this.threadPoolMonitor = executorService instanceof ThreadPoolExecutor
+            ? new ThreadPoolMonitor(THREAD_NAME_PREFIX, executorService)
+            : null;
     }
 
     /**
@@ -107,29 +127,38 @@ public class DeleteRecordsInterceptor implements Closeable {
         }
 
         // TODO use purgatory
-        executorService.execute(() -> {
-            try {
-                final List<DeleteRecordsRequest> requests = offsetPerPartitionEnriched.entrySet().stream()
-                    .map(kv -> new DeleteRecordsRequest(kv.getKey(), kv.getValue()))
-                    .toList();
-                final List<DeleteRecordsResponse> responses = controlPlane.deleteRecords(requests);
-                final Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult> result = new HashMap<>();
-                for (int i = 0; i < responses.size(); i++) {
-                    final DeleteRecordsRequest request = requests.get(i);
-                    final DeleteRecordsResponse response = responses.get(i);
-                    final var value = new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
-                        .setPartitionIndex(request.topicIdPartition().partition())
-                        .setErrorCode(response.errors().code())
-                        .setLowWatermark(response.lowWatermark());
-                    result.put(request.topicIdPartition().topicPartition(), value);
-                }
-                responseCallback.accept(result);
-            } catch (final Exception e) {
-                LOGGER.error("Unknown exception", e);
-                respondAllWithError(offsetPerPartition, responseCallback, Errors.UNKNOWN_SERVER_ERROR);
-            }
-        });
+        try {
+            executorService.execute(() -> deleteRecords(offsetPerPartition, offsetPerPartitionEnriched, responseCallback));
+        } catch (final RejectedExecutionException e) {
+            LOGGER.warn("DeleteRecords rejected: thread pool queue is full");
+            respondAllWithError(offsetPerPartition, responseCallback, Errors.UNKNOWN_SERVER_ERROR);
+        }
         return true;
+    }
+
+    private void deleteRecords(final Map<TopicPartition, Long> offsetPerPartition,
+                               final Map<TopicIdPartition, Long> offsetPerPartitionEnriched,
+                               final Consumer<Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult>> responseCallback) {
+        try {
+            final List<DeleteRecordsRequest> requests = offsetPerPartitionEnriched.entrySet().stream()
+                .map(kv -> new DeleteRecordsRequest(kv.getKey(), kv.getValue()))
+                .toList();
+            final List<DeleteRecordsResponse> responses = controlPlane.deleteRecords(requests);
+            final Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult> result = new HashMap<>();
+            for (int i = 0; i < responses.size(); i++) {
+                final DeleteRecordsRequest request = requests.get(i);
+                final DeleteRecordsResponse response = responses.get(i);
+                final var value = new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
+                    .setPartitionIndex(request.topicIdPartition().partition())
+                    .setErrorCode(response.errors().code())
+                    .setLowWatermark(response.lowWatermark());
+                result.put(request.topicIdPartition().topicPartition(), value);
+            }
+            responseCallback.accept(result);
+        } catch (final Exception e) {
+            LOGGER.error("Unknown exception", e);
+            respondAllWithError(offsetPerPartition, responseCallback, Errors.UNKNOWN_SERVER_ERROR);
+        }
     }
 
     private void respondAllWithError(final Map<TopicPartition, Long> offsetPerPartition,
@@ -149,5 +178,8 @@ public class DeleteRecordsInterceptor implements Closeable {
     @Override
     public void close() throws IOException {
         ThreadUtils.shutdownExecutorServiceQuietly(executorService, 5, TimeUnit.SECONDS);
+        if (threadPoolMonitor != null) {
+            threadPoolMonitor.close();
+        }
     }
 }

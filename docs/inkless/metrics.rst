@@ -183,13 +183,14 @@ InklessFetchOffset metrics
 io.aiven.inkless.consume:type=InklessFetchOffsetMetrics
 -------------------------------------------------------
 
-=====================  ==================================================================
-Attribute name         Description                                                       
-=====================  ==================================================================
-FetchOffsetErrorRate   Rate of failed fetch offset requests per second                   
-FetchOffsetRate        Rate of fetch offset requests processed per second                
-FetchOffsetTotalTime   Total time spent processing a fetch offset request in milliseconds
-=====================  ==================================================================
+========================  ================================================================================================================================================================
+Attribute name            Description                                                                                                                                                     
+========================  ================================================================================================================================================================
+FetchOffsetErrorRate      Rate of failed fetch offset requests per second                                                                                                                 
+FetchOffsetRate           Rate of fetch offset requests processed per second                                                                                                              
+FetchOffsetRejectedRate   Rate of fetch offset requests rejected per second because the fetch offset thread pool queue is full. Rejected requests are also counted in FetchOffsetErrorRate
+FetchOffsetTotalTime      Total time spent processing a fetch offset request in milliseconds                                                                                              
+========================  ================================================================================================================================================================
 
 
 Writer metrics
