@@ -45,6 +45,8 @@ import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
+import static org.apache.kafka.common.record.internal.RecordBatch.NO_TIMESTAMP;
+import static org.apache.kafka.common.requests.ListOffsetsRequest.MAX_TIMESTAMP;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers
@@ -99,6 +101,47 @@ class ListOffsetsJobTest {
         System.out.println(result);
         assertThat(result).containsExactly(
             new ListOffsetsResponse(Errors.NONE, T0P0, -1, 12)
+        );
+    }
+
+    /**
+     * The timestamp lookup returns the first batch in offset order whose timestamp is at or after the
+     * target, not the batch with the smallest qualifying timestamp. The two differ only when timestamps
+     * are out of order across batches.
+     */
+    @Test
+    void timestampLookupFollowsOffsetOrderNotTimestampOrder() {
+        // Offsets 0-9 at ts 2000, 10-19 at ts 1000, 20-29 at ts 3000.
+        new CommitFileJob(
+            time, pgContainer.getJooqCtx(), "obj1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, T0P0, 0, 100, 0, 9, 2000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P0, 100, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P0, 200, 100, 0, 9, 3000, TimestampType.CREATE_TIME)
+            ),
+            duration -> {}
+        ).call();
+
+        final List<ListOffsetsResponse> result = new ListOffsetsJob(
+            time, pgContainer.getJooqCtx(),
+            List.of(
+                // Batch 2 (ts 1000) is the smallest qualifying timestamp, but batch 1 comes first by offset.
+                new ListOffsetsRequest(T0P0, 1000),
+                new ListOffsetsRequest(T0P0, 1500),
+                // Only batch 3 qualifies.
+                new ListOffsetsRequest(T0P0, 2001),
+                new ListOffsetsRequest(T0P0, 3001),
+                new ListOffsetsRequest(T0P0, MAX_TIMESTAMP)
+            ),
+            duration -> {}
+        ).call();
+
+        assertThat(result).containsExactly(
+            new ListOffsetsResponse(Errors.NONE, T0P0, 2000, 0),
+            new ListOffsetsResponse(Errors.NONE, T0P0, 2000, 0),
+            new ListOffsetsResponse(Errors.NONE, T0P0, 3000, 20),
+            new ListOffsetsResponse(Errors.NONE, T0P0, NO_TIMESTAMP, -1),
+            new ListOffsetsResponse(Errors.NONE, T0P0, 3000, 29)
         );
     }
 }
