@@ -35,7 +35,12 @@ import org.mockito.quality.Strictness;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -51,7 +56,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -256,6 +263,79 @@ class DeleteRecordsInterceptorTest {
                 .setLowWatermark(INVALID_LOW_WATERMARK)
         ));
         interceptor.close();
+    }
+
+    @Test
+    public void rejectedSubmissionRespondsWithError() throws Exception {
+        final Uuid topicId = new Uuid(1, 2);
+        when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
+        when(metadataView.getTopicId(eq("diskless"))).thenReturn(topicId);
+        doThrow(new RejectedExecutionException("queue full")).when(executorService).execute(any());
+
+        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
+            controlPlane, metadataView, executorService);
+
+        final TopicPartition topicPartition = new TopicPartition("diskless", 1);
+        final boolean result = interceptor.intercept(Map.of(topicPartition, 4567L), responseCallback);
+        assertThat(result).isTrue();
+        verify(controlPlane, never()).deleteRecords(anyList());
+
+        verify(responseCallback).accept(resultCaptor.capture());
+        assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
+            topicPartition,
+            new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
+                .setPartitionIndex(1)
+                .setErrorCode(Errors.REQUEST_TIMED_OUT.code())
+                .setLowWatermark(INVALID_LOW_WATERMARK)
+        ));
+        interceptor.close();
+    }
+
+    @Test
+    public void fullQueueRejectsOnlyTheOverflowingRequest() throws Exception {
+        final Uuid topicId = new Uuid(1, 2);
+        when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
+        when(metadataView.getTopicId(eq("diskless"))).thenReturn(topicId);
+        final CountDownLatch release = new CountDownLatch(1);
+        when(controlPlane.deleteRecords(anyList())).thenAnswer(invocation -> {
+            release.await();
+            return List.of(new DeleteRecordsResponse(Errors.NONE, 123L));
+        });
+        // One worker and one queue slot. The first request runs, the second waits, and the third gets rejected.
+        final ExecutorService boundedExecutor = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(1), new ThreadPoolExecutor.AbortPolicy());
+        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(controlPlane, metadataView, boundedExecutor);
+        final TopicPartition topicPartition = new TopicPartition("diskless", 0);
+        final Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult> expectedOk = Map.of(
+            topicPartition,
+            new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
+                .setPartitionIndex(0).setErrorCode(Errors.NONE.code()).setLowWatermark(123L));
+        try {
+            final var running = new CompletableFuture<Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult>>();
+            final var queued = new CompletableFuture<Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult>>();
+            final var rejected = new CompletableFuture<Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult>>();
+            assertThat(interceptor.intercept(Map.of(topicPartition, 1L), running::complete)).isTrue();
+            assertThat(interceptor.intercept(Map.of(topicPartition, 2L), queued::complete)).isTrue();
+            assertThat(interceptor.intercept(Map.of(topicPartition, 3L), rejected::complete)).isTrue();
+
+            assertThat(rejected.isDone()).isTrue();
+            assertThat(rejected.get()).isEqualTo(Map.of(
+                topicPartition,
+                new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
+                    .setPartitionIndex(0)
+                    .setErrorCode(Errors.REQUEST_TIMED_OUT.code())
+                    .setLowWatermark(INVALID_LOW_WATERMARK)));
+            assertThat(running.isDone()).isFalse();
+            assertThat(queued.isDone()).isFalse();
+
+            release.countDown();
+            assertThat(running.get(5, TimeUnit.SECONDS)).isEqualTo(expectedOk);
+            assertThat(queued.get(5, TimeUnit.SECONDS)).isEqualTo(expectedOk);
+            verify(controlPlane, times(2)).deleteRecords(anyList());
+        } finally {
+            release.countDown();
+            interceptor.close();
+        }
     }
 
     @Test
