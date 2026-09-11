@@ -118,6 +118,19 @@ class FindBatchesJobTest {
     }
 
     @Test
+    void usesGenericPlanForPerPartitionQueries() {
+        final Boolean usesGenericPlan = pgContainer.getJooqCtx().fetch(
+            """
+                SELECT COALESCE(proconfig @> ARRAY['plan_cache_mode=force_generic_plan'], false)
+                FROM pg_proc
+                WHERE oid = 'find_batches_v2(find_batches_request_v1[],integer,integer)'::regprocedure
+            """
+        ).get(0).get(0, Boolean.class);
+
+        assertThat(usesGenericPlan).isTrue();
+    }
+
+    @Test
     void topicIdPartitionNotFound() {
         final FindBatchesJob job = new FindBatchesJob(
             time, pgContainer.getJooqCtx(),
