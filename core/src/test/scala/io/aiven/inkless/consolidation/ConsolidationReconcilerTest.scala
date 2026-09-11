@@ -20,14 +20,15 @@ package io.aiven.inkless.consolidation
 
 import kafka.cluster.Partition
 import kafka.server.metadata.InklessMetadataView
-import kafka.server.{InitialFetchState, ReplicaManager, ReplicationQuotaManager}
+import kafka.server.{InitialFetchState, KafkaConfig, ReplicaManager, ReplicationQuotaManager}
+import kafka.utils.TestUtils
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.logger.StateChangeLogger
 import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.storage.internals.log.UnifiedLog
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
-import org.mockito.ArgumentMatchers.{any, anyBoolean, anyLong}
+import org.mockito.ArgumentMatchers.{any, anyBoolean, anyInt, anyLong}
 import org.mockito.Mockito
 import org.mockito.Mockito._
 
@@ -38,6 +39,7 @@ class ConsolidationReconcilerTest {
 
   private val topicPartition = new TopicPartition("reconcile-topic", 0)
   private val topicId = Uuid.randomUuid()
+  private val brokerConfig = KafkaConfig.fromProps(TestUtils.createBrokerConfig(0))
 
   private def newReconciler(
     metadataView: InklessMetadataView,
@@ -316,6 +318,8 @@ class ConsolidationReconcilerTest {
     val replicaManager = mock(classOf[ReplicaManager])
     val (partition, _) = mockPartition(logStartOffset = 0L, logEndOffset = 100L)
     when(replicaManager.onlinePartition(topicPartition)).thenReturn(Some(partition))
+    when(replicaManager.config).thenReturn(brokerConfig)
+    when(view.isReplicaInIsr(topicPartition, brokerConfig.brokerId)).thenReturn(true)
     val reconciler = newReconciler(view, fetcherManager, replicaManager = replicaManager)
 
     reconciler.startConsolidationFetchersForCaughtUpClassicPartitions(Set(topicPartition))
@@ -323,6 +327,51 @@ class ConsolidationReconcilerTest {
     // Admitted and armed at the seal (LEO == seal): the fetcher is started for the partition.
     verify(fetcherManager).addFetcherForPartitions(any())
     verify(view, never()).isConsolidatingDisklessTopic(topicPartition.topic)
+  }
+
+  @Test
+  def testStartConsolidationFetchersForCaughtUpClassicPartitionsSkipsSwitchedReplicaOutsideIsr(): Unit = {
+    // The classic fetcher queues the hand-off and cannot hold `partitionMapLock` across the
+    // fetcher-manager call, so its decision can be stale by the time it lands here. Enforce ISR
+    // membership at the point of effect: consolidating outside ISR sends no fetch to the leader,
+    // so nothing would readmit the replica.
+    val view = mock(classOf[InklessMetadataView])
+    when(view.isDisklessTopic(topicPartition.topic)).thenReturn(true)
+    when(view.getClassicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+
+    val fetcherManager = mock(classOf[ConsolidationFetcherManager])
+    val replicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.config).thenReturn(brokerConfig)
+    when(view.isReplicaInIsr(topicPartition, brokerConfig.brokerId)).thenReturn(false)
+    val reconciler = newReconciler(view, fetcherManager, replicaManager = replicaManager)
+
+    reconciler.startConsolidationFetchersForCaughtUpClassicPartitions(Set(topicPartition))
+
+    verify(replicaManager, never()).onlinePartition(topicPartition)
+    verify(fetcherManager, never()).addFetcherForPartitions(any())
+  }
+
+  @Test
+  def testStartConsolidationFetchersForCaughtUpClassicPartitionsAdmitsNeverSwitchedPartition(): Unit = {
+    // A born-diskless partition has no classic prefix and no seal, so ISR membership is not a
+    // precondition for it.
+    val view = mock(classOf[InklessMetadataView])
+    when(view.isDisklessTopic(topicPartition.topic)).thenReturn(true)
+    when(view.isRemoteStorageEnabled(topicPartition.topic)).thenReturn(true)
+    when(view.getTopicId(topicPartition.topic)).thenReturn(topicId)
+    when(view.getClassicToDisklessStartOffset(topicPartition))
+      .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+
+    val fetcherManager = mock(classOf[ConsolidationFetcherManager])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val (partition, _) = mockPartition(logStartOffset = 0L, logEndOffset = 100L)
+    when(replicaManager.onlinePartition(topicPartition)).thenReturn(Some(partition))
+    val reconciler = newReconciler(view, fetcherManager, replicaManager = replicaManager)
+
+    reconciler.startConsolidationFetchersForCaughtUpClassicPartitions(Set(topicPartition))
+
+    verify(fetcherManager).addFetcherForPartitions(any())
+    verify(view, never()).isReplicaInIsr(any(), anyInt())
   }
 
   @Test

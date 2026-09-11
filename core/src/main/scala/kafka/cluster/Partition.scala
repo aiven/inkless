@@ -1032,6 +1032,42 @@ class Partition(val topicPartition: TopicPartition,
     canAddReplicaToIsr(followerReplica.brokerId) && isFollowerInSync(followerReplica)
   }
 
+  /**
+   * Expands the ISR for a switched diskless partition on the evidence of a follower fetch at the seal.
+   *
+   * Inkless: the generic in-sync check compares the recorded follower offset against this leader's
+   * local high watermark. A consolidating leader advances that watermark to the diskless frontier,
+   * which a follower must never replicate over the inter-broker path, so the follower cannot reach it
+   * and never joins the ISR. Reaching the seal is the whole evidence a switched partition needs: the
+   * records below it are the only ones replicated from this leader.
+   *
+   * @param seal the partition's classicToDisklessStartOffset, which the caller has already confirmed
+   *             the follower reached.
+   */
+  private[kafka] def maybeExpandIsrAtSeal(followerReplica: Replica, seal: Long): Unit = {
+    def caughtUpToSeal: Boolean =
+      leaderLogIfLocal.isDefined &&
+        canAddReplicaToIsr(followerReplica.brokerId) &&
+        followerReplica.stateSnapshot.logEndOffset >= seal
+
+    val needsIsrUpdate = !partitionState.isInflight &&
+      canAddReplicaToIsr(followerReplica.brokerId) &&
+      inReadLock(leaderIsrUpdateLock, () => caughtUpToSeal)
+    if (needsIsrUpdate) {
+      val alterIsrUpdateOpt = inWriteLock(leaderIsrUpdateLock, () => {
+        partitionState match {
+          case currentState: CommittedPartitionState if caughtUpToSeal =>
+            Some(prepareIsrExpand(currentState, followerReplica.brokerId))
+          case _ =>
+            None
+        }
+      })
+      // Submitted outside the lock, as `maybeExpandIsr` does: completion may increment the high
+      // watermark and complete delayed operations.
+      alterIsrUpdateOpt.foreach(submitAlterPartition)
+    }
+  }
+
   private def canAddReplicaToIsr(followerReplicaId: Int): Boolean = {
     val current = partitionState
     !current.isInflight &&
@@ -1479,6 +1515,90 @@ class Partition(val topicPartition: TopicPartition,
       })
     }
   }
+
+  /**
+   * Validates a follower fetch at the classic-to-diskless seal and records the follower's position,
+   * without reading any records.
+   *
+   * Returns the diverging epoch when the offered epoch's lineage does not match this leader's, and
+   * nothing otherwise. Recording the follower's position does not admit it to ISR: the caller decides
+   * that separately from whether the offered epoch proves the classic prefix.
+   *
+   * The read path resolves lineage by reading at the seal, which throws once local retention has
+   * deleted the segment holding it even though the range is still retained in the remote tier. The
+   * leader epoch cache answers the same question without touching a segment, so this validates the
+   * same four things `fetchRecords` would -- leadership, leader epoch, replica assignment, and
+   * broker epoch -- plus lineage, for a range the leader no longer holds locally.
+   */
+  private[kafka] def validateFollowerFetchAtSeal(
+    fetchParams: FetchParams,
+    fetchPartitionData: FetchRequest.PartitionData,
+    fetchTimeMs: Long
+  ): Optional[FetchResponseData.EpochEndOffset] = inReadLock(leaderIsrUpdateLock, () => {
+    val localLog = localLogWithEpochOrThrow(fetchPartitionData.currentLeaderEpoch, requireLeader = true)
+    val fetchOffset = fetchPartitionData.fetchOffset
+    var divergingEpoch = Optional.empty[FetchResponseData.EpochEndOffset]()
+    fetchPartitionData.lastFetchedEpoch.ifPresent { fetchEpoch =>
+      val epochEndOffset = lastOffsetForLeaderEpoch(
+        fetchPartitionData.currentLeaderEpoch, fetchEpoch, fetchOnlyFromLeader = false)
+      val error = Errors.forCode(epochEndOffset.errorCode)
+      if (error != Errors.NONE) {
+        throw error.exception()
+      }
+      if (epochEndOffset.endOffset == UNDEFINED_EPOCH_OFFSET || epochEndOffset.leaderEpoch == UNDEFINED_EPOCH) {
+        throw new OffsetOutOfRangeException(s"Could not determine the end offset of the last fetched " +
+          s"epoch $fetchEpoch from the request for partition $topicPartition")
+      }
+      if (fetchOffset < localLog.logStartOffset) {
+        throw new OffsetOutOfRangeException(s"Received request for offset $fetchOffset for partition " +
+          s"$topicPartition, but we only have log segments in the range ${localLog.logStartOffset} " +
+          s"to ${localLog.logEndOffset}.")
+      }
+      if (epochEndOffset.leaderEpoch < fetchEpoch || epochEndOffset.endOffset < fetchOffset) {
+        divergingEpoch = Optional.of(new FetchResponseData.EpochEndOffset()
+          .setEpoch(epochEndOffset.leaderEpoch)
+          .setEndOffset(epochEndOffset.endOffset))
+      }
+    }
+    if (!divergingEpoch.isPresent) {
+      // Every request is validated whether or not it proves the prefix, matching the read path: a
+      // request from a replica this leader does not have, or from a stale broker incarnation, is
+      // rejected rather than answered. The broker epoch is only checked while recording.
+      val replica = followerReplicaOrThrow(fetchParams.replicaId, fetchPartitionData)
+      replica.updateFetchStateOrThrow(
+        new LogOffsetMetadata(fetchOffset),
+        fetchPartitionData.logStartOffset,
+        fetchTimeMs,
+        localLog.logEndOffset,
+        fetchParams.replicaEpoch
+      )
+    }
+    divergingEpoch
+  })
+
+  /**
+   * Records an assigned follower's actual position after the classic prefix has expired.
+   *
+   * Once the leader's logical start has reached the switch seal, no retained record carries a classic
+   * epoch, so lineage proves nothing about prefix ownership and comparing it would only truncate a
+   * consolidated suffix the follower may keep. The caller admits against the seal separately.
+   */
+  private[kafka] def recordFollowerFetchAfterClassicPrefixExpired(
+    fetchParams: FetchParams,
+    fetchPartitionData: FetchRequest.PartitionData,
+    fetchTimeMs: Long
+  ): Replica = inReadLock(leaderIsrUpdateLock, () => {
+    val localLog = localLogWithEpochOrThrow(fetchPartitionData.currentLeaderEpoch, requireLeader = true)
+    val replica = followerReplicaOrThrow(fetchParams.replicaId, fetchPartitionData)
+    replica.updateFetchStateOrThrow(
+      new LogOffsetMetadata(fetchPartitionData.fetchOffset),
+      fetchPartitionData.logStartOffset,
+      fetchTimeMs,
+      localLog.logEndOffset,
+      fetchParams.replicaEpoch
+    )
+    replica
+  })
 
   private def followerReplicaOrThrow(
     replicaId: Int,
