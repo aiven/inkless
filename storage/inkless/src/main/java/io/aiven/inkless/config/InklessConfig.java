@@ -201,6 +201,12 @@ public class InklessConfig extends AbstractConfig {
         + "from becoming a bottleneck in mixed hot/cold workloads.";
     private static final int FETCH_METADATA_THREAD_POOL_SIZE_DEFAULT = 8;
 
+    public static final String FETCH_OFFSET_THREAD_POOL_SIZE_CONFIG = "fetch.offset.thread.pool.size";
+    public static final String FETCH_OFFSET_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently resolve ListOffsets requests "
+        + "against the batch coordinator. The queue capacity is thread.pool.size * 100; a ListOffsets request that "
+        + "arrives when the queue is full fails immediately instead of waiting.";
+    private static final int FETCH_OFFSET_THREAD_POOL_SIZE_DEFAULT = 8;
+
     public static final String FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_CONFIG = "fetch.lagging.consumer.thread.pool.size";
     public static final String FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_DOC = "Thread pool size for lagging consumer fetch requests (consumers reading old data). "
         + "Set to 0 to disable the lagging consumer feature (all requests will use the recent data path). "
@@ -498,6 +504,14 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(1),
             ConfigDef.Importance.LOW,
             FETCH_METADATA_THREAD_POOL_SIZE_DOC
+        );
+        configDef.define(
+            FETCH_OFFSET_THREAD_POOL_SIZE_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_OFFSET_THREAD_POOL_SIZE_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            FETCH_OFFSET_THREAD_POOL_SIZE_DOC
         );
         configDef.define(
             FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_CONFIG,
@@ -829,6 +843,10 @@ public class InklessConfig extends AbstractConfig {
 
     public int fetchMetadataThreadPoolSize() {
         return getInt(FETCH_METADATA_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    public int fetchOffsetThreadPoolSize() {
+        return getInt(FETCH_OFFSET_THREAD_POOL_SIZE_CONFIG);
     }
 
     public int fetchLaggingConsumerThreadPoolSize() {

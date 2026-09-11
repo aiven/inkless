@@ -36,6 +36,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -51,6 +52,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -252,6 +254,32 @@ class DeleteRecordsInterceptorTest {
             new TopicPartition("diskless2", 2),
             new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
                 .setPartitionIndex(2)
+                .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
+                .setLowWatermark(INVALID_LOW_WATERMARK)
+        ));
+        interceptor.close();
+    }
+
+    @Test
+    public void rejectedSubmissionRespondsWithError() throws Exception {
+        final Uuid topicId = new Uuid(1, 2);
+        when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
+        when(metadataView.getTopicId(eq("diskless"))).thenReturn(topicId);
+        doThrow(new RejectedExecutionException("queue full")).when(executorService).execute(any());
+
+        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
+            controlPlane, metadataView, executorService);
+
+        final TopicPartition topicPartition = new TopicPartition("diskless", 1);
+        final boolean result = interceptor.intercept(Map.of(topicPartition, 4567L), responseCallback);
+        assertThat(result).isTrue();
+        verify(controlPlane, never()).deleteRecords(anyList());
+
+        verify(responseCallback).accept(resultCaptor.capture());
+        assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
+            topicPartition,
+            new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
+                .setPartitionIndex(1)
                 .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
                 .setLowWatermark(INVALID_LOW_WATERMARK)
         ));

@@ -60,6 +60,7 @@ class InklessConfigTest {
         configs.put("inkless.produce.upload.thread.pool.size", "16");
         configs.put("inkless.fetch.data.thread.pool.size", "12");
         configs.put("inkless.fetch.metadata.thread.pool.size", "14");
+        configs.put("inkless.fetch.offset.thread.pool.size", "6");
         configs.put("inkless.retention.enforcement.max.batches.per.request", "50");
         configs.put("inkless.consolidation.cleanup.interval.ms", "60000");
         final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), configs));
@@ -83,6 +84,7 @@ class InklessConfigTest {
         assertThat(config.produceUploadThreadPoolSize()).isEqualTo(16);
         assertThat(config.fetchDataThreadPoolSize()).isEqualTo(12);
         assertThat(config.fetchMetadataThreadPoolSize()).isEqualTo(14);
+        assertThat(config.fetchOffsetThreadPoolSize()).isEqualTo(6);
         assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(50);
         assertThat(config.consolidationCleanupInterval()).isEqualTo(Duration.ofMillis(60000));
     }
@@ -116,6 +118,7 @@ class InklessConfigTest {
         assertThat(config.produceUploadThreadPoolSize()).isEqualTo(8);
         assertThat(config.fetchDataThreadPoolSize()).isEqualTo(32);
         assertThat(config.fetchMetadataThreadPoolSize()).isEqualTo(8);
+        assertThat(config.fetchOffsetThreadPoolSize()).isEqualTo(8);
         assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(2000);
         assertThat(config.retentionEnforcementInterval()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.consolidationCleanupInterval()).isEqualTo(Duration.ofMinutes(5));
