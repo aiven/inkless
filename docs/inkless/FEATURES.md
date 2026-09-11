@@ -20,8 +20,7 @@ Currently Diskless topics support:
 * Managed replicas with user-defined replication factor (see [Managed Replicas](#managed-replicas))
 
 The following are notable unsupported features:
-* cleanup.policy=delete
-* cleanup.policy=compact
+* `cleanup.policy=compact`
 * Transactional Produce, `AddPartitionsToTxn`, and `WriteTxnMarkers` targeting Diskless topics
 * read_committed consumers reading Diskless topics
 * Producing to both inkless and traditional topics simultaneously
