@@ -20,6 +20,7 @@ package io.aiven.inkless.consume;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.ApiException;
+import org.apache.kafka.common.errors.KafkaStorageException;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.record.internal.FileRecords;
 import org.apache.kafka.common.record.internal.RecordBatch;
@@ -54,6 +55,7 @@ import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.common.TopicIdEnricher;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MetadataView;
@@ -209,8 +211,23 @@ public class FetchOffsetHandler implements Closeable {
             final List<ListOffsetsResponse> controlPlaneResponses;
             try {
                 controlPlaneResponses = controlPlane.listOffsets(controlPlaneRequests);
+            } catch (final ControlPlaneUnavailableException unavailableException) {
+                // AvailabilityGatedControlPlane already recorded the gated call. KAFKA_STORAGE_ERROR
+                // is retriable, unlike the UNKNOWN_SERVER_ERROR the raw exception would map to below.
+                LOGGER.warn("Rejecting diskless list offsets: {}", unavailableException.getMessage());
+                final var exception = new KafkaStorageException(unavailableException.getMessage());
+                for (final var future : futures.values()) {
+                    if (!future.isDone()) {
+                        future.complete(new OffsetResultHolder.FileRecordsOrError(
+                            Optional.of(exception),
+                            Optional.empty()
+                        ));
+                    }
+                }
+                metrics.fetchOffsetFailed();
+                return;
             } catch (final Exception exception) {
-                // Handle global errors (e.g. control plane not available).
+                // Handle other global errors.
                 for (final var future : futures.values()) {
                     if (!future.isDone()) {
                         future.complete(new OffsetResultHolder.FileRecordsOrError(

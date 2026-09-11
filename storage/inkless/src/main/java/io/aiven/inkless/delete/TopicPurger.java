@@ -31,6 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.PurgeDeletedLogsResponse;
 
 public class TopicPurger implements Runnable, Closeable {
@@ -96,6 +97,11 @@ public class TopicPurger implements Runnable, Closeable {
             attempts.set(0);
             nextEligibleMs = 0L;
             metrics.recordTopicPurgerCycleSucceeded();
+        } catch (final ControlPlaneUnavailableException e) {
+            // Let the caller (ReplicaManager.runIfControlPlaneAvailable) catch this and skip quietly.
+            // Arming the error backoff here would also delay the first tick after the control plane
+            // comes back, since a gated tick is not a failure to retreat from.
+            throw e;
         } catch (final Exception e) {
             metrics.recordTopicPurgerError();
             final long backoff = errorBackoff.backoff(attempts.incrementAndGet());

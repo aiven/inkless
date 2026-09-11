@@ -18,7 +18,7 @@
 
 package io.aiven.inkless.consolidation
 
-import io.aiven.inkless.control_plane.{ControlPlane, PruneDisklessLogsError, PruneDisklessLogsResponse}
+import io.aiven.inkless.control_plane.{ControlPlane, ControlPlaneUnavailableException, PruneDisklessLogsError, PruneDisklessLogsResponse}
 import io.aiven.inkless.control_plane.PruneDisklessLogsRequest
 import kafka.cluster.Partition
 import kafka.server.ReplicaManager
@@ -234,5 +234,21 @@ class ConsolidatedDisklessLogPrunerTest {
     new ConsolidatedDisklessLogPruner(rm, view, cp).run()
 
     verify(partition, never()).maybeAdvanceConsolidationPruneFloor(anyLong())
+  }
+
+  @Test
+  def testRunPropagatesControlPlaneUnavailableException(): Unit = {
+    val rm = mock(classOf[ReplicaManager])
+    val view = mock(classOf[InklessMetadataView])
+    val cp = mock(classOf[ControlPlane])
+
+    when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Set.of(tip))
+    val partition = readyPartition(10L, Some(10L))
+    when(rm.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+    when(cp.pruneDisklessLogs(any()))
+      .thenThrow(new ControlPlaneUnavailableException("No diskless control plane is configured"))
+
+    // the caller (ReplicaManager.runIfControlPlaneAvailable) is the one place that turns this into a quiet skip.
+    assertThrows(classOf[ControlPlaneUnavailableException], () => new ConsolidatedDisklessLogPruner(rm, view, cp).run())
   }
 }

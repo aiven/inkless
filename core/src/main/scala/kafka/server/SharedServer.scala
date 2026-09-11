@@ -17,7 +17,7 @@
 
 package kafka.server
 
-import io.aiven.inkless.control_plane.ControlPlane
+import io.aiven.inkless.control_plane.{AvailabilityGatedControlPlane, ControlPlane, ControlPlaneAvailability}
 import kafka.metrics.KafkaMetricsReporter
 import kafka.raft.KafkaRaftManager
 import kafka.server.Server.MetricsPrefix
@@ -129,6 +129,10 @@ class SharedServer(
   @volatile private var metadataLoaderMetrics: MetadataLoaderMetrics = _
 
   @volatile var inklessControlPlane: Option[ControlPlane] = None
+  @volatile var inklessControlPlaneGate: Option[AvailabilityGatedControlPlane] = None
+
+  def inklessControlPlaneAvailability: Option[ControlPlaneAvailability] =
+    inklessControlPlaneGate.map(_.availability())
 
   def clusterId: String = metaPropsEnsemble.clusterId().get()
 
@@ -290,8 +294,19 @@ class SharedServer(
           Option(controllerServerMetrics).foreach(_.setIgnoredStaticVoters(ignoredStaticVoters))
         }
 
-        if (brokerConfig.disklessStorageSystemEnabled)
-          inklessControlPlane = Some(ControlPlane.create(sharedServerConfig.inklessConfig, time))
+        if (brokerConfig.disklessStorageSystemEnabled) {
+          // Read through the config instance for a role this node runs. Only brokerConfig and
+          // controllerConfig receive updateCurrentConfig, through their BrokerConfigHandler;
+          // sharedServerConfig is initialized once and never updated.
+          val liveConfig =
+            if (sharedServerConfig.processRoles.contains(ProcessRole.BrokerRole)) brokerConfig
+            else controllerConfig
+          val gate = new AvailabilityGatedControlPlane(
+            () => liveConfig.currentInklessConfig,
+            config => ControlPlane.create(config, time))
+          inklessControlPlaneGate = Some(gate)
+          inklessControlPlane = Some(gate)
+        }
 
         val _raftManager = new KafkaRaftManager[ApiMessageAndVersion](
           clusterId,
