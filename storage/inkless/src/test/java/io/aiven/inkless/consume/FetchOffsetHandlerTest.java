@@ -43,6 +43,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.cache.CrossTierLogStartCache;
@@ -59,6 +60,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -322,6 +324,26 @@ class FetchOffsetHandlerTest {
             assertThat(future.get().exception()).isNotEmpty();
             assertThat(future.get().exception().get()).isInstanceOf(RuntimeException.class);
             assertThat(future.get().exception().get()).message().contains("Topic ID not found");
+            assertThat(future.get().timestampAndOffset()).isEmpty();
+        }
+    }
+
+    @Test
+    void rejectedSubmissionFailsAllFutures() throws ExecutionException, InterruptedException {
+        when(metadataView.getTopicId(TOPIC_0)).thenReturn(TOPIC_ID_0);
+        when(metadataView.getTopicId(TOPIC_1)).thenReturn(TOPIC_ID_1);
+        doThrow(new RejectedExecutionException("queue full")).when(executor).submit((Runnable) any());
+
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, crossTierLogStartCache, executor, time, metrics);
+        final var future1 = job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(-1));
+        final var future2 = job.add(T1P1, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(1).setTimestamp(-3));
+
+        job.start();
+
+        verify(controlPlane, never()).listOffsets(any());
+        for (final var future : List.of(future1, future2)) {
+            assertThat(future.isDone()).isTrue();
+            assertThat(future.get().exception()).containsInstanceOf(RejectedExecutionException.class);
             assertThat(future.get().timestampAndOffset()).isEmpty();
         }
     }

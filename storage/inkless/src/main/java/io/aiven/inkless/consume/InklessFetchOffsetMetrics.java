@@ -43,6 +43,9 @@ public class InklessFetchOffsetMetrics {
     private static final String FETCH_OFFSET_RATE_DOC = "Rate of fetch offset requests processed per second";
     private static final String FETCH_OFFSET_ERROR_RATE = "FetchOffsetErrorRate";
     private static final String FETCH_OFFSET_ERROR_RATE_DOC = "Rate of failed fetch offset requests per second";
+    private static final String FETCH_OFFSET_REJECTED_RATE = "FetchOffsetRejectedRate";
+    private static final String FETCH_OFFSET_REJECTED_RATE_DOC = "Rate of fetch offset requests rejected per second because the "
+        + "fetch offset thread pool queue is full. Rejected requests are also counted in FetchOffsetErrorRate";
 
     /**
      * This method returns a list of all the metric name templates for the InklessFetchOffsetMetrics class.
@@ -52,7 +55,8 @@ public class InklessFetchOffsetMetrics {
         return List.of(
             new MetricNameTemplate(FETCH_OFFSET_TOTAL_TIME, GROUP, FETCH_OFFSET_TOTAL_TIME_DOC),
             new MetricNameTemplate(FETCH_OFFSET_RATE, GROUP, FETCH_OFFSET_RATE_DOC),
-            new MetricNameTemplate(FETCH_OFFSET_ERROR_RATE, GROUP, FETCH_OFFSET_ERROR_RATE_DOC)
+            new MetricNameTemplate(FETCH_OFFSET_ERROR_RATE, GROUP, FETCH_OFFSET_ERROR_RATE_DOC),
+            new MetricNameTemplate(FETCH_OFFSET_REJECTED_RATE, GROUP, FETCH_OFFSET_REJECTED_RATE_DOC)
         );
     }
 
@@ -64,12 +68,14 @@ public class InklessFetchOffsetMetrics {
     private final Histogram fetchOffsetTimeHistogram;
     private final Meter fetchOffsetRate;
     private final Meter fetchOffsetErrorRate;
+    private final Meter fetchOffsetRejectedRate;
 
     public InklessFetchOffsetMetrics(Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
         fetchOffsetTimeHistogram = metricsGroup.newHistogram(FETCH_OFFSET_TOTAL_TIME, true, Map.of());
         fetchOffsetRate = metricsGroup.newMeter(FETCH_OFFSET_RATE, "fetches", java.util.concurrent.TimeUnit.SECONDS, Map.of());
         fetchOffsetErrorRate = metricsGroup.newMeter(FETCH_OFFSET_ERROR_RATE, "errors", java.util.concurrent.TimeUnit.SECONDS, Map.of());
+        fetchOffsetRejectedRate = metricsGroup.newMeter(FETCH_OFFSET_REJECTED_RATE, "rejections", java.util.concurrent.TimeUnit.SECONDS, Map.of());
     }
 
     public void fetchOffsetCompleted(final Instant startTime) {
@@ -81,9 +87,15 @@ public class InklessFetchOffsetMetrics {
         fetchOffsetErrorRate.mark();
     }
 
+    public void fetchOffsetRejected() {
+        fetchOffsetRejectedRate.mark();
+        fetchOffsetErrorRate.mark();
+    }
+
     public void close() {
         metricsGroup.removeMetric(FETCH_OFFSET_RATE);
         metricsGroup.removeMetric(FETCH_OFFSET_ERROR_RATE);
+        metricsGroup.removeMetric(FETCH_OFFSET_REJECTED_RATE);
         metricsGroup.removeMetric(FETCH_OFFSET_TOTAL_TIME);
     }
 }

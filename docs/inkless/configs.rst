@@ -219,6 +219,14 @@ Under ``inkless.``
   * Valid Values: [1,...]
   * Importance: low
 
+``fetch.offset.thread.pool.size``
+  Thread pool size to concurrently resolve ListOffsets requests against the batch coordinator. The queue capacity is thread.pool.size * 100; a ListOffsets request that arrives when the queue is full fails immediately instead of waiting.
+
+  * Type: int
+  * Default: 8
+  * Valid Values: [1,...]
+  * Importance: low
+
 ``file.cleaner.interval.ms``
   The interval with which to clean up files marked for deletion. Together with file.cleaner.max.files.per.cycle, this interval sets the rate at which files marked for deletion drain.
 

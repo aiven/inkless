@@ -109,7 +109,7 @@ public abstract class AbstractControlPlane implements ControlPlane {
     );
 
     @Override
-    public synchronized List<ListOffsetsResponse> listOffsets(final List<ListOffsetsRequest> listOffsetsRequests) {
+    public List<ListOffsetsResponse> listOffsets(final List<ListOffsetsRequest> listOffsetsRequests) {
         final SplitMapper<ListOffsetsRequest, ListOffsetsResponse> splitMapper = new SplitMapper<>(
                 listOffsetsRequests, findBatchRequest -> true
         );
