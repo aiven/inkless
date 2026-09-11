@@ -30,7 +30,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
@@ -54,12 +53,16 @@ public class FileCleaner implements Runnable, Closeable {
     final int maxFilesPerCycle;
     final FileCleanerMetrics metrics;
     private final ExponentialBackoff errorBackoff = new ExponentialBackoff(100, 2, 60 * 1000, 0.2);
-    private final Supplier<Long> noWorkBackoffSupplier;
 
     /**
      * The counter of cleaning attempts.
      */
     private final AtomicInteger attempts = new AtomicInteger();
+
+    // KafkaScheduler uses scheduleAtFixedRate. Sleeping inside run() queues missed ticks, and
+    // the next work cycle bursts past file.cleaner.max.files.per.cycle / interval. Skip the
+    // tick until this time instead.
+    private volatile long nextEligibleMs;
 
     public FileCleaner(SharedState sharedState) {
         this(
@@ -86,16 +89,14 @@ public class FileCleaner implements Runnable, Closeable {
         this.retentionPeriod = retentionPeriod;
         this.maxFilesPerCycle = maxFilesPerCycle;
         this.metrics = new FileCleanerMetrics(time);
-
-        // This backoff is needed only for jitter, there's no exponent in it.
-        final int noWorkBackoffDuration = 10 * 1000;
-        final var noWorkBackoff = new ExponentialBackoff(noWorkBackoffDuration, 1, noWorkBackoffDuration * 2, 0.2);
-        noWorkBackoffSupplier = () -> noWorkBackoff.backoff(1);
     }
 
 
     @Override
     public void run() {
+        if (time.milliseconds() < nextEligibleMs) {
+            return;
+        }
         try {
             final var now = TimeUtils.now(time);
 
@@ -113,10 +114,7 @@ public class FileCleaner implements Runnable, Closeable {
                 .map(FileToDelete::objectKey)
                 .collect(Collectors.toSet());
             if (objectKeyPaths.isEmpty()) {
-                final long sleepMillis = noWorkBackoffSupplier.get();
-                final Duration sleepDuration = Duration.ofMillis(sleepMillis);
-                LOGGER.info("No files to delete, sleeping for {}", sleepDuration);
-                time.sleep(sleepMillis);
+                LOGGER.debug("No files to delete this cycle");
             } else {
                 if (saturated) {
                     metrics.recordFileCleanerCycleSaturated();
@@ -133,12 +131,13 @@ public class FileCleaner implements Runnable, Closeable {
             }
 
             attempts.set(0);
+            nextEligibleMs = 0L;
             metrics.recordFileCleanerCycleSucceeded();
         } catch (final Exception e) {
             metrics.recordFileCleanerError();
             final long backoff = errorBackoff.backoff(attempts.incrementAndGet());
-            LOGGER.error("Error while deleting files, waiting for {}", Duration.ofMillis(backoff), e);
-            time.sleep(backoff);
+            nextEligibleMs = time.milliseconds() + backoff;
+            LOGGER.error("Error while deleting files, retrying after {}", Duration.ofMillis(backoff), e);
         }
     }
 
