@@ -335,6 +335,158 @@ Four metrics track hot/cold path behavior:
 - **High `LaggingConsumerRateLimitWaitTime`**: Indicates rate limiting is actively throttling requests (expected behavior under load)
 - **Ratio of recent vs lagging requests**: Helps understand workload patterns and tune thresholds
 
+#### Troubleshoot high PostgreSQL read-replica CPU
+
+Every diskless fetch asks the batch coordinator for batch coordinates through `find_batches_v2`.
+Tiered storage consolidation uses the same query: each consolidation fetcher continuously copies
+the diskless WAL into local logs while it has lag to drain. Consolidation can therefore expose
+planning overhead that normal consumer traffic does not.
+
+Treat high PostgreSQL CPU as one of three different problems:
+
+- **Query volume:** Brokers call `find_batches_v2` more often.
+- **Partition fan-out:** Each function call contains more partitions, and the function runs its
+  inner `batches` query once per partition.
+- **Per-query cost:** PostgreSQL spends more time planning or executing each inner query.
+
+For consolidation, approximate the per-broker inner-query rate as:
+
+```text
+per-broker consolidation fetches/second
+    × average partitions/fetch
+```
+
+Sum this product across brokers to estimate the cluster-wide rate. Do not multiply the observed
+fetch rate by the replication factor: each broker's metric already includes fetches for the
+consolidating replicas assigned to that broker. This value can be much higher than the outer
+`find_batches_v2` call rate. Consumer fetches and consumer-side consolidation supplements add to
+the same PostgreSQL workload.
+
+Start with the following broker and PostgreSQL signals:
+
+- `PostgresControlPlane.FindBatchesQueryRate` and `FindBatchesQueryTime`.
+- Consumer `InklessFetchMetrics.FetchRate` and `FetchPartitionsPerFetchCount`.
+- Consolidation `ConsolidationFetchMetrics.FetchRate` and
+  `FetchPartitionsPerFetchCount`.
+- `ConsolidationTotalLag`, `ConsolidationLocalLag`, and
+  `ConsolidationSupplementRate`.
+- PostgreSQL CPU, active sessions, and read latency.
+- Control-plane read-pool active, idle, and pending connection counts.
+
+The PostgreSQL control-plane metrics combine consumer and consolidation calls. The separate
+consumer and consolidation metrics identify which broker path supplies the workload.
+
+##### Measure planning during a diagnostic window
+
+The `pg_stat_statements` extension can separate planning from execution. It must track nested
+statements to expose the query inside the PL/pgSQL function:
+
+```text
+pg_stat_statements.track = 'all'
+pg_stat_statements.track_planning = on
+```
+
+> [!CAUTION]
+> `pg_stat_statements.track_planning` is off by default and only a PostgreSQL superuser can change
+> it. Tracking planning can add noticeable overhead when many concurrent sessions repeatedly plan
+> the same normalized query. This is the workload shape described here. Measure the overhead in a
+> representative environment before leaving it enabled, or enable it for a bounded diagnostic
+> window through the database operator or service provider.
+
+Use the following query to inspect the outer function call and nested batch scan:
+
+```sql
+SELECT
+    queryid,
+    toplevel,
+    calls,
+    plans,
+    ROUND(plans::numeric / NULLIF(calls, 0), 3) AS plans_per_call,
+    ROUND(total_plan_time::numeric, 3) AS total_plan_time_ms,
+    ROUND(mean_plan_time::numeric, 3) AS mean_plan_time_ms,
+    ROUND(total_exec_time::numeric, 3) AS total_exec_time_ms,
+    shared_blks_hit,
+    shared_blks_read,
+    temp_blks_written,
+    query
+FROM pg_stat_statements
+WHERE query ILIKE '%find_batches_v2%'
+   OR query ILIKE '%FROM batches b%'
+ORDER BY total_plan_time DESC;
+```
+
+These counters are cumulative. Compare two snapshots over a fixed interval, or export the fields
+as counters and graph their rates. Account for PostgreSQL restarts, statistics resets, and statement
+entry eviction. If the PostgreSQL version provides `pg_stat_statements_info.dealloc`, monitor it to
+detect entry eviction.
+
+Interpret the measurements as follows:
+
+- **`calls` stays stable while `plans/calls` falls:** PostgreSQL starts reusing a cached plan.
+- **`calls` and `plans` fall together while `plans/calls` stays stable:** The workload changes.
+  For example, consolidation catches up and its fetchers poll less often.
+- **`plans/calls` stays high and planning time consumes meaningful CPU:** Repeated custom planning
+  is the likely bottleneck.
+- **Planning stays low while execution time or block reads rise:** Investigate the execution plan,
+  indexes, data distribution, and storage instead.
+
+A high `plans/calls` ratio alone is not an error. One-shot SQL normally plans once per call. Treat
+the ratio as actionable only when the statement should reuse a plan and planning consumes enough
+CPU or latency to affect the service.
+
+`pgbouncer_total_server_parse_count` does not replace this measurement. It counts named prepared
+statements that PgBouncer creates on PostgreSQL server connections. PostgreSQL can build a custom
+plan for every execution without receiving another protocol `Parse` message.
+
+##### Reduce consolidation pressure
+
+If consolidation supplies most of the query volume, reduce that pressure before changing
+PostgreSQL planning policy:
+
+- Temporarily set `diskless.consolidation.fetch.rate.limit.bytes.per.second=0` to pause
+  consolidation during a controlled comparison. This increases consolidation lag, so restore the
+  limit after the test.
+- Increase `diskless.consolidation.fetch.max.bytes` or
+  `diskless.consolidation.fetch.response.max.bytes` to transfer more data per control-plane query.
+  Validate segment-size safety and broker memory before increasing either limit.
+- Increase `diskless.consolidation.fetch.min.bytes` or
+  `diskless.consolidation.fetch.max.wait.ms` if caught-up fetchers poll too frequently.
+- Keep `diskless.consolidation.num.fetchers` no higher than the throughput target requires.
+
+##### Evaluate generic planning
+
+If calls remain necessary but repeated planning dominates CPU, test a generic plan with
+representative requests before applying it broadly. Cover caught-up partitions, deeply lagging
+partitions, empty results, skewed partition sizes, and large multi-partition requests. Confirm that
+the nested query still uses `batches_by_last_offset_covering_idx` in `last_offset` order without a
+`Sort` or materialization step. Compare execution time per call, shared-block reads, temporary
+writes, and tail latency.
+
+To opt in after that validation, apply the function setting on the writable PostgreSQL primary
+through the normal schema-management process:
+
+```sql
+ALTER FUNCTION find_batches_v2(find_batches_request_v1[], integer, integer)
+    SET plan_cache_mode = force_generic_plan;
+```
+
+This setting applies only while `find_batches_v2` runs, but it affects every SQL statement inside
+the function, not only the inner batch scan. A generic plan ignores actual parameter values, so it
+can regress execution when data distribution or request shapes differ from the test workload.
+PostgreSQL rebuilds invalidated cached plans after relevant schema or statistics changes, but the
+replacement remains generic.
+
+To return to PostgreSQL's automatic generic-versus-custom decision:
+
+```sql
+ALTER FUNCTION find_batches_v2(find_batches_request_v1[], integer, integer)
+    RESET plan_cache_mode;
+```
+
+After either change, monitor planning rate, execution time per call, block reads, temporary writes,
+`FindBatchesQueryTime`, and PostgreSQL CPU. Roll back if planning decreases but execution cost or
+tail latency increases.
+
 #### Fetch data phase metrics
 
 A consumer fetch has four stages: find batches, plan, wait for every object fetch, assemble the
