@@ -92,10 +92,21 @@ public class InklessPostgreSQLContainer extends PostgreSQLContainer<InklessPostg
         }
     }
 
-    public void migrate(){
+    public void migrate() {
+        migrate(null);
+    }
+
+    /**
+     * Applies migrations up to and including {@code targetVersion} (a Flyway version such as {@code "28"}),
+     * or all of them when {@code null}. Lets a benchmark measure the same workload against schema variants.
+     */
+    public void migrate(final String targetVersion) {
         setupConnectionPool();
-        final Flyway flyway = Flyway.configure().dataSource(getDataSource()).load();
-        flyway.migrate();
+        final var configuration = Flyway.configure().dataSource(getDataSource());
+        if (targetVersion != null) {
+            configuration.target(targetVersion);
+        }
+        configuration.load().migrate();
     }
 
     private void setupConnectionPool() {
