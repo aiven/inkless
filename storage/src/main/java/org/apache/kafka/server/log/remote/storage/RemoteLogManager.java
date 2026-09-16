@@ -846,6 +846,38 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
         return remoteLogMetadataManagerPlugin.get().isReady(topicIdPartition);
     }
 
+    /**
+     * Returns whether this partition has at least one remote log segment that is not delete-finished.
+     * Empty if the partition is not registered with this manager, RLMM is not ready, or the query fails.
+     * Unregistered and not-ready are the normal become-leader window; a list failure is a real fault
+     * and is logged at warn. Empty means the caller retries: a wiped consolidated diskless topic
+     * can still have a remote prefix to rebuild.
+     */
+    public Optional<Boolean> hasNonDeletedRemoteLogSegments(TopicPartition topicPartition) {
+        Uuid uuid = topicIdByPartitionMap.get(topicPartition);
+        if (uuid == null) {
+            return Optional.empty();
+        }
+        TopicIdPartition topicIdPartition = new TopicIdPartition(uuid, topicPartition);
+        try {
+            if (!remoteLogMetadataManagerPlugin.get().isReady(topicIdPartition)) {
+                return Optional.empty();
+            }
+            Iterator<RemoteLogSegmentMetadata> segments =
+                    remoteLogMetadataManagerPlugin.get().listRemoteLogSegments(topicIdPartition);
+            while (segments.hasNext()) {
+                if (segments.next().state() != RemoteLogSegmentState.DELETE_SEGMENT_FINISHED) {
+                    return Optional.of(true);
+                }
+            }
+            return Optional.of(false);
+        } catch (RemoteStorageException | RuntimeException e) {
+            LOGGER.warn("Failed to list remote log segments for {} while checking for a consolidated prefix",
+                    topicPartition, e);
+            return Optional.empty();
+        }
+    }
+
     abstract class RLMTask extends CancellableRunnable {
 
         protected final TopicIdPartition topicIdPartition;

@@ -82,6 +82,12 @@ class DisklessLeaderEndPointTest {
       invocation.getArgument(0, classOf[DelayedConsolidationFetch]).forceComplete()
     }
     when(replicaManager.delayedConsolidationFetchPurgatory).thenReturn(purgatory)
+    when(replicaManager.crossTierEarliestOffset(any())).thenReturn(OptionalLong.empty())
+    when(replicaManager.crossTierRemoteLogStartOffset(any())).thenReturn(OptionalLong.empty())
+    when(replicaManager.classicToDisklessStartOffset(any()))
+      .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(replicaManager.hasNonDeletedRemoteLogSegments(any()))
+      .thenReturn(Optional.of(java.lang.Boolean.FALSE))
     replicaManager
   }
 
@@ -149,12 +155,51 @@ class DisklessLeaderEndPointTest {
     when(partition.localLogOrException).thenReturn(localLog)
     when(localLog.logStartOffset).thenReturn(localLogStartOffset)
     when(localLog.remoteLogEnabled()).thenReturn(remoteLogEnabled)
+    // A consolidated prefix fixture has already copied data (or at least offset 0). Mockito would
+    // default this long to 0 anyway; set it explicitly so OFFSET_MOVED tests do not depend on that.
+    when(localLog.highestOffsetInRemoteStorage()).thenReturn(Math.max(0L, disklessStart - 1))
     when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
 
     val fetchData = new FetchPartitionData(
       Errors.NONE,
       highWatermark,
       disklessStart,
+      MemoryRecords.EMPTY,
+      Optional.empty(),
+      OptionalLong.empty(),
+      Optional.empty(),
+      OptionalInt.empty(),
+      false
+    )
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
+    newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+  }
+
+  /**
+   * Born-diskless late consolidation: the empty local log is at 0, the WAL has already been pruned
+   * to S=100 by pure-diskless retention, and local RLM state does not prove a remote prefix
+   * (`highestOffsetInRemoteStorage=-1`, no seal). `remotePrefixEvidence` is the RLMM list result
+   * the overlay consults.
+   */
+  private def bornDisklessWalGapEndPoint(
+    remotePrefixEvidence: Optional[java.lang.Boolean],
+    replicaManager: ReplicaManager
+  ): DisklessLeaderEndPoint = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val partition = mock(classOf[Partition])
+    val localLog = mock(classOf[UnifiedLog])
+    when(partition.localLogOrException).thenReturn(localLog)
+    when(localLog.logStartOffset).thenReturn(0L)
+    when(localLog.remoteLogEnabled()).thenReturn(true)
+    when(localLog.highestOffsetInRemoteStorage()).thenReturn(-1L)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+    when(replicaManager.hasNonDeletedRemoteLogSegments(topicPartition)).thenReturn(remotePrefixEvidence)
+
+    val fetchData = new FetchPartitionData(
+      Errors.OFFSET_OUT_OF_RANGE,
+      200L,
+      100L,
       MemoryRecords.EMPTY,
       Optional.empty(),
       OptionalLong.empty(),
@@ -1124,6 +1169,45 @@ class DisklessLeaderEndPointTest {
 
     assertEquals(Errors.NONE.code, pd.errorCode)
     assertEquals(100L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchLeavesOffsetOutOfRangeWhenBornDisklessHasNoRemotePrefix(): Unit = {
+    // RLMM is ready and empty: never-tiered late consolidation. OFFSET_OUT_OF_RANGE lets
+    // handleOutOfRangeError truncate the empty log and start at the WAL start.
+    val replicaManager = replicaManagerMock()
+    val endPoint = bornDisklessWalGapEndPoint(Optional.of(java.lang.Boolean.FALSE), replicaManager)
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 0L)).get(topicPartition)
+
+    assertEquals(Errors.OFFSET_OUT_OF_RANGE.code, pd.errorCode)
+    assertEquals(0L, pd.logStartOffset)
+    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(false))
+  }
+
+  @Test
+  def testFetchSignalsOffsetMovedWhenRlmmHasRemoteSegmentsAfterLocalLogLoss(): Unit = {
+    // Wiped born-diskless CDT: local RLM cursor, seal, and remote_log_start are all absent, but
+    // RLMM still lists copied segments. OFFSET_MOVED rebuilds from that remote prefix.
+    val replicaManager = replicaManagerMock()
+    val endPoint = bornDisklessWalGapEndPoint(Optional.of(java.lang.Boolean.TRUE), replicaManager)
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 0L)).get(topicPartition)
+
+    assertEquals(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code, pd.errorCode)
+    assertEquals(0L, pd.logStartOffset)
+    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(false))
+  }
+
+  @Test
+  def testFetchRetriesWhenRlmmIsNotReadyInWalGap(): Unit = {
+    // Fetchers start before rlm.onLeadershipChange, so the first gap fetch is often not-ready.
+    // NOT_LEADER_OR_FOLLOWER retries with backoff at debug.
+    val replicaManager = replicaManagerMock()
+    val endPoint = bornDisklessWalGapEndPoint(Optional.empty(), replicaManager)
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 0L)).get(topicPartition)
+
+    assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, pd.errorCode)
+    assertEquals(0L, pd.logStartOffset)
+    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(true))
   }
 
   @Test

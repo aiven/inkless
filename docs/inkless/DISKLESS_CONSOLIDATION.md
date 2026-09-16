@@ -4,7 +4,7 @@ Tiered storage consolidation (TS consolidation) distills diskless Write-Ahead Lo
 
 Internally, **TS unification** is the umbrella for three features: [managed replicas](FEATURES.md#managed-replicas), the [classic-to-diskless switch](CLASSIC_TO_DISKLESS_SWITCH.md), and TS consolidation. This document is the consolidation piece.
 
-A consolidated diskless topic has both `diskless.enable=true` and `remote.storage.enable=true`. Origin and consolidation are separate. A *born-diskless* topic is created with `diskless.enable=true` and consolidates only if it is also created with `remote.storage.enable=true`. A *born-classic* topic consolidates after the [classic-to-diskless switch](CLASSIC_TO_DISKLESS_SWITCH.md), which sets both flags atomically, so a switched topic is always consolidating.
+A consolidated diskless topic has both `diskless.enable=true` and `remote.storage.enable=true`. Origin and consolidation are separate. A *born-diskless* topic is created with `diskless.enable=true` and consolidates when it also has `remote.storage.enable=true`, either at create time or when that flag is set later. A *born-classic* topic consolidates after the [classic-to-diskless switch](CLASSIC_TO_DISKLESS_SWITCH.md), which sets both flags atomically, so a switched topic is always consolidating.
 
 The broker gates the feature behind `diskless.remote.storage.consolidation.enable`, which currently defaults to `false`. That flag also requires `diskless.allow.from.classic.enable=true`, managed replicas, and `remote.log.storage.system.enable=true`. Consolidation will be the default going forward.
 
@@ -104,6 +104,8 @@ The supplement starts where the local read left off, not at a fixed boundary, an
 #### Remote reads after WAL prune
 
 After a batch is consolidated to remote storage and the WAL is pruned, data below the diskless WAL start lives only in the remote tier. If a fetch targets an offset in `[logStartOffset, disklessWALStart)` — for example after local-log loss, or a follower catching up — `DisklessLeaderEndPoint.fetch` signals `OFFSET_MOVED_TO_TIERED_STORAGE` and clears the records. The stock Kafka tier-state machine then rebuilds the leader-epoch cache and producer snapshot from remote storage before it resumes the WAL fetch.
+
+That redirect only fires when a remote prefix actually exists: `highestOffsetInRemoteStorage >= 0`, a committed seal, or RLMM listing a live (not delete-finished) remote segment. A born-diskless topic that just started consolidating can already have WAL start `S > 0` from pure-diskless retention while remote storage is still empty. The endpoint leaves `OFFSET_OUT_OF_RANGE` only after RLMM is ready and empty, so the fetcher truncates the empty local log and starts at `S`. If RLMM is not ready, the endpoint returns `NOT_LEADER_OR_FOLLOWER` so the fetcher retries with backoff at debug instead of truncating a wiped CDT onto the WAL start. Fetchers start in `applyLocalLeadersDelta` before `RemoteLogManager.onLeadershipChange`, and `isReady` can stay false until `__remote_log_metadata` catch-up, so that retry is the normal startup path. `ConsolidationRemotePrefixUnknown` is 1 while that wait is in progress; a list failure is logged at warn, unlike the unregistered and not-ready cases. Alert semantics, including why a brief 0 or a leftover 1 can appear, are in the `ConsolidationRemotePrefixUnknown` row of [Metrics](#metrics).
 
 This is the read-from-remote path that lets a consolidated topic survive losing every local copy.
 
@@ -219,7 +221,7 @@ sequenceDiagram
     note over UL: Local segments are reclaimed by standard local retention (local.retention.* via localLogStartOffset), not by consolidation.<br/>Cross-tier earliest offset and consumer-side supplement are covered in their own sections.
 ```
 
-1. On `applyDelta()` in `ReplicaManager`, a partition change starts the process. `ReplicaManager` creates `Partition` objects and `UnifiedLog` objects for diskless partitions where both `diskless.enable=true` and `remote.storage.enable=true`. The `ConsolidationReconciler` decides whether to arm a consolidation fetcher for each.
+1. On `applyDelta()` in `ReplicaManager`, a partition change starts the process. `ReplicaManager` creates `Partition` objects and `UnifiedLog` objects for diskless partitions where both `diskless.enable=true` and `remote.storage.enable=true`. The `ConsolidationReconciler` decides whether to arm a consolidation fetcher for each. Enabling `remote.storage.enable=true` on an already-diskless topic co-commits a leader-epoch bump with the `ConfigRecord`, so the broker re-enters this path instead of waiting for a later restart or reassignment.
 2. Once armed, the partition is assigned to a `ConsolidationFetcherThread`. The thread's `leader` is a `DisklessLeaderEndPoint`. The fetch loop is the standard `maybeTruncate()` then `maybeFetch()`:
    - `buildFetch()` constructs fetch requests for each partition it fetches.
    - `fetch()` calls the `FetchHandler`, which resolves batch coordinates (from the coordinate cache or the control plane) and batch data (from the Caffeine cache or object storage, via the cold path; see [Cache pollution](#cache-pollution-cold-path)).
@@ -244,7 +246,7 @@ flowchart TD
     failed --> fenced[Partition stays online for reads/writes\nFailed flag clears on next leader-epoch change]
 ```
 
-A `Failed` partition stays online and remains readable and writable. Consolidation doesn't run, so the local log doesn't grow unbounded into an untiered diskless log. `FailedPartitionsCount` and the controller-side `DisklessWithoutRemoteStorageCount` metric surface the state to operators. If the failure is an invariant violation, set `remote.storage.enable=true` and trigger a leader-epoch change (restart, reassignment, or preferred-leader election) so reconciliation runs again.
+A `Failed` partition stays online and remains readable and writable. Consolidation doesn't run, so the local log doesn't grow unbounded into an untiered diskless log. `FailedPartitionsCount` and the controller-side `DisklessWithoutRemoteStorageCount` metric surface the state to operators. If the failure is an invariant violation, set `remote.storage.enable=true`. The controller co-commits a leader-epoch bump so reconciliation runs again.
 
 ### Diskless leader epoch for truncation
 
@@ -319,7 +321,7 @@ Broker-level configs live in `ServerConfigs` (no prefix) and `InklessConfig` (un
 | ---------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `diskless.remote.storage.consolidation.enable` | `false` | Enables the consolidation framework. Requires `diskless.allow.from.classic.enable=true`, `diskless.managed.rf.enable=true`, and `remote.log.storage.system.enable=true`. |
 
-Per topic, consolidation runs when `diskless.enable=true` and `remote.storage.enable=true`. The classic-to-diskless switch sets both atomically. A born-diskless topic consolidates when it is created with both.
+Per topic, consolidation runs when `diskless.enable=true` and `remote.storage.enable=true`. The classic-to-diskless switch sets both atomically. A born-diskless topic consolidates when it is created with both, or when `remote.storage.enable=true` is set later.
 
 ### Consolidation fetcher tuning
 
@@ -354,6 +356,7 @@ The broker registers these under the `io.aiven.inkless.consolidation` group. The
 | `io.aiven.inkless.consolidation:type=ConsolidationMetrics`      | `ConsolidationTotalLag`                                     | `disklessLEO - remoteLogEndOffset` (full pipeline: diskless to remote). Broker aggregate; per-partition gauges tagged with `topic`/`partition`. Only updated when remote storage is active. |
 |                                                                 | `ConsolidationLocalLag`                                     | `disklessLEO - localLogEndOffset` (first hop: diskless to local).                                                                                                                          |
 |                                                                 | `ConsolidationDeletableMessages`                            | Messages already in remote storage, eligible for WAL pruning (`remoteLogEndOffset - localLogStartOffset`).                                                                                 |
+|                                                                 | `ConsolidationRemotePrefixUnknown`                          | 1 while a WAL-gap fetch is waiting on RLMM to decide `OFFSET_MOVED` vs never-tiered `OFFSET_OUT_OF_RANGE`; 0 once decided. Broker aggregate is the count of waiting partitions. A leadership transition or fetcher re-arm can dip the gauge to 0 while the partition is still waiting; the next backed-off fetch restores 1. An in-flight `leader.fetch()` runs outside `partitionMapLock` and can park up to `diskless.consolidation.fetch.max.wait.ms`, so it can also write 1 after removal or re-register already cleared the latch. Alert on a sustained non-zero value after `__remote_log_metadata` catch-up, not on the instantaneous reading. |
 | `io.aiven.inkless.consolidation:type=ConsolidationFetchMetrics` | `RecentDataRequestRate` / `LaggingConsumerRequestRate`      | Hot-path (cache-hit) vs cold-path (object-storage) consolidation fetch rates.                                                                                                              |
 | `io.aiven.inkless.delete:type=CrossTierLogStartReporter`        | `PartitionsReported` / `ReportErrors` / `PendingPartitions` | Cross-tier log start offset reporting to the control plane.                                                                                                                                |
 | `io.aiven.inkless.cache:type=CrossTierLogStartCache`            | `CacheHits` / `CacheMisses` / `CacheSize`                   | Cross-tier earliest-offset cache.                                                                                                                                                          |

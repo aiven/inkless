@@ -1482,6 +1482,69 @@ public class RemoteLogManagerTest {
     }
 
     @Test
+    void testHasNonDeletedRemoteLogSegmentsWhenUnregistered() throws RemoteStorageException {
+        assertEquals(Optional.empty(),
+                remoteLogManager.hasNonDeletedRemoteLogSegments(leaderTopicIdPartition.topicPartition()));
+        verify(remoteLogMetadataManager, never()).listRemoteLogSegments(any(TopicIdPartition.class));
+    }
+
+    @Test
+    void testHasNonDeletedRemoteLogSegmentsWhenNotReady() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        when(remoteLogMetadataManager.isReady(leaderTopicIdPartition)).thenReturn(false);
+
+        assertEquals(Optional.empty(),
+                remoteLogManager.hasNonDeletedRemoteLogSegments(leaderTopicIdPartition.topicPartition()));
+    }
+
+    @Test
+    void testHasNonDeletedRemoteLogSegmentsWhenReadyAndEmpty() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenReturn(Collections.emptyIterator());
+
+        assertEquals(Optional.of(false),
+                remoteLogManager.hasNonDeletedRemoteLogSegments(leaderTopicIdPartition.topicPartition()));
+    }
+
+    @Test
+    void testHasNonDeletedRemoteLogSegmentsWhenCopyFinished() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        RemoteLogSegmentMetadata metadata = createRemoteLogSegmentMetadata(
+                new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()),
+                0L, 99L, 1000, totalEpochEntries, RemoteLogSegmentState.COPY_SEGMENT_FINISHED);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenAnswer(invocation -> List.of(metadata).iterator());
+
+        assertEquals(Optional.of(true),
+                remoteLogManager.hasNonDeletedRemoteLogSegments(leaderTopicIdPartition.topicPartition()));
+    }
+
+    @Test
+    void testHasNonDeletedRemoteLogSegmentsIgnoresDeleteFinished() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        RemoteLogSegmentMetadata metadata = createRemoteLogSegmentMetadata(
+                new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()),
+                0L, 99L, 1000, totalEpochEntries, RemoteLogSegmentState.DELETE_SEGMENT_FINISHED);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenAnswer(invocation -> List.of(metadata).iterator());
+
+        assertEquals(Optional.of(false),
+                remoteLogManager.hasNonDeletedRemoteLogSegments(leaderTopicIdPartition.topicPartition()));
+    }
+
+    @Test
+    void testHasNonDeletedRemoteLogSegmentsWhenListFails() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        doAnswer(invocation -> {
+            throw new RemoteStorageException("rlmm unavailable");
+        }).when(remoteLogMetadataManager).listRemoteLogSegments(leaderTopicIdPartition);
+
+        assertEquals(Optional.empty(),
+                remoteLogManager.hasNonDeletedRemoteLogSegments(leaderTopicIdPartition.topicPartition()));
+    }
+
+    @Test
     void testFetchRemoteLogSegmentMetadata() throws RemoteStorageException {
         remoteLogManager.onLeadershipChange(
             Set.of(mockPartition(leaderTopicIdPartition)), Set.of(mockPartition(followerTopicIdPartition)), topicIds);

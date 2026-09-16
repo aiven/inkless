@@ -1997,12 +1997,15 @@ public final class QuorumController implements Controller {
             if (validateOnly) {
                 return result.withoutRecords();
             } else {
-                List<ApiMessageAndVersion> migrationRecords =
-                    replicationControl.markClassicToDisklessSwitchStarted(effectiveChanges, result.response());
-                if (!migrationRecords.isEmpty()) {
+                List<ApiMessageAndVersion> extraRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+                extraRecords.addAll(
+                    replicationControl.markClassicToDisklessSwitchStarted(effectiveChanges, result.response()));
+                extraRecords.addAll(
+                    replicationControl.markConsolidationStarted(effectiveChanges, result.response()));
+                if (!extraRecords.isEmpty()) {
                     List<ApiMessageAndVersion> allRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
                     allRecords.addAll(result.records());
-                    allRecords.addAll(migrationRecords);
+                    allRecords.addAll(extraRecords);
                     return ControllerResult.atomicOf(allRecords, result.response());
                 }
                 return result;
@@ -2054,12 +2057,17 @@ public final class QuorumController implements Controller {
             if (validateOnly) {
                 return result.withoutRecords();
             } else {
-                List<ApiMessageAndVersion> migrationRecords =
-                    replicationControl.markClassicToDisklessSwitchStartedForLegacyAlterConfigs(effectiveConfigs, result.response());
-                if (!migrationRecords.isEmpty()) {
+                List<ApiMessageAndVersion> extraRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+                extraRecords.addAll(
+                    replicationControl.markClassicToDisklessSwitchStartedForLegacyAlterConfigs(
+                        effectiveConfigs, result.response()));
+                extraRecords.addAll(
+                    replicationControl.markConsolidationStartedForLegacyAlterConfigs(
+                        effectiveConfigs, result.response()));
+                if (!extraRecords.isEmpty()) {
                     List<ApiMessageAndVersion> allRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
                     allRecords.addAll(result.records());
-                    allRecords.addAll(migrationRecords);
+                    allRecords.addAll(extraRecords);
                     return ControllerResult.atomicOf(allRecords, result.response());
                 }
                 return result;

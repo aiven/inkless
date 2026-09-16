@@ -3192,6 +3192,248 @@ public class ReplicationControlManagerInklessTest {
             assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
                 ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
         }
+
+        private Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> setRemoteTrue(String topic) {
+            return Map.of(new ConfigResource(ConfigResource.Type.TOPIC, topic),
+                Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+        }
+
+        private Uuid seedDisklessWithoutRemote(ReplicationControlTestContext ctx, String topic, int[][] replicas) {
+            CreatableTopicResult result = ctx.createTestTopic(topic, replicas);
+            // Replay bypasses LogConfig validation so we can represent a pre-consolidation
+            // born-diskless topic (diskless.enable=true, remote.storage.enable absent, no seal).
+            ctx.alterTopicConfig(topic, DISKLESS_ENABLE_CONFIG, "true");
+            return result.topicId();
+        }
+
+        @Test
+        void testLateRemoteEnableBumpsLeaderEpochWithoutSeal() {
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid topicId = seedDisklessWithoutRemote(ctx, "foo",
+                new int[][] {new int[] {0, 1, 2}, new int[] {1, 2, 0}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> configChanges = setRemoteTrue("foo");
+            Map<ConfigResource, ApiError> configResults = Map.of(resource, ApiError.NONE);
+
+            int[] epochsBefore = new int[2];
+            for (int i = 0; i < 2; i++) {
+                epochsBefore[i] = ctx.replicationControl.getPartition(topicId, i).leaderEpoch;
+            }
+
+            List<ApiMessageAndVersion> records =
+                ctx.replicationControl.markConsolidationStarted(configChanges, configResults);
+            assertEquals(2, records.size());
+            for (ApiMessageAndVersion message : records) {
+                assertInstanceOf(PartitionChangeRecord.class, message.message());
+                PartitionChangeRecord record = (PartitionChangeRecord) message.message();
+                assertEquals(topicId, record.topicId());
+                assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+                    InitDisklessLogFields.decodeClassicToDisklessStartOffset(record.unknownTaggedFields()));
+                int expectedLeader = ctx.replicationControl.getPartition(topicId, record.partitionId()).leader;
+                assertEquals(expectedLeader, record.leader());
+            }
+
+            ctx.replay(records);
+            for (int i = 0; i < 2; i++) {
+                PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, i);
+                assertEquals(epochsBefore[i] + 1, partition.leaderEpoch);
+                assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+                    partition.classicToDisklessStartOffset);
+            }
+        }
+
+        @Test
+        void testLateRemoteEnableCommitsConfigAndEpochBumpInOneBatch() {
+            // Drive the same wiring QuorumController.incrementalAlterConfigs uses
+            // (validate, then merge config records with the epoch-bump PartitionChangeRecords).
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid topicId = seedDisklessWithoutRemote(ctx, "foo",
+                new int[][] {new int[] {0, 1, 2}, new int[] {1, 2, 0}});
+
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> requested = setRemoteTrue("foo");
+            ControllerResult<Map<ConfigResource, ApiError>> configResult =
+                ctx.configurationControl.incrementalAlterConfigs(requested, false,
+                    resource -> ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, requested));
+            assertEquals(ApiError.NONE,
+                configResult.response().get(new ConfigResource(ConfigResource.Type.TOPIC, "foo")));
+
+            List<ApiMessageAndVersion> switchRecords =
+                ctx.replicationControl.markClassicToDisklessSwitchStarted(requested, configResult.response());
+            assertTrue(switchRecords.isEmpty(),
+                "already-diskless topics must not emit classic-to-diskless switch pending markers");
+
+            List<ApiMessageAndVersion> consolidationRecords =
+                ctx.replicationControl.markConsolidationStarted(requested, configResult.response());
+
+            List<ApiMessageAndVersion> batch = new ArrayList<>();
+            batch.addAll(configResult.records());
+            batch.addAll(switchRecords);
+            batch.addAll(consolidationRecords);
+
+            List<ConfigRecord> configRecords = batch.stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .toList();
+            assertTrue(configRecords.stream()
+                    .anyMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")),
+                "remote.storage.enable=true ConfigRecord must be in the batch");
+
+            List<PartitionChangeRecord> epochBumps = batch.stream()
+                .filter(m -> m.message() instanceof PartitionChangeRecord)
+                .map(m -> (PartitionChangeRecord) m.message())
+                .filter(r -> r.topicId().equals(topicId))
+                .toList();
+            assertEquals(2, epochBumps.size(),
+                "both partitions must get a leader-epoch bump in the same batch");
+            for (PartitionChangeRecord record : epochBumps) {
+                assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+                    InitDisklessLogFields.decodeClassicToDisklessStartOffset(record.unknownTaggedFields()));
+            }
+
+            int epochBefore = ctx.replicationControl.getPartition(topicId, 0).leaderEpoch;
+            ctx.replay(batch);
+            assertEquals(epochBefore + 1, ctx.replicationControl.getPartition(topicId, 0).leaderEpoch);
+            assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+                ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+        }
+
+        @Test
+        void testLateRemoteEnableSkippedWhenConsolidationDisabled() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(false)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            seedDisklessWithoutRemote(ctx, "foo", new int[][] {new int[] {0, 1, 2}});
+
+            List<ApiMessageAndVersion> records = ctx.replicationControl.markConsolidationStarted(
+                setRemoteTrue("foo"),
+                Map.of(new ConfigResource(ConfigResource.Type.TOPIC, "foo"), ApiError.NONE));
+            assertTrue(records.isEmpty());
+        }
+
+        @Test
+        void testLateRemoteEnableSkippedWhenTopicIsNotDiskless() {
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            List<ApiMessageAndVersion> records = ctx.replicationControl.markConsolidationStarted(
+                setRemoteTrue("foo"),
+                Map.of(new ConfigResource(ConfigResource.Type.TOPIC, "foo"), ApiError.NONE));
+            assertTrue(records.isEmpty(),
+                "classic topics enabling remote storage must not emit a consolidation epoch bump");
+        }
+
+        @Test
+        void testLateRemoteEnableSkippedWhenRemoteAlreadyEnabled() {
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            seedDisklessWithoutRemote(ctx, "foo", new int[][] {new int[] {0, 1, 2}});
+            ctx.alterTopicConfig("foo", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+
+            List<ApiMessageAndVersion> records = ctx.replicationControl.markConsolidationStarted(
+                setRemoteTrue("foo"),
+                Map.of(new ConfigResource(ConfigResource.Type.TOPIC, "foo"), ApiError.NONE));
+            assertTrue(records.isEmpty());
+        }
+
+        @Test
+        void testLateRemoteEnableSkippedWhenConfigFailed() {
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            seedDisklessWithoutRemote(ctx, "foo", new int[][] {new int[] {0, 1, 2}});
+
+            List<ApiMessageAndVersion> records = ctx.replicationControl.markConsolidationStarted(
+                setRemoteTrue("foo"),
+                Map.of(new ConfigResource(ConfigResource.Type.TOPIC, "foo"),
+                    new ApiError(Errors.INVALID_CONFIG, "bad config")));
+            assertTrue(records.isEmpty());
+        }
+
+        @Test
+        void testLateRemoteEnableSkippedOnClassicToDisklessSwitch() {
+            // A classic topic switching to diskless in the same request sets remote.storage.enable
+            // via injection. The switch-pending records already bump the leader epoch.
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> effective =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForSwitch(setDisklessTrue("foo"));
+            List<ApiMessageAndVersion> consolidationRecords =
+                ctx.replicationControl.markConsolidationStarted(effective,
+                    Map.of(new ConfigResource(ConfigResource.Type.TOPIC, "foo"), ApiError.NONE));
+            assertTrue(consolidationRecords.isEmpty());
+        }
+
+        @Test
+        void testLateRemoteEnableViaLegacyAlterConfigs() {
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid topicId = seedDisklessWithoutRemote(ctx, "foo", new int[][] {new int[] {0, 1, 2}});
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            // Legacy full-map replace must keep diskless.enable=true or the override is deleted.
+            Map<ConfigResource, Map<String, String>> newConfigs = Map.of(
+                resource, Map.of(
+                    DISKLESS_ENABLE_CONFIG, "true",
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"));
+            Map<ConfigResource, ApiError> configResults = Map.of(resource, ApiError.NONE);
+
+            int epochBefore = ctx.replicationControl.getPartition(topicId, 0).leaderEpoch;
+            List<ApiMessageAndVersion> records =
+                ctx.replicationControl.markConsolidationStartedForLegacyAlterConfigs(newConfigs, configResults);
+            assertEquals(1, records.size());
+            ctx.replay(records);
+            assertEquals(epochBefore + 1, ctx.replicationControl.getPartition(topicId, 0).leaderEpoch);
+            assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+                ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+        }
+
+        @Test
+        void testLateRemoteEnableOnSwitchedTopicWithSealPreservesSeal() {
+            // Pre-atomic-switch metadata: diskless with a committed seal and remote storage off.
+            // Enabling remote bumps the epoch so the Failed reconciler re-runs, and the seal stays.
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid topicId = seedDisklessWithoutRemote(ctx, "foo", new int[][] {new int[] {0, 1, 2}});
+
+            PartitionRegistration beforeSeal = ctx.replicationControl.getPartition(topicId, 0);
+            PartitionChangeRecord sealRecord = new PartitionChangeRecord()
+                .setTopicId(topicId)
+                .setPartitionId(0)
+                .setLeader(beforeSeal.leader);
+            sealRecord.unknownTaggedFields().add(
+                InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L));
+            ctx.replay(List.of(new ApiMessageAndVersion(sealRecord, (short) 0)));
+            assertEquals(100L, ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+
+            int epochBefore = ctx.replicationControl.getPartition(topicId, 0).leaderEpoch;
+            List<ApiMessageAndVersion> records = ctx.replicationControl.markConsolidationStarted(
+                setRemoteTrue("foo"),
+                Map.of(new ConfigResource(ConfigResource.Type.TOPIC, "foo"), ApiError.NONE));
+            assertEquals(1, records.size());
+            ctx.replay(records);
+
+            PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(epochBefore + 1, after.leaderEpoch);
+            assertEquals(100L, after.classicToDisklessStartOffset);
+        }
     }
 
     @Nested

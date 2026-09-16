@@ -44,12 +44,13 @@ class ConsolidationReconcilerTest {
     fetcherManager: ConsolidationFetcherManager = mock(classOf[ConsolidationFetcherManager]),
     initialFetchOffset: UnifiedLog => Long = _.highWatermark,
     quotaManager: ReplicationQuotaManager = mock(classOf[ReplicationQuotaManager]),
-    replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
+    replicaManager: ReplicaManager = mock(classOf[ReplicaManager]),
+    consolidationMetrics: ConsolidationMetrics = mock(classOf[ConsolidationMetrics])
   ): ConsolidationReconciler = {
     new ConsolidationReconciler(
       replicaManager,
       new StateChangeLogger(0),
-      mock(classOf[ConsolidationMetrics]),
+      consolidationMetrics,
       metadataView,
       initialFetchOffset,
       fetcherManager,
@@ -283,20 +284,23 @@ class ConsolidationReconcilerTest {
   }
 
   @Test
-  def testStartConsolidationFetchersMarksThrottledBeforeStartingFetchers(): Unit = {
+  def testStartConsolidationFetchersMarksThrottledAndRegistersMetricsBeforeStartingFetchers(): Unit = {
     // The fetcher only records bytes to the quota when the partition is already throttled, and
-    // addFetcherForPartitions starts the threads immediately. Marking must therefore happen first,
-    // otherwise the first fetch/append bypasses the dedicated bandwidth quota.
+    // addFetcherForPartitions starts the threads immediately. Quota marking and metric
+    // registration run first so the first fetch is throttled and the unknown latch is reset.
     val view = mockMetadataView(classicToDisklessStartOffset = 100L)
     val fetcherManager = mock(classOf[ConsolidationFetcherManager])
     val quotaManager = mock(classOf[ReplicationQuotaManager])
+    val consolidationMetrics = mock(classOf[ConsolidationMetrics])
     val (partition, _) = mockPartition(logStartOffset = 0L, logEndOffset = 100L)
-    val reconciler = newReconciler(view, fetcherManager, quotaManager = quotaManager)
+    val reconciler = newReconciler(view, fetcherManager, quotaManager = quotaManager,
+      consolidationMetrics = consolidationMetrics)
 
     reconciler.startConsolidationFetchers(mutable.HashMap(topicPartition -> partition))
 
-    val inOrder = Mockito.inOrder(quotaManager, fetcherManager)
+    val inOrder = Mockito.inOrder(quotaManager, consolidationMetrics, fetcherManager)
     inOrder.verify(quotaManager).markThrottled(topicPartition.topic)
+    inOrder.verify(consolidationMetrics).registerPartition(topicPartition)
     inOrder.verify(fetcherManager).addFetcherForPartitions(any())
   }
 

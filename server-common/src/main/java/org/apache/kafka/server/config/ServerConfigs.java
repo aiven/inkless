@@ -159,8 +159,8 @@ public class ServerConfigs {
     public static final String DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG = "diskless.remote.storage.consolidation.enable";
     public static final boolean DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_DEFAULT = false;
     public static final String DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_DOC = "When enabled, it allows topics to set both " +
-        "diskless.enable=true and remote.storage.enable=true on new topics. Setting both will start consolidating Diskless WAL segments into " +
-        "Kafka tiered log storage on the configured topic.";
+        "diskless.enable=true and remote.storage.enable=true. Setting both, including enabling remote.storage.enable later " +
+        "on an already-diskless topic, starts consolidating Diskless WAL segments into Kafka tiered log storage on the configured topic.";
 
     public static final String DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_CONFIG = "diskless.consolidation.fetch.max.bytes";
     public static final int DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_DEFAULT = 10 * 1024 * 1024; // 10MB
