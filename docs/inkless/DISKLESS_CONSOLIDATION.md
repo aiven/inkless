@@ -14,6 +14,8 @@ On a diskless topic, brokers create WAL files to store partition data and nothin
 
 Rewriting WAL segments into the Kafka log format offloads the diskless coordinator, improves read performance, and keeps the log format Kafka already expects.
 
+Consolidation bounds the diskless metadata that the PostgreSQL coordinator retains. This keeps coordinator resource use and retention cleanup predictable as retained history grows. Continuous background consolidation also reduces bursts of object-storage GET requests when consumers read older data, which stabilizes read latency and lets the cluster sustain lagging consumers more consistently.
+
 ## Migration paths
 
 Migration between classic and diskless topics has several cases. This document covers TSU-1/2 and the transitive TSU-3/5 paths. The [classic-to-diskless switch](CLASSIC_TO_DISKLESS_SWITCH.md) and the upstream tiered-storage framework cover the other paths.
