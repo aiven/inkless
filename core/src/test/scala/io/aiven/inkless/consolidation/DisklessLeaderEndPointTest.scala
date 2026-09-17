@@ -20,7 +20,7 @@ package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
 import kafka.cluster.Partition
-import kafka.server.{KafkaConfig, QuotaFactory, ReplicaManager, ReplicaQuota}
+import kafka.server.{KafkaConfig, QuotaFactory, ReplicaManager, ReplicaQuota, ReplicationQuotaManager}
 import kafka.utils.TestUtils
 import org.apache.kafka.common.errors.{KafkaStorageException, NotLeaderOrFollowerException, UnknownTopicOrPartitionException}
 import org.apache.kafka.server.config.ServerConfigs
@@ -45,7 +45,7 @@ import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.{any, anyLong, eq => eqTo}
-import org.mockito.Mockito.{doNothing, mock, verify, when}
+import org.mockito.Mockito.{doAnswer, doNothing, mock, verify, when}
 
 import java.util
 import java.nio.ByteBuffer
@@ -1207,6 +1207,51 @@ class DisklessLeaderEndPointTest {
     assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, pd.errorCode)
     assertEquals(0L, pd.logStartOffset)
     verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(true), eqTo(0L))
+  }
+
+  @Test
+  def testFetchCapturesRemotePrefixGenerationBeforeBlockedDelayedFetch(): Unit = {
+    // removeFetcherForPartitions bumps the generation while awaitDelayedFetch is parked.
+    // Overlay must mark with the generation captured before that wait, not the post-removal one.
+    val metrics = new ConsolidationMetrics()
+    try {
+      metrics.registerPartition(topicPartition)
+      assertEquals(1L, metrics.remotePrefixGeneration(topicPartition))
+
+      val replicaManager = replicaManagerMock()
+      when(replicaManager.consolidationRemotePrefixGeneration(any())).thenAnswer(_ =>
+        Long.box(metrics.remotePrefixGeneration(topicPartition)))
+
+      val props = TestUtils.createBrokerConfig(nodeId = 1)
+      val config = KafkaConfig.fromProps(props)
+      val manager = new ConsolidationFetcherManager(
+        config,
+        replicaManager,
+        mock(classOf[ReplicationQuotaManager]),
+        mock(classOf[FetchHandler]),
+        mock(classOf[FetchOffsetHandler]),
+        Some(metrics)
+      )
+      try {
+        val purgatory = replicaManager.delayedConsolidationFetchPurgatory
+        doAnswer { invocation =>
+          manager.removeFetcherForPartitions(Set(topicPartition))
+          invocation.getArgument(0, classOf[DelayedConsolidationFetch]).forceComplete()
+        }.when(purgatory).tryCompleteElseWatch(any(), any())
+
+        val endPoint = bornDisklessWalGapEndPoint(Optional.empty(), replicaManager)
+        val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 0L)).get(topicPartition)
+
+        assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, pd.errorCode)
+        assertEquals(2L, metrics.remotePrefixGeneration(topicPartition))
+        verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(true), eqTo(1L))
+      } finally {
+        manager.shutdown()
+      }
+    } finally {
+      metrics.close()
+      TestUtils.clearYammerMetrics()
+    }
   }
 
   @Test

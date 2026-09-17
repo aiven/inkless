@@ -88,6 +88,12 @@ class DisklessLeaderEndPoint(
       topicNames.put(topic.topicId, topic.topic)
     }
     val fetchInfos = request.fetchData(topicNames.asJava)
+    // Capture before awaitDelayedFetch. The delayed op parks up to
+    // diskless.consolidation.fetch.max.wait.ms, and removeFetcherForPartitions
+    // can bump the generation while this thread is blocked.
+    val remotePrefixGenerations = fetchInfos.asScala.keys.iterator.map { tidp =>
+      tidp.topicPartition -> replicaManager.consolidationRemotePrefixGeneration(tidp.topicPartition)
+    }.toMap
 
     val fetchParams = new FetchParams(
       FetchRequest.FUTURE_LOCAL_REPLICA_ID,
@@ -175,7 +181,7 @@ class DisklessLeaderEndPoint(
                   requestedOffset >= logStartOffset &&
                   requestedOffset < disklessStartOffset) {
                 localLogOpt.filter(_.remoteLogEnabled()).foreach { _ =>
-                  val generation = replicaManager.consolidationRemotePrefixGeneration(tp.topicPartition)
+                  val generation = remotePrefixGenerations.getOrElse(tp.topicPartition, 0L)
                   val evidence = remoteConsolidatedPrefixEvidence(tp.topicPartition, disklessStartOffset)
                   if (!evidence.isPresent) {
                     // leader.fetch() runs outside partitionMapLock. Alert semantics: the
