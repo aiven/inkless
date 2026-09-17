@@ -155,13 +155,15 @@ class ConsolidationMetrics extends Closeable {
     Option(remotePrefixGenerationByPartition.get(tp)).exists(_.get == generation)
 
   def unregisterPartition(tp: TopicPartition): Unit = {
+    // Bump and keep the generation counter. Deleting it would let re-register reuse 1
+    // and an in-flight fetch that captured 1 could restore the latch after stopPartitions.
+    bumpRemotePrefixGeneration(tp)
     val tags = Map("topic" -> tp.topic, "partition" -> tp.partition.toString).asJava
     totalLagByPartition.remove(tp)
     localLagByPartition.remove(tp)
     deletableByPartition.remove(tp)
     oversizedBatchByPartition.remove(tp)
     remotePrefixUnknownByPartition.remove(tp)
-    remotePrefixGenerationByPartition.remove(tp)
     metricsGroup.removeMetric(TotalLag, tags)
     metricsGroup.removeMetric(LocalLag, tags)
     metricsGroup.removeMetric(DeletableMessages, tags)
@@ -174,6 +176,7 @@ class ConsolidationMetrics extends Closeable {
     val partitions = (totalLagByPartition.keys.asScala ++ remotePrefixUnknownByPartition.keys.asScala ++
       remotePrefixGenerationByPartition.keys.asScala).toSet
     partitions.foreach(unregisterPartition)
+    remotePrefixGenerationByPartition.clear()
     // Unregistering aggregated metrics
     metricsGroup.removeMetric(TotalLag)
     metricsGroup.removeMetric(LocalLag)

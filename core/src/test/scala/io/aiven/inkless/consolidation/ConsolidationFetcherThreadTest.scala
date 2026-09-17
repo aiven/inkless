@@ -690,6 +690,28 @@ class ConsolidationFetcherThreadTest {
     assertEquals(0L, findBrokerGaugeValue("ConsolidationRemotePrefixUnknown"))
   }
 
+  @Test
+  def testUnregisterKeepsRemotePrefixGenerationMonotonic(): Unit = {
+    metrics.registerPartition(topicPartition)
+    val first = metrics.remotePrefixGeneration(topicPartition)
+    assertEquals(1L, first)
+    metrics.setRemotePrefixUnknown(topicPartition, unknown = true, first)
+    assertEquals(1L, findGaugeValue("ConsolidationRemotePrefixUnknown", topicPartition))
+
+    metrics.unregisterPartition(topicPartition)
+    assertNull(findGaugeOrNull("ConsolidationRemotePrefixUnknown", topicPartition))
+    assertEquals(2L, metrics.remotePrefixGeneration(topicPartition))
+    metrics.setRemotePrefixUnknown(topicPartition, unknown = true, first)
+    assertNull(findGaugeOrNull("ConsolidationRemotePrefixUnknown", topicPartition))
+
+    metrics.registerPartition(topicPartition)
+    val second = metrics.remotePrefixGeneration(topicPartition)
+    assertEquals(3L, second)
+    assertEquals(0L, findGaugeValue("ConsolidationRemotePrefixUnknown", topicPartition))
+    metrics.setRemotePrefixUnknown(topicPartition, unknown = true, first)
+    assertEquals(0L, findGaugeValue("ConsolidationRemotePrefixUnknown", topicPartition))
+  }
+
   private def findGaugeOrNull(name: String, tp: TopicPartition): com.yammer.metrics.core.Gauge[_] = {
     val expectedScope = s"partition.${tp.partition}.topic.${tp.topic.replace(".", "_")}"
     KafkaYammerMetrics.defaultRegistry.allMetrics.asScala
