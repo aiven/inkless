@@ -72,6 +72,10 @@ class DisklessLeaderEndPoint(
   private val maxBytes = brokerConfig.disklessConsolidationFetchResponseMaxBytes
   private val fetchSize = brokerConfig.disklessConsolidationFetchMaxBytes
   private val unsafeSegmentConfigWarnings = ConcurrentHashMap.newKeySet[TopicPartition]()
+  // Snapshotted in buildFetch, which maybeFetch calls under partitionMapLock.
+  // Carried into fetch() so a removeFetcher bump after the lock drops cannot be
+  // adopted by this request's overlay.
+  private val pendingRemotePrefixGenerations = new ConcurrentHashMap[TopicPartition, java.lang.Long]()
 
   override def isTruncationOnFetchSupported: Boolean = false
 
@@ -88,12 +92,14 @@ class DisklessLeaderEndPoint(
       topicNames.put(topic.topicId, topic.topic)
     }
     val fetchInfos = request.fetchData(topicNames.asJava)
-    // Capture before awaitDelayedFetch. The delayed op parks up to
-    // diskless.consolidation.fetch.max.wait.ms, and removeFetcherForPartitions
-    // can bump the generation while this thread is blocked.
+    // Prefer the buildFetch snapshot. Tests that call fetch() directly fall back
+    // to a live read before awaitDelayedFetch.
     val remotePrefixGenerations = fetchInfos.asScala.keys.iterator.map { tidp =>
-      tidp.topicPartition -> replicaManager.consolidationRemotePrefixGeneration(tidp.topicPartition)
+      val tp = tidp.topicPartition
+      val captured = pendingRemotePrefixGenerations.get(tp)
+      tp -> (if (captured != null) captured.longValue() else replicaManager.consolidationRemotePrefixGeneration(tp))
     }.toMap
+    pendingRemotePrefixGenerations.clear()
 
     val fetchParams = new FetchParams(
       FetchRequest.FUTURE_LOCAL_REPLICA_ID,
@@ -497,6 +503,7 @@ class DisklessLeaderEndPoint(
     } else {
       val partitionsWithError = mutable.Set[TopicPartition]()
       val requestMap = new util.LinkedHashMap[TopicPartition, FetchRequest.PartitionData]()
+      pendingRemotePrefixGenerations.clear()
 
       partitions.forEach { (topicPartition, fetchState) =>
         if (fetchState.isReadyForFetch && !shouldFollowerThrottle(quota, fetchState, topicPartition)) {
@@ -527,6 +534,10 @@ class DisklessLeaderEndPoint(
                 Optional.of(fetchState.currentLeaderEpoch()),
                 lastFetchedEpoch
               )
+            )
+            pendingRemotePrefixGenerations.put(
+              topicPartition,
+              Long.box(replicaManager.consolidationRemotePrefixGeneration(topicPartition))
             )
           } catch {
             // UnknownTopicOrPartitionException from localLogOrException when partition is

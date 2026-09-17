@@ -1255,6 +1255,58 @@ class DisklessLeaderEndPointTest {
   }
 
   @Test
+  def testFetchUsesRemotePrefixGenerationCapturedInBuildFetch(): Unit = {
+    // AbstractFetcherThread builds the request under partitionMapLock, releases it,
+    // then calls leader.fetch. Removal in that gap must not let overlay adopt the
+    // post-removal generation.
+    val metrics = new ConsolidationMetrics()
+    try {
+      metrics.registerPartition(topicPartition)
+      assertEquals(1L, metrics.remotePrefixGeneration(topicPartition))
+
+      val replicaManager = replicaManagerMock()
+      when(replicaManager.consolidationRemotePrefixGeneration(any())).thenAnswer(_ =>
+        Long.box(metrics.remotePrefixGeneration(topicPartition)))
+      val localLog = unifiedLogMock(logStartOffset = 0L, segmentSize = Int.MaxValue, maxMessageSize = 1024 * 1024)
+      when(replicaManager.localLogOrException(topicPartition)).thenReturn(localLog)
+
+      val props = TestUtils.createBrokerConfig(nodeId = 1)
+      val config = KafkaConfig.fromProps(props)
+      val manager = new ConsolidationFetcherManager(
+        config,
+        replicaManager,
+        mock(classOf[ReplicationQuotaManager]),
+        mock(classOf[FetchHandler]),
+        mock(classOf[FetchOffsetHandler]),
+        Some(metrics)
+      )
+      try {
+        val endPoint = bornDisklessWalGapEndPoint(Optional.empty(), replicaManager)
+        val fetchState = new PartitionFetchState(
+          Optional.of(topicId),
+          0L,
+          Optional.empty(),
+          0,
+          ReplicaState.FETCHING,
+          Optional.empty()
+        )
+        val replicaFetch = endPoint.buildFetch(util.Map.of(topicPartition, fetchState)).result.get
+        manager.removeFetcherForPartitions(Set(topicPartition))
+        val pd = endPoint.fetch(replicaFetch.fetchRequest).get(topicPartition)
+
+        assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, pd.errorCode)
+        assertEquals(2L, metrics.remotePrefixGeneration(topicPartition))
+        verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(true), eqTo(1L))
+      } finally {
+        manager.shutdown()
+      }
+    } finally {
+      metrics.close()
+      TestUtils.clearYammerMetrics()
+    }
+  }
+
+  @Test
   def testFetchLeavesOffsetOutOfRangeWhenRemoteSegmentDoesNotCoverWalBoundary(): Unit = {
     // Seal 100 and later WAL copies (highest remote 250) do not cover S-1=199 after pure-diskless
     // retention advanced the WAL start to 200. OFFSET_MOVED would send TierStateMachine looking
