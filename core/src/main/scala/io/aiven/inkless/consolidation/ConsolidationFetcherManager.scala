@@ -20,8 +20,12 @@ package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import kafka.server.{AbstractFetcherManager, KafkaConfig, ReplicaManager, ReplicationQuotaManager}
+import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.utils.LogContext
+import org.apache.kafka.server.PartitionFetchState
 import org.apache.kafka.server.network.BrokerEndPoint
+
+import scala.collection.{Map, Set}
 
 class ConsolidationFetcherManager(brokerConfig: KafkaConfig,
                                   replicaManager: ReplicaManager,
@@ -49,6 +53,14 @@ class ConsolidationFetcherManager(brokerConfig: KafkaConfig,
     )
     new ConsolidationFetcherThread(threadName, disklessLeaderEndPoint, brokerConfig, failedPartitions, replicaManager,
       quotaManager, logContext.logPrefix, consolidationMetrics)
+  }
+
+  // Bumps the unknown-latch generation when the consolidation fetcher drops a partition, including
+  // fence and Failed/Retry paths that do not call registerPartition again.
+  override def removeFetcherForPartitions(partitions: Set[TopicPartition]): Map[TopicPartition, PartitionFetchState] = {
+    val removed = super.removeFetcherForPartitions(partitions)
+    consolidationMetrics.foreach(m => partitions.foreach(m.bumpRemotePrefixGeneration))
+    removed
   }
 
   def shutdown(): Unit = {

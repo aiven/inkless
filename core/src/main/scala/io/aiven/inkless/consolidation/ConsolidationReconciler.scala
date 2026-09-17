@@ -51,12 +51,11 @@ private class ReconciliationException(message: String) extends RuntimeException(
  *
  * ==Invariant: diskless.enable and remote.storage.enable are set together==
  * 
- * The classic-to-diskless switch enforces this invariant atomically:
- * a switched topic has both `diskless.enable=true` AND `remote.storage.enable=true` set together in the
- * same controller batch. Therefore, a diskless topic is always consolidating (tiering to remote storage).
- *
- * This reconciler assumes the invariant holds. A topic that violates it (e.g., from pre-atomic-switch metadata)
- * is marked Failed rather than silently dropping or growing the log unbounded.
+ * A consolidating topic has both `diskless.enable=true` and `remote.storage.enable=true`. The
+ * classic-to-diskless switch sets them in the same controller batch. Enabling
+ * `remote.storage.enable=true` on an already-diskless topic does the same: the controller
+ * co-commits a leader-epoch bump so this reconciler runs. A topic that violates the invariant
+ * (remote off after a switch, from pre-atomic-switch metadata) is marked Failed.
  *
  * @see LogConfigTest.scala header for the full state machine and valid transitions
  */
@@ -81,14 +80,17 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
       val consolidatingPartitionAndOffsets: mutable.HashMap[TopicPartition, InitialFetchState] =
         initConsolidatingPartitionFetching(consolidatingPartitions)
 
-      // Mark topics throttled BEFORE starting fetchers: addFetcherForPartitions starts the threads
-      // immediately and bytes only count toward the quota while the partition is already throttled,
-      // so marking after would let the first fetch bypass the quota. All consolidating topics are
-      // marked unconditionally. We never removeThrottle on stop (matching the classic ReplicaFetcher
-      // pattern); the leftover topic -> List(-1) entries are tiny and bounded, so the residue is benign.
+      // Mark topics throttled and register per-partition gauges before starting fetchers:
+      // addFetcherForPartitions starts the threads immediately, so anything the first fetch depends
+      // on has to be in place. Bytes only count toward the quota while the partition is already
+      // throttled. registerPartition resets ConsolidationRemotePrefixUnknown to 0 before the first
+      // WAL-gap fetch can set it to 1. All consolidating topics are marked throttled
+      // unconditionally. We never removeThrottle on stop (matching the classic ReplicaFetcher
+      // pattern); the leftover topic -> List(-1) entries are tiny and bounded, so the residue is
+      // benign.
       consolidatingPartitionAndOffsets.keys.map(_.topic).toSet.foreach((topic: String) => consolidationQuotaManager.markThrottled(topic))
-      consolidationFetcherManager.addFetcherForPartitions(consolidatingPartitionAndOffsets)
       consolidatingPartitionAndOffsets.keys.foreach(tp => consolidationMetrics.registerPartition(tp))
+      consolidationFetcherManager.addFetcherForPartitions(consolidatingPartitionAndOffsets)
     }
   }
 
@@ -142,9 +144,9 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
       case seal if seal >= 0 && !inklessMetadataView.isRemoteStorageEnabled(tp.topic) =>
         // Unsupported state: a switched topic (seal >= 0) with remote storage off violates the invariant.
         // This can only come from metadata written before the atomic switch enforcement.
-        // Mark Failed (not Retry) to prevent unbounded log growth — FailedPartitionsCount metric surfaces it.
-        // Recovery: operator must set remote.storage.enable=true and trigger a leader-epoch increment
-        // (restart/reassignment/preferred-leader-election) to re-run reconciliation.
+        // Mark Failed to prevent unbounded log growth. FailedPartitionsCount surfaces it.
+        // Recovery: set remote.storage.enable=true. The controller co-commits a leader-epoch bump
+        // so reconciliation runs again.
         ConsolidationStartState.Failed(new ReconciliationException(
           s"Diskless topic $tp has remote storage disabled but was switched from classic " +
             s"(violates diskless.enable implies remote.storage.enable); consolidation cannot start " +

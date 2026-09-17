@@ -72,6 +72,10 @@ class DisklessLeaderEndPoint(
   private val maxBytes = brokerConfig.disklessConsolidationFetchResponseMaxBytes
   private val fetchSize = brokerConfig.disklessConsolidationFetchMaxBytes
   private val unsafeSegmentConfigWarnings = ConcurrentHashMap.newKeySet[TopicPartition]()
+  // Snapshotted in buildFetch, which maybeFetch calls under partitionMapLock.
+  // Carried into fetch() so a removeFetcher bump after the lock drops cannot be
+  // adopted by this request's overlay.
+  private val pendingRemotePrefixGenerations = new ConcurrentHashMap[TopicPartition, java.lang.Long]()
 
   override def isTruncationOnFetchSupported: Boolean = false
 
@@ -88,6 +92,14 @@ class DisklessLeaderEndPoint(
       topicNames.put(topic.topicId, topic.topic)
     }
     val fetchInfos = request.fetchData(topicNames.asJava)
+    // Missing capture is 0, which generationMatches rejects. A live read after
+    // partitionMapLock drops would adopt a post-removal generation.
+    val remotePrefixGenerations = fetchInfos.asScala.keys.iterator.map { tidp =>
+      val tp = tidp.topicPartition
+      val captured = pendingRemotePrefixGenerations.get(tp)
+      tp -> (if (captured != null) captured.longValue() else 0L)
+    }.toMap
+    pendingRemotePrefixGenerations.clear()
 
     val fetchParams = new FetchParams(
       FetchRequest.FUTURE_LOCAL_REPLICA_ID,
@@ -159,22 +171,44 @@ class DisklessLeaderEndPoint(
               fetchResponseData.setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code)
             } else {
               fetchResponseData.setLogStartOffset(logStartOffset)
-              // `data.logStartOffset` is the diskless WAL start (advanced to highestRemoteOffset + 1
-              // as the WAL is pruned), not the whole-log start. Offsets in
-              // `[logStartOffset, disklessStartOffset)` were consolidated to remote and only live there, so
-              // a fetch for them (e.g. after local-log loss) must come from the remote tier. Signal
-              // OFFSET_MOVED_TO_TIERED_STORAGE so the tier-state machine rebuilds from remote.
+              // `data.logStartOffset` is the diskless WAL start, advanced as the WAL is pruned.
+              // Offsets in `[logStartOffset, disklessStartOffset)` live only in the remote tier
+              // after consolidation prune. OFFSET_MOVED_TO_TIERED_STORAGE fires when RLMM has a
+              // readable segment covering `disklessStartOffset - 1`, which is the offset
+              // TierStateMachine looks up. Present-false leaves OFFSET_OUT_OF_RANGE so
+              // handleOutOfRangeError truncates onto the WAL start. Empty (not ready, list failed,
+              // or a covering segment still transitional) returns NOT_LEADER_OR_FOLLOWER so the
+              // fetcher retries at debug. Fetchers start in applyLocalLeadersDelta before
+              // rlm.onLeadershipChange, and isReady can stay false until __remote_log_metadata
+              // catch-up.
               val disklessStartOffset = data.logStartOffset
               val requestedOffset = Option(fetchInfos.get(tp)).map(_.fetchOffset).getOrElse(-1L)
-              if (localLogOpt.exists(_.remoteLogEnabled())
-                  && logStartOffset != UnifiedLog.UNKNOWN_OFFSET
-                  && requestedOffset >= logStartOffset
-                  && requestedOffset < disklessStartOffset) {
-                logger.debug("Offset {} for {} is below the diskless WAL start {} but at/above the whole-log start {}; " +
-                  "signalling OFFSET_MOVED_TO_TIERED_STORAGE to rebuild the consolidated remote prefix.",
-                  requestedOffset, tp.topicPartition, disklessStartOffset, logStartOffset)
-                fetchResponseData.setErrorCode(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code)
-                fetchResponseData.setRecords(MemoryRecords.EMPTY)
+              if (logStartOffset != UnifiedLog.UNKNOWN_OFFSET &&
+                  requestedOffset >= logStartOffset &&
+                  requestedOffset < disklessStartOffset) {
+                localLogOpt.filter(_.remoteLogEnabled()).foreach { _ =>
+                  val generation = remotePrefixGenerations.getOrElse(tp.topicPartition, 0L)
+                  val evidence = remoteConsolidatedPrefixEvidence(tp.topicPartition, disklessStartOffset)
+                  if (!evidence.isPresent) {
+                    // leader.fetch() runs outside partitionMapLock. Alert semantics: the
+                    // ConsolidationRemotePrefixUnknown row in docs/inkless/DISKLESS_CONSOLIDATION.md.
+                    replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = true, generation)
+                    logger.debug("RLMM has no readable coverage of {} for {} while the fetch offset {} sits in the WAL gap [{}, {}); " +
+                      "returning NOT_LEADER_OR_FOLLOWER so the fetcher retries with backoff instead of truncating onto the WAL start.",
+                      disklessStartOffset - 1, tp.topicPartition, requestedOffset, logStartOffset, disklessStartOffset)
+                    fetchResponseData.setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
+                    fetchResponseData.setRecords(MemoryRecords.EMPTY)
+                  } else if (evidence.get.booleanValue) {
+                    replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = false, generation)
+                    logger.debug("Offset {} for {} is below the diskless WAL start {} but at/above the whole-log start {}; " +
+                      "signalling OFFSET_MOVED_TO_TIERED_STORAGE to rebuild the consolidated remote prefix.",
+                      requestedOffset, tp.topicPartition, disklessStartOffset, logStartOffset)
+                    fetchResponseData.setErrorCode(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code)
+                    fetchResponseData.setRecords(MemoryRecords.EMPTY)
+                  } else {
+                    replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = false, generation)
+                  }
+                }
               }
             }
           } else {
@@ -183,6 +217,16 @@ class DisklessLeaderEndPoint(
       }
       tp.topicPartition -> fetchResponseData
     }.toMap.asJava
+  }
+
+  /**
+   * Returns whether RLMM has a readable remote segment covering `disklessStartOffset - 1`.
+   * Present-true: a `COPY_SEGMENT_FINISHED` segment covers that offset, so OFFSET_MOVED can rebuild.
+   * Present-false: RLMM is ready and has no such segment, so the fetch stays OFFSET_OUT_OF_RANGE.
+   * Empty: RLMM is not ready, the query failed, or a covering segment is still transitional.
+   */
+  private def remoteConsolidatedPrefixEvidence(topicPartition: TopicPartition, disklessStartOffset: Long): Optional[java.lang.Boolean] = {
+    replicaManager.hasReadableRemoteLogCoverage(topicPartition, disklessStartOffset - 1)
   }
 
   /**
@@ -459,6 +503,7 @@ class DisklessLeaderEndPoint(
     } else {
       val partitionsWithError = mutable.Set[TopicPartition]()
       val requestMap = new util.LinkedHashMap[TopicPartition, FetchRequest.PartitionData]()
+      pendingRemotePrefixGenerations.clear()
 
       partitions.forEach { (topicPartition, fetchState) =>
         if (fetchState.isReadyForFetch && !shouldFollowerThrottle(quota, fetchState, topicPartition)) {
@@ -489,6 +534,10 @@ class DisklessLeaderEndPoint(
                 Optional.of(fetchState.currentLeaderEpoch()),
                 lastFetchedEpoch
               )
+            )
+            pendingRemotePrefixGenerations.put(
+              topicPartition,
+              Long.box(replicaManager.consolidationRemotePrefixGeneration(topicPartition))
             )
           } catch {
             // UnknownTopicOrPartitionException from localLogOrException when partition is

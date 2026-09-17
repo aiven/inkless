@@ -597,6 +597,121 @@ class ConsolidationFetcherThreadTest {
     assertNull(findGaugeOrNull("ConsolidationOversizedBatch", tp0))
   }
 
+  @Test
+  def testRemotePrefixUnknownGaugeTracksWaitingPartitions(): Unit = {
+    val tp0 = new TopicPartition("topic-a", 0)
+    val tp1 = new TopicPartition("topic-a", 1)
+
+    metrics.registerPartition(tp0)
+    metrics.registerPartition(tp1)
+    assertEquals(0L, findBrokerGaugeValue("ConsolidationRemotePrefixUnknown"))
+
+    metrics.setRemotePrefixUnknown(tp0, unknown = true)
+    metrics.setRemotePrefixUnknown(tp1, unknown = true)
+    assertEquals(1L, findGaugeValue("ConsolidationRemotePrefixUnknown", tp0))
+    assertEquals(1L, findGaugeValue("ConsolidationRemotePrefixUnknown", tp1))
+    assertEquals(2L, findBrokerGaugeValue("ConsolidationRemotePrefixUnknown"))
+
+    metrics.setRemotePrefixUnknown(tp0, unknown = false)
+    assertEquals(0L, findGaugeValue("ConsolidationRemotePrefixUnknown", tp0))
+    assertEquals(1L, findBrokerGaugeValue("ConsolidationRemotePrefixUnknown"))
+
+    metrics.unregisterPartition(tp1)
+    assertEquals(0L, findBrokerGaugeValue("ConsolidationRemotePrefixUnknown"))
+    assertNull(findGaugeOrNull("ConsolidationRemotePrefixUnknown", tp1))
+  }
+
+  @Test
+  def testRemotePrefixUnknownGaugeResetsOnReRegistration(): Unit = {
+    val tp0 = new TopicPartition("topic-a", 0)
+
+    metrics.registerPartition(tp0)
+    metrics.setRemotePrefixUnknown(tp0, unknown = true)
+    assertEquals(1L, findGaugeValue("ConsolidationRemotePrefixUnknown", tp0))
+
+    // Re-registration resets the latch to 0.
+    metrics.registerPartition(tp0)
+    assertEquals(0L, findGaugeValue("ConsolidationRemotePrefixUnknown", tp0))
+    assertEquals(0L, findBrokerGaugeValue("ConsolidationRemotePrefixUnknown"))
+  }
+
+  @Test
+  def testRemotePrefixUnknownClearDoesNotCreateGauge(): Unit = {
+    val tp0 = new TopicPartition("topic-a", 0)
+
+    // become-leader and become-follower pass every local replica through removeFetcherForPartitions.
+    // Clearing an unregistered partition leaves the gauge uncreated.
+    metrics.setRemotePrefixUnknown(tp0, unknown = false)
+    assertNull(findGaugeOrNull("ConsolidationRemotePrefixUnknown", tp0))
+    assertEquals(0L, findBrokerGaugeValue("ConsolidationRemotePrefixUnknown"))
+  }
+
+  @Test
+  def testRemoveFetcherForPartitionsClearsRemotePrefixUnknownWithoutUnregistering(): Unit = {
+    metrics.registerPartition(topicPartition)
+    metrics.updateTotalLag(topicPartition, 30L)
+    metrics.setRemotePrefixUnknown(topicPartition, unknown = true)
+    assertEquals(1L, findGaugeValue("ConsolidationRemotePrefixUnknown", topicPartition))
+    assertEquals(30L, findGaugeValue("ConsolidationTotalLag", topicPartition))
+
+    val props = TestUtils.createBrokerConfig(nodeId = 1)
+    val config = KafkaConfig.fromProps(props)
+    val manager = new ConsolidationFetcherManager(
+      config,
+      mock(classOf[ReplicaManager]),
+      mock(classOf[ReplicationQuotaManager]),
+      mock(classOf[FetchHandler]),
+      mock(classOf[FetchOffsetHandler]),
+      Some(metrics)
+    )
+    try {
+      manager.removeFetcherForPartitions(Set(topicPartition))
+      assertEquals(0L, findGaugeValue("ConsolidationRemotePrefixUnknown", topicPartition))
+      // Lag gauges stay registered.
+      assertEquals(30L, findGaugeValue("ConsolidationTotalLag", topicPartition))
+      assertNotNull(findGaugeOrNull("ConsolidationRemotePrefixUnknown", topicPartition))
+    } finally {
+      manager.shutdown()
+    }
+  }
+
+  @Test
+  def testRemotePrefixUnknownIgnoresStaleGenerationAfterRemoval(): Unit = {
+    metrics.registerPartition(topicPartition)
+    val generation = metrics.remotePrefixGeneration(topicPartition)
+    metrics.setRemotePrefixUnknown(topicPartition, unknown = true, generation)
+    assertEquals(1L, findGaugeValue("ConsolidationRemotePrefixUnknown", topicPartition))
+
+    metrics.bumpRemotePrefixGeneration(topicPartition)
+    assertEquals(0L, findGaugeValue("ConsolidationRemotePrefixUnknown", topicPartition))
+
+    metrics.setRemotePrefixUnknown(topicPartition, unknown = true, generation)
+    assertEquals(0L, findGaugeValue("ConsolidationRemotePrefixUnknown", topicPartition))
+    assertEquals(0L, findBrokerGaugeValue("ConsolidationRemotePrefixUnknown"))
+  }
+
+  @Test
+  def testUnregisterKeepsRemotePrefixGenerationMonotonic(): Unit = {
+    metrics.registerPartition(topicPartition)
+    val first = metrics.remotePrefixGeneration(topicPartition)
+    assertEquals(1L, first)
+    metrics.setRemotePrefixUnknown(topicPartition, unknown = true, first)
+    assertEquals(1L, findGaugeValue("ConsolidationRemotePrefixUnknown", topicPartition))
+
+    metrics.unregisterPartition(topicPartition)
+    assertNull(findGaugeOrNull("ConsolidationRemotePrefixUnknown", topicPartition))
+    assertEquals(2L, metrics.remotePrefixGeneration(topicPartition))
+    metrics.setRemotePrefixUnknown(topicPartition, unknown = true, first)
+    assertNull(findGaugeOrNull("ConsolidationRemotePrefixUnknown", topicPartition))
+
+    metrics.registerPartition(topicPartition)
+    val second = metrics.remotePrefixGeneration(topicPartition)
+    assertEquals(3L, second)
+    assertEquals(0L, findGaugeValue("ConsolidationRemotePrefixUnknown", topicPartition))
+    metrics.setRemotePrefixUnknown(topicPartition, unknown = true, first)
+    assertEquals(0L, findGaugeValue("ConsolidationRemotePrefixUnknown", topicPartition))
+  }
+
   private def findGaugeOrNull(name: String, tp: TopicPartition): com.yammer.metrics.core.Gauge[_] = {
     val expectedScope = s"partition.${tp.partition}.topic.${tp.topic.replace(".", "_")}"
     KafkaYammerMetrics.defaultRegistry.allMetrics.asScala

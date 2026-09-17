@@ -1482,6 +1482,109 @@ public class RemoteLogManagerTest {
     }
 
     @Test
+    void testHasReadableRemoteLogCoverageWhenUnregistered() throws RemoteStorageException {
+        assertEquals(Optional.empty(),
+                remoteLogManager.hasReadableRemoteLogCoverage(leaderTopicIdPartition.topicPartition(), 99L));
+        verify(remoteLogMetadataManager, never()).listRemoteLogSegments(any(TopicIdPartition.class));
+    }
+
+    @Test
+    void testHasReadableRemoteLogCoverageWhenNotReady() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        when(remoteLogMetadataManager.isReady(leaderTopicIdPartition)).thenReturn(false);
+
+        assertEquals(Optional.empty(),
+                remoteLogManager.hasReadableRemoteLogCoverage(leaderTopicIdPartition.topicPartition(), 99L));
+    }
+
+    @Test
+    void testHasReadableRemoteLogCoverageWhenReadyAndEmpty() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        doReturn(true).when(remoteLogMetadataManager).isReady(any(TopicIdPartition.class));
+        doAnswer(invocation -> Collections.emptyIterator())
+                .when(remoteLogMetadataManager).listRemoteLogSegments(any(TopicIdPartition.class));
+
+        assertEquals(Optional.of(false),
+                remoteLogManager.hasReadableRemoteLogCoverage(leaderTopicIdPartition.topicPartition(), 99L));
+    }
+
+    @Test
+    void testHasReadableRemoteLogCoverageWhenCopyFinishedCoversOffset() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        RemoteLogSegmentMetadata metadata = createRemoteLogSegmentMetadata(
+                new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()),
+                0L, 99L, 1000, totalEpochEntries, RemoteLogSegmentState.COPY_SEGMENT_FINISHED);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenAnswer(invocation -> List.of(metadata).iterator());
+
+        assertEquals(Optional.of(true),
+                remoteLogManager.hasReadableRemoteLogCoverage(leaderTopicIdPartition.topicPartition(), 99L));
+    }
+
+    @Test
+    void testHasReadableRemoteLogCoverageWhenCopyFinishedMissesOffset() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        RemoteLogSegmentMetadata metadata = createRemoteLogSegmentMetadata(
+                new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()),
+                0L, 99L, 1000, totalEpochEntries, RemoteLogSegmentState.COPY_SEGMENT_FINISHED);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenAnswer(invocation -> List.of(metadata).iterator());
+
+        assertEquals(Optional.of(false),
+                remoteLogManager.hasReadableRemoteLogCoverage(leaderTopicIdPartition.topicPartition(), 199L));
+    }
+
+    @Test
+    void testHasReadableRemoteLogCoverageWhenCopyStartedCoversOffset() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        RemoteLogSegmentMetadata metadata = createRemoteLogSegmentMetadata(
+                new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()),
+                0L, 99L, 1000, totalEpochEntries, RemoteLogSegmentState.COPY_SEGMENT_STARTED);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenAnswer(invocation -> List.of(metadata).iterator());
+
+        assertEquals(Optional.empty(),
+                remoteLogManager.hasReadableRemoteLogCoverage(leaderTopicIdPartition.topicPartition(), 99L));
+    }
+
+    @Test
+    void testHasReadableRemoteLogCoverageWhenDeleteStartedCoversOffset() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        RemoteLogSegmentMetadata metadata = createRemoteLogSegmentMetadata(
+                new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()),
+                0L, 99L, 1000, totalEpochEntries, RemoteLogSegmentState.DELETE_SEGMENT_STARTED);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenAnswer(invocation -> List.of(metadata).iterator());
+
+        assertEquals(Optional.empty(),
+                remoteLogManager.hasReadableRemoteLogCoverage(leaderTopicIdPartition.topicPartition(), 99L));
+    }
+
+    @Test
+    void testHasReadableRemoteLogCoverageIgnoresDeleteFinished() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        RemoteLogSegmentMetadata metadata = createRemoteLogSegmentMetadata(
+                new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()),
+                0L, 99L, 1000, totalEpochEntries, RemoteLogSegmentState.DELETE_SEGMENT_FINISHED);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenAnswer(invocation -> List.of(metadata).iterator());
+
+        assertEquals(Optional.of(false),
+                remoteLogManager.hasReadableRemoteLogCoverage(leaderTopicIdPartition.topicPartition(), 99L));
+    }
+
+    @Test
+    void testHasReadableRemoteLogCoverageWhenListFails() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        doAnswer(invocation -> {
+            throw new RemoteStorageException("rlmm unavailable");
+        }).when(remoteLogMetadataManager).listRemoteLogSegments(leaderTopicIdPartition);
+
+        assertEquals(Optional.empty(),
+                remoteLogManager.hasReadableRemoteLogCoverage(leaderTopicIdPartition.topicPartition(), 99L));
+    }
+
+    @Test
     void testFetchRemoteLogSegmentMetadata() throws RemoteStorageException {
         remoteLogManager.onLeadershipChange(
             Set.of(mockPartition(leaderTopicIdPartition)), Set.of(mockPartition(followerTopicIdPartition)), topicIds);

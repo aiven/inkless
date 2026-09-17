@@ -3534,6 +3534,82 @@ public class ReplicationControlManager {
         return markClassicToDisklessSwitchStarted(configChanges, configResults);
     }
 
+    /**
+     * For every already-diskless topic whose {@code remote.storage.enable} flips to {@code true}
+     * while cluster consolidation is on, emit a {@link PartitionChangeRecord} per partition that
+     * re-sets the current leader. Brokers treat that as a leader-epoch bump and re-enter
+     * become-leader, which creates the local log (born-diskless) or re-runs the reconciler
+     * (switched partitions that were {@code Failed} with remote storage off) and arms consolidation.
+     * These records MUST be committed atomically with the {@code remote.storage.enable=true}
+     * {@link ConfigRecord}.
+     * No-op when consolidation is off, the topic is not already diskless, remote storage is
+     * already on, or the config change failed. A classic topic that is switching to diskless in
+     * the same request is handled by {@link #markClassicToDisklessSwitchStarted}.
+     */
+    List<ApiMessageAndVersion> markConsolidationStarted(
+        Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
+        Map<ConfigResource, ApiError> configResults
+    ) {
+        if (!isDisklessRemoteStorageConsolidationEnabled) {
+            return List.of();
+        }
+        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        for (Entry<ConfigResource, Map<String, Entry<OpType, String>>> configEntry : configChanges.entrySet()) {
+            ConfigResource resource = configEntry.getKey();
+            if (resource.type() != TOPIC) continue;
+            if (!isSettingConfigToTrue(configEntry.getValue(), REMOTE_LOG_STORAGE_ENABLE_CONFIG)) continue;
+            ApiError error = configResults.get(resource);
+            if (error != null && error != ApiError.NONE) continue;
+            if (!isDisklessTopic(resource.name())) continue;
+            if (isRemoteStorageEnabledForTopic(resource.name())) continue;
+
+            Uuid topicId = topicsByName.get(resource.name());
+            if (topicId == null) continue;
+            TopicControlInfo topicInfo = topics.get(topicId);
+            if (topicInfo == null) continue;
+
+            int sizeBefore = records.size();
+            for (Entry<Integer, PartitionRegistration> partEntry : topicInfo.parts.entrySet()) {
+                PartitionRegistration partition = partEntry.getValue();
+                if (partition.leader == NO_LEADER) {
+                    log.warn("Partition {}-{} has no leader; consolidation start waits until a leader is elected",
+                        topicInfo.name, partEntry.getKey());
+                }
+                PartitionChangeRecord record = new PartitionChangeRecord()
+                    .setTopicId(topicInfo.id)
+                    .setPartitionId(partEntry.getKey())
+                    .setLeader(partition.leader); // Force leader epoch bump to trigger makeLeader on broker
+                records.add(new ApiMessageAndVersion(record, (short) 0));
+            }
+            log.info("Bumped leader epoch on {} partition(s) of topic {} to start consolidation",
+                records.size() - sizeBefore, topicInfo.name);
+        }
+        return records;
+    }
+
+    /**
+     * Legacy AlterConfigs provides complete config maps rather than per-key operations.
+     * Adapt that input and reuse {@link #markConsolidationStarted(Map, Map)}
+     * so both legacy and incremental alter configs emit the same epoch-bump records.
+     */
+    List<ApiMessageAndVersion> markConsolidationStartedForLegacyAlterConfigs(
+        Map<ConfigResource, Map<String, String>> newConfigs,
+        Map<ConfigResource, ApiError> configResults
+    ) {
+        Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges = new HashMap<>();
+        for (Entry<ConfigResource, Map<String, String>> entry : newConfigs.entrySet()) {
+            ConfigResource resource = entry.getKey();
+            String remoteEnable = entry.getValue().get(REMOTE_LOG_STORAGE_ENABLE_CONFIG);
+            if (remoteEnable != null) {
+                configChanges.put(resource, Map.of(
+                    REMOTE_LOG_STORAGE_ENABLE_CONFIG,
+                    new SimpleImmutableEntry<>(SET, remoteEnable)
+                ));
+            }
+        }
+        return markConsolidationStarted(configChanges, configResults);
+    }
+
     private static boolean isSettingConfigToTrue(Map<String, Entry<OpType, String>> changes, String configKey) {
         Entry<OpType, String> change = changes.get(configKey);
         return change != null && change.getKey() == SET && Boolean.parseBoolean(change.getValue());

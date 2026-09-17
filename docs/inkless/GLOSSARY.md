@@ -36,7 +36,7 @@ Another term for the Batch Coordinator's storage layer. In the PostgreSQL implem
 A topic created with `diskless.enable=false`. It stores data on local broker disks and may use classic tiered storage. It can later become diskless through the [Classic-to-Diskless Switch](#classic-to-diskless-switch). Contrast with [Born-Diskless Topic](#born-diskless-topic).
 
 **Born-Diskless Topic**
-A topic created with `diskless.enable=true`. It has no classic prefix and no seal (`classicToDisklessStartOffset` is unset). Consolidation is a separate property: a born-diskless topic consolidates only when it also has `remote.storage.enable=true`. Older text sometimes called that combination "born-consolidated"; use *born-diskless* for origin and *consolidating* (or [CDT](#consolidated-diskless-topic-cdt)) for the storage mode. Contrast with a [Switched Topic](#switched-topic), which started as [born-classic](#born-classic-topic).
+A topic created with `diskless.enable=true`. It has no classic prefix and no seal (`classicToDisklessStartOffset` is unset). Consolidation is a separate property: a born-diskless topic consolidates when it also has `remote.storage.enable=true`, either at create time or when that flag is set later. Older text sometimes called that combination "born-consolidated"; use *born-diskless* for origin and *consolidating* (or [CDT](#consolidated-diskless-topic-cdt)) for the storage mode. Contrast with a [Switched Topic](#switched-topic), which started as [born-classic](#born-classic-topic).
 
 ---
 
@@ -52,7 +52,7 @@ The protocol that migrates a classic topic to diskless storage by sealing the lo
 The fetch processing path for lagging consumer requests (data older than the threshold). Bypasses cache to avoid evicting hot data, uses a dedicated bounded executor pool with optional rate limiting, and a separate storage client for resource isolation. See also: [Hot Path](#hot-path).
 
 **Consolidated Diskless Topic (CDT)**
-A topic with both `diskless.enable=true` and `remote.storage.enable=true`. Writes go through the diskless WAL; [TS Consolidation](#ts-consolidation--tiered-storage-consolidation) rewrites those WAL segments into classic Kafka log segments and tiers them to remote storage. A CDT is either a [born-diskless](#born-diskless-topic) topic created with remote storage, or a [switched](#switched-topic) topic. See [DISKLESS_CONSOLIDATION.md](./DISKLESS_CONSOLIDATION.md).
+A topic with both `diskless.enable=true` and `remote.storage.enable=true`. Writes go through the diskless WAL; [TS Consolidation](#ts-consolidation--tiered-storage-consolidation) rewrites those WAL segments into classic Kafka log segments and tiers them to remote storage. A CDT is a [born-diskless](#born-diskless-topic) topic with remote storage (at create time or enabled later), or a [switched](#switched-topic) topic. See [DISKLESS_CONSOLIDATION.md](./DISKLESS_CONSOLIDATION.md).
 
 **Control Plane**
 The metadata management layer in Inkless, responsible for coordinating batch commits and lookups. See also: [Batch Coordinator](#batch-coordinator).

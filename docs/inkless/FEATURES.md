@@ -41,7 +41,7 @@ If not specified above, features are untested and assumed to be inoperable.
 - `DESCRIBE_TOPIC_PARTITIONS`
     - the output is modified according to client and broker racks.
 - `CREATE_TOPICS`
-    - Diskless topics cannot be created with the remote storage enabled;
+    - with consolidation off, diskless topics cannot enable remote storage; with consolidation on, creating a diskless topic also enables remote storage;
     - when `diskless.managed.rf.enable=false` (default): the replication factor must be `1` or `-1` (resolves to 1);
     - when `diskless.managed.rf.enable=true`: any valid RF is accepted — RF=-1 resolves to `default.replication.factor`, explicit RF values (1, 2, 3, ...) are accepted, and placement uses standard rack-aware assignment;
     - manual replica assignments are accepted only when `diskless.managed.rf.enable=true` (rejected in legacy mode).
@@ -51,11 +51,11 @@ If not specified above, features are untested and assumed to be inoperable.
 - `OFFSET_FOR_LEADER_EPOCH`
 - `DESCRIBE_CONFIGS`
 - `ALTER_CONFIGS`
-    - the remote storage cannot be enabled for Diskless topics.
+    - with consolidation off, remote storage cannot be enabled on a diskless topic; with consolidation on, setting `remote.storage.enable=true` on an already-diskless topic starts consolidation (the controller bumps the leader epoch in the same batch).
 - `CREATE_PARTITIONS`
     - manual partition assignments are accepted only when `diskless.managed.rf.enable=true` (rejected in legacy mode).
 - `INCREMENTAL_ALTER_CONFIGS`
-    - the remote storage cannot be enabled for Diskless topics.
+    - with consolidation off, remote storage cannot be enabled on a diskless topic; with consolidation on, setting `remote.storage.enable=true` on an already-diskless topic starts consolidation (the controller bumps the leader epoch in the same batch).
 - `ALTER_PARTITION_REASSIGNMENTS`
     - the replication factor can be changed for Diskless topics only when `diskless.managed.rf.enable=true`; in legacy mode (managed replicas disabled) the RF stays pinned and RF-changing reassignments are rejected with `INVALID_REPLICATION_FACTOR`;
     - reassignments for diskless topics are applied immediately (no staged adding/removing) since data lives in object storage and all brokers are instantly in-sync. This includes growing/shrinking the replica set, e.g. increasing a legacy RF=1 topic to RF=3 after enabling managed replicas.

@@ -6580,6 +6580,73 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testConsolidationFetcherManagerWiredWhenBornDisklessLaterEnablesRemoteStorage(): Unit = {
+    // A born-diskless topic has no local Partition until it becomes consolidating. The controller
+    // co-commits a leader-epoch bump with remote.storage.enable=true so applyDelta re-enters
+    // become-leader and arms the consolidation fetcher.
+    val topic = disklessTopicPartition.topic()
+    val tp = disklessTopicPartition.topicPartition()
+
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mock, _) =>
+        when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = createReplicaManager(
+        List(topic),
+        disklessRemoteStorageConsolidationEnabled = true,
+      )
+      try {
+        val mockCfm = consolidationCtor.constructed().get(0)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+          .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+        val oneReplica = Seq[Integer](1).asJava
+        val firstDelta = createLeaderDelta(
+          disklessTopicPartition.topicId,
+          tp,
+          1,
+          oneReplica,
+          oneReplica,
+          leaderEpoch = 0,
+        )
+        replicaManager.applyDelta(firstDelta, imageFromTopics(firstDelta.apply()))
+        verify(mockCfm, never()).addFetcherForPartitions(any())
+
+        when(replicaManager.inklessMetadataView().isConsolidatingDisklessTopic(topic)).thenReturn(true)
+        when(replicaManager.inklessMetadataView().isRemoteStorageEnabled(topic)).thenReturn(true)
+
+        val bumpDelta = new TopicsDelta(firstDelta.apply())
+        bumpDelta.replay(new PartitionChangeRecord()
+          .setTopicId(disklessTopicPartition.topicId)
+          .setPartitionId(tp.partition)
+          .setLeader(1))
+        val localChanges = bumpDelta.localChanges(1)
+        assertTrue(localChanges.leaders.containsKey(tp),
+          "same-leader epoch bump must appear in localChanges.leaders")
+        assertTrue(localChanges.electedLeaders.containsKey(tp),
+          "same-leader epoch bump must appear in localChanges.electedLeaders")
+        assertEquals(1, localChanges.leaders.get(tp).partition.leaderEpoch)
+        replicaManager.applyDelta(bumpDelta, imageFromTopics(bumpDelta.apply()))
+
+        verify(mockCfm).addFetcherForPartitions(
+          Map(tp -> InitialFetchState(
+            topicId = Some(disklessTopicPartition.topicId),
+            leader = new BrokerEndPoint(-1, "diskless", -1),
+            currentLeaderEpoch = 1,
+            initOffset = 0
+          ))
+        )
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+        verify(consolidationCtor.constructed().get(0)).shutdown()
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
   def testConsolidationFetcherManagerWiredOnConsolidatingDisklessBecomeFollower(): Unit = {
     val consolidatingTopic = disklessTopicPartition.topic()
     val tp = disklessTopicPartition.topicPartition()

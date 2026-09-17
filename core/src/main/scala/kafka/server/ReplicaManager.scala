@@ -1913,6 +1913,38 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Returns whether RLMM has a readable remote segment covering `offset`.
+   * Empty if `RemoteLogManager` is unset, the partition is not registered, RLMM is not ready, the
+   * query fails, or a covering segment is still transitional. Empty means the caller retries.
+   * A list failure is logged at warn in `RemoteLogManager`; unregistered and not-ready are the
+   * normal become-leader window.
+   */
+  def hasReadableRemoteLogCoverage(topicPartition: TopicPartition, offset: Long): Optional[java.lang.Boolean] = {
+    remoteLogManager match {
+      case Some(rlm) => rlm.hasReadableRemoteLogCoverage(topicPartition, offset)
+      case None => Optional.empty()
+    }
+  }
+
+  /**
+   * Returns the remote-prefix unknown generation for `topicPartition`.
+   * DisklessLeaderEndPoint captures this before the RLMM query so a later register or fetcher
+   * removal can ignore the in-flight mark.
+   */
+  def consolidationRemotePrefixGeneration(topicPartition: TopicPartition): Long =
+    consolidationMetrics.map(_.remotePrefixGeneration(topicPartition)).getOrElse(0L)
+
+  /**
+   * Records whether the last WAL-gap prefix check for this partition was inconclusive (RLMM not
+   * ready, unregistered, list failed, or a covering segment still transitional). `generation` is
+   * the value captured before that check; a mismatch means a later register or fetcher removal
+   * already cleared the latch. Alert semantics: the `ConsolidationRemotePrefixUnknown` row in
+   * `docs/inkless/DISKLESS_CONSOLIDATION.md`.
+   */
+  def markConsolidationRemotePrefixUnknown(topicPartition: TopicPartition, unknown: Boolean, generation: Long): Unit =
+    consolidationMetrics.foreach(_.setRemotePrefixUnknown(topicPartition, unknown, generation))
+
+  /**
    * The authoritative, broker-agnostic cross-tier earliest offset for a consolidating diskless
    * partition, as tracked by the control plane (`COALESCE(remote_log_start_offset, log_start_offset)`,
    * what `ListOffsets(EARLIEST)` returns); empty for non-consolidating/non-inkless partitions or when
@@ -3836,6 +3868,9 @@ class ReplicaManager(val config: KafkaConfig,
         replicaAlterLogDirsManager.shutdownIdleFetcherThreads()
         consolidationFetcherManager.foreach(_.shutdownIdleFetcherThreads())
 
+        // Consolidation fetchers start in applyLocalLeadersDelta, before this call. The first
+        // WAL-gap fetch can therefore see an unregistered partition here. DisklessLeaderEndPoint
+        // retries with NOT_LEADER_OR_FOLLOWER until this registration runs and RLMM isReady.
         remoteLogManager.foreach(rlm => rlm.onLeadershipChange((leaderChangedPartitions.toSet: Set[TopicPartitionLog]).asJava, (followerChangedPartitions.toSet: Set[TopicPartitionLog]).asJava, localChanges.topicIds()))
       }
 
@@ -4261,6 +4296,8 @@ class ReplicaManager(val config: KafkaConfig,
         case (tp, _) => onlinePartition(tp).isDefined
       }
       if (onlineToStartFetching.nonEmpty) {
+        // Fetchers start before rlm.onLeadershipChange later in applyDelta. A WAL-gap fetch in
+        // that window retries with NOT_LEADER_OR_FOLLOWER.
         consolidationReconciler.foreach(_.startConsolidationFetchers(onlineToStartFetching))
         stateChangeLogger.info(s"Started consolidating diskless fetchers as part of become-leader for ${onlineToStartFetching.size} partitions")
       }
