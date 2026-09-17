@@ -6616,14 +6616,17 @@ class ReplicaManagerInklessTest {
         when(replicaManager.inklessMetadataView().isConsolidatingDisklessTopic(topic)).thenReturn(true)
         when(replicaManager.inklessMetadataView().isRemoteStorageEnabled(topic)).thenReturn(true)
 
-        val bumpDelta = createLeaderDelta(
-          disklessTopicPartition.topicId,
-          tp,
-          1,
-          oneReplica,
-          oneReplica,
-          leaderEpoch = 1,
-        )
+        val bumpDelta = new TopicsDelta(firstDelta.apply())
+        bumpDelta.replay(new PartitionChangeRecord()
+          .setTopicId(disklessTopicPartition.topicId)
+          .setPartitionId(tp.partition)
+          .setLeader(1))
+        val localChanges = bumpDelta.localChanges(1)
+        assertTrue(localChanges.leaders.containsKey(tp),
+          "same-leader epoch bump must appear in localChanges.leaders")
+        assertTrue(localChanges.electedLeaders.containsKey(tp),
+          "same-leader epoch bump must appear in localChanges.electedLeaders")
+        assertEquals(1, localChanges.leaders.get(tp).partition.leaderEpoch)
         replicaManager.applyDelta(bumpDelta, imageFromTopics(bumpDelta.apply()))
 
         verify(mockCfm).addFetcherForPartitions(
