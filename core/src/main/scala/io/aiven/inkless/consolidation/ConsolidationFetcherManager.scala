@@ -55,11 +55,11 @@ class ConsolidationFetcherManager(brokerConfig: KafkaConfig,
       quotaManager, logContext.logPrefix, consolidationMetrics)
   }
 
-  // Clears the unknown latch when the consolidation fetcher drops a partition, including
+  // Bumps the unknown-latch generation when the consolidation fetcher drops a partition, including
   // fence and Failed/Retry paths that do not call registerPartition again.
   override def removeFetcherForPartitions(partitions: Set[TopicPartition]): Map[TopicPartition, PartitionFetchState] = {
     val removed = super.removeFetcherForPartitions(partitions)
-    consolidationMetrics.foreach(m => partitions.foreach(tp => m.setRemotePrefixUnknown(tp, unknown = false)))
+    consolidationMetrics.foreach(m => partitions.foreach(m.bumpRemotePrefixGeneration))
     removed
   }
 

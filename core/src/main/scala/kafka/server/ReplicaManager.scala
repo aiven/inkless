@@ -1927,12 +1927,22 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
-   * Records whether the last WAL-gap prefix check for this partition was inconclusive (RLMM not
-   * ready, unregistered, list failed, or a covering segment still transitional). Alert semantics:
-   * the `ConsolidationRemotePrefixUnknown` row in `docs/inkless/DISKLESS_CONSOLIDATION.md`.
+   * Returns the remote-prefix unknown generation for `topicPartition`.
+   * DisklessLeaderEndPoint captures this before the RLMM query so a later register or fetcher
+   * removal can ignore the in-flight mark.
    */
-  def markConsolidationRemotePrefixUnknown(topicPartition: TopicPartition, unknown: Boolean): Unit =
-    consolidationMetrics.foreach(_.setRemotePrefixUnknown(topicPartition, unknown))
+  def consolidationRemotePrefixGeneration(topicPartition: TopicPartition): Long =
+    consolidationMetrics.map(_.remotePrefixGeneration(topicPartition)).getOrElse(0L)
+
+  /**
+   * Records whether the last WAL-gap prefix check for this partition was inconclusive (RLMM not
+   * ready, unregistered, list failed, or a covering segment still transitional). `generation` is
+   * the value captured before that check; a mismatch means a later register or fetcher removal
+   * already cleared the latch. Alert semantics: the `ConsolidationRemotePrefixUnknown` row in
+   * `docs/inkless/DISKLESS_CONSOLIDATION.md`.
+   */
+  def markConsolidationRemotePrefixUnknown(topicPartition: TopicPartition, unknown: Boolean, generation: Long): Unit =
+    consolidationMetrics.foreach(_.setRemotePrefixUnknown(topicPartition, unknown, generation))
 
   /**
    * The authoritative, broker-agnostic cross-tier earliest offset for a consolidating diskless

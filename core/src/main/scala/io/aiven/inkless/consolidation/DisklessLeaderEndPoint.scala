@@ -175,25 +175,26 @@ class DisklessLeaderEndPoint(
                   requestedOffset >= logStartOffset &&
                   requestedOffset < disklessStartOffset) {
                 localLogOpt.filter(_.remoteLogEnabled()).foreach { _ =>
+                  val generation = replicaManager.consolidationRemotePrefixGeneration(tp.topicPartition)
                   val evidence = remoteConsolidatedPrefixEvidence(tp.topicPartition, disklessStartOffset)
                   if (!evidence.isPresent) {
                     // leader.fetch() runs outside partitionMapLock. Alert semantics: the
                     // ConsolidationRemotePrefixUnknown row in docs/inkless/DISKLESS_CONSOLIDATION.md.
-                    replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = true)
+                    replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = true, generation)
                     logger.debug("RLMM has no readable coverage of {} for {} while the fetch offset {} sits in the WAL gap [{}, {}); " +
                       "returning NOT_LEADER_OR_FOLLOWER so the fetcher retries with backoff instead of truncating onto the WAL start.",
                       disklessStartOffset - 1, tp.topicPartition, requestedOffset, logStartOffset, disklessStartOffset)
                     fetchResponseData.setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
                     fetchResponseData.setRecords(MemoryRecords.EMPTY)
                   } else if (evidence.get.booleanValue) {
-                    replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = false)
+                    replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = false, generation)
                     logger.debug("Offset {} for {} is below the diskless WAL start {} but at/above the whole-log start {}; " +
                       "signalling OFFSET_MOVED_TO_TIERED_STORAGE to rebuild the consolidated remote prefix.",
                       requestedOffset, tp.topicPartition, disklessStartOffset, logStartOffset)
                     fetchResponseData.setErrorCode(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code)
                     fetchResponseData.setRecords(MemoryRecords.EMPTY)
                   } else {
-                    replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = false)
+                    replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = false, generation)
                   }
                 }
               }

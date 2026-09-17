@@ -61,6 +61,7 @@ class ConsolidationMetrics extends Closeable {
   private val deletableByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val oversizedBatchByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val remotePrefixUnknownByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
+  private val remotePrefixGenerationByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
 
   // Broker-level aggregate gauges (sum across all partitions)
   metricsGroup.newGauge(TotalLag, () => sumValues(totalLagByPartition))
@@ -94,6 +95,8 @@ class ConsolidationMetrics extends Closeable {
       value
     })
     // Resets to 0 on re-arm so a previous WAL-gap wait does not survive re-registration.
+    // Bumps the generation so an in-flight fetch from the previous arm cannot restore the latch.
+    remotePrefixGenerationByPartition.computeIfAbsent(tp, _ => new AtomicLong(0L)).incrementAndGet()
     remotePrefixUnknownByPartition.computeIfAbsent(tp, _ => {
       val value = new AtomicLong(0)
       metricsGroup.newGauge(RemotePrefixUnknown, () => value.get, tags)
@@ -113,12 +116,28 @@ class ConsolidationMetrics extends Closeable {
   def recordOversizedBatch(tp: TopicPartition): Unit =
     Option(oversizedBatchByPartition.get(tp)).foreach(_.incrementAndGet())
 
-  def setRemotePrefixUnknown(tp: TopicPartition, unknown: Boolean): Unit = {
+  def remotePrefixGeneration(tp: TopicPartition): Long =
+    Option(remotePrefixGenerationByPartition.get(tp)).map(_.get).getOrElse(0L)
+
+  // Called when the consolidation fetcher drops a partition. Classic partitions never registered
+  // here, so this is a no-op for them.
+  def bumpRemotePrefixGeneration(tp: TopicPartition): Unit = {
+    Option(remotePrefixGenerationByPartition.get(tp)).foreach { generation =>
+      generation.incrementAndGet()
+      Option(remotePrefixUnknownByPartition.get(tp)).foreach(_.set(0L))
+    }
+  }
+
+  def setRemotePrefixUnknown(tp: TopicPartition, unknown: Boolean): Unit =
+    setRemotePrefixUnknown(tp, unknown, remotePrefixGeneration(tp))
+
+  def setRemotePrefixUnknown(tp: TopicPartition, unknown: Boolean, generation: Long): Unit = {
+    if (!generationMatches(tp, generation)) {
+      return
+    }
     if (unknown) {
       val tags = Map("topic" -> tp.topic, "partition" -> tp.partition.toString).asJava
       // unknown=true creates the gauge if needed so a WAL-gap fetch can mark the wait.
-      // unknown=false only updates an existing gauge: become-leader and become-follower pass
-      // every local replica through removeFetcherForPartitions, including classic partitions.
       remotePrefixUnknownByPartition.computeIfAbsent(tp, _ => {
         val value = new AtomicLong(0)
         metricsGroup.newGauge(RemotePrefixUnknown, () => value.get, tags)
@@ -127,7 +146,13 @@ class ConsolidationMetrics extends Closeable {
     } else {
       Option(remotePrefixUnknownByPartition.get(tp)).foreach(_.set(0L))
     }
+    if (!generationMatches(tp, generation)) {
+      Option(remotePrefixUnknownByPartition.get(tp)).foreach(_.set(0L))
+    }
   }
+
+  private def generationMatches(tp: TopicPartition, generation: Long): Boolean =
+    Option(remotePrefixGenerationByPartition.get(tp)).exists(_.get == generation)
 
   def unregisterPartition(tp: TopicPartition): Unit = {
     val tags = Map("topic" -> tp.topic, "partition" -> tp.partition.toString).asJava
@@ -136,6 +161,7 @@ class ConsolidationMetrics extends Closeable {
     deletableByPartition.remove(tp)
     oversizedBatchByPartition.remove(tp)
     remotePrefixUnknownByPartition.remove(tp)
+    remotePrefixGenerationByPartition.remove(tp)
     metricsGroup.removeMetric(TotalLag, tags)
     metricsGroup.removeMetric(LocalLag, tags)
     metricsGroup.removeMetric(DeletableMessages, tags)
@@ -145,7 +171,8 @@ class ConsolidationMetrics extends Closeable {
 
   override def close(): Unit = {
     // Using same keys to unregister all partition-level metrics
-    val partitions = (totalLagByPartition.keys.asScala ++ remotePrefixUnknownByPartition.keys.asScala).toSet
+    val partitions = (totalLagByPartition.keys.asScala ++ remotePrefixUnknownByPartition.keys.asScala ++
+      remotePrefixGenerationByPartition.keys.asScala).toSet
     partitions.foreach(unregisterPartition)
     // Unregistering aggregated metrics
     metricsGroup.removeMetric(TotalLag)

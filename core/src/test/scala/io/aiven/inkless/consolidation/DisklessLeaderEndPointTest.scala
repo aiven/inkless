@@ -88,6 +88,7 @@ class DisklessLeaderEndPointTest {
       .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
     when(replicaManager.hasReadableRemoteLogCoverage(any(), anyLong()))
       .thenReturn(Optional.of(java.lang.Boolean.FALSE))
+    when(replicaManager.consolidationRemotePrefixGeneration(any())).thenReturn(0L)
     replicaManager
   }
 
@@ -1179,7 +1180,7 @@ class DisklessLeaderEndPointTest {
 
     assertEquals(Errors.OFFSET_OUT_OF_RANGE.code, pd.errorCode)
     assertEquals(0L, pd.logStartOffset)
-    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(false))
+    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(false), eqTo(0L))
   }
 
   @Test
@@ -1192,7 +1193,7 @@ class DisklessLeaderEndPointTest {
 
     assertEquals(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code, pd.errorCode)
     assertEquals(0L, pd.logStartOffset)
-    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(false))
+    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(false), eqTo(0L))
   }
 
   @Test
@@ -1205,7 +1206,7 @@ class DisklessLeaderEndPointTest {
 
     assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, pd.errorCode)
     assertEquals(0L, pd.logStartOffset)
-    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(true))
+    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(true), eqTo(0L))
   }
 
   @Test
@@ -1245,7 +1246,7 @@ class DisklessLeaderEndPointTest {
 
     assertEquals(Errors.OFFSET_OUT_OF_RANGE.code, pd.errorCode)
     assertEquals(0L, pd.logStartOffset)
-    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(false))
+    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(false), eqTo(0L))
   }
 
   @Test
