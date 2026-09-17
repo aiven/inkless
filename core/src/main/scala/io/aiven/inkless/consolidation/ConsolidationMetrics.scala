@@ -42,7 +42,8 @@ import scala.jdk.CollectionConverters._
  *   indicates a partition holding a batch larger than the current `segment.bytes`; raise `segment.bytes` above the
  *   batch size to resume. See DisklessLeaderEndPoint.clampRecordsToSegment.
  * - ConsolidationRemotePrefixUnknown: 1 while a WAL-gap fetch is waiting on RLMM to decide OFFSET_MOVED
- *   vs never-tiered OFFSET_OUT_OF_RANGE (unregistered, not ready, or list failed); 0 once decided.
+ *   vs never-tiered OFFSET_OUT_OF_RANGE (unregistered, not ready, list failed, or a covering segment
+ *   still transitional); 0 once decided.
  *   Broker aggregate is the count of waiting partitions. Alert semantics: the
  *   `ConsolidationRemotePrefixUnknown` row in `docs/inkless/DISKLESS_CONSOLIDATION.md`.
  */

@@ -847,13 +847,16 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
     }
 
     /**
-     * Returns whether this partition has at least one remote log segment that is not delete-finished.
-     * Empty if the partition is not registered with this manager, RLMM is not ready, or the query fails.
-     * Unregistered and not-ready are the normal become-leader window; a list failure is a real fault
-     * and is logged at warn. Empty means the caller retries: a wiped consolidated diskless topic
-     * can still have a remote prefix to rebuild.
+     * Returns whether RLMM has a readable remote segment covering {@code offset}.
+     * Present-true is a {@link RemoteLogSegmentState#COPY_SEGMENT_FINISHED} segment that contains
+     * the offset, which is the lookup the tier-state rebuild uses on
+     * {@code OFFSET_MOVED_TO_TIERED_STORAGE}.
+     * Empty if the partition is not registered with this manager, RLMM is not ready, the query fails,
+     * or a covering segment is still transitional ({@code COPY_SEGMENT_STARTED} or
+     * {@code DELETE_SEGMENT_STARTED}). Unregistered and not-ready are the normal become-leader
+     * window; a list failure is a real fault and is logged at warn. Empty means the caller retries.
      */
-    public Optional<Boolean> hasNonDeletedRemoteLogSegments(TopicPartition topicPartition) {
+    public Optional<Boolean> hasReadableRemoteLogCoverage(TopicPartition topicPartition, long offset) {
         Uuid uuid = topicIdByPartitionMap.get(topicPartition);
         if (uuid == null) {
             return Optional.empty();
@@ -865,15 +868,27 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
             }
             Iterator<RemoteLogSegmentMetadata> segments =
                     remoteLogMetadataManagerPlugin.get().listRemoteLogSegments(topicIdPartition);
+            boolean coveringUnreadable = false;
             while (segments.hasNext()) {
-                if (segments.next().state() != RemoteLogSegmentState.DELETE_SEGMENT_FINISHED) {
+                RemoteLogSegmentMetadata segment = segments.next();
+                if (segment.startOffset() > offset || segment.endOffset() < offset) {
+                    continue;
+                }
+                if (segment.state() == RemoteLogSegmentState.COPY_SEGMENT_FINISHED) {
                     return Optional.of(true);
                 }
+                if (segment.state() == RemoteLogSegmentState.COPY_SEGMENT_STARTED
+                        || segment.state() == RemoteLogSegmentState.DELETE_SEGMENT_STARTED) {
+                    coveringUnreadable = true;
+                }
+            }
+            if (coveringUnreadable) {
+                return Optional.empty();
             }
             return Optional.of(false);
         } catch (RemoteStorageException | RuntimeException e) {
-            LOGGER.warn("Failed to list remote log segments for {} while checking for a consolidated prefix",
-                    topicPartition, e);
+            LOGGER.warn("Failed to list remote log segments for {} while checking readable coverage of offset {}",
+                    topicPartition, offset, e);
             return Optional.empty();
         }
     }

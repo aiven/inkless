@@ -1913,22 +1913,23 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
-   * Returns whether this partition has at least one remote log segment that is not delete-finished.
-   * Empty if `RemoteLogManager` is unset, the partition is not registered, RLMM is not ready, or the
-   * query fails. Empty means the caller retries. A list failure is logged at warn in
-   * `RemoteLogManager`; unregistered and not-ready are the normal become-leader window.
+   * Returns whether RLMM has a readable remote segment covering `offset`.
+   * Empty if `RemoteLogManager` is unset, the partition is not registered, RLMM is not ready, the
+   * query fails, or a covering segment is still transitional. Empty means the caller retries.
+   * A list failure is logged at warn in `RemoteLogManager`; unregistered and not-ready are the
+   * normal become-leader window.
    */
-  def hasNonDeletedRemoteLogSegments(topicPartition: TopicPartition): Optional[java.lang.Boolean] = {
+  def hasReadableRemoteLogCoverage(topicPartition: TopicPartition, offset: Long): Optional[java.lang.Boolean] = {
     remoteLogManager match {
-      case Some(rlm) => rlm.hasNonDeletedRemoteLogSegments(topicPartition)
+      case Some(rlm) => rlm.hasReadableRemoteLogCoverage(topicPartition, offset)
       case None => Optional.empty()
     }
   }
 
   /**
    * Records whether the last WAL-gap prefix check for this partition was inconclusive (RLMM not
-   * ready, unregistered, or list failed). Alert semantics: the `ConsolidationRemotePrefixUnknown`
-   * row in `docs/inkless/DISKLESS_CONSOLIDATION.md`.
+   * ready, unregistered, list failed, or a covering segment still transitional). Alert semantics:
+   * the `ConsolidationRemotePrefixUnknown` row in `docs/inkless/DISKLESS_CONSOLIDATION.md`.
    */
   def markConsolidationRemotePrefixUnknown(topicPartition: TopicPartition, unknown: Boolean): Unit =
     consolidationMetrics.foreach(_.setRemotePrefixUnknown(topicPartition, unknown))

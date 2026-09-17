@@ -159,31 +159,30 @@ class DisklessLeaderEndPoint(
               fetchResponseData.setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code)
             } else {
               fetchResponseData.setLogStartOffset(logStartOffset)
-              // `data.logStartOffset` is the diskless WAL start, advanced to highestRemoteOffset + 1
-              // as the WAL is pruned. Offsets in `[logStartOffset, disklessStartOffset)` live only in
-              // the remote tier after consolidation prune, so a fetch for them (for example after
-              // local-log loss) rebuilds from remote. OFFSET_MOVED_TO_TIERED_STORAGE fires when a
-              // remote prefix exists. A born-diskless topic that just started consolidating can
-              // already have WAL start S > 0 from pure-diskless retention; OFFSET_MOVED against empty
-              // remote stalls the fetcher, so OFFSET_OUT_OF_RANGE waits until RLMM is ready and empty
-              // and handleOutOfRangeError truncates the empty local log and starts at S. If RLMM is
-              // not ready, NOT_LEADER_OR_FOLLOWER retries with backoff at debug. Fetchers start in
-              // applyLocalLeadersDelta before rlm.onLeadershipChange, and isReady can stay false
-              // until __remote_log_metadata catch-up.
+              // `data.logStartOffset` is the diskless WAL start, advanced as the WAL is pruned.
+              // Offsets in `[logStartOffset, disklessStartOffset)` live only in the remote tier
+              // after consolidation prune. OFFSET_MOVED_TO_TIERED_STORAGE fires when RLMM has a
+              // readable segment covering `disklessStartOffset - 1`, which is the offset
+              // TierStateMachine looks up. Present-false leaves OFFSET_OUT_OF_RANGE so
+              // handleOutOfRangeError truncates onto the WAL start. Empty (not ready, list failed,
+              // or a covering segment still transitional) returns NOT_LEADER_OR_FOLLOWER so the
+              // fetcher retries at debug. Fetchers start in applyLocalLeadersDelta before
+              // rlm.onLeadershipChange, and isReady can stay false until __remote_log_metadata
+              // catch-up.
               val disklessStartOffset = data.logStartOffset
               val requestedOffset = Option(fetchInfos.get(tp)).map(_.fetchOffset).getOrElse(-1L)
               if (logStartOffset != UnifiedLog.UNKNOWN_OFFSET &&
                   requestedOffset >= logStartOffset &&
                   requestedOffset < disklessStartOffset) {
-                localLogOpt.filter(_.remoteLogEnabled()).foreach { log =>
-                  val evidence = remoteConsolidatedPrefixEvidence(tp.topicPartition, log)
+                localLogOpt.filter(_.remoteLogEnabled()).foreach { _ =>
+                  val evidence = remoteConsolidatedPrefixEvidence(tp.topicPartition, disklessStartOffset)
                   if (!evidence.isPresent) {
                     // leader.fetch() runs outside partitionMapLock. Alert semantics: the
                     // ConsolidationRemotePrefixUnknown row in docs/inkless/DISKLESS_CONSOLIDATION.md.
                     replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = true)
-                    logger.debug("RLMM has no prefix evidence for {} while the fetch offset {} sits in the WAL gap [{}, {}); " +
+                    logger.debug("RLMM has no readable coverage of {} for {} while the fetch offset {} sits in the WAL gap [{}, {}); " +
                       "returning NOT_LEADER_OR_FOLLOWER so the fetcher retries with backoff instead of truncating onto the WAL start.",
-                      tp.topicPartition, requestedOffset, logStartOffset, disklessStartOffset)
+                      disklessStartOffset - 1, tp.topicPartition, requestedOffset, logStartOffset, disklessStartOffset)
                     fetchResponseData.setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
                     fetchResponseData.setRecords(MemoryRecords.EMPTY)
                   } else if (evidence.get.booleanValue) {
@@ -208,21 +207,13 @@ class DisklessLeaderEndPoint(
   }
 
   /**
-   * Returns evidence of a remote-tier prefix the OFFSET_MOVED path can rebuild from.
-   * Present-true: copy has confirmed data (`highestOffsetInRemoteStorage >= 0`), a committed
-   * seal, or RLMM lists a live (not delete-finished) remote segment.
+   * Returns whether RLMM has a readable remote segment covering `disklessStartOffset - 1`.
+   * Present-true: a `COPY_SEGMENT_FINISHED` segment covers that offset, so OFFSET_MOVED can rebuild.
    * Present-false: RLMM is ready and has no such segment, so the fetch stays OFFSET_OUT_OF_RANGE.
-   * Empty: RLMM is not ready or the query failed; the caller retries.
-   * `crossTierEarliestOffset` and a reported `remote_log_start_offset` can look like a prefix
-   * on a never-tiered born-diskless topic, so this method does not use them.
+   * Empty: RLMM is not ready, the query failed, or a covering segment is still transitional.
    */
-  private def remoteConsolidatedPrefixEvidence(topicPartition: TopicPartition, localLog: UnifiedLog): Optional[java.lang.Boolean] = {
-    if (localLog.highestOffsetInRemoteStorage() >= 0 ||
-        replicaManager.classicToDisklessStartOffset(topicPartition) >= 0) {
-      Optional.of(true)
-    } else {
-      replicaManager.hasNonDeletedRemoteLogSegments(topicPartition)
-    }
+  private def remoteConsolidatedPrefixEvidence(topicPartition: TopicPartition, disklessStartOffset: Long): Optional[java.lang.Boolean] = {
+    replicaManager.hasReadableRemoteLogCoverage(topicPartition, disklessStartOffset - 1)
   }
 
   /**
