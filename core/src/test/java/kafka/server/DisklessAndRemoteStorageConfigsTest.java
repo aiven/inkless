@@ -71,6 +71,7 @@ public class DisklessAndRemoteStorageConfigsTest {
     private static final String ENABLE_DISKLESS_ERROR = "It is invalid to enable diskless on an already existing topic.";
     private static final String DISABLE_DISKLESS_ERROR = "It is invalid to disable diskless.";
     private static final String DISKLESS_REMOTE_SET_ERROR = "It is not valid to set a value for both diskless.enable and remote.storage.enable unless it's for diskless switch or consolidation.";
+    private static final String REQUIRES_REMOTE_STORAGE_ERROR = "Diskless topics must have remote storage enabled. Cannot set remote.storage.enable=false when diskless is enabled.";
     private static final String DISABLE_REMOTE_WITHOUT_DELETE_ERROR = "It is invalid to disable remote storage without deleting remote data. "
         + "If you want to keep the remote data and turn to read only, please set `remote.storage.enable=true,remote.log.copy.disable=true`. "
         + "If you want to disable remote storage and delete all remote data, please set `remote.storage.enable=false,remote.log.delete.on.disable=true`.";
@@ -295,7 +296,7 @@ public class DisklessAndRemoteStorageConfigsTest {
      * 5  | CLASSIC    → DISKLESS  | allow-from-classic=false                                    | REJECTED                   | testConsolidatedTransitionsWithoutAllowFromClassic
      * 6  | TIERED     → DISKLESS  | allow-from-classic=true                                     | VALID (switch)             | testConsolidatedTransitionsWithAllowFromClassic
      * 7  | TIERED     → DISKLESS  | allow-from-classic=false                                    | REJECTED                   | testConsolidatedTransitionsWithoutAllowFromClassic
-     * 8  | DISKLESS   → forbidden | remote.storage.enable=false                                 | REJECTED (mutual exclusion)| testConsolidatedTransitionsWithAllowFromClassic
+     * 8  | DISKLESS   → forbidden | remote.storage.enable=false                                 | REJECTED (requires remote) | testConsolidatedTransitionsWithAllowFromClassic
      * 9  | DISKLESS   → TIERED    | diskless.enable=false                                       | REJECTED (irreversible)    | testConsolidatedTransitionsWithAllowFromClassic
      * </pre>
      */
@@ -319,7 +320,7 @@ public class DisklessAndRemoteStorageConfigsTest {
                 Optional<String> error = createTopic(admin, "diskless-rs-false", Map.of(
                     DISKLESS_ENABLE_CONFIG, "true",
                     REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
-                assertTrue(error.isPresent(), "Should reject diskless with remote.storage.enable=false");
+                assertEquals(REQUIRES_REMOTE_STORAGE_ERROR, error.get());
 
                 // Scenario 4: classic-to-diskless switch with diskless.enable=true ONLY.
                 // The controller auto-enables remote-storage atomically, exactly like creation,
@@ -373,7 +374,7 @@ public class DisklessAndRemoteStorageConfigsTest {
                 Optional<String> disableRsError = incrementalAlterTopicConfig(admin, "diskless-no-disable-rs", Map.of(
                     REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
                 assertTrue(disableRsError.isPresent(), "Should not allow disabling remote storage on diskless topic");
-                assertEquals(DISKLESS_REMOTE_SET_ERROR, disableRsError.get());
+                assertEquals(REQUIRES_REMOTE_STORAGE_ERROR, disableRsError.get());
 
                 // Scenario 9: DISKLESS cannot be disabled
                 Optional<String> disableDisklessError = incrementalAlterTopicConfig(admin, "diskless-no-disable-rs", Map.of(
