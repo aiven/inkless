@@ -92,12 +92,12 @@ class DisklessLeaderEndPoint(
       topicNames.put(topic.topicId, topic.topic)
     }
     val fetchInfos = request.fetchData(topicNames.asJava)
-    // Prefer the buildFetch snapshot. Tests that call fetch() directly fall back
-    // to a live read before awaitDelayedFetch.
+    // Missing capture is 0, which generationMatches rejects. A live read after
+    // partitionMapLock drops would adopt a post-removal generation.
     val remotePrefixGenerations = fetchInfos.asScala.keys.iterator.map { tidp =>
       val tp = tidp.topicPartition
       val captured = pendingRemotePrefixGenerations.get(tp)
-      tp -> (if (captured != null) captured.longValue() else replicaManager.consolidationRemotePrefixGeneration(tp))
+      tp -> (if (captured != null) captured.longValue() else 0L)
     }.toMap
     pendingRemotePrefixGenerations.clear()
 

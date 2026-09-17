@@ -1212,7 +1212,7 @@ class DisklessLeaderEndPointTest {
   @Test
   def testFetchCapturesRemotePrefixGenerationBeforeBlockedDelayedFetch(): Unit = {
     // removeFetcherForPartitions bumps the generation while awaitDelayedFetch is parked.
-    // Overlay must mark with the generation captured before that wait, not the post-removal one.
+    // Overlay must mark with the buildFetch snapshot, not a live read after the bump.
     val metrics = new ConsolidationMetrics()
     try {
       metrics.registerPartition(topicPartition)
@@ -1221,6 +1221,8 @@ class DisklessLeaderEndPointTest {
       val replicaManager = replicaManagerMock()
       when(replicaManager.consolidationRemotePrefixGeneration(any())).thenAnswer(_ =>
         Long.box(metrics.remotePrefixGeneration(topicPartition)))
+      val localLog = unifiedLogMock(logStartOffset = 0L, segmentSize = Int.MaxValue, maxMessageSize = 1024 * 1024)
+      when(replicaManager.localLogOrException(topicPartition)).thenReturn(localLog)
 
       val props = TestUtils.createBrokerConfig(nodeId = 1)
       val config = KafkaConfig.fromProps(props)
@@ -1240,7 +1242,16 @@ class DisklessLeaderEndPointTest {
         }.when(purgatory).tryCompleteElseWatch(any(), any())
 
         val endPoint = bornDisklessWalGapEndPoint(Optional.empty(), replicaManager)
-        val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 0L)).get(topicPartition)
+        val fetchState = new PartitionFetchState(
+          Optional.of(topicId),
+          0L,
+          Optional.empty(),
+          0,
+          ReplicaState.FETCHING,
+          Optional.empty()
+        )
+        val replicaFetch = endPoint.buildFetch(util.Map.of(topicPartition, fetchState)).result.get
+        val pd = endPoint.fetch(replicaFetch.fetchRequest).get(topicPartition)
 
         assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, pd.errorCode)
         assertEquals(2L, metrics.remotePrefixGeneration(topicPartition))
