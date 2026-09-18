@@ -198,10 +198,11 @@ object ReplicaManager {
       try {
         body
       } catch {
-        // The availability reads as available until something is tried, so a task can still discover
-        // unavailability partway through its own body instead of at this pre-check. Each task lets that
-        // failure propagate ({@code catch (ControlPlaneUnavailableException e) { throw e; }} ahead of its
-        // own error handling) so this one place is where it's caught.
+        // The pre-check and the body's own call are not atomic, so a concurrent reconfiguration can
+        // still flip the control plane unavailable in between, and a task discovers that partway
+        // through its own body instead of at this pre-check. Each task lets that failure propagate
+        // ({@code catch (ControlPlaneUnavailableException e) { throw e; }} ahead of its own error
+        // handling) so this one place is where it's caught.
         case _: ControlPlaneUnavailableException =>
           log.warn("Stopped {} partway through: control plane is {}", task, availability.state())
       }
