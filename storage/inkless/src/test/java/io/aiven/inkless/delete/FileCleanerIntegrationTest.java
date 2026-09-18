@@ -176,8 +176,13 @@ class FileCleanerIntegrationTest {
         config.put("consume.batch.coordinate.cache.ttl.ms", Long.toString(Duration.ofMillis(500).toMillis()));
         final InklessConfig inklessConfig = new InklessConfig(config);
 
+        // The control plane above is wired in directly, not through the reconciler that would
+        // otherwise mark this available once its delegate is built.
+        final ControlPlaneAvailability controlPlaneAvailability = new ControlPlaneAvailability();
+        controlPlaneAvailability.markAvailable();
+
         sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig,
-            metadataView, controlPlane, new ControlPlaneAvailability(),
+            metadataView, controlPlane, controlPlaneAvailability,
             new BrokerTopicStats(), defaultTopicConfigs);
     }
 
