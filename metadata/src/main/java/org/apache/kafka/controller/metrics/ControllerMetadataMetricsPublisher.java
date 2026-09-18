@@ -31,14 +31,11 @@ import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.fault.FaultHandler;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.ArrayList;
-import java.util.List;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
+import java.util.Set;
 
 
 /**
@@ -50,8 +47,6 @@ import java.util.Optional;
  *
  */
 public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
-    private static final Logger log = LoggerFactory.getLogger(ControllerMetadataMetricsPublisher.class);
-
     private final ControllerMetadataMetrics metrics;
     private final FaultHandler faultHandler;
     private MetadataImage prevImage = MetadataImage.EMPTY;
@@ -101,6 +96,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
 
     private void publishDelta(MetadataDelta delta, MetadataImage newImage) {
         ControllerMetricsChanges changes = new ControllerMetricsChanges();
+        Set<String> changedTopicNames = new HashSet<>();
         if (delta.clusterDelta() != null) {
             for (Entry<Integer, Optional<BrokerRegistration>> entry :
                     delta.clusterDelta().changedBrokers().entrySet()) {
@@ -118,10 +114,12 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
                     throw new RuntimeException("Unable to find deleted topic id " + topicId +
                             " in previous topics image.");
                 }
+                changedTopicNames.add(prevTopic.name());
                 // For deleted topics, check isDiskless from prevImage since config is already removed from newImage
                 changes.handleDeletedTopic(prevTopic, isDisklessTopic(prevImage.configs(), prevTopic.name()));
             }
             for (Entry<Uuid, TopicDelta> entry : delta.topicsDelta().changedTopics().entrySet()) {
+                changedTopicNames.add(entry.getValue().name());
                 // Use prevImage configs intentionally: diskless.enable transitions
                 // are handled by the configsDelta loop below, not here.
                 changes.handleTopicChange(
@@ -135,6 +133,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         if (delta.configsDelta() != null) {
             for (ConfigResource resource : delta.configsDelta().changes().keySet()) {
                 if (resource.type() != ConfigResource.Type.TOPIC) continue;
+                changedTopicNames.add(resource.name());
                 boolean wasDiskless = isDisklessTopic(prevImage.configs(), resource.name());
                 boolean isDiskless = isDisklessTopic(newImage.configs(), resource.name());
                 if (wasDiskless != isDiskless) {
@@ -146,6 +145,23 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
             }
         }
         changes.apply(metrics);
+        publishDisklessWithoutRemoteStorageDelta(changedTopicNames, newImage);
+    }
+
+    private void publishDisklessWithoutRemoteStorageDelta(
+        Set<String> changedTopicNames,
+        MetadataImage newImage
+    ) {
+        int disklessWithoutRemoteStorageChange = 0;
+        for (String topicName : changedTopicNames) {
+            disklessWithoutRemoteStorageChange += ControllerMetricsChanges.delta(
+                isDisklessWithoutRemoteStorage(prevImage, topicName),
+                isDisklessWithoutRemoteStorage(newImage, topicName)
+            );
+        }
+        if (disklessWithoutRemoteStorageChange != 0) {
+            metrics.addToDisklessWithoutRemoteStorageCount(disklessWithoutRemoteStorageChange);
+        }
     }
 
     private void publishSnapshot(MetadataImage newImage) {
@@ -174,17 +190,13 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         int disklessPartitions = 0;
         int disklessOfflinePartitions = 0;
         int disklessWithoutRemoteStorage = 0;
-        List<String> disklessTopicsWithoutRemoteStorage = new ArrayList<>();
         for (TopicImage topicImage : newImage.topics().topicsById().values()) {
             // Check diskless from newImage configs directly for consistency with delta path
             final boolean isDiskless = isDisklessTopic(newImage.configs(), topicImage.name());
             if (isDiskless) {
                 disklessTopics++;
-                if (hasRemoteStorageExplicitlyDisabled(newImage.configs(), topicImage.name())) {
+                if (!isRemoteStorageEnabled(newImage.configs(), topicImage.name())) {
                     disklessWithoutRemoteStorage++;
-                    if (disklessTopicsWithoutRemoteStorage.size() < 20) {
-                        disklessTopicsWithoutRemoteStorage.add(topicImage.name());
-                    }
                 }
             }
             for (PartitionRegistration partition : topicImage.partitions().values()) {
@@ -210,11 +222,13 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         metrics.setDisklessTopicCount(disklessTopics);
         metrics.setDisklessPartitionCount(disklessPartitions);
         metrics.setDisklessOfflinePartitionCount(disklessOfflinePartitions);
-        // Only refreshed on snapshot (not delta) — advisory metric for legacy topic detection,
-        // not a real-time alert. Snapshots occur on controller failover or periodically
-        // (default: every hour or 20MB of metadata records, whichever comes first).
         metrics.setDisklessWithoutRemoteStorageCount(disklessWithoutRemoteStorage);
-        warnDisklessWithoutRemoteStorage(disklessWithoutRemoteStorage, disklessTopicsWithoutRemoteStorage);
+    }
+
+    private static boolean isDisklessWithoutRemoteStorage(MetadataImage image, String topicName) {
+        return image.topics().getTopic(topicName) != null
+            && isDisklessTopic(image.configs(), topicName)
+            && !isRemoteStorageEnabled(image.configs(), topicName);
     }
 
     private static boolean isDisklessTopic(ConfigurationsImage configsImage, String topicName) {
@@ -223,23 +237,10 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         return Boolean.parseBoolean(configMap.getOrDefault(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
     }
 
-    private static boolean hasRemoteStorageExplicitlyDisabled(ConfigurationsImage configsImage, String topicName) {
+    private static boolean isRemoteStorageEnabled(ConfigurationsImage configsImage, String topicName) {
         ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
         Map<String, String> configMap = configsImage.configMapForResource(resource);
-        // Only flag topics where remote.storage.enable is explicitly stored as false.
-        // Absent means "never configured" — the controller will auto-enable on next interaction.
-        String value = configMap.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
-        return value != null && !Boolean.parseBoolean(value);
-    }
-
-    private void warnDisklessWithoutRemoteStorage(int count, List<String> topicNames) {
-        if (count > 0 && count <= 20) {
-            log.warn("Found {} diskless topic(s) with remote.storage.enable explicitly set to false: {}. "
-                + "Set remote.storage.enable=true on these topics.", count, topicNames);
-        } else if (count > 20) {
-            log.warn("Found {} diskless topic(s) with remote.storage.enable explicitly set to false (truncated, first 20): {}. "
-                + "Set remote.storage.enable=true on these topics.", count, topicNames.stream().limit(20).toList());
-        }
+        return Boolean.parseBoolean(configMap.getOrDefault(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
     }
 
     @Override

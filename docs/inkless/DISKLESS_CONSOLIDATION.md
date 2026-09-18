@@ -240,7 +240,7 @@ flowchart TD
     seal -- "NO_CLASSIC_TO_DISKLESS_START_OFFSET\n(born-diskless)" --> ready[Ready: arm at initialFetchOffset]
     seal -- "SWITCH_PENDING" --> retry[Retry: classic switch in progress]
     seal -- "seal >= 0" --> remote{remote.storage.enable?}
-    remote -- "off" --> failed[Failed: invariant violation\nsee DisklessWithoutRemoteStorageCount]
+    remote -- "off" --> failed[Failed: invariant violation\nsee FailedPartitionsCount]
     remote -- "on" --> leo{local LEO vs seal?}
     leo -- "LEO < seal, leader" --> rebuild[Ready: arm at LEO\nrebuild classic prefix from remote\nvia OFFSET_MOVED_TO_TIERED_STORAGE]
     leo -- "LEO < seal, follower" --> retry2[Retry: wait for classic catch-up fetcher]
@@ -248,7 +248,9 @@ flowchart TD
     failed --> fenced[Partition stays online for reads/writes\nFailed flag clears on next leader-epoch change]
 ```
 
-A `Failed` partition stays online and remains readable and writable. Consolidation doesn't run, so the local log doesn't grow unbounded into an untiered diskless log. `FailedPartitionsCount` and the controller-side `DisklessWithoutRemoteStorageCount` metric surface the state to operators. If the failure is an invariant violation, set `remote.storage.enable=true`. The controller co-commits a leader-epoch bump so reconciliation runs again.
+A `Failed` partition stays online and remains readable and writable. Consolidation doesn't run, so the local log doesn't grow unbounded into an untiered diskless log. `FailedPartitionsCount` surfaces this per-partition state. If the failure is an invariant violation, set `remote.storage.enable=true`. The controller co-commits a leader-epoch bump so reconciliation runs again.
+
+The controller-side `DisklessWithoutRemoteStorageCount` separately inventories every diskless topic where `remote.storage.enable` is `false` or unset, including born-diskless topics that never enter the `Failed` state. Those topics do not consolidate until `remote.storage.enable=true` is set, with consolidation on.
 
 ### Diskless leader epoch for truncation
 
@@ -362,7 +364,7 @@ The broker registers these under the `io.aiven.inkless.consolidation` group. The
 | `io.aiven.inkless.consolidation:type=ConsolidationFetchMetrics` | `RecentDataRequestRate` / `LaggingConsumerRequestRate`      | Hot-path (cache-hit) vs cold-path (object-storage) consolidation fetch rates.                                                                                                              |
 | `io.aiven.inkless.delete:type=CrossTierLogStartReporter`        | `PartitionsReported` / `ReportErrors` / `PendingPartitions` | Cross-tier log start offset reporting to the control plane.                                                                                                                                |
 | `io.aiven.inkless.cache:type=CrossTierLogStartCache`            | `CacheHits` / `CacheMisses` / `CacheSize`                   | Cross-tier earliest-offset cache.                                                                                                                                                          |
-| controller                                                      | `DisklessWithoutRemoteStorageCount`                         | Switched topics with remote storage off (invariant violation; surfaces `Failed` reconciler state).                                                                                         |
+| controller                                                      | `DisklessWithoutRemoteStorageCount`                         | Diskless topics where `remote.storage.enable` is `false` or unset, including born-diskless topics that never enter the `Failed` reconciler state.                                            |
 
 ## Compatibility
 

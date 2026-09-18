@@ -150,7 +150,7 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
         ConsolidationStartState.Failed(new ReconciliationException(
           s"Diskless topic $tp has remote storage disabled but was switched from classic " +
             s"(violates diskless.enable implies remote.storage.enable); consolidation cannot start " +
-            s"(see DisklessWithoutRemoteStorageCount)"))
+            s"(see FailedPartitionsCount)"))
       case seal if seal >= 0 =>
         val log = partition.localLogOrException
         if (log.logEndOffset < seal) {

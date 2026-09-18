@@ -385,6 +385,10 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
         this.disklessWithoutRemoteStorageCount.set(count);
     }
 
+    public void addToDisklessWithoutRemoteStorageCount(int delta) {
+        this.disklessWithoutRemoteStorageCount.addAndGet(delta);
+    }
+
     public int disklessWithoutRemoteStorageCount() {
         return this.disklessWithoutRemoteStorageCount.get();
     }
