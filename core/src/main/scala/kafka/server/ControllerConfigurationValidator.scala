@@ -131,7 +131,9 @@ class ControllerConfigurationValidator(kafkaConfig: KafkaConfig) extends Configu
           kafkaConfig.disklessAllowFromClassicEnabled,
           kafkaConfig.disklessStorageSystemEnabled,
           kafkaConfig.disklessRemoteStorageConsolidationEnabled)
-      case BROKER => validateBrokerName(resource.name())
+      case BROKER =>
+        validateBrokerName(resource.name())
+        InklessControlPlaneConnectionStringValidator.validate(newConfigs)
       case CLIENT_METRICS =>
         val filteredConfigs = filterAndValidateNullConfigs(newConfigs, "client metrics")
         ClientMetricsConfigs.validate(resource.name(), filteredConfigs)
