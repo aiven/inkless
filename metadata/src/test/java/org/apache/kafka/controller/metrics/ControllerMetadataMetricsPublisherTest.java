@@ -190,6 +190,7 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(0, env.metrics.disklessTopicCount());
             assertEquals(0, env.metrics.disklessPartitionCount());
             assertEquals(0, env.metrics.disklessOfflinePartitionCount());
+            assertEquals(0, env.metrics.disklessWithoutRemoteStorageCount());
         }
     }
 
@@ -212,14 +213,13 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(7, env.metrics.disklessPartitionCount());
             // 3 partitions from "quux" topic are offline (leader=-1)
             assertEquals(3, env.metrics.disklessOfflinePartitionCount());
-            // remote.storage.enable absent (never configured) — not counted; only explicit false triggers the metric
-            assertEquals(0, env.metrics.disklessWithoutRemoteStorageCount());
+            // All three topics have remote.storage.enable unset, so its effective value is false.
+            assertEquals(3, env.metrics.disklessWithoutRemoteStorageCount());
         }
     }
 
     @Test
-    public void testDisklessWithoutRemoteStorageCountsOnlyExplicitFalse() {
-        // Only diskless topics with remote.storage.enable explicitly stored as "false" are counted.
+    public void testDisklessWithoutRemoteStorageCountsFalseAndUnset() {
         try (TestEnv env = new TestEnv()) {
             // Build image with 3 diskless topics: remote.storage.enable=true, =false, and absent
             Map<ConfigResource, ConfigurationImage> configs = new HashMap<>();
@@ -242,8 +242,8 @@ public class ControllerMetadataMetricsPublisherTest {
             env.publisher.onMetadataUpdate(delta, image, fakeManifest(true));
 
             assertEquals(3, env.metrics.disklessTopicCount());
-            // Only "bar" (remote.storage.enable explicitly false) is counted
-            assertEquals(1, env.metrics.disklessWithoutRemoteStorageCount());
+            // "bar" has remote storage explicitly disabled, and "quux" inherits the false default.
+            assertEquals(2, env.metrics.disklessWithoutRemoteStorageCount());
         }
     }
 
