@@ -31,11 +31,6 @@ import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.fault.FaultHandler;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
@@ -50,8 +45,6 @@ import java.util.Optional;
  *
  */
 public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
-    private static final Logger log = LoggerFactory.getLogger(ControllerMetadataMetricsPublisher.class);
-
     private final ControllerMetadataMetrics metrics;
     private final FaultHandler faultHandler;
     private MetadataImage prevImage = MetadataImage.EMPTY;
@@ -174,17 +167,13 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         int disklessPartitions = 0;
         int disklessOfflinePartitions = 0;
         int disklessWithoutRemoteStorage = 0;
-        List<String> disklessTopicsWithoutRemoteStorage = new ArrayList<>();
         for (TopicImage topicImage : newImage.topics().topicsById().values()) {
             // Check diskless from newImage configs directly for consistency with delta path
             final boolean isDiskless = isDisklessTopic(newImage.configs(), topicImage.name());
             if (isDiskless) {
                 disklessTopics++;
-                if (hasRemoteStorageExplicitlyDisabled(newImage.configs(), topicImage.name())) {
+                if (!isRemoteStorageEnabled(newImage.configs(), topicImage.name())) {
                     disklessWithoutRemoteStorage++;
-                    if (disklessTopicsWithoutRemoteStorage.size() < 20) {
-                        disklessTopicsWithoutRemoteStorage.add(topicImage.name());
-                    }
                 }
             }
             for (PartitionRegistration partition : topicImage.partitions().values()) {
@@ -210,11 +199,10 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         metrics.setDisklessTopicCount(disklessTopics);
         metrics.setDisklessPartitionCount(disklessPartitions);
         metrics.setDisklessOfflinePartitionCount(disklessOfflinePartitions);
-        // Only refreshed on snapshot (not delta) — advisory metric for legacy topic detection,
+        // Snapshot-only: the count is the inventory of diskless topics that are not consolidating,
         // not a real-time alert. Snapshots occur on controller failover or periodically
         // (default: every hour or 20MB of metadata records, whichever comes first).
         metrics.setDisklessWithoutRemoteStorageCount(disklessWithoutRemoteStorage);
-        warnDisklessWithoutRemoteStorage(disklessWithoutRemoteStorage, disklessTopicsWithoutRemoteStorage);
     }
 
     private static boolean isDisklessTopic(ConfigurationsImage configsImage, String topicName) {
@@ -223,23 +211,10 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         return Boolean.parseBoolean(configMap.getOrDefault(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
     }
 
-    private static boolean hasRemoteStorageExplicitlyDisabled(ConfigurationsImage configsImage, String topicName) {
+    private static boolean isRemoteStorageEnabled(ConfigurationsImage configsImage, String topicName) {
         ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
         Map<String, String> configMap = configsImage.configMapForResource(resource);
-        // Only flag topics where remote.storage.enable is explicitly stored as false.
-        // Absent means "never configured" — the controller will auto-enable on next interaction.
-        String value = configMap.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
-        return value != null && !Boolean.parseBoolean(value);
-    }
-
-    private void warnDisklessWithoutRemoteStorage(int count, List<String> topicNames) {
-        if (count > 0 && count <= 20) {
-            log.warn("Found {} diskless topic(s) with remote.storage.enable explicitly set to false: {}. "
-                + "Set remote.storage.enable=true on these topics.", count, topicNames);
-        } else if (count > 20) {
-            log.warn("Found {} diskless topic(s) with remote.storage.enable explicitly set to false (truncated, first 20): {}. "
-                + "Set remote.storage.enable=true on these topics.", count, topicNames.stream().limit(20).toList());
-        }
+        return Boolean.parseBoolean(configMap.getOrDefault(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
     }
 
     @Override
