@@ -18,6 +18,8 @@
 package kafka.server
 
 import com.yammer.metrics.core.{Gauge, Meter, Timer}
+import io.aiven.inkless.control_plane.ControlPlaneAvailability
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException
 import kafka.cluster.PartitionTest.MockPartitionListener
 import kafka.cluster.Partition
 import kafka.log.LogManager
@@ -6139,6 +6141,44 @@ class ReplicaManagerTest {
         KafkaYammerMetrics.defaultRegistry.removeMetric(metricName)
       }
     }
+  }
+
+  @Test
+  def testRunIfControlPlaneAvailableSkipsWhenUnavailable(): Unit = {
+    val availability = new ControlPlaneAvailability()
+    var runs = 0
+
+    // An untried control plane reads as unavailable, so the first tick is skipped rather than
+    // calling into a control plane that might have no delegate ready yet.
+    ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") { runs += 1 }
+    assertEquals(0, runs)
+
+    availability.markUnavailable(ControlPlaneAvailability.UnavailableReason.NOT_CONFIGURED)
+    ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") { runs += 1 }
+    assertEquals(0, runs)
+
+    availability.markAvailable()
+    ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") { runs += 1 }
+    assertEquals(1, runs)
+
+    availability.close()
+  }
+
+  @Test
+  def testRunIfControlPlaneAvailableCatchesUnavailableExceptionFromBody(): Unit = {
+    val availability = new ControlPlaneAvailability()
+    availability.markAvailable()
+    var attempts = 0
+
+    // The pre-check passes, but a concurrent reconfiguration can still flip the control plane
+    // unavailable before the body's own call, which is the one that discovers it here.
+    ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") {
+      attempts += 1
+      throw new ControlPlaneUnavailableException("No diskless control plane is configured")
+    }
+    assertEquals(1, attempts)
+
+    availability.close()
   }
 }
 

@@ -19,12 +19,40 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.flywaydb.core.Flyway;
 
+import java.util.Map;
+
 class Migrations {
+    /**
+     * Applies pending schema migrations, bounded by the configured timeouts.
+     *
+     * <p>Flyway builds its own JDBC connection rather than borrowing one from the Hikari pool, so
+     * it does not inherit the pool's driver properties. Without the ones set here it would fall
+     * back to the pgjdbc defaults, where {@code socketTimeout} is {@code 0}: a database that
+     * accepts the connection and then stops answering would block this thread forever.
+     *
+     * <p>Socket reads get {@code migration.timeout.ms} rather than {@code socket.timeout.ms}
+     * because a migration that builds an index on a populated table runs far longer than any
+     * query, and being cut off part-way through leaves the schema behind.
+     */
     static void migrate(final PostgresControlPlaneConfig controlPlaneConfig) {
-        final Flyway flyway = Flyway.configure().dataSource(
-            controlPlaneConfig.connectionString(),
-            controlPlaneConfig.username(),
-            controlPlaneConfig.password()).load();
+        final long migrationTimeoutSeconds = controlPlaneConfig.migrationTimeoutSeconds();
+        // jdbcProperties MUST be set before dataSource: setting the data source builds the
+        // DriverDataSource eagerly from whatever properties are configured at that moment, so
+        // properties registered afterwards are silently dropped.
+        final Flyway flyway = Flyway.configure()
+            .jdbcProperties(Map.of(
+                "connectTimeout", Long.toString(controlPlaneConfig.tcpConnectTimeoutSeconds()),
+                "loginTimeout", Long.toString(controlPlaneConfig.tcpConnectTimeoutSeconds()),
+                "socketTimeout", Long.toString(migrationTimeoutSeconds)))
+            // Flyway takes an advisory lock so that only one broker migrates at a time, and retries
+            // once a second while another broker holds it. One retry per second means the retry
+            // count is the budget in seconds.
+            .lockRetryCount((int) Math.min(Integer.MAX_VALUE, migrationTimeoutSeconds))
+            .dataSource(
+                controlPlaneConfig.connectionString(),
+                controlPlaneConfig.username(),
+                controlPlaneConfig.password())
+            .load();
         flyway.migrate();
     }
 }
