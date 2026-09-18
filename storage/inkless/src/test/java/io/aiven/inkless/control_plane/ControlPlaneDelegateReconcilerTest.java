@@ -316,6 +316,19 @@ class ControlPlaneDelegateReconcilerTest {
     }
 
     @Test
+    void recoversOnItsOwnWithoutAnyCallerReachingCurrent() {
+        // Produce now fails fast on UNKNOWN instead of calling into the control plane, so nothing
+        // here ever calls current(). The reconciler still has to find its own way back.
+        factoryFailure.set(new IllegalStateException("connection refused"));
+        reconciler().start();
+        awaitFactoryInvocations(1);
+
+        factoryFailure.set(null);
+        awaitState(ControlPlaneAvailability.State.AVAILABLE);
+        assertSame(delegate, reconciler.current());
+    }
+
+    @Test
     void invalidateRebuildsFromTheNewConfigAndClosesTheRetiredDelegate() throws Exception {
         reconciler().start();
         awaitState(ControlPlaneAvailability.State.AVAILABLE);

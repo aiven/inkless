@@ -35,7 +35,13 @@ public class ControlPlaneAvailability implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(ControlPlaneAvailability.class);
 
     public enum State {
-        /** Nothing has been tried yet, so gating would be premature. */
+        /**
+         * Nothing has been tried yet. Gates the same as {@link #UNAVAILABLE}: a caller that
+         * buffered and uploaded against a control plane that turns out to have no delegate ready
+         * would hit the same failure on the commit, and again on the follow-up
+         * {@link ControlPlane#isSafeToDeleteFile} check, which orphans the uploaded object instead
+         * of cleaning it up.
+         */
         UNKNOWN,
         AVAILABLE,
         UNAVAILABLE
@@ -62,9 +68,9 @@ public class ControlPlaneAvailability implements Closeable {
         return state.get();
     }
 
-    /** True if diskless work may proceed; false otherwise. An untried control plane reads true. */
+    /** True if diskless work may proceed; false otherwise. An untried control plane reads false. */
     public boolean isAvailable() {
-        return state.get() != State.UNAVAILABLE;
+        return state.get() == State.AVAILABLE;
     }
 
     /** Why the gate is unavailable, or {@code null} if it isn't. */
