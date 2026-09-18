@@ -938,21 +938,4 @@ class DynamicConfigChangeUnitTest {
     assertEquals(ControlPlaneAvailability.State.UNAVAILABLE, gate.availability().state())
     gate.close()
   }
-
-  @Test
-  def testInklessControlPlaneConnectionStringRejectsEmbeddedCredentials(): Unit = {
-    val gate = new AvailabilityGatedControlPlane(
-      () => new InklessConfig(java.util.Map.of("control.plane.class",
-        classOf[io.aiven.inkless.control_plane.InMemoryControlPlane].getCanonicalName)),
-      _ => mock(classOf[ControlPlane]),
-      org.apache.kafka.common.utils.Time.SYSTEM)
-
-    val newProps = TestUtils.createBrokerConfig(0, port = 8181)
-    newProps.put("inkless.control.plane.connection.string", "jdbc:postgresql://host/db?user=admin&password=secret")
-    val newConfig = KafkaConfig.fromProps(newProps)
-
-    val reconfigurable = new DynamicInklessControlPlaneConfig(gate)
-    assertThrows(classOf[ConfigException], () => reconfigurable.validateReconfiguration(newConfig))
-    gate.close()
-  }
 }

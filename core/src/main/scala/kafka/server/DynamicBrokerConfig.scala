@@ -662,17 +662,13 @@ object DynamicInklessControlPlaneConfig {
    * The connection strings the management plane may repoint at runtime. Setting one to an empty
    * value takes the control plane out of service. Credentials are deliberately absent: these keys
    * are not declared in `AbstractKafkaConfig.CONFIG_DEF`, so they skip the `Password` encryption
-   * path and would land in the metadata log in plaintext.
+   * path and would land in the metadata log in plaintext. `ControllerConfigurationValidator`
+   * rejects a value that embeds credentials before it ever reaches the metadata log; this class
+   * only sees the config after it has already been committed and replicated, too late to stop
+   * a leak.
    */
   val ReconfigurableConfigs: util.Set[String] =
     ConnectionStringKeySuffixes.asScala.map(ConnectionStringPrefix + _).asJava
-
-  // pgjdbc accepts credentials embedded as a `user=`/`password=` query parameter. That is the only
-  // way a connection string can carry them, so this is what has to stay out of the metadata log.
-  private val EmbeddedCredentialsPattern = java.util.regex.Pattern.compile("(?i)[?&](user|password)=")
-
-  private def embedsCredentials(connectionString: String): Boolean =
-    connectionString != null && EmbeddedCredentialsPattern.matcher(connectionString).find()
 }
 
 class DynamicInklessControlPlaneConfig(gate: AvailabilityGatedControlPlane) extends BrokerReconfigurable with Logging {
@@ -680,22 +676,9 @@ class DynamicInklessControlPlaneConfig(gate: AvailabilityGatedControlPlane) exte
 
   override def reconfigurableConfigs: util.Set[String] = ReconfigurableConfigs
 
-  override def validateReconfiguration(newConfig: KafkaConfig): Unit = {
-    // A malformed non-empty value can't be checked without connecting, and an empty value is the
-    // signal that takes the control plane out of service, so neither can be rejected here.
-    val controlPlaneConfig = newConfig.currentInklessConfig.controlPlaneConfig()
-    ConnectionStringKeySuffixes.forEach { suffix =>
-      val value = controlPlaneConfig.get(suffix)
-      // Connection string is a dynamic config, so it is stored in the metadata log in plaintext.
-      // Reject one that embeds credentials to prevent leaking credentials in the metadata log.
-      if (value != null && embedsCredentials(value.toString)) {
-        throw new ConfigException(
-          ConnectionStringPrefix + suffix,
-          value,
-          "must not embed credentials in the connection string; configure username/password separately")
-      }
-    }
-  }
+  // A malformed non-empty value can't be checked without connecting, and an empty value is the
+  // signal that takes the control plane out of service, so neither can be rejected here.
+  override def validateReconfiguration(newConfig: KafkaConfig): Unit = {}
 
   override def reconfigure(oldConfig: KafkaConfig, newConfig: KafkaConfig): Unit = {
     val controlPlaneConfig = newConfig.currentInklessConfig.controlPlaneConfig()
