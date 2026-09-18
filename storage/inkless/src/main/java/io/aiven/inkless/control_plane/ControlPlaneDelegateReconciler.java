@@ -26,9 +26,9 @@ import org.slf4j.LoggerFactory;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -106,7 +106,7 @@ class ControlPlaneDelegateReconciler implements Closeable {
     /** Written only by the reconciler thread, and by {@link #close()} taking over teardown. */
     private volatile Actual actual = new Actual(-1, null, ControlPlaneAvailability.State.UNKNOWN, null);
 
-    private final ExecutorService reconciler = Executors.newSingleThreadExecutor(
+    private final ScheduledExecutorService reconciler = Executors.newSingleThreadScheduledExecutor(
         new InklessThreadFactory("inkless-control-plane-reconciler-", true));
     private final AtomicBoolean reconcileScheduled = new AtomicBoolean();
 
@@ -182,7 +182,9 @@ class ControlPlaneDelegateReconciler implements Closeable {
             }
             // Settled on this generation without a delegate. A transient failure is worth retrying
             // once the backoff has elapsed; UNAVAILABLE means unconfigured, which stays settled
-            // until a reconfiguration increments the generation.
+            // until a reconfiguration increments the generation. backOff() already schedules this
+            // same retry on its own, so a caller landing here only gets it to happen sooner, not
+            // instead of that; recovery does not depend on any caller showing up.
             if (current.state() == ControlPlaneAvailability.State.UNKNOWN
                 && time.milliseconds() >= nextAttemptAtMs) {
                 requestReconcile();
@@ -262,8 +264,8 @@ class ControlPlaneDelegateReconciler implements Closeable {
                 return;
             }
             if (!attempt(want, current)) {
-                // Failed transiently. Stop here rather than spinning; a later call retries once
-                // the backoff has elapsed.
+                // Failed transiently. Stop here rather than spinning; backOff() already scheduled
+                // the retry, and a caller reaching current() before then retries sooner.
                 return;
             }
         }
@@ -366,9 +368,22 @@ class ControlPlaneDelegateReconciler implements Closeable {
         }
     }
 
+    /**
+     * Schedules the next retry itself, instead of waiting for a caller to reach {@link #current()}
+     * after the backoff elapses. Produce now fails fast on {@link ControlPlaneAvailability.State#UNKNOWN}
+     * instead of buffering and uploading against it, so it no longer calls into the control plane
+     * while unavailable; without a self-scheduled retry, recovery would depend entirely on some
+     * other caller, such as a fetch or a background job, happening to poll in the meantime.
+     */
     private void backOff() {
-        nextAttemptAtMs = time.milliseconds() + retryBackoffMs;
+        final long delayMs = retryBackoffMs;
+        nextAttemptAtMs = time.milliseconds() + delayMs;
         retryBackoffMs = Math.min(RETRY_BACKOFF_MAX_MS, retryBackoffMs * 2);
+        try {
+            reconciler.schedule(this::requestReconcile, delayMs, TimeUnit.MILLISECONDS);
+        } catch (final RejectedExecutionException e) {
+            // Shut down: there is nothing left to retry towards.
+        }
     }
 
     private void resetBackoff() {

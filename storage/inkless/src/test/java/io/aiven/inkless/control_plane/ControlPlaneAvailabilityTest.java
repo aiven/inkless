@@ -26,11 +26,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ControlPlaneAvailabilityTest {
     @Test
-    void startsUnknownAndReadsAsAvailable() {
+    void startsUnknownAndReadsAsUnavailable() {
         try (final ControlPlaneAvailability availability = new ControlPlaneAvailability()) {
             assertEquals(ControlPlaneAvailability.State.UNKNOWN, availability.state());
-            assertTrue(availability.isAvailable(),
-                "an untried control plane must not block diskless work");
+            assertFalse(availability.isAvailable(),
+                "an untried control plane must not let produce buffer and upload before the "
+                    + "first attempt settles");
             assertNull(availability.unavailableReason());
         }
     }
@@ -57,12 +58,12 @@ class ControlPlaneAvailabilityTest {
     }
 
     @Test
-    void markUnknownResetsToOptimisticAndClearsTheReason() {
+    void markUnknownResetsToUntriedAndClearsTheReason() {
         try (final ControlPlaneAvailability availability = new ControlPlaneAvailability()) {
             availability.markUnavailable(ControlPlaneAvailability.UnavailableReason.NOT_CONFIGURED);
             availability.markUnknown();
             assertEquals(ControlPlaneAvailability.State.UNKNOWN, availability.state());
-            assertTrue(availability.isAvailable());
+            assertFalse(availability.isAvailable());
             assertNull(availability.unavailableReason());
         }
     }
