@@ -1499,10 +1499,10 @@ public class RemoteLogManagerTest {
 
     @Test
     void testHasReadableRemoteLogCoverageWhenReadyAndEmpty() throws RemoteStorageException {
-        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
         doReturn(true).when(remoteLogMetadataManager).isReady(any(TopicIdPartition.class));
         doAnswer(invocation -> Collections.emptyIterator())
                 .when(remoteLogMetadataManager).listRemoteLogSegments(any(TopicIdPartition.class));
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
 
         assertEquals(Optional.of(false),
                 remoteLogManager.hasReadableRemoteLogCoverage(leaderTopicIdPartition.topicPartition(), 99L));
@@ -3170,15 +3170,63 @@ public class RemoteLogManagerTest {
     }
 
     @Test
+    public void testConsolidatingBecomeLeaderDefersLogStartReportUntilRemoteSegmentExists()
+            throws RemoteStorageException, IOException, InterruptedException {
+        // A late-enabled born-diskless topic can have a pruned WAL start above 0 while its newly
+        // created local log and remote tier are both empty. Reporting the local fallback 0 here
+        // makes ListOffsets(EARLIEST) return 0 instead of the WAL start and traps consolidation in
+        // an OFFSET_OUT_OF_RANGE reset loop. Keep the raw remote start unset until RLMM has data.
+        when(mockLog.topicPartition()).thenReturn(leaderTopicIdPartition.topicPartition());
+        checkpoint.write(List.of(epochEntry0));
+        LeaderEpochFileCache cache =
+                new LeaderEpochFileCache(leaderTopicIdPartition.topicPartition(), checkpoint, scheduler);
+        when(mockLog.leaderEpochCache()).thenReturn(cache);
+        when(mockLog.localLogStartOffset()).thenReturn(0L);
+
+        RemoteLogSegmentMetadata metadata = createRemoteLogSegmentMetadata(
+                new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()),
+                100L, 199L, 1024, List.of(new EpochEntry(0, 100L)),
+                RemoteLogSegmentState.COPY_SEGMENT_FINISHED);
+        AtomicInteger remoteSegmentAvailable = new AtomicInteger();
+        when(remoteLogMetadataManager.listRemoteLogSegments(eq(leaderTopicIdPartition), anyInt()))
+                .thenAnswer(invocation -> {
+                    int epoch = invocation.getArgument(1);
+                    return epoch == 0 && remoteSegmentAvailable.get() == 1
+                            ? List.of(metadata).iterator()
+                            : Collections.emptyIterator();
+                });
+
+        AtomicLong reported = new AtomicLong(-1L);
+        try (RemoteLogManager rlm = new RemoteLogManager(config, brokerId, logDir, clusterId, time,
+                tp -> Optional.of(mockLog),
+                (topicPartition, offset) -> reported.set(offset),
+                brokerTopicStats, metrics, endPoint,
+                topicPartition -> OptionalLong.empty(),
+                topicPartition -> true) {
+            @Override
+            public RemoteLogMetadataManager createRemoteLogMetadataManager() {
+                return remoteLogMetadataManager;
+            }
+        }) {
+            RemoteLogManager.RLMCopyTask task = rlm.new RLMCopyTask(leaderTopicIdPartition, 128);
+            task.copyLogSegmentsToRemote(mockLog);
+            assertEquals(-1L, reported.get(), "An empty remote tier must not bootstrap the remote start to 0");
+
+            remoteSegmentAvailable.set(1);
+            task.copyLogSegmentsToRemote(mockLog);
+            assertEquals(100L, reported.get(), "The first readable remote segment supplies the remote start");
+        }
+    }
+
+    @Test
     public void testConsolidatingBecomeLeaderReportsRemoteEarliestWhenOverrideAbsent()
             throws RemoteStorageException, IOException, InterruptedException {
         // Become-leader report, over-reclaim + bootstrap hardening: when the cross-tier remote start
-        // override is empty for a CONSOLIDATING partition (reporter has not landed a value yet, control
-        // plane unreachable, or metadata not propagated), the report must resolve to the remote earliest
-        // (findLogStartOffset -> 0), never the broker-local seal (200) and never be skipped. Skipping it
-        // would leave remote_log_start_offset unset, so ListOffsets(EARLIEST) COALESCEs to the pruned WAL
-        // frontier and hides the still-live remote prefix; reporting the seal would push the broker-agnostic
-        // earliest up to the seal.
+        // override is empty for a CONSOLIDATING partition but remote segments exist, the report must
+        // resolve to their earliest offset (findLogStartOffset -> 0), never the broker-local seal (200).
+        // Leaving remote_log_start_offset unset would make ListOffsets(EARLIEST) COALESCE to the pruned
+        // WAL frontier and hide the still-live remote prefix; reporting the seal would push the
+        // broker-agnostic earliest up to the seal.
         when(mockLog.topicPartition()).thenReturn(leaderTopicIdPartition.topicPartition());
         // A rebuilt leader reassigns its leader-epoch cache from the cumulative remote checkpoint, so the
         // cache carries the full history from offset 0 and findLogStartOffset can resolve the true earliest.
@@ -3289,7 +3337,7 @@ public class RemoteLogManagerTest {
     public void testConsolidatingBootstrapReportsRemoteEarliestAndDoesNotOverReclaimWhenOverrideAbsent()
             throws RemoteStorageException, ExecutionException, InterruptedException, IOException {
         // End-to-end unit guard for a consolidating partition whose cross-tier remote start override is
-        // empty (reporter stuck or not yet propagated) and whose local start is pinned at the seal (200).
+        // empty, whose remote prefix exists, and whose local start is pinned at the seal (200).
         // On the same leader both halves must hold together:
         //   1) become-leader reports the remote earliest (0), never the seal and never nothing, so
         //      remote_log_start_offset heals to 0 instead of leaving EARLIEST to COALESCE to the WAL frontier;

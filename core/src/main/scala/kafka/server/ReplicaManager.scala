@@ -1927,6 +1927,57 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Advances a born-diskless partition's cross-tier start to its surviving WAL start after RLMM has
+   * proved that no remote segment covers the preceding offset. This repairs late consolidation when
+   * an empty local log incorrectly bootstrapped `remote_log_start_offset` to 0 after pure-diskless
+   * retention had already advanced the WAL start.
+   *
+   * The caller must establish the missing remote coverage before invoking this method. Switched
+   * partitions are rejected because they can still hold a valid classic prefix outside RLMM.
+   */
+  def advanceBornDisklessCrossTierStart(topicPartition: TopicPartition, disklessStartOffset: Long): OptionalLong = {
+    val sharedState = inklessSharedState.orNull
+    if (sharedState == null ||
+      disklessStartOffset < 0 ||
+      !_inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic) ||
+      _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition) !=
+        PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+      return OptionalLong.empty()
+    }
+
+    val topicId = _inklessMetadataView.getTopicId(topicPartition.topic)
+    if (topicId == null || topicId.equals(Uuid.ZERO_UUID)) {
+      return OptionalLong.empty()
+    }
+
+    try {
+      val responses = sharedState.controlPlane().advanceCrossTierLogStartOffset(util.List.of(
+        new AdvanceCrossTierLogStartOffsetRequest(topicId, topicPartition.partition, disklessStartOffset)
+      ))
+      if (responses != null && responses.size() == 1) {
+        val response = responses.get(0)
+        if (response.errors() == Errors.NONE &&
+          response.remoteLogStartOffset() != AdvanceCrossTierLogStartOffsetResponse.NO_OFFSET) {
+          val stored = response.remoteLogStartOffset()
+          sharedState.crossTierLogStartCache().put(
+            new TopicIdPartition(topicId, topicPartition.partition, topicPartition.topic), stored)
+          info(s"Advanced cross-tier start for never-tiered born-diskless partition $topicPartition " +
+            s"to its WAL start $stored")
+          return OptionalLong.of(stored)
+        }
+      }
+      warn(s"Could not advance cross-tier start for born-diskless partition $topicPartition " +
+        s"to WAL start $disklessStartOffset")
+      OptionalLong.empty()
+    } catch {
+      case e: Exception =>
+        warn(s"Failed to advance cross-tier start for born-diskless partition $topicPartition " +
+          s"to WAL start $disklessStartOffset", e)
+        OptionalLong.empty()
+    }
+  }
+
+  /**
    * Returns the remote-prefix unknown generation for `topicPartition`.
    * DisklessLeaderEndPoint captures this before the RLMM query so a later register or fetcher
    * removal can ignore the in-flight mark.

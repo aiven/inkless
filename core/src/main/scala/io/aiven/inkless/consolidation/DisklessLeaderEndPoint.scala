@@ -207,6 +207,18 @@ class DisklessLeaderEndPoint(
                     fetchResponseData.setRecords(MemoryRecords.EMPTY)
                   } else {
                     replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = false, generation)
+                    if (replicaManager.classicToDisklessStartOffset(tp.topicPartition) ==
+                      PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+                      // No remote segment reaches the WAL boundary, so a born-diskless partition has
+                      // no surviving prefix below disklessStartOffset. Advance the cross-tier start
+                      // before OFFSET_OUT_OF_RANGE recovery asks for EARLIEST; otherwise a stale 0
+                      // bootstrapped from the empty local log resets the fetcher from 0 back to 0.
+                      val repairedStart = replicaManager.advanceBornDisklessCrossTierStart(
+                        tp.topicPartition, disklessStartOffset)
+                      if (repairedStart.isPresent) {
+                        fetchResponseData.setLogStartOffset(repairedStart.getAsLong)
+                      }
+                    }
                   }
                 }
               }

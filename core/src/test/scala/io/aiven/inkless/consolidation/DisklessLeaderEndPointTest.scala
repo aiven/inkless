@@ -45,7 +45,7 @@ import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.{any, anyLong, eq => eqTo}
-import org.mockito.Mockito.{doAnswer, doNothing, mock, verify, when}
+import org.mockito.Mockito.{doAnswer, doNothing, mock, never, verify, when}
 
 import java.util
 import java.nio.ByteBuffer
@@ -1181,6 +1181,41 @@ class DisklessLeaderEndPointTest {
     assertEquals(Errors.OFFSET_OUT_OF_RANGE.code, pd.errorCode)
     assertEquals(0L, pd.logStartOffset)
     verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(false), eqTo(0L))
+  }
+
+  @Test
+  def testFetchRepairsPoisonedCrossTierStartWhenBornDisklessHasNoRemotePrefix(): Unit = {
+    // A previous become-leader bootstrap persisted 0 from the empty local log even though pure-diskless
+    // retention had already advanced the WAL start to 100. Once RLMM proves there is no remote prefix,
+    // advance the authoritative whole-log start to the WAL start so OOR recovery cannot reset 0 -> 0.
+    val replicaManager = replicaManagerMock()
+    when(replicaManager.crossTierEarliestOffset(topicPartition)).thenReturn(OptionalLong.of(0L))
+    when(replicaManager.advanceBornDisklessCrossTierStart(topicPartition, 100L))
+      .thenReturn(OptionalLong.of(100L))
+    val endPoint = bornDisklessWalGapEndPoint(Optional.of(java.lang.Boolean.FALSE), replicaManager)
+
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 0L)).get(topicPartition)
+
+    assertEquals(Errors.OFFSET_OUT_OF_RANGE.code, pd.errorCode)
+    assertEquals(100L, pd.logStartOffset)
+    verify(replicaManager).advanceBornDisklessCrossTierStart(topicPartition, 100L)
+    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(false), eqTo(0L))
+  }
+
+  @Test
+  def testFetchDoesNotAdvanceSwitchedCrossTierStartWithoutRemoteCoverage(): Unit = {
+    // A switched partition can still hold its classic prefix locally before RLMM copies it. Absence of
+    // remote coverage alone does not prove that its whole-log start can advance to the WAL boundary.
+    val replicaManager = replicaManagerMock()
+    when(replicaManager.crossTierEarliestOffset(topicPartition)).thenReturn(OptionalLong.of(0L))
+    when(replicaManager.classicToDisklessStartOffset(topicPartition)).thenReturn(50L)
+    val endPoint = bornDisklessWalGapEndPoint(Optional.of(java.lang.Boolean.FALSE), replicaManager)
+
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 0L)).get(topicPartition)
+
+    assertEquals(Errors.OFFSET_OUT_OF_RANGE.code, pd.errorCode)
+    assertEquals(0L, pd.logStartOffset)
+    verify(replicaManager, never()).advanceBornDisklessCrossTierStart(any(), anyLong())
   }
 
   @Test

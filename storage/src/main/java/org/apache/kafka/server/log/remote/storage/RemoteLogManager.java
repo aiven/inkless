@@ -982,6 +982,17 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                 // when the remote start is unreported, which would lock the wrong value in via the
                 // forward-only advance. No-op for classic topics.
                 OptionalLong override = logStartOffsetOverride.apply(topicIdPartition.topicPartition());
+                if (override.isEmpty()
+                        && isConsolidatingDisklessPartition.test(topicIdPartition.topicPartition())
+                        && !hasRemoteLogSegmentInLeaderEpochHistory(log)) {
+                    // A late-enabled born-diskless topic can have WAL start S > 0 while the new local
+                    // log is empty at 0. Persisting that local fallback would make EARLIEST return 0
+                    // and trap its consolidation fetcher below S. Retry after the first segment lands;
+                    // findLogStartOffset can then report the real remote start.
+                    logger.debug("Deferring the cross-tier log start bootstrap for {} because its remote tier is empty",
+                            topicIdPartition);
+                    return;
+                }
                 long logStartOffset = override.isPresent()
                         ? override.getAsLong()
                         : findLogStartOffset(topicIdPartition, log);
@@ -990,6 +1001,22 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                 logger.info("Found the logStartOffset: {} for partition: {} after becoming leader",
                         logStartOffset, topicIdPartition);
             }
+        }
+
+        private boolean hasRemoteLogSegmentInLeaderEpochHistory(UnifiedLog log) throws RemoteStorageException {
+            LeaderEpochFileCache leaderEpochCache = log.leaderEpochCache();
+            OptionalInt epoch = leaderEpochCache.earliestEntry()
+                    .map(entry -> OptionalInt.of(entry.epoch()))
+                    .orElseGet(OptionalInt::empty);
+            while (epoch.isPresent()) {
+                if (remoteLogMetadataManagerPlugin.get()
+                        .listRemoteLogSegments(topicIdPartition, epoch.getAsInt())
+                        .hasNext()) {
+                    return true;
+                }
+                epoch = leaderEpochCache.nextEpoch(epoch.getAsInt());
+            }
+            return false;
         }
 
         private void maybeUpdateCopiedOffset(UnifiedLog log) throws RemoteStorageException {
