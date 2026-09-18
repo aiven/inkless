@@ -6148,17 +6148,18 @@ class ReplicaManagerTest {
     val availability = new ControlPlaneAvailability()
     var runs = 0
 
-    // An untried control plane reads as available, so the first tick must not be skipped.
+    // An untried control plane reads as unavailable, so the first tick is skipped rather than
+    // calling into a control plane that might have no delegate ready yet.
     ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") { runs += 1 }
-    assertEquals(1, runs)
+    assertEquals(0, runs)
 
     availability.markUnavailable(ControlPlaneAvailability.UnavailableReason.NOT_CONFIGURED)
     ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") { runs += 1 }
-    assertEquals(1, runs)
+    assertEquals(0, runs)
 
     availability.markAvailable()
     ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") { runs += 1 }
-    assertEquals(2, runs)
+    assertEquals(1, runs)
 
     availability.close()
   }
@@ -6166,10 +6167,11 @@ class ReplicaManagerTest {
   @Test
   def testRunIfControlPlaneAvailableCatchesUnavailableExceptionFromBody(): Unit = {
     val availability = new ControlPlaneAvailability()
+    availability.markAvailable()
     var attempts = 0
 
-    // The availability reads as available until something is tried, so the body runs and is the
-    // one that discovers the control plane is unavailable.
+    // The pre-check passes, but a concurrent reconfiguration can still flip the control plane
+    // unavailable before the body's own call, which is the one that discovers it here.
     ReplicaManager.runIfControlPlaneAvailable(availability, "test-task") {
       attempts += 1
       throw new ControlPlaneUnavailableException("No diskless control plane is configured")
