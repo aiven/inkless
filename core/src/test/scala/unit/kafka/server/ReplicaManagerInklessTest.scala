@@ -22,7 +22,7 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager}
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse, ListOffsetsRequest => CpListOffsetsRequest, ListOffsetsResponse => CpListOffsetsResponse}
+import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetRequest, AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse, ListOffsetsRequest => CpListOffsetsRequest, ListOffsetsResponse => CpListOffsetsResponse}
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.Partition
 import kafka.server.QuotaFactory.QuotaManagers
@@ -1186,6 +1186,49 @@ class ReplicaManagerInklessTest {
       // Each partition is written through under its own TopicIdPartition key.
       verify(cache).put(ArgumentMatchers.eq(new TopicIdPartition(topicId, 0, topic)), ArgumentMatchers.eq(100L))
       verify(cache).put(ArgumentMatchers.eq(new TopicIdPartition(topicId, 1, topic)), ArgumentMatchers.eq(0L))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testAdvanceBornDisklessCrossTierStartWritesThroughAndRejectsSwitchedPartition(): Unit = {
+    val topic = disklessTopicPartition.topic()
+    val topicId = disklessTopicPartition.topicId()
+    val topicPartition = disklessTopicPartition.topicPartition()
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.advanceCrossTierLogStartOffset(anyList())).thenAnswer { invocation =>
+      val requests = invocation.getArgument(0)
+        .asInstanceOf[util.List[AdvanceCrossTierLogStartOffsetRequest]]
+      assertEquals(1, requests.size())
+      assertEquals(topicId, requests.get(0).topicId())
+      assertEquals(topicPartition.partition(), requests.get(0).partition())
+      assertEquals(100L, requests.get(0).remoteLogStartOffset())
+      util.List.of(AdvanceCrossTierLogStartOffsetResponse.success(100L))
+    }
+    val cache = mock(classOf[CrossTierLogStartCache])
+    val replicaManager = createReplicaManager(
+      List(topic),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(topic -> topicId),
+      consolidatingDisklessTopics = Set(topic),
+      crossTierLogStartCache = Some(cache),
+    )
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(topicPartition))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+
+      assertEquals(OptionalLong.of(100L),
+        replicaManager.advanceBornDisklessCrossTierStart(topicPartition, 100L))
+      verify(cache).put(new TopicIdPartition(topicId, topicPartition), 100L)
+
+      clearInvocations(controlPlane, cache)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(topicPartition))
+        .thenReturn(50L)
+      assertEquals(OptionalLong.empty(),
+        replicaManager.advanceBornDisklessCrossTierStart(topicPartition, 100L))
+      verify(controlPlane, never()).advanceCrossTierLogStartOffset(anyList())
+      verify(cache, never()).put(any(), anyLong())
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
