@@ -500,7 +500,7 @@ public class LogConfig extends AbstractConfig {
      * LogConfigHelper is a collection of utility methods for implementing validation logic easier based on
      * new, existing and combined configs (where combined is the broker default + the new configs).
      */
-    private record LogConfigHelper(Map<String, String> existingConfigs, Map<String, Object> requestedConfigs,
+    private record LogConfigHelper(Map<String, String> existingConfigs, Map<String, Object> resultingConfigs,
                                    Map<?, ?> combinedConfigs, boolean isDisklessAllowFromClassicEnabled,
                                    boolean isRemoteStorageConsolidationEnabled) {
 
@@ -509,7 +509,7 @@ public class LogConfig extends AbstractConfig {
         }
 
         public boolean isDisklessExplicitlySet() {
-            return requestedConfigs.containsKey(TopicConfig.DISKLESS_ENABLE_CONFIG);
+            return resultingConfigs.containsKey(TopicConfig.DISKLESS_ENABLE_CONFIG);
         }
 
         public boolean wasDisklessExplicitlySet() {
@@ -529,23 +529,15 @@ public class LogConfig extends AbstractConfig {
         }
 
         public boolean isRemoteStorageExplicitlySet() {
-            return requestedConfigs.containsKey(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
+            return resultingConfigs.containsKey(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
         }
 
         public boolean wasRemoteStorageExplicitlySet() {
             return existingConfigs.containsKey(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
         }
 
-        public boolean requestedRemoteStorageEnabled() {
-            return (boolean) combinedConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
-        }
-
         public boolean isRemoteStorageEnabled() {
-            if (isRemoteStorageExplicitlySet()) {
-                return requestedRemoteStorageEnabled();
-            } else {
-                return wasRemoteStorageEnabled();
-            }
+            return (boolean) combinedConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
         }
 
         public boolean isDisklessConsolidationModeOnCreation() {
@@ -607,7 +599,7 @@ public class LogConfig extends AbstractConfig {
         }
 
         private boolean mergedTopicBoolean(String configName) {
-            if (!requestedConfigs.containsKey(configName)) {
+            if (!resultingConfigs.containsKey(configName)) {
                 return false;
             }
             return (boolean) combinedConfigs.get(configName);
@@ -622,7 +614,7 @@ public class LogConfig extends AbstractConfig {
             // If remote.storage.enable doesn't resolve to true, no valid switch is happening:
             // either mutual exclusion won't fire (remote.storage.enable absent) or the request
             // is invalid (remote.storage.enable=false).
-            if (!isDisklessAllowFromClassicEnabled || !isDisklessEnabled() || !requestedRemoteStorageEnabled()) {
+            if (!isDisklessAllowFromClassicEnabled || !isDisklessEnabled() || !isRemoteStorageEnabled()) {
                 return false;
             }
             // TIERED→DISKLESS: Remote-Storage was already explicitly set and enabled
@@ -669,25 +661,22 @@ public class LogConfig extends AbstractConfig {
         }
 
         private boolean isRemoteStorageBecomesEnabled() {
-            return !wasRemoteStorageEnabled() && requestedRemoteStorageEnabled();
+            return !wasRemoteStorageEnabled() && isRemoteStorageEnabled();
         }
 
-        // True when the request newly writes remote.storage.enable=false, not when that
-        // override was already present (the controller passes the merged config map).
         private boolean isRemoteStorageBecomesDisabled() {
-            return isRemoteStorageExplicitlySet()
-                && !isRemoteStorageEnabled()
+            return !isRemoteStorageEnabled()
                 && !isRemoteStorageStaysDisabledWithoutNewOverride();
         }
     }
 
     private static void validateDiskless(Map<String, String> existingConfigs,
-                                         Map<String, Object> requestedConfigs,
+                                         Map<String, Object> resultingConfigs,
                                          Map<?, ?> newConfigs,
                                          boolean isDisklessStorageSystemEnabled,
                                          boolean isDisklessAllowFromClassicEnabled,
                                          boolean isRemoteStorageConsolidationEnabled) {
-        final var logConfigHelper = new LogConfigHelper(existingConfigs, requestedConfigs, newConfigs,
+        final var logConfigHelper = new LogConfigHelper(existingConfigs, resultingConfigs, newConfigs,
             isDisklessAllowFromClassicEnabled, isRemoteStorageConsolidationEnabled);
 
         if (logConfigHelper.isDisklessExplicitlySet() && !isDisklessStorageSystemEnabled) {
@@ -708,7 +697,7 @@ public class LogConfig extends AbstractConfig {
         // Exception 1: when classic-to-diskless switch is allowed, we permit diskless.enable=true
         // on a topic that already had remote.storage.enable=true — both during the switch itself
         // and in steady state afterward (switched topics retain both configs).
-        // Note: in the controller path, requestedConfigs is the merged state (existing + changes),
+        // Note: resultingConfigs is the merged state (existing + changes),
         // so we cannot distinguish "client set this" from "already existed". We detect the exception
         // by checking that diskless is (or will be) enabled and remote storage was and remains enabled.
         final boolean isSwitchedFromClassicWithRemoteStorage = logConfigHelper.isSwitchedFromClassicWithRemoteStorage();
@@ -801,19 +790,19 @@ public class LogConfig extends AbstractConfig {
      * The `newConfigs` supplied contains the topic-level configs,
      * The default values should be extracted from the KafkaConfig.
      * @param existingConfigs                   The existing properties
-     * @param requestedConfigs                  The configs explicitly included in the topic update/create request
-     * @param newConfigs                        The new properties to be validated (combined from broker + requested)
+     * @param resultingConfigs                  The resulting topic-level config overrides
+     * @param newConfigs                        The new properties to be validated (combined from broker + resulting)
      * @param isRemoteLogStorageSystemEnabled   true if system wise remote log storage is enabled
      */
     private static void validateTopicLogConfigValues(Map<String, String> existingConfigs,
-                                                     Map<String, Object> requestedConfigs,
+                                                     Map<String, Object> resultingConfigs,
                                                      Map<String, ?> newConfigs,
                                                      boolean isRemoteLogStorageSystemEnabled,
                                                      boolean isDisklessStorageSystemEnabled,
                                                      boolean isDisklessAllowFromClassicEnabled,
                                                      boolean isRemoteStorageConsolidationEnabled) {
         validateValues(newConfigs);
-        validateDiskless(existingConfigs, requestedConfigs, newConfigs, isDisklessStorageSystemEnabled, isDisklessAllowFromClassicEnabled, isRemoteStorageConsolidationEnabled);
+        validateDiskless(existingConfigs, resultingConfigs, newConfigs, isDisklessStorageSystemEnabled, isDisklessAllowFromClassicEnabled, isRemoteStorageConsolidationEnabled);
 
         boolean isRemoteLogStorageEnabled = (Boolean) newConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
         if (isRemoteLogStorageEnabled) {
