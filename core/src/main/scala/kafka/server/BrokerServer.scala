@@ -640,6 +640,13 @@ class BrokerServer(
         "the initial broker metadata update to be published",
         brokerMetadataPublisher.firstPublishFuture , startupDeadline, time)
 
+      // Now that the initial metadata image, including any persisted dynamic
+      // inkless.control.plane.* configuration, has been applied to `config`, it is safe to build
+      // the diskless control plane delegate. Building any earlier would read only the static
+      // server.properties value. This node always has BrokerRole, so config is the same
+      // liveConfig instance SharedServer picked when it constructed the gate.
+      sharedServer.startInklessControlPlane()
+
       // Now that we have loaded some metadata, we can log a reasonably up-to-date broker
       // configuration.  Keep in mind that KafkaConfig.originals is a mutable field that gets set
       // by the dynamic configuration publisher. Ironically, KafkaConfig.originals does not

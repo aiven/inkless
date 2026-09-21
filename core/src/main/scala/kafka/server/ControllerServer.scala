@@ -331,14 +331,15 @@ class ControllerServer(
 
       // Set up the dynamic config publisher. This runs even in combined mode, since the broker
       // has its own separate dynamic configuration object.
-      metadataPublishers.add(new DynamicConfigPublisher(
+      val dynamicConfigPublisher = new DynamicConfigPublisher(
         config,
         sharedServer.metadataPublishingFaultHandler,
         immutable.Map[ConfigType, ConfigHandler](
           // controllers don't host topics, so no need to do anything with dynamic topic config changes here
           ConfigType.BROKER -> new BrokerConfigHandler(config, quotaManagers)
         ),
-        "controller"))
+        "controller")
+      metadataPublishers.add(dynamicConfigPublisher)
 
       // Register this instance for dynamic config changes to the KafkaConfig. This must be called
       // after the authorizer and quotaManagers are initialized, since it references those objects.
@@ -402,6 +403,21 @@ class ControllerServer(
       FutureUtils.waitWithLogging(logger.underlying, logIdent,
         "the controller metadata publishers to be installed",
         sharedServer.loader.installPublishers(metadataPublishers), startupDeadline, time)
+
+      if (!config.processRoles.contains(ProcessRole.BrokerRole)) {
+        // Wait for the initial metadata image, including any persisted dynamic
+        // inkless.control.plane.* configuration, to be applied to config before building the
+        // diskless control plane delegate. installPublishers() above only guarantees this
+        // publisher was scheduled for its first update, not that the update already ran.
+        //
+        // Skipped in combined mode: there, the gate reads through the broker's config instance,
+        // not this one, and BrokerServer.startup() is the one that builds it once the broker's
+        // own dynamic config publisher has caught up.
+        FutureUtils.waitWithLogging(logger.underlying, logIdent,
+          "the initial controller dynamic configuration to be published",
+          dynamicConfigPublisher.initialPublishFuture, startupDeadline, time)
+        sharedServer.startInklessControlPlane()
+      }
 
       val authorizerFutures: Map[Endpoint, CompletableFuture[Void]] = endpointReadyFutures.futures().asScala.toMap
 

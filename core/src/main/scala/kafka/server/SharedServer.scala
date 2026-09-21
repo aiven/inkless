@@ -134,6 +134,23 @@ class SharedServer(
   def inklessControlPlaneAvailability: Option[ControlPlaneAvailability] =
     inklessControlPlaneGate.map(_.availability())
 
+  /**
+   * Builds the control plane delegate, waiting for that first attempt to finish before returning.
+   *
+   * The caller must not call this until the initial metadata image has been applied to whichever
+   * `KafkaConfig` the gate reads through: `brokerConfig` for a node with `BrokerRole`, otherwise
+   * `controllerConfig`. Calling earlier would build from the static `server.properties` value even
+   * when a dynamic override, including an empty one that takes the control plane out of service,
+   * is already sitting in the metadata log.
+   *
+   * Safe to call more than once, and a no-op once the first build has already settled, so a
+   * combined broker/controller node can call this from either startup path without coordinating
+   * which one goes first.
+   */
+  def startInklessControlPlane(): Unit = {
+    inklessControlPlaneGate.foreach(_.startAndAwaitFirstBuild())
+  }
+
   def clusterId: String = metaPropsEnsemble.clusterId().get()
 
   def nodeId: Int = metaPropsEnsemble.nodeId().getAsInt
@@ -307,11 +324,14 @@ class SharedServer(
             time)
           inklessControlPlaneGate = Some(gate)
           inklessControlPlane = Some(gate)
-          // Build the delegate before this node starts serving requests. The gate fast-fails calls
-          // that arrive before it is ready, and diskless topic creation has nowhere to put a
-          // retriable error, so startup waits for the first attempt rather than racing it. Bounded,
-          // and it returns straight away if no control plane is configured.
-          gate.startAndAwaitFirstBuild()
+          // Only construct the gate here, so other components created later in this method, and
+          // in BrokerServer/ControllerServer, can reference it. Do not build the delegate yet:
+          // liveConfig still holds nothing but the static server.properties value, since Raft and
+          // the metadata loader have not applied any persisted dynamic broker configuration yet.
+          // Building now would connect to the static value even if a dynamic override, including
+          // an empty one that takes the control plane out of service, is sitting in the metadata
+          // log. startInklessControlPlane() runs the actual build, once the caller has confirmed
+          // the initial metadata image was applied to liveConfig.
         }
 
         val _raftManager = new KafkaRaftManager[ApiMessageAndVersion](
