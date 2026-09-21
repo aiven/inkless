@@ -579,6 +579,35 @@ class DynamicBrokerConfigTest {
     assertEquals("User:admin", authorizer.superUsers)
   }
 
+  @Test
+  def testCombinedControllerDoesNotRegisterInklessControlPlaneGateTwice(): Unit = {
+    val props = createCombinedControllerConfig(0, 9092)
+    val oldConfig = KafkaConfig.fromProps(props)
+    oldConfig.dynamicConfig.initialize(None)
+
+    val controllerServer: ControllerServer = mock(classOf[kafka.server.ControllerServer])
+    when(controllerServer.config).thenReturn(oldConfig)
+    when(controllerServer.kafkaYammerMetrics).thenReturn(KafkaYammerMetrics.INSTANCE)
+    val metrics: Metrics = mock(classOf[Metrics])
+    when(controllerServer.metrics).thenReturn(metrics)
+    val quotaManagers: QuotaFactory.QuotaManagers = mock(classOf[QuotaFactory.QuotaManagers])
+    when(quotaManagers.clientQuotaCallbackPlugin).thenReturn(Optional.empty())
+    when(controllerServer.quotaManagers).thenReturn(quotaManagers)
+    val socketServer: SocketServer = mock(classOf[SocketServer])
+    when(socketServer.reconfigurableConfigs).thenReturn(JSocketServer.RECONFIGURABLE_CONFIGS)
+    when(controllerServer.socketServer).thenReturn(socketServer)
+    val sharedServer: SharedServer = mock(classOf[SharedServer])
+    when(controllerServer.sharedServer).thenReturn(sharedServer)
+    when(controllerServer.authorizerPlugin).thenReturn(None)
+
+    controllerServer.config.dynamicConfig.addReconfigurables(controllerServer)
+
+    // The broker side registers the shared gate through `ReplicaManager`. Registering it again
+    // here would let the controller's callback invalidate the gate from a stale config, racing
+    // the broker's own callback.
+    verify(sharedServer, never()).inklessControlPlaneGate
+  }
+
   private def createIsolatedControllerConfig(
     nodeId: Int,
     port: Int
@@ -626,6 +655,34 @@ class DynamicBrokerConfigTest {
     props.put("super.users", "User:admin")
     controllerServer.config.dynamicConfig.updateBrokerConfig(0, props)
     assertEquals("User:admin", authorizer.superUsers)
+  }
+
+  @Test
+  def testIsolatedControllerRegistersInklessControlPlaneGate(): Unit = {
+    val props = createIsolatedControllerConfig(0, port = 9092)
+    val oldConfig = KafkaConfig.fromProps(props)
+    oldConfig.dynamicConfig.initialize(None)
+
+    val controllerServer: ControllerServer = mock(classOf[kafka.server.ControllerServer])
+    when(controllerServer.config).thenReturn(oldConfig)
+    when(controllerServer.kafkaYammerMetrics).thenReturn(KafkaYammerMetrics.INSTANCE)
+    val metrics: Metrics = mock(classOf[Metrics])
+    when(controllerServer.metrics).thenReturn(metrics)
+    val quotaManagers: QuotaFactory.QuotaManagers = mock(classOf[QuotaFactory.QuotaManagers])
+    when(quotaManagers.clientQuotaCallbackPlugin).thenReturn(Optional.empty())
+    when(controllerServer.quotaManagers).thenReturn(quotaManagers)
+    val socketServer: SocketServer = mock(classOf[SocketServer])
+    when(socketServer.reconfigurableConfigs).thenReturn(JSocketServer.RECONFIGURABLE_CONFIGS)
+    when(controllerServer.socketServer).thenReturn(socketServer)
+    val sharedServer: SharedServer = mock(classOf[SharedServer])
+    when(sharedServer.inklessControlPlaneGate).thenReturn(None)
+    when(controllerServer.sharedServer).thenReturn(sharedServer)
+    when(controllerServer.authorizerPlugin).thenReturn(None)
+
+    controllerServer.config.dynamicConfig.addReconfigurables(controllerServer)
+
+    // An isolated controller has no broker side to register the gate, so the controller must.
+    verify(sharedServer).inklessControlPlaneGate
   }
 
   @Test

@@ -231,8 +231,14 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     addBrokerReconfigurable(new ControllerDynamicThreadPool(controller))
     // TODO: addBrokerReconfigurable(new DynamicListenerConfig(controller))
     addBrokerReconfigurable(controller.socketServer)
-    controller.sharedServer.inklessControlPlaneGate.foreach { gate =>
-      addBrokerReconfigurable(new DynamicInklessControlPlaneConfig(gate))
+    if (!kafkaConfig.processRoles.contains(ProcessRole.BrokerRole)) {
+      // A combined broker/controller node shares one gate between `ReplicaManager` and
+      // `SharedServer`. Registering it again here would let the controller's reconfigure
+      // callback invalidate the gate from a metadata image the broker side hasn't caught up
+      // to, racing the broker's own callback with a stale config.
+      controller.sharedServer.inklessControlPlaneGate.foreach { gate =>
+        addBrokerReconfigurable(new DynamicInklessControlPlaneConfig(gate))
+      }
     }
   }
 
