@@ -47,13 +47,22 @@ public class ControlPlaneAvailability implements Closeable {
         UNAVAILABLE
     }
 
-    /** Why the gate is {@link State#UNAVAILABLE}. Meaningless in any other state. */
+    /**
+     * Why a gated call was rejected.
+     */
     public enum UnavailableReason {
         /**
          * No connection string is configured; the delegate factory raised a
          * {@link ControlPlaneNotConfiguredException}.
          */
-        NOT_CONFIGURED
+        NOT_CONFIGURED,
+        /**
+         * The state is {@link State#UNKNOWN}: no delegate has settled for the current generation
+         * yet, whether because the first build has not finished, a reconfiguration retired the
+         * previous delegate and is rebuilding, or the last attempt failed transiently and a retry
+         * is pending.
+         */
+        NOT_READY
     }
 
     private final AtomicReference<State> state = new AtomicReference<>(State.UNKNOWN);
@@ -103,9 +112,13 @@ public class ControlPlaneAvailability implements Closeable {
         }
     }
 
-    /** Records a call rejected without contacting the control plane, tagged by {@link #unavailableReason()}. */
+    /**
+     * Records a call rejected without contacting the control plane, tagged by
+     * {@link #unavailableReason()}, or {@link UnavailableReason#NOT_READY} while
+     * {@link State#UNKNOWN}, where there is no reason to report yet.
+     */
     public void recordGatedCall() {
-        metrics.recordGatedCall(unavailableReason);
+        metrics.recordGatedCall(unavailableReason == null ? UnavailableReason.NOT_READY : unavailableReason);
     }
 
     @Override

@@ -115,11 +115,8 @@ public class ControlPlaneAvailabilityMetrics implements Closeable {
         metricsGroup.newGauge(CONTROL_PLANE_AVAILABILITY, () -> value, availabilityTags);
     }
 
-    /** No-op if {@code reason} is {@code null}: nothing has been marked unavailable yet. */
     public void recordGatedCall(final ControlPlaneAvailability.UnavailableReason reason) {
-        if (reason != null) {
-            gatedCallRate.get(reason).increment();
-        }
+        gatedCallRate.get(reason).increment();
     }
 
     @Override

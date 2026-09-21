@@ -78,10 +78,13 @@ class ControlPlaneAvailabilityTest {
     }
 
     @Test
-    void recordGatedCallBeforeAnyFailureIsANoOp() {
+    void recordGatedCallBeforeAnyFailureDoesNotChangeState() {
         try (final ControlPlaneAvailability availability = new ControlPlaneAvailability()) {
             availability.recordGatedCall();
             assertEquals(ControlPlaneAvailability.State.UNKNOWN, availability.state());
+            // unavailableReason() stays null: NOT_READY is only how the gated call gets counted,
+            // it is never a value unavailableReason() reports while UNKNOWN.
+            assertNull(availability.unavailableReason());
         }
     }
 }

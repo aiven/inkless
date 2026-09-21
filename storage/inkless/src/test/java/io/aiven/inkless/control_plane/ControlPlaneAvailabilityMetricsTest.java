@@ -58,6 +58,14 @@ class ControlPlaneAvailabilityMetricsTest {
         return captor.getValue().get();
     }
 
+    @SuppressWarnings("unchecked")
+    private long gatedCallRateValue(final ControlPlaneAvailability.UnavailableReason reason) {
+        final ArgumentCaptor<Supplier<Long>> captor = ArgumentCaptor.forClass(Supplier.class);
+        verify(metricsGroup).newGauge(eq(ControlPlaneAvailabilityMetrics.CONTROL_PLANE_GATED_CALL_RATE),
+            captor.capture(), eq(Map.of(ControlPlaneAvailabilityMetrics.REASON_TAG, reason.name())));
+        return captor.getValue().get();
+    }
+
     @Test
     void registersTheInitialStateWithAnEmptyReason() {
         assertThat(registeredValue(ControlPlaneAvailability.State.UNKNOWN, "")).isEqualTo(0);
@@ -94,6 +102,18 @@ class ControlPlaneAvailabilityMetricsTest {
 
         assertThat(availability.tags()).containsExactly(
             ControlPlaneAvailabilityMetrics.STATE_TAG, ControlPlaneAvailabilityMetrics.REASON_TAG);
+    }
+
+    @Test
+    void recordGatedCallIncrementsOnlyTheGivenReasonsCounter() {
+        // NOT_READY is how a call gated while the state is UNKNOWN gets counted; a bare null
+        // reason is never passed in here (ControlPlaneAvailability resolves that before calling).
+        metrics.recordGatedCall(ControlPlaneAvailability.UnavailableReason.NOT_READY);
+        metrics.recordGatedCall(ControlPlaneAvailability.UnavailableReason.NOT_READY);
+        metrics.recordGatedCall(ControlPlaneAvailability.UnavailableReason.NOT_CONFIGURED);
+
+        assertThat(gatedCallRateValue(ControlPlaneAvailability.UnavailableReason.NOT_READY)).isEqualTo(2);
+        assertThat(gatedCallRateValue(ControlPlaneAvailability.UnavailableReason.NOT_CONFIGURED)).isEqualTo(1);
     }
 
     @Test
