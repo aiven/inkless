@@ -302,10 +302,18 @@ class ControlPlaneDelegateReconcilerTest {
 
     @Test
     void recoversOnceTheControlPlaneComesBack() {
-        factoryFailure.set(new IllegalStateException("connection refused"));
+        final IllegalStateException refused = new IllegalStateException("connection refused");
+        factoryFailure.set(refused);
         reconciler().start();
         awaitFactoryInvocations(1);
-        assertThrows(ControlPlaneUnavailableException.class, () -> reconciler.current());
+
+        // Waiting for the invocation count is not enough: the factory increments it before
+        // reading factoryFailure, so clearing that reference right after could race ahead of the
+        // read and make the "first" attempt succeed outright. Asserting the cause proves the
+        // reconciler actually settled on this failure before factoryFailure is cleared below.
+        final ControlPlaneUnavailableException first = assertThrows(ControlPlaneUnavailableException.class,
+            () -> reconciler.current());
+        assertSame(refused, first.getCause());
 
         factoryFailure.set(null);
         time.sleep(TimeUnit.SECONDS.toMillis(1));
@@ -313,6 +321,8 @@ class ControlPlaneDelegateReconcilerTest {
 
         awaitState(ControlPlaneAvailability.State.AVAILABLE);
         assertSame(delegate, reconciler.current());
+        assertEquals(2, factoryInvocations.get(),
+            "recovery must come from a genuine second attempt, not a first one that raced past the failure");
     }
 
     @Test
@@ -334,9 +344,14 @@ class ControlPlaneDelegateReconcilerTest {
         awaitState(ControlPlaneAvailability.State.AVAILABLE);
         assertSame(delegate, reconciler.current());
 
+        // Park the rebuild so the reconciler cannot race past UNKNOWN before the assertion below:
+        // without this, a fast reconciler thread can publish AVAILABLE again before this thread
+        // gets to read the state invalidate() just set.
+        factoryRelease.set(new CountDownLatch(1));
         reconciler.invalidate();
 
         assertEquals(ControlPlaneAvailability.State.UNKNOWN, reconciler.availability().state());
+        factoryRelease.get().countDown();
         awaitFactoryInvocations(2);
         awaitState(ControlPlaneAvailability.State.AVAILABLE);
         // Closing the retired delegate drains connection pools, so it happens on the reconciler
