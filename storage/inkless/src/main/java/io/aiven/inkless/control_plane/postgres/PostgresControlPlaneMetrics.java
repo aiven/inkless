@@ -166,34 +166,26 @@ public class PostgresControlPlaneMetrics implements Closeable {
         getCrossTierLogStartMetrics.record(duration);
     }
 
+    /**
+     * Does nothing: these metrics outlive any single {@code PostgresControlPlane} generation.
+     *
+     * <p>Their names are fixed, not scoped to a generation, so Yammer's registry hands a new
+     * generation back the previous one's already-registered gauge or histogram instead of one of
+     * its own. That aliasing is harmless while both generations are live: they share the same
+     * counters, which is the right behavior for a query-timing metric that should read
+     * continuously across a reconfiguration. It stops being harmless the moment a generation's
+     * {@code close()} removes the registration: whichever generation is newest loses its metrics
+     * with no error, because the name it was writing into no longer resolves to anything a reporter
+     * can see. Not removing them here is what keeps that from happening; they disappear only when
+     * the process does.
+     */
     @Override
     public void close() {
-        findBatchesMetrics.remove();
-        getLogsMetrics.remove();
-        commitFileMetrics.remove();
-        topicCreateMetrics.remove();
-        topicDeleteMetrics.remove();
-        purgeDeletedLogsMetrics.remove();
-        fileDeleteMetrics.remove();
-        listOffsetsMetrics.remove();
-        deleteRecordsMetrics.remove();
-        enforceRetentionMetrics.remove();
-        getFilesToDeleteMetrics.remove();
-        safeDeleteFileCheckMetrics.remove();
-        getLogInfoMetrics.remove();
-        initDisklessLogMetrics.remove();
-        repairDisklessLogMetrics.remove();
-        getProducerStateMetrics.remove();
-        pruneDisklessLogsMetrics.remove();
-        advanceCrossTierLogStartMetrics.remove();
-        getCrossTierLogStartMetrics.remove();
+        // Intentionally does not remove any metric. See the Javadoc above.
     }
 
     // Visible for testing.
     class QueryMetrics {
-        private final String queryTimeMetricName;
-        private final String queryRateMetricName;
-        private final String lastSuccessfulQueryAgeMsMetricName;
         private final Histogram queryTimeHistogram;
         private final LongAdder queryRate = new LongAdder();
         // -1 means no successful query has occurred since startup.
@@ -201,12 +193,9 @@ public class PostgresControlPlaneMetrics implements Closeable {
         final AtomicLong lastSuccessfulQueryTimeMs = new AtomicLong(-1);
 
         private QueryMetrics(final String name) {
-            this.queryTimeMetricName = name + "QueryTime";
-            this.queryRateMetricName = name + "QueryRate";
-            this.lastSuccessfulQueryAgeMsMetricName = name + "LastSuccessfulQueryAgeMs";
-            this.queryTimeHistogram = metricsGroup.newHistogram(queryTimeMetricName, true, Map.of());
-            metricsGroup.newGauge(queryRateMetricName, queryRate::intValue);
-            metricsGroup.newGauge(lastSuccessfulQueryAgeMsMetricName, () -> {
+            this.queryTimeHistogram = metricsGroup.newHistogram(name + "QueryTime", true, Map.of());
+            metricsGroup.newGauge(name + "QueryRate", queryRate::intValue);
+            metricsGroup.newGauge(name + "LastSuccessfulQueryAgeMs", () -> {
                 final long last = lastSuccessfulQueryTimeMs.get();
                 return last == -1 ? -1L : time.milliseconds() - last;
             });
@@ -216,12 +205,6 @@ public class PostgresControlPlaneMetrics implements Closeable {
             queryTimeHistogram.update(duration);
             queryRate.increment();
             lastSuccessfulQueryTimeMs.set(time.milliseconds());
-        }
-
-        private void remove() {
-            metricsGroup.removeMetric(this.queryTimeMetricName);
-            metricsGroup.removeMetric(this.queryRateMetricName);
-            metricsGroup.removeMetric(this.lastSuccessfulQueryAgeMsMetricName);
         }
     }
 }

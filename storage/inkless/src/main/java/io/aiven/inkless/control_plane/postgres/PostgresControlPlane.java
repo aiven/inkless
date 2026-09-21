@@ -84,6 +84,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     private HikariDataSource readDataSource;
     private HikariDataSource writeDataSource;
     private PostgresControlPlaneConfig controlPlaneConfig;
+    private volatile boolean closed;
 
     private DSLContext readJooqCtx;
     private DSLContext writeJooqCtx;
@@ -378,9 +379,22 @@ public class PostgresControlPlane extends AbstractControlPlane {
         }
     }
 
+    /**
+     * Closes whatever {@link #configure} managed to open before this is discarded, whether that is
+     * everything, nothing, because it failed before opening any pool, or something in between,
+     * because it failed partway through. Idempotent, so {@link ControlPlane#create} closing this on
+     * a {@code configure()} failure and the reconciler closing it again later, if it ever got that
+     * far, don't double-close the same pool.
+     */
     @Override
     public void close() throws IOException {
-        jobsDataSource.close();
+        if (closed) {
+            return;
+        }
+        closed = true;
+        if (jobsDataSource != null) {
+            jobsDataSource.close();
+        }
         if (writeDataSource != null) {
             writeDataSource.close();
         }
