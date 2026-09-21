@@ -40,7 +40,20 @@ class PostgresControlPlaneConfigureTest {
 
         final var e = assertThrows(ControlPlaneNotConfiguredException.class,
             () -> controlPlane.configure(Map.of("username", "username", "password", "password")));
-        assertEquals("Missing required configuration \"connection.string\" which has no default value.",
+        assertEquals("No diskless control plane is configured: connection.string is empty or missing",
+            e.getMessage());
+    }
+
+    @Test
+    void emptyConnectionStringIsReportedAsNotConfigured() {
+        final var controlPlane = new PostgresControlPlane(new MockTime());
+
+        final var e = assertThrows(ControlPlaneNotConfiguredException.class,
+            () -> controlPlane.configure(Map.of(
+                "connection.string", "",
+                "username", "username",
+                "password", "password")));
+        assertEquals("No diskless control plane is configured: connection.string is empty or missing",
             e.getMessage());
     }
 
@@ -54,7 +67,23 @@ class PostgresControlPlaneConfigureTest {
                 "username", "username",
                 "password", "password",
                 "read.connection.string", "")));
-        assertEquals("Invalid value  for configuration connection.string: String must be non-empty",
+        assertEquals("No diskless control plane is configured: read.connection.string is empty or missing",
+            e.getMessage());
+    }
+
+    @Test
+    void missingWriteConnectionStringIsReportedAsNotConfigured() {
+        final var controlPlane = new PostgresControlPlane(new MockTime());
+
+        // A write override with some other key present, but no connection string of its own, is
+        // just as unconfigured as an empty one.
+        final var e = assertThrows(ControlPlaneNotConfiguredException.class,
+            () -> controlPlane.configure(Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "password", "password",
+                "write.username", "write-username")));
+        assertEquals("No diskless control plane is configured: write.connection.string is empty or missing",
             e.getMessage());
     }
 
@@ -70,6 +99,23 @@ class PostgresControlPlaneConfigureTest {
                 "username", "username",
                 "password", "password",
                 "max.connections", "not-a-number")));
+        assertEquals(ConfigException.class, e.getClass());
+    }
+
+    @Test
+    void invalidConfigValueThatMentionsConnectionStringIsNotReportedAsNotConfigured() {
+        final var controlPlane = new PostgresControlPlane(new MockTime());
+
+        // The value, not the key, happens to contain the text "connection.string". A classifier
+        // that pattern-matches the resulting ConfigException's message would misread this as the
+        // connection string being unconfigured; it must not, since the connection string here is
+        // present and valid.
+        final ConfigException e = assertThrows(ConfigException.class,
+            () -> controlPlane.configure(Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "password", "password",
+                "max.connections", "connection.string")));
         assertEquals(ConfigException.class, e.getClass());
     }
 }

@@ -97,22 +97,16 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public void configure(final Map<String, ?> configs) {
-        try {
-            controlPlaneConfig = new PostgresControlPlaneConfig(configs);
-            LOGGER.info("Configuring PostgresControlPlane");
+        // Checked structurally, against the raw map, before constructing anything: matching a
+        // caught ConfigException's message risks classifying an unrelated error as "not
+        // configured" whenever some other value happens to contain the text "connection.string".
+        requireConnectionStringsConfigured(configs);
 
-            controlPlaneConfig.initializeReadWriteConfigs();
-            LOGGER.info("Initialized read/write configurations");
-        } catch (final ConfigException e) {
-            // The default, read, or write connection string is the only thing this map may
-            // legitimately lack: a dynamic reconfiguration empties it to take the control plane out
-            // of service. originalsWithPrefix strips the read./write. prefix before either
-            // sub-config is parsed, so all three surface under the same unprefixed key name.
-            if (e.getMessage() != null && e.getMessage().contains(PostgresConnectionConfig.CONNECTION_STRING_CONFIG)) {
-                throw new ControlPlaneNotConfiguredException(e.getMessage(), e);
-            }
-            throw e;
-        }
+        controlPlaneConfig = new PostgresControlPlaneConfig(configs);
+        LOGGER.info("Configuring PostgresControlPlane");
+
+        controlPlaneConfig.initializeReadWriteConfigs();
+        LOGGER.info("Initialized read/write configurations");
 
         Migrations.migrate(controlPlaneConfig);
         LOGGER.info("Database migrations completed");
@@ -144,6 +138,39 @@ public class PostgresControlPlane extends AbstractControlPlane {
         } else {
             LOGGER.info("No separate write configuration found, using jobs context for reads");
             readJooqCtx = jobsJooqCtx;
+        }
+    }
+
+    /**
+     * Requires the default connection string, and the read or write connection string if either
+     * override is present at all, to exist and be non-empty.
+     *
+     * <p>A dynamic reconfiguration may legitimately empty one of these three keys to take the
+     * control plane out of service; nothing else in this map may be missing or malformed without
+     * it being a genuine misconfiguration. Checking that structurally, against the raw keys and
+     * values, keeps this from being confused with an unrelated {@link ConfigException}, such as a
+     * bad numeric property whose value happens to contain the text "connection.string".
+     */
+    private static void requireConnectionStringsConfigured(final Map<String, ?> configs) {
+        requireConnectionString(configs, "");
+        if (hasAnyKeyWithPrefix(configs, PostgresControlPlaneConfig.READ_CONFIG_PREFIX)) {
+            requireConnectionString(configs, PostgresControlPlaneConfig.READ_CONFIG_PREFIX);
+        }
+        if (hasAnyKeyWithPrefix(configs, PostgresControlPlaneConfig.WRITE_CONFIG_PREFIX)) {
+            requireConnectionString(configs, PostgresControlPlaneConfig.WRITE_CONFIG_PREFIX);
+        }
+    }
+
+    private static boolean hasAnyKeyWithPrefix(final Map<String, ?> configs, final String prefix) {
+        return configs.keySet().stream().anyMatch(key -> key.startsWith(prefix));
+    }
+
+    private static void requireConnectionString(final Map<String, ?> configs, final String prefix) {
+        final String key = prefix + PostgresConnectionConfig.CONNECTION_STRING_CONFIG;
+        final Object value = configs.get(key);
+        if (value == null || value.toString().isEmpty()) {
+            throw new ControlPlaneNotConfiguredException(
+                "No diskless control plane is configured: " + key + " is empty or missing");
         }
     }
 
