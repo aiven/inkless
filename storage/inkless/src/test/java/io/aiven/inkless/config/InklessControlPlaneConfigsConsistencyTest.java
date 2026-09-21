@@ -38,6 +38,7 @@ class InklessControlPlaneConfigsConsistencyTest {
     void namesMatchInklessConfigComposition() {
         final String prefix = InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX;
 
+        assertThat(InklessControlPlaneConfigs.PREFIX).isEqualTo(prefix);
         assertThat(InklessControlPlaneConfigs.CONNECTION_STRING_CONFIG)
             .isEqualTo(prefix + PostgresConnectionConfig.CONNECTION_STRING_CONFIG);
         assertThat(InklessControlPlaneConfigs.READ_CONNECTION_STRING_CONFIG)

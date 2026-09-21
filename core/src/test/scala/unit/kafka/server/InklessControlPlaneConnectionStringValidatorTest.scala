@@ -99,4 +99,61 @@ class InklessControlPlaneConnectionStringValidatorTest {
     config.put("some.other.config", "value")
     validator.validate(new ConfigResource(BROKER, "1"), config, emptyMap())
   }
+
+  @Test
+  def testInklessControlPlaneConnectionStringRejectsSslPassword(): Unit = {
+    val config = new util.TreeMap[String, String]()
+    config.put("inkless.control.plane.connection.string", "jdbc:postgresql://host/db?sslpassword=secret")
+    assertEquals("inkless.control.plane.connection.string must not embed credentials in the " +
+      "connection string; configure username/password separately",
+      assertThrows(classOf[InvalidConfigurationException], () => validator.validate(
+        new ConfigResource(BROKER, ""), config, emptyMap())).getMessage)
+  }
+
+  private def assertDirectPropertyRejected(key: String): Unit = {
+    val config = new util.TreeMap[String, String]()
+    config.put(key, "secret")
+    assertEquals(s"$key cannot be set dynamically; only the Inkless control plane connection " +
+      "strings may be changed at runtime",
+      assertThrows(classOf[InvalidConfigurationException], () => validator.validate(
+        new ConfigResource(BROKER, ""), config, emptyMap())).getMessage)
+  }
+
+  @Test
+  def testInklessControlPlanePasswordCannotBeSetDynamically(): Unit =
+    assertDirectPropertyRejected("inkless.control.plane.password")
+
+  @Test
+  def testInklessControlPlaneUsernameCannotBeSetDynamically(): Unit =
+    assertDirectPropertyRejected("inkless.control.plane.username")
+
+  @Test
+  def testInklessControlPlaneReadPasswordCannotBeSetDynamically(): Unit =
+    assertDirectPropertyRejected("inkless.control.plane.read.password")
+
+  @Test
+  def testInklessControlPlaneReadUsernameCannotBeSetDynamically(): Unit =
+    assertDirectPropertyRejected("inkless.control.plane.read.username")
+
+  @Test
+  def testInklessControlPlaneWritePasswordCannotBeSetDynamically(): Unit =
+    assertDirectPropertyRejected("inkless.control.plane.write.password")
+
+  @Test
+  def testInklessControlPlaneWriteUsernameCannotBeSetDynamically(): Unit =
+    assertDirectPropertyRejected("inkless.control.plane.write.username")
+
+  @Test
+  def testInklessControlPlaneUnknownNestedPropertyCannotBeSetDynamically(): Unit =
+    assertDirectPropertyRejected("inkless.control.plane.max.connections")
+
+  @Test
+  def testInklessControlPlanePasswordCannotBeSetDynamicallyEvenPerBroker(): Unit = {
+    val config = new util.TreeMap[String, String]()
+    config.put("inkless.control.plane.password", "secret")
+    assertEquals("inkless.control.plane.password cannot be set dynamically; only the Inkless " +
+      "control plane connection strings may be changed at runtime",
+      assertThrows(classOf[InvalidConfigurationException], () => validator.validate(
+        new ConfigResource(BROKER, "1"), config, emptyMap())).getMessage)
+  }
 }

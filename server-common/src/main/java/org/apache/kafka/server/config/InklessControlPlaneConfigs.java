@@ -29,7 +29,7 @@ import java.util.Set;
  * property names without a circular module dependency.
  */
 public final class InklessControlPlaneConfigs {
-    private static final String PREFIX = "inkless.control.plane.";
+    public static final String PREFIX = "inkless.control.plane.";
 
     public static final String CONNECTION_STRING_CONFIG = PREFIX + "connection.string";
     public static final String READ_CONNECTION_STRING_CONFIG = PREFIX + "read.connection.string";

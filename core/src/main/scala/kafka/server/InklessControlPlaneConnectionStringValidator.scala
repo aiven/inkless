@@ -17,11 +17,13 @@
 package kafka.server
 
 import java.util
+import java.util.Locale
 import org.apache.kafka.common.errors.InvalidConfigurationException
+import org.apache.kafka.server.config.{InklessControlPlaneConfigs => JInklessControlPlaneConfigs}
 
 /**
- * Rejects an Inkless control plane connection string that embeds credentials or that targets a
- * specific broker, before the value ever reaches the metadata log.
+ * Guards every dynamic `inkless.control.plane.*` broker property, before the value ever reaches
+ * the metadata log.
  *
  * `ControllerConfigurationValidator` calls this from the `AlterConfigs`/`IncrementalAlterConfigs`
  * request path, before the controller appends the corresponding `ConfigRecord`. That is the only
@@ -29,22 +31,53 @@ import org.apache.kafka.common.errors.InvalidConfigurationException
  * `BrokerReconfigurable` for these same keys, only sees the config after it has already been
  * committed and replicated.
  *
- * These keys must stay on the default broker resource. A per-broker override would let that one
- * broker point at a different control plane database than the rest of the cluster, so brokers
+ * Kafka's outer config schema has no idea these are Postgres connection settings: they are
+ * undeclared custom broker properties, so anything under the `inkless.control.plane.` prefix
+ * passes the generic dynamic-config checks unchecked. Without an allowlist here, a request could
+ * set `inkless.control.plane.password` (or `.read.password`, `.write.password`) directly, and
+ * that value would land in a plaintext `ConfigRecord`, exactly what rejecting embedded
+ * credentials in the connection string is meant to prevent.
+ *
+ * These keys must also stay on the default broker resource. A per-broker override would let that
+ * one broker point at a different control plane database than the rest of the cluster, so brokers
  * could assign conflicting offsets or see different topic metadata and retention state.
  */
 object InklessControlPlaneConnectionStringValidator {
-  // pgjdbc accepts credentials embedded as a `user=`/`password=` query parameter. That is the only
-  // way a connection string can carry them, so this is what has to stay out of the metadata log.
-  private val EmbeddedCredentialsPattern = java.util.regex.Pattern.compile("(?i)[?&](user|password)=")
+  // pgjdbc reads the username and password from the URL as `user`/`password` query parameters,
+  // and reads the private key's password, when the key itself is encrypted, as `sslpassword`.
+  // Those are the only ways a connection string can carry a secret, so they are what has to stay
+  // out of the metadata log.
+  private val SensitiveConnectionParams: Set[String] = Set("user", "password", "sslpassword")
 
-  private def embedsCredentials(connectionString: String): Boolean =
-    connectionString != null && EmbeddedCredentialsPattern.matcher(connectionString).find()
+  private def embedsCredentials(connectionString: String): Boolean = {
+    if (connectionString == null) {
+      return false
+    }
+    val queryStart = connectionString.indexOf('?')
+    if (queryStart < 0) {
+      return false
+    }
+    connectionString.substring(queryStart + 1).split('&').exists { param =>
+      val name = param.indexOf('=') match {
+        case -1 => param
+        case eq => param.substring(0, eq)
+      }
+      SensitiveConnectionParams.contains(name.toLowerCase(Locale.ROOT))
+    }
+  }
 
   def validate(resourceName: String, newConfigs: util.Map[String, String]): Unit = {
-    DynamicInklessControlPlaneConfig.ReconfigurableConfigs.forEach { key =>
-      val value = newConfigs.get(key)
-      if (value != null) {
+    newConfigs.forEach { (key, value) =>
+      if (key.startsWith(JInklessControlPlaneConfigs.PREFIX) && value != null) {
+        // Only the three connection strings may be set dynamically. Every other nested Postgres
+        // property, most importantly the direct username/password fields, must be configured
+        // statically so it goes through the broker's own startup-time handling instead of a
+        // plaintext ConfigRecord.
+        if (!JInklessControlPlaneConfigs.RECONFIGURABLE_CONFIGS.contains(key)) {
+          throw new InvalidConfigurationException(
+            s"$key cannot be set dynamically; only the Inkless control plane connection strings " +
+              "may be changed at runtime")
+        }
         // A per-broker override lets one broker point at a different control plane database than
         // the rest of the cluster, splitting offset assignment and topic metadata. Only the default
         // resource may set these keys.
