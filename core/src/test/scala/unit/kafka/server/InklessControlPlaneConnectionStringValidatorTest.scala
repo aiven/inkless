@@ -62,4 +62,41 @@ class InklessControlPlaneConnectionStringValidatorTest {
       assertThrows(classOf[InvalidConfigurationException], () => validator.validate(
         new ConfigResource(BROKER, ""), config, emptyMap())).getMessage)
   }
+
+  @Test
+  def testInklessControlPlaneConnectionStringRejectsPerBrokerOverride(): Unit = {
+    val config = new util.TreeMap[String, String]()
+    config.put("inkless.control.plane.connection.string", "jdbc:postgresql://host/db")
+    assertEquals("inkless.control.plane.connection.string can only be set on the default broker " +
+      "resource, not on broker 1",
+      assertThrows(classOf[InvalidConfigurationException], () => validator.validate(
+        new ConfigResource(BROKER, "1"), config, emptyMap())).getMessage)
+  }
+
+  @Test
+  def testInklessControlPlaneReadConnectionStringRejectsPerBrokerOverride(): Unit = {
+    val config = new util.TreeMap[String, String]()
+    config.put("inkless.control.plane.read.connection.string", "jdbc:postgresql://host/db")
+    assertEquals("inkless.control.plane.read.connection.string can only be set on the default " +
+      "broker resource, not on broker 1",
+      assertThrows(classOf[InvalidConfigurationException], () => validator.validate(
+        new ConfigResource(BROKER, "1"), config, emptyMap())).getMessage)
+  }
+
+  @Test
+  def testInklessControlPlaneWriteConnectionStringRejectsPerBrokerOverride(): Unit = {
+    val config = new util.TreeMap[String, String]()
+    config.put("inkless.control.plane.write.connection.string", "jdbc:postgresql://host/db")
+    assertEquals("inkless.control.plane.write.connection.string can only be set on the default " +
+      "broker resource, not on broker 1",
+      assertThrows(classOf[InvalidConfigurationException], () => validator.validate(
+        new ConfigResource(BROKER, "1"), config, emptyMap())).getMessage)
+  }
+
+  @Test
+  def testUnrelatedPerBrokerConfigIsAllowed(): Unit = {
+    val config = new util.TreeMap[String, String]()
+    config.put("some.other.config", "value")
+    validator.validate(new ConfigResource(BROKER, "1"), config, emptyMap())
+  }
 }

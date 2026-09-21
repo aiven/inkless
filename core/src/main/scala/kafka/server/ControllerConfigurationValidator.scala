@@ -133,7 +133,7 @@ class ControllerConfigurationValidator(kafkaConfig: KafkaConfig) extends Configu
           kafkaConfig.disklessRemoteStorageConsolidationEnabled)
       case BROKER =>
         validateBrokerName(resource.name())
-        InklessControlPlaneConnectionStringValidator.validate(newConfigs)
+        InklessControlPlaneConnectionStringValidator.validate(resource.name(), newConfigs)
       case CLIENT_METRICS =>
         val filteredConfigs = filterAndValidateNullConfigs(newConfigs, "client metrics")
         ClientMetricsConfigs.validate(resource.name(), filteredConfigs)
