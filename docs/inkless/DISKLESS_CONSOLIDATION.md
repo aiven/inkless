@@ -250,7 +250,7 @@ flowchart TD
 
 A `Failed` partition stays online and remains readable and writable. Consolidation doesn't run, so the local log doesn't grow unbounded into an untiered diskless log. `FailedPartitionsCount` surfaces this per-partition state. If the failure is an invariant violation, set `remote.storage.enable=true`. The controller co-commits a leader-epoch bump so reconciliation runs again.
 
-The controller-side `DisklessWithoutRemoteStorageCount` separately inventories every diskless topic where `remote.storage.enable` is `false` or unset, including born-diskless topics that never enter the `Failed` state. Those topics do not consolidate until `remote.storage.enable=true` is set, with consolidation on.
+The controller-side `DisklessWithoutRemoteStorageCount` separately inventories every diskless topic where `remote.storage.enable` is `false` or unset, including born-diskless topics that never enter the `Failed` state. Those topics don't consolidate until an operator sets `remote.storage.enable=true` while consolidation is on.
 
 ### Diskless leader epoch for truncation
 
