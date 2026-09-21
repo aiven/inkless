@@ -301,6 +301,38 @@ class ControlPlaneDelegateReconcilerTest {
     }
 
     @Test
+    void concurrentCallerDuringAnInFlightAttemptDoesNotBypassTheBackoff() throws Exception {
+        final IllegalStateException refused = new IllegalStateException("connection refused");
+        factoryFailure.set(refused);
+        factoryRelease.set(new CountDownLatch(1));
+        reconciler().start();
+        assertTrue(factoryEntered.get().await(AWAIT_SECONDS, TimeUnit.SECONDS), "the build never started");
+
+        // actual still carries the initial generation (-1), so this queues a second runReconcile()
+        // pass behind the in-flight one, on the same single-threaded executor, before backOff()
+        // has had any chance to set nextAttemptAtMs for the failure the in-flight attempt is
+        // about to record.
+        assertThrows(ControlPlaneUnavailableException.class, () -> reconciler.current());
+
+        // Reset before releasing, so this latch can only fire if a second attempt starts.
+        factoryEntered.set(new CountDownLatch(1));
+        factoryRelease.getAndSet(null).countDown();
+
+        // The queued pass must not re-dial immediately once the in-flight attempt fails: it has
+        // to respect the same backoff deadline, even though it was queued before that deadline
+        // existed.
+        assertFalse(factoryEntered.get().await(200, TimeUnit.MILLISECONDS),
+            "a queued pass must not re-dial before the backoff elapses");
+        assertEquals(1, factoryInvocations.get());
+
+        // Past the backoff, the next caller still gets a retry.
+        time.sleep(TimeUnit.SECONDS.toMillis(1));
+        assertThrows(ControlPlaneUnavailableException.class, () -> reconciler.current());
+        assertTrue(factoryEntered.get().await(AWAIT_SECONDS, TimeUnit.SECONDS), "the retry never happened");
+        awaitFactoryInvocations(2);
+    }
+
+    @Test
     void recoversOnceTheControlPlaneComesBack() {
         final IllegalStateException refused = new IllegalStateException("connection refused");
         factoryFailure.set(refused);
@@ -328,12 +360,17 @@ class ControlPlaneDelegateReconcilerTest {
     @Test
     void recoversOnItsOwnWithoutAnyCallerReachingCurrent() {
         // Produce now fails fast on UNKNOWN instead of calling into the control plane, so nothing
-        // here ever calls current(). The reconciler still has to find its own way back.
+        // here ever calls current(). The reconciler still has to find its own way back, through
+        // the timer backOff() schedules for itself.
         factoryFailure.set(new IllegalStateException("connection refused"));
         reconciler().start();
         awaitFactoryInvocations(1);
 
         factoryFailure.set(null);
+        // The scheduled retry fires after a real delay, unrelated to this MockTime; advance
+        // MockTime past the backoff deadline too, or needsWork() would keep declining the retry
+        // that timer triggers, the same way a caller's current() call would have to wait for it.
+        time.sleep(TimeUnit.SECONDS.toMillis(1));
         awaitState(ControlPlaneAvailability.State.AVAILABLE);
         assertSame(delegate, reconciler.current());
     }

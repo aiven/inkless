@@ -275,8 +275,14 @@ class ControlPlaneDelegateReconciler implements Closeable {
         if (current.generation() != want) {
             return true;
         }
-        // Settled on this generation, but the last attempt failed transiently, so a retry is due.
-        return current.delegate() == null && current.state() == ControlPlaneAvailability.State.UNKNOWN;
+        // Settled on this generation, but the last attempt failed transiently, so a retry is due
+        // only once the backoff has elapsed. Without the deadline check, a caller's current()
+        // call can queue this same pass while the previous attempt is still in flight, before
+        // backOff() has had a chance to set nextAttemptAtMs for the failure that attempt is about
+        // to record; that queued pass would otherwise re-dial immediately after the in-flight one
+        // fails, once per such caller, instead of once per backoff interval.
+        return current.delegate() == null && current.state() == ControlPlaneAvailability.State.UNKNOWN
+            && time.milliseconds() >= nextAttemptAtMs;
     }
 
     /** Returns true if this generation is now settled, false if it failed transiently. */
