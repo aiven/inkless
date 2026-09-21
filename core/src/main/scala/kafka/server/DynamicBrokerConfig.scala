@@ -21,7 +21,6 @@ import java.util
 import java.util.{Collections, Properties}
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.locks.ReentrantReadWriteLock
-import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.control_plane.{AvailabilityGatedControlPlane, ControlPlaneAvailability}
 import io.aiven.inkless.control_plane.postgres.{PostgresConnectionConfig, PostgresControlPlaneConfig}
 import kafka.log.LogManager
@@ -44,7 +43,7 @@ import org.apache.kafka.network.SocketServer
 import org.apache.kafka.raft.KafkaRaftClient
 import org.apache.kafka.server.{DynamicThreadPool, ProcessRole}
 import org.apache.kafka.server.common.{ApiMessageAndVersion, DirectoryEventHandler}
-import org.apache.kafka.server.config.{DynamicConfig, DynamicProducerStateManagerConfig, ServerConfigs, ServerLogConfigs, DynamicBrokerConfig => JDynamicBrokerConfig}
+import org.apache.kafka.server.config.{DynamicConfig, DynamicProducerStateManagerConfig, InklessControlPlaneConfigs, ServerConfigs, ServerLogConfigs, DynamicBrokerConfig => JDynamicBrokerConfig}
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
 import org.apache.kafka.server.metrics.{ClientTelemetryExporterPlugin, MetricConfigs}
 import org.apache.kafka.server.telemetry.{ClientTelemetry, ClientTelemetryExporterProvider}
@@ -656,8 +655,6 @@ class DynamicInklessLogConfig(inklessMetadataView: InklessMetadataView) extends 
 }
 
 object DynamicInklessControlPlaneConfig {
-  private val ConnectionStringPrefix = InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX
-
   // Unprefixed suffixes, matching the keys InklessConfig#controlPlaneConfig returns.
   private val ConnectionStringKeySuffixes: util.Set[String] = util.Set.of(
     PostgresConnectionConfig.CONNECTION_STRING_CONFIG,
@@ -672,9 +669,14 @@ object DynamicInklessControlPlaneConfig {
    * rejects a value that embeds credentials before it ever reaches the metadata log; this class
    * only sees the config after it has already been committed and replicated, too late to stop
    * a leak.
+   *
+   * Sourced from `InklessControlPlaneConfigs.RECONFIGURABLE_CONFIGS` rather than composed from
+   * `InklessConfig`'s prefixes: `JDynamicBrokerConfig.ALL_DYNAMIC_CONFIGS` needs the exact same
+   * three names to mark `DescribeConfigs` results as writable and to replay them from a metadata
+   * snapshot on restart, and `:server` cannot depend on `:storage:inkless` (where `InklessConfig`
+   * lives) to compute them independently.
    */
-  val ReconfigurableConfigs: util.Set[String] =
-    ConnectionStringKeySuffixes.asScala.map(ConnectionStringPrefix + _).asJava
+  val ReconfigurableConfigs: util.Set[String] = InklessControlPlaneConfigs.RECONFIGURABLE_CONFIGS
 }
 
 class DynamicInklessControlPlaneConfig(gate: AvailabilityGatedControlPlane) extends BrokerReconfigurable with Logging {
