@@ -116,7 +116,11 @@ class ControlPlaneDelegateReconciler implements Closeable {
     /** Opens when the first build attempt finishes, so the owner can hold off serving requests. */
     private final CountDownLatch firstBuild = new CountDownLatch(1);
 
-    /** Guards publishing a delegate against {@link #close()} taking over teardown. Never on the hot path. */
+    /**
+     * Guards publishing a delegate and retiring a generation against each other and against
+     * {@link #close()} taking over teardown, so a generation change and the availability mark it
+     * carries land as one atomic step. Never on the hot path.
+     */
     private final Object publishLock = new Object();
     private volatile boolean closed = false;
 
@@ -204,8 +208,7 @@ class ControlPlaneDelegateReconciler implements Closeable {
      * the reconciler closes the retired delegate on its own thread.
      */
     void invalidate() {
-        availability.markUnknown();
-        retire();
+        retire(() -> availability.markUnknown());
     }
 
     /**
@@ -218,12 +221,27 @@ class ControlPlaneDelegateReconciler implements Closeable {
      * I/O: the reconciler closes the retired delegate on its own thread.
      */
     void takeOutOfService(final ControlPlaneAvailability.UnavailableReason reason) {
-        availability.markUnavailable(reason);
-        retire();
+        retire(() -> availability.markUnavailable(reason));
     }
 
-    private void retire() {
-        desiredGeneration.incrementAndGet();
+    /**
+     * Marks the availability, then bumps {@link #desiredGeneration} under {@link #publishLock}, so
+     * this can't interleave with {@link #publish}'s own check-and-act on the same generation and
+     * availability. Without that, a {@link #publish} already past its generation check can still
+     * overwrite the mark this makes with a verdict about the generation being retired.
+     *
+     * <p>Skips the mark entirely once {@link #close()} has run: {@link #close()} closes the
+     * availability outside this lock, once it is sure nothing still holding the lock can reach it,
+     * and a mark landing after that would resurrect metrics {@link #close()} just removed.
+     */
+    private void retire(final Runnable markAvailability) {
+        synchronized (publishLock) {
+            if (closed) {
+                return;
+            }
+            markAvailability.run();
+            desiredGeneration.incrementAndGet();
+        }
         // An operator changing the configuration is a reason to try again now, whatever the
         // previous attempt's backoff had decided.
         resetBackoff();
@@ -353,15 +371,15 @@ class ControlPlaneDelegateReconciler implements Closeable {
                 return false;
             }
             actual = next;
-        }
-        // A reconfiguration may have landed while this generation was being built, and it has
-        // already set the availability for where it is heading. Don't overwrite that with an
-        // answer about a generation nobody wants any more.
-        if (desiredGeneration.get() == next.generation()) {
-            switch (next.state()) {
-                case AVAILABLE -> availability.markAvailable();
-                case UNAVAILABLE -> availability.markUnavailable(reason);
-                case UNKNOWN -> availability.markUnknown();
+            // A reconfiguration may have landed while this generation was being built, and it has
+            // already set the availability for where it is heading. Don't overwrite that with an
+            // answer about a generation nobody wants any more.
+            if (desiredGeneration.get() == next.generation()) {
+                switch (next.state()) {
+                    case AVAILABLE -> availability.markAvailable();
+                    case UNAVAILABLE -> availability.markUnavailable(reason);
+                    case UNKNOWN -> availability.markUnknown();
+                }
             }
         }
         return true;
