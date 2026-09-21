@@ -190,6 +190,7 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(0, env.metrics.disklessTopicCount());
             assertEquals(0, env.metrics.disklessPartitionCount());
             assertEquals(0, env.metrics.disklessOfflinePartitionCount());
+            assertEquals(0, env.metrics.disklessWithoutRemoteStorageCount());
         }
     }
 
@@ -212,14 +213,13 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(7, env.metrics.disklessPartitionCount());
             // 3 partitions from "quux" topic are offline (leader=-1)
             assertEquals(3, env.metrics.disklessOfflinePartitionCount());
-            // remote.storage.enable absent (never configured) — not counted; only explicit false triggers the metric
-            assertEquals(0, env.metrics.disklessWithoutRemoteStorageCount());
+            // All three topics have remote.storage.enable unset, so its effective value is false.
+            assertEquals(3, env.metrics.disklessWithoutRemoteStorageCount());
         }
     }
 
     @Test
-    public void testDisklessWithoutRemoteStorageCountsOnlyExplicitFalse() {
-        // Only diskless topics with remote.storage.enable explicitly stored as "false" are counted.
+    public void testDisklessWithoutRemoteStorageCountsFalseAndUnset() {
         try (TestEnv env = new TestEnv()) {
             // Build image with 3 diskless topics: remote.storage.enable=true, =false, and absent
             Map<ConfigResource, ConfigurationImage> configs = new HashMap<>();
@@ -242,7 +242,46 @@ public class ControllerMetadataMetricsPublisherTest {
             env.publisher.onMetadataUpdate(delta, image, fakeManifest(true));
 
             assertEquals(3, env.metrics.disklessTopicCount());
-            // Only "bar" (remote.storage.enable explicitly false) is counted
+            // "bar" has remote storage explicitly disabled, and "quux" inherits the false default.
+            assertEquals(2, env.metrics.disklessWithoutRemoteStorageCount());
+        }
+    }
+
+    @Test
+    public void testDisklessWithoutRemoteStorageTracksConfigDeltas() {
+        try (TestEnv env = new TestEnv()) {
+            MetadataDelta snapshotDelta = new MetadataDelta(MetadataImage.EMPTY);
+            ImageReWriter writer = new ImageReWriter(snapshotDelta);
+            IMAGE1_DISKLESS.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
+            env.publisher.onMetadataUpdate(snapshotDelta, IMAGE1_DISKLESS, fakeManifest(true));
+            assertEquals(3, env.metrics.disklessWithoutRemoteStorageCount());
+
+            MetadataDelta enableRemoteStorageDelta = new MetadataDelta(IMAGE1_DISKLESS);
+            enableRemoteStorageDelta.replay(new ConfigRecord()
+                .setResourceType(ConfigResource.Type.TOPIC.id())
+                .setResourceName("foo")
+                .setName(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+                .setValue("true"));
+            MetadataImage remoteStorageEnabledImage =
+                enableRemoteStorageDelta.apply(MetadataProvenance.EMPTY);
+            env.publisher.onMetadataUpdate(
+                enableRemoteStorageDelta,
+                remoteStorageEnabledImage,
+                fakeManifest(false));
+            assertEquals(2, env.metrics.disklessWithoutRemoteStorageCount());
+
+            MetadataDelta disableDisklessDelta = new MetadataDelta(remoteStorageEnabledImage);
+            disableDisklessDelta.replay(new ConfigRecord()
+                .setResourceType(ConfigResource.Type.TOPIC.id())
+                .setResourceName("bar")
+                .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+                .setValue("false"));
+            MetadataImage disklessDisabledImage =
+                disableDisklessDelta.apply(MetadataProvenance.EMPTY);
+            env.publisher.onMetadataUpdate(
+                disableDisklessDelta,
+                disklessDisabledImage,
+                fakeManifest(false));
             assertEquals(1, env.metrics.disklessWithoutRemoteStorageCount());
         }
     }
@@ -283,6 +322,7 @@ public class ControllerMetadataMetricsPublisherTest {
                 "Diskless partition count should equal global partition count");
             assertEquals(0, env.metrics.offlinePartitionCount());
             assertEquals(0, env.metrics.disklessOfflinePartitionCount());
+            assertEquals(1, env.metrics.disklessWithoutRemoteStorageCount());
         }
     }
 
@@ -304,6 +344,7 @@ public class ControllerMetadataMetricsPublisherTest {
             env.publisher.onMetadataUpdate(snapshotDelta, baseImage, fakeManifest(true));
             assertEquals(1, env.metrics.globalTopicCount());
             assertEquals(1, env.metrics.disklessTopicCount());
+            assertEquals(1, env.metrics.disklessWithoutRemoteStorageCount());
 
             // Now delete via delta
             MetadataDelta deleteDelta = new MetadataDelta(baseImage);
@@ -316,6 +357,7 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(0, env.metrics.disklessTopicCount());
             assertEquals(0, env.metrics.globalPartitionCount());
             assertEquals(0, env.metrics.disklessPartitionCount());
+            assertEquals(0, env.metrics.disklessWithoutRemoteStorageCount());
         }
     }
 
@@ -367,6 +409,7 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(2, env.metrics.disklessPartitionCount(),
                 "Both partitions (old + new) should be counted as diskless exactly once");
             assertEquals(0, env.metrics.offlinePartitionCount());
+            assertEquals(1, env.metrics.disklessWithoutRemoteStorageCount());
         }
     }
 }

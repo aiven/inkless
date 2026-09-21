@@ -336,17 +336,12 @@ public class ControllerMetadataMetricsTest {
     @SuppressWarnings("unchecked")
     @Test
     public void testDisklessWithoutRemoteStorageCountMetric() {
-        MetricsRegistry registry = new MetricsRegistry();
-        try (ControllerMetadataMetrics metrics = new ControllerMetadataMetrics(Optional.of(registry))) {
-            assertEquals(0, metrics.disklessWithoutRemoteStorageCount());
-            assertEquals(0, ((Gauge<Integer>) registry.allMetrics().
-                    get(metricName("KafkaController", "DisklessWithoutRemoteStorageCount"))).value());
-            metrics.setDisklessWithoutRemoteStorageCount(5);
-            assertEquals(5, metrics.disklessWithoutRemoteStorageCount());
-            assertEquals(5, ((Gauge<Integer>) registry.allMetrics().
-                    get(metricName("KafkaController", "DisklessWithoutRemoteStorageCount"))).value());
-        } finally {
-            registry.shutdown();
-        }
+        testIntGaugeMetric(
+            m -> m.disklessWithoutRemoteStorageCount(),
+            registry -> ((Gauge<Integer>) registry.allMetrics().
+                    get(metricName("KafkaController", "DisklessWithoutRemoteStorageCount"))).value(),
+            (m, v) -> m.setDisklessWithoutRemoteStorageCount(v),
+            (m, v) -> m.addToDisklessWithoutRemoteStorageCount(v)
+        );
     }
 }
