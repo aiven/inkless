@@ -327,6 +327,8 @@ public class InklessTopicTypeSwitcherClusterTest {
                                              final Map<String, Integer> expectedCounts) {
         final Map<String, Integer> consumedCounts = new HashMap<>();
         topics.forEach(topic -> consumedCounts.put(topic, 0));
+        final Map<TopicPartition, Integer> perPartitionCounts = new HashMap<>();
+        final Map<TopicPartition, Long> lastOffsetSeen = new HashMap<>();
         log.warn("[stage=consume-start] topics={}, expectedCounts={}", topics, expectedCounts);
 
         try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerConfigs)) {
@@ -337,11 +339,17 @@ public class InklessTopicTypeSwitcherClusterTest {
                 final ConsumerRecords<byte[], byte[]> records = consumer.poll(Duration.ofSeconds(1));
                 for (ConsumerRecord<byte[], byte[]> record : records) {
                     consumedCounts.compute(record.topic(), (k, v) -> v == null ? 1 : v + 1);
+                    final TopicPartition rtp = new TopicPartition(record.topic(), record.partition());
+                    perPartitionCounts.compute(rtp, (k, v) -> v == null ? 1 : v + 1);
+                    lastOffsetSeen.put(rtp, record.offset());
                 }
 
                 if (hasReachedExpected(consumedCounts, expectedCounts, topics)) {
                     break;
                 }
+            }
+            if (!hasReachedExpected(consumedCounts, expectedCounts, topics)) {
+                logConsumerDiagnostics(consumer, perPartitionCounts, lastOffsetSeen);
             }
         }
         log.warn("[stage=consume-end] consumedCounts={}", consumedCounts);
@@ -349,10 +357,97 @@ public class InklessTopicTypeSwitcherClusterTest {
         for (String topic : topics) {
             final int expected = expectedCounts.getOrDefault(topic, 0);
             final int actual = consumedCounts.getOrDefault(topic, 0);
-            if (expected > 0) {
-                assertTrue(actual >= expected,
-                    "Expected to consume at least " + expected + " record(s) from topic "
-                        + topic + " after producing to it, but consumed " + actual);
+            if (expected == 0) {
+                continue;
+            }
+            if (actual < expected) {
+                // A bare count says nothing about which partition stalled or why. Dump before the
+                // assertion so a CI-only failure carries its own diagnosis.
+                dumpPartitionState(topic);
+            }
+            assertTrue(actual >= expected,
+                "Expected to consume at least " + expected + " record(s) from topic "
+                    + topic + " after producing to it, but consumed " + actual);
+        }
+    }
+
+    /**
+     * Reports what the consumer itself saw, for a run that came up short.
+     *
+     * <p>Positions have to be read while the consumer is still open. A partition the consumer never
+     * positioned is missing from the assignment entirely, which distinguishes a partition that
+     * stalled before fetching from one that stalled part way through.
+     */
+    private void logConsumerDiagnostics(final Consumer<byte[], byte[]> consumer,
+                                        final Map<TopicPartition, Integer> perPartitionCounts,
+                                        final Map<TopicPartition, Long> lastOffsetSeen) {
+        final Map<TopicPartition, Long> positions = new HashMap<>();
+        for (final TopicPartition tp : consumer.assignment()) {
+            try {
+                positions.put(tp, consumer.position(tp, Duration.ofSeconds(5)));
+            } catch (Exception e) {
+                log.warn("[diag] position() failed for {}", tp, e);
+            }
+        }
+        log.warn("[diag] consumerPositions={}", positions);
+        log.warn("[diag] perPartitionCounts={}", perPartitionCounts);
+        log.warn("[diag] lastOffsetSeenPerPartition={}", lastOffsetSeen);
+    }
+
+    /**
+     * Reports per-broker log state and per-partition offset lookups for a topic that came up short.
+     *
+     * <p>A stalled partition shows up here as a replica whose high watermark trails the switch seal,
+     * or as an offset lookup that times out while the others answer.
+     */
+    private void dumpPartitionState(final String topic) {
+        // One call per partition and spec, so a hang on a single partition cannot mask the others.
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            for (int p = 0; p < NUM_PARTITIONS; p++) {
+                final TopicPartition tp = new TopicPartition(topic, p);
+                for (final Map.Entry<String, OffsetSpec> spec
+                    : Map.of("EARLIEST", OffsetSpec.earliest(), "LATEST", OffsetSpec.latest()).entrySet()) {
+                    try {
+                        final var res = admin.listOffsets(Map.of(tp, spec.getValue()))
+                            .all().get(10, TimeUnit.SECONDS);
+                        log.warn("[diag] listOffsets {} tp={} -> {}", spec.getKey(), tp, res);
+                    } catch (Exception e) {
+                        log.warn("[diag] listOffsets {} tp={} FAILED: {}", spec.getKey(), tp,
+                            e.getClass().getSimpleName() + ": " + e.getMessage());
+                    }
+                }
+            }
+            try {
+                log.warn("[diag] describeTopics={}",
+                    admin.describeTopics(List.of(topic)).allTopicNames().get(10, TimeUnit.SECONDS));
+            } catch (Exception e) {
+                log.warn("[diag] describeTopics FAILED: {}", e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+        } catch (Exception e) {
+            log.warn("[diag] admin setup failed", e);
+        }
+        for (int p = 0; p < NUM_PARTITIONS; p++) {
+            final TopicPartition tp = new TopicPartition(topic, p);
+            for (final int brokerId : cluster.brokers().keySet()) {
+                final var broker = cluster.brokers().get(brokerId);
+                final var rm = broker.replicaManager();
+                final long seal = rm.inklessMetadataView().getClassicToDisklessStartOffset(tp);
+                final boolean inIsr = rm.inklessMetadataView().isReplicaInIsr(tp, brokerId);
+                final var logOpt = broker.logManager().getLog(tp, false);
+                final var partitionOpt = rm.onlinePartition(tp);
+                final String leaderState = partitionOpt.isDefined()
+                    ? "isLeader=" + partitionOpt.get().isLeader()
+                    : "noPartition";
+                if (logOpt.isEmpty()) {
+                    log.warn("[diag] tp={} broker={} seal={} inIsr={} {} log=ABSENT",
+                        tp, brokerId, seal, inIsr, leaderState);
+                } else {
+                    final var l = logOpt.get();
+                    log.warn("[diag] tp={} broker={} seal={} inIsr={} {} "
+                            + "logStart={} localLogStart={} hw={} leo={}",
+                        tp, brokerId, seal, inIsr, leaderState,
+                        l.logStartOffset(), l.localLogStartOffset(), l.highWatermark(), l.logEndOffset());
+                }
             }
         }
     }
