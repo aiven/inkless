@@ -40,6 +40,8 @@ inkless-sync/**                                          @aiven/inkless
 tests/kafkatest/tests/inkless/**                         @aiven/inkless
 tests/kafkatest/services/inkless/**                      @aiven/inkless
 .github/workflows/inkless*.yml                           @aiven/inkless
+.vale.ini                                                @aiven/inkless  # vale prose-lint config
+.vale/**                                                 @aiven/inkless  # vale vocabulary; synced styles are gitignored
 Makefile                                                 @aiven/inkless  # inkless-specific targets
 INKLESS_OWNERSHIP                                        @aiven/inkless  # this manifest itself
 AGENTS.md                                                @aiven/inkless

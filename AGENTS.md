@@ -202,3 +202,10 @@ When you do write a comment or a Javadoc/Scaladoc sentence:
 - Boolean returns: `True if ...; false otherwise.`
 - Keep the first sentence able to stand alone; some generators take only that
   sentence as the summary.
+
+### Prose linting
+
+Vale checks the Style section mechanically on added prose in Markdown files and
+code comments on inkless-owned paths. Before you commit or report a task as
+complete, you SHOULD run `make vale` and fix what it reports. The `inkless-vale`
+skill under `.claude/skills/` packages this workflow for agents.
