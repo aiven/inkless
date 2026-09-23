@@ -46,7 +46,10 @@ import static org.apache.kafka.common.config.TopicConfig.RETENTION_BYTES_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.RETENTION_MS_CONFIG;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -80,7 +83,7 @@ class RetentionEnforcerTest {
         void fullDefault() throws Exception {
             when(retentionEnforcementScheduler.getReadyPartitions()).thenReturn(List.of(T0P0));
             when(metadataView.getTopicConfig(any())).thenReturn(new LogConfig(Map.of()));
-            try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0)) {
+            try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0, false)) {
                 enforcer.run();
 
                 verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
@@ -97,7 +100,7 @@ class RetentionEnforcerTest {
                 RETENTION_MS_CONFIG, "567"
             )));
 
-            try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0)) {
+            try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0, false)) {
                 enforcer.run();
 
                 verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
@@ -118,7 +121,7 @@ class RetentionEnforcerTest {
             topicConfig.put(RETENTION_MS_CONFIG, "567000");
             when(metadataView.getTopicConfig(any())).thenReturn(LogConfig.fromProps(defaultConfigs, topicConfig));
 
-            try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0)) {
+            try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0, false)) {
                 enforcer.run();
 
                 verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
@@ -146,13 +149,70 @@ class RetentionEnforcerTest {
         t2Config.put(CLEANUP_POLICY_CONFIG, "delete");
         when(metadataView.getTopicConfig(eq(TOPIC_2))).thenReturn(LogConfig.fromProps(defaultConfigs, t2Config));
 
-        try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0)) {
+        try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0, false)) {
             enforcer.run();
 
             verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
             assertThat(requestCaptor.getValue())
                 .map(EnforceRetentionRequest::topicId)
                 .containsExactly(TOPIC_ID_1, TOPIC_ID_2);
+        }
+    }
+
+    @Nested
+    class ConsolidatingTopics {
+        @Test
+        void mixedReadySetSendsOnlyNonConsolidatingPartitions() throws Exception {
+            when(retentionEnforcementScheduler.getReadyPartitions()).thenReturn(List.of(T0P0, T1P0, T2P0));
+            when(metadataView.isConsolidatingDisklessTopic(TOPIC_0)).thenReturn(true);
+            when(metadataView.isConsolidatingDisklessTopic(TOPIC_1)).thenReturn(false);
+            when(metadataView.isConsolidatingDisklessTopic(TOPIC_2)).thenReturn(true);
+            when(metadataView.getTopicConfig(TOPIC_1)).thenReturn(new LogConfig(Map.of(
+                RETENTION_BYTES_CONFIG, "123",
+                RETENTION_MS_CONFIG, "567"
+            )));
+
+            try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0, true)) {
+                enforcer.run();
+
+                verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
+                assertThat(requestCaptor.getValue())
+                    .map(EnforceRetentionRequest::topicId)
+                    .containsExactly(TOPIC_ID_1);
+                assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionBytes).containsExactly(123L);
+                assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionMs).containsExactly(567L);
+            }
+        }
+
+        @Test
+        void consolidationDisabledDoesNotSuppressRetention() throws Exception {
+            when(retentionEnforcementScheduler.getReadyPartitions()).thenReturn(List.of(T0P0, T1P0));
+            // Topic metadata says both are consolidating. The broker flag is off, so that must not matter.
+            lenient().when(metadataView.isConsolidatingDisklessTopic(any())).thenReturn(true);
+            when(metadataView.getTopicConfig(any())).thenReturn(new LogConfig(Map.of()));
+
+            try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0, false)) {
+                enforcer.run();
+
+                verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
+                assertThat(requestCaptor.getValue())
+                    .map(EnforceRetentionRequest::topicId)
+                    .containsExactly(TOPIC_ID_0, TOPIC_ID_1);
+            }
+        }
+
+        @Test
+        void everyReadyPartitionConsolidatingSendsNoRequest() throws Exception {
+            when(retentionEnforcementScheduler.getReadyPartitions()).thenReturn(List.of(T0P0, T1P0, T2P0));
+            when(metadataView.isConsolidatingDisklessTopic(any())).thenReturn(true);
+            // Present so a missing skip still builds a request instead of failing on a null config.
+            lenient().when(metadataView.getTopicConfig(any())).thenReturn(new LogConfig(Map.of()));
+
+            try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0, true)) {
+                enforcer.run();
+
+                verify(controlPlane, never()).enforceRetention(any(), anyInt());
+            }
         }
     }
 }

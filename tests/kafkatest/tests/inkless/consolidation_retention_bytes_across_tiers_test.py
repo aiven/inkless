@@ -30,21 +30,17 @@ class RetentionBytesReclaimsAcrossTiersTest(Test):
     remote tier and advance the topic's earliest readable offset.
 
     This is the size-based counterpart to ``consolidation_retention_across_tiers_test.py``
-    (which drives the reclaim with ``retention.ms``). The distinction matters
-    because the two limits are enforced by *different* code paths on a
-    born-consolidated topic:
+    (which drives the reclaim with ``retention.ms``). On a consolidating topic both
+    limits are whole-log retention, enforced by ``RemoteLogManager``:
 
-    - The Inkless retention enforcer only measures the diskless WAL batches in the
-      control plane (``logs.byte_size``). Once the WAL is pruned that size is tiny,
-      so ``retention.bytes`` compared against it never binds and never advances the
-      topic earliest -- which is why a naive ``retention.bytes`` test was previously
-      inconclusive.
-    - The whole-log ``retention.bytes`` for a tiered topic is enforced by the classic
-      ``RemoteLogManager``: it sums the not-yet-tiered local tail plus the remote
-      segments and, when that total exceeds the limit, deletes the oldest *remote*
-      segments and raises ``UnifiedLog.logStartOffset``. On a consolidating topic that
-      advance is published to the control plane by ``CrossTierLogStartReporter``
-      (``remote_log_start_offset``), so ``ListOffsets(EARLIEST)`` moves off-leader too.
+    - ``RetentionEnforcer`` does not run for a consolidating topic. It only measures
+      diskless WAL batches, and ``ConsolidatedDisklessLogPruner`` deletes those batches
+      once remote storage confirms them. Neither applies ``retention.bytes``.
+    - ``RemoteLogManager`` sums the not-yet-tiered local tail plus the remote segments
+      and, when that total exceeds the limit, deletes the oldest *remote* segments and
+      raises ``UnifiedLog.logStartOffset``. ``CrossTierLogStartReporter`` publishes that
+      advance (``remote_log_start_offset``), so ``ListOffsets(EARLIEST)`` moves
+      off-leader too.
 
     So the reclaim that this test exercises is genuinely cross-tier: after the
     born-consolidated topic has drained (WAL -> local -> remote) and the WAL is
@@ -103,14 +99,13 @@ class RetentionBytesReclaimsAcrossTiersTest(Test):
             controller_num_nodes_override=1,
             consolidation=True,
             server_prop_overrides=[
-                # Run the WAL pruner / file cleaner / remote-log task / retention
-                # sweep fast so the pipeline drains and the deleted remote segments
-                # are reclaimed within the test window (not the default minutes).
+                # Run the WAL pruner, file cleaner, local retention check, and
+                # remote-log retention task fast so the pipeline drains and the
+                # deleted remote segments are reclaimed within the test window.
                 ["inkless.consolidation.cleanup.interval.ms", "5000"],
                 ["inkless.file.cleaner.interval.ms", "5000"],
                 ["inkless.file.cleaner.retention.period.ms", "6000"],
                 ["inkless.consume.batch.coordinate.cache.ttl.ms", "2000"],
-                ["inkless.retention.enforcement.interval.ms", "5000"],
                 ["remote.log.manager.task.interval.ms", "5000"],
                 ["log.retention.check.interval.ms", "5000"],
             ],
