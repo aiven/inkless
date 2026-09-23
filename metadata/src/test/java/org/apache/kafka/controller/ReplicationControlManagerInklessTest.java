@@ -83,6 +83,7 @@ import java.util.Map.Entry;
 import java.util.Set;
 
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.SEGMENT_BYTES_CONFIG;
 import static org.apache.kafka.common.protocol.Errors.FENCED_LEADER_EPOCH;
@@ -2788,6 +2789,120 @@ public class ReplicationControlManagerInklessTest {
                 anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
             assertEquals(Errors.INVALID_CONFIG.code(), result.response().topics().find("foo").errorCode(),
                 "Diskless topic with remote.storage.enable=false should be rejected");
+        }
+
+        @Test
+        void testDefaultDisklessEnableRejectsRemoteLogCopyDisable() {
+            // log.diskless.enable is applied after LogConfig validation. A create that only
+            // sets remote.log.copy.disable=true must still be rejected, because validConfigRecords
+            // would persist diskless.enable=true and remote.storage.enable=true.
+            final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final ControllerResult<CreateTopicsResponseData> result = createTopicWithConfigs(ctx, "foo",
+                Map.of(REMOTE_LOG_COPY_DISABLE_CONFIG, "true"));
+            assertEquals(Errors.INVALID_CONFIG.code(), result.response().topics().find("foo").errorCode());
+            assertEquals(
+                "Consolidating diskless topics require `remote.log.copy.disable=false` because WAL pruning requires remote copies.",
+                result.response().topics().find("foo").errorMessage());
+            assertTrue(result.records().isEmpty());
+        }
+
+        @Test
+        void testExplicitDisklessRejectsRemoteLogCopyDisable() {
+            final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final ControllerResult<CreateTopicsResponseData> result = createTopicWithConfigs(ctx, "foo",
+                Map.of(
+                    DISKLESS_ENABLE_CONFIG, "true",
+                    REMOTE_LOG_COPY_DISABLE_CONFIG, "true"));
+            assertEquals(Errors.INVALID_CONFIG.code(), result.response().topics().find("foo").errorCode());
+            assertTrue(result.records().isEmpty());
+        }
+
+        @Test
+        void testConsolidationDisabledAllowsRemoteLogCopyDisable() {
+            // Without consolidation the topic stays pure diskless, and WAL retention deletes its batches.
+            final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(false)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final ControllerResult<CreateTopicsResponseData> result = createTopicWithConfigs(ctx, "foo",
+                Map.of(REMOTE_LOG_COPY_DISABLE_CONFIG, "true"));
+            assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+            List<ConfigRecord> configRecords = configRecords(result);
+            assertTrue(configRecords.stream()
+                .anyMatch(r -> r.name().equals(DISKLESS_ENABLE_CONFIG) && r.value().equals("true")));
+            assertTrue(configRecords.stream()
+                .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG)));
+            assertTrue(configRecords.stream()
+                .anyMatch(r -> r.name().equals(REMOTE_LOG_COPY_DISABLE_CONFIG) && r.value().equals("true")));
+        }
+
+        @Test
+        void testSystemTopicAllowsRemoteLogCopyDisableWhenDefaultDiskless() {
+            // System topics are never diskless, so the broker default must not reject copy disable.
+            final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final ControllerResult<CreateTopicsResponseData> result = createTopicWithConfigs(ctx,
+                Topic.GROUP_METADATA_TOPIC_NAME, Map.of(REMOTE_LOG_COPY_DISABLE_CONFIG, "true"));
+            assertEquals(NONE.code(), result.response().topics().find(Topic.GROUP_METADATA_TOPIC_NAME).errorCode());
+            List<ConfigRecord> configRecords = configRecords(result);
+            assertTrue(configRecords.stream()
+                .anyMatch(r -> r.name().equals(DISKLESS_ENABLE_CONFIG) && r.value().equals("false")));
+            assertTrue(configRecords.stream()
+                .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG)));
+        }
+
+        private ControllerResult<CreateTopicsResponseData> createTopicWithConfigs(
+            ReplicationControlTestContext ctx,
+            String topicName,
+            Map<String, String> topicConfigs
+        ) {
+            final CreateTopicsRequestData request = new CreateTopicsRequestData();
+            final CreateTopicsRequestData.CreatableTopicConfigCollection configs =
+                new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            topicConfigs.forEach((name, value) -> configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName(name)
+                .setValue(value)));
+            request.topics().add(new CreatableTopic()
+                .setName(topicName)
+                .setNumPartitions(-1)
+                .setReplicationFactor((short) -1)
+                .setConfigs(configs));
+            return ctx.replicationControl.createTopics(
+                anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of(topicName));
+        }
+
+        private List<ConfigRecord> configRecords(ControllerResult<CreateTopicsResponseData> result) {
+            return result.records().stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .toList();
         }
 
         // ---- classic-to-diskless switch: auto-enable remote-storage atomically ----

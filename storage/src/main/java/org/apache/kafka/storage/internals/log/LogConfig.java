@@ -581,6 +581,40 @@ public class LogConfig extends AbstractConfig {
             return Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
         }
 
+        public boolean willConsolidateDisklessTopic() {
+            // The controller passes the merged topic config. A missing diskless.enable stays false:
+            // isConsolidatingDisklessTopic does not apply the broker default log.diskless.enable.
+            // On creation, an explicit diskless topic with no remote.storage.enable still consolidates,
+            // because the controller enables remote storage after this check. A create that omits
+            // diskless.enable and relies on log.diskless.enable is rejected in
+            // ReplicationControlManager, which knows the topic name.
+            return isRemoteStorageConsolidationEnabled
+                && mergedTopicBoolean(TopicConfig.DISKLESS_ENABLE_CONFIG)
+                && (mergedTopicBoolean(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+                    || (isCreation() && isDisklessExplicitlySet() && !isRemoteStorageExplicitlySet()));
+        }
+
+        public boolean wasConsolidatingDisklessTopic() {
+            return wasDisklessEnabled() && wasRemoteStorageEnabled();
+        }
+
+        public boolean isRemoteLogCopyDisabled() {
+            // Absent from the merged map means deleted or never stored. That is the default false,
+            // not the previous value.
+            return mergedTopicBoolean(TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG);
+        }
+
+        public boolean wasRemoteLogCopyDisabled() {
+            return Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG, "false"));
+        }
+
+        private boolean mergedTopicBoolean(String configName) {
+            if (!requestedConfigs.containsKey(configName)) {
+                return false;
+            }
+            return (boolean) combinedConfigs.get(configName);
+        }
+
         public boolean isSwitchedFromClassicWithRemoteStorage() {
             // Allows both diskless and remote-storage to be set when:
             // - The allow-from-classic flag is on, AND
@@ -680,6 +714,7 @@ public class LogConfig extends AbstractConfig {
         // remote.storage.enable=true.
         if (isRemoteStorageConsolidationEnabled) {
             validateDisklessRequiresRemoteStorage(logConfigHelper);
+            validateRemoteLogCopyEnabledForConsolidation(logConfigHelper);
         }
     }
 
@@ -729,6 +764,19 @@ public class LogConfig extends AbstractConfig {
             throw new InvalidConfigurationException(
                 "Diskless topics must have remote storage enabled. Set remote.storage.enable=true when enabling diskless.");
         }
+    }
+
+    private static void validateRemoteLogCopyEnabledForConsolidation(LogConfigHelper logConfigHelper) {
+        if (!logConfigHelper.willConsolidateDisklessTopic() || !logConfigHelper.isRemoteLogCopyDisabled()) {
+            return;
+        }
+        // The pair already exists. Allow unrelated alters, and allow a later request to delete
+        // the key or set it to false (those requests do not reach this point).
+        if (logConfigHelper.wasConsolidatingDisklessTopic() && logConfigHelper.wasRemoteLogCopyDisabled()) {
+            return;
+        }
+        throw new InvalidConfigurationException(
+            "Consolidating diskless topics require `remote.log.copy.disable=false` because WAL pruning requires remote copies.");
     }
 
     /**

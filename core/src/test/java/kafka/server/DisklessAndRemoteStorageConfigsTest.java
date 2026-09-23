@@ -56,6 +56,7 @@ import io.aiven.inkless.test_utils.S3TestContainer;
 import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_COMPACT;
 import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -74,6 +75,8 @@ public class DisklessAndRemoteStorageConfigsTest {
     private static final String DISABLE_REMOTE_WITHOUT_DELETE_ERROR = "It is invalid to disable remote storage without deleting remote data. "
         + "If you want to keep the remote data and turn to read only, please set `remote.storage.enable=true,remote.log.copy.disable=true`. "
         + "If you want to disable remote storage and delete all remote data, please set `remote.storage.enable=false,remote.log.delete.on.disable=true`.";
+    private static final String CONSOLIDATION_COPY_DISABLED_ERROR =
+        "Consolidating diskless topics require `remote.log.copy.disable=false` because WAL pruning requires remote copies.";
 
     @BeforeEach
     public void setup(final TestInfo testInfo) {
@@ -297,6 +300,8 @@ public class DisklessAndRemoteStorageConfigsTest {
      * 7  | TIERED     → DISKLESS  | allow-from-classic=false                                    | REJECTED                   | testConsolidatedTransitionsWithoutAllowFromClassic
      * 8  | DISKLESS   → forbidden | remote.storage.enable=false                                 | REJECTED (mutual exclusion)| testConsolidatedTransitionsWithAllowFromClassic
      * 9  | DISKLESS   → TIERED    | diskless.enable=false                                       | REJECTED (irreversible)    | testConsolidatedTransitionsWithAllowFromClassic
+     * 10 | (none)     → DISKLESS  | remote.log.copy.disable=true                                | REJECTED (WAL pruning)     | testConsolidatedTransitionsWithAllowFromClassic
+     * 11 | DISKLESS   → forbidden | remote.log.copy.disable=true                                | REJECTED (WAL pruning)     | testConsolidatedTransitionsWithAllowFromClassic
      * </pre>
      */
     @Nested
@@ -380,6 +385,16 @@ public class DisklessAndRemoteStorageConfigsTest {
                     DISKLESS_ENABLE_CONFIG, "false"));
                 assertTrue(disableDisklessError.isPresent(), "Should not allow disabling diskless");
                 assertEquals(DISABLE_DISKLESS_ERROR, disableDisklessError.get());
+
+                // Scenarios 10 and 11: consolidation requires remote copies so the pruner can delete WAL data.
+                Optional<String> createCopyDisabledError = createTopic(admin, "diskless-copy-disabled", Map.of(
+                    DISKLESS_ENABLE_CONFIG, "true",
+                    REMOTE_LOG_COPY_DISABLE_CONFIG, "true"));
+                assertEquals(CONSOLIDATION_COPY_DISABLED_ERROR, createCopyDisabledError.orElseThrow());
+
+                Optional<String> alterCopyDisabledError = incrementalAlterTopicConfig(
+                    admin, "diskless-no-disable-rs", Map.of(REMOTE_LOG_COPY_DISABLE_CONFIG, "true"));
+                assertEquals(CONSOLIDATION_COPY_DISABLED_ERROR, alterCopyDisabledError.orElseThrow());
             } finally {
                 cluster.close();
             }
