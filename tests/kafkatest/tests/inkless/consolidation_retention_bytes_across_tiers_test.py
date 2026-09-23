@@ -33,9 +33,10 @@ class RetentionBytesReclaimsAcrossTiersTest(Test):
     (which drives the reclaim with ``retention.ms``). On a consolidating topic both
     limits are whole-log retention, enforced by ``RemoteLogManager``:
 
-    - ``RetentionEnforcer`` does not run for a consolidating topic. It only measures
-      diskless WAL batches, and ``ConsolidatedDisklessLogPruner`` deletes those batches
-      once remote storage confirms them. Neither applies ``retention.bytes``.
+    - ``RetentionEnforcer`` does not run for a consolidating topic with remote copy
+      enabled. It only measures diskless WAL batches, and ``ConsolidatedDisklessLogPruner``
+      deletes those batches once remote storage confirms them. Neither applies
+      ``retention.bytes``.
     - ``RemoteLogManager`` sums the not-yet-tiered local tail plus the remote segments
       and, when that total exceeds the limit, deletes the oldest *remote* segments and
       raises ``UnifiedLog.logStartOffset``. ``CrossTierLogStartReporter`` publishes that

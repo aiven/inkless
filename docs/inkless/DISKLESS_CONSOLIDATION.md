@@ -293,7 +293,7 @@ Cleanup is asynchronous. Retention time and size configs for diskless topics mat
 
 When remote logs are in play, `retention.ms` and `retention.bytes` are the whole-log expiration (local plus remote), consistent with classic tiered topics. `local.retention.*` keep their existing meaning for the local portion.
 
-`RemoteLogManager` enforces that whole-log expiration. `ConsolidatedDisklessLogPruner` removes only WAL data that remote storage has confirmed. `RetentionEnforcer` skips actively consolidating topics, so the WAL-only retention path leaves those topics alone.
+`RemoteLogManager` enforces that whole-log expiration. `ConsolidatedDisklessLogPruner` removes only WAL data that remote storage has confirmed. `RetentionEnforcer` skips an actively consolidating topic when remote copy is enabled, so the WAL-only retention path leaves that topic alone. A consolidating topic with `remote.log.copy.disable=true` keeps WAL retention: the pruner waits for a remote offset that never advances.
 
 When consolidation is enabled, the enforcer reads `isConsolidatingDisklessTopic` on each cycle. The scheduler's partition list is a five-minute cache of diskless partitions, and a topic can start consolidating inside that window. Pure diskless topics still go through `RetentionEnforcer`. With `diskless.remote.storage.consolidation.enable` set to `false`, `RetentionEnforcer` still runs for every diskless topic.
 
@@ -330,6 +330,8 @@ Broker-level configs live in `ServerConfigs` (no prefix) and `InklessConfig` (un
 | `diskless.remote.storage.consolidation.enable` | `false` | Enables the consolidation framework. Requires `diskless.allow.from.classic.enable=true`, `diskless.managed.rf.enable=true`, and `remote.log.storage.system.enable=true`. |
 
 Per topic, consolidation runs when `diskless.enable=true` and `remote.storage.enable=true`. The classic-to-diskless switch sets both atomically. A born-diskless topic consolidates when it is created with both, or when `remote.storage.enable=true` is set later.
+
+Consolidating diskless topics require `remote.log.copy.disable=false` because WAL pruning requires remote-storage confirmation. Config validation rejects any topic that sets it to `true`. Before you enable consolidation, set this config to `false` on every existing diskless topic.
 
 ### Consolidation fetcher tuning
 

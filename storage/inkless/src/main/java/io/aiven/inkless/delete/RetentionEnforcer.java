@@ -102,14 +102,17 @@ public class RetentionEnforcer implements Runnable, Closeable {
         final List<TopicIdPartition> readyPartitions = retentionEnforcementScheduler.getReadyPartitions();
         final Map<String, LogConfig> topicConfigs = new HashMap<>();
         for (final TopicIdPartition partition : readyPartitions) {
+            final LogConfig topicConfig = topicConfigs.computeIfAbsent(partition.topic(), metadataView::getTopicConfig);
+
             // The scheduler's partition list refreshes every five minutes. A topic can start
             // consolidating inside that window, so the decision belongs on this cycle.
+            // Remote copy disabled means the pruner never sees a confirmed remote offset, so
+            // WAL retention stays in place for that consolidating topic.
             if (remoteStorageConsolidationEnabled
-                    && metadataView.isConsolidatingDisklessTopic(partition.topic())) {
+                    && metadataView.isConsolidatingDisklessTopic(partition.topic())
+                    && !topicConfig.remoteLogCopyDisable()) {
                 continue;
             }
-
-            final LogConfig topicConfig = topicConfigs.computeIfAbsent(partition.topic(), metadataView::getTopicConfig);
 
             // This check must be done here and not at scheduling, because the config may change at any moment.
             if (topicConfig.delete) {

@@ -42,6 +42,7 @@ import io.aiven.inkless.control_plane.EnforceRetentionRequest;
 import io.aiven.inkless.control_plane.MetadataView;
 
 import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.RETENTION_BYTES_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.RETENTION_MS_CONFIG;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -167,6 +168,8 @@ class RetentionEnforcerTest {
             when(metadataView.isConsolidatingDisklessTopic(TOPIC_0)).thenReturn(true);
             when(metadataView.isConsolidatingDisklessTopic(TOPIC_1)).thenReturn(false);
             when(metadataView.isConsolidatingDisklessTopic(TOPIC_2)).thenReturn(true);
+            when(metadataView.getTopicConfig(TOPIC_0)).thenReturn(new LogConfig(Map.of()));
+            when(metadataView.getTopicConfig(TOPIC_2)).thenReturn(new LogConfig(Map.of()));
             when(metadataView.getTopicConfig(TOPIC_1)).thenReturn(new LogConfig(Map.of(
                 RETENTION_BYTES_CONFIG, "123",
                 RETENTION_MS_CONFIG, "567"
@@ -202,11 +205,34 @@ class RetentionEnforcerTest {
         }
 
         @Test
+        void consolidatingTopicWithRemoteCopyDisabledKeepsWalRetention() throws Exception {
+            when(retentionEnforcementScheduler.getReadyPartitions()).thenReturn(List.of(T0P0, T1P0));
+            when(metadataView.isConsolidatingDisklessTopic(TOPIC_0)).thenReturn(true);
+            when(metadataView.isConsolidatingDisklessTopic(TOPIC_1)).thenReturn(true);
+            when(metadataView.getTopicConfig(TOPIC_0)).thenReturn(new LogConfig(Map.of(
+                REMOTE_LOG_COPY_DISABLE_CONFIG, "true",
+                RETENTION_BYTES_CONFIG, "123",
+                RETENTION_MS_CONFIG, "567"
+            )));
+            when(metadataView.getTopicConfig(TOPIC_1)).thenReturn(new LogConfig(Map.of()));
+
+            try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0, true)) {
+                enforcer.run();
+
+                verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
+                assertThat(requestCaptor.getValue())
+                    .map(EnforceRetentionRequest::topicId)
+                    .containsExactly(TOPIC_ID_0);
+                assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionBytes).containsExactly(123L);
+                assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionMs).containsExactly(567L);
+            }
+        }
+
+        @Test
         void everyReadyPartitionConsolidatingSendsNoRequest() throws Exception {
             when(retentionEnforcementScheduler.getReadyPartitions()).thenReturn(List.of(T0P0, T1P0, T2P0));
             when(metadataView.isConsolidatingDisklessTopic(any())).thenReturn(true);
-            // Present so a missing skip still builds a request instead of failing on a null config.
-            lenient().when(metadataView.getTopicConfig(any())).thenReturn(new LogConfig(Map.of()));
+            when(metadataView.getTopicConfig(any())).thenReturn(new LogConfig(Map.of()));
 
             try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0, true)) {
                 enforcer.run();

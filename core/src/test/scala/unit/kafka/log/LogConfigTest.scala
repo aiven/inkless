@@ -56,6 +56,9 @@ import org.junit.jupiter.params.provider.ValueSource
  *   TIERED → DISKLESS (diskless.enable=true, remote.storage.enable=true)    → VALID (switch)
  *   DISKLESS → set remote.storage.enable=false                              → REJECTED (mutual exclusion)
  *   DISKLESS → set diskless.enable=false                                    → REJECTED (unsupported)
+ *   DISKLESS → set remote.log.copy.disable=true                             → REJECTED (WAL pruning requires remote copies)
+ *   DISKLESS with remote.log.copy.disable=true already → other alter        → VALID (grandfathered)
+ *   DISKLESS → delete remote.log.copy.disable                               → VALID
  *
  * See also: DisklessAndRemoteStorageConfigsTest (integration-level equivalent)
  */
@@ -556,6 +559,120 @@ class LogConfigTest {
         kafkaConfig.disklessRemoteStorageConsolidationEnabled
       )
     }
+  }
+
+  @Test
+  def testConsolidatingDisklessTopicRejectsRemoteLogCopyDisable(): Unit = {
+    val kafkaConfig = KafkaConfig.fromProps(TestUtils.createDummyBrokerConfig())
+    val noExisting: util.Map[String, String] = util.Map.of()
+    val copyDisabledError =
+      "Consolidating diskless topics require `remote.log.copy.disable=false` because WAL pruning requires remote copies."
+
+    // Explicit born-consolidated topic.
+    assertInvalid(noExisting, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG -> "true"),
+      copyDisabledError, kafkaConfig, remoteStorageConsolidationEnabled = true)
+
+    // The controller auto-enables remote storage after validating a born-diskless topic.
+    assertInvalid(noExisting, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG -> "true"),
+      copyDisabledError, kafkaConfig, remoteStorageConsolidationEnabled = true)
+
+    // A missing topic-level diskless.enable is not the broker default. A read-only tiered topic
+    // stays non-consolidating when log.diskless.enable=true, so an alter is allowed.
+    val defaultDisklessProps = TestUtils.createDummyBrokerConfig()
+    defaultDisklessProps.put(ServerLogConfigs.DISKLESS_ENABLE_CONFIG, "true")
+    defaultDisklessProps.put(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
+    val defaultDisklessKafkaConfig = KafkaConfig.fromProps(defaultDisklessProps)
+    val existingCopyDisabledTiered = util.Map.of(
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true",
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG, "true"
+    )
+    assertValid(existingCopyDisabledTiered, topicProps(
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG -> "true",
+      TopicConfig.RETENTION_MS_CONFIG -> "86400000"),
+      defaultDisklessKafkaConfig, remoteStorageConsolidationEnabled = true)
+    // The validator does not apply log.diskless.enable. ReplicationControlManager.createTopic
+    // rejects this create after it stamps diskless.enable and remote.storage.enable.
+    assertValid(noExisting, topicProps(
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG -> "true"),
+      defaultDisklessKafkaConfig, remoteStorageConsolidationEnabled = true)
+
+    // Existing consolidated topic changing remote.log.copy.disable to true.
+    val existingConsolidating = util.Map.of(
+      TopicConfig.DISKLESS_ENABLE_CONFIG, "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"
+    )
+    assertInvalid(existingConsolidating, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG -> "true"),
+      copyDisabledError, kafkaConfig, remoteStorageConsolidationEnabled = true)
+
+    // A topic that already has the unsupported setting can turn remote copy back on,
+    // delete the key, or change an unrelated config. The stored true is not repaired here.
+    val existingCopyDisabledConsolidating = util.Map.of(
+      TopicConfig.DISKLESS_ENABLE_CONFIG, "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true",
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG, "true"
+    )
+    assertValid(existingCopyDisabledConsolidating, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG -> "false"),
+      kafkaConfig, remoteStorageConsolidationEnabled = true)
+    assertValid(existingCopyDisabledConsolidating, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true"),
+      kafkaConfig, remoteStorageConsolidationEnabled = true)
+    assertValid(existingCopyDisabledConsolidating, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG -> "true",
+      TopicConfig.RETENTION_MS_CONFIG -> "86400000"),
+      kafkaConfig, remoteStorageConsolidationEnabled = true)
+
+    // Enabling consolidation and disabling remote copy in the same update.
+    val existingPureDiskless = util.Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")
+    assertInvalid(existingPureDiskless, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG -> "true"),
+      copyDisabledError, kafkaConfig, remoteStorageConsolidationEnabled = true)
+
+    // A copy-disabled tiered topic cannot switch to diskless while the merged config still
+    // stores remote.log.copy.disable=true. Deleting that key in the same change is allowed.
+    assertInvalid(existingCopyDisabledTiered, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG -> "true"),
+      copyDisabledError, kafkaConfig,
+      disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = true)
+    assertValid(existingCopyDisabledTiered, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true"),
+      kafkaConfig, disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = true)
+
+    // Classic tiered topics and pure diskless topics do not use the consolidation pruning path.
+    assertValid(noExisting, topicProps(
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG -> "true"),
+      kafkaConfig, remoteStorageConsolidationEnabled = true)
+    assertValid(existingPureDiskless, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG -> "true"),
+      kafkaConfig, remoteStorageConsolidationEnabled = true)
+
+    // Without consolidation, switched diskless topics still use WAL retention.
+    assertValid(noExisting, topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG -> "true"),
+      kafkaConfig, disklessAllowFromClassic = true)
   }
 
   @Test

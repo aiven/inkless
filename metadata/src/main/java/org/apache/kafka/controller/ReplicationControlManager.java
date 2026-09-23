@@ -135,6 +135,7 @@ import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
 import static org.apache.kafka.common.config.ConfigResource.Type.TOPIC;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG;
 import static org.apache.kafka.common.internals.Topic.CLUSTER_METADATA_TOPIC_NAME;
@@ -929,6 +930,15 @@ public class ReplicationControlManager {
                 return new ApiError(Errors.INVALID_CONFIG,
                     "Diskless topics must have remote storage enabled. "
                         + "Cannot set remote.storage.enable=false when diskless is enabled.");
+            }
+            // LogConfig validation runs on the request map, before this method applies
+            // log.diskless.enable. A create that only sets remote.log.copy.disable=true would
+            // otherwise be persisted as a consolidating topic.
+            if (isDisklessRemoteStorageConsolidationEnabled &&
+                    "true".equalsIgnoreCase(creationConfigs.get(REMOTE_LOG_COPY_DISABLE_CONFIG))) {
+                return new ApiError(Errors.INVALID_CONFIG,
+                    "Consolidating diskless topics require `remote.log.copy.disable=false` "
+                        + "because WAL pruning requires remote copies.");
             }
         }
 

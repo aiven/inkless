@@ -63,8 +63,8 @@ class RetentionReclaimsAcrossTiersTest(Test):
 
     ``RemoteLogManager`` enforces whole-log retention. ``ConsolidatedDisklessLogPruner``
     removes only WAL batches remote storage has confirmed, and ``RetentionEnforcer``
-    does not run for a consolidating topic. The cross-tier publish path is
-    unit-covered (``CrossTierLogStartReporterTest``,
+    does not run for a consolidating topic with remote copy enabled. The cross-tier
+    publish path is unit-covered (``CrossTierLogStartReporterTest``,
     ``PruneBatchesBelowHighestTieredOffsetV1Test``). What is untested below that
     level is the end-to-end cross-tier reclaim, where a bug means either leaked
     remote data or lost surviving records.
