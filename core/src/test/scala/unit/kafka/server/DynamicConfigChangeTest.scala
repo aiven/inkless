@@ -772,11 +772,11 @@ class DynamicConfigChangeUnitTest {
       TopicConfig.RETENTION_BYTES_CONFIG -> "1048576",
       TopicConfig.CLEANUP_POLICY_CONFIG -> TopicConfig.CLEANUP_POLICY_DELETE))
 
-    // RetentionEnforcer re-reads these three per cycle through getTopicConfig, so a stale entry keeps
-    // enforcing the old retention indefinitely (silently, and it governs deletion).
+    // Whole-log retention for a consolidating topic is RemoteLogManager on the local log.
+    // RetentionEnforcer skips these topics and does not read the cached values.
     val updated = inklessMetadataView.getTopicConfig(topic)
-    assertEquals(3600000L, updated.retentionMs, "Shortened retention.ms must reach diskless retention enforcement")
-    assertEquals(1048576L, updated.retentionSize, "Changed retention.bytes must reach diskless retention enforcement")
+    assertEquals(3600000L, updated.retentionMs, "Shortened retention.ms must replace the cached value")
+    assertEquals(1048576L, updated.retentionSize, "Changed retention.bytes must replace the cached value")
     assertTrue(updated.delete, "cleanup.policy must still be read from the refreshed entry")
   }
 

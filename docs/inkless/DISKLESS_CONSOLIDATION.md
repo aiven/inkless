@@ -293,6 +293,10 @@ Cleanup is asynchronous. Retention time and size configs for diskless topics mat
 
 When remote logs are in play, `retention.ms` and `retention.bytes` are the whole-log expiration (local plus remote), consistent with classic tiered topics. `local.retention.*` keep their existing meaning for the local portion.
 
+`RemoteLogManager` enforces that whole-log expiration. `ConsolidatedDisklessLogPruner` removes only WAL data that remote storage has confirmed. `RetentionEnforcer` skips actively consolidating topics, so the WAL-only retention path leaves those topics alone.
+
+When consolidation is enabled, the enforcer reads `isConsolidatingDisklessTopic` on each cycle. The scheduler's partition list is a five-minute cache of diskless partitions, and a topic can start consolidating inside that window. Pure diskless topics still go through `RetentionEnforcer`. With `diskless.remote.storage.consolidation.enable` set to `false`, `RetentionEnforcer` still runs for every diskless topic.
+
 ![Retention: tiered [0,249], local [250,299], diskless [240,350]. Diskless overlaps both](img/consolidation/retention.png)
 
 ### WAL pruning

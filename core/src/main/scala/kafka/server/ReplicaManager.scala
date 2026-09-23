@@ -273,7 +273,8 @@ class ReplicaManager(val config: KafkaConfig,
     delayedRemoteListOffsetsPurgatory
   )
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
-  private val inklessRetentionEnforcer: Option[RetentionEnforcer] = inklessSharedState.map(new RetentionEnforcer(_))
+  private val inklessRetentionEnforcer: Option[RetentionEnforcer] =
+    inklessSharedState.map(state => new RetentionEnforcer(state, config.disklessRemoteStorageConsolidationEnabled))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
   private val inklessTopicPurger: Option[TopicPurger] = inklessSharedState.map(new TopicPurger(_))
 

@@ -50,10 +50,11 @@ public class RetentionEnforcer implements Runnable, Closeable {
     private final ControlPlane controlPlane;
     private final RetentionEnforcementScheduler retentionEnforcementScheduler;
     private final int maxBatchesPerRequest;
+    private final boolean remoteStorageConsolidationEnabled;
 
     private final RetentionEnforcerMetrics metrics;
 
-    public RetentionEnforcer(final SharedState sharedState) {
+    public RetentionEnforcer(final SharedState sharedState, final boolean remoteStorageConsolidationEnabled) {
         this(Objects.requireNonNull(sharedState, "sharedState cannot be null").time(),
             sharedState.metadata(),
             sharedState.controlPlane(),
@@ -63,7 +64,8 @@ public class RetentionEnforcer implements Runnable, Closeable {
                 sharedState.config().retentionEnforcementInterval(),
                 new Random()
             ),
-            sharedState.config().maxBatchesPerEnforcementRequest()
+            sharedState.config().maxBatchesPerEnforcementRequest(),
+            remoteStorageConsolidationEnabled
         );
     }
 
@@ -72,12 +74,14 @@ public class RetentionEnforcer implements Runnable, Closeable {
                       final MetadataView metadataView,
                       final ControlPlane controlPlane,
                       final RetentionEnforcementScheduler retentionEnforcementScheduler,
-                      final int maxBatchesPerRequest) {
+                      final int maxBatchesPerRequest,
+                      final boolean remoteStorageConsolidationEnabled) {
         this.time = time;
         this.metadataView = metadataView;
         this.controlPlane = controlPlane;
         this.retentionEnforcementScheduler = retentionEnforcementScheduler;
         this.maxBatchesPerRequest = maxBatchesPerRequest;
+        this.remoteStorageConsolidationEnabled = remoteStorageConsolidationEnabled;
         this.metrics = new RetentionEnforcerMetrics(retentionEnforcementScheduler::scheduleLagMillis);
     }
 
@@ -98,6 +102,13 @@ public class RetentionEnforcer implements Runnable, Closeable {
         final List<TopicIdPartition> readyPartitions = retentionEnforcementScheduler.getReadyPartitions();
         final Map<String, LogConfig> topicConfigs = new HashMap<>();
         for (final TopicIdPartition partition : readyPartitions) {
+            // The scheduler's partition list refreshes every five minutes. A topic can start
+            // consolidating inside that window, so the decision belongs on this cycle.
+            if (remoteStorageConsolidationEnabled
+                    && metadataView.isConsolidatingDisklessTopic(partition.topic())) {
+                continue;
+            }
+
             final LogConfig topicConfig = topicConfigs.computeIfAbsent(partition.topic(), metadataView::getTopicConfig);
 
             // This check must be done here and not at scheduling, because the config may change at any moment.

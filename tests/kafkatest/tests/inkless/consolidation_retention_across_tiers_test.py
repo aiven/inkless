@@ -61,10 +61,13 @@ class RetentionReclaimsAcrossTiersTest(Test):
     - **Freeze**: the long retention is restored *before* read-back so the surviving
       tail is not creeping under an active ``retention.ms`` window while it is read.
 
-    The control-plane mechanics are unit-covered (``RetentionEnforcerTest``,
-    ``EnforceRetentionJobTest``, ``PruneBatchesBelowHighestTieredOffsetV1Test``,
-    ...); what is untested below that level is the end-to-end cross-tier reclaim,
-    where a bug means either leaked remote data or lost surviving records.
+    ``RemoteLogManager`` enforces whole-log retention. ``ConsolidatedDisklessLogPruner``
+    removes only WAL batches remote storage has confirmed, and ``RetentionEnforcer``
+    does not run for a consolidating topic. The cross-tier publish path is
+    unit-covered (``CrossTierLogStartReporterTest``,
+    ``PruneBatchesBelowHighestTieredOffsetV1Test``). What is untested below that
+    level is the end-to-end cross-tier reclaim, where a bug means either leaked
+    remote data or lost surviving records.
     """
 
     # Unique per run: the Postgres/MinIO containers persist across runs, so a stale
@@ -106,20 +109,13 @@ class RetentionReclaimsAcrossTiersTest(Test):
             controller_num_nodes_override=1,
             consolidation=True,
             server_prop_overrides=[
-                # Run the WAL pruner / file cleaner / remote-log task / retention
-                # sweep fast so the pipeline drains and the deleted remote segments
-                # are reclaimed within the test window (not the default minutes).
+                # Run the WAL pruner, file cleaner, local retention check, and
+                # remote-log retention task fast so the pipeline drains and the
+                # deleted remote segments are reclaimed within the test window.
                 ["inkless.consolidation.cleanup.interval.ms", "5000"],
                 ["inkless.file.cleaner.interval.ms", "5000"],
                 ["inkless.file.cleaner.retention.period.ms", "6000"],
                 ["inkless.consume.batch.coordinate.cache.ttl.ms", "2000"],
-                # Inkless retention enforcement (the path that actually advances
-                # the diskless log_start on a born-consolidated topic) defaults to
-                # 5 minutes per broker, multiplied by broker count with +/-25%
-                # jitter -- with 3 brokers a partition's first enforcement fires
-                # 11-19 minutes after scheduling, far outside the test window.
-                # 5s base -> 11-19s per-partition first-fire range.
-                ["inkless.retention.enforcement.interval.ms", "5000"],
                 ["remote.log.manager.task.interval.ms", "5000"],
                 ["log.retention.check.interval.ms", "5000"],
             ],
