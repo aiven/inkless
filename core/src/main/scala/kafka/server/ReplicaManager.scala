@@ -1869,25 +1869,25 @@ class ReplicaManager(val config: KafkaConfig,
   /**
    * Whether `topicPartition` is a consolidating diskless topic on this broker (covers both switched
    * partitions, which carry a seal, and born-diskless partitions, which do not). Used by the
-   * [[org.apache.kafka.server.log.remote.storage.RemoteLogManager]] to pick its reclaim-floor fallback
-   * when [[crossTierRemoteLogStartOffset]] is unavailable: such a partition must not fall back to the
-   * broker-local log start, which on a rebuilt leader can sit above the true cross-tier earliest (at the
-   * seal for a switched partition). Mirrors the guard in [[crossTierRemoteLogStartOffset]] so the two agree.
+   * [[org.apache.kafka.server.log.remote.storage.RemoteLogManager]] when
+   * [[crossTierRemoteLogStartOffset]] is unavailable. A consolidating partition defers its become-leader
+   * report and remote expiration instead of falling back to a broker-local or inferred value. Mirrors the
+   * guard in [[crossTierRemoteLogStartOffset]] so the two agree.
    */
   def isConsolidatingDisklessPartition(topicPartition: TopicPartition): Boolean =
     inklessSharedState.isDefined && _inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
 
   /**
    * The raw cross-tier remote log start (`logs.remote_log_start_offset`) for a consolidating diskless
-   * partition, present only when the partition's classic leader has actually reported it; empty when it
-   * is unset (NULL), for non-consolidating/non-inkless partitions, or when unresolved.
+   * partition, present after the control plane initializes it; empty when it is unset (NULL), for
+   * non-consolidating/non-inkless partitions, or when unresolved.
    *
    * This is the reclaim floor and become-leader report source for the
    * [[org.apache.kafka.server.log.remote.storage.RemoteLogManager]]. Unlike [[crossTierEarliestOffset]]
    * it deliberately does NOT fall back to `log_start_offset` (the WAL prune frontier): that frontier can
    * run ahead of the true remote start, so using it as the reclaim floor would delete still-live remote
    * segments, and reporting it back would lock the wrong value in via the forward-only control-plane
-   * advance. Returning empty here makes the RLM fail safe to the true remote earliest instead.
+   * advance. Returning empty makes the RLM defer its become-leader report and remote expiration.
    *
    * Reads the dedicated control-plane accessor rather than the write-through
    * [[io.aiven.inkless.cache.CrossTierLogStartCache]], since that cache is also populated by

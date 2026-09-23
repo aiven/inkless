@@ -161,15 +161,13 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
     // partitions. Their broker-local UnifiedLog.logStartOffset can be pinned at the classic-to-diskless
     // seal on a rebuilt leader, so using it would over-reclaim the remote classic prefix and report the
     // seal as the cross-tier earliest. Returns the raw control-plane remote log start, present only once
-    // the classic leader has reported it and not COALESCEd to the WAL prune frontier (which could also
-    // over-reclaim). Empty for classic/non-inkless partitions and for an unreported remote start; when
-    // empty the reclaim path uses the true remote earliest (findLogStartOffset), not the local seal.
+    // the control plane completes the first-prune handoff and not COALESCEd to the WAL prune frontier
+    // (which could also over-reclaim). An empty value defers the report and remote expiration.
     // Non-consolidating partitions keep the upstream log.logStartOffset() behavior.
     private final Function<TopicPartition, OptionalLong> logStartOffsetOverride;
-    // Inkless: tells whether a partition is a consolidating diskless topic. Used to pick the reclaim
-    // floor's fallback when {@link #logStartOffsetOverride} is empty: consolidating partitions must never
-    // fall back to the broker-local log start (the classic-to-diskless seal on a rebuilt leader), while
-    // classic topics keep the upstream local-log-start behavior. No-op predicate for non-Inkless callers.
+    // Inkless: tells whether a partition is a consolidating diskless topic. Consolidating partitions
+    // wait for logStartOffsetOverride instead of deriving a cross-tier start from broker-local metadata.
+    // No-op predicate for non-Inkless callers.
     private final Predicate<TopicPartition> isConsolidatingDisklessPartition;
     private final BrokerTopicStats brokerTopicStats;
     private final Metrics metrics;
@@ -979,9 +977,15 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                 // freshly-elected leader does not report its local seal as the cross-tier earliest (which
                 // would push the broker-agnostic earliest up to the seal). This is deliberately the raw
                 // remote start, not ListOffsets(EARLIEST): the latter COALESCEs to the WAL prune frontier
-                // when the remote start is unreported, which would lock the wrong value in via the
+                // when the remote start is uninitialized, which would lock the wrong value in via the
                 // forward-only advance. No-op for classic topics.
                 OptionalLong override = logStartOffsetOverride.apply(topicIdPartition.topicPartition());
+                if (override.isEmpty()
+                        && isConsolidatingDisklessPartition.test(topicIdPartition.topicPartition())) {
+                    logger.debug("Deferring the log start offset update for {} until the control plane initializes it",
+                            topicIdPartition);
+                    return;
+                }
                 long logStartOffset = override.isPresent()
                         ? override.getAsLong()
                         : findLogStartOffset(topicIdPartition, log);
@@ -1415,12 +1419,9 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
          * start is unreported, which would itself over-reclaim still-live remote segments and lock the
          * wrong value in via the forward-only control-plane advance.
          *
-         * <p>If the override is empty for such a partition (control plane unreachable, or metadata not yet
-         * propagated, or the remote start not reported yet) we fall back to
-         * {@link RemoteLogManager#findLogStartOffset(TopicIdPartition, UnifiedLog)}, which walks the
-         * cumulative remote epoch cache back to the true remote earliest. The classic prefix survives and
-         * time/size retention still applies. That floor is the true earliest and never the local seal, so
-         * the irreversible remote delete cannot over-reclaim.
+         * <p>If the override is empty for such a partition, the control plane has not completed the
+         * cross-tier handoff yet. Remote expiration retries instead of deriving an irreversible reclaim
+         * floor from broker-local or remote metadata.
          */
         private long reclaimFloorLogStartOffset(UnifiedLog log) throws RemoteStorageException {
             final TopicPartition tp = topicIdPartition.topicPartition();
@@ -1429,7 +1430,8 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                 return crossTierRemoteStart.getAsLong();
             }
             if (isConsolidatingDisklessPartition.test(tp)) {
-                return findLogStartOffset(topicIdPartition, log);
+                throw new RetriableRemoteStorageException(
+                        "Cross-tier log start offset is not initialized for " + topicIdPartition);
             }
             return log.logStartOffset();
         }

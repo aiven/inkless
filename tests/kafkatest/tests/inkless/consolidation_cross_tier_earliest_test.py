@@ -167,3 +167,146 @@ class CrossTierEarliestBootstrapTest(Test):
                 "content mismatch at offset %d: value=%d, expected %d" % (offset, value, offset))
         self.logger.info("Remote prefix from 0 read back contiguous (%d records) below frontier %d"
                          % (spot, frontier))
+
+
+class CrossTierEarliestLateEnableTest(Test):
+    """Enabling consolidation after pure-diskless retention must preserve the first
+    surviving WAL offset as the cross-tier earliest.
+
+    While ``remote_log_start_offset`` is NULL, ``ListOffsets(EARLIEST)`` falls back to
+    the WAL ``log_start_offset``. The first consolidated prune atomically freezes that
+    value as the cross-tier start before advancing the WAL frontier. This test creates
+    the late-enable state with a nonzero WAL start and verifies the handoff end to end."""
+
+    TOPIC_PREFIX = "cross-tier-earliest-late-enable"
+    NUM_PARTITIONS = 1
+    REPLICATION_FACTOR = 3
+    NUM_RECORDS = 300000
+    SPOT_CHECK = 20000
+
+    def __init__(self, test_context):
+        super(CrossTierEarliestLateEnableTest, self).__init__(test_context=test_context)
+        self.num_brokers = 3
+        self.TOPIC = "%s-%s" % (self.TOPIC_PREFIX, uuid.uuid4().hex[:8])
+
+    def _start_cluster(self):
+        self.kafka = KafkaService(
+            self.test_context,
+            num_nodes=self.num_brokers,
+            zk=None,
+            controller_num_nodes_override=1,
+            consolidation=False,
+            server_prop_overrides=[
+                ["diskless.managed.rf.enable", "true"],
+                ["inkless.consolidation.cleanup.interval.ms", "5000"],
+                ["inkless.file.cleaner.interval.ms", "5000"],
+                ["inkless.file.cleaner.retention.period.ms", "6000"],
+                ["inkless.consume.batch.coordinate.cache.ttl.ms", "2000"],
+                ["inkless.retention.enforcement.interval.ms", "5000"],
+                ["remote.log.manager.task.interval.ms", "5000"],
+                ["log.retention.check.interval.ms", "5000"],
+            ],
+            topics={
+                self.TOPIC: {
+                    "partitions": self.NUM_PARTITIONS,
+                    "replication-factor": self.REPLICATION_FACTOR,
+                    "configs": {
+                        "diskless.enable": "true",
+                        "min.insync.replicas": 2,
+                        # Advance the pure-diskless WAL start before enabling consolidation.
+                        "retention.bytes": 1 * 1024 * 1024,
+                        "segment.bytes": 1048576,
+                        "segment.ms": 5000,
+                        "local.retention.ms": 5000,
+                    },
+                },
+            },
+        )
+        self.kafka.start()
+
+    @cluster(num_nodes=6)
+    @matrix(metadata_quorum=[quorum.isolated_kraft])
+    def test_late_enabled_cross_tier_earliest_survives_wal_prune(self, metadata_quorum):
+        self._start_cluster()
+        verifier = ConsolidationVerifier(self.kafka)
+        verifier.verify_tooling()
+
+        acked = verifier.produce(self.TOPIC, self.NUM_RECORDS, "late-enable")
+        self.logger.info("Produced pure-diskless stream: acked=%d" % acked)
+
+        wait_until(lambda: verifier.min_log_start_offset(self.TOPIC) > 0,
+                   timeout_sec=240, backoff_sec=2,
+                   err_msg="Pure-diskless retention never advanced the WAL start.")
+
+        self.kafka.alter_topic_configs(self.TOPIC, {"retention.bytes": "-1"})
+        stability = {"value": None, "samples": 0}
+
+        def wal_start_is_stable():
+            current = verifier.min_log_start_offset(self.TOPIC)
+            if current == stability["value"]:
+                stability["samples"] += 1
+            else:
+                stability["value"] = current
+                stability["samples"] = 1
+            return stability["samples"] >= 3
+
+        wait_until(wal_start_is_stable, timeout_sec=30, backoff_sec=2,
+                   err_msg="WAL start did not stabilize after disabling pure-diskless retention.")
+        bootstrap_start = stability["value"]
+        assert 0 < bootstrap_start < acked
+
+        self.kafka.consolidation = True
+        controller = self.kafka.isolated_controller_quorum
+        controller.consolidation = True
+        controller.restart_cluster()
+        self.kafka.restart_cluster()
+
+        assert verifier.min_log_start_offset(self.TOPIC) == bootstrap_start
+        baseline_tiered = verifier.tiered_object_count()
+        self.kafka.alter_topic_configs(self.TOPIC, {"remote.storage.enable": "true"})
+
+        wait_until(lambda: verifier.tiered_object_count() > baseline_tiered,
+                   timeout_sec=240, backoff_sec=2,
+                   err_msg="Consolidation never tiered a remote prefix.")
+        wait_until(lambda: verifier.min_log_start_offset(self.TOPIC) > bootstrap_start,
+                   timeout_sec=240, backoff_sec=2,
+                   err_msg="Consolidation never advanced the WAL frontier past its initial start.")
+        frontier = verifier.min_log_start_offset(self.TOPIC)
+
+        remote_start = verifier.wait_for_remote_log_start_bootstrapped(
+            self.TOPIC, expected=bootstrap_start)
+        self.logger.info("Control plane remote_log_start_offset bootstrapped to %d (frontier=%d)"
+                         % (remote_start, frontier))
+
+        per_broker = verifier.earliest_on_each_broker(self.TOPIC)
+        assert set(per_broker.values()) == {bootstrap_start}, (
+            "EARLIEST did not preserve the late-enable start %d with WAL frontier %d: %s"
+            % (bootstrap_start, frontier, per_broker))
+
+        local_start = {"value": -1}
+
+        def local_prefix_is_evicted():
+            local_start["value"] = verifier.offset_at(self.TOPIC, time_spec=-4)
+            return local_start["value"] > bootstrap_start
+
+        wait_until(local_prefix_is_evicted, timeout_sec=240, backoff_sec=2,
+                   err_msg=("EARLIEST_LOCAL did not advance past the preserved cross-tier "
+                            "start; the remote read could not be verified."))
+
+        first_served = verifier.first_served_offset(self.TOPIC, from_offset=bootstrap_start)
+        assert first_served == bootstrap_start, (
+            "a fetch from offset %d returned offset %d with WAL frontier %d"
+            % (bootstrap_start, first_served, frontier))
+        spot = min(acked - bootstrap_start, self.SPOT_CHECK)
+        records = verifier.read_records_with_values_from(
+            self.TOPIC, from_offset=bootstrap_start, max_messages=spot, timeout_ms=240000)
+        assert len(records) >= spot, (
+            "bounded read from offset %d returned only %d of %d records"
+            % (bootstrap_start, len(records), spot))
+        for i, (offset, value) in enumerate(records[:spot]):
+            expected = bootstrap_start + i
+            assert offset == expected, (
+                "non-contiguous read at position %d: offset=%d, expected %d (gap/dupe/reorder)"
+                % (i, offset, expected))
+            assert value == offset, (
+                "content mismatch at offset %d: value=%d, expected %d" % (offset, value, offset))

@@ -835,18 +835,18 @@ class BrokerServer(
         // Reclaim-floor / become-leader log-start override: for a consolidating diskless partition use the
         // raw control-plane remote log start instead of the local log start (pinned at the seal on a
         // freshly-rebuilt leader). Deliberately the raw remote start, not ListOffsets(EARLIEST): the latter
-        // COALESCEs to the WAL prune frontier when the remote start is unreported, which would over-reclaim
+        // COALESCEs to the WAL prune frontier when the remote start is uninitialized, which would over-reclaim
         // still-live remote segments and lock that wrong value in via the forward-only advance. Empty for
-        // classic / non-inkless topics or an unreported remote start (RLM then fails safe to the true remote
-        // earliest). Resolved lazily via ReplicaManager (constructed after the RLM but only invoked at RLM runtime).
+        // classic / non-inkless topics, an uninitialized remote start, or a failed lookup. Resolved lazily
+        // via ReplicaManager (constructed after the RLM but only invoked at RLM runtime).
         (tp: TopicPartition) =>
           if (_replicaManager != null) _replicaManager.crossTierRemoteLogStartOffset(tp) else util.OptionalLong.empty(),
         // Whether the partition is consolidating diskless: when the override above is unavailable, this
-        // makes the RLM fail safe to the true remote earliest (findLogStartOffset walks the cumulative
-        // remote epoch cache) rather than reclaim to the local seal. False for classic topics. The
+        // makes the RLM defer its become-leader report and remote expiration instead of inferring an
+        // irreversible value. False for classic topics, which keep the upstream fallback. The
         // `_replicaManager == null` branch is unreachable (these lambdas run only from leadership-scheduled
-        // RLM tasks, applied by ReplicaManager); we still default to the fail-safe `true` there so an
-        // impossible early call can never over-reclaim.
+        // RLM tasks, applied by ReplicaManager); defaulting to `true` makes an impossible early call defer
+        // instead of over-reclaiming.
         (tp: TopicPartition) =>
           if (_replicaManager != null) _replicaManager.isConsolidatingDisklessPartition(tp) else true)
       Some(rlm)

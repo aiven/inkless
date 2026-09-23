@@ -86,7 +86,11 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
       case PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET =>
         Some(highestRemoteOffset)
       case classicToDisklessStartOffset if classicToDisklessStartOffset >= 0 =>
-        partition.getSafeConsolidatedDisklessPruneOffset(highestRemoteOffset)
+        partition.getSafeConsolidatedDisklessPruneOffset(highestRemoteOffset).orElse {
+          // The classic prefix ends immediately before the seal. A prune at this boundary removes no
+          // diskless batches, but lets the control plane complete the cross-tier start handoff.
+          Option.when(highestRemoteOffset == classicToDisklessStartOffset - 1)(highestRemoteOffset)
+        }
       case unexpected =>
         logger.warn("Skipping pruning for {} due to unexpected classic-to-diskless start offset {}",
           partition.topicPartition,
