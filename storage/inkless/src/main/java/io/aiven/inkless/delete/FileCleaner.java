@@ -59,9 +59,8 @@ public class FileCleaner implements Runnable, Closeable {
      */
     private final AtomicInteger attempts = new AtomicInteger();
 
-    // KafkaScheduler uses scheduleAtFixedRate. Sleeping inside run() queues missed ticks, and
-    // the next work cycle bursts past file.cleaner.max.files.per.cycle / interval. Skip the
-    // tick until this time instead.
+    // Do not sleep in run(): KafkaScheduler uses scheduleAtFixedRate, and a sleep queues missed
+    // ticks that then fire back to back past file.cleaner.max.files.per.cycle.
     private volatile long nextEligibleMs;
 
     public FileCleaner(SharedState sharedState) {
@@ -131,13 +130,12 @@ public class FileCleaner implements Runnable, Closeable {
             }
 
             attempts.set(0);
-            nextEligibleMs = 0L;
             metrics.recordFileCleanerCycleSucceeded();
         } catch (final Exception e) {
             metrics.recordFileCleanerError();
             final long backoff = errorBackoff.backoff(attempts.incrementAndGet());
             nextEligibleMs = time.milliseconds() + backoff;
-            LOGGER.error("Error while deleting files, retrying after {}", Duration.ofMillis(backoff), e);
+            LOGGER.error("Error while deleting files, skipping ticks for the next {}", Duration.ofMillis(backoff), e);
         }
     }
 

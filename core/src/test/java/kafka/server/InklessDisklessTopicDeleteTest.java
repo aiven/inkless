@@ -293,9 +293,13 @@ public class InklessDisklessTopicDeleteTest {
     }
 
     /**
-     * Every deleting cycle but the last hits the cap: {@code capReached} requires {@code moreRemain}.
-     * Two brokers can share the last pair of batches, so the floor is {@code batchesAtDelete - 1}
-     * (one finishing cycle), not {@code batchesAtDelete - NUM_BROKERS}.
+     * With one batch per cycle, every deleting cycle hits the cap except the one that removes the
+     * last deleted log: {@code capReached} requires {@code moreRemain}. Two brokers can finish
+     * concurrently, but each probes {@code moreRemain} before it commits, so at most one of them
+     * sees no log left. The floor is therefore {@code batchesAtDelete - 1} saturated lines.
+     *
+     * <p>The purger logs after its transaction commits, so poll the appender instead of counting
+     * once after the DB reads zero.
      */
     private static void assertSaturatedAcrossMultipleCycles(LogCaptureAppender appender, long batchesAtDelete)
             throws InterruptedException {
