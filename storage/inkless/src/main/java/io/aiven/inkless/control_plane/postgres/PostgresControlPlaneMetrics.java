@@ -23,15 +23,20 @@ import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.yammer.metrics.core.Histogram;
 
-import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
-public class PostgresControlPlaneMetrics implements Closeable {
+/**
+ * Query metrics shared by every {@code PostgresControlPlane} in the process.
+ *
+ * <p>A rebuilt control plane runs the same queries under the same metric names. Yammer's registry
+ * keeps whichever metric registered a name first, so the metrics are registered once, by the single
+ * instance, and are never removed.
+ */
+public final class PostgresControlPlaneMetrics {
     private static final String GROUP = PostgresControlPlane.class.getSimpleName();
 
     private static final List<String> QUERY_NAMES = List.of(
@@ -60,7 +65,12 @@ public class PostgresControlPlaneMetrics implements Closeable {
         return templates;
     }
 
-    final Time time;
+    // Registers the metrics on first use, not when MetricsDocs loads this class to call all().
+    private static final class Holder {
+        private static final PostgresControlPlaneMetrics INSTANCE = new PostgresControlPlaneMetrics();
+    }
+
+    private final Time time = Time.SYSTEM;
 
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
         PostgresControlPlane.class.getPackageName(), PostgresControlPlane.class.getSimpleName());
@@ -86,8 +96,11 @@ public class PostgresControlPlaneMetrics implements Closeable {
     private final QueryMetrics advanceCrossTierLogStartMetrics = new QueryMetrics("AdvanceCrossTierLogStart");
     private final QueryMetrics getCrossTierLogStartMetrics = new QueryMetrics("GetCrossTierLogStart");
 
-    public PostgresControlPlaneMetrics(Time time) {
-        this.time = Objects.requireNonNull(time, "time cannot be null");
+    private PostgresControlPlaneMetrics() {
+    }
+
+    public static PostgresControlPlaneMetrics instance() {
+        return Holder.INSTANCE;
     }
 
     public void onFindBatchesCompleted(Long duration) {
@@ -166,22 +179,9 @@ public class PostgresControlPlaneMetrics implements Closeable {
         getCrossTierLogStartMetrics.record(duration);
     }
 
-    /**
-     * Does nothing: these metrics outlive any single {@code PostgresControlPlane} generation.
-     *
-     * <p>Their names are fixed, not scoped to a generation, so Yammer's registry hands a new
-     * generation back the previous one's already-registered gauge or histogram instead of one of
-     * its own. That aliasing is harmless while both generations are live: they share the same
-     * counters, which is the right behavior for a query-timing metric that should read
-     * continuously across a reconfiguration. It stops being harmless the moment a generation's
-     * {@code close()} removes the registration: whichever generation is newest loses its metrics
-     * with no error, because the name it was writing into no longer resolves to anything a reporter
-     * can see. Not removing them here is what keeps that from happening; they disappear only when
-     * the process does.
-     */
-    @Override
-    public void close() {
-        // Intentionally does not remove any metric. See the Javadoc above.
+    // Visible for testing.
+    static long ageMs(final long lastSuccessfulQueryTimeMs, final long nowMs) {
+        return lastSuccessfulQueryTimeMs == -1 ? -1L : nowMs - lastSuccessfulQueryTimeMs;
     }
 
     // Visible for testing.
@@ -195,10 +195,8 @@ public class PostgresControlPlaneMetrics implements Closeable {
         private QueryMetrics(final String name) {
             this.queryTimeHistogram = metricsGroup.newHistogram(name + "QueryTime", true, Map.of());
             metricsGroup.newGauge(name + "QueryRate", queryRate::intValue);
-            metricsGroup.newGauge(name + "LastSuccessfulQueryAgeMs", () -> {
-                final long last = lastSuccessfulQueryTimeMs.get();
-                return last == -1 ? -1L : time.milliseconds() - last;
-            });
+            metricsGroup.newGauge(name + "LastSuccessfulQueryAgeMs",
+                () -> ageMs(lastSuccessfulQueryTimeMs.get(), time.milliseconds()));
         }
 
         private void record(final long duration) {

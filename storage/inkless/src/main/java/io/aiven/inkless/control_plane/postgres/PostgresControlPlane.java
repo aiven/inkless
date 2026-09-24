@@ -21,7 +21,6 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -76,9 +75,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     private static final String POOL_NAME = "pg-control-plane";
 
-    private final KafkaMetricsGroup metrics = new KafkaMetricsGroup(
-        PostgresConnectionPoolMetrics.class.getPackageName(), PostgresConnectionPoolMetrics.class.getSimpleName());
-    private final PostgresControlPlaneMetrics pgMetrics;
+    private final PostgresControlPlaneMetrics pgMetrics = PostgresControlPlaneMetrics.instance();
 
     private HikariDataSource jobsDataSource;
     private HikariDataSource readDataSource;
@@ -92,8 +89,6 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     public PostgresControlPlane(final Time time) {
         super(time);
-
-        this.pgMetrics = new PostgresControlPlaneMetrics(time);
     }
 
     @Override
@@ -112,7 +107,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         Migrations.migrate(controlPlaneConfig);
         LOGGER.info("Database migrations completed");
 
-        jobsDataSource = new HikariDataSource(dataSourceConfig(metrics, POOL_NAME, controlPlaneConfig));
+        jobsDataSource = new HikariDataSource(dataSourceConfig(POOL_NAME, controlPlaneConfig));
 
         // Avoid merger/cleaner waiting on class loading deadlocks between threads
         try {
@@ -126,7 +121,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         // Set up read and write contexts if configured
         if (controlPlaneConfig.writeConfig() != null) {
             LOGGER.info("Using separate write configuration");
-            writeDataSource = new HikariDataSource(dataSourceConfig(metrics, POOL_NAME + "-write", controlPlaneConfig.writeConfig()));
+            writeDataSource = new HikariDataSource(dataSourceConfig(POOL_NAME + "-write", controlPlaneConfig.writeConfig()));
             writeJooqCtx = DSL.using(writeDataSource, SQLDialect.POSTGRES);
         } else {
             LOGGER.info("No separate write configuration found, using jobs context for writes");
@@ -134,7 +129,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         }
         if (controlPlaneConfig.readConfig() != null) {
             LOGGER.info("Using separate read configuration");
-            readDataSource = new HikariDataSource(dataSourceConfig(metrics, POOL_NAME + "-read", controlPlaneConfig.readConfig()));
+            readDataSource = new HikariDataSource(dataSourceConfig(POOL_NAME + "-read", controlPlaneConfig.readConfig()));
             readJooqCtx = DSL.using(readDataSource, SQLDialect.POSTGRES);
         } else {
             LOGGER.info("No separate write configuration found, using jobs context for reads");
@@ -175,13 +170,13 @@ public class PostgresControlPlane extends AbstractControlPlane {
         }
     }
 
-    private static HikariConfig dataSourceConfig(final KafkaMetricsGroup metrics, final String name, final PostgresConnectionConfig connectionConfig) {
+    private static HikariConfig dataSourceConfig(final String name, final PostgresConnectionConfig connectionConfig) {
         final HikariConfig config = new HikariConfig();
         config.setPoolName(name);
         config.setJdbcUrl(connectionConfig.connectionString());
         config.setUsername(connectionConfig.username());
         config.setPassword(connectionConfig.password());
-        config.setMetricsTrackerFactory((poolName, poolStats) -> new PostgresConnectionPoolMetrics(metrics, poolName, poolStats));
+        config.setMetricsTrackerFactory(PostgresConnectionPoolMetrics.instance()::tracker);
         config.setTransactionIsolation(IsolationLevel.TRANSACTION_READ_COMMITTED.name());
 
         config.setMaximumPoolSize(connectionConfig.maxConnections());
@@ -401,6 +396,5 @@ public class PostgresControlPlane extends AbstractControlPlane {
         if (readDataSource != null) {
             readDataSource.close();
         }
-        pgMetrics.close();
     }
 }

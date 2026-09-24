@@ -19,23 +19,31 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
-import org.apache.kafka.server.metrics.KafkaYammerMetrics;
 
-import com.yammer.metrics.core.Gauge;
 import com.yammer.metrics.core.Meter;
-import com.yammer.metrics.core.Metric;
-import com.yammer.metrics.core.MetricName;
 import com.zaxxer.hikari.metrics.IMetricsTracker;
 import com.zaxxer.hikari.metrics.PoolStats;
 
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Supplier;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.ToIntFunction;
 
-public class PostgresConnectionPoolMetrics implements IMetricsTracker {
+/**
+ * Connection pool metrics shared by every {@code PostgresControlPlane} in the process.
+ *
+ * <p>A rebuilt control plane opens new pools under the same pool names, so the metric names don't
+ * change across generations. Yammer's registry keeps whichever metric registered a name first, so
+ * each pool name gets its metrics registered once, here, and they are never removed. The gauges
+ * read whichever pool currently holds the name.
+ */
+public final class PostgresConnectionPoolMetrics {
+    private static final PostgresConnectionPoolMetrics INSTANCE = new PostgresConnectionPoolMetrics();
+
     private static final String GROUP = PostgresConnectionPoolMetrics.class.getSimpleName();
 
     public static final String ACTIVE_CONNECTIONS_COUNT = "ActiveConnectionsCount";
@@ -76,92 +84,79 @@ public class PostgresConnectionPoolMetrics implements IMetricsTracker {
         );
     }
 
-    private final KafkaMetricsGroup metrics;
+    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
+        PostgresConnectionPoolMetrics.class.getPackageName(), PostgresConnectionPoolMetrics.class.getSimpleName());
+    private final ConcurrentMap<String, PoolMetrics> pools = new ConcurrentHashMap<>();
 
-    /**
-     * What this instance currently owns, so {@link #close()} can tell its own registrations apart
-     * from a newer pool's. Unlike the pool metrics themselves, {@code pool} is a fixed tag value,
-     * not unique per {@link com.zaxxer.hikari.HikariDataSource}: a reconfiguration opens a new pool
-     * under the same name while the old one may still be closing. Populated by {@link #registerGauge}
-     * and {@link #registerMeter}.
-     */
-    private final Map<MetricName, Metric> owned = new LinkedHashMap<>();
+    private PostgresConnectionPoolMetrics() {
+    }
 
-    private final Meter connectionTimeoutMeter;
-    private final Meter connectionUsageMeter;
-    private final Meter connectionAcquireMeter;
-
-    public PostgresConnectionPoolMetrics(final KafkaMetricsGroup metrics, final String poolName, final PoolStats poolStats) {
-        this.metrics = metrics;
-        final var tags = Map.of("pool", poolName);
-
-        this.connectionTimeoutMeter = registerMeter(metrics.metricName(CONNECTION_TIMEOUT_COUNT, tags),
-            "connection timeouts", TimeUnit.SECONDS);
-        this.connectionUsageMeter = registerMeter(metrics.metricName(CONNECTION_USAGE_MILLIS, tags),
-            "connection usage", TimeUnit.MILLISECONDS);
-        this.connectionAcquireMeter = registerMeter(metrics.metricName(CONNECTION_ACQUIRED_NANOS, tags),
-            "connection acquires", TimeUnit.NANOSECONDS);
-
-        registerGauge(metrics.metricName(TOTAL_CONNECTIONS_COUNT, tags), poolStats::getTotalConnections);
-        registerGauge(metrics.metricName(IDLE_CONNECTIONS_COUNT, tags), poolStats::getIdleConnections);
-        registerGauge(metrics.metricName(ACTIVE_CONNECTIONS_COUNT, tags), poolStats::getActiveConnections);
-        registerGauge(metrics.metricName(PENDING_THREADS_COUNT, tags), poolStats::getPendingThreads);
-        registerGauge(metrics.metricName(MAX_CONNECTIONS_COUNT, tags), poolStats::getMaxConnections);
-        registerGauge(metrics.metricName(MIN_CONNECTIONS_COUNT, tags), poolStats::getMinConnections);
+    public static PostgresConnectionPoolMetrics instance() {
+        return INSTANCE;
     }
 
     /**
-     * Registers a fresh gauge under {@code name}, evicting whatever a previous pool sharing that
-     * name left behind. Without the eviction, Yammer's registry would hand back the previous pool's
-     * gauge instead of registering this one's, and this pool's numbers would never surface.
+     * Returns the tracker HikariCP uses for a pool, and makes the gauges for {@code poolName} read
+     * that pool's {@code poolStats}.
      */
-    private <T> Gauge<T> registerGauge(final MetricName name, final Supplier<T> supplier) {
-        metrics.removeMetric(name);
-        final Gauge<T> gauge = metrics.newGauge(name, supplier);
-        owned.put(name, gauge);
-        return gauge;
+    public IMetricsTracker tracker(final String poolName, final PoolStats poolStats) {
+        final PoolMetrics pool = pools.computeIfAbsent(poolName, PoolMetrics::new);
+        pool.current.set(poolStats);
+        return new Tracker(pool, poolStats);
     }
 
-    /** Same eviction as {@link #registerGauge}, for a {@link Meter}. */
-    private Meter registerMeter(final MetricName name, final String eventType, final TimeUnit unit) {
-        metrics.removeMetric(name);
-        final Meter meter = metrics.newMeter(name, eventType, unit);
-        owned.put(name, meter);
-        return meter;
+    private final class PoolMetrics {
+        /** The newest open pool with this name, or null once it closes. */
+        private final AtomicReference<PoolStats> current = new AtomicReference<>();
+        private final Meter connectionTimeoutMeter;
+        private final Meter connectionUsageMeter;
+        private final Meter connectionAcquireMeter;
+
+        private PoolMetrics(final String poolName) {
+            final var tags = Map.of("pool", poolName);
+            connectionTimeoutMeter = metricsGroup.newMeter(CONNECTION_TIMEOUT_COUNT, "connection timeouts", TimeUnit.SECONDS, tags);
+            connectionUsageMeter = metricsGroup.newMeter(CONNECTION_USAGE_MILLIS, "connection usage", TimeUnit.MILLISECONDS, tags);
+            connectionAcquireMeter = metricsGroup.newMeter(CONNECTION_ACQUIRED_NANOS, "connection acquires", TimeUnit.NANOSECONDS, tags);
+
+            newGauge(TOTAL_CONNECTIONS_COUNT, tags, PoolStats::getTotalConnections);
+            newGauge(IDLE_CONNECTIONS_COUNT, tags, PoolStats::getIdleConnections);
+            newGauge(ACTIVE_CONNECTIONS_COUNT, tags, PoolStats::getActiveConnections);
+            newGauge(PENDING_THREADS_COUNT, tags, PoolStats::getPendingThreads);
+            newGauge(MAX_CONNECTIONS_COUNT, tags, PoolStats::getMaxConnections);
+            newGauge(MIN_CONNECTIONS_COUNT, tags, PoolStats::getMinConnections);
+        }
+
+        private void newGauge(final String name, final Map<String, String> tags, final ToIntFunction<PoolStats> stat) {
+            metricsGroup.newGauge(name, () -> {
+                final PoolStats stats = current.get();
+                return stats == null ? 0 : stat.applyAsInt(stats);
+            }, tags);
+        }
     }
 
-    @Override
-    public void recordConnectionAcquiredNanos(long elapsedAcquiredNanos) {
-        connectionAcquireMeter.mark(elapsedAcquiredNanos);
-    }
+    private record Tracker(PoolMetrics pool, PoolStats poolStats) implements IMetricsTracker {
+        @Override
+        public void recordConnectionAcquiredNanos(final long elapsedAcquiredNanos) {
+            pool.connectionAcquireMeter.mark(elapsedAcquiredNanos);
+        }
 
-    @Override
-    public void recordConnectionUsageMillis(long elapsedBorrowedMillis) {
-        connectionUsageMeter.mark(elapsedBorrowedMillis);
-    }
+        @Override
+        public void recordConnectionUsageMillis(final long elapsedBorrowedMillis) {
+            pool.connectionUsageMeter.mark(elapsedBorrowedMillis);
+        }
 
-    @Override
-    public void recordConnectionTimeout() {
-        connectionTimeoutMeter.mark();
-    }
+        @Override
+        public void recordConnectionTimeout() {
+            pool.connectionTimeoutMeter.mark();
+        }
 
-    /**
-     * Removes only the registrations this instance still owns.
-     *
-     * <p>Because {@code pool} is a fixed tag, a newer pool's {@link #registerGauge}/
-     * {@link #registerMeter} may already have evicted this instance's registration and put its own
-     * under the same name, while this instance is still closing. Removing unconditionally would
-     * delete that newer pool's metric instead of this one's, silently blanking it with no error.
-     * The identity check tells the two apart: it only removes a name if the registry still holds the
-     * exact object this instance registered.
-     */
-    @Override
-    public void close() {
-        final Map<MetricName, Metric> registered = KafkaYammerMetrics.defaultRegistry().allMetrics();
-        owned.forEach((name, mine) -> {
-            if (registered.get(name) == mine) {
-                metrics.removeMetric(name);
-            }
-        });
+        /**
+         * Detaches the gauges from this pool, unless a newer pool with the same name already took
+         * them over. The old pool can close after the new one opens.
+         */
+        @Override
+        public void close() {
+            pool.current.compareAndSet(poolStats, null);
+        }
     }
 }
