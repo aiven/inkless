@@ -1055,8 +1055,8 @@ class ReplicaManagerInklessTest {
     // the seal, so a read of the surviving remote prefix [X, seal) fails as out-of-range until the control
     // plane recovers. The fetch still completes; it just cannot see that prefix meanwhile. The reclaim
     // floor and become-leader report never touch this accessor: they read the raw
-    // crossTierRemoteLogStartOffset and fall back to findLogStartOffset, the true remote earliest. This
-    // test locks in that read-path behavior.
+    // crossTierRemoteLogStartOffset and defer while it is unavailable. This test locks in that read-path
+    // behavior.
     val controlPlane = mock(classOf[ControlPlane])
     when(controlPlane.listOffsets(anyList())).thenThrow(new ControlPlaneException("boom"))
     val cache = mock(classOf[CrossTierLogStartCache])
@@ -1196,7 +1196,7 @@ class ReplicaManagerInklessTest {
     // Data-loss guard (the whole point of the raw accessor): when remote_log_start_offset is NULL the
     // dedicated control-plane read returns empty. The accessor must propagate that (NOT the WAL prune
     // frontier that ListOffsets(EARLIEST) would COALESCE to), so the RLM reclaim floor / become-leader
-    // report fall back to the true remote earliest instead of over-reclaiming still-live remote segments.
+    // report defer instead of inferring a value that could over-reclaim still-live remote segments.
     val controlPlane = mock(classOf[ControlPlane])
     when(controlPlane.getCrossTierLogStart(any())).thenReturn(OptionalLong.empty())
     val cache = mock(classOf[CrossTierLogStartCache])
@@ -1221,8 +1221,8 @@ class ReplicaManagerInklessTest {
 
   @Test
   def testCrossTierRemoteLogStartOffsetReturnsReportedValue(): Unit = {
-    // Once the classic leader has reported a remote start, the accessor returns it verbatim (still
-    // bypassing the shared cache).
+    // Once the control plane has initialized a remote start, the accessor returns it verbatim while
+    // continuing to bypass the shared cache.
     val controlPlane = mock(classOf[ControlPlane])
     when(controlPlane.getCrossTierLogStart(any())).thenReturn(OptionalLong.of(150L))
     val cache = mock(classOf[CrossTierLogStartCache])
@@ -1264,8 +1264,8 @@ class ReplicaManagerInklessTest {
 
   @Test
   def testCrossTierRemoteLogStartOffsetReturnsEmptyWhenControlPlaneThrows(): Unit = {
-    // A control-plane outage in the reclaim window yields empty (not an exception); the RLM then fails
-    // safe to the true remote earliest rather than the local seal.
+    // A control-plane outage in the reclaim window yields empty (not an exception); the RLM then defers
+    // its become-leader report and remote expiration rather than using the local seal.
     val controlPlane = mock(classOf[ControlPlane])
     when(controlPlane.getCrossTierLogStart(any())).thenThrow(new ControlPlaneException("boom"))
     val replicaManager = createReplicaManager(

@@ -776,6 +776,9 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final long highestRemote = request.highestRemoteOffset();
         final long logStartBefore = logInfo.logStartOffset;
         final long highWatermark = logInfo.highWatermark;
+        if (logInfo.remoteLogStartOffset < 0) {
+            logInfo.remoteLogStartOffset = logStartBefore;
+        }
 
         final List<Long> keysToRemove = new ArrayList<>();
         for (final long lastOffsetKey : coordinates.keySet()) {

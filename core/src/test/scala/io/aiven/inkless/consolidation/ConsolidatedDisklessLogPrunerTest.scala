@@ -128,6 +128,30 @@ class ConsolidatedDisklessLogPrunerTest {
   }
 
   @Test
+  def testRunBootstrapsSwitchedPartitionWhenRemotePrefixEndsBeforeSeal(): Unit = {
+    val rm = mock(classOf[ReplicaManager])
+    val view = mock(classOf[InklessMetadataView])
+    val cp = mock(classOf[ControlPlane])
+
+    when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Set.of(tip))
+    when(view.getClassicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+    val partition = readyPartition(99L)
+    when(rm.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+
+    var captured: util.List[PruneDisklessLogsRequest] = null
+    when(cp.pruneDisklessLogs(any())).thenAnswer(invocation => {
+      captured = invocation.getArgument(0)
+      util.Collections.emptyList()
+    })
+
+    new ConsolidatedDisklessLogPruner(rm, view, cp).run()
+
+    assertNotNull(captured)
+    assertEquals(1, captured.size())
+    assertEquals(99L, captured.get(0).highestRemoteOffset())
+  }
+
+  @Test
   def testRunOmitsPruneWhenHighestOffsetInRemoteStorageNegative(): Unit = {
     val rm = mock(classOf[ReplicaManager])
     val view = mock(classOf[InklessMetadataView])

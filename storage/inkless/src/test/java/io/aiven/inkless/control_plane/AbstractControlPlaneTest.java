@@ -1906,6 +1906,118 @@ public abstract class AbstractControlPlaneTest {
     }
 
     @Nested
+    class PruneCrossTierBootstrap {
+        private static final String topicName = "pruneCrossTierBootstrap";
+        private static final Uuid topicId = new Uuid(12345, 67890);
+        private static final TopicIdPartition tidp = new TopicIdPartition(topicId, 0, topicName);
+
+        @BeforeEach
+        void prepare() {
+            controlPlane.createTopicAndPartitions(Set.of(
+                new CreateTopicAndPartitionsRequest(topicId, topicName, 1)
+            ));
+            controlPlane.commitFile("prune-cross-tier-0", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+                BROKER_ID, FILE_SIZE, List.of(
+                    CommitBatchRequest.of(0, tidp, 0, 10, 0, 9, 1000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("prune-cross-tier-1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+                BROKER_ID, FILE_SIZE, List.of(
+                    CommitBatchRequest.of(0, tidp, 0, 10, 10, 19, 1000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("prune-cross-tier-2", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+                BROKER_ID, FILE_SIZE, List.of(
+                    CommitBatchRequest.of(0, tidp, 0, 10, 20, 29, 1000, TimestampType.CREATE_TIME)));
+            controlPlane.deleteRecords(List.of(new DeleteRecordsRequest(tidp, 10)));
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).isEmpty();
+        }
+
+        @Test
+        void firstPruneFreezesPreviousWalStart() {
+            assertThat(controlPlane.pruneDisklessLogs(List.of(
+                new PruneDisklessLogsRequest(tidp, 19)
+            ))).containsExactly(new PruneDisklessLogsResponse(tidp, 20, PruneDisklessLogsError.NONE));
+
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(10);
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(tidp, EARLIEST_TIMESTAMP),
+                new ListOffsetsRequest(tidp, EARLIEST_LOCAL_TIMESTAMP)
+            ))).containsExactly(
+                ListOffsetsResponse.success(tidp, NO_TIMESTAMP, 10),
+                ListOffsetsResponse.success(tidp, NO_TIMESTAMP, 20)
+            );
+        }
+
+        @Test
+        void pruneWithoutWalDeletionCompletesHandoff() {
+            assertThat(controlPlane.pruneDisklessLogs(List.of(
+                new PruneDisklessLogsRequest(tidp, 9)
+            ))).containsExactly(new PruneDisklessLogsResponse(tidp, 10, PruneDisklessLogsError.NONE));
+
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(10);
+        }
+
+        @Test
+        void prunePreservesExistingCrossTierStart() {
+            controlPlane.advanceCrossTierLogStartOffset(List.of(
+                new AdvanceCrossTierLogStartOffsetRequest(topicId, 0, 5)
+            ));
+
+            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, 19)));
+
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(5);
+        }
+    }
+
+    @Nested
+    class SwitchedPruneCrossTierBootstrap {
+        private static final String topicName = "switchedPruneCrossTierBootstrap";
+        private static final Uuid topicId = new Uuid(13579, 24680);
+        private static final TopicIdPartition tidp = new TopicIdPartition(topicId, 0, topicName);
+        private static final long classicLogStart = 10;
+        private static final long seal = 100;
+
+        @Test
+        void handoffWithBatchAtSeal() {
+            verifyHandoff(true);
+        }
+
+        @Test
+        void handoffWithEmptyWal() {
+            verifyHandoff(false);
+        }
+
+        private void verifyHandoff(final boolean commitBatchAtSeal) {
+            assertThat(controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(topicId, topicName, 0, classicLogStart, seal, List.of())
+            ))).containsExactly(InitDisklessLogResponse.success());
+
+            if (commitBatchAtSeal) {
+                controlPlane.commitFile("switched-prune-cross-tier", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+                    BROKER_ID, FILE_SIZE, List.of(
+                        CommitBatchRequest.of(0, tidp, 0, 10, seal, seal + 9, 1000, TimestampType.CREATE_TIME)));
+            }
+
+            assertThat(controlPlane.pruneDisklessLogs(List.of(
+                new PruneDisklessLogsRequest(tidp, seal - 1)
+            ))).containsExactly(new PruneDisklessLogsResponse(tidp, seal, PruneDisklessLogsError.NONE));
+
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(classicLogStart);
+            final long expectedHighWatermark = commitBatchAtSeal ? seal + 10 : seal;
+            final long expectedByteSize = commitBatchAtSeal ? 10 : 0;
+            assertThat(controlPlane.getLogInfo(List.of(
+                new GetLogInfoRequest(topicId, 0)
+            ))).containsExactly(GetLogInfoResponse.success(
+                seal, expectedHighWatermark, seal, expectedByteSize
+            ));
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(tidp, EARLIEST_TIMESTAMP),
+                new ListOffsetsRequest(tidp, EARLIEST_LOCAL_TIMESTAMP)
+            ))).containsExactly(
+                ListOffsetsResponse.success(tidp, NO_TIMESTAMP, classicLogStart),
+                ListOffsetsResponse.success(tidp, NO_TIMESTAMP, seal)
+            );
+        }
+    }
+
+    @Nested
     class AdvanceCrossTierLogStartOffset {
         private static final String topicName = "crossTierTopic";
         private static final Uuid topicId = new Uuid(54321, 9876);

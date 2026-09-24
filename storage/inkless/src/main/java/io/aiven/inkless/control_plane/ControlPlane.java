@@ -108,15 +108,16 @@ public interface ControlPlane extends Closeable, Configurable {
 
     /**
      * The raw cross-tier (remote) log start offset stored for a partition, or empty when it has not
-     * been reported yet ({@code remote_log_start_offset IS NULL}) or the partition is unknown.
+     * been initialized yet ({@code remote_log_start_offset IS NULL}) or the partition is unknown.
      * <p>
      * Unlike {@code ListOffsets(EARLIEST)} this deliberately does NOT fall back to
      * {@code log_start_offset} (the diskless WAL prune frontier). That frontier can run ahead of the
      * true remote start, so a caller using it as a reclaim floor would delete still-live remote
-     * segments. Returning empty lets such callers fail safe to the true remote earliest instead.
+     * segments. Returning empty lets {@code RemoteLogManager} defer its become-leader report and
+     * remote expiration until the control plane initializes the value.
      *
      * @param topicIdPartition the partition to read
-     * @return the reported remote log start offset, or empty when unreported/unknown
+     * @return the stored remote log start offset, or empty when uninitialized/unknown
      */
     OptionalLong getCrossTierLogStart(TopicIdPartition topicIdPartition);
 

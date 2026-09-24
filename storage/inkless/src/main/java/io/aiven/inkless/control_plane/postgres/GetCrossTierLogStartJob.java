@@ -33,7 +33,7 @@ import static org.jooq.generated.tables.Logs.LOGS;
  * Reads the raw cross-tier (remote) log start offset for a single partition, null-aware.
  *
  * <p>Returns empty when the partition is unknown or {@code remote_log_start_offset} is still NULL
- * (not yet reported by the classic leader). Deliberately does not fall back to {@code log_start_offset}.
+ * (not yet initialized). Deliberately does not fall back to {@code log_start_offset}.
  */
 public class GetCrossTierLogStartJob implements Callable<OptionalLong> {
     private final Time time;
