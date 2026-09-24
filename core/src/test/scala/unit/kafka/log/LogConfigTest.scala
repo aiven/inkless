@@ -680,6 +680,7 @@ class LogConfigTest {
     val kafkaConfig = KafkaConfig.fromProps(TestUtils.createDummyBrokerConfig())
     val noExisting: util.Map[String, String] = util.Map.of()
     val mutualExclusionError = "It is not valid to set a value for both diskless.enable and remote.storage.enable unless it's for diskless switch or consolidation."
+    val requiresRemoteStorageError = "Diskless topics must have remote storage enabled. Cannot set remote.storage.enable=false when diskless is enabled."
 
     // Allowed: diskless.enable=true without explicit remote.storage.enable — controller will auto-enable
     assertValid(noExisting, topicProps(TopicConfig.DISKLESS_ENABLE_CONFIG -> "true"), kafkaConfig,
@@ -705,11 +706,11 @@ class LogConfigTest {
       kafkaConfig,
       remoteStorageConsolidationEnabled = true)
 
-    // NOT allowed to set diskless.enable=true and remote.storage.enable=false at creation (mutual exclusion fires first)
+    // NOT allowed to set diskless.enable=true and remote.storage.enable=false at creation
     assertInvalid(noExisting, topicProps(
       TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
       TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "false"),
-      mutualExclusionError,
+      requiresRemoteStorageError,
       kafkaConfig,
       remoteStorageConsolidationEnabled = true)
 
@@ -763,6 +764,7 @@ class LogConfigTest {
   def testRemoteStorageConsolidationAtUpdate(): Unit = {
     val kafkaConfig = KafkaConfig.fromProps(TestUtils.createDummyBrokerConfig())
     val mutualExclusionError = "It is not valid to set a value for both diskless.enable and remote.storage.enable unless it's for diskless switch or consolidation."
+    val requiresRemoteStorageError = "Diskless topics must have remote storage enabled. Cannot set remote.storage.enable=false when diskless is enabled."
 
     val existingWithoutDisklessOrRemote = util.Map.of(TopicConfig.RETENTION_MS_CONFIG, "1000")
     val existingWithDisklessFalse = util.Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")
@@ -811,7 +813,10 @@ class LogConfigTest {
 
     assertValid(existingWithoutDisklessOrRemote, setRemoteStorageFalse, kafkaConfig, remoteStorageConsolidationEnabled = true)
     assertInvalid(existingWithDisklessFalse, setRemoteStorageFalse, mutualExclusionError, kafkaConfig, remoteStorageConsolidationEnabled = true)
-    assertInvalid(existingWithDisklessTrue, setRemoteStorageFalse, mutualExclusionError, kafkaConfig, remoteStorageConsolidationEnabled = true)
+    assertInvalid(existingWithDisklessTrue, setRemoteStorageFalse, requiresRemoteStorageError, kafkaConfig, remoteStorageConsolidationEnabled = true)
+    // With consolidation off the specific invariant does not run. Mutual exclusion must
+    // still reject a newly added remote.storage.enable=false on a diskless topic.
+    assertInvalid(existingWithDisklessTrue, setRemoteStorageFalse, mutualExclusionError, kafkaConfig)
     assertValid(existingWithRemoteFalse, setRemoteStorageFalse, kafkaConfig, remoteStorageConsolidationEnabled = true)
     assertInvalid(existingWithRemoteTrue, setRemoteStorageFalse,
       "It is invalid to disable remote storage without deleting remote data. If you want to keep the remote data and turn to read only, please set `remote.storage.enable=true,remote.log.copy.disable=true`. If you want to disable remote storage and delete all remote data, please set `remote.storage.enable=false,remote.log.delete.on.disable=true`.",
@@ -841,10 +846,32 @@ class LogConfigTest {
     assertValid(existingWithDisklessTrueRemoteFalse, setDisklessTrueRemoteStorageTrue, kafkaConfig, disklessAllowFromClassic = true)
     assertInvalid(existingWithDisklessTrueRemoteFalse, setDisklessTrueRemoteStorageTrue, mutualExclusionError, kafkaConfig)
 
-    // Case 8: if diskless and remote is enabled, can't disable remote storage
+    // Case 8: an unrelated config change on a diskless topic that already carries
+    // remote.storage.enable=false is not a remote-storage transition, so it stays valid.
+    // The controller passes the merged config map, so both overrides show up in the request.
+    // This is flag-independent: the same grandfathered shape must stay alterable when
+    // consolidation is off.
+    val setUnrelatedConfigWithDisklessTrueRemoteFalse = topicProps(
+      TopicConfig.DISKLESS_ENABLE_CONFIG -> "true",
+      TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "false",
+      TopicConfig.LOCAL_LOG_RETENTION_MS_CONFIG -> "300000")
+    assertValid(existingWithDisklessTrueRemoteFalse, setUnrelatedConfigWithDisklessTrueRemoteFalse, kafkaConfig,
+      disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = true)
+    assertValid(existingWithDisklessTrueRemoteFalse, setUnrelatedConfigWithDisklessTrueRemoteFalse, kafkaConfig,
+      remoteStorageConsolidationEnabled = true)
+    assertValid(existingWithDisklessTrueRemoteFalse, setUnrelatedConfigWithDisklessTrueRemoteFalse, kafkaConfig)
+    // Enabling diskless onto an existing remote.storage.enable=false override is not
+    // a routine alter of a topic that already has both.
+    assertInvalid(existingWithRemoteFalse, setDisklessTrue,
+      "It is invalid to enable diskless on an already existing topic.", kafkaConfig)
+    // Newly adding remote.storage.enable=false on a diskless-only topic is not stay-disabled.
+    assertInvalid(existingWithDisklessTrue, setRemoteStorageFalse, mutualExclusionError, kafkaConfig)
+
+    // Case 9: if diskless and remote is enabled, can't disable remote storage.
+    // With consolidation the specific invariant fires; without it, mutual exclusion does.
     val setDisklessTrueRemoteStorageFalse = topicProps(TopicConfig.DISKLESS_ENABLE_CONFIG -> "true", TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "false")
-    assertInvalid(existingWithDisklessTrueRemoteTrue, setDisklessTrueRemoteStorageFalse, mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = true)
-    assertInvalid(existingWithDisklessTrueRemoteTrue, setDisklessTrueRemoteStorageFalse, mutualExclusionError, kafkaConfig, remoteStorageConsolidationEnabled = true)
+    assertInvalid(existingWithDisklessTrueRemoteTrue, setDisklessTrueRemoteStorageFalse, requiresRemoteStorageError, kafkaConfig, disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = true)
+    assertInvalid(existingWithDisklessTrueRemoteTrue, setDisklessTrueRemoteStorageFalse, requiresRemoteStorageError, kafkaConfig, remoteStorageConsolidationEnabled = true)
     assertInvalid(existingWithDisklessTrueRemoteTrue, setDisklessTrueRemoteStorageFalse, mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true)
     assertInvalid(existingWithDisklessTrueRemoteTrue, setDisklessTrueRemoteStorageFalse, mutualExclusionError, kafkaConfig)
   }
@@ -853,6 +880,7 @@ class LogConfigTest {
   def testDisklessAllowFromClassicAndRemoteStorageConsolidationAtUpdate(): Unit = {
     val kafkaConfig = KafkaConfig.fromProps(TestUtils.createDummyBrokerConfig())
     val mutualExclusionError = "It is not valid to set a value for both diskless.enable and remote.storage.enable unless it's for diskless switch or consolidation."
+    val requiresRemoteStorageError = "Diskless topics must have remote storage enabled. Cannot set remote.storage.enable=false when diskless is enabled."
     val existingWithoutDisklessOrRemote = util.Map.of(TopicConfig.RETENTION_MS_CONFIG, "1000")
     val existingWithDisklessFalse = util.Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")
     val existingWithDisklessTrue = util.Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")
@@ -867,8 +895,9 @@ class LogConfigTest {
     assertValid(existingWithDisklessFalse, setDisklessTrue, kafkaConfig, disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = true)
     // Already diskless — no-op, not rejected (legacy state allowed for existing topics)
     assertValid(existingWithDisklessTrue, setDisklessTrue, kafkaConfig, disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = true)
-    // Mutual exclusion still applies when existing remote.storage.enable=false
-    assertInvalid(existingWithRemoteFalse, setDisklessTrue, mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = true)
+    // Enabling diskless while remote.storage.enable=false is already set is rejected
+    assertInvalid(existingWithRemoteFalse, setDisklessTrue, requiresRemoteStorageError, kafkaConfig, disklessAllowFromClassic = true, remoteStorageConsolidationEnabled = true)
+    assertInvalid(existingWithRemoteFalse, setDisklessTrue, mutualExclusionError, kafkaConfig, disklessAllowFromClassic = true)
     // Classic-to-diskless switch: setting diskless.enable=true on a topic with remote.storage.enable=true is valid.
     // In the real controller flow (ConfigurationControlManager.validateAlterConfig), props contains the merged
     // state of existing overrides + requested changes, so remote.storage.enable=true is included in props.
