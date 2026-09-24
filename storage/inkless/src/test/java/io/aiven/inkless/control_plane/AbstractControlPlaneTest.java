@@ -1967,6 +1967,57 @@ public abstract class AbstractControlPlaneTest {
     }
 
     @Nested
+    class SwitchedPruneCrossTierBootstrap {
+        private static final String topicName = "switchedPruneCrossTierBootstrap";
+        private static final Uuid topicId = new Uuid(13579, 24680);
+        private static final TopicIdPartition tidp = new TopicIdPartition(topicId, 0, topicName);
+        private static final long classicLogStart = 10;
+        private static final long seal = 100;
+
+        @Test
+        void handoffWithBatchAtSeal() {
+            verifyHandoff(true);
+        }
+
+        @Test
+        void handoffWithEmptyWal() {
+            verifyHandoff(false);
+        }
+
+        private void verifyHandoff(final boolean commitBatchAtSeal) {
+            assertThat(controlPlane.initDisklessLog(List.of(
+                new InitDisklessLogRequest(topicId, topicName, 0, classicLogStart, seal, List.of())
+            ))).containsExactly(InitDisklessLogResponse.success());
+
+            if (commitBatchAtSeal) {
+                controlPlane.commitFile("switched-prune-cross-tier", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+                    BROKER_ID, FILE_SIZE, List.of(
+                        CommitBatchRequest.of(0, tidp, 0, 10, seal, seal + 9, 1000, TimestampType.CREATE_TIME)));
+            }
+
+            assertThat(controlPlane.pruneDisklessLogs(List.of(
+                new PruneDisklessLogsRequest(tidp, seal - 1)
+            ))).containsExactly(new PruneDisklessLogsResponse(tidp, seal, PruneDisklessLogsError.NONE));
+
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(classicLogStart);
+            final long expectedHighWatermark = commitBatchAtSeal ? seal + 10 : seal;
+            final long expectedByteSize = commitBatchAtSeal ? 10 : 0;
+            assertThat(controlPlane.getLogInfo(List.of(
+                new GetLogInfoRequest(topicId, 0)
+            ))).containsExactly(GetLogInfoResponse.success(
+                seal, expectedHighWatermark, seal, expectedByteSize
+            ));
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(tidp, EARLIEST_TIMESTAMP),
+                new ListOffsetsRequest(tidp, EARLIEST_LOCAL_TIMESTAMP)
+            ))).containsExactly(
+                ListOffsetsResponse.success(tidp, NO_TIMESTAMP, classicLogStart),
+                ListOffsetsResponse.success(tidp, NO_TIMESTAMP, seal)
+            );
+        }
+    }
+
+    @Nested
     class AdvanceCrossTierLogStartOffset {
         private static final String topicName = "crossTierTopic";
         private static final Uuid topicId = new Uuid(54321, 9876);
