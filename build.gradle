@@ -3840,6 +3840,8 @@ project(':jmh-benchmarks') {
 
   shadowJar {
     archiveBaseName = 'kafka-jmh-benchmarks'
+    // The shaded benchmark jar has more than 65535 entries, which classic Zip cannot store.
+    zip64 = true
   }
 
   dependencies {
