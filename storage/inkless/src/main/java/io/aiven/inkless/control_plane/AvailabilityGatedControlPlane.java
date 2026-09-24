@@ -76,10 +76,12 @@ public class AvailabilityGatedControlPlane implements ControlPlane {
     /**
      * Builds the delegate, waiting for that first attempt to finish before returning.
      *
-     * <p>Call this during startup, before the node begins serving requests. Building happens on the
-     * reconciler's thread either way; waiting here only keeps requests from arriving while the very
-     * first attempt is still running, because some of them, diskless topic creation in particular,
-     * have nowhere to put a retriable error.
+     * <p>Call this during startup. Building happens on the reconciler's thread either way; waiting
+     * here keeps the node from reporting itself started while the very first attempt is still
+     * running. A broker calls this before it begins serving requests. A dedicated controller calls
+     * this after its acceptors start, because it must answer Raft Vote requests before its initial
+     * metadata image can be published. Diskless topic creation that reaches the controller before
+     * the build settles fails, and the client's retry completes it.
      *
      * <p>Returns as soon as the attempt settles, whether or not it produced a usable delegate, so an
      * unconfigured or unreachable control plane does not hold up startup. If the attempt outlasts

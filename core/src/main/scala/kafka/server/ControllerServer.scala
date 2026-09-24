@@ -404,21 +404,6 @@ class ControllerServer(
         "the controller metadata publishers to be installed",
         sharedServer.loader.installPublishers(metadataPublishers), startupDeadline, time)
 
-      if (!config.processRoles.contains(ProcessRole.BrokerRole)) {
-        // Wait for the initial metadata image, including any persisted dynamic
-        // inkless.control.plane.* configuration, to be applied to config before building the
-        // diskless control plane delegate. installPublishers() above only guarantees this
-        // publisher was scheduled for its first update, not that the update already ran.
-        //
-        // Skipped in combined mode: there, the gate reads through the broker's config instance,
-        // not this one, and BrokerServer.startup() is the one that builds it once the broker's
-        // own dynamic config publisher has caught up.
-        FutureUtils.waitWithLogging(logger.underlying, logIdent,
-          "the initial controller dynamic configuration to be published",
-          dynamicConfigPublisher.initialPublishFuture, startupDeadline, time)
-        sharedServer.startInklessControlPlane()
-      }
-
       val authorizerFutures: Map[Endpoint, CompletableFuture[Void]] = endpointReadyFutures.futures().asScala.toMap
 
       /**
@@ -455,6 +440,29 @@ class ControllerServer(
       FutureUtils.waitWithLogging(logger.underlying, logIdent,
         "all of the SocketServer Acceptors to be started",
         socketServerFuture, startupDeadline, time)
+
+      if (sharedServer.inklessControlPlaneGate.isDefined &&
+          !config.processRoles.contains(ProcessRole.BrokerRole)) {
+        // Wait for the initial metadata image, including any persisted dynamic
+        // inkless.control.plane.* configuration, to be applied to config before building the
+        // diskless control plane delegate. installPublishers() above only guarantees this
+        // publisher was scheduled for its first update, not that the update already ran.
+        //
+        // This wait must come after the acceptors start. The metadata loader publishes nothing
+        // until it knows the high watermark, which needs an elected Raft leader. When several
+        // controllers start together, none of them can elect a leader while all of them refuse
+        // Vote requests. Until the build below settles, the gate fails diskless calls with
+        // ControlPlaneUnavailableException, and CreateTopics retries fill in a missed diskless
+        // creation through the TOPIC_ALREADY_EXISTS path.
+        //
+        // Skipped in combined mode: there, the gate reads through the broker's config instance,
+        // not this one, and BrokerServer.startup() is the one that builds it once the broker's
+        // own dynamic config publisher has caught up.
+        FutureUtils.waitWithLogging(logger.underlying, logIdent,
+          "the initial controller dynamic configuration to be published",
+          dynamicConfigPublisher.initialPublishFuture, startupDeadline, time)
+        sharedServer.startInklessControlPlane()
+      }
     } catch {
       case e: Throwable =>
         maybeChangeStatus(STARTING, STARTED)
