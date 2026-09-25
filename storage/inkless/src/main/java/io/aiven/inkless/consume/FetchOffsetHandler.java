@@ -214,7 +214,7 @@ public class FetchOffsetHandler implements Closeable {
             } catch (final ControlPlaneUnavailableException unavailableException) {
                 // KAFKA_STORAGE_ERROR is retriable, unlike the UNKNOWN_SERVER_ERROR the raw
                 // exception would map to below.
-                LOGGER.warn("Rejecting diskless list offsets: {}", unavailableException.getMessage());
+                LOGGER.debug("Rejecting diskless list offsets: {}", unavailableException.getMessage());
                 final var exception = new KafkaStorageException(unavailableException.getMessage());
                 for (final var future : futures.values()) {
                     if (!future.isDone()) {

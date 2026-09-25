@@ -108,7 +108,7 @@ public class AppendHandler implements Closeable {
             // Fail before buffering or uploading: an upload here would be paid for and then thrown
             // away when the commit fails. KAFKA_STORAGE_ERROR is what a failed commit already returns.
             controlPlaneAvailability.recordGatedCall();
-            LOGGER.warn("Rejecting diskless produce: control plane is {}",
+            LOGGER.debug("Rejecting diskless produce: control plane is {}",
                 controlPlaneAvailability.state());
             return CompletableFuture.completedFuture(entriesPerPartition.entrySet().stream().collect(
                 Collectors.toMap(Map.Entry::getKey,
