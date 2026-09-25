@@ -11,7 +11,7 @@ Each release on version branches represents stable progress of the Inkless imple
 - Docker (required for building - jOOQ plugin uses a PostgreSQL container for Flyway migrations and class generation)
 - Object storage (AWS S3, Google Cloud Storage, or Azure Blob Storage)
 
-> **Note:** Any S3-compatible storage backend should work in principle. MinIO has been used for integration testing, though we are evaluating alternatives given [MinIO's recent changes](https://github.com/minio/minio/commit/27742d469462e1561c776f88ca7a1f26816d69e2) to their Docker image and single-node deployment support.
+> **Note:** Any S3-compatible storage backend should work in principle. Integration tests, system tests, and the local demo use [`pgsty/minio`](https://github.com/pgsty/minio), a community-maintained MinIO fork, because upstream MinIO no longer publishes Docker images.
 - PostgreSQL (for batch coordinator) or in-memory mode for testing
 
 ## Quick Start
