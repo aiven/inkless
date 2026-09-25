@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": ["Bash(make vale)"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.ai-agents/hooks/vale_gate.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.ai-agents/hooks/vale_gate.py"
+          }
+        ]
+      }
+    ]
+  }
+}

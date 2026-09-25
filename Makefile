@@ -154,6 +154,12 @@ docker_push_multiarch: docker_build_multiarch
 docs:
 	./gradlew genInklessConfigDoc genInklessTopicConfigDoc genInklessMetricsDoc
 
+# Lint inkless-owned prose changes with Vale
+.PHONY: vale
+vale:
+	@test -d .vale/styles/Google -a -d .vale/styles/ai-tells || vale sync
+	python3 .vale/inkless.py
+
 .PHONY: fmt
 fmt:
 	./gradlew \
