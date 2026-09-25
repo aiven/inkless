@@ -40,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
 import io.aiven.inkless.control_plane.MetadataView;
@@ -208,6 +209,40 @@ class DeleteRecordsInterceptorTest {
             new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
                 .setPartitionIndex(1)
                 .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
+                .setLowWatermark(INVALID_LOW_WATERMARK)
+        ));
+        interceptor.close();
+    }
+
+    @Test
+    public void unavailableControlPlaneFailsRetriably() throws Exception {
+        // AvailabilityGatedControlPlane fast-fails without opening a connection, so there is no
+        // pre-check here: the call always reaches the control plane and this is the only place
+        // unavailability is discovered.
+        final Uuid topicId = new Uuid(1, 2);
+        when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
+        when(metadataView.getTopicId(eq("diskless"))).thenReturn(topicId);
+        when(controlPlane.deleteRecords(anyList()))
+            .thenThrow(new ControlPlaneUnavailableException("No diskless control plane is configured"));
+
+        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
+            controlPlane, metadataView, new SynchronousExecutor());
+
+        final TopicPartition topicPartition = new TopicPartition("diskless", 1);
+        final Map<TopicPartition, Long> entriesPerPartition = Map.of(
+            topicPartition, 4567L
+        );
+
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        assertThat(result).isTrue();
+        verify(controlPlane).deleteRecords(anyList());
+
+        verify(responseCallback).accept(resultCaptor.capture());
+        assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
+            new TopicPartition("diskless", 1),
+            new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
+                .setPartitionIndex(1)
+                .setErrorCode(Errors.KAFKA_STORAGE_ERROR.code())
                 .setLowWatermark(INVALID_LOW_WATERMARK)
         ));
         interceptor.close();

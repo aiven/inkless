@@ -43,6 +43,8 @@ import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.StreamSupport;
 
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -173,6 +175,31 @@ public class FetchHandlerTest {
             final var result = handler.handle(params, fetchInfos).get();
 
             assertThat(result).hasSize(0);
+        }
+    }
+
+    @Test
+    public void unavailableControlPlaneFailsWithARetriableError() throws Exception {
+        // AvailabilityGatedControlPlane fast-fails without opening a connection, so there is no
+        // pre-check here: the reader is always called and this is the only place unavailability
+        // is discovered.
+        when(reader.fetch(any(), any())).thenReturn(CompletableFuture.failedFuture(
+            new ControlPlaneUnavailableException("No diskless control plane is configured")));
+        try (FetchHandler handler = new FetchHandler(reader)) {
+            final FetchParams params = new FetchParams(fetchVersion,
+                -1, -1, -1, -1,
+                FetchIsolation.LOG_END, Optional.empty());
+
+            final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+                topicIdPartition,
+                new FetchRequest.PartitionData(inklessUuid, 0, 0, 1024, Optional.empty())
+            );
+
+            final var result = handler.handle(params, fetchInfos).get();
+
+            assertThat(result.get(topicIdPartition).error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+            assertThat(result.get(topicIdPartition).error.exception()).isInstanceOf(
+                org.apache.kafka.common.errors.RetriableException.class);
         }
     }
 }

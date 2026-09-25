@@ -39,6 +39,7 @@ import io.aiven.inkless.cache.CrossTierLogStartCache;
 import io.aiven.inkless.control_plane.AdvanceCrossTierLogStartOffsetRequest;
 import io.aiven.inkless.control_plane.AdvanceCrossTierLogStartOffsetResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.MetadataView;
 
 /**
@@ -124,6 +125,10 @@ public class CrossTierLogStartReporter implements Runnable, Closeable {
     public void run() {
         try {
             flush();
+        } catch (final ControlPlaneUnavailableException e) {
+            // Let the caller (ReplicaManager.runIfControlPlaneAvailable) catch this and skip
+            // quietly, instead of treating it as a report failure.
+            throw e;
         } catch (final Exception e) {
             LOGGER.error("Error reporting cross-tier log start offsets", e);
         }

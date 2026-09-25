@@ -364,6 +364,14 @@ Under ``inkless.control.plane.``
   * Valid Values: [1,...]
   * Importance: medium
 
+``migration.timeout.ms``
+  Maximum time in milliseconds that schema migration may spend waiting on the database, applied both to socket reads and to the wait for the migration advisory lock another broker may be holding. Distinct from socket.timeout.ms, which bounds ordinary queries: a migration that builds an index on a populated table legitimately runs far longer than a query, so bounding it at the query timeout would kill it part-way through.
+
+  * Type: long
+  * Default: 300000 (5 minutes)
+  * Valid Values: [1000,...]
+  * Importance: low
+
 
 
 -----------------
