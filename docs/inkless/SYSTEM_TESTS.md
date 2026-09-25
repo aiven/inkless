@@ -57,7 +57,7 @@ Object storage reachable at hostname `storage`:
 
 ```shell
 docker run -d --name storage --network ducknet --network-alias storage \
-  quay.io/minio/minio server /data --console-address ":9001"
+  pgsty/minio:RELEASE.2026-08-04T00-00-00Z server /data --console-address ":9001"
 ```
 
 ### 4. Create the inkless bucket
@@ -65,7 +65,7 @@ docker run -d --name storage --network ducknet --network-alias storage \
 The brokers expect a bucket named `inkless` to exist:
 
 ```shell
-docker run --rm --network ducknet --entrypoint /bin/sh quay.io/minio/mc -c '
+docker run --rm --network ducknet --entrypoint /bin/sh pgsty/mc:RELEASE.2026-09-16T00-00-00Z -c '
   until /usr/bin/mc alias set local http://storage:9000 minioadmin minioadmin; do
     echo "waiting for minio"; sleep 2;
   done;
@@ -144,7 +144,7 @@ docker exec postgres pg_isready --dbname=inkless -U admin
 **MinIO bucket errors**: Verify the bucket exists:
 
 ```shell
-docker run --rm --network ducknet --entrypoint /bin/sh quay.io/minio/mc -c '
+docker run --rm --network ducknet --entrypoint /bin/sh pgsty/mc:RELEASE.2026-09-16T00-00-00Z -c '
   /usr/bin/mc alias set local http://storage:9000 minioadmin minioadmin;
   /usr/bin/mc ls local/inkless
 '

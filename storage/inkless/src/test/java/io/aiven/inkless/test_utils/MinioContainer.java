@@ -34,7 +34,8 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 
 public class MinioContainer extends GenericContainer<MinioContainer> {
-    private static final DockerImageName DEFAULT_IMAGE_NAME = DockerImageName.parse("quay.io/minio/minio");
+    private static final DockerImageName DEFAULT_IMAGE_NAME = DockerImageName.parse("pgsty/minio");
+    private static final String DEFAULT_TAG = "RELEASE.2026-08-04T00-00-00Z";
 
     private static final Logger log = LoggerFactory.getLogger(MinioContainer.class);
 
@@ -47,7 +48,7 @@ public class MinioContainer extends GenericContainer<MinioContainer> {
     private String bucketName;
 
     public MinioContainer() {
-        this(DEFAULT_IMAGE_NAME.withTag("latest"));
+        this(DEFAULT_IMAGE_NAME.withTag(DEFAULT_TAG));
     }
 
     public MinioContainer(DockerImageName dockerImageName) {
@@ -55,8 +56,8 @@ public class MinioContainer extends GenericContainer<MinioContainer> {
 
         withExposedPorts(DEFAULT_PORT, DEFAULT_CONSOLE_PORT);
         withCommand("server", "/data", "--console-address", ":" + DEFAULT_CONSOLE_PORT);
-        withEnv("MINIO_ACCESS_KEY", DEFAULT_ACCESS_KEY);
-        withEnv("MINIO_SECRET_KEY", DEFAULT_SECRET_KEY);
+        withEnv("MINIO_ROOT_USER", DEFAULT_ACCESS_KEY);
+        withEnv("MINIO_ROOT_PASSWORD", DEFAULT_SECRET_KEY);
     }
 
     public S3Client getS3Client() {
