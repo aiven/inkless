@@ -22,8 +22,8 @@ import org.apache.kafka.common.errors.InvalidConfigurationException
 import org.apache.kafka.server.config.{InklessControlPlaneConfigs => JInklessControlPlaneConfigs}
 
 /**
- * Guards every dynamic `inkless.control.plane.*` broker property, before the value ever reaches
- * the metadata log.
+ * Guards every dynamic `inkless.control.plane.*` broker property before the
+ * controller writes the value to the metadata log.
  *
  * `ControllerConfigurationValidator` calls this from the `AlterConfigs`/`IncrementalAlterConfigs`
  * request path, before the controller appends the corresponding `ConfigRecord`. That is the only
@@ -31,12 +31,12 @@ import org.apache.kafka.server.config.{InklessControlPlaneConfigs => JInklessCon
  * `BrokerReconfigurable` for these same keys, only sees the config after it has already been
  * committed and replicated.
  *
- * Kafka's outer config schema has no idea these are Postgres connection settings: they are
- * undeclared custom broker properties, so anything under the `inkless.control.plane.` prefix
+ * Kafka's outer config schema doesn't declare these Postgres connection settings. They are
+ * custom broker properties, so anything under the `inkless.control.plane.` prefix
  * passes the generic dynamic-config checks unchecked. Without an allowlist here, a request could
- * set `inkless.control.plane.password` (or `.read.password`, `.write.password`) directly, and
- * that value would land in a plaintext `ConfigRecord`, exactly what rejecting embedded
- * credentials in the connection string is meant to prevent.
+ * set `inkless.control.plane.password` (or `.read.password`, `.write.password`) directly.
+ * The controller would then write that value to a plaintext `ConfigRecord`. Rejecting embedded
+ * credentials in the connection string is meant to prevent that.
  *
  * These keys must also stay on the default broker resource. A per-broker override would let that
  * one broker point at a different control plane database than the rest of the cluster, so brokers
@@ -45,7 +45,7 @@ import org.apache.kafka.server.config.{InklessControlPlaneConfigs => JInklessCon
 object InklessControlPlaneConnectionStringValidator {
   // pgjdbc reads the username and password from the URL as `user`/`password` query parameters,
   // and reads the private key's password, when the key itself is encrypted, as `sslpassword`.
-  // Those are the only ways a connection string can carry a secret, so they are what has to stay
+  // Secrets appear in a connection string only through these parameters, so they are what has to stay
   // out of the metadata log.
   private val SensitiveConnectionParams: Set[String] = Set("user", "password", "sslpassword")
 
@@ -69,8 +69,8 @@ object InklessControlPlaneConnectionStringValidator {
   def validate(resourceName: String, newConfigs: util.Map[String, String]): Unit = {
     newConfigs.forEach { (key, value) =>
       if (key.startsWith(JInklessControlPlaneConfigs.PREFIX) && value != null) {
-        // Only the three connection strings may be set dynamically. Every other nested Postgres
-        // property, most importantly the direct username/password fields, must be configured
+        // Only the three connection strings may be set at runtime. Every other nested Postgres
+        // property, especially the direct username/password fields, must be configured
         // statically so it goes through the broker's own startup-time handling instead of a
         // plaintext ConfigRecord.
         if (!JInklessControlPlaneConfigs.RECONFIGURABLE_CONFIGS.contains(key)) {
@@ -79,7 +79,7 @@ object InklessControlPlaneConnectionStringValidator {
               "may be changed at runtime")
         }
         // A per-broker override lets one broker point at a different control plane database than
-        // the rest of the cluster, splitting offset assignment and topic metadata. Only the default
+        // the rest of the cluster. That splits offset assignment and topic metadata. Only the default
         // resource may set these keys.
         if (resourceName.nonEmpty) {
           throw new InvalidConfigurationException(

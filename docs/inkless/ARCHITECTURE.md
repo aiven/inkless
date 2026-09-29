@@ -162,8 +162,10 @@ kafka-configs.sh --bootstrap-server localhost:9092 --alter \
 Every broker retires its connection pool and fails diskless produce and fetch with
 `KAFKA_STORAGE_ERROR`, a retriable error, without waiting for a connection to time out.
 Background diskless jobs skip their ticks. Classic topics are unaffected. Set the config
-back to a real value, which may point at a different host after a restore, and each broker
-rebuilds the pool in the background. No restart is needed.
+back to a valid connection string. After a restore, it may point at a different host.
+**PLEASE NOTE** that pointing to a database in a different state (e.g. restored from a
+backup) isn't fully supported.
+Each broker then rebuilds the pool in the background. You don't need to restart brokers.
 
 Rebuilding runs on a background thread, never on a thread serving a request: it applies
 schema migration and opens connection pools, which against a sick database takes longer
@@ -186,7 +188,7 @@ Set the value to empty rather than deleting the override. Deleting it restores t
 from `server.properties`, which is a working connection string.
 
 The `read.` and `write.` connection strings, `inkless.control.plane.read.connection.string`
-and `inkless.control.plane.write.connection.string`, are dynamic in the same way.
+and `inkless.control.plane.write.connection.string`, can also change at runtime.
 Credentials are not, because otherwise they would be written to the metadata log in plaintext.
 
 The `ControlPlaneAvailability` metric reports `1` while the control plane is available and

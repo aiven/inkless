@@ -46,7 +46,7 @@ class InklessControlPlaneConnectionStringValidatorTest {
   @Test
   def testInklessControlPlaneConnectionStringRejectsEmbeddedCredentials(): Unit = {
     val config = new util.TreeMap[String, String]()
-    config.put("inkless.control.plane.connection.string", "jdbc:postgresql://host/db?user=admin&password=secret")
+    config.put("inkless.control.plane.connection.string", "jdbc:postgresql://host/db?user=alice&password=secret")
     assertEquals("inkless.control.plane.connection.string must not embed credentials in the " +
       "connection string; configure username/password separately",
       assertThrows(classOf[InvalidConfigurationException], () => validator.validate(

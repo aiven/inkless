@@ -45,7 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Starts several dedicated controllers at the same time. Each controller must accept Raft Vote
+ * Starts several dedicated controllers concurrently. Each controller must accept Raft Vote
  * requests before it waits on published metadata, or no leader is ever elected and startup hangs.
  */
 @Testcontainers
