@@ -17,7 +17,7 @@
 package kafka.server
 
 import io.aiven.inkless.config.InklessConfig
-import io.aiven.inkless.control_plane.{AvailabilityGatedControlPlane, ControlPlane, ControlPlaneAvailability}
+import io.aiven.inkless.control_plane.{AvailabilityGatedControlPlane, ControlPlane, ControlPlaneAvailability, ControlPlaneNotConfiguredException}
 import kafka.cluster.Partition
 import kafka.integration.KafkaServerTestHarness
 import kafka.server.metadata.InklessMetadataView
@@ -26,7 +26,7 @@ import kafka.utils._
 import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.{Admin, AlterClientQuotasOptions, AlterConfigOp, ConfigEntry}
-import org.apache.kafka.common.config.{ConfigException, ConfigResource, TopicConfig}
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors.{InvalidRequestException, UnknownTopicOrPartitionException}
 import org.apache.kafka.common.metrics.Quota
 import org.apache.kafka.common.quota.ClientQuotaAlteration.Op
@@ -910,11 +910,11 @@ class DynamicConfigChangeUnitTest {
     val gate = new AvailabilityGatedControlPlane(
       () => new InklessConfig(java.util.Map.of("control.plane.class",
         classOf[io.aiven.inkless.control_plane.InMemoryControlPlane].getCanonicalName)),
-      // The real factory raises ConfigException for an empty connection string, while parsing its
-      // configuration and before it opens a socket. The gate's reconciler rebuilds from the
+      // The real factory raises ControlPlaneNotConfiguredException for an empty connection string,
+      // while parsing its configuration and before it opens a socket. The gate's reconciler rebuilds from the
       // current configuration after a takedown, so a factory that ignored that would report the
       // control plane back in service.
-      _ => throw new ConfigException("connection.string", "", "Missing"),
+      _ => throw new ControlPlaneNotConfiguredException("connection.string is missing"),
       org.apache.kafka.common.utils.Time.SYSTEM) {
       override def takeOutOfService(reason: ControlPlaneAvailability.UnavailableReason): Unit = {
         takeOutOfServiceCalls.incrementAndGet()
