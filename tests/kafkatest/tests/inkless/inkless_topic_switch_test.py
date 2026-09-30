@@ -146,7 +146,7 @@ class InklessClassicToDisklessSwitchTest(Test):
             controller_num_nodes_override=controller_num_nodes,
             server_prop_overrides=[
                 ["diskless.managed.rf.enable", "true"],
-                # _degrade_network() also throttles the broker's path to object storage, so a WAL
+                # `_degrade_network()` also throttles the broker's path to object storage, so a WAL
                 # upload outlasts the 2 s default S3 call timeout. The producer then retries the
                 # failed produce, which duplicates records and stalls production.
                 ["inkless.storage.s3.api.call.timeout", "60000"],
