@@ -146,6 +146,11 @@ class InklessClassicToDisklessSwitchTest(Test):
             controller_num_nodes_override=controller_num_nodes,
             server_prop_overrides=[
                 ["diskless.managed.rf.enable", "true"],
+                # _degrade_network() also throttles the broker's path to object storage, so a WAL
+                # upload outlasts the 2 s default S3 call timeout. The producer then retries the
+                # failed produce, which duplicates records and stalls production.
+                ["inkless.storage.s3.api.call.timeout", "60000"],
+                ["inkless.storage.s3.api.call.attempt.timeout", "30000"],
             ],
             jmx_object_names=jmx_object_names,
             jmx_attributes=self.SWITCH_JMX_ATTRIBUTES,
@@ -302,12 +307,18 @@ class InklessClassicToDisklessSwitchTest(Test):
     # Helpers: switch
     # -----------------------------------------------------------------------
 
-    def _switch_topic_to_diskless(self, topic=None):
+    def _switch_topic_to_diskless(self, topic=None, node=None):
+        """Run the switch alter from ``node``, or from the first broker if unset.
+
+        While a network partition is active, pass a node outside the isolated
+        side: an admin client on the isolated broker can't reach its peers and
+        times out describing the topic config.
+        """
         if topic is None:
             topic = self.topic
         self.logger.info("Switching topic %s to diskless", topic)
         self._switched_topics.add(topic)
-        self.kafka.alter_topic_config(topic, "diskless.enable", "true")
+        self.kafka.alter_topic_config(topic, "diskless.enable", "true", node=node)
 
     def _wait_for_switch_config(self, topic=None, timeout_sec=None):
         """Wait until kafka-configs reports diskless.enable=true for the topic."""
@@ -1819,14 +1830,15 @@ class InklessClassicToDisklessSwitchTest(Test):
 
         follower_nodes = self._get_follower_nodes(partition=0)
         follower = follower_nodes[0]
+        reachable_nodes = [n for n in self.kafka.nodes if n != follower]
 
         partition_spec = NetworkPartitionFaultSpec(
             0, 5 * 60 * 1000,
-            [[follower], [n for n in self.kafka.nodes if n != follower]]
+            [[follower], reachable_nodes]
         )
         fault = self.trogdor.create_task("follower_partition", partition_spec)
 
-        self._switch_topic_to_diskless()
+        self._switch_topic_to_diskless(node=reachable_nodes[0])
 
         # The partition fault should block switch in WaitingForReplication;
         # waiting on that JMX state is more precise than sleeping for ISR lag.
@@ -1892,7 +1904,7 @@ class InklessClassicToDisklessSwitchTest(Test):
         )
         fault = self.trogdor.create_task("leader_partition", partition_spec)
 
-        self._switch_topic_to_diskless()
+        self._switch_topic_to_diskless(node=non_leader_nodes[0])
 
         # The partition fault should block switch in WaitingForReplication;
         # waiting on that JMX state is more precise than sleeping for ISR lag.
