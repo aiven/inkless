@@ -38,12 +38,14 @@ import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -194,6 +196,20 @@ class FileCleanerMockedTest {
 
         cleaner.run();
 
+        assertEquals(-1, cleaner.metrics.lastSuccessfulCleanupTimeMs.get());
+    }
+
+    @Test
+    void propagatesControlPlaneUnavailableExceptionWithoutTouchingStorage() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
+        when(controlPlane.getFilesToDelete(any(), anyInt()))
+            .thenThrow(new ControlPlaneUnavailableException("No diskless control plane is configured"));
+
+        // run() rethrows this rather than swallowing it: the caller (ReplicaManager.runIfControlPlaneAvailable)
+        // is the one place that turns it into a quiet skip.
+        assertThrows(ControlPlaneUnavailableException.class, cleaner::run);
+
+        verify(storageBackend, times(0)).delete(any(Set.class));
         assertEquals(-1, cleaner.metrics.lastSuccessfulCleanupTimeMs.get());
     }
 

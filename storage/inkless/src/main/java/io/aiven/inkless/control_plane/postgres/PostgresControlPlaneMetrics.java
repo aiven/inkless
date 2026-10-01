@@ -23,15 +23,20 @@ import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.yammer.metrics.core.Histogram;
 
-import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
-public class PostgresControlPlaneMetrics implements Closeable {
+/**
+ * Query metrics shared by every {@code PostgresControlPlane} in the process.
+ *
+ * <p>A rebuilt control plane runs the same queries under the same metric names. Yammer's registry
+ * keeps whichever metric registered a name first, so the metrics are registered once, by the single
+ * instance, and are never removed.
+ */
+public final class PostgresControlPlaneMetrics {
     private static final String GROUP = PostgresControlPlane.class.getSimpleName();
 
     private static final List<String> QUERY_NAMES = List.of(
@@ -60,7 +65,12 @@ public class PostgresControlPlaneMetrics implements Closeable {
         return templates;
     }
 
-    final Time time;
+    // Registers the metrics on first use, not when MetricsDocs loads this class to call all().
+    private static final class Holder {
+        private static final PostgresControlPlaneMetrics INSTANCE = new PostgresControlPlaneMetrics();
+    }
+
+    private final Time time = Time.SYSTEM;
 
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
         PostgresControlPlane.class.getPackageName(), PostgresControlPlane.class.getSimpleName());
@@ -86,8 +96,11 @@ public class PostgresControlPlaneMetrics implements Closeable {
     private final QueryMetrics advanceCrossTierLogStartMetrics = new QueryMetrics("AdvanceCrossTierLogStart");
     private final QueryMetrics getCrossTierLogStartMetrics = new QueryMetrics("GetCrossTierLogStart");
 
-    public PostgresControlPlaneMetrics(Time time) {
-        this.time = Objects.requireNonNull(time, "time cannot be null");
+    private PostgresControlPlaneMetrics() {
+    }
+
+    public static PostgresControlPlaneMetrics instance() {
+        return Holder.INSTANCE;
     }
 
     public void onFindBatchesCompleted(Long duration) {
@@ -166,34 +179,13 @@ public class PostgresControlPlaneMetrics implements Closeable {
         getCrossTierLogStartMetrics.record(duration);
     }
 
-    @Override
-    public void close() {
-        findBatchesMetrics.remove();
-        getLogsMetrics.remove();
-        commitFileMetrics.remove();
-        topicCreateMetrics.remove();
-        topicDeleteMetrics.remove();
-        purgeDeletedLogsMetrics.remove();
-        fileDeleteMetrics.remove();
-        listOffsetsMetrics.remove();
-        deleteRecordsMetrics.remove();
-        enforceRetentionMetrics.remove();
-        getFilesToDeleteMetrics.remove();
-        safeDeleteFileCheckMetrics.remove();
-        getLogInfoMetrics.remove();
-        initDisklessLogMetrics.remove();
-        repairDisklessLogMetrics.remove();
-        getProducerStateMetrics.remove();
-        pruneDisklessLogsMetrics.remove();
-        advanceCrossTierLogStartMetrics.remove();
-        getCrossTierLogStartMetrics.remove();
+    // Visible for testing.
+    static long ageMs(final long lastSuccessfulQueryTimeMs, final long nowMs) {
+        return lastSuccessfulQueryTimeMs == -1 ? -1L : nowMs - lastSuccessfulQueryTimeMs;
     }
 
     // Visible for testing.
     class QueryMetrics {
-        private final String queryTimeMetricName;
-        private final String queryRateMetricName;
-        private final String lastSuccessfulQueryAgeMsMetricName;
         private final Histogram queryTimeHistogram;
         private final LongAdder queryRate = new LongAdder();
         // -1 means no successful query has occurred since startup.
@@ -201,27 +193,16 @@ public class PostgresControlPlaneMetrics implements Closeable {
         final AtomicLong lastSuccessfulQueryTimeMs = new AtomicLong(-1);
 
         private QueryMetrics(final String name) {
-            this.queryTimeMetricName = name + "QueryTime";
-            this.queryRateMetricName = name + "QueryRate";
-            this.lastSuccessfulQueryAgeMsMetricName = name + "LastSuccessfulQueryAgeMs";
-            this.queryTimeHistogram = metricsGroup.newHistogram(queryTimeMetricName, true, Map.of());
-            metricsGroup.newGauge(queryRateMetricName, queryRate::intValue);
-            metricsGroup.newGauge(lastSuccessfulQueryAgeMsMetricName, () -> {
-                final long last = lastSuccessfulQueryTimeMs.get();
-                return last == -1 ? -1L : time.milliseconds() - last;
-            });
+            this.queryTimeHistogram = metricsGroup.newHistogram(name + "QueryTime", true, Map.of());
+            metricsGroup.newGauge(name + "QueryRate", queryRate::intValue);
+            metricsGroup.newGauge(name + "LastSuccessfulQueryAgeMs",
+                () -> ageMs(lastSuccessfulQueryTimeMs.get(), time.milliseconds()));
         }
 
         private void record(final long duration) {
             queryTimeHistogram.update(duration);
             queryRate.increment();
             lastSuccessfulQueryTimeMs.set(time.milliseconds());
-        }
-
-        private void remove() {
-            metricsGroup.removeMetric(this.queryTimeMetricName);
-            metricsGroup.removeMetric(this.queryRateMetricName);
-            metricsGroup.removeMetric(this.lastSuccessfulQueryAgeMsMetricName);
         }
     }
 }

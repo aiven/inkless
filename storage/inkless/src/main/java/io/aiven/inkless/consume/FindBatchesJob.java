@@ -31,6 +31,7 @@ import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
@@ -92,6 +93,10 @@ public class FindBatchesJob implements Supplier<Map<TopicIdPartition, FindBatchR
                 out.put(request.topicIdPartition(), response);
             }
             return out;
+        } catch (final ControlPlaneUnavailableException e) {
+            // Let this reach FetchHandler unwrapped so it answers with a retriable error, instead of
+            // turning a reported outage into an UNKNOWN_SERVER_ERROR the client cannot retry.
+            throw e;
         } catch (Exception e) {
             throw new FindBatchesException(e);
         }

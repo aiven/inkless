@@ -21,8 +21,19 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class DynamicBrokerConfigTest {
+
+    @Test
+    public void testInklessControlPlaneConnectionStringsAreDynamicAndClusterWide() {
+        for (String name : InklessControlPlaneConfigs.RECONFIGURABLE_CONFIGS) {
+            assertTrue(DynamicBrokerConfig.ALL_DYNAMIC_CONFIGS.contains(name),
+                    name + " must be in ALL_DYNAMIC_CONFIGS, or DescribeConfigs reports it as " +
+                            "read-only and a metadata snapshot restore drops it");
+            assertEquals("cluster-wide", DynamicBrokerConfig.dynamicConfigUpdateModes().get(name));
+        }
+    }
 
     @Test
     public void testBrokerConfigSynonyms() {

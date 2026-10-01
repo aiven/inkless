@@ -17,61 +17,70 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
+import org.apache.kafka.server.metrics.KafkaYammerMetrics;
 
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
+import com.yammer.metrics.core.Gauge;
+import com.yammer.metrics.core.Histogram;
+import com.yammer.metrics.core.Metric;
+
 import org.junit.jupiter.api.Test;
+
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class PostgresControlPlaneMetricsTest {
+    // Shared by every test in the JVM, so assertions compare before and after instead of expecting
+    // absolute values.
+    private final PostgresControlPlaneMetrics metrics = PostgresControlPlaneMetrics.instance();
 
-    MockTime time;
-    PostgresControlPlaneMetrics metrics;
-
-    @BeforeEach
-    void setUp() {
-        time = new MockTime(0, 0, 0);
-        metrics = new PostgresControlPlaneMetrics(time);
-    }
-
-    @AfterEach
-    void tearDown() {
-        metrics.close();
+    @Test
+    void instanceIsShared() {
+        assertThat(PostgresControlPlaneMetrics.instance()).isSameAs(metrics);
     }
 
     @Test
     void lastSuccessfulQueryAgeMs_isMinusOneBeforeFirstQuery() {
-        assertThat(metrics.commitFileMetrics.lastSuccessfulQueryTimeMs.get()).isEqualTo(-1L);
+        assertThat(PostgresControlPlaneMetrics.ageMs(-1L, 5_000L)).isEqualTo(-1L);
     }
 
     @Test
-    void lastSuccessfulQueryAgeMs_recordedOnQueryCompletion() {
-        time.setCurrentTimeMs(1_000L);
-        metrics.onCommitFileCompleted(50L);
-
-        assertThat(metrics.commitFileMetrics.lastSuccessfulQueryTimeMs.get()).isEqualTo(1_000L);
+    void lastSuccessfulQueryAgeMs_isTimeSinceLastQuery() {
+        assertThat(PostgresControlPlaneMetrics.ageMs(1_000L, 5_000L)).isEqualTo(4_000L);
     }
 
     @Test
-    void lastSuccessfulQueryAgeMs_updatesOnSubsequentQueries() {
-        time.setCurrentTimeMs(1_000L);
+    void recordUpdatesTheRegisteredMetrics() {
+        final int rateBefore = (int) gaugeValue("CommitFileQueryRate");
+        final long countBefore = ((Histogram) registered("CommitFileQueryTime")).count();
+        final long startMs = System.currentTimeMillis();
+
         metrics.onCommitFileCompleted(50L);
 
-        time.setCurrentTimeMs(3_000L);
-        metrics.onCommitFileCompleted(30L);
-
-        assertThat(metrics.commitFileMetrics.lastSuccessfulQueryTimeMs.get()).isEqualTo(3_000L);
+        assertThat(gaugeValue("CommitFileQueryRate")).isEqualTo(rateBefore + 1);
+        assertThat(((Histogram) registered("CommitFileQueryTime")).count()).isEqualTo(countBefore + 1);
+        assertThat(metrics.commitFileMetrics.lastSuccessfulQueryTimeMs.get())
+            .isBetween(startMs, System.currentTimeMillis());
+        assertThat((long) gaugeValue("CommitFileLastSuccessfulQueryAgeMs")).isGreaterThanOrEqualTo(0L);
     }
 
     @Test
-    void lastSuccessfulQueryAgeMs_independentPerQueryType() {
-        time.setCurrentTimeMs(1_000L);
+    void recordIsIndependentPerQueryType() {
+        final int findBatchesBefore = (int) gaugeValue("FindBatchesQueryRate");
+
         metrics.onCommitFileCompleted(50L);
 
-        // FindBatches has not been called — its timestamp should still be -1.
-        assertThat(metrics.commitFileMetrics.lastSuccessfulQueryTimeMs.get()).isEqualTo(1_000L);
-        assertThat(metrics.findBatchesMetrics.lastSuccessfulQueryTimeMs.get()).isEqualTo(-1L);
+        assertThat(gaugeValue("FindBatchesQueryRate")).isEqualTo(findBatchesBefore);
+    }
+
+    private static Metric registered(final String name) {
+        final KafkaMetricsGroup group = new KafkaMetricsGroup(
+            PostgresControlPlane.class.getPackageName(), PostgresControlPlane.class.getSimpleName());
+        return KafkaYammerMetrics.defaultRegistry().allMetrics().get(group.metricName(name, Map.of()));
+    }
+
+    private static Object gaugeValue(final String name) {
+        return ((Gauge<?>) registered(name)).value();
     }
 }

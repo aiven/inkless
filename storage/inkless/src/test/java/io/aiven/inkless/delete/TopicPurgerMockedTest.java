@@ -28,9 +28,11 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.PurgeDeletedLogsResponse;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -135,6 +137,25 @@ class TopicPurgerMockedTest {
 
         // First error backoff is 100 * 2^1 * [0.8, 1.2] ms. Jump past the max.
         time.sleep(1_000);
+        purger.run();
+        assertEquals(time.milliseconds(), purger.metrics.lastSuccessfulPurgeTimeMs.get());
+        verify(controlPlane, times(2)).purgeDeletedLogs(eq(MAX_BATCHES_PER_CYCLE));
+    }
+
+    @Test
+    void propagatesControlPlaneUnavailableExceptionWithoutBackingOff() {
+        final var purger = new TopicPurger(time, controlPlane, MAX_BATCHES_PER_CYCLE);
+        when(controlPlane.purgeDeletedLogs(MAX_BATCHES_PER_CYCLE))
+            .thenThrow(new ControlPlaneUnavailableException("No diskless control plane is configured"))
+            .thenReturn(PurgeDeletedLogsResponse.empty());
+
+        // run() rethrows this rather than swallowing it: the caller (ReplicaManager.runIfControlPlaneAvailable)
+        // is the one place that turns it into a quiet skip.
+        assertThrows(ControlPlaneUnavailableException.class, purger::run);
+        assertEquals(-1, purger.metrics.lastSuccessfulPurgeTimeMs.get());
+
+        // A gated tick isn't an error, so it must not arm the error backoff: the tick after the control
+        // plane comes back runs at once instead of waiting the backoff out.
         purger.run();
         assertEquals(time.milliseconds(), purger.metrics.lastSuccessfulPurgeTimeMs.get());
         verify(controlPlane, times(2)).purgeDeletedLogs(eq(MAX_BATCHES_PER_CYCLE));

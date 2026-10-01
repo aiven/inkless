@@ -144,4 +144,22 @@ public class PostgresConnectionConfig extends AbstractControlPlaneConfig {
     public int socketTimeoutMs() {
         return getInt(SOCKET_TIMEOUT_MS_CONFIG);
     }
+
+    public long tcpConnectTimeoutSeconds() {
+        return timeoutSeconds(tcpConnectTimeoutMs());
+    }
+
+    public long socketTimeoutSeconds() {
+        return timeoutSeconds(socketTimeoutMs());
+    }
+
+    /**
+     * Converts a millisecond timeout to the whole seconds pgjdbc expects, rounding up.
+     *
+     * <p>Rounding up matters: pgjdbc reads {@code 0} as "no timeout", so truncating a sub-second
+     * value would turn a tight bound into an unbounded wait.
+     */
+    static long timeoutSeconds(final long timeoutMs) {
+        return (timeoutMs - 1L) / 1000L + 1L;
+    }
 }
