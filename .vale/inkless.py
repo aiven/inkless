@@ -4,14 +4,16 @@
 Supported modes:
   - Lint everything in full (--all)
   - Lint only changed lines, compared to an optional base (--base <ref>)
+  - Lint only changed lines from AI-attributed commits (--ai-attributed)
 
 Usage:
-  inkless.py [--base <ref>] [--all]
+  inkless.py [--base <ref>] [--ai-attributed] [--all]
 """
 
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Iterable
@@ -19,6 +21,12 @@ from typing import Final, TypedDict
 
 OWNER: Final = "@aiven/inkless"
 VALE_ALERTS_FOUND_EXIT_CODE: Final = 1
+AI_AGENT_EMAILS: Final = (
+    "noreply@anthropic.com",
+    "cursoragent@cursor.com",
+    "copilot@users.noreply.github.com",
+)
+BLAME_HEADER: Final = re.compile(r"^([0-9a-f]{40}) \d+ (\d+)")
 
 
 class Alert(TypedDict, total=False):
@@ -119,6 +127,54 @@ def added_lines(base: str, path: str) -> set[int] | None:
     return lines
 
 
+def commits_matching(base: str, *filters: str) -> set[str]:
+    log = git(
+        "log",
+        "--format=%H",
+        "--extended-regexp",
+        "--regexp-ignore-case",
+        *filters,
+        f"{base}..HEAD",
+    )
+    return set(log.split())
+
+
+def ai_attributed_commits(base: str) -> set[str]:
+    emails = [re.escape(email) for email in AI_AGENT_EMAILS]
+    authored = commits_matching(base, *(f"--author={email}" for email in emails))
+    co_authored = commits_matching(
+        base, *(f"--grep=^Co-authored-by:.*{email}" for email in emails)
+    )
+    assisted = commits_matching(base, "--grep=^Assisted-by:")
+    return authored | co_authored | assisted
+
+
+def lines_from_commits(base: str, path: str, commits: set[str]) -> set[int]:
+    blame = git("blame", "--porcelain", f"{base}..HEAD", "--", path)
+    lines: set[int] = set()
+    for line in blame.splitlines():
+        header = BLAME_HEADER.match(line)
+        if header and header.group(1) in commits:
+            lines.add(int(header.group(2)))
+    return lines
+
+
+def ai_attributed_lines(
+    base: str,
+    files: list[str],
+    commits: set[str],
+) -> dict[str, set[int] | None]:
+    lines_by_file: dict[str, set[int] | None] = {}
+    for path in files:
+        new_lines = added_lines(base, path)
+        if not new_lines:
+            continue
+        ai_lines = new_lines & lines_from_commits(base, path, commits)
+        if ai_lines:
+            lines_by_file[path] = ai_lines
+    return lines_by_file
+
+
 def run_vale(files: list[str]) -> dict[str, list[Alert]]:
     try:
         output = vale("--output=JSON", *files)
@@ -152,7 +208,14 @@ def main() -> int:
         action="store_true",
         help="lint all owned files in full",
     )
+    parser.add_argument(
+        "--ai-attributed",
+        action="store_true",
+        help="lint only added lines from commits attributed to an AI agent",
+    )
     args = parser.parse_args()
+    if args.all and args.ai_attributed:
+        parser.error("--ai-attributed requires diff mode, not --all")
 
     pathspecs = owned_pathspecs()
     base: str | None
@@ -163,13 +226,25 @@ def main() -> int:
         base = resolve_base(args.base)
         files = changed_files(base, pathspecs)
 
-    if not files:
-        print("No changed inkless-owned files to lint.")
+    lines_by_file: dict[str, set[int] | None]
+    if base is None:
+        lines_by_file = dict.fromkeys(files)
+    elif args.ai_attributed:
+        commits = ai_attributed_commits(base)
+        if not commits:
+            print(f"No AI-attributed commits since {base[:10]}; nothing to lint.")
+            return 0
+        lines_by_file = ai_attributed_lines(base, files, commits)
+    else:
+        lines_by_file = {path: added_lines(base, path) for path in files}
+
+    if not lines_by_file:
+        print("No changed inkless-owned prose to lint.")
         return 0
 
     count = 0
-    for path, alerts in run_vale(files).items():
-        new_lines = None if base is None else added_lines(base, path)
+    for path, alerts in run_vale(list(lines_by_file)).items():
+        new_lines = lines_by_file[path]
         for alert in alerts:
             if new_lines is None or alert["Line"] in new_lines:
                 report(path, alert)
@@ -179,7 +254,7 @@ def main() -> int:
         print(f"\n{count} Vale alert(s) on added lines. Fix them before committing.")
         return 1
 
-    print(f"Vale: no alerts on added lines across {len(files)} file(s).")
+    print(f"Vale: no alerts on added lines across {len(lines_by_file)} file(s).")
     return 0
 
 

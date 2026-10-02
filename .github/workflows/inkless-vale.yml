@@ -1,0 +1,80 @@
+# Copyright (c) 2026 Aiven, Helsinki, Finland. https://aiven.io/
+name: Inkless Vale
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+  push:
+    branches:
+      - "main"
+    paths:
+      - ".vale.ini"
+      - ".github/workflows/inkless-vale.yml"
+
+concurrency:
+  group: inkless-vale-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  VALE_VERSION: 3.23.0
+
+jobs:
+  vale:
+    name: Lint AI-written prose
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Restore Vale
+        id: vale-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/vale/${{ env.VALE_VERSION }}
+          key: vale-${{ runner.os }}-${{ env.VALE_VERSION }}
+
+      - name: Install Vale
+        if: steps.vale-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ runner.temp }}
+        run: |
+          archive="vale_${VALE_VERSION}_Linux_64-bit.tar.gz"
+          base_url="https://github.com/vale-cli/vale/releases/download/v${VALE_VERSION}"
+          curl -fsSLO "${base_url}/${archive}"
+          curl -fsSLO "${base_url}/vale_${VALE_VERSION}_checksums.txt"
+          grep " ${archive}\$" "vale_${VALE_VERSION}_checksums.txt" | sha256sum --check -
+          mkdir -p "$RUNNER_TOOL_CACHE/vale/$VALE_VERSION"
+          tar -xzf "${archive}" -C "$RUNNER_TOOL_CACHE/vale/$VALE_VERSION" vale
+
+      - name: Add Vale to PATH
+        run: echo "$RUNNER_TOOL_CACHE/vale/$VALE_VERSION" >> "$GITHUB_PATH"
+
+      - name: Restore Vale packages
+        id: packages-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .vale/styles/*
+            !.vale/styles/config
+          key: vale-packages-${{ hashFiles('.vale.ini') }}
+
+      - name: Sync Vale packages
+        if: steps.packages-cache.outputs.cache-hit != 'true'
+        run: vale sync
+
+      - name: Register the Vale problem matcher
+        if: github.event_name == 'pull_request'
+        run: echo "::add-matcher::.vale/problem-matcher.json"
+
+      - name: Lint added prose from AI-attributed commits
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 .vale/inkless.py --base "$BASE_SHA" --ai-attributed

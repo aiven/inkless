@@ -37,6 +37,10 @@ it finds an alert on an added line. Useful variants:
   of the merge base with `main`.
 - `python3 .vale/inkless.py --all`: audit every owned file in full, ignoring the
   diff.
+- `python3 .vale/inkless.py --ai-attributed`: lint only the added lines that
+  `git blame` attributes to an AI-attributed commit. The `Inkless Vale` workflow
+  runs this mode on pull requests, so human-written prose isn't held to these
+  rules.
 
 ## Fix alerts
 
