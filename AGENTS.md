@@ -186,6 +186,18 @@ The body MUST say why the change exists, not only what files moved. Use
 present tense for the new behavior. Put testing under a sentence-case
 heading. Do not pad the body with "please review" or a recap of the diff.
 
+If an AI agent writes or edits a commit, the commit MUST end with an
+`Assisted-by` trailer with the model, not the agent tool:
+
+```text
+Assisted-by: Claude Opus 5.5
+```
+
+Use it in place of the `Co-authored-by` trailer that your tool adds by
+default. If more than one model contributed, add one trailer per model. The
+`Inkless Vale` workflow lints only the prose that comes from AI-attributed
+commits, so a commit without attribution are treated as human-written.
+
 #### Comments
 
 Write self-documenting code. Comments SHOULD be rare and explain **why** the
