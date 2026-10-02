@@ -50,8 +50,8 @@ class ConsolidationFetcherThread(name: String,
 
   override protected def shouldRecordReplicationBytesIn: Boolean = false
 
-  // ConsolidationLocalLag is the external first-hop lag signal. Keep updating
-  // fetcherLagStats for MaxLag, but do not register the generic ConsumerLag JMX gauge.
+  // `ConsolidationLocalLag` is the external first-hop lag signal. Keep updating
+  // `fetcherLagStats` for `MaxLag`, but don't register the generic `ConsumerLag` JMX gauge.
   override protected def registerFetcherConsumerLagMetrics: Boolean = false
 
   override def processPartitionData(
