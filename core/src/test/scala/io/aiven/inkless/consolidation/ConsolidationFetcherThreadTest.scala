@@ -409,6 +409,25 @@ class ConsolidationFetcherThreadTest {
   }
 
   @Test
+  def testTracksFetcherLagWithoutRegisteringConsumerLag(): Unit = {
+    val partition = mockPartitionWithLog(80L, 60L)
+    val replicaManager = mockReplicaManager(partition)
+    val thread = createConsolidationFetcherThread(replicaManager, Some(metrics))
+
+    val lagMetrics = thread.fetcherLagStats.getAndMaybePut(topicPartition)
+    lagMetrics.lag = 42L
+
+    assertEquals(42L, thread.fetcherLagStats.stats.get(topicPartition).lag)
+    assertFalse(
+      KafkaYammerMetrics.defaultRegistry.allMetrics.asScala.keys.exists { metricName =>
+        metricName.getGroup == "kafka.server" &&
+          metricName.getType == "FetcherLagMetrics" &&
+          metricName.getName == FetcherMetrics.ConsumerLag
+      },
+      "ConsolidationFetcherThread must not register the generic FetcherLagMetrics.ConsumerLag JMX gauge")
+  }
+
+  @Test
   def testRecordsConsolidationFetchBytesInAndSkipsReplicationBytesIn(): Unit = {
     val validBytes = 512
     val partition = mockPartitionWithLog(logEndOffset = 80L, highestOffsetInRemoteStorage = 60L,
