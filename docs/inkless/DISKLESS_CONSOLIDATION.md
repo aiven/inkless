@@ -373,6 +373,8 @@ The broker registers these under the `io.aiven.inkless.consolidation` group. The
 | `io.aiven.inkless.cache:type=CrossTierLogStartCache`            | `CacheHits` / `CacheMisses` / `CacheSize`                   | Cross-tier earliest-offset cache.                                                                                                                                                          |
 | controller                                                      | `DisklessWithoutRemoteStorageCount`                         | Diskless topics where `remote.storage.enable` is `false` or unset, including born-diskless topics that never enter the `Failed` reconciler state.                                            |
 
+Consolidation fetchers report first-hop lag through `ConsolidationLocalLag`. They do not contribute to Kafka's generic `kafka.server:type=FetcherLagMetrics,name=ConsumerLag` metric, so replica catch-up dashboards that sum that metric exclude consolidation backlog.
+
 ## Compatibility
 
 - **Produce / consume / replication**: Standard Kafka client APIs. A consolidated topic behaves like a tiered topic for clients.
