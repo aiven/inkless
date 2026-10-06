@@ -21,16 +21,29 @@ import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.yammer.metrics.core.Meter;
-import com.yammer.metrics.core.MetricName;
 import com.zaxxer.hikari.metrics.IMetricsTracker;
 import com.zaxxer.hikari.metrics.PoolStats;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.ToIntFunction;
 
-public class PostgresConnectionPoolMetrics implements IMetricsTracker {
+/**
+ * Connection pool metrics shared by every {@code PostgresControlPlane} in the process.
+ *
+ * <p>A rebuilt control plane opens new pools under the same pool names, so the metric names don't
+ * change across generations. Yammer's registry keeps whichever metric registered a name first, so
+ * each pool name gets its metrics registered once, here, and they are never removed. The gauges
+ * read whichever pool currently holds the name.
+ */
+public final class PostgresConnectionPoolMetrics {
+    private static final PostgresConnectionPoolMetrics INSTANCE = new PostgresConnectionPoolMetrics();
+
     private static final String GROUP = PostgresConnectionPoolMetrics.class.getSimpleName();
 
     public static final String ACTIVE_CONNECTIONS_COUNT = "ActiveConnectionsCount";
@@ -71,71 +84,79 @@ public class PostgresConnectionPoolMetrics implements IMetricsTracker {
         );
     }
 
-    private final MetricName activeConnectionsCountMetricName;
-    private final MetricName totalConnectionsCountMetricName;
-    private final MetricName idleConnectionsCountMetricName;
-    private final MetricName maxConnectionsCountMetricName;
-    private final MetricName minConnectionsCountMetricName;
-    private final MetricName pendingThreadsCountMetricName;
-    private final MetricName connectionAcquiredNanosMetricName;
-    private final MetricName connectionUsageMillisMetricName;
-    private final MetricName connectionTimeoutCountMetricName;
+    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
+        PostgresConnectionPoolMetrics.class.getPackageName(), PostgresConnectionPoolMetrics.class.getSimpleName());
+    private final ConcurrentMap<String, PoolMetrics> pools = new ConcurrentHashMap<>();
 
-    final KafkaMetricsGroup metrics;
-
-    private final Meter connectionTimeoutMeter;
-    private final Meter connectionUsageMeter;
-    private final Meter connectionAcquireMeter;
-
-    public PostgresConnectionPoolMetrics(final KafkaMetricsGroup metrics, final String poolName, final PoolStats poolStats) {
-        this.metrics = metrics;
-        final var tags = Map.of("pool", poolName);
-        connectionTimeoutCountMetricName = metrics.metricName(CONNECTION_TIMEOUT_COUNT, tags);
-        this.connectionTimeoutMeter = metrics.newMeter(connectionTimeoutCountMetricName, "connection timeouts", TimeUnit.SECONDS);
-        connectionUsageMillisMetricName = metrics.metricName(CONNECTION_USAGE_MILLIS, tags);
-        this.connectionUsageMeter = metrics.newMeter(connectionUsageMillisMetricName, "connection usage", TimeUnit.MILLISECONDS);
-        connectionAcquiredNanosMetricName = metrics.metricName(CONNECTION_ACQUIRED_NANOS, tags);
-        this.connectionAcquireMeter = metrics.newMeter(connectionAcquiredNanosMetricName, "connection acquires", TimeUnit.NANOSECONDS);
-
-        totalConnectionsCountMetricName = metrics.metricName(TOTAL_CONNECTIONS_COUNT, tags);
-        metrics.newGauge(totalConnectionsCountMetricName, poolStats::getTotalConnections);
-        idleConnectionsCountMetricName = metrics.metricName(IDLE_CONNECTIONS_COUNT, tags);
-        metrics.newGauge(idleConnectionsCountMetricName, poolStats::getIdleConnections);
-        activeConnectionsCountMetricName = metrics.metricName(ACTIVE_CONNECTIONS_COUNT, tags);
-        metrics.newGauge(activeConnectionsCountMetricName, poolStats::getActiveConnections);
-        pendingThreadsCountMetricName = metrics.metricName(PENDING_THREADS_COUNT, tags);
-        metrics.newGauge(pendingThreadsCountMetricName, poolStats::getPendingThreads);
-        maxConnectionsCountMetricName = metrics.metricName(MAX_CONNECTIONS_COUNT, tags);
-        metrics.newGauge(maxConnectionsCountMetricName, poolStats::getMaxConnections);
-        minConnectionsCountMetricName = metrics.metricName(MIN_CONNECTIONS_COUNT, tags);
-        metrics.newGauge(minConnectionsCountMetricName, poolStats::getMinConnections);
+    private PostgresConnectionPoolMetrics() {
     }
 
-    @Override
-    public void recordConnectionAcquiredNanos(long elapsedAcquiredNanos) {
-        connectionAcquireMeter.mark(elapsedAcquiredNanos);
+    public static PostgresConnectionPoolMetrics instance() {
+        return INSTANCE;
     }
 
-    @Override
-    public void recordConnectionUsageMillis(long elapsedBorrowedMillis) {
-        connectionUsageMeter.mark(elapsedBorrowedMillis);
+    /**
+     * Returns the tracker HikariCP uses for a pool, and makes the gauges for {@code poolName} read
+     * that pool's {@code poolStats}.
+     */
+    public IMetricsTracker tracker(final String poolName, final PoolStats poolStats) {
+        final PoolMetrics pool = pools.computeIfAbsent(poolName, PoolMetrics::new);
+        pool.current.set(poolStats);
+        return new Tracker(pool, poolStats);
     }
 
-    @Override
-    public void recordConnectionTimeout() {
-        connectionTimeoutMeter.mark();
+    private final class PoolMetrics {
+        /** The newest open pool with this name, or null once it closes. */
+        private final AtomicReference<PoolStats> current = new AtomicReference<>();
+        private final Meter connectionTimeoutMeter;
+        private final Meter connectionUsageMeter;
+        private final Meter connectionAcquireMeter;
+
+        private PoolMetrics(final String poolName) {
+            final var tags = Map.of("pool", poolName);
+            connectionTimeoutMeter = metricsGroup.newMeter(CONNECTION_TIMEOUT_COUNT, "connection timeouts", TimeUnit.SECONDS, tags);
+            connectionUsageMeter = metricsGroup.newMeter(CONNECTION_USAGE_MILLIS, "connection usage", TimeUnit.MILLISECONDS, tags);
+            connectionAcquireMeter = metricsGroup.newMeter(CONNECTION_ACQUIRED_NANOS, "connection acquires", TimeUnit.NANOSECONDS, tags);
+
+            newGauge(TOTAL_CONNECTIONS_COUNT, tags, PoolStats::getTotalConnections);
+            newGauge(IDLE_CONNECTIONS_COUNT, tags, PoolStats::getIdleConnections);
+            newGauge(ACTIVE_CONNECTIONS_COUNT, tags, PoolStats::getActiveConnections);
+            newGauge(PENDING_THREADS_COUNT, tags, PoolStats::getPendingThreads);
+            newGauge(MAX_CONNECTIONS_COUNT, tags, PoolStats::getMaxConnections);
+            newGauge(MIN_CONNECTIONS_COUNT, tags, PoolStats::getMinConnections);
+        }
+
+        private void newGauge(final String name, final Map<String, String> tags, final ToIntFunction<PoolStats> stat) {
+            metricsGroup.newGauge(name, () -> {
+                final PoolStats stats = current.get();
+                return stats == null ? 0 : stat.applyAsInt(stats);
+            }, tags);
+        }
     }
 
-    @Override
-    public void close() {
-        metrics.removeMetric(connectionTimeoutCountMetricName);
-        metrics.removeMetric(connectionAcquiredNanosMetricName);
-        metrics.removeMetric(connectionUsageMillisMetricName);
-        metrics.removeMetric(totalConnectionsCountMetricName);
-        metrics.removeMetric(idleConnectionsCountMetricName);
-        metrics.removeMetric(activeConnectionsCountMetricName);
-        metrics.removeMetric(pendingThreadsCountMetricName);
-        metrics.removeMetric(maxConnectionsCountMetricName);
-        metrics.removeMetric(minConnectionsCountMetricName);
+    private record Tracker(PoolMetrics pool, PoolStats poolStats) implements IMetricsTracker {
+        @Override
+        public void recordConnectionAcquiredNanos(final long elapsedAcquiredNanos) {
+            pool.connectionAcquireMeter.mark(elapsedAcquiredNanos);
+        }
+
+        @Override
+        public void recordConnectionUsageMillis(final long elapsedBorrowedMillis) {
+            pool.connectionUsageMeter.mark(elapsedBorrowedMillis);
+        }
+
+        @Override
+        public void recordConnectionTimeout() {
+            pool.connectionTimeoutMeter.mark();
+        }
+
+        /**
+         * Detaches the gauges from this pool, unless a newer pool with the same name already took
+         * them over. The old pool can close after the new one opens.
+         */
+        @Override
+        public void close() {
+            pool.current.compareAndSet(poolStats, null);
+        }
     }
 }

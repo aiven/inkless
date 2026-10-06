@@ -137,15 +137,29 @@ public interface ControlPlane extends Closeable, Configurable {
 
     static ControlPlane create(final InklessConfig config, final Time time) {
         final Class<ControlPlane> controlPlaneClass = config.controlPlaneClass();
+        final ControlPlane result;
         try {
             final Constructor<ControlPlane> ctor = controlPlaneClass.getConstructor(Time.class);
-            final ControlPlane result = ctor.newInstance(time);
-            result.configure(config.controlPlaneConfig());
-            return result;
+            result = ctor.newInstance(time);
         } catch (final NoSuchMethodException | InstantiationException | IllegalAccessException |
                        InvocationTargetException e) {
             throw new RuntimeException(e);
         }
+        // configure() may have opened connection pools or registered metrics before failing partway
+        // through, for example when an earlier pool opens but a later one can't reach its host. Close
+        // what it built so a caller that only sees this exception isn't left holding a leak on top of
+        // it, and so the next retry doesn't pile a fresh leak onto this one.
+        try {
+            result.configure(config.controlPlaneConfig());
+        } catch (final RuntimeException e) {
+            try {
+                result.close();
+            } catch (final Exception closeFailure) {
+                e.addSuppressed(closeFailure);
+            }
+            throw e;
+        }
+        return result;
     }
 
     boolean isSafeToDeleteFile(String objectKeyPath);

@@ -49,10 +49,12 @@ import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlaneException;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.storage_backend.common.ObjectDeleter;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -201,6 +203,29 @@ class FileCommitJobTest {
         Assert.assertThrows(RuntimeException.class, job::get);
 
         verify(objectDeleter, times(isSafeToDelete ? 1 : 0)).delete(eq(OBJECT_KEY));
+    }
+
+    @Test
+    void deleteObjectDirectlyWhenControlPlaneWasUnavailable() throws Exception {
+        // commitFile() never reached a delegate, so no control-plane row can reference this
+        // object: it must be deleted outright, without asking the same unavailable gate whether
+        // that is safe, which would only repeat the rejection and leave the object orphaned.
+        final Map<Integer, CompletableFuture<Map<TopicIdPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+            0, new CompletableFuture<>(),
+            1, new CompletableFuture<>()
+        );
+
+        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
+            .thenThrow(new ControlPlaneUnavailableException("test"));
+
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
+        final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
+
+        Assert.assertThrows(RuntimeException.class, job::get);
+
+        verify(objectDeleter, times(1)).delete(eq(OBJECT_KEY));
+        verify(controlPlane, never()).isSafeToDeleteFile(any());
     }
 
     @Test

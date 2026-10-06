@@ -34,6 +34,7 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.ControlPlaneException;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.storage_backend.common.ObjectDeleter;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -121,6 +122,16 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
     }
 
     private void tryDeleteFile(ObjectKey objectKey, Exception e) {
+        if (e instanceof ControlPlaneUnavailableException) {
+            // commitFile() never reached a delegate, so no control-plane row can reference this
+            // object: it is orphaned for certain. isSafeToDeleteFile() would ask the same
+            // unavailable gate and get the same rejection, leaving the object around forever,
+            // since FileCleaner only discovers files a control-plane row once referenced.
+            LOGGER.error("Control plane was unavailable, removing the uploaded file {} directly", objectKey, e);
+            deleteFile(objectKey);
+            return;
+        }
+
         boolean safeToDeleteFile;
         try {
             safeToDeleteFile = controlPlane.isSafeToDeleteFile(objectKey.value());
@@ -131,13 +142,17 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
 
         if (safeToDeleteFile) {
             LOGGER.error("Error commiting data, attempting to remove the uploaded file {}", objectKey, e);
-            try {
-                objectDeleter.delete(objectKey);
-            } catch (final StorageBackendException e2) {
-                LOGGER.error("Error removing the uploaded file {}", objectKey, e2);
-            }
+            deleteFile(objectKey);
         } else {
             LOGGER.error("Error commiting data, but not removing the uploaded file {} as it is not safe", objectKey, e);
+        }
+    }
+
+    private void deleteFile(final ObjectKey objectKey) {
+        try {
+            objectDeleter.delete(objectKey);
+        } catch (final StorageBackendException e2) {
+            LOGGER.error("Error removing the uploaded file {}", objectKey, e2);
         }
     }
 

@@ -19,8 +19,8 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -46,6 +46,7 @@ import io.aiven.inkless.control_plane.AdvanceCrossTierLogStartOffsetResponse;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlaneException;
+import io.aiven.inkless.control_plane.ControlPlaneNotConfiguredException;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
@@ -74,14 +75,13 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     private static final String POOL_NAME = "pg-control-plane";
 
-    private final KafkaMetricsGroup metrics = new KafkaMetricsGroup(
-        PostgresConnectionPoolMetrics.class.getPackageName(), PostgresConnectionPoolMetrics.class.getSimpleName());
-    private final PostgresControlPlaneMetrics pgMetrics;
+    private final PostgresControlPlaneMetrics pgMetrics = PostgresControlPlaneMetrics.instance();
 
     private HikariDataSource jobsDataSource;
     private HikariDataSource readDataSource;
     private HikariDataSource writeDataSource;
     private PostgresControlPlaneConfig controlPlaneConfig;
+    private volatile boolean closed;
 
     private DSLContext readJooqCtx;
     private DSLContext writeJooqCtx;
@@ -89,12 +89,15 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     public PostgresControlPlane(final Time time) {
         super(time);
-
-        this.pgMetrics = new PostgresControlPlaneMetrics(time);
     }
 
     @Override
     public void configure(final Map<String, ?> configs) {
+        // Checked structurally, against the raw map, before constructing anything: matching a
+        // caught ConfigException's message risks classifying an unrelated error as "not
+        // configured" whenever some other value happens to contain the text "connection.string".
+        requireConnectionStringsConfigured(configs);
+
         controlPlaneConfig = new PostgresControlPlaneConfig(configs);
         LOGGER.info("Configuring PostgresControlPlane");
 
@@ -104,7 +107,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         Migrations.migrate(controlPlaneConfig);
         LOGGER.info("Database migrations completed");
 
-        jobsDataSource = new HikariDataSource(dataSourceConfig(metrics, POOL_NAME, controlPlaneConfig));
+        jobsDataSource = new HikariDataSource(dataSourceConfig(POOL_NAME, controlPlaneConfig));
 
         // Avoid merger/cleaner waiting on class loading deadlocks between threads
         try {
@@ -118,7 +121,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         // Set up read and write contexts if configured
         if (controlPlaneConfig.writeConfig() != null) {
             LOGGER.info("Using separate write configuration");
-            writeDataSource = new HikariDataSource(dataSourceConfig(metrics, POOL_NAME + "-write", controlPlaneConfig.writeConfig()));
+            writeDataSource = new HikariDataSource(dataSourceConfig(POOL_NAME + "-write", controlPlaneConfig.writeConfig()));
             writeJooqCtx = DSL.using(writeDataSource, SQLDialect.POSTGRES);
         } else {
             LOGGER.info("No separate write configuration found, using jobs context for writes");
@@ -126,7 +129,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         }
         if (controlPlaneConfig.readConfig() != null) {
             LOGGER.info("Using separate read configuration");
-            readDataSource = new HikariDataSource(dataSourceConfig(metrics, POOL_NAME + "-read", controlPlaneConfig.readConfig()));
+            readDataSource = new HikariDataSource(dataSourceConfig(POOL_NAME + "-read", controlPlaneConfig.readConfig()));
             readJooqCtx = DSL.using(readDataSource, SQLDialect.POSTGRES);
         } else {
             LOGGER.info("No separate write configuration found, using jobs context for reads");
@@ -134,30 +137,58 @@ public class PostgresControlPlane extends AbstractControlPlane {
         }
     }
 
-    private static HikariConfig dataSourceConfig(final KafkaMetricsGroup metrics, final String name, final PostgresConnectionConfig connectionConfig) {
+    /**
+     * Requires the default connection string, and the read or write connection string if either
+     * override is present at all, to exist and be non-empty.
+     *
+     * <p>A dynamic reconfiguration may legitimately empty one of these three keys to take the
+     * control plane out of service; nothing else in this map may be missing or malformed without
+     * it being a genuine misconfiguration. Checking that structurally, against the raw keys and
+     * values, keeps this from being confused with an unrelated {@link ConfigException}, such as a
+     * bad numeric property whose value happens to contain the text "connection.string".
+     */
+    private static void requireConnectionStringsConfigured(final Map<String, ?> configs) {
+        requireConnectionString(configs, "");
+        if (hasAnyKeyWithPrefix(configs, PostgresControlPlaneConfig.READ_CONFIG_PREFIX)) {
+            requireConnectionString(configs, PostgresControlPlaneConfig.READ_CONFIG_PREFIX);
+        }
+        if (hasAnyKeyWithPrefix(configs, PostgresControlPlaneConfig.WRITE_CONFIG_PREFIX)) {
+            requireConnectionString(configs, PostgresControlPlaneConfig.WRITE_CONFIG_PREFIX);
+        }
+    }
+
+    private static boolean hasAnyKeyWithPrefix(final Map<String, ?> configs, final String prefix) {
+        return configs.keySet().stream().anyMatch(key -> key.startsWith(prefix));
+    }
+
+    private static void requireConnectionString(final Map<String, ?> configs, final String prefix) {
+        final String key = prefix + PostgresConnectionConfig.CONNECTION_STRING_CONFIG;
+        final Object value = configs.get(key);
+        if (value == null || value.toString().isEmpty()) {
+            throw new ControlPlaneNotConfiguredException(
+                "No diskless control plane is configured: " + key + " is empty or missing");
+        }
+    }
+
+    private static HikariConfig dataSourceConfig(final String name, final PostgresConnectionConfig connectionConfig) {
         final HikariConfig config = new HikariConfig();
         config.setPoolName(name);
         config.setJdbcUrl(connectionConfig.connectionString());
         config.setUsername(connectionConfig.username());
         config.setPassword(connectionConfig.password());
-        config.setMetricsTrackerFactory((poolName, poolStats) -> new PostgresConnectionPoolMetrics(metrics, poolName, poolStats));
+        config.setMetricsTrackerFactory(PostgresConnectionPoolMetrics.instance()::tracker);
         config.setTransactionIsolation(IsolationLevel.TRANSACTION_READ_COMMITTED.name());
 
         config.setMaximumPoolSize(connectionConfig.maxConnections());
         config.setConnectionTimeout(connectionConfig.connectionPoolTimeoutMs());
-        config.addDataSourceProperty("connectTimeout", Long.toString(timeoutSeconds(connectionConfig.tcpConnectTimeoutMs())));
-        config.addDataSourceProperty("socketTimeout", Long.toString(timeoutSeconds(connectionConfig.socketTimeoutMs())));
-        config.addDataSourceProperty("loginTimeout", Long.toString(timeoutSeconds(connectionConfig.tcpConnectTimeoutMs())));
+        config.addDataSourceProperty("connectTimeout", Long.toString(connectionConfig.tcpConnectTimeoutSeconds()));
+        config.addDataSourceProperty("socketTimeout", Long.toString(connectionConfig.socketTimeoutSeconds()));
+        config.addDataSourceProperty("loginTimeout", Long.toString(connectionConfig.tcpConnectTimeoutSeconds()));
         config.addDataSourceProperty("tcpKeepAlive", "true");
 
         // We're doing interactive transactions.
         config.setAutoCommit(false);
         return config;
-    }
-
-    private static long timeoutSeconds(final long timeoutMs) {
-        // pgjdbc expects whole seconds, so round millisecond config values up.
-        return (timeoutMs - 1L) / 1000L + 1L;
     }
 
     @Override
@@ -343,15 +374,27 @@ public class PostgresControlPlane extends AbstractControlPlane {
         }
     }
 
+    /**
+     * Closes whatever {@link #configure} managed to open before this is discarded, whether that is
+     * everything, nothing, because it failed before opening any pool, or something in between,
+     * because it failed partway through. Idempotent, so {@link ControlPlane#create} closing this on
+     * a {@code configure()} failure and the reconciler closing it again later, if it ever got that
+     * far, don't double-close the same pool.
+     */
     @Override
     public void close() throws IOException {
-        jobsDataSource.close();
+        if (closed) {
+            return;
+        }
+        closed = true;
+        if (jobsDataSource != null) {
+            jobsDataSource.close();
+        }
         if (writeDataSource != null) {
             writeDataSource.close();
         }
         if (readDataSource != null) {
             readDataSource.close();
         }
-        pgMetrics.close();
     }
 }

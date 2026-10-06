@@ -57,6 +57,7 @@ import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.github.bucket4j.Bandwidth;
@@ -524,6 +525,15 @@ public class Reader implements AutoCloseable {
                 inFlight.release();
                 // Mark broker side fetch metrics
                 if (throwable != null) {
+                    // All exceptions are wrapped in CompletionException due to CompletableFuture
+                    final Throwable cause = throwable instanceof CompletionException && throwable.getCause() != null
+                        ? throwable.getCause()
+                        : throwable;
+                    if (cause instanceof ControlPlaneUnavailableException) {
+                        // FetchHandler should decide what to do. Also skip the failure-rate metrics below,
+                        // a known outage isn't a fetch failure.
+                        return;
+                    }
                     LOGGER.warn("Fetch failed", throwable);
                     for (final var entry : fetchInfos.entrySet()) {
                         final String topic = entry.getKey().topic();
@@ -531,14 +541,10 @@ public class Reader implements AutoCloseable {
                         brokerTopicStats.topicStats(topic).failedFetchRequestRate().mark();
                     }
                     // Record specific failure metrics based on exception type
-                    // All exceptions are wrapped in CompletionException due to CompletableFuture
-                    if (throwable instanceof CompletionException && throwable.getCause() != null) {
-                        final Throwable cause = throwable.getCause();
-                        if (cause instanceof FindBatchesException) {
-                            fetchMetrics.findBatchesFailed();
-                        } else if (cause instanceof FileFetchException) {
-                            fetchMetrics.fileFetchFailed();
-                        }
+                    if (cause instanceof FindBatchesException) {
+                        fetchMetrics.findBatchesFailed();
+                    } else if (cause instanceof FileFetchException) {
+                        fetchMetrics.fileFetchFailed();
                     }
                     fetchMetrics.fetchFailed();
                 } else {

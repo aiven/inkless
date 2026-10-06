@@ -178,7 +178,13 @@ class ConfigAdminManager(nodeId: Int,
     try {
       validateBrokerConfigChange(configProps, configResource)
     } catch {
-      case t: Throwable => error(s"validation of configProps $configProps for $configResource failed with exception", t)
+      case t: Throwable =>
+        // Log the redacted view, not `configProps` itself: a config that fails validation here
+        // for an unrelated reason (for example a malformed numeric property) can still carry a
+        // sensitive value, such as an Inkless control plane connection string with embedded
+        // credentials, that must never reach the logs in plaintext.
+        error(s"validation of configProps ${toLoggableProps(configResource, configProps)} " +
+          s"for $configResource failed with exception", t)
         throw t
     }
   }
