@@ -17,6 +17,7 @@
 package kafka.server
 
 import kafka.cluster.Partition
+import io.aiven.inkless.consolidation.ConsolidationFetcherThread
 import kafka.log.LogManager
 import kafka.server.QuotaFactory.UNBOUNDED_QUOTA
 import kafka.server.epoch.util.MockBlockingSender
@@ -36,11 +37,17 @@ import org.apache.kafka.common.requests.{FetchRequest, FetchResponse}
 import org.apache.kafka.common.utils.{LogContext, Time}
 import org.apache.kafka.metadata.{KRaftMetadataCache, PartitionRegistration}
 import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion, OffsetAndEpoch}
+import org.apache.kafka.server.config.ServerConfigs
+import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.ReplicaState
+import org.apache.kafka.server.LeaderEndPoint
+import org.apache.kafka.server.ResultWithPartitions
+import org.apache.kafka.server.ReplicaFetch
 import org.apache.kafka.server.PartitionFetchState
 import org.apache.kafka.server.config.ReplicationConfigs
 import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogConfig, RecordValidationStats, UnifiedLog}
+import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, Test}
@@ -53,7 +60,7 @@ import org.mockito.Mockito.{mock, times, verify, when}
 import java.lang.{Long => JLong}
 import java.nio.charset.StandardCharsets
 import java.util
-import java.util.{Collections, Optional, Properties}
+import java.util.{Collections, Optional, OptionalInt, Properties}
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters._
@@ -211,6 +218,7 @@ class ReplicaFetcherThreadTest {
     when(replicaManager.replicaAlterLogDirsManager).thenReturn(replicaAlterLogDirsManager)
     when(replicaManager.brokerTopicStats).thenReturn(mock(classOf[BrokerTopicStats]))
     stub(partition, replicaManager, log)
+    when(replicaManager.inklessMetadataView()).thenReturn(mock(classOf[InklessMetadataView]))
 
     //Define the offsets for the OffsetsForLeaderEpochResponse
     val offsets = java.util.Map.of(
@@ -280,6 +288,7 @@ class ReplicaFetcherThreadTest {
     when(replicaManager.replicaAlterLogDirsManager).thenReturn(replicaAlterLogDirsManager)
     when(replicaManager.brokerTopicStats).thenReturn(mock(classOf[BrokerTopicStats]))
     stub(partition, replicaManager, log)
+    when(replicaManager.inklessMetadataView()).thenReturn(mock(classOf[InklessMetadataView]))
 
     // Create the fetcher thread
     val mockNetwork = new MockBlockingSender(Collections.emptyMap(), brokerEndPoint, Time.SYSTEM)
@@ -781,6 +790,9 @@ class ReplicaFetcherThreadTest {
     when(log.logEndOffset).thenReturn(100L)
     when(log.latestEpoch).thenReturn(Optional.of(Integer.valueOf(1)))
     when(log.maybeUpdateHighWatermark(anyLong())).thenReturn(Optional.empty)
+    val epochCache: LeaderEpochFileCache = mock(classOf[LeaderEpochFileCache])
+    when(epochCache.epochForOffset(99L)).thenReturn(OptionalInt.of(1))
+    when(log.leaderEpochCache).thenReturn(epochCache)
 
     val partition: Partition = mock(classOf[Partition])
     when(partition.localLogOrException).thenReturn(log)
@@ -789,6 +801,7 @@ class ReplicaFetcherThreadTest {
 
     val inklessMetadataView: InklessMetadataView = mock(classOf[InklessMetadataView])
     when(inklessMetadataView.getClassicToDisklessStartOffset(t1p0)).thenReturn(100L)
+    when(inklessMetadataView.isDisklessTopic(t1p0.topic)).thenReturn(true)
     when(inklessMetadataView.isReplicaInIsr(t1p0, config.brokerId)).thenReturn(false)
 
     val replicaFetcherManager: ReplicaFetcherManager = mock(classOf[ReplicaFetcherManager])
@@ -850,6 +863,206 @@ class ReplicaFetcherThreadTest {
       classicToDisklessStartOffset = PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
       logEndOffsetAfterAppend = 100L,
       expectEviction = false)
+  }
+
+  @Test
+  def shouldDelayConsolidatingPartitionAtSealWhileOutsideIsr(): Unit = {
+    // Consolidation used to short-circuit the ISR check, evicting the partition at the seal. It must
+    // not: once the partition hands off, the consolidation fetcher reads object storage and sends no
+    // fetch to the leader, so the leader never observes the catch-up and no path expands ISR.
+    val f = consolidatingFollowerAtSeal()
+
+    f.thread.processPartitionData(t1p0, 100L, Int.MaxValue, f.partitionData)
+
+    // Queued for back-off rather than eviction. Assert before `doWork`, which drains the buffer.
+    assertEquals(mutable.Buffer(t1p0), f.thread.partitionsAwaitingIsrRecovery)
+    assertEquals(mutable.Buffer.empty, f.thread.partitionsToEvictAfterDisklessSwitch)
+    verify(f.replicaFetcherManager, times(0)).removeFetcherForPartitions(any())
+
+    f.thread.backOffPartitionsAwaitingIsrRecovery()
+
+    val fetchState = f.thread.fetchState(t1p0).get
+    assertTrue(fetchState.isDelayed,
+      s"Consolidating replica outside ISR must be delayed, not evicted, got $fetchState")
+    assertEquals(f.config.replicaFetchBackoffMs.toLong, fetchState.delay.orElse(0L))
+    assertEquals(mutable.Buffer.empty, f.thread.partitionsAwaitingIsrRecovery)
+  }
+
+  @Test
+  def shouldClearPendingIsrRecoveryBackoffWhenPartitionIsRemoved(): Unit = {
+    val f = consolidatingFollowerAtSeal()
+
+    f.thread.processPartitionData(t1p0, 100L, Int.MaxValue, f.partitionData)
+    assertEquals(mutable.Buffer(t1p0), f.thread.partitionsAwaitingIsrRecovery)
+
+    f.thread.removePartitions(Set(t1p0))
+    assertEquals(mutable.Buffer.empty, f.thread.partitionsAwaitingIsrRecovery)
+
+    f.thread.addPartitions(Map(t1p0 -> initialFetchState(Some(topicId1), 100L)))
+    f.thread.backOffPartitionsAwaitingIsrRecovery()
+    assertFalse(f.thread.fetchState(t1p0).get.isDelayed,
+      "a re-added partition must not inherit pending backoff from its removed assignment")
+  }
+
+  @Test
+  def shouldClearPendingEvictionWhenPartitionIsRemoved(): Unit = {
+    // Queued while the replica was in ISR, then an ISR-only delta drops it and routes it back to
+    // this fetcher. Handing the re-added partition to consolidation would strand the replica
+    // outside ISR, which is the state the ISR gate exists to prevent.
+    val f = consolidatingFollowerAtSeal(replicaInIsr = true)
+
+    f.thread.processPartitionData(t1p0, 100L, Int.MaxValue, f.partitionData)
+    assertEquals(mutable.Buffer(t1p0), f.thread.partitionsToEvictAfterDisklessSwitch)
+
+    when(f.inklessMetadataView.isReplicaInIsr(t1p0, f.config.brokerId)).thenReturn(false)
+    f.thread.removePartitions(Set(t1p0))
+    assertEquals(mutable.Buffer.empty, f.thread.partitionsToEvictAfterDisklessSwitch)
+
+    f.thread.addPartitions(Map(t1p0 -> initialFetchState(Some(topicId1), 100L)))
+    f.thread.evictFullySwitchedDisklessPartitions()
+
+    verify(f.replicaFetcherManager, times(0)).removeFetcherForPartitions(any())
+    verify(f.replicaManager, times(0)).startConsolidationFetchersForCaughtUpClassicPartitions(any())
+    assertTrue(f.thread.fetchState(t1p0).isDefined,
+      "the re-added partition must keep fetching from the classic leader")
+  }
+
+  @Test
+  def shouldNotEvictWhenIsrShrinksAfterTheBufferDrains(): Unit = {
+    // The buffer is already drained when the ISR delta lands, so clearing it on removal cannot
+    // help. `partitionMapLock` cannot cover the fetcher-manager calls, so the eviction re-reads ISR
+    // instead: removing it here would leave the replica with no fetcher at all.
+    val f = consolidatingFollowerAtSeal(replicaInIsr = true)
+
+    f.thread.processPartitionData(t1p0, 100L, Int.MaxValue, f.partitionData)
+    assertEquals(mutable.Buffer(t1p0), f.thread.partitionsToEvictAfterDisklessSwitch)
+
+    when(f.inklessMetadataView.isReplicaInIsr(t1p0, f.config.brokerId)).thenReturn(false)
+    f.thread.evictFullySwitchedDisklessPartitions()
+
+    assertEquals(mutable.Buffer.empty, f.thread.partitionsToEvictAfterDisklessSwitch)
+    verify(f.replicaFetcherManager, times(0)).removeFetcherForPartitions(any())
+    verify(f.replicaManager, times(0)).startConsolidationFetchersForCaughtUpClassicPartitions(any())
+    assertTrue(f.thread.fetchState(t1p0).isDefined,
+      "the replica must stay on the classic fetcher until the leader readmits it")
+  }
+
+  @Test
+  def shouldOfferClassicBoundaryEpochAtOrAboveTheSeal(): Unit = {
+    // Above the seal the latest epoch is the diskless one, stamped on records from object storage.
+    // Offering it proves the suffix resolves on the leader and nothing about the classic prefix, so
+    // the fetcher offers the epoch of the last classic record instead. The fixture seals at 100 with
+    // latest epoch 7 and boundary epoch 1.
+    val f = consolidatingFollowerAtSeal()
+
+    assertEquals(Optional.of(Integer.valueOf(1)), f.thread.fetchState(t1p0).get.lastFetchedEpoch,
+      "at the seal the fetcher must offer the classic boundary epoch, not the diskless latest epoch")
+
+    when(f.log.logEndOffset).thenReturn(4000L)
+    f.thread.removePartitions(Set(t1p0))
+    f.thread.addPartitions(Map(t1p0 -> initialFetchState(Some(topicId1), 4000L)))
+    assertEquals(Optional.of(Integer.valueOf(1)), f.thread.fetchState(t1p0).get.lastFetchedEpoch,
+      "past the seal the boundary epoch still applies")
+
+    when(f.log.logEndOffset).thenReturn(50L)
+    f.thread.removePartitions(Set(t1p0))
+    f.thread.addPartitions(Map(t1p0 -> initialFetchState(Some(topicId1), 50L)))
+    assertEquals(Optional.of(Integer.valueOf(7)), f.thread.fetchState(t1p0).get.lastFetchedEpoch,
+      "below the seal the latest epoch applies")
+  }
+
+  @Test
+  def consolidationFetcherOffersLatestEpochNotClassicBoundary(): Unit = {
+    // Same fixture as above, but the thread is the consolidation fetcher, which inherits latestEpoch.
+    // Its endpoint does not support truncation on fetch, so the epoch is not stored at addPartitions;
+    // it is asked for on the truncation pass and sent in OffsetsForLeaderEpoch. The endpoint answers
+    // any epoch below the diskless one with the seal, so offering the boundary epoch there would
+    // truncate the consolidated suffix on every start. It must offer the latest epoch.
+    val f = consolidatingFollowerAtSeal()
+    when(f.log.logEndOffset).thenReturn(4000L)
+    val leader: LeaderEndPoint = mock(classOf[LeaderEndPoint])
+    when(leader.brokerEndPoint()).thenReturn(brokerEndPoint)
+    when(leader.isTruncationOnFetchSupported).thenReturn(false)
+    when(leader.fetchEpochEndOffsets(any())).thenReturn(java.util.Map.of())
+    when(leader.buildFetch(any())).thenReturn(
+      new ResultWithPartitions[Optional[ReplicaFetch]](Optional.empty(), java.util.Set.of()))
+    val consolidationThread = new ConsolidationFetcherThread(
+      "consolidation-fetcher", leader, f.config, failedPartitions, f.replicaManager,
+      mock(classOf[ReplicaQuota]), "[ConsolidationFetcher test] ")
+    consolidationThread.addPartitions(Map(t1p0 -> initialFetchState(Some(topicId1), 4000L)))
+
+    consolidationThread.doWork()
+
+    val offered = ArgumentCaptor.forClass(classOf[java.util.Map[TopicPartition, OffsetForLeaderPartition]])
+    verify(leader).fetchEpochEndOffsets(offered.capture())
+    assertEquals(7, offered.getValue.get(t1p0).leaderEpoch,
+      "the consolidation fetcher must offer its latest epoch, not the classic boundary epoch")
+  }
+
+
+  private case class ConsolidatingAtSealFetcher(thread: ReplicaFetcherThread,
+                                                partitionData: FetchResponseData.PartitionData,
+                                                inklessMetadataView: InklessMetadataView,
+                                                replicaFetcherManager: ReplicaFetcherManager,
+                                                replicaManager: ReplicaManager,
+                                                config: KafkaConfig,
+                                                log: UnifiedLog)
+
+  private def consolidatingFollowerAtSeal(replicaInIsr: Boolean = false): ConsolidatingAtSealFetcher = {
+    val props = TestUtils.createBrokerConfig(1)
+    props.setProperty(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
+    props.setProperty(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, "true")
+    props.setProperty(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
+    props.setProperty(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, "true")
+    props.setProperty(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, "true")
+    val config = KafkaConfig.fromProps(props)
+
+    val mockBlockingSend: BlockingSend = mock(classOf[BlockingSend])
+    when(mockBlockingSend.brokerEndPoint()).thenReturn(brokerEndPoint)
+
+    val log: UnifiedLog = mock(classOf[UnifiedLog])
+    when(log.logEndOffset).thenReturn(100L)
+    when(log.latestEpoch).thenReturn(Optional.of(Integer.valueOf(7)))
+    when(log.maybeUpdateHighWatermark(anyLong())).thenReturn(Optional.empty)
+    val epochCache: LeaderEpochFileCache = mock(classOf[LeaderEpochFileCache])
+    when(epochCache.epochForOffset(99L)).thenReturn(OptionalInt.of(1))
+    when(log.leaderEpochCache).thenReturn(epochCache)
+
+    val partition: Partition = mock(classOf[Partition])
+    when(partition.localLogOrException).thenReturn(log)
+    when(partition.appendRecordsToFollowerOrFutureReplica(any[MemoryRecords], any[Boolean], any[Int]))
+      .thenReturn(Some(mock(classOf[LogAppendInfo])))
+
+    val inklessMetadataView: InklessMetadataView = mock(classOf[InklessMetadataView])
+    when(inklessMetadataView.getClassicToDisklessStartOffset(t1p0)).thenReturn(100L)
+    when(inklessMetadataView.isDisklessTopic(t1p0.topic)).thenReturn(true)
+    when(inklessMetadataView.isReplicaInIsr(t1p0, config.brokerId)).thenReturn(replicaInIsr)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(t1p0.topic)).thenReturn(true)
+
+    val replicaFetcherManager: ReplicaFetcherManager = mock(classOf[ReplicaFetcherManager])
+    val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.getPartitionOrException(any[TopicPartition])).thenReturn(partition)
+    when(replicaManager.localLogOrException(t1p0)).thenReturn(log)
+    when(replicaManager.localLog(t1p0)).thenReturn(Some(log))
+    when(replicaManager.brokerTopicStats).thenReturn(new BrokerTopicStats)
+    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    when(replicaManager.replicaFetcherManager).thenReturn(replicaFetcherManager)
+
+    val thread = createReplicaFetcherThread(
+      name = "replica-fetcher",
+      fetcherId = 0,
+      brokerConfig = config,
+      failedPartitions = failedPartitions,
+      replicaMgr = replicaManager,
+      quota = mock(classOf[ReplicaQuota]),
+      leaderEndpointBlockingSend = mockBlockingSend)
+
+    thread.addPartitions(Map(t1p0 -> initialFetchState(Some(topicId1), 100L)))
+    val partitionData = new FetchResponseData.PartitionData()
+      .setPartitionIndex(t1p0.partition)
+      .setRecords(MemoryRecords.withRecords(Compression.NONE,
+        new SimpleRecord(1000, "foo".getBytes(StandardCharsets.UTF_8))))
+    ConsolidatingAtSealFetcher(thread, partitionData, inklessMetadataView, replicaFetcherManager, replicaManager, config, log)
   }
 
   private def verifyDisklessSwitchEviction(
