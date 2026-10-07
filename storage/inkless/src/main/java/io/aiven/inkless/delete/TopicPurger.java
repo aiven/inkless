@@ -36,15 +36,17 @@ import io.aiven.inkless.control_plane.PurgeDeletedLogsResponse;
 public class TopicPurger implements Runnable, Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(TopicPurger.class);
 
+    // Shared with InklessDisklessTopicDeleteTest so the saturation assertion cannot drift.
+    public static final String CAP_REACHED_LOG_FRAGMENT = "per-cycle cap reached";
+
     final Time time;
     final ControlPlane controlPlane;
     final int maxBatchesPerCycle;
     final TopicPurgerMetrics metrics;
     private final ExponentialBackoff errorBackoff = new ExponentialBackoff(100, 2, 60 * 1000, 0.2);
     private final AtomicInteger attempts = new AtomicInteger();
-    // KafkaScheduler uses scheduleAtFixedRate. Sleeping inside run() queues missed ticks, and
-    // the next work cycle bursts past topic.purger.max.batches.per.cycle / interval. Skip the
-    // tick until this time instead.
+    // Do not sleep in run(): KafkaScheduler uses scheduleAtFixedRate, and a sleep queues missed
+    // ticks that then fire back to back past topic.purger.max.batches.per.cycle.
     private volatile long nextEligibleMs;
 
     public TopicPurger(SharedState sharedState) {
@@ -84,8 +86,9 @@ public class TopicPurger implements Runnable, Closeable {
                 if (saturated) {
                     metrics.recordTopicPurgerCycleSaturated();
                     LOGGER.info("Running topic purger: deleted {} batches, purged {} logs, marked {} files "
-                            + "(per-cycle cap reached, more remain)",
-                        result.batchesDeleted(), result.logsPurged(), result.filesMarked());
+                            + "({}, more remain)",
+                        result.batchesDeleted(), result.logsPurged(), result.filesMarked(),
+                        CAP_REACHED_LOG_FRAGMENT);
                 } else {
                     LOGGER.info("Running topic purger: deleted {} batches, purged {} logs, marked {} files",
                         result.batchesDeleted(), result.logsPurged(), result.filesMarked());
@@ -94,13 +97,12 @@ public class TopicPurger implements Runnable, Closeable {
             }
 
             attempts.set(0);
-            nextEligibleMs = 0L;
             metrics.recordTopicPurgerCycleSucceeded();
         } catch (final Exception e) {
             metrics.recordTopicPurgerError();
             final long backoff = errorBackoff.backoff(attempts.incrementAndGet());
             nextEligibleMs = time.milliseconds() + backoff;
-            LOGGER.error("Error while purging deleted logs, retrying after {}", Duration.ofMillis(backoff), e);
+            LOGGER.error("Error while purging deleted logs, skipping ticks for the next {}", Duration.ofMillis(backoff), e);
         }
     }
 
