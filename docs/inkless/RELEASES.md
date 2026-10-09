@@ -91,7 +91,7 @@ gh release download inkless-release-0.33 --repo aiven/inkless --pattern "*.tgz"
 These branches receive new Inkless releases. When a release is cut, all of them are updated
 with the same Inkless version number.
 
-A Kafka patch release can ship on a branch without a new Inkless release. In that case, the
+A Kafka patch version update can be released on a branch without a new Inkless release. In that case, the
 `inkless-<kafka-version>-<inkless-version>` tag exists, but the
 [GitHub Releases](https://github.com/aiven/inkless/releases) page doesn't list it. To find the
 latest version on a branch, check the tags in the repository.
