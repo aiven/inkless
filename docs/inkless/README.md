@@ -40,6 +40,7 @@ Internally, **TS unification** is the umbrella for [managed replicas](FEATURES.m
 - [Tiered Storage Consolidation](DISKLESS_CONSOLIDATION.md) - Consolidating diskless WAL segments into tiered Kafka log segments
 - [Classic to Diskless Switch](CLASSIC_TO_DISKLESS_SWITCH.md) - Migrating classic topics to diskless (and consolidated) topics
 - [CREATE_TOPIC interceptors](CREATE-TOPICS-INTERCEPTORS.md) - Intercepting topic creation (e.g. forced diskless/classic)
+- [PostgreSQL RLMM](POSTGRES_RLMM.md) - Storing remote log segment metadata in PostgreSQL
 
 ### Operations & Configuration
 - [Performance](PERFORMANCE.md) - Performance tuning guide for producers and consumers
