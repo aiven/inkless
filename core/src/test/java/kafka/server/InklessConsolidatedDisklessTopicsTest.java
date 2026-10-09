@@ -51,8 +51,6 @@ import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
 import org.apache.kafka.server.config.ReplicationConfigs;
 import org.apache.kafka.server.config.ServerConfigs;
-import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager;
-import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerConfig;
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
 import org.apache.kafka.test.TestUtils;
 
@@ -94,8 +92,10 @@ import java.util.function.IntFunction;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.config.InklessConfig;
+import io.aiven.inkless.control_plane.postgres.PostgresConnectionConfig;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlane;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlaneConfig;
+import io.aiven.inkless.remote_log_metadata.postgres.PostgresRemoteLogMetadataManager;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.storage_backend.s3.S3StorageConfig;
 import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
@@ -172,7 +172,7 @@ public class InklessConsolidatedDisklessTopicsTest {
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONSOLIDATION_CLEANUP_INTERVAL_MS_CONFIG, 5000)
             // PG control plane config
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
-            .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl())
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getUserJdbcUrl())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.USERNAME_CONFIG, PostgreSQLTestContainer.USERNAME)
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.PASSWORD_CONFIG, PostgreSQLTestContainer.PASSWORD)
             // S3 storage config
@@ -187,10 +187,14 @@ public class InklessConsolidatedDisklessTopicsTest {
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_TASK_INTERVAL_MS_PROP, "5000")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_FOLLOWER_THREAD_POOL_SIZE_PROP, "4")
-            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_CLASS_NAME_PROP, TopicBasedRemoteLogMetadataManager.class.getName())
-            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_LISTENER_NAME_PROP, "EXTERNAL")
+            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_CLASS_NAME_PROP,
+                PostgresRemoteLogMetadataManager.class.getName())
             .setConfigProp(RemoteLogManagerConfig.DEFAULT_REMOTE_LOG_METADATA_MANAGER_CONFIG_PREFIX
-                + TopicBasedRemoteLogMetadataManagerConfig.REMOTE_LOG_METADATA_TOPIC_REPLICATION_FACTOR_PROP, "1")
+                + PostgresConnectionConfig.CONNECTION_STRING_CONFIG, pgContainer.getUserJdbcUrl())
+            .setConfigProp(RemoteLogManagerConfig.DEFAULT_REMOTE_LOG_METADATA_MANAGER_CONFIG_PREFIX
+                + PostgresConnectionConfig.USERNAME_CONFIG, PostgreSQLTestContainer.USERNAME)
+            .setConfigProp(RemoteLogManagerConfig.DEFAULT_REMOTE_LOG_METADATA_MANAGER_CONFIG_PREFIX
+                + PostgresConnectionConfig.PASSWORD_CONFIG, PostgreSQLTestContainer.PASSWORD)
             .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, "io.aiven.kafka.tieredstorage.RemoteStorageManager")
             .setConfigProp(RSM_CONFIG_PREFIX + "chunk.size", 1048576)
             .setConfigProp(RSM_CONFIG_PREFIX + "fetch.chunk.cache.class", "io.aiven.kafka.tieredstorage.fetch.cache.DiskChunkCache")
@@ -278,6 +282,9 @@ public class InklessConsolidatedDisklessTopicsTest {
                 120_000,
                 () -> "Expected at least one tiered object in the Minio bucket after produce");
         }
+        TestUtils.waitForCondition(() -> readRlmmEpochStateCount(topicUuid) > 0,
+            120_000,
+            () -> "Expected PostgreSQL RLMM epoch state after remote copy");
 
         ControlPlaneDisklessSnapshot beforeConsumeSnapshot = readControlPlaneDisklessSnapshot(topicUuid);
         log.info("Control plane snapshot before first consume: {}", beforeConsumeSnapshot);
@@ -1035,7 +1042,7 @@ public class InklessConsolidatedDisklessTopicsTest {
     private Long readPartitionHighWatermark(UUID topicId, int partition) {
         try (
             Connection connection = DriverManager.getConnection(
-                pgContainer.getJdbcUrl(),
+                pgContainer.getUserJdbcUrl(),
                 PostgreSQLTestContainer.USERNAME,
                 PostgreSQLTestContainer.PASSWORD);
             PreparedStatement ps = connection.prepareStatement(
@@ -1058,7 +1065,7 @@ public class InklessConsolidatedDisklessTopicsTest {
         Map<Integer, Long> out = new HashMap<>();
         try (
             Connection connection = DriverManager.getConnection(
-                pgContainer.getJdbcUrl(),
+                pgContainer.getUserJdbcUrl(),
                 PostgreSQLTestContainer.USERNAME,
                 PostgreSQLTestContainer.PASSWORD);
             PreparedStatement ps = connection.prepareStatement(
@@ -1086,11 +1093,30 @@ public class InklessConsolidatedDisklessTopicsTest {
         return new UUID(topicId.getMostSignificantBits(), topicId.getLeastSignificantBits());
     }
 
+    private long readRlmmEpochStateCount(Uuid kafkaTopicId) {
+        try (
+            Connection connection = DriverManager.getConnection(
+                pgContainer.getUserJdbcUrl(),
+                PostgreSQLTestContainer.USERNAME,
+                PostgreSQLTestContainer.PASSWORD);
+            PreparedStatement statement = connection.prepareStatement(
+                "SELECT COUNT(*) FROM inkless_rlmm.rlmm_epoch_state WHERE topic_id = ?")
+        ) {
+            statement.setObject(1, toJavaUuid(kafkaTopicId));
+            try (ResultSet result = statement.executeQuery()) {
+                result.next();
+                return result.getLong(1);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private ControlPlaneDisklessSnapshot readControlPlaneDisklessSnapshot(Uuid kafkaTopicId) throws SQLException {
         UUID id = toJavaUuid(kafkaTopicId);
         try (
             Connection connection = DriverManager.getConnection(
-                pgContainer.getJdbcUrl(),
+                pgContainer.getUserJdbcUrl(),
                 PostgreSQLTestContainer.USERNAME,
                 PostgreSQLTestContainer.PASSWORD)
         ) {
