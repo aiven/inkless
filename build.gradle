@@ -2599,6 +2599,7 @@ project(':storage:inkless') {
     api project(':clients')
     implementation project(':server-common')
     implementation project(':storage')
+    implementation project(':storage:storage-api')
     implementation project(':metadata')
 
     api libs.pitestAnnotations
@@ -2766,12 +2767,64 @@ project(':storage:inkless') {
     }
   }
 
+  // RLMM tables live in their own Flyway stream (db/rlmm/migration) and schema
+  // (inkless_rlmm), so they get a dedicated codegen task. Sharing the control-plane
+  // task would merge the streams and restructure the existing generated packages.
+  tasks.register('generateRlmmJooqClasses', dev.monosoul.jooq.GenerateJooqClassesTask) {
+    withContainer {
+      image {
+        name = "postgres:17.2-alpine"
+      }
+    }
+
+    usingJavaConfig {
+      withGenerate(new org.jooq.meta.jaxb.Generate()
+        .withImplicitJoinPathTableSubtypes(false))
+      database.withForcedTypes(
+              new ForcedType()
+                .withName("UUID")
+                .withUserType("org.apache.kafka.common.Uuid")
+                .withIncludeExpression("TOPIC_ID|SEGMENT_ID")
+                .withConverter("io.aiven.inkless.control_plane.postgres.converters.UUIDtoUuidConverter"),
+
+              new ForcedType()
+                .withName("TIMESTAMP WITH TIME ZONE")
+                .withUserType("java.time.Instant")
+                .withIncludeExpression("NOW|ARG_NOW|.*_AT")
+                .withConverter("io.aiven.inkless.control_plane.postgres.converters.OffsetDateTimeToInstantConverter")
+      )
+    }
+    basePackageName.set("org.jooq.rlmm.generated")
+    outputDirectory.set(project.layout.projectDirectory.dir("src/main/rlmm-jooq"))
+    includeFlywayTable.set(false)
+    migrationLocations.set([
+      new dev.monosoul.jooq.migration.MigrationLocation.Filesystem(
+        project.files("src/main/resources/db/rlmm/migration"))
+    ])
+    schemas.set(["inkless_rlmm"])
+    inputs.dir("src/main/resources/db/rlmm/migration")
+    doLast {
+      def keysFile = project.file("src/main/rlmm-jooq/org/jooq/rlmm/generated/Keys.java")
+      def generatedHeading = '// FOREIGN KEY definitions'
+      def styledHeading = '// Foreign key definitions'
+      def keysText = keysFile.getText(StandardCharsets.UTF_8.name())
+      if (!keysText.contains(generatedHeading) && !keysText.contains(styledHeading)) {
+        throw new GradleException("Could not locate the generated foreign-key heading in ${keysFile}")
+      }
+      keysFile.setText(
+        keysText.replace(generatedHeading, styledHeading),
+        StandardCharsets.UTF_8.name()
+      )
+    }
+  }
+
   sourceSets {
     main {
       java {
         srcDirs = [
                 "src/main/java",
                 "src/main/jooq",
+                "src/main/rlmm-jooq",
                 "${projectDir}/build/generated/main/java"
         ]
       }
@@ -2783,8 +2836,8 @@ project(':storage:inkless') {
     }
   }
 
-  compileJava.dependsOn('processMessages', 'generateJooqClasses')
-  srcJar.dependsOn('processMessages', 'generateJooqClasses')
+  compileJava.dependsOn('processMessages', 'generateJooqClasses', 'generateRlmmJooqClasses')
+  srcJar.dependsOn('processMessages', 'generateJooqClasses', 'generateRlmmJooqClasses')
 
   javadoc {
     enabled = false
