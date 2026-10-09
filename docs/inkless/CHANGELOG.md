@@ -41,6 +41,33 @@ Regenerate a draft with the `inkless-changelog` skill (or run it directly):
 
 ---
 
+## 0.49 (Kafka 4.1.2, 4.2.1, 4.3.1)
+
+### Fixes
+- (inkless:config) allow routine alters on diskless topics with remote.storage.enable=false (#804)
+- (inkless:consolidation) freeze cross-tier start during prune (#806)
+- (inkless:retention) reject new consolidating topics with `remote.log.copy.disable=true` [KC-552] (#809)
+- (inkless:retention) skip consolidating topics in WAL retention [KC-552] (#808)
+- (inkless:controller) count diskless topics with remote storage effectively off [KC-540] (#805)
+- (inkless:consolidation) start consolidation when remote storage is enabled later [KC-540] (#802)
+
+### Docs
+- (inkless) describe TS unification benefits (#803)
+- (inkless) document PostgreSQL planning pressure (#801)
+- (inkless) drop cleanup.policy=delete from the unsupported list (#800)
+- (inkless:release) changelog and cherrypick session for 0.48 (#797)
+
+### Other
+- (inkless:release) move the release workflows to Node 24 action majors (#796)
+
+### Config & metric changes
+- no config or metric changes
+
+### Postgres schema changes
+- `V29__Bootstrap_cross_tier_start_on_prune.sql`: `CREATE OR REPLACE FUNCTION prune_batches_below_highest_tiered_offset_v1`, which only replaces the function body. The function sets `logs.remote_log_start_offset` to the pre-prune `log_start_offset` when it is null, before pruning advances it (#806).
+
+---
+
 ## 0.48 (Kafka 4.1.2, 4.2.1, 4.3.1)
 
 > Upstream sync: main development base moved to Kafka 4.3.0-SNAPSHOT (from 4.2.0-SNAPSHOT), Scala 2.13.17 -> 2.13.18. `inkless-4.3` (Kafka 4.3.1) ships its first release with this increment.

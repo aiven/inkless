@@ -131,8 +131,8 @@ def migration_note(tag, name):
         return ""
     note = ", ".join(sorted(statements))
     if CONCURRENTLY.search(sql):
-        return f" -- {note} (CONCURRENTLY)"
-    return f" -- {note}: takes a table-level lock, check the migration header for operator impact"
+        return f": {note} (CONCURRENTLY)"
+    return f": {note}. Takes a table-level lock. Check the migration header for operator impact."
 
 
 def parse_configs(text):
