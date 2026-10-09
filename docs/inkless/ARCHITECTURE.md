@@ -335,3 +335,157 @@ Low-throughput partitions which roll infrequently, will be merged into larger Di
 These merged segments will typically be larger than the segments created upon ingestion, allowing for efficient replica rebuilds.
 They will combine data from multiple partitions, because those partitions do not individually have enough throughput to meet the roll conditions for Tiered Storage.
 Data which never satisfies the configured roll conditions will either be expired due to retention, or periodically moved to fresher objects.
+
+```mermaid
+---
+title: Topic Type Lifecycle
+---
+flowchart TB
+    NewTopic["Newly created topic"]
+    subgraph Hybrid
+        HybridDiskless["Hybrid-Diskless:</br>Diskless for new data"]
+        HybridClassic["Hybrid-Classic:</br>Classic for new data"]
+    end
+    Classic
+    Diskless
+    NewTopic --> Classic
+    NewTopic --> Diskless
+    Classic -- Reconfig diskless.enable=true --> HybridDiskless
+    Diskless -- Reconfig diskless.enable=false --> HybridClassic
+    HybridDiskless -- Reconfig diskless.enable=false --> HybridClassic
+    HybridDiskless -- Retire all Classic data --> Diskless
+    HybridClassic -- Reconfig diskless.enable=true --> HybridDiskless
+    HybridClassic -- Retire all Diskless data --> Classic
+```
+
+```mermaid
+---
+title: Transition Classic to Hybrid-Diskless
+---
+sequenceDiagram
+    autonumber
+    participant A as Admin
+    participant P0 as Producer 0
+    participant L as Leader
+    participant K as KRaft Quorum
+    participant D as Diskless Controller
+    activate L
+    P0->>L: Produce
+    L->>P0: Success
+    A->>K: Set diskless.enable=true
+    K->>K: Mark partition hybrid if not already
+    par
+    L->>K: Fetch
+    K->>L: Propagate Config
+    L->>L: Seal Segment
+    L->>L: Begin buffering data for Diskless Produces
+    deactivate L
+    P0->>L: Produce
+    L->>D: Commit
+    D->>L: NOT_LEADER_OR_FOLLOWER
+    L->>P0: NOT_LEADER_OR_FOLLOWER
+    L->>K: AlterPartition
+    K->>L: Success
+    D->>K: Fetch
+    K->>D: Propagate Seal
+    activate D
+    end
+    P0->>L: Produce
+    L->>D: Commit
+    D->>L: Success
+    L->>P0: Success
+    deactivate D
+```
+```mermaid
+---
+title: Transition Diskless to Hybrid-Classic
+---
+sequenceDiagram
+    autonumber
+    participant A as Admin
+    participant P0 as Producer 0
+    participant L as Promoted Replica
+    participant R as Replica
+    participant K as KRaft Quorum
+    participant D as Diskless Controller
+    activate D
+    P0->>L: Produce
+    L->>D: Commit
+    D->>L: Success
+    L->>P0: Success
+    A->>K: Set diskless.enable=false
+    K->>K: Mark partition hybrid if not already
+    K->>K: Elect leaders for partitions
+    par
+    D->>K: Fetch
+    K->>D: Propagate Config
+    D->>D: Seal Segment
+    deactivate D
+    D->>K: AlterPartition
+    K->>D: Success
+    P0->>L: Produce
+    L->>D: Commit
+    D->>L: NOT_LEADER_OR_FOLLOWER
+    L->>P0: NOT_LEADER_OR_FOLLOWER
+    L->>K: Fetch
+    K->>L: Propagate Seal
+    L->>L: Become Leader
+    L->>L: Open Segment
+    activate L
+    end
+    P0->>L: Produce
+    R->>L: Fetch
+    L->>R: Data
+    R->>L: Fetch
+    L->>P0: Success
+    deactivate L
+```
+
+```mermaid
+---
+title: Transition Hybrid-Diskless to Diskless 
+---
+sequenceDiagram
+    autonumber
+    participant L as Replica
+    participant K as KRaft Quorum
+    par
+        alt Classic Segments Expired
+            L-->>L: Age of local segment > retention.ms
+        else Classic Segments Uploaded
+            L->>L: Upload segment to Tiered Storage
+            L-->>L: End of tiered storage log > latest offset in local segment
+        end
+        L->>L: Delete local segment
+        L-->>L: Local log start > latest seal
+        L->>L: Remove all nodes from ISR
+        L->>K: AlterPartition
+        K->>L: Success
+    end
+    K-->>K: All partitions are Diskless
+    K->>K: Mark topic as Diskless
+```
+
+```mermaid
+---
+title: Transition Hybrid-Classic to Classic 
+---
+sequenceDiagram
+    autonumber
+    participant L as Leader
+    participant K as KRaft Quorum
+    participant D as Diskless Controller
+    par
+        alt Diskless data expired
+            D-->>D: Age of diskless data > retention.ms
+        else Diskless data consolidated
+            L->>D: DisklessAdvanceLogStart
+            D-->>D: End of tiered storage log > offset of diskless data
+        end
+        D->>D: Diskless data expired 
+        D->>K: AlterPartition
+        K->>D: Success
+    end
+    K-->>K: All partitions are Classic
+    K->>K: Mark topic as Classic
+```
