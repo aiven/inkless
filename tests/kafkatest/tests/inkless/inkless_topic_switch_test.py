@@ -156,12 +156,14 @@ class InklessClassicToDisklessSwitchTest(Test):
             jmx_attributes=self.SWITCH_JMX_ATTRIBUTES,
         )
         # Switch configs (diskless.allow.from.classic.enable) require
+        # diskless.remote.storage.consolidation.enable, which requires
         # remote.log.storage.system.enable, which needs RSM class names.
         # The NoOp classes are test-only and absent from the broker runtime
         # classpath, but the controller never instantiates RemoteLogManager
         # so referencing them there is safe. We must copy the list first
         # because both KafkaService instances share the same list object.
         controller_only_overrides = [
+            ["diskless.remote.storage.consolidation.enable", "true"],
             ["diskless.allow.from.classic.enable", "true"],
             ["remote.log.storage.system.enable", "true"],
             ["remote.log.storage.manager.class.name",
@@ -228,6 +230,7 @@ class InklessClassicToDisklessSwitchTest(Test):
         common_overrides = [
             ["diskless.managed.rf.enable", "true"],
             ["remote.log.storage.system.enable", "true"],
+            ["diskless.remote.storage.consolidation.enable", "true"],
             ["diskless.allow.from.classic.enable", "true"],
             ["remote.log.metadata.manager.class.name",
              "org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager"],

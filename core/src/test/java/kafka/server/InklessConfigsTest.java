@@ -84,7 +84,7 @@ public class InklessConfigsTest {
     }
 
     private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig, boolean disklessStorageEnableConfig, boolean isDisklessAllowFromClassicEnabled) throws Exception {
-        return init(defaultDisklessEnableConfig, disklessStorageEnableConfig, isDisklessAllowFromClassicEnabled, isDisklessAllowFromClassicEnabled, false, true, false, List.of());
+        return init(defaultDisklessEnableConfig, disklessStorageEnableConfig, isDisklessAllowFromClassicEnabled, isDisklessAllowFromClassicEnabled, isDisklessAllowFromClassicEnabled, true, false, List.of());
     }
 
     private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig,
@@ -430,20 +430,11 @@ public class InklessConfigsTest {
         }
 
         @Test
-        void allowFromClassicRequiresManagedReplicas() {
+        void allowFromClassicRequiresConsolidation() {
             final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> init(false, true, true, false, false, true, false, List.of()));
+                () -> init(false, true, true, true, false, true, false, List.of()));
             assertEquals(
-                "requirement failed: diskless.allow.from.classic.enable requires diskless.managed.rf.enable=true",
-                exception.getMessage());
-        }
-
-        @Test
-        void allowFromClassicRequiresRemoteLogStorage() {
-            final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> init(false, true, true, true, false, false, false, List.of()));
-            assertEquals(
-                "requirement failed: diskless.allow.from.classic.enable requires remote.log.storage.system.enable=true",
+                "requirement failed: diskless.allow.from.classic.enable requires diskless.remote.storage.consolidation.enable=true",
                 exception.getMessage());
         }
 
@@ -466,12 +457,9 @@ public class InklessConfigsTest {
         }
 
         @Test
-        void disklessRemoteStorageConsolidationRequiresAllowFromClassic() {
-            final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> init(false, true, false, true, true, true, false, List.of()));
-            assertEquals(
-                "requirement failed: diskless.remote.storage.consolidation.enable requires diskless.allow.from.classic.enable=true",
-                exception.getMessage());
+        void consolidationWithoutAllowFromClassicSucceeds() throws Exception {
+            final KafkaClusterTestKit cluster = init(false, true, false, true, true, true, false, List.of());
+            cluster.close();
         }
 
         @Test

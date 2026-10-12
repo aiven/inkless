@@ -6,7 +6,7 @@ Internally, **TS unification** is the umbrella for three features: [managed repl
 
 A consolidated diskless topic has both `diskless.enable=true` and `remote.storage.enable=true`. Origin and consolidation are separate. A *born-diskless* topic is created with `diskless.enable=true` and consolidates when it also has `remote.storage.enable=true`, either at create time or when that flag is set later. A *born-classic* topic consolidates after the [classic-to-diskless switch](CLASSIC_TO_DISKLESS_SWITCH.md), which sets both flags atomically, so a switched topic is always consolidating.
 
-The broker gates the feature behind `diskless.remote.storage.consolidation.enable`, which currently defaults to `false`. That flag also requires `diskless.allow.from.classic.enable=true`, managed replicas, and `remote.log.storage.system.enable=true`. Consolidation will be the default going forward.
+You enable the feature with `diskless.remote.storage.consolidation.enable`, which defaults to `false`. That flag requires managed replicas and `remote.log.storage.system.enable=true`. The `diskless.allow.from.classic.enable` flag requires this flag. Consolidation is the planned default.
 
 ## Motivation
 
@@ -326,9 +326,9 @@ Broker-level configs live in `ServerConfigs` (no prefix) and `InklessConfig` (un
 
 ### Feature flag and dependencies
 
-| Config                                         | Default | Meaning                                                                                                                                                                        |
-| ---------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `diskless.remote.storage.consolidation.enable` | `false` | Enables the consolidation framework. Requires `diskless.allow.from.classic.enable=true`, `diskless.managed.rf.enable=true`, and `remote.log.storage.system.enable=true`. |
+| Config                                         | Default | Meaning                                                                                                                                                  |
+| ---------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `diskless.remote.storage.consolidation.enable` | `false` | Enables the consolidation framework. Requires `diskless.managed.rf.enable=true` and `remote.log.storage.system.enable=true`. `diskless.allow.from.classic.enable=true` requires this flag. |
 
 Per topic, consolidation runs when `diskless.enable=true` and `remote.storage.enable=true`. The classic-to-diskless switch sets both atomically. A born-diskless topic consolidates when it is created with both, or when `remote.storage.enable=true` is set later.
 

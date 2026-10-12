@@ -439,9 +439,7 @@ public class DisklessAndRemoteStorageConfigsTest {
                 .setConfigProp(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
                 .setConfigProp(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, "true")
                 .setConfigProp(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, String.valueOf(allowFromClassic))
-                // Consolidation requires the switch flag, so this test pairs them: when the switch is off,
-                // consolidation must be off too (KafkaConfig rejects consolidation without allow-from-classic).
-                // Both scenarios covered here run with consolidation matching the switch flag.
+                // The switch flag requires consolidation, so this test pairs them: consolidation matches the switch flag.
                 .setConfigProp(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, String.valueOf(allowFromClassic))
                 .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
                 .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, "org.apache.kafka.server.log.remote.storage.NoOpRemoteStorageManager")

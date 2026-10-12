@@ -49,6 +49,7 @@ docker compose -f docker-compose.yml -f docker-compose.s3-local.yml \
 | Config                                | Value  | Purpose                                             |
 |---------------------------------------|--------|-----------------------------------------------------|
 | `remote.log.storage.system.enable`    | `true` | Classic tiered storage via Aiven TS plugin          |
+| `diskless.remote.storage.consolidation.enable` | `true` | Consolidate diskless WAL into tiered storage |
 | `diskless.allow.from.classic.enable`  | `true` | Allow classic-to-diskless topic switch              |
 | `classic.remote.storage.force.enable` | `true` | All classic topics get `remote.storage.enable=true` |
 | `log.diskless.enable`                 | `false`| Topics start as classic (not diskless by default)   |
