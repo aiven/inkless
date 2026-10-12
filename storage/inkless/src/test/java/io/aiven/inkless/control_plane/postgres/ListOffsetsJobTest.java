@@ -40,11 +40,14 @@ import java.util.Set;
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
+import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
+import static org.apache.kafka.common.record.internal.RecordBatch.NO_TIMESTAMP;
+import static org.apache.kafka.common.requests.ListOffsetsRequest.MAX_TIMESTAMP;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers
@@ -100,5 +103,109 @@ class ListOffsetsJobTest {
         assertThat(result).containsExactly(
             new ListOffsetsResponse(Errors.NONE, T0P0, -1, 12)
         );
+    }
+
+    /**
+     * The timestamp lookup returns the first batch in offset order whose timestamp is at or after the
+     * target, not the batch with the smallest qualifying timestamp. These differ only when timestamps
+     * are out of order across batches.
+     */
+    @Test
+    void timestampLookupFollowsOffsetOrderNotTimestampOrder() {
+        // Offsets 0-9 at ts 2000, 10-19 at ts 1000, 20-29 at ts 3000.
+        new CommitFileJob(
+            time, pgContainer.getJooqCtx(), "obj1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, T0P0, 0, 100, 0, 9, 2000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P0, 100, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P0, 200, 100, 0, 9, 3000, TimestampType.CREATE_TIME)
+            ),
+            duration -> {}
+        ).call();
+
+        final List<ListOffsetsResponse> result = new ListOffsetsJob(
+            time, pgContainer.getJooqCtx(),
+            List.of(
+                // Batch 2 (ts 1000) is the smallest qualifying timestamp, but batch 1 comes first by offset.
+                new ListOffsetsRequest(T0P0, 1000),
+                new ListOffsetsRequest(T0P0, 1500),
+                // Only batch 3 qualifies.
+                new ListOffsetsRequest(T0P0, 2001),
+                new ListOffsetsRequest(T0P0, 3001),
+                new ListOffsetsRequest(T0P0, MAX_TIMESTAMP)
+            ),
+            duration -> {}
+        ).call();
+
+        assertThat(result).containsExactly(
+            new ListOffsetsResponse(Errors.NONE, T0P0, 2000, 0),
+            new ListOffsetsResponse(Errors.NONE, T0P0, 2000, 0),
+            new ListOffsetsResponse(Errors.NONE, T0P0, 3000, 20),
+            new ListOffsetsResponse(Errors.NONE, T0P0, NO_TIMESTAMP, -1),
+            new ListOffsetsResponse(Errors.NONE, T0P0, 3000, 29)
+        );
+    }
+
+    @Test
+    void maxTimestampTieReturnsFirstBatchByOffset() {
+        commitOutOfOrderBatches();
+
+        final List<ListOffsetsResponse> result = new ListOffsetsJob(
+            time, pgContainer.getJooqCtx(),
+            List.of(new ListOffsetsRequest(T0P0, MAX_TIMESTAMP)),
+            duration -> {}
+        ).call();
+
+        // Batches 1 and 3 have the maximum timestamp 3000. The result is the first batch by offset.
+        assertThat(result).containsExactly(new ListOffsetsResponse(Errors.NONE, T0P0, 3000, 9));
+    }
+
+    @Test
+    void timestampBeforeOldestBatchReturnsOldestBatch() {
+        commitOutOfOrderBatches();
+
+        final List<ListOffsetsResponse> result = new ListOffsetsJob(
+            time, pgContainer.getJooqCtx(),
+            List.of(new ListOffsetsRequest(T0P0, 0), new ListOffsetsRequest(T0P0, 1500)),
+            duration -> {}
+        ).call();
+
+        // Both targets are answered by batch 1, the first by offset: one because it is the oldest batch and
+        // qualifies, the other because it is found by the scan.
+        assertThat(result).containsExactly(
+            new ListOffsetsResponse(Errors.NONE, T0P0, 3000, 0),
+            new ListOffsetsResponse(Errors.NONE, T0P0, 3000, 0)
+        );
+    }
+
+    @Test
+    void timestampLookupIsClampedToLogStartOffset() {
+        commitOutOfOrderBatches();
+        new DeleteRecordsJob(time, pgContainer.getJooqCtx(), List.of(new DeleteRecordsRequest(T0P0, 5L)), duration -> {}).call();
+
+        final List<ListOffsetsResponse> result = new ListOffsetsJob(
+            time, pgContainer.getJooqCtx(),
+            List.of(new ListOffsetsRequest(T0P0, 0), new ListOffsetsRequest(T0P0, 2500)),
+            duration -> {}
+        ).call();
+
+        // Batch 1 spans offsets 0-9 and stays because it ends after the new log start offset 5.
+        assertThat(result).containsExactly(
+            new ListOffsetsResponse(Errors.NONE, T0P0, 3000, 5),
+            new ListOffsetsResponse(Errors.NONE, T0P0, 3000, 5)
+        );
+    }
+
+    /** Offsets 0-9 at ts 3000, 10-19 at ts 1000, 20-29 at ts 3000. */
+    private void commitOutOfOrderBatches() {
+        new CommitFileJob(
+            time, pgContainer.getJooqCtx(), "obj-ooo", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, T0P0, 0, 100, 0, 9, 3000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P0, 100, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P0, 200, 100, 0, 9, 3000, TimestampType.CREATE_TIME)
+            ),
+            duration -> {}
+        ).call();
     }
 }
