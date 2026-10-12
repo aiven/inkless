@@ -36,6 +36,12 @@ If not specified above, features are untested and assumed to be inoperable.
 - `FETCH`
     - can't fetch from Inkless and classic topics in the same request.
 - `LIST_OFFSETS`
+    - on a born-diskless topic before consolidation:
+        - each broker returns the same answer for a timestamp type, read from the batch coordinator;
+        - answers are batch-level: `MAX_TIMESTAMP` returns the last offset of the batch with the max timestamp, and a timestamp lookup returns the base offset and the max timestamp of the first batch whose max timestamp is at or after the target. A reset by time can read records before the target again, but it does not skip records;
+        - `EARLIEST_LOCAL` returns the log start offset, and `LATEST_TIERED` returns offset `-1`;
+        - `EARLIEST_PENDING_UPLOAD` fails with `UNKNOWN_SERVER_ERROR`. Classic Kafka returns offset `-1` when remote storage is off;
+        - the leader epoch in each answer is `0`.
 - `METADATA`
     - the output is modified according to client and broker racks.
 - `DESCRIBE_TOPIC_PARTITIONS`

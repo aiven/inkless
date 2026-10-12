@@ -119,7 +119,7 @@ Followers must never replicate diskless records into their local log. When a par
 
 On a consolidating born-diskless topic, the earliest readable offset eventually lives only in the remote tier: the diskless WAL is pruned and local segments are evicted, yet `ListOffsets(EARLIEST)` must still point at real data. When `retention.ms` expires the oldest remote segments, only the partition's classic leader observes the earliest offset advancing. Its `RemoteLogManager` raises `UnifiedLog.logStartOffset` as it deletes them. That value is broker-local. Followers fetch from the diskless WAL and never learn it, and the control plane's `log_start_offset` tracks only the WAL prune frontier, not the remote-retention frontier.
 
-Without this feature, `ListOffsets(EARLIEST_TIMESTAMP)` (`--time -2`) served by any non-leader broker returned a stale `0`, pointing consumers at data that no longer exists. `EARLIEST_LOCAL_TIMESTAMP` (`--time -4`) is intentionally unaffected: it must keep returning the diskless WAL log start.
+Without this feature, `ListOffsets(EARLIEST_TIMESTAMP)` (`--time -2`) served by any non-leader broker returned a stale `0`, pointing consumers at data that no longer exists. `EARLIEST_LOCAL_TIMESTAMP` (`--time -4`) is unaffected: on a consolidating partition, `DisklessFetchOffsetRouter` answers it from the local log of the broker that receives the request.
 
 The leader is the only participant that knows the cross-tier earliest offset, but any broker must be able to serve it. The control plane is the source of truth, with a short-TTL cache:
 
@@ -153,7 +153,7 @@ The design reuses the replica-fetcher machinery with a custom `LeaderEndPoint` t
 
 ### Sequence
 
-The implementation adds a reconciler gate, the diskless leader epoch `E_d`, the `OFFSET_MOVED_TO_TIERED_STORAGE` recovery path, and cold-path reads with a dedicated quota. It moves WAL pruning out of the `RemoteLogManager` into a scheduled `ConsolidatedDisklessLogPruner`.
+The change adds a reconciler gate, the diskless leader epoch (`disklessLeaderEpoch`), the `OFFSET_MOVED_TO_TIERED_STORAGE` recovery path, and cold-path reads with a dedicated quota. It moves WAL pruning out of the `RemoteLogManager` into a scheduled `ConsolidatedDisklessLogPruner`.
 
 ```mermaid
 sequenceDiagram
@@ -191,7 +191,7 @@ sequenceDiagram
     RS-->>FH: records
     FH-->>DLE: ConcatenatedRecords
     DLE-->>CFT: fetchResponse
-    CFT->>CFT: stamp diskless leader epoch E_d
+    CFT->>CFT: stamp the diskless leader epoch
     CFT->>UL: append to local log
     UL-->>CFT: ack
     note over CFT,FH: Rate-limited by diskless.consolidation.fetch.rate.limit.bytes.per.second (dynamic)
@@ -257,16 +257,16 @@ The controller-side `DisklessWithoutRemoteStorageCount` separately inventories e
 
 Diskless records are produced with leader epoch 0. Appending them after a switched partition's classic prefix (which carries higher classic epochs) would break `LeaderEpochFileCache` monotonicity and disable `OffsetsForLeaderEpoch` divergence truncation.
 
-The controller captures a frozen diskless leader epoch `E_d` at the `initDisklessLog` commit and persists it in KRaft metadata as a tagged field on `PartitionRegistration`. Then:
+The controller captures a frozen diskless leader epoch (`disklessLeaderEpoch`) at the `initDisklessLog` commit and persists it in KRaft metadata as a tagged field on `PartitionRegistration`. Then:
 
-- `ConsolidationFetcherThread.maybeStampDisklessLeaderEpoch` stamps `E_d` onto each materialized batch in place (the partition leader epoch is outside the batch CRC, so no checksum recompute is needed). Born-diskless partitions with no `E_d` are left at epoch 0.
+- `ConsolidationFetcherThread.maybeStampDisklessLeaderEpoch` stamps the diskless leader epoch onto each materialized batch in place (the partition leader epoch is outside the batch CRC, so no checksum recompute is needed). Born-diskless partitions with no diskless leader epoch are left at epoch 0.
 - `DisklessLeaderEndPoint.fetchEpochEndOffsets` answers `OffsetsForLeaderEpoch` for followers:
-  - A queried epoch below `E_d` returns the seal, so a stale classic tail past the seal truncates back to it. Collapsing every classic epoch to the seal is correct because the classic prefix `[0, seal)` is committed and identical across replicas.
-  - A queried epoch at or above `E_d` (or a born-diskless partition with no `E_d`) returns the current diskless LEO.
+  - A queried epoch below the diskless leader epoch returns the seal, so a stale classic tail past the seal truncates back to it. Collapsing every classic epoch to the seal is correct because the classic prefix `[0, seal)` is committed and identical across replicas.
+  - A queried epoch equal to or greater than the diskless leader epoch (or a born-diskless partition without one) returns the current diskless LEO.
 
 `DisklessLeaderEndPoint.resolveLeaderEpoch` applies the same region logic to list-offsets results, because `FetchOffsetHandler` stamps a placeholder epoch of 0 that cannot be trusted.
 
-> **Upgrade caveat.** Partitions switched before this change carry a seal but no `E_d`, so they fall through to the LATEST-LEO branch and keep the pre-divergence-truncation behavior until they are re-switched. This is a safe fallback, not a correctness regression.
+> **Upgrade caveat.** Partitions switched before this change carry a seal but no diskless leader epoch, so they reach the LATEST-LEO branch and keep the pre-divergence-truncation behavior until they are re-switched, a safe fallback that does not change correctness.
 
 ### Cache pollution: cold path
 
@@ -378,8 +378,8 @@ Consolidation fetchers report first-hop lag through `ConsolidationLocalLag`. The
 ## Compatibility
 
 - **Produce / consume / replication**: Standard Kafka client APIs. A consolidated topic behaves like a tiered topic for clients.
-- **ListOffsets**: `EARLIEST` returns the cross-tier earliest offset (remote + local). `EARLIEST_LOCAL` returns the diskless WAL log start. `LATEST` works as usual.
-- **OffsetsForLeaderEpoch**: Supported for switched partitions via the diskless leader epoch `E_d` mapping (epochs below `E_d` map to the seal; `E_d` and above map to the diskless LEO). This enables follower divergence truncation.
+- **ListOffsets**: `EARLIEST` returns the cross-tier earliest offset (remote + local). `EARLIEST_LOCAL` and `LATEST_TIERED` return the local log start and the highest tiered offset of the broker that receives the request. `LATEST` works as usual.
+- **OffsetsForLeaderEpoch**: the broker supports it for switched partitions via the diskless leader epoch mapping. Epochs below the diskless leader epoch map to the seal. The diskless leader epoch and greater epochs map to the diskless LEO. Follower divergence truncation uses this answer.
 - **DeleteRecords**: Supported for hybrid (switched) partitions.
   - *Known limitation (authorization).* When an authorizer is enabled, `DeleteRecords` on a switched or consolidating partition requires the broker's inter-broker principal to be granted `DELETE` on the topic. `InklessTopicMetadataTransformer` advertises a hash-selected replica (usually a follower) as the client-facing leader, so the admin request rarely reaches the real KRaft leader directly. The receiving broker forwards the leader-only leg to it over the inter-broker listener (`DisklessDeleteRecordsForwarder`) as a plain `DeleteRecords`, which the leader authorizes against the forwarding broker's principal, not the original client's. If the broker principal lacks `DELETE` on the topic, the forwarded leg is rejected with `TOPIC_AUTHORIZATION_FAILED` and the operation fails. Deployments where the inter-broker principal is a super-user (the common case) are unaffected. This is accepted for now. The proper fix is wrapping the forwarded request in a KIP-590 envelope so the leader re-authorizes against the original client principal. That requires API changes: enabling the `Envelope` request on the broker inter-broker listener, which today accepts it only on the controller listener, plus a broker-side envelope handler. It is deferred.
 - **Transactions**: Transactional offset commits are allowed for diskless sources. Abort markers are preserved for the local portion of a consolidating partition. Transactions that span the consolidation boundary into the diskless portion are not supported: the broker logs a warning and those offsets have no abort markers.
