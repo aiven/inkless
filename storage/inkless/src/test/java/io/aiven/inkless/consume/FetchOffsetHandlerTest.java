@@ -20,11 +20,13 @@ package io.aiven.inkless.consume;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.errors.UnknownServerException;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.record.internal.FileRecords;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.storage.internals.log.OffsetResultHolder;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -38,11 +40,15 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.cache.CrossTierLogStartCache;
@@ -59,9 +65,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -89,6 +98,8 @@ class FetchOffsetHandlerTest {
     ControlPlane controlPlane;
     @Mock
     private ExecutorService executor;
+    @Mock
+    InklessFetchOffsetMetrics metricsMock;
     @Captor
     ArgumentCaptor<Runnable> runnableCaptor;
 
@@ -324,6 +335,75 @@ class FetchOffsetHandlerTest {
             assertThat(future.get().exception().get()).message().contains("Topic ID not found");
             assertThat(future.get().timestampAndOffset()).isEmpty();
         }
+    }
+
+    @Test
+    void rejectedSubmissionFailsAllFutures() throws ExecutionException, InterruptedException {
+        when(metadataView.getTopicId(TOPIC_0)).thenReturn(TOPIC_ID_0);
+        when(metadataView.getTopicId(TOPIC_1)).thenReturn(TOPIC_ID_1);
+        doThrow(new RejectedExecutionException("queue full")).when(executor).submit((Runnable) any());
+
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, crossTierLogStartCache, executor, time, metrics);
+        final var future1 = job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(-1));
+        final var future2 = job.add(T1P1, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(1).setTimestamp(-3));
+
+        job.start();
+
+        verify(controlPlane, never()).listOffsets(any());
+        for (final var future : List.of(future1, future2)) {
+            assertThat(future.isDone()).isTrue();
+            assertThat(future.get().exception()).containsInstanceOf(TimeoutException.class);
+            assertThat(future.get().exception().get().getCause()).isInstanceOf(RejectedExecutionException.class);
+            assertThat(future.get().timestampAndOffset()).isEmpty();
+        }
+    }
+
+    @Test
+    void fullQueueRejectsOnlyTheOverflowingJob() throws Exception {
+        final ExecutorService boundedExecutor = FetchOffsetHandler.createExecutor(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        stubControlPlaneBlockedUntil(release);
+        try {
+            // One job runs on the worker and QUEUE_CAPACITY_PER_THREAD jobs wait in the queue.
+            final int accepted = 1 + FetchOffsetHandler.QUEUE_CAPACITY_PER_THREAD;
+            final List<CompletableFuture<OffsetResultHolder.FileRecordsOrError>> acceptedFutures = new ArrayList<>();
+            for (int i = 0; i < accepted; i++) {
+                acceptedFutures.add(startJob(boundedExecutor));
+            }
+            final var rejected = startJob(boundedExecutor);
+
+            assertThat(rejected.isDone()).isTrue();
+            assertThat(rejected.get().exception()).containsInstanceOf(TimeoutException.class);
+            assertThat(rejected.get().exception().get().getCause()).isInstanceOf(RejectedExecutionException.class);
+            verify(metricsMock).fetchOffsetRejected();
+            assertThat(acceptedFutures).noneMatch(CompletableFuture::isDone);
+
+            release.countDown();
+            for (final var future : acceptedFutures) {
+                assertThat(future.get(5, TimeUnit.SECONDS).timestampAndOffset()).isPresent();
+            }
+            verify(controlPlane, times(accepted)).listOffsets(any());
+            verify(metricsMock, timeout(5000).times(accepted)).fetchOffsetCompleted(any());
+        } finally {
+            release.countDown();
+            boundedExecutor.shutdownNow();
+        }
+    }
+
+    private CompletableFuture<OffsetResultHolder.FileRecordsOrError> startJob(final ExecutorService executorToUse) {
+        final FetchOffsetHandler.Job job =
+            new FetchOffsetHandler.Job(metadataView, controlPlane, crossTierLogStartCache, executorToUse, time, metricsMock);
+        final var future = job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(-1));
+        job.start();
+        return future;
+    }
+
+    private void stubControlPlaneBlockedUntil(final CountDownLatch release) {
+        when(metadataView.getTopicId(TOPIC_0)).thenReturn(TOPIC_ID_0);
+        when(controlPlane.listOffsets(any())).thenAnswer(invocation -> {
+            release.await();
+            return List.of(ListOffsetsResponse.success(TIDP_T0P0, -1, 100));
+        });
     }
 
     @Test

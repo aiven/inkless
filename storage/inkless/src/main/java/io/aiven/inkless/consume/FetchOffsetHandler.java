@@ -20,6 +20,7 @@ package io.aiven.inkless.consume;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.ApiException;
+import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.record.internal.FileRecords;
 import org.apache.kafka.common.record.internal.RecordBatch;
@@ -41,11 +42,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.TimeUtils;
@@ -53,6 +56,7 @@ import io.aiven.inkless.cache.CrossTierLogStartCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.common.TopicIdEnricher;
+import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
@@ -61,15 +65,20 @@ import io.aiven.inkless.control_plane.MetadataView;
 import static org.apache.kafka.common.requests.ListOffsetsRequest.EARLIEST_TIMESTAMP;
 
 public class FetchOffsetHandler implements Closeable {
+    private static final String THREAD_NAME_PREFIX = "inkless-fetch-offset-metadata";
+    // Visible for testing.
+    static final int QUEUE_CAPACITY_PER_THREAD = 100;
+
     private final SharedState state;
     private final ExecutorService executor;
     private final Time time;
     private final InklessFetchOffsetMetrics metrics;
+    private final ThreadPoolMonitor threadPoolMonitor;
 
     public FetchOffsetHandler(SharedState state) {
         this(
             state,
-            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-offset-metadata", false)),
+            createExecutor(state.config().fetchOffsetThreadPoolSize()),
             state.time(),
             new InklessFetchOffsetMetrics(state.time())
         );
@@ -86,6 +95,25 @@ public class FetchOffsetHandler implements Closeable {
         this.executor = executor;
         this.time = time;
         this.metrics = metrics;
+        this.threadPoolMonitor = executor instanceof ThreadPoolExecutor
+            ? new ThreadPoolMonitor(THREAD_NAME_PREFIX, executor)
+            : null;
+    }
+
+    // Visible for testing.
+    static ExecutorService createExecutor(final int poolSize) {
+        // ArrayBlockingQueue, as in Reader's lagging consumer pool. The queue is small, so eager allocation is irrelevant.
+        // A task that is cancelled while queued keeps its slot until a worker skips it, as in Kafka's remote reader pool.
+        return new ThreadPoolExecutor(
+            poolSize,
+            poolSize,
+            0L,
+            TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(poolSize * QUEUE_CAPACITY_PER_THREAD),
+            new InklessThreadFactory(THREAD_NAME_PREFIX, false),
+            // Reject instead of CallerRunsPolicy: the caller is a request handler thread.
+            new ThreadPoolExecutor.AbortPolicy()
+        );
     }
 
     public Job createJob() {
@@ -95,6 +123,9 @@ public class FetchOffsetHandler implements Closeable {
     @Override
     public void close() throws IOException {
         ThreadUtils.shutdownExecutorServiceQuietly(executor, 5, TimeUnit.SECONDS);
+        if (threadPoolMonitor != null) {
+            threadPoolMonitor.close();
+        }
         metrics.close();
     }
 
@@ -161,16 +192,18 @@ public class FetchOffsetHandler implements Closeable {
                 // Complete all pending futures with the error rather than throwing an unchecked
                 // exception that propagates to the request handler, which may log the full request
                 // context (all topic names) producing an oversized log entry.
-                final var exception = new RuntimeException("Topic ID not found: " + e.topicName, e);
-                for (final var future : futures.values()) {
-                    future.complete(new OffsetResultHolder.FileRecordsOrError(
-                        Optional.of(exception),
-                        Optional.empty()
-                    ));
-                }
+                completeFuturesWithError(new RuntimeException("Topic ID not found: " + e.topicName, e));
                 return;
             }
-            final Future<?> submitted = executor.submit(() -> queryControlPlane(requestsEnriched));
+
+            final Future<?> submitted;
+            try {
+                submitted = executor.submit(() -> queryControlPlane(requestsEnriched));
+            } catch (final RejectedExecutionException e) {
+                metrics.fetchOffsetRejected();
+                completeFuturesWithError(new TimeoutException("Fetch offset thread pool queue is full", e));
+                return;
+            }
             cancelHandler.handle((_ignored, e) -> {
                 if (e instanceof CancellationException) {
                     if (submitted.cancel(true)) {
@@ -211,14 +244,7 @@ public class FetchOffsetHandler implements Closeable {
                 controlPlaneResponses = controlPlane.listOffsets(controlPlaneRequests);
             } catch (final Exception exception) {
                 // Handle global errors (e.g. control plane not available).
-                for (final var future : futures.values()) {
-                    if (!future.isDone()) {
-                        future.complete(new OffsetResultHolder.FileRecordsOrError(
-                            Optional.of(exception),
-                            Optional.empty()
-                        ));
-                    }
-                }
+                completeFuturesWithError(exception);
                 metrics.fetchOffsetFailed();
                 return;
             }
@@ -243,6 +269,17 @@ public class FetchOffsetHandler implements Closeable {
                 }
             }
             metrics.fetchOffsetCompleted(startTime);
+        }
+
+        private void completeFuturesWithError(final Exception exception) {
+            for (final var future : futures.values()) {
+                if (!future.isDone()) {
+                    future.complete(new OffsetResultHolder.FileRecordsOrError(
+                        Optional.of(exception),
+                        Optional.empty()
+                    ));
+                }
+            }
         }
 
         private boolean isCrossTierEarliest(final TopicIdPartition topicIdPartition, final long timestamp) {

@@ -643,7 +643,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 .iterator();
     }
 
-    private ListOffsetsResponse listOffset(ListOffsetsRequest request) {
+    private synchronized ListOffsetsResponse listOffset(ListOffsetsRequest request) {
         final LogInfo logInfo = liveLog(request.topicIdPartition());
 
         if (logInfo == null) {
