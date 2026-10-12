@@ -61,7 +61,17 @@ public class AppInfoParser {
         return COMMIT_ID;
     }
 
-    // INKLESS: the inkless release tag description (e.g. "inkless-4.2.1-0.45"), from git describe.
+    // INKLESS: the upstream Kafka version: the version without the "-inkless" qualifier, such as "4.3.1".
+    public static String getKafkaVersion() {
+        return kafkaVersion(VERSION);
+    }
+
+    // Visible for testing
+    static String kafkaVersion(String version) {
+        return version.replaceFirst("-inkless", "");
+    }
+
+    // INKLESS: the inkless release tag description (for example "inkless-4.2.1-0.45"), from git describe.
     public static String getInklessTag() {
         return INKLESS_TAG;
     }
@@ -120,11 +130,15 @@ public class AppInfoParser {
         metrics.addMetric(metricName(metrics, "version", Map.of()), (Gauge<String>) (config, now) -> appInfo.getVersion());
         metrics.addMetric(metricName(metrics, "commit-id", Map.of()), (Gauge<String>) (config, now) -> appInfo.getCommitId());
         metrics.addMetric(metricName(metrics, "start-time-ms", Map.of()), (Gauge<Long>) (config, now) -> appInfo.getStartTimeMs());
+        metrics.addMetric(metricName(metrics, "inkless-tag", Map.of()), (Gauge<String>) (config, now) -> appInfo.getInklessTag());
+        metrics.addMetric(metricName(metrics, "kafka-version", Map.of()), (Gauge<String>) (config, now) -> appInfo.getKafkaVersion());
         // MirrorMaker/Worker doesn't set client-id tag into the metrics config, so we need to set it here.
         if (!metrics.config().tags().containsKey("client-id") && clientId != null) {
             metrics.addMetric(metricName(metrics, "version", Map.of("client-id", clientId)), (Gauge<String>) (config, now) -> appInfo.getVersion());
             metrics.addMetric(metricName(metrics, "commit-id", Map.of("client-id", clientId)), (Gauge<String>) (config, now) -> appInfo.getCommitId());
             metrics.addMetric(metricName(metrics, "start-time-ms", Map.of("client-id", clientId)), (Gauge<Long>) (config, now) -> appInfo.getStartTimeMs());
+            metrics.addMetric(metricName(metrics, "inkless-tag", Map.of("client-id", clientId)), (Gauge<String>) (config, now) -> appInfo.getInklessTag());
+            metrics.addMetric(metricName(metrics, "kafka-version", Map.of("client-id", clientId)), (Gauge<String>) (config, now) -> appInfo.getKafkaVersion());
         }
     }
 
@@ -134,11 +148,15 @@ public class AppInfoParser {
         metrics.removeMetric(metricName(metrics, "version", Map.of()));
         metrics.removeMetric(metricName(metrics, "commit-id", Map.of()));
         metrics.removeMetric(metricName(metrics, "start-time-ms", Map.of()));
+        metrics.removeMetric(metricName(metrics, "inkless-tag", Map.of()));
+        metrics.removeMetric(metricName(metrics, "kafka-version", Map.of()));
 
         if (!metrics.config().tags().containsKey("client-id") && clientId != null) {
             metrics.removeMetric(metricName(metrics, "version", Map.of("client-id", clientId)));
             metrics.removeMetric(metricName(metrics, "commit-id", Map.of("client-id", clientId)));
             metrics.removeMetric(metricName(metrics, "start-time-ms", Map.of("client-id", clientId)));
+            metrics.removeMetric(metricName(metrics, "inkless-tag", Map.of("client-id", clientId)));
+            metrics.removeMetric(metricName(metrics, "kafka-version", Map.of("client-id", clientId)));
         }
     }
 
@@ -146,6 +164,8 @@ public class AppInfoParser {
         String getVersion();
         String getCommitId();
         Long getStartTimeMs();
+        String getInklessTag();
+        String getKafkaVersion();
     }
 
     public static class AppInfo implements AppInfoMBean {
@@ -176,6 +196,16 @@ public class AppInfoParser {
         @Override
         public Long getStartTimeMs() {
             return startTimeMs;
+        }
+
+        @Override
+        public String getInklessTag() {
+            return AppInfoParser.getInklessTag();
+        }
+
+        @Override
+        public String getKafkaVersion() {
+            return AppInfoParser.getKafkaVersion();
         }
 
     }
