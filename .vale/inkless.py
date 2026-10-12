@@ -27,6 +27,7 @@ AI_AGENT_EMAILS: Final = (
     "copilot@users.noreply.github.com",
 )
 BLAME_HEADER: Final = re.compile(r"^([0-9a-f]{40}) \d+ (\d+)")
+EXCLUDE_GENERATED: Final = ":(exclude,attr:linguist-generated=true)"
 
 
 class Alert(TypedDict, total=False):
@@ -59,7 +60,7 @@ def owned_pathspecs() -> list[str]:
                 pathspecs.append(":(glob)" + fields[0])
     if not pathspecs:
         sys.exit("No OWNED entries found in INKLESS_OWNERSHIP")
-    return pathspecs
+    return [*pathspecs, EXCLUDE_GENERATED]
 
 
 def resolve_base(base_arg: str | None) -> str:

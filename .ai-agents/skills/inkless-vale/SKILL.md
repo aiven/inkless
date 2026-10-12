@@ -16,7 +16,8 @@ The runner (`.vale/inkless.py`) limits alerts to:
 
 - Files on inkless-OWNED paths, derived from the single-owner `@aiven/inkless`
   entries in `INKLESS_OWNERSHIP`. Upstream Kafka files and INTERLEAVED files are
-  never checked.
+  never checked. The runner also skips files that `.gitattributes` marks
+  `linguist-generated=true`.
 - Lines added relative to the merge base with `main`, so pre-existing prose
   doesn't surface.
 - Markdown files plus comments in `.java`, `.scala`, and `.py` files.
