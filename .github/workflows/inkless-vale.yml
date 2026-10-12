@@ -63,6 +63,7 @@ jobs:
           path: |
             .vale/styles/*
             !.vale/styles/config
+            !.vale/styles/Inkless
           key: vale-packages-${{ hashFiles('.vale.ini') }}
 
       - name: Sync Vale packages
