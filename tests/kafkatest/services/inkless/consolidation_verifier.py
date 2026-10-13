@@ -41,6 +41,7 @@ class ConsolidationVerifier(object):
     JMX_TYPE = "ConsolidationMetrics"
     TOTAL_LAG = "ConsolidationTotalLag"
     LOCAL_LAG = "ConsolidationLocalLag"
+    LOCAL_TIME_LAG = "ConsolidationLocalTimeLag"
     DELETABLE_MESSAGES = "ConsolidationDeletableMessages"
     JMX_ATTRIBUTE = "Value"
 

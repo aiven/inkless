@@ -139,6 +139,8 @@ class ConsolidationPipelineTest(Test):
         self.kafka.read_jmx_output_all_nodes()
         jmx_keys = self.kafka.maximum_jmx_value
         local_lag_key = ConsolidationVerifier.find_aggregate_key(jmx_keys, ConsolidationVerifier.LOCAL_LAG)
+        local_time_lag_key = ConsolidationVerifier.find_aggregate_key(
+            jmx_keys, ConsolidationVerifier.LOCAL_TIME_LAG)
         total_lag_key = ConsolidationVerifier.find_aggregate_key(jmx_keys, ConsolidationVerifier.TOTAL_LAG)
         deletable_key = ConsolidationVerifier.find_aggregate_key(jmx_keys, ConsolidationVerifier.DELETABLE_MESSAGES)
         local_lag_peak = jmx_keys.get(local_lag_key, 0) if local_lag_key else 0
@@ -149,6 +151,10 @@ class ConsolidationPipelineTest(Test):
         assert local_lag_key is not None, \
             ("ConsolidationLocalLag was not exported/scraped via JMX. Expected a "
              "%s 'name=ConsolidationLocalLag' Value column; got keys: %s"
+             % (ConsolidationVerifier.JMX_PACKAGE, sorted(jmx_keys)))
+        assert local_time_lag_key is not None, \
+            ("ConsolidationLocalTimeLag was not exported/scraped via JMX. Expected a "
+             "%s 'name=ConsolidationLocalTimeLag' Value column; got keys: %s"
              % (ConsolidationVerifier.JMX_PACKAGE, sorted(jmx_keys)))
 
         # Read every acked record back (from remote). Track unique offsets to avoid a false pass if
