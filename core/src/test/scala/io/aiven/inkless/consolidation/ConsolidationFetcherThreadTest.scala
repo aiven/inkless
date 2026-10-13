@@ -30,9 +30,8 @@ import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.FetchRequest
 import org.apache.kafka.common.record.TimestampType
-import org.apache.kafka.common.record.internal.{BaseRecords, MemoryRecords, SimpleRecord}
+import org.apache.kafka.common.record.internal.{BaseRecords, MemoryRecords, MutableRecordBatch, SimpleRecord}
 import org.apache.kafka.metadata.PartitionRegistration
-import org.apache.kafka.server.LeaderEndPoint
 import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
@@ -157,12 +156,16 @@ class ConsolidationFetcherThreadTest {
 
   private def createConsolidationFetcherThread(
     replicaManager: ReplicaManager,
-    consolidationMetrics: Option[ConsolidationMetrics]
+    consolidationMetrics: Option[ConsolidationMetrics],
+    leaderOverride: DisklessLeaderEndPoint = null
   ): ConsolidationFetcherThread = {
     val props = TestUtils.createBrokerConfig(nodeId=1)
     val config = KafkaConfig.fromProps(props)
-    val leader = mock(classOf[LeaderEndPoint])
-    when(leader.brokerEndPoint()).thenReturn(new BrokerEndPoint(0, "localhost", 9092))
+    val leader = Option(leaderOverride).getOrElse {
+      val mockedLeader = mock(classOf[DisklessLeaderEndPoint])
+      when(mockedLeader.brokerEndPoint()).thenReturn(new BrokerEndPoint(0, "localhost", 9092))
+      mockedLeader
+    }
     new ConsolidationFetcherThread(
       "consolidation-fetcher-test",
       leader,
@@ -239,6 +242,19 @@ class ConsolidationFetcherThreadTest {
       .setRecords(records)
       .setHighWatermark(highWatermark)
       .setLogStartOffset(0)
+  }
+
+  private def batchWithTimestamp(baseOffset: Long, timestamp: Long): MemoryRecords =
+    MemoryRecords.withRecords(
+      baseOffset,
+      Compression.NONE,
+      new SimpleRecord(timestamp, "foo".getBytes(StandardCharsets.UTF_8)))
+
+  private def logAppendTimeBatch(baseOffset: Long, timestamp: Long): MemoryRecords = {
+    val records = batchWithTimestamp(baseOffset, timestamp)
+    records.batches().iterator().next().asInstanceOf[MutableRecordBatch]
+      .setMaxTimestamp(TimestampType.LOG_APPEND_TIME, timestamp)
+    records
   }
 
   private def recordsWithEpoch(baseOffset: Long, epoch: Int, value: String): MemoryRecords =
@@ -406,6 +422,49 @@ class ConsolidationFetcherThreadTest {
     assertEquals(40L, findGaugeValue("ConsolidationTotalLag", topicPartition))
     assertEquals(20L, findGaugeValue("ConsolidationLocalLag", topicPartition))
     assertEquals(50L, findGaugeValue("ConsolidationDeletableMessages", topicPartition))
+  }
+
+  @Test
+  def testLocalTimeLagUsesValidBytesPrefixAndLastBatchTimestamp(): Unit = {
+    val first = batchWithTimestamp(0L, 100L)
+    val second = batchWithTimestamp(1L, 20L)
+    val trailing = batchWithTimestamp(2L, 900L)
+    val records = new ConcatenatedRecords(util.List.of(first, second, trailing))
+    val validBytes = first.sizeInBytes() + second.sizeInBytes()
+
+    val partition = mockPartitionWithLog(
+      logEndOffset = 0L,
+      highestOffsetInRemoteStorage = -1L,
+      appendedValidBytes = validBytes)
+    val replicaManager = mockReplicaManager(partition)
+    val leader = mock(classOf[DisklessLeaderEndPoint])
+    when(leader.brokerEndPoint()).thenReturn(new BrokerEndPoint(0, "localhost", 9092))
+    when(leader.takeHeadTimestamp(topicPartition, 0L)).thenReturn(Some(50L))
+    val thread = createConsolidationFetcherThread(replicaManager, Some(metrics), leader)
+    metrics.registerPartition(topicPartition)
+
+    thread.processPartitionData(topicPartition, 0L, Int.MaxValue, partitionDataWith(records))
+
+    assertEquals(30L, findGaugeValue("ConsolidationLocalTimeLag", topicPartition))
+  }
+
+  @Test
+  def testLocalTimeLagUsesLogAppendTimestamp(): Unit = {
+    val records = logAppendTimeBatch(0L, 4242L)
+    val partition = mockPartitionWithLog(
+      logEndOffset = 0L,
+      highestOffsetInRemoteStorage = -1L,
+      appendedValidBytes = records.sizeInBytes())
+    val replicaManager = mockReplicaManager(partition)
+    val leader = mock(classOf[DisklessLeaderEndPoint])
+    when(leader.brokerEndPoint()).thenReturn(new BrokerEndPoint(0, "localhost", 9092))
+    when(leader.takeHeadTimestamp(topicPartition, 0L)).thenReturn(Some(5000L))
+    val thread = createConsolidationFetcherThread(replicaManager, Some(metrics), leader)
+    metrics.registerPartition(topicPartition)
+
+    thread.processPartitionData(topicPartition, 0L, Int.MaxValue, partitionDataWith(records))
+
+    assertEquals(758L, findGaugeValue("ConsolidationLocalTimeLag", topicPartition))
   }
 
   @Test
@@ -589,6 +648,48 @@ class ConsolidationFetcherThreadTest {
     assertEquals(50L, findBrokerGaugeValue("ConsolidationTotalLag"))
     assertEquals(20L, findBrokerGaugeValue("ConsolidationLocalLag"))
     assertEquals(15L, findBrokerGaugeValue("ConsolidationDeletableMessages"))
+  }
+
+  @Test
+  def testLocalTimeLagHoldsUntilBothTimestampsArriveAndZerosWhenCaughtUp(): Unit = {
+    val tp = new TopicPartition("topic-time", 0)
+    metrics.registerPartition(tp)
+
+    metrics.reportLocalTimeLag(tp, Some(100L), None, 80L, 100L)
+    assertEquals(0L, findGaugeValue("ConsolidationLocalTimeLag", tp))
+
+    metrics.reportLocalTimeLag(tp, None, Some(250L), 80L, 100L)
+    assertEquals(150L, findGaugeValue("ConsolidationLocalTimeLag", tp))
+
+    metrics.reportLocalTimeLag(tp, None, None, 80L, 100L)
+    assertEquals(150L, findGaugeValue("ConsolidationLocalTimeLag", tp))
+
+    metrics.reportLocalTimeLag(tp, None, None, -1L, 100L)
+    assertEquals(150L, findGaugeValue("ConsolidationLocalTimeLag", tp))
+
+    metrics.reportLocalTimeLag(tp, None, None, 100L, 100L)
+    assertEquals(0L, findGaugeValue("ConsolidationLocalTimeLag", tp))
+  }
+
+  @Test
+  def testLocalTimeLagClampsNegativeValuesAndBrokerAggregateUsesMaximum(): Unit = {
+    val tp0 = new TopicPartition("topic-time", 0)
+    val tp1 = new TopicPartition("topic-time", 1)
+    metrics.registerPartition(tp0)
+    metrics.registerPartition(tp1)
+
+    metrics.reportLocalTimeLag(tp0, Some(200L), Some(100L), 0L, 100L)
+    metrics.reportLocalTimeLag(tp1, Some(100L), Some(300L), 0L, 100L)
+
+    assertEquals(0L, findGaugeValue("ConsolidationLocalTimeLag", tp0))
+    assertEquals(200L, findGaugeValue("ConsolidationLocalTimeLag", tp1))
+    assertEquals(200L, findBrokerGaugeValue("ConsolidationLocalTimeLag"))
+
+    metrics.registerPartition(tp1)
+    assertEquals(0L, findGaugeValue("ConsolidationLocalTimeLag", tp1))
+    metrics.unregisterPartition(tp1)
+    assertNull(findGaugeOrNull("ConsolidationLocalTimeLag", tp1))
+    assertEquals(0L, findBrokerGaugeValue("ConsolidationLocalTimeLag"))
   }
 
   @Test

@@ -22,16 +22,15 @@ import io.aiven.inkless.consume.ConcatenatedRecords
 import kafka.server.{FailedPartitions, KafkaConfig, ReplicaFetcherThread, ReplicaManager, ReplicaQuota}
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.errors.RecordBatchTooLargeException
-import org.apache.kafka.common.record.internal.{MemoryRecords, Records}
+import org.apache.kafka.common.record.internal.{BaseRecords, MemoryRecords, RecordBatch, Records}
 import org.apache.kafka.common.requests.FetchResponse
 import org.apache.kafka.metadata.PartitionRegistration
-import org.apache.kafka.server.LeaderEndPoint
 import org.apache.kafka.storage.internals.log.LogAppendInfo
 
 import scala.util.Try
 
 class ConsolidationFetcherThread(name: String,
-                                 leader: LeaderEndPoint,
+                                 leader: DisklessLeaderEndPoint,
                                  brokerConfig: KafkaConfig,
                                  failedPartitions: FailedPartitions,
                                  replicaMgr: ReplicaManager,
@@ -60,6 +59,8 @@ class ConsolidationFetcherThread(name: String,
     partitionLeaderEpoch: Int,
     partitionData: FetchData
   ): Option[LogAppendInfo] = {
+    val headTimestamp = Option(leader.takeHeadTimestamp(topicPartition, fetchOffset)).flatten
+    val fetchedRecords = FetchResponse.recordsOrFail(partitionData)
     maybeStampDisklessLeaderEpoch(topicPartition, partitionData)
     val result =
       try {
@@ -96,6 +97,14 @@ class ConsolidationFetcherThread(name: String,
         val remoteLogEndOffset = log.highestOffsetInRemoteStorage()
 
         metrics.updateLocalLag(topicPartition, Math.max(0L, disklessLogEndOffset - localLogEndOffset))
+        val frontierTimestamp = result.flatMap(logAppendInfo =>
+          lastAppendedTimestamp(fetchedRecords, logAppendInfo.validBytes))
+        metrics.reportLocalTimeLag(
+          topicPartition,
+          frontierTimestamp,
+          headTimestamp,
+          localLogEndOffset,
+          disklessLogEndOffset)
         if (remoteLogEndOffset >= 0) {
           metrics.updateTotalLag(topicPartition, Math.max(0L, disklessLogEndOffset - remoteLogEndOffset))
           metrics.updateDeletableMessages(topicPartition, Math.max(0L, remoteLogEndOffset - log.localLogStartOffset()))
@@ -104,6 +113,32 @@ class ConsolidationFetcherThread(name: String,
     }
 
     result
+  }
+
+  private def lastAppendedTimestamp(records: BaseRecords, validBytes: Int): Option[Long] = {
+    if (validBytes <= 0) {
+      None
+    } else {
+      records match {
+        case recordSet: Records =>
+          var remainingBytes = validBytes.toLong
+          var lastTimestamp = Option.empty[Long]
+          val batches = recordSet.batches().iterator()
+          while (batches.hasNext && remainingBytes > 0) {
+            val batch = batches.next()
+            val batchSize = batch.sizeInBytes().toLong
+            if (batchSize <= remainingBytes) {
+              remainingBytes -= batchSize
+              lastTimestamp = Some(batch.maxTimestamp)
+            } else {
+              remainingBytes = 0
+            }
+          }
+          lastTimestamp.filter(_ != RecordBatch.NO_TIMESTAMP)
+        case _ =>
+          None
+      }
+    }
   }
 
   /**

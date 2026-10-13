@@ -23,16 +23,51 @@ import org.apache.kafka.server.metrics.KafkaMetricsGroup
 
 import java.io.Closeable
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
 import scala.jdk.CollectionConverters._
+
+object ConsolidationMetrics {
+  final case class TimeLagState(
+    frontier: Option[Long],
+    head: Option[Long],
+    publishedLag: Long
+  )
+
+  def transition(
+    state: TimeLagState,
+    frontier: Option[Long],
+    head: Option[Long],
+    localLeo: Long,
+    disklessLeo: Long
+  ): TimeLagState = {
+    val next = state.copy(
+      frontier = frontier.orElse(state.frontier),
+      head = head.orElse(state.head)
+    )
+    val publishedLag =
+      if (localLeo < 0 || disklessLeo < 0) {
+        state.publishedLag
+      } else if (localLeo >= disklessLeo) {
+        0L
+      } else {
+        (for {
+          headTimestamp <- next.head
+          frontierTimestamp <- next.frontier
+        } yield Math.max(0L, headTimestamp - frontierTimestamp)).getOrElse(state.publishedLag)
+      }
+    next.copy(publishedLag = publishedLag)
+  }
+}
 
 /**
  * Tracks consolidation pipeline lag per partition and aggregated at broker level.
- * All lag values are in offsets (messages).
+ * Offset lag values are in messages. Time lag values are in milliseconds.
  *
  * Pipeline: Diskless WAL → Local Log → Remote/Tiered Storage
  *
  * - ConsolidationLocalLag: disklessLEO - localLogEndOffset (first hop: diskless → local)
+ * - ConsolidationLocalTimeLag: head timestamp - frontier timestamp for the first hop. The broker
+ *   aggregate reports the maximum partition value.
  * - ConsolidationTotalLag: disklessLEO - remoteLogEndOffset (full pipeline: diskless → remote).
  *   Only updated when remote storage is active (highestOffsetInRemoteStorage ≥ 0); stays at 0 otherwise.
  * - ConsolidationDeletableMessages: messages already in remote storage eligible for WAL pruning
@@ -50,6 +85,7 @@ import scala.jdk.CollectionConverters._
 class ConsolidationMetrics extends Closeable {
   private val TotalLag = "ConsolidationTotalLag"
   private val LocalLag = "ConsolidationLocalLag"
+  private val LocalTimeLag = "ConsolidationLocalTimeLag"
   private val DeletableMessages = "ConsolidationDeletableMessages"
   private val OversizedBatch = "ConsolidationOversizedBatch"
   private val RemotePrefixUnknown = "ConsolidationRemotePrefixUnknown"
@@ -58,14 +94,16 @@ class ConsolidationMetrics extends Closeable {
 
   private val totalLagByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val localLagByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
+  private val localTimeLagByPartition =
+    new ConcurrentHashMap[TopicPartition, AtomicReference[ConsolidationMetrics.TimeLagState]]()
   private val deletableByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val oversizedBatchByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val remotePrefixUnknownByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val remotePrefixGenerationByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
 
-  // Broker-level aggregate gauges (sum across all partitions)
   metricsGroup.newGauge(TotalLag, () => sumValues(totalLagByPartition))
   metricsGroup.newGauge(LocalLag, () => sumValues(localLagByPartition))
+  metricsGroup.newGauge(LocalTimeLag, () => maxTimeLagValues(localTimeLagByPartition))
   metricsGroup.newGauge(DeletableMessages, () => sumValues(deletableByPartition))
   metricsGroup.newGauge(OversizedBatch, () => sumValues(oversizedBatchByPartition))
   metricsGroup.newGauge(RemotePrefixUnknown, () => sumValues(remotePrefixUnknownByPartition))
@@ -83,6 +121,11 @@ class ConsolidationMetrics extends Closeable {
       metricsGroup.newGauge(LocalLag, () => value.get, tags)
       value
     }).set(0)
+    localTimeLagByPartition.computeIfAbsent(tp, _ => {
+      val value = new AtomicReference(ConsolidationMetrics.TimeLagState(None, None, 0L))
+      metricsGroup.newGauge(LocalTimeLag, () => value.get.publishedLag, tags)
+      value
+    }).set(ConsolidationMetrics.TimeLagState(None, None, 0L))
     deletableByPartition.computeIfAbsent(tp, _ => {
       val value = new AtomicLong(0)
       metricsGroup.newGauge(DeletableMessages, () => value.get, tags)
@@ -109,6 +152,23 @@ class ConsolidationMetrics extends Closeable {
 
   def updateLocalLag(tp: TopicPartition, lag: Long): Unit =
     Option(localLagByPartition.get(tp)).foreach(_.set(lag))
+
+  def reportLocalTimeLag(
+    tp: TopicPartition,
+    frontier: Option[Long],
+    head: Option[Long],
+    localLeo: Long,
+    disklessLeo: Long
+  ): Unit = {
+    Option(localTimeLagByPartition.get(tp)).foreach { stateRef =>
+      var updated = false
+      while (!updated) {
+        val current = stateRef.get
+        val next = ConsolidationMetrics.transition(current, frontier, head, localLeo, disklessLeo)
+        updated = stateRef.compareAndSet(current, next)
+      }
+    }
+  }
 
   def updateDeletableMessages(tp: TopicPartition, count: Long): Unit =
     Option(deletableByPartition.get(tp)).foreach(_.set(count))
@@ -161,11 +221,13 @@ class ConsolidationMetrics extends Closeable {
     val tags = Map("topic" -> tp.topic, "partition" -> tp.partition.toString).asJava
     totalLagByPartition.remove(tp)
     localLagByPartition.remove(tp)
+    localTimeLagByPartition.remove(tp)
     deletableByPartition.remove(tp)
     oversizedBatchByPartition.remove(tp)
     remotePrefixUnknownByPartition.remove(tp)
     metricsGroup.removeMetric(TotalLag, tags)
     metricsGroup.removeMetric(LocalLag, tags)
+    metricsGroup.removeMetric(LocalTimeLag, tags)
     metricsGroup.removeMetric(DeletableMessages, tags)
     metricsGroup.removeMetric(OversizedBatch, tags)
     metricsGroup.removeMetric(RemotePrefixUnknown, tags)
@@ -173,13 +235,15 @@ class ConsolidationMetrics extends Closeable {
 
   override def close(): Unit = {
     // Using same keys to unregister all partition-level metrics
-    val partitions = (totalLagByPartition.keys.asScala ++ remotePrefixUnknownByPartition.keys.asScala ++
+    val partitions = (totalLagByPartition.keys.asScala ++ localTimeLagByPartition.keys.asScala ++
+      remotePrefixUnknownByPartition.keys.asScala ++
       remotePrefixGenerationByPartition.keys.asScala).toSet
     partitions.foreach(unregisterPartition)
     remotePrefixGenerationByPartition.clear()
     // Unregistering aggregated metrics
     metricsGroup.removeMetric(TotalLag)
     metricsGroup.removeMetric(LocalLag)
+    metricsGroup.removeMetric(LocalTimeLag)
     metricsGroup.removeMetric(DeletableMessages)
     metricsGroup.removeMetric(OversizedBatch)
     metricsGroup.removeMetric(RemotePrefixUnknown)
@@ -187,4 +251,9 @@ class ConsolidationMetrics extends Closeable {
 
   private def sumValues(map: ConcurrentHashMap[TopicPartition, AtomicLong]): Long =
     map.values.asScala.foldLeft(0L)(_ + _.get)
+
+  private def maxTimeLagValues(
+    map: ConcurrentHashMap[TopicPartition, AtomicReference[ConsolidationMetrics.TimeLagState]]
+  ): Long =
+    map.values.asScala.foldLeft(0L)((max, state) => Math.max(max, state.get.publishedLag))
 }

@@ -18,7 +18,7 @@
 
 package io.aiven.inkless.consolidation
 
-import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
+import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler, InklessFetchPartitionData}
 import kafka.server.{KafkaConfig, ReplicaManager, ReplicaQuota}
 import kafka.utils.Logging
 import org.apache.kafka.common.errors.{KafkaStorageException, UnknownTopicOrPartitionException}
@@ -76,6 +76,8 @@ class DisklessLeaderEndPoint(
   // Carried into fetch() so a removeFetcher bump after the lock drops cannot be
   // adopted by this request's overlay.
   private val pendingRemotePrefixGenerations = new ConcurrentHashMap[TopicPartition, java.lang.Long]()
+  private case class HeadSample(fetchOffset: Long, timestamp: Option[Long])
+  private val headSamples = new ConcurrentHashMap[TopicPartition, HeadSample]()
 
   override def isTruncationOnFetchSupported: Boolean = false
 
@@ -85,7 +87,13 @@ class DisklessLeaderEndPoint(
 
   override def brokerEndPoint(): BrokerEndPoint = brokerEndPoint
 
+  def takeHeadTimestamp(topicPartition: TopicPartition, fetchOffset: Long): Option[Long] = {
+    val sample = headSamples.remove(topicPartition)
+    if (sample != null && sample.fetchOffset == fetchOffset) sample.timestamp else None
+  }
+
   override def fetch(fetchRequest: FetchRequest.Builder): util.Map[TopicPartition, FetchResponseData.PartitionData] = {
+    headSamples.clear()
     val request = fetchRequest.build()
     val topicNames = new mutable.HashMap[Uuid, String]()
     request.data.topics.forEach { topic =>
@@ -119,6 +127,18 @@ class DisklessLeaderEndPoint(
       val lastStableOffset: Long = data.lastStableOffset.orElse(FetchResponse.INVALID_LAST_STABLE_OFFSET)
       // Enforce the segment-safe budget reserved in buildFetch, at physical-batch granularity.
       val partitionData = fetchInfos.get(tp)
+      if (data.error == Errors.NONE && partitionData != null) {
+        data match {
+          case inklessData: InklessFetchPartitionData =>
+            val timestamp =
+              if (inklessData.highWatermarkTimestamp.isPresent)
+                Some(inklessData.highWatermarkTimestamp.getAsLong)
+              else
+                None
+            headSamples.put(tp.topicPartition, HeadSample(partitionData.fetchOffset, timestamp))
+          case _ =>
+        }
+      }
       val records =
         if (data.error == Errors.NONE && partitionData != null)
           clampRecordsToSegment(data.records, partitionData.fetchOffset, partitionData.maxBytes)
