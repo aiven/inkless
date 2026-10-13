@@ -26,6 +26,8 @@ import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
+import org.apache.kafka.common.protocol.ByteBufferAccessor;
+import org.apache.kafka.common.protocol.MessageUtil;
 import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.image.writer.RecordListWriter;
 import org.apache.kafka.metadata.InitDisklessLogFields;
@@ -952,5 +954,62 @@ public class TopicsImageTest {
         PartitionRegistration restored = image.getPartition(topicId, 0);
         assertEquals(42L, restored.classicToDisklessStartOffset);
         assertEquals(producerStates, restored.disklessProducerStates);
+    }
+
+    @Test
+    public void testClassicPrefixInRemoteStorageSnapshotRoundTrip() {
+        PartitionRegistration partition = new PartitionRegistration.Builder()
+            .setReplicas(new int[]{0, 1, 2})
+            .setDirectories(DirectoryId.unassignedArray(3))
+            .setIsr(new int[]{0, 1, 2})
+            .setLeader(0)
+            .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
+            .setLeaderEpoch(5)
+            .setPartitionEpoch(0)
+            .setClassicToDisklessStartOffset(42L)
+            .setDisklessProducerStates(List.of(
+                new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L)))
+            .setDisklessLeaderEpoch(5)
+            .setClassicPrefixInRemoteStorage(true)
+            .build();
+        Uuid topicId = Uuid.randomUuid();
+        TopicsImage image = TopicsImage.EMPTY.including(newTopicImage("diskless-test", topicId, partition));
+
+        List<ApiMessageAndVersion> records = getImageRecords(image);
+        testToImage(image, records);
+
+        PartitionRecord partitionRecord = records.stream()
+            .map(ApiMessageAndVersion::message)
+            .filter(PartitionRecord.class::isInstance)
+            .map(PartitionRecord.class::cast)
+            .findFirst().orElseThrow();
+        assertEquals(Optional.of(true),
+            InitDisklessLogFields.decodeClassicPrefixInRemoteStorageIfPresent(partitionRecord.unknownTaggedFields()));
+        assertTrue(image.getPartition(topicId, 0).classicPrefixInRemoteStorage);
+    }
+
+    @Test
+    public void testClassicPrefixInRemoteStorageSurvivesRecordSerialization() {
+        PartitionRegistration partition = new PartitionRegistration.Builder()
+            .setReplicas(new int[]{0, 1, 2})
+            .setDirectories(DirectoryId.unassignedArray(3))
+            .setIsr(new int[]{0, 1, 2})
+            .setLeader(0)
+            .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
+            .setLeaderEpoch(5)
+            .setPartitionEpoch(0)
+            .setClassicToDisklessStartOffset(42L)
+            .setDisklessLeaderEpoch(5)
+            .setClassicPrefixInRemoteStorage(true)
+            .build();
+        ApiMessageAndVersion record = partition.toRecord(Uuid.randomUuid(), 0,
+            new ImageWriterOptions.Builder(MetadataVersion.latestTesting()).build());
+
+        // The tagged fields go through the real wire format: the reader rejects out-of-order tags.
+        ByteBufferAccessor accessor = MessageUtil.toByteBufferAccessor(record.message(), record.version());
+        PartitionRecord read = new PartitionRecord(accessor, record.version());
+
+        assertTrue(new PartitionRegistration(read).classicPrefixInRemoteStorage);
+        assertEquals(partition, new PartitionRegistration(read));
     }
 }

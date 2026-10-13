@@ -30,12 +30,15 @@ import java.util.OptionalLong;
  * as {@link RawTaggedField}s on standard Kafka metadata records (PartitionRecord, PartitionChangeRecord).
  * High tag numbers (100+) are used to avoid conflicts with upstream Apache Kafka
  * tagged fields. Apache Kafka will silently skip these fields.
+ * Each tag has a fixed type. A new field gets a new tag.
+ * Nodes that do not know a tag skip it, but they drop it when they write a snapshot.
  */
 public final class InitDisklessLogFields {
 
     public static final int CLASSIC_TO_DISKLESS_START_OFFSET_TAG = 100;
     public static final int PRODUCER_STATES_TAG = 101;
     public static final int DISKLESS_LEADER_EPOCH_TAG = 102;
+    public static final int CLASSIC_PREFIX_IN_REMOTE_STORAGE_TAG = 103;
 
     private InitDisklessLogFields() {}
 
@@ -133,5 +136,27 @@ public final class InitDisklessLogFields {
             }
         }
         return Optional.empty();
+    }
+
+    // --- classicPrefixInRemoteStorage (tag 103): a single boolean byte, written only when true ---
+    // The controller sets it after the leader proves the classic prefix is in remote storage.
+    // An absent tag means false.
+    public static RawTaggedField encodeClassicPrefixInRemoteStorage() {
+        return new RawTaggedField(CLASSIC_PREFIX_IN_REMOTE_STORAGE_TAG, new byte[] {1});
+    }
+
+    public static Optional<Boolean> decodeClassicPrefixInRemoteStorageIfPresent(List<RawTaggedField> taggedFields) {
+        for (RawTaggedField field : taggedFields) {
+            if (field.tag() == CLASSIC_PREFIX_IN_REMOTE_STORAGE_TAG) {
+                final var data = field.data();
+                // Only 1 is true: an unexpected byte must not trigger the deletion of the local classic prefix.
+                return Optional.of(data.length > 0 && data[0] == 1);
+            }
+        }
+        return Optional.empty();
+    }
+
+    public static boolean decodeClassicPrefixInRemoteStorage(List<RawTaggedField> taggedFields) {
+        return decodeClassicPrefixInRemoteStorageIfPresent(taggedFields).orElse(false);
     }
 }
