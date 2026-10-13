@@ -230,6 +230,49 @@ public abstract class AbstractControlPlaneTest {
     }
 
     @Test
+    void findHighWatermarkTimestampUsesTheOffsetHead() {
+        controlPlane.commitFile(
+            "head-timestamp-1",
+            ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+            BROKER_ID,
+            FILE_SIZE,
+            List.of(CommitBatchRequest.of(
+                0,
+                EXISTING_TOPIC_1_ID_PARTITION_0,
+                1,
+                10,
+                0,
+                9,
+                1000,
+                TimestampType.CREATE_TIME))
+        );
+        controlPlane.commitFile(
+            "head-timestamp-2",
+            ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+            BROKER_ID,
+            FILE_SIZE,
+            List.of(CommitBatchRequest.of(
+                0,
+                EXISTING_TOPIC_1_ID_PARTITION_0,
+                11,
+                10,
+                10,
+                19,
+                10,
+                TimestampType.CREATE_TIME))
+        );
+
+        final FindBatchResponse response = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 20, Integer.MAX_VALUE, true)),
+            Integer.MAX_VALUE,
+            0
+        ).get(0);
+
+        assertThat(response.batches()).isEmpty();
+        assertThat(response.highWatermarkTimestamp()).hasValue(10L);
+    }
+
+    @Test
     void findEmptyBatchOnLastOffset() {
         final String objectKey = "a";
 

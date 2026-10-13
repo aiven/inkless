@@ -157,6 +157,100 @@ class FindBatchesJobTest {
     }
 
     @Test
+    void flagOffDoesNotReturnHighWatermarkTimestamp() {
+        commitTimestampedBatches(List.of(
+            CommitBatchRequest.of(0, T0P0, 0, 1000, 0, 9, 100L, TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(1, T0P0, 1000, 1000, 10, 19, 200L, TimestampType.CREATE_TIME)
+        ));
+
+        final FindBatchResponse response = new FindBatchesJob(
+            time,
+            pgContainer.getJooqCtx(),
+            List.of(new FindBatchRequest(T0P0, 20, 1000, false)),
+            2000,
+            0,
+            duration -> {}
+        ).call().get(0);
+
+        assertThat(response.batches()).isEmpty();
+        assertThat(response.highWatermarkTimestamp()).isEmpty();
+    }
+
+    @Test
+    void flagOnReturnsTimestampOfExactHeadBatch() {
+        commitTimestampedBatches(List.of(
+            CommitBatchRequest.of(0, T0P0, 0, 1000, 0, 9, 100L, TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(1, T0P0, 1000, 1000, 10, 19, 200L, TimestampType.CREATE_TIME)
+        ));
+
+        final FindBatchResponse response = new FindBatchesJob(
+            time,
+            pgContainer.getJooqCtx(),
+            List.of(new FindBatchRequest(T0P0, 20, 1000, true)),
+            2000,
+            0,
+            duration -> {}
+        ).call().get(0);
+
+        assertThat(response.batches()).isEmpty();
+        assertThat(response.highWatermarkTimestamp()).hasValue(200L);
+    }
+
+    @Test
+    void flagOnReturnsEmptyForAnEmptyLog() {
+        final FindBatchResponse response = new FindBatchesJob(
+            time,
+            pgContainer.getJooqCtx(),
+            List.of(new FindBatchRequest(T0P1, 0, 1000, true)),
+            2000,
+            0,
+            duration -> {}
+        ).call().get(0);
+
+        assertThat(response.batches()).isEmpty();
+        assertThat(response.highWatermarkTimestamp()).isEmpty();
+    }
+
+    @Test
+    void flagOnUsesHeadOffsetInsteadOfMaximumCreateTime() {
+        commitTimestampedBatches(List.of(
+            CommitBatchRequest.of(0, T0P0, 0, 1000, 0, 9, 1000L, TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(1, T0P0, 1000, 1000, 10, 19, 10L, TimestampType.CREATE_TIME)
+        ));
+
+        final FindBatchResponse response = new FindBatchesJob(
+            time,
+            pgContainer.getJooqCtx(),
+            List.of(new FindBatchRequest(T0P0, 0, 2000, true)),
+            2000,
+            0,
+            duration -> {}
+        ).call().get(0);
+
+        assertThat(response.highWatermarkTimestamp()).hasValue(10L);
+    }
+
+    @Test
+    void flagOnUsesLogAppendTime() {
+        final long expectedTimestamp = time.milliseconds();
+        commitTimestampedBatches(List.of(
+            CommitBatchRequest.of(0, T0P0, 0, 1000, 0, 9, 1000L, TimestampType.LOG_APPEND_TIME),
+            CommitBatchRequest.of(1, T0P0, 1000, 1000, 10, 19, 10L, TimestampType.LOG_APPEND_TIME)
+        ));
+
+        final FindBatchResponse response = new FindBatchesJob(
+            time,
+            pgContainer.getJooqCtx(),
+            List.of(new FindBatchRequest(T0P0, 20, 2000, true)),
+            2000,
+            0,
+            duration -> {}
+        ).call().get(0);
+
+        assertThat(response.highWatermarkTimestamp()).hasValue(expectedTimestamp);
+    }
+
+    @Test
     void findCornerCases() {
         commitBatches(OBJECT_KEY, List.of(T0P0), 1, 1234, 10);
 
@@ -672,6 +766,21 @@ class FindBatchesJobTest {
             time, pgContainer.getJooqCtx(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
             BROKER_ID, FILE_SIZE, requests, false, duration -> {
         }
+        );
+        assertThat(commitJob.call()).isNotEmpty();
+    }
+
+    private void commitTimestampedBatches(final List<CommitBatchRequest> requests) {
+        final CommitFileJob commitJob = new CommitFileJob(
+            time,
+            pgContainer.getJooqCtx(),
+            OBJECT_KEY,
+            ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+            BROKER_ID,
+            FILE_SIZE,
+            requests,
+            false,
+            duration -> {}
         );
         assertThat(commitJob.call()).isNotEmpty();
     }

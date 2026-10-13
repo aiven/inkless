@@ -136,6 +136,31 @@ public class FetchCompleterTest {
         assertThat(data.records).isEqualTo(MemoryRecords.EMPTY);
         assertThat(data.logStartOffset).isEqualTo(logStartOffset);
         assertThat(data.highWatermark).isEqualTo(highWatermark);
+        assertThat(data).isInstanceOf(InklessFetchPartitionData.class);
+    }
+
+    @Test
+    public void testSuccessfulEmptyFetchCarriesHighWatermarkTimestamp() {
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(
+                Collections.emptyList(), 0, 10, OptionalLong.of(1234L))
+        );
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(),
+            OBJECT_KEY_CREATOR,
+            fetchInfos,
+            coordinates,
+            Collections.emptyList(),
+            durationMs -> {}, metrics
+        );
+
+        FetchPartitionData data = job.get().get(partition0);
+
+        assertThat(data).isInstanceOf(InklessFetchPartitionData.class);
+        assertThat(((InklessFetchPartitionData) data).highWatermarkTimestamp).hasValue(1234L);
     }
 
     @Test

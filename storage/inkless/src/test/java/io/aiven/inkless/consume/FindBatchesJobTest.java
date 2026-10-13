@@ -87,6 +87,30 @@ public class FindBatchesJobTest {
         Map<TopicIdPartition, FindBatchResponse> result = job.get();
 
         assertThat(result).isEqualTo(coordinates);
+        assertThat(requestCaptor.getValue().get(0).includeHighWatermarkTimestamp()).isFalse();
+    }
+
+    @Test
+    public void consolidationFindRequestsHeadTimestamp() {
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(), 0, 0)
+        );
+        FindBatchesJob job = new FindBatchesJob(
+            time,
+            controlPlane,
+            params,
+            fetchInfos,
+            maxBatchesPerPartition,
+            true,
+            durationMs -> {});
+        when(controlPlane.findBatches(requestCaptor.capture(), anyInt(), anyInt()))
+            .thenReturn(new ArrayList<>(coordinates.values()));
+
+        assertThat(job.get()).isEqualTo(coordinates);
+        assertThat(requestCaptor.getValue().get(0).includeHighWatermarkTimestamp()).isTrue();
     }
 
 }

@@ -20,21 +20,38 @@ package io.aiven.inkless.control_plane;
 import org.apache.kafka.common.protocol.Errors;
 
 import java.util.List;
+import java.util.OptionalLong;
 
 public record FindBatchResponse(Errors errors,
                                 List<BatchInfo> batches,
                                 long logStartOffset,
-                                long highWatermark) {
+                                long highWatermark,
+                                OptionalLong highWatermarkTimestamp) {
     public static final long UNKNOWN_OFFSET = -1L;
+
+    public FindBatchResponse(final Errors errors,
+                             final List<BatchInfo> batches,
+                             final long logStartOffset,
+                             final long highWatermark) {
+        this(errors, batches, logStartOffset, highWatermark, OptionalLong.empty());
+    }
 
     public static FindBatchResponse success(final List<BatchInfo> batches,
                                             final long logStartOffset,
                                             final long highWatermark) {
-        return new FindBatchResponse(Errors.NONE, batches, logStartOffset, highWatermark);
+        return success(batches, logStartOffset, highWatermark, OptionalLong.empty());
+    }
+
+    public static FindBatchResponse success(final List<BatchInfo> batches,
+                                            final long logStartOffset,
+                                            final long highWatermark,
+                                            final OptionalLong highWatermarkTimestamp) {
+        return new FindBatchResponse(Errors.NONE, batches, logStartOffset, highWatermark, highWatermarkTimestamp);
     }
 
     public static FindBatchResponse offsetOutOfRange(final long logStartOffset, final long highWatermark) {
-        return new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, logStartOffset, highWatermark);
+        return new FindBatchResponse(
+            Errors.OFFSET_OUT_OF_RANGE, null, logStartOffset, highWatermark, OptionalLong.empty());
     }
 
     public static FindBatchResponse unknownTopicOrPartition() {
@@ -42,7 +59,8 @@ public record FindBatchResponse(Errors errors,
             Errors.UNKNOWN_TOPIC_OR_PARTITION,
             null,
             UNKNOWN_OFFSET,
-            UNKNOWN_OFFSET);
+            UNKNOWN_OFFSET,
+            OptionalLong.empty());
     }
 
     public static FindBatchResponse unknownServerError() {
@@ -50,7 +68,8 @@ public record FindBatchResponse(Errors errors,
             Errors.UNKNOWN_SERVER_ERROR,
             null,
             UNKNOWN_OFFSET,
-            UNKNOWN_OFFSET);
+            UNKNOWN_OFFSET,
+            OptionalLong.empty());
     }
 
     /**

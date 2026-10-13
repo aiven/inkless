@@ -361,7 +361,17 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 break;
             }
         }
-        return new PartitionServed(FindBatchResponse.success(batches, logInfo.logStartOffset, logInfo.highWatermark), partitionBytes);
+        OptionalLong highWatermarkTimestamp = OptionalLong.empty();
+        if (request.includeHighWatermarkTimestamp()) {
+            final Map.Entry<Long, BatchInfoInternal> head = coordinates.lowerEntry(logInfo.highWatermark);
+            if (head != null) {
+                highWatermarkTimestamp = OptionalLong.of(head.getValue().batchInfo().metadata().timestamp());
+            }
+        }
+        return new PartitionServed(
+            FindBatchResponse.success(
+                batches, logInfo.logStartOffset, logInfo.highWatermark, highWatermarkTimestamp),
+            partitionBytes);
     }
 
     @Override

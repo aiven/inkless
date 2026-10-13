@@ -41,6 +41,7 @@ public class FindBatchesJob implements Supplier<Map<TopicIdPartition, FindBatchR
     private final FetchParams params;
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
     private final int maxBatchesPerPartition;
+    private final boolean includeHighWatermarkTimestamp;
     private final Consumer<Long> durationCallback;
 
     public FindBatchesJob(Time time,
@@ -49,11 +50,22 @@ public class FindBatchesJob implements Supplier<Map<TopicIdPartition, FindBatchR
                           Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
                           int maxBatchesPerPartition,
                           Consumer<Long> durationCallback) {
+        this(time, controlPlane, params, fetchInfos, maxBatchesPerPartition, false, durationCallback);
+    }
+
+    public FindBatchesJob(Time time,
+                          ControlPlane controlPlane,
+                          FetchParams params,
+                          Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
+                          int maxBatchesPerPartition,
+                          boolean includeHighWatermarkTimestamp,
+                          Consumer<Long> durationCallback) {
         this.time = time;
         this.controlPlane = controlPlane;
         this.params = params;
         this.fetchInfos = fetchInfos;
         this.maxBatchesPerPartition = maxBatchesPerPartition;
+        this.includeHighWatermarkTimestamp = includeHighWatermarkTimestamp;
         this.durationCallback = durationCallback;
     }
 
@@ -67,7 +79,11 @@ public class FindBatchesJob implements Supplier<Map<TopicIdPartition, FindBatchR
             List<FindBatchRequest> requests = new ArrayList<>();
             for (Map.Entry<TopicIdPartition, FetchRequest.PartitionData> fetchInfo : fetchInfos.entrySet()) {
                 TopicIdPartition topicIdPartition = fetchInfo.getKey();
-                requests.add(new FindBatchRequest(topicIdPartition, fetchInfo.getValue().fetchOffset, fetchInfo.getValue().maxBytes));
+                requests.add(new FindBatchRequest(
+                    topicIdPartition,
+                    fetchInfo.getValue().fetchOffset,
+                    fetchInfo.getValue().maxBytes,
+                    includeHighWatermarkTimestamp));
             }
 
             List<FindBatchResponse> responses = controlPlane.findBatches(requests, params.maxBytes, maxBatchesPerPartition);

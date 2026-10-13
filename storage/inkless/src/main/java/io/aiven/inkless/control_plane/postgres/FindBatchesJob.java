@@ -22,13 +22,14 @@ import org.apache.kafka.common.utils.Time;
 
 import org.jooq.Configuration;
 import org.jooq.DSLContext;
-import org.jooq.generated.udt.FindBatchesResponseV1;
+import org.jooq.generated.udt.FindBatchesResponseV2;
 import org.jooq.generated.udt.records.BatchInfoV1Record;
-import org.jooq.generated.udt.records.FindBatchesRequestV1Record;
-import org.jooq.generated.udt.records.FindBatchesResponseV1Record;
+import org.jooq.generated.udt.records.FindBatchesRequestV2Record;
+import org.jooq.generated.udt.records.FindBatchesResponseV2Record;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
@@ -38,7 +39,7 @@ import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
-import static org.jooq.generated.Tables.FIND_BATCHES_V2;
+import static org.jooq.generated.Tables.FIND_BATCHES_V3;
 
 class FindBatchesJob implements Callable<List<FindBatchResponse>> {
     private final Time time;
@@ -72,26 +73,28 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
             return List.of();
         }
 
-        final FindBatchesRequestV1Record[] dbRequests = requests.stream()
-            .map(req -> new FindBatchesRequestV1Record(
+        final FindBatchesRequestV2Record[] dbRequests = requests.stream()
+            .map(req -> new FindBatchesRequestV2Record(
                 req.topicIdPartition().topicId(),
                 req.topicIdPartition().partition(),
                 req.offset(),
-                req.maxPartitionFetchBytes()
+                req.maxPartitionFetchBytes(),
+                req.includeHighWatermarkTimestamp()
             ))
-            .toArray(FindBatchesRequestV1Record[]::new);
+            .toArray(FindBatchesRequestV2Record[]::new);
 
         return jooqCtx.transactionResult((final Configuration conf) -> {
             try {
-                final List<FindBatchesResponseV1Record> dbResponses = conf.dsl().select(
-                    FindBatchesResponseV1.TOPIC_ID,
-                    FindBatchesResponseV1.PARTITION,
-                    FindBatchesResponseV1.LOG_START_OFFSET,
-                    FindBatchesResponseV1.HIGH_WATERMARK,
-                    FindBatchesResponseV1.BATCHES,
-                    FindBatchesResponseV1.ERROR
-                ).from(FIND_BATCHES_V2.call(dbRequests, fetchMaxBytes, maxBatchesPerPartition))
-                    .fetchInto(FindBatchesResponseV1Record.class);
+                final List<FindBatchesResponseV2Record> dbResponses = conf.dsl().select(
+                    FindBatchesResponseV2.TOPIC_ID,
+                    FindBatchesResponseV2.PARTITION,
+                    FindBatchesResponseV2.LOG_START_OFFSET,
+                    FindBatchesResponseV2.HIGH_WATERMARK,
+                    FindBatchesResponseV2.HIGH_WATERMARK_TIMESTAMP,
+                    FindBatchesResponseV2.BATCHES,
+                    FindBatchesResponseV2.ERROR
+                ).from(FIND_BATCHES_V3.call(dbRequests, fetchMaxBytes, maxBatchesPerPartition))
+                    .fetchInto(FindBatchesResponseV2Record.class);
 
                 if (dbResponses.size() != requests.size()) {
                     throw new ControlPlaneException(
@@ -102,14 +105,21 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
 
                 final List<FindBatchResponse> responses = new ArrayList<>();
                 for (int i = 0; i < dbResponses.size(); i++) {
-                    final FindBatchesResponseV1Record record = dbResponses.get(i);
+                    final FindBatchesResponseV2Record record = dbResponses.get(i);
                     final FindBatchRequest request = requests.get(i);
 
                     validateResponse(record, request);
 
                     var error = record.getError();
                     if (error == null) {
-                        responses.add(FindBatchResponse.success(getBatchInfos(record, request), record.getLogStartOffset(), record.getHighWatermark()));
+                        final OptionalLong highWatermarkTimestamp = record.getHighWatermarkTimestamp() == null
+                            ? OptionalLong.empty()
+                            : OptionalLong.of(record.getHighWatermarkTimestamp());
+                        responses.add(FindBatchResponse.success(
+                            getBatchInfos(record, request),
+                            record.getLogStartOffset(),
+                            record.getHighWatermark(),
+                            highWatermarkTimestamp));
                     } else {
                         final var errorResponse = switch (error) {
                             case offset_out_of_range ->
@@ -127,7 +137,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
         });
     }
 
-    private static List<BatchInfo> getBatchInfos(FindBatchesResponseV1Record record, FindBatchRequest request) {
+    private static List<BatchInfo> getBatchInfos(FindBatchesResponseV2Record record, FindBatchRequest request) {
         final List<BatchInfo> batches = new ArrayList<>();
         if (record.getBatches() != null) {
             for (final BatchInfoV1Record batchInfo : record.getBatches()) {
@@ -151,12 +161,12 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
         return batches;
     }
 
-    private void validateResponse(FindBatchesResponseV1Record record, FindBatchRequest request) {
+    private void validateResponse(FindBatchesResponseV2Record record, FindBatchRequest request) {
         // Sanity check to match returned and requested partitions (they should go in order).
         final Uuid requestTopicId = request.topicIdPartition().topicId();
         final int requestPartition = request.topicIdPartition().partition();
         final Uuid resultTopicId = record.getTopicId();
-        final int resultPartition = record.get(FindBatchesResponseV1.PARTITION);
+        final int resultPartition = record.get(FindBatchesResponseV2.PARTITION);
         if (!resultTopicId.equals(requestTopicId) || resultPartition != requestPartition) {
             throw new ControlPlaneException(String.format(
                 "Returned topic ID or partition doesn't match: expected %s-%d, got %s-%d",
