@@ -84,7 +84,8 @@ public class TopicImageNodeTest {
                 "directories=[AAAAAAAAAAAAAAAAAAAAAA, AAAAAAAAAAAAAAAAAAAAAA, AAAAAAAAAAAAAAAAAAAAAA], " +
                 "isr=[2, 3], removingReplicas=[], addingReplicas=[], elr=[], lastKnownElr=[], leader=2, " +
                 "leaderRecoveryState=RECOVERED, leaderEpoch=1, partitionEpoch=345, " +
-                "classicToDisklessStartOffset=-1, disklessProducerStates=[], disklessLeaderEpoch=-1)", stringifier.toString());
+                "classicToDisklessStartOffset=-1, disklessProducerStates=[], disklessLeaderEpoch=-1, " +
+                "classicPrefixInRemoteStorage=false)", stringifier.toString());
     }
 
     @Test

@@ -55,6 +55,7 @@ public class PartitionRegistration {
         private long classicToDisklessStartOffset = -1L;
         private List<InitDisklessLogFields.ProducerStateEntry> disklessProducerStates = List.of();
         private int disklessLeaderEpoch = NO_DISKLESS_LEADER_EPOCH;
+        private boolean classicPrefixInRemoteStorage;
 
         public Builder setReplicas(int[] replicas) {
             this.replicas = replicas;
@@ -126,6 +127,11 @@ public class PartitionRegistration {
             return this;
         }
 
+        public Builder setClassicPrefixInRemoteStorage(boolean classicPrefixInRemoteStorage) {
+            this.classicPrefixInRemoteStorage = classicPrefixInRemoteStorage;
+            return this;
+        }
+
         public PartitionRegistration build() {
             if (replicas == null) {
                 throw new IllegalStateException("You must set replicas.");
@@ -167,7 +173,8 @@ public class PartitionRegistration {
                 lastKnownElr,
                 classicToDisklessStartOffset,
                 disklessProducerStates,
-                disklessLeaderEpoch
+                disklessLeaderEpoch,
+                classicPrefixInRemoteStorage
             );
         }
     }
@@ -192,6 +199,7 @@ public class PartitionRegistration {
     public final long classicToDisklessStartOffset;
     public final List<InitDisklessLogFields.ProducerStateEntry> disklessProducerStates;
     public final int disklessLeaderEpoch;
+    public final boolean classicPrefixInRemoteStorage;
 
     public static boolean electionWasUnclean(byte leaderRecoveryState) {
         return leaderRecoveryState == LeaderRecoveryState.RECOVERING.value();
@@ -244,7 +252,8 @@ public class PartitionRegistration {
             Replicas.toArray(record.lastKnownElr()),
             InitDisklessLogFields.decodeClassicToDisklessStartOffset(record.unknownTaggedFields()),
             InitDisklessLogFields.decodeProducerStates(record.unknownTaggedFields()),
-            InitDisklessLogFields.decodeDisklessLeaderEpoch(record.unknownTaggedFields()));
+            InitDisklessLogFields.decodeDisklessLeaderEpoch(record.unknownTaggedFields()),
+            InitDisklessLogFields.decodeClassicPrefixInRemoteStorage(record.unknownTaggedFields()));
     }
 
     @SuppressWarnings("checkstyle:ParameterNumber")
@@ -253,7 +262,8 @@ public class PartitionRegistration {
                                   int leaderEpoch, int partitionEpoch, int[] elr, int[] lastKnownElr,
                                   long classicToDisklessStartOffset,
                                   List<InitDisklessLogFields.ProducerStateEntry> disklessProducerStates,
-                                  int disklessLeaderEpoch) {
+                                  int disklessLeaderEpoch,
+                                  boolean classicPrefixInRemoteStorage) {
         Objects.requireNonNull(directories);
         if (directories.length > 0 && directories.length != replicas.length) {
             throw new IllegalArgumentException("The lengths for replicas and directories do not match.");
@@ -270,6 +280,7 @@ public class PartitionRegistration {
         this.classicToDisklessStartOffset = classicToDisklessStartOffset;
         this.disklessProducerStates = disklessProducerStates != null ? disklessProducerStates : List.of();
         this.disklessLeaderEpoch = disklessLeaderEpoch;
+        this.classicPrefixInRemoteStorage = classicPrefixInRemoteStorage;
 
         // We could parse a lower version record without elr/lastKnownElr.
         this.elr = elr == null ? new int[0] : elr;
@@ -322,6 +333,8 @@ public class PartitionRegistration {
                 newDisklessLeaderEpoch = disklessLeaderEpoch;
             }
         }
+        boolean newClassicPrefixInRemoteStorage = InitDisklessLogFields.decodeClassicPrefixInRemoteStorageIfPresent(record.unknownTaggedFields())
+            .orElse(classicPrefixInRemoteStorage);
         return new PartitionRegistration(newReplicas,
             newDirectories,
             newIsr,
@@ -335,13 +348,15 @@ public class PartitionRegistration {
             newLastKnownElr,
             newClassicToDisklessStartOffset,
             newDisklessProducerStates,
-            newDisklessLeaderEpoch);
+            newDisklessLeaderEpoch,
+            newClassicPrefixInRemoteStorage);
     }
 
     public PartitionRegistration withClassicToDisklessStartOffset(long classicToDisklessStartOffset) {
         return new PartitionRegistration(replicas, directories, isr, removingReplicas,
             addingReplicas, leader, leaderRecoveryState, leaderEpoch, partitionEpoch,
-            elr, lastKnownElr, classicToDisklessStartOffset, disklessProducerStates, disklessLeaderEpoch);
+            elr, lastKnownElr, classicToDisklessStartOffset, disklessProducerStates, disklessLeaderEpoch,
+            classicPrefixInRemoteStorage);
     }
 
     public String diff(PartitionRegistration prev) {
@@ -423,6 +438,11 @@ public class PartitionRegistration {
         if (disklessLeaderEpoch != prev.disklessLeaderEpoch) {
             builder.append(prefix).append("disklessLeaderEpoch: ").
                 append(prev.disklessLeaderEpoch).append(" -> ").append(disklessLeaderEpoch);
+            prefix = ", ";
+        }
+        if (classicPrefixInRemoteStorage != prev.classicPrefixInRemoteStorage) {
+            builder.append(prefix).append("classicPrefixInRemoteStorage: ").
+                append(prev.classicPrefixInRemoteStorage).append(" -> ").append(classicPrefixInRemoteStorage);
         }
         return builder.toString();
     }
@@ -487,6 +507,10 @@ public class PartitionRegistration {
                 InitDisklessLogFields.encodeDisklessLeaderEpoch(disklessLeaderEpoch));
         }
 
+        if (classicPrefixInRemoteStorage) {
+            record.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+        }
+
         if (options.metadataVersion() == null) {
             options.handleLoss("the metadata version");
             return new ApiMessageAndVersion(record, (short) 0);
@@ -509,7 +533,7 @@ public class PartitionRegistration {
         return Objects.hash(Arrays.hashCode(replicas), Arrays.hashCode(isr), Arrays.hashCode(removingReplicas),
             Arrays.hashCode(directories), Arrays.hashCode(elr), Arrays.hashCode(lastKnownElr),
             Arrays.hashCode(addingReplicas), leader, leaderRecoveryState, leaderEpoch, partitionEpoch,
-            classicToDisklessStartOffset, disklessProducerStates, disklessLeaderEpoch);
+            classicToDisklessStartOffset, disklessProducerStates, disklessLeaderEpoch, classicPrefixInRemoteStorage);
     }
 
     @Override
@@ -528,7 +552,8 @@ public class PartitionRegistration {
             partitionEpoch == other.partitionEpoch &&
             classicToDisklessStartOffset == other.classicToDisklessStartOffset &&
             Objects.equals(disklessProducerStates, other.disklessProducerStates) &&
-            disklessLeaderEpoch == other.disklessLeaderEpoch;
+            disklessLeaderEpoch == other.disklessLeaderEpoch &&
+            classicPrefixInRemoteStorage == other.classicPrefixInRemoteStorage;
     }
 
     @Override
@@ -547,6 +572,7 @@ public class PartitionRegistration {
                 ", classicToDisklessStartOffset=" + classicToDisklessStartOffset +
                 ", disklessProducerStates=" + disklessProducerStates +
                 ", disklessLeaderEpoch=" + disklessLeaderEpoch +
+                ", classicPrefixInRemoteStorage=" + classicPrefixInRemoteStorage +
                 ")";
     }
 }

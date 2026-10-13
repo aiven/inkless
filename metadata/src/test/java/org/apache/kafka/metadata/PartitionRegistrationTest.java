@@ -40,6 +40,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -691,5 +692,129 @@ public class PartitionRegistrationTest {
 
         assertEquals(5, merged.disklessLeaderEpoch);
         assertEquals(100L, merged.classicToDisklessStartOffset);
+    }
+
+    private static PartitionRegistration.Builder classicPrefixBuilder() {
+        return new PartitionRegistration.Builder().
+            setReplicas(new int[]{1, 2, 3}).setDirectories(DirectoryId.unassignedArray(3)).
+            setIsr(new int[]{1, 2, 3}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
+            setLeaderEpoch(5).setPartitionEpoch(0).setClassicToDisklessStartOffset(100L).
+            setDisklessProducerStates(List.of(
+                new InitDisklessLogFields.ProducerStateEntry(1L, (short) 0, 0, 10, 100L, 5000L))).
+            setDisklessLeaderEpoch(5);
+    }
+
+    @Test
+    public void testDefaultClassicPrefixInRemoteStorage() {
+        PartitionRegistration registration = classicPrefixBuilder().build();
+        assertFalse(registration.classicPrefixInRemoteStorage);
+    }
+
+    @Test
+    public void testClassicPrefixInRemoteStorageRoundTrip() {
+        PartitionRegistration original = classicPrefixBuilder().setClassicPrefixInRemoteStorage(true).build();
+
+        ApiMessageAndVersion record = original.toRecord(Uuid.randomUuid(), 0,
+            new ImageWriterOptions.Builder(MetadataVersion.latestTesting()).build());
+        PartitionRecord partitionRecord = (PartitionRecord) record.message();
+        PartitionRegistration restored = new PartitionRegistration(partitionRecord);
+
+        assertEquals(Optional.of(true),
+            InitDisklessLogFields.decodeClassicPrefixInRemoteStorageIfPresent(partitionRecord.unknownTaggedFields()));
+        assertTrue(restored.classicPrefixInRemoteStorage);
+        assertEquals(original, restored);
+    }
+
+    @Test
+    public void testFalseClassicPrefixInRemoteStorageWritesNoTag() {
+        PartitionRegistration original = classicPrefixBuilder().build();
+
+        ApiMessageAndVersion record = original.toRecord(Uuid.randomUuid(), 0,
+            new ImageWriterOptions.Builder(MetadataVersion.latestTesting()).build());
+        PartitionRecord partitionRecord = (PartitionRecord) record.message();
+
+        assertEquals(Optional.empty(),
+            InitDisklessLogFields.decodeClassicPrefixInRemoteStorageIfPresent(partitionRecord.unknownTaggedFields()));
+        assertFalse(new PartitionRegistration(partitionRecord).classicPrefixInRemoteStorage);
+    }
+
+    @Test
+    public void testClassicPrefixInRemoteStorageSurvivesSnapshotWithoutOtherSwitchTags() {
+        PartitionRegistration original = classicPrefixBuilder().
+            setClassicToDisklessStartOffset(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET).
+            setDisklessProducerStates(List.of()).
+            setDisklessLeaderEpoch(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH).
+            setClassicPrefixInRemoteStorage(true).build();
+
+        ApiMessageAndVersion record = original.toRecord(Uuid.randomUuid(), 0,
+            new ImageWriterOptions.Builder(MetadataVersion.latestTesting()).build());
+        PartitionRegistration restored = new PartitionRegistration((PartitionRecord) record.message());
+
+        assertTrue(restored.classicPrefixInRemoteStorage);
+    }
+
+    @Test
+    public void testMergeSetsClassicPrefixInRemoteStorage() {
+        PartitionRegistration original = classicPrefixBuilder().build();
+
+        PartitionChangeRecord changeRecord = new PartitionChangeRecord();
+        changeRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+
+        PartitionRegistration merged = original.merge(changeRecord);
+        assertTrue(merged.classicPrefixInRemoteStorage);
+        assertEquals(original.classicToDisklessStartOffset, merged.classicToDisklessStartOffset);
+        assertEquals(original.disklessProducerStates, merged.disklessProducerStates);
+        assertEquals(original.disklessLeaderEpoch, merged.disklessLeaderEpoch);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("changesWithoutClassicPrefixTag")
+    public void testMergePreservesClassicPrefixInRemoteStorage(String name, PartitionChangeRecord changeRecord) {
+        PartitionRegistration original = classicPrefixBuilder().setClassicPrefixInRemoteStorage(true).build();
+
+        assertTrue(original.merge(changeRecord).classicPrefixInRemoteStorage);
+    }
+
+    private static Stream<Arguments> changesWithoutClassicPrefixTag() {
+        PartitionChangeRecord sealOnly = new PartitionChangeRecord();
+        sealOnly.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(90L));
+        PartitionChangeRecord negativeSeal = new PartitionChangeRecord();
+        negativeSeal.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+            PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET));
+        return Stream.of(
+            Arguments.of("isr only", new PartitionChangeRecord().setIsr(List.of(1, 2))),
+            Arguments.of("leader only", new PartitionChangeRecord().setLeader(2)),
+            Arguments.of("seal only", sealOnly),
+            Arguments.of("negative seal", negativeSeal));
+    }
+
+    @Test
+    public void testWithClassicToDisklessStartOffsetPreservesClassicPrefixInRemoteStorage() {
+        PartitionRegistration original = classicPrefixBuilder().setClassicPrefixInRemoteStorage(true).build();
+
+        assertTrue(original.withClassicToDisklessStartOffset(50L).classicPrefixInRemoteStorage);
+    }
+
+    @Test
+    public void testClassicPrefixInRemoteStorageInEqualsAndHashCode() {
+        PartitionRegistration a = classicPrefixBuilder().setClassicPrefixInRemoteStorage(true).build();
+        PartitionRegistration b = classicPrefixBuilder().setClassicPrefixInRemoteStorage(true).build();
+        PartitionRegistration c = classicPrefixBuilder().build();
+
+        assertEquals(a, b);
+        assertEquals(a.hashCode(), b.hashCode());
+        assertNotEquals(a, c);
+    }
+
+    @Test
+    public void testClassicPrefixInRemoteStorageInDiffAndToString() {
+        PartitionRegistration before = classicPrefixBuilder().setDisklessLeaderEpoch(
+            PartitionRegistration.NO_DISKLESS_LEADER_EPOCH).build();
+        PartitionRegistration after = classicPrefixBuilder().setClassicPrefixInRemoteStorage(true).build();
+
+        // The flag entry must not run into the preceding disklessLeaderEpoch entry.
+        assertTrue(after.diff(before).endsWith(
+            "disklessLeaderEpoch: -1 -> 5, classicPrefixInRemoteStorage: false -> true"), after.diff(before));
+        assertTrue(after.toString().contains("classicPrefixInRemoteStorage=true"));
     }
 }
