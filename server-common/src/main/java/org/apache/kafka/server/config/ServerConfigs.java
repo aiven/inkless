@@ -141,7 +141,8 @@ public class ServerConfigs {
     public static final String DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DOC = "Allow switching existing topics from classic (diskless.enable=false) to diskless (diskless.enable=true). " +
         "This should only be enabled in non-production environments for testing or switching purposes. " +
         "When enabled, topics can have their diskless.enable config changed from false to true. " +
-        "Requires remote.log.storage.system.enable=true at the broker level.";
+        "Requires diskless.remote.storage.consolidation.enable=true at the broker level, " +
+        "which in turn requires diskless.managed.rf.enable=true and remote.log.storage.system.enable=true.";
 
     // When enabled, diskless topics are created with user-defined replication factor.
     // RF=-1 resolves to default.replication.factor. Explicit RF values (1, 2, 3, ...) are accepted.
@@ -160,7 +161,8 @@ public class ServerConfigs {
     public static final boolean DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_DEFAULT = false;
     public static final String DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_DOC = "When enabled, it allows topics to set both " +
         "diskless.enable=true and remote.storage.enable=true. Setting both, including enabling remote.storage.enable later " +
-        "on an already-diskless topic, starts consolidating Diskless WAL segments into Kafka tiered log storage on the configured topic.";
+        "on an already-diskless topic, starts consolidating Diskless WAL segments into Kafka tiered log storage on the configured topic. " +
+        "Requires diskless.managed.rf.enable=true and remote.log.storage.system.enable=true at the broker level.";
 
     public static final String DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_CONFIG = "diskless.consolidation.fetch.max.bytes";
     public static final int DISKLESS_CONSOLIDATION_FETCH_MAX_BYTES_DEFAULT = 10 * 1024 * 1024; // 10MB

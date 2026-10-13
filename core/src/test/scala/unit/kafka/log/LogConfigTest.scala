@@ -527,10 +527,6 @@ class LogConfigTest {
     kafkaProps.put(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
     kafkaProps.put(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, "true")
     kafkaProps.put(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, remoteStorageConsolidationEnabled)
-    // Consolidation requires the classic-to-diskless switch to be enabled.
-    if (remoteStorageConsolidationEnabled) {
-      kafkaProps.put(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, "true")
-    }
     val kafkaConfig = KafkaConfig.fromProps(kafkaProps)
 
     if (!remoteStorageConsolidationEnabled) {
