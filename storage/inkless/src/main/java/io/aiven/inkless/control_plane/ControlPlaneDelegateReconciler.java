@@ -25,7 +25,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -59,7 +59,7 @@ import io.aiven.inkless.config.InklessConfig;
  * two volatiles and takes no lock.
  *
  * <p>The cost of never blocking is that a call arriving before the first delegate is ready fails
- * rather than waiting. {@link #awaitFirstBuild(long)} exists to close that window at startup: the
+ * rather than waiting. {@link #firstBuildFuture()} exists to close that window at startup: the
  * owner starts the build and waits for it before the node serves any request, so the first build is
  * never raced. A rebuild after a reconfiguration is a different matter and is not waited for, so
  * callers must still tolerate the failure, which is retriable.
@@ -113,8 +113,8 @@ class ControlPlaneDelegateReconciler implements Closeable {
     private volatile long nextAttemptAtMs;
     private volatile long retryBackoffMs = RETRY_BACKOFF_INITIAL_MS;
 
-    /** Opens when the first build attempt finishes, so the owner can hold off serving requests. */
-    private final CountDownLatch firstBuild = new CountDownLatch(1);
+    /** Completes when the first build attempt finishes, so the owner can hold off serving requests. */
+    private final CompletableFuture<Void> firstBuild = new CompletableFuture<>();
 
     /**
      * Guards publishing a delegate and retiring a generation against each other and against
@@ -148,8 +148,7 @@ class ControlPlaneDelegateReconciler implements Closeable {
     }
 
     /**
-     * Waits for the first build attempt to finish, whatever its outcome. Returns true if it
-     * finished, false on timeout.
+     * Returns a future that completes when the first build attempt finishes, whatever its outcome.
      *
      * <p>Settling unsuccessfully counts as finished, because the wait doesn't need the control plane to
      * become usable: it only keeps the owner from serving requests while the very first attempt
@@ -158,11 +157,13 @@ class ControlPlaneDelegateReconciler implements Closeable {
      * migration and an advisory lock that every other broker contends for concurrently, so
      * the window is comfortably long enough to hit.
      *
-     * <p>The timeout is a backstop, not the expected path. Exceeding it leaves the build running in
-     * the background, which is the same state the owner would be in had it never waited.
+     * <p>The future has no timeout of its own. The build is bounded by the delegate's own
+     * timeouts, such as {@code migration.timeout.ms} for a schema migration, so the owner can wait
+     * for as long as the build legitimately takes. Completing the returned future doesn't affect
+     * the build.
      */
-    boolean awaitFirstBuild(final long timeoutMs) throws InterruptedException {
-        return firstBuild.await(timeoutMs, TimeUnit.MILLISECONDS);
+    CompletableFuture<Void> firstBuildFuture() {
+        return firstBuild.copy();
     }
 
     /**
@@ -267,7 +268,7 @@ class ControlPlaneDelegateReconciler implements Closeable {
         } catch (final RejectedExecutionException e) {
             // Shut down: there is nothing left to reconcile towards, and nothing to wait for.
             reconcileScheduled.set(false);
-            firstBuild.countDown();
+            firstBuild.complete(null);
         }
     }
 
@@ -308,7 +309,7 @@ class ControlPlaneDelegateReconciler implements Closeable {
         try {
             return attemptOnce(want, current);
         } finally {
-            firstBuild.countDown();
+            firstBuild.complete(null);
         }
     }
 
@@ -427,7 +428,7 @@ class ControlPlaneDelegateReconciler implements Closeable {
         // interruptible, and shutdown must not inherit that wait.
         reconciler.shutdownNow();
         // Release anyone still waiting for the first build. It can't finish now.
-        firstBuild.countDown();
+        firstBuild.complete(null);
         Utils.closeQuietly(availability, "inkless control plane availability");
         if (current != null) {
             current.close();

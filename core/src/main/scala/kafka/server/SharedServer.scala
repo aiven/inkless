@@ -135,7 +135,9 @@ class SharedServer(
     inklessControlPlaneGate.map(_.availability())
 
   /**
-   * Builds the control plane delegate, waiting for that first attempt to finish before returning.
+   * Starts building the control plane delegate and returns a future that completes when that
+   * first attempt finishes, whether or not it produced a usable delegate. The future is already
+   * complete when diskless is disabled.
    *
    * The caller must not call this until the initial metadata image has been applied to whichever
    * `KafkaConfig` the gate reads through: `brokerConfig` for a node with `BrokerRole`, otherwise
@@ -147,8 +149,8 @@ class SharedServer(
    * combined broker/controller node can call this from either startup path without coordinating
    * which one goes first.
    */
-  def startInklessControlPlane(): Unit = {
-    inklessControlPlaneGate.foreach(_.startAndAwaitFirstBuild())
+  def startInklessControlPlane(): CompletableFuture[Void] = {
+    inklessControlPlaneGate.map(_.start()).getOrElse(CompletableFuture.completedFuture(null))
   }
 
   def clusterId: String = metaPropsEnsemble.clusterId().get()

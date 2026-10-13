@@ -644,8 +644,12 @@ class BrokerServer(
       // inkless.control.plane.* configuration, has been applied to `config`, it is safe to build
       // the diskless control plane delegate. Building any earlier would read only the static
       // server.properties value. This node always has BrokerRole, so config is the same
-      // liveConfig instance SharedServer picked when it constructed the gate.
-      sharedServer.startInklessControlPlane()
+      // liveConfig instance SharedServer picked when it constructed the gate. Waiting for the
+      // build before asking to be unfenced keeps clients on other brokers while this one runs a
+      // schema migration, which can outlast any fixed timeout on a large control plane database.
+      FutureUtils.waitWithLogging(logger.underlying, logIdent,
+        "the diskless control plane to be built",
+        sharedServer.startInklessControlPlane(), startupDeadline, time)
 
       // Now that we have loaded some metadata, we can log a reasonably up-to-date broker
       // configuration.  Keep in mind that KafkaConfig.originals is a mutable field that gets set

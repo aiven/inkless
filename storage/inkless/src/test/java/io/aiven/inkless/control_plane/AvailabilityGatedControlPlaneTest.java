@@ -78,7 +78,7 @@ class AvailabilityGatedControlPlaneTest {
 
     /** Builds a gate whose delegate is ready. Calls go to the mock instead of fast-failing. */
     private AvailabilityGatedControlPlane ready() {
-        gated().startAndAwaitFirstBuild();
+        gated().start().orTimeout(AWAIT_SECONDS, TimeUnit.SECONDS).join();
         assertEquals(ControlPlaneAvailability.State.AVAILABLE, controlPlane.availability().state());
         return controlPlane;
     }
@@ -141,7 +141,7 @@ class AvailabilityGatedControlPlaneTest {
     @Test
     void everyCallFailsWhileNoControlPlaneIsConfigured() {
         factoryFailure.set(new ControlPlaneNotConfiguredException("connection.string is missing"));
-        gated().startAndAwaitFirstBuild();
+        gated().start().orTimeout(AWAIT_SECONDS, TimeUnit.SECONDS).join();
         assertEquals(ControlPlaneAvailability.State.UNAVAILABLE, controlPlane.availability().state());
 
         assertThrows(ControlPlaneUnavailableException.class,

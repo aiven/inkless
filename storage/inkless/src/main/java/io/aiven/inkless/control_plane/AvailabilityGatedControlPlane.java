@@ -21,15 +21,13 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -51,15 +49,6 @@ import io.aiven.inkless.config.InklessConfig;
  * request and uploading it to object storage.
  */
 public class AvailabilityGatedControlPlane implements ControlPlane {
-    private static final Logger LOGGER = LoggerFactory.getLogger(AvailabilityGatedControlPlane.class);
-
-    /**
-     * How long {@link #startAndAwaitFirstBuild()} waits. A backstop, not the expected path: a
-     * healthy control plane is built in well under a second, and the cost of giving up early is
-     * only that the first few calls fail.
-     */
-    static final long FIRST_BUILD_TIMEOUT_MS = 60_000;
-
     private final ControlPlaneDelegateReconciler reconciler;
 
     public AvailabilityGatedControlPlane(final Supplier<InklessConfig> configSupplier,
@@ -73,33 +62,27 @@ public class AvailabilityGatedControlPlane implements ControlPlane {
     }
 
     /**
-     * Builds the delegate, waiting for that first attempt to finish before returning.
+     * Starts building the delegate and returns a future that completes when that first attempt
+     * finishes.
      *
-     * <p>Call this during startup. Building happens on the reconciler's thread either way; waiting
-     * here keeps the node from reporting itself started while the very first attempt is still
-     * running. A broker calls this before it begins serving requests. A dedicated controller calls
-     * this after its acceptors start, because it must answer Raft Vote requests before its initial
-     * metadata image can be published. Diskless topic creation that reaches the controller before
-     * the build settles fails, and the client's retry completes it.
+     * <p>Call this during startup, and wait for the future before serving requests. Building
+     * happens on the reconciler's thread either way; waiting keeps the node from reporting itself
+     * started while the very first attempt is still running. A broker waits before it asks to be
+     * unfenced, so clients go to other brokers until this one can serve diskless requests. A
+     * dedicated controller waits after its acceptors start, because it must answer Raft Vote
+     * requests before its initial metadata image can be published. Diskless topic creation that
+     * reaches the controller before the build settles fails, and the client's retry completes it.
      *
-     * <p>Returns as soon as the attempt settles, whether or not it produced a usable delegate, so an
-     * unconfigured or unreachable control plane does not hold up startup. If the attempt outlasts
-     * {@link #FIRST_BUILD_TIMEOUT_MS} this gives up waiting and returns. The attempt finishes in the
-     * background.
+     * <p>The future completes as soon as the attempt settles, even if it didn't produce a usable
+     * delegate. An unconfigured or unreachable control plane doesn't hold up startup. It has no
+     * timeout of its own: the delegate's own timeouts bound the build, including a schema migration
+     * that runs up to {@code migration.timeout.ms}.
      *
-     * @see ControlPlaneDelegateReconciler#awaitFirstBuild(long)
+     * @see ControlPlaneDelegateReconciler#firstBuildFuture()
      */
-    public void startAndAwaitFirstBuild() {
+    public CompletableFuture<Void> start() {
         reconciler.start();
-        try {
-            if (!reconciler.awaitFirstBuild(FIRST_BUILD_TIMEOUT_MS)) {
-                LOGGER.warn("Diskless control plane is still being built after {} ms; continuing startup "
-                    + "without it. Calls fail until it is ready.", FIRST_BUILD_TIMEOUT_MS);
-            }
-        } catch (final InterruptedException e) {
-            Thread.currentThread().interrupt();
-            LOGGER.warn("Interrupted while waiting for the diskless control plane to be built");
-        }
+        return reconciler.firstBuildFuture();
     }
 
     /**

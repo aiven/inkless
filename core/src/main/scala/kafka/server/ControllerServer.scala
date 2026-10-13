@@ -461,7 +461,9 @@ class ControllerServer(
         FutureUtils.waitWithLogging(logger.underlying, logIdent,
           "the initial controller dynamic configuration to be published",
           dynamicConfigPublisher.initialPublishFuture, startupDeadline, time)
-        sharedServer.startInklessControlPlane()
+        FutureUtils.waitWithLogging(logger.underlying, logIdent,
+          "the diskless control plane to be built",
+          sharedServer.startInklessControlPlane(), startupDeadline, time)
       }
     } catch {
       case e: Throwable =>

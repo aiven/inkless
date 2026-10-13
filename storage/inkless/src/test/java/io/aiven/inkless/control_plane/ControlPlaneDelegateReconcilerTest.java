@@ -28,6 +28,7 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -160,32 +161,33 @@ class ControlPlaneDelegateReconcilerTest {
     }
 
     @Test
-    void awaitFirstBuildReturnsOnceTheDelegateIsReady() throws Exception {
+    void firstBuildFutureCompletesOnceTheDelegateIsReady() throws Exception {
         reconciler().start();
 
-        assertTrue(reconciler.awaitFirstBuild(TimeUnit.SECONDS.toMillis(AWAIT_SECONDS)));
+        reconciler.firstBuildFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);
         // Waiting closes the window in which a caller would fail.
         assertSame(delegate, reconciler.current());
     }
 
     @Test
-    void awaitFirstBuildReturnsWhenTheBuildSettlesUnsuccessfully() throws Exception {
+    void firstBuildFutureCompletesWhenTheBuildSettlesUnsuccessfully() throws Exception {
         factoryFailure.set(new ControlPlaneNotConfiguredException("connection.string is missing"));
         reconciler().start();
 
         // Settling unsuccessfully still counts as finished: an unconfigured or unreachable control
         // plane must not hold up the owner's startup.
-        assertTrue(reconciler.awaitFirstBuild(TimeUnit.SECONDS.toMillis(AWAIT_SECONDS)));
+        reconciler.firstBuildFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);
         assertEquals(ControlPlaneAvailability.State.UNAVAILABLE, reconciler.availability().state());
     }
 
     @Test
-    void awaitFirstBuildTimesOutWhileTheBuildIsStillRunning() throws Exception {
+    void firstBuildFutureStaysIncompleteWhileTheBuildIsStillRunning() throws Exception {
         factoryRelease.set(new CountDownLatch(1));
         reconciler().start();
         assertTrue(factoryEntered.get().await(AWAIT_SECONDS, TimeUnit.SECONDS), "the build never started");
 
-        assertFalse(reconciler.awaitFirstBuild(200), "must not wait for a build that is not finishing");
+        assertThrows(TimeoutException.class, () -> reconciler.firstBuildFuture().get(200, TimeUnit.MILLISECONDS),
+            "must not complete before the build finishes");
     }
 
     @Test
@@ -197,7 +199,7 @@ class ControlPlaneDelegateReconcilerTest {
         reconciler.close();
 
         // Shutdown must not leave a startup thread parked waiting for a build that is now abandoned.
-        assertTrue(reconciler.awaitFirstBuild(TimeUnit.SECONDS.toMillis(AWAIT_SECONDS)));
+        reconciler.firstBuildFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);
     }
 
     @Test
