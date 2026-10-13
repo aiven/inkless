@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": "python3 .ai-agents/hooks/vale_gate.py --harness cursor",
+        "matcher": "git.*commit"
+      }
+    ],
+    "stop": [
+      {
+        "command": "python3 .ai-agents/hooks/vale_gate.py --harness cursor"
+      }
+    ]
+  }
+}

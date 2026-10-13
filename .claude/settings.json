@@ -9,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.ai-agents/hooks/vale_gate.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.ai-agents/hooks/vale_gate.py --harness claude"
           }
         ]
       }
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.ai-agents/hooks/vale_gate.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.ai-agents/hooks/vale_gate.py --harness claude"
           }
         ]
       }
