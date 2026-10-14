@@ -228,6 +228,8 @@ import org.apache.kafka.common.message.SaslAuthenticateRequestData;
 import org.apache.kafka.common.message.SaslAuthenticateResponseData;
 import org.apache.kafka.common.message.SaslHandshakeRequestData;
 import org.apache.kafka.common.message.SaslHandshakeResponseData;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageRequestData;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageResponseData;
 import org.apache.kafka.common.message.ShareAcknowledgeRequestData;
 import org.apache.kafka.common.message.ShareAcknowledgeResponseData;
 import org.apache.kafka.common.message.ShareFetchRequestData;
@@ -1084,6 +1086,7 @@ public class RequestResponseTest {
             case INIT_DISKLESS_LOG: return createInitDisklessLogRequest(version);
             case ALTER_DISKLESS_SWITCH: return createAlterDisklessSwitchRequest(version);
             case REPAIR_DISKLESS_LOG: return createRepairDisklessLogRequest(version);
+            case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE: return createSetClassicPrefixInRemoteStorageRequest(version);
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
     }
@@ -1182,6 +1185,7 @@ public class RequestResponseTest {
             case INIT_DISKLESS_LOG: return createInitDisklessLogResponse();
             case ALTER_DISKLESS_SWITCH: return createAlterDisklessSwitchResponse();
             case REPAIR_DISKLESS_LOG: return createRepairDisklessLogResponse();
+            case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE: return createSetClassicPrefixInRemoteStorageResponse();
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
     }
@@ -1341,6 +1345,38 @@ public class RequestResponseTest {
         return new RepairDisklessLogResponse(new RepairDisklessLogResponseData()
                 .setThrottleTimeMs(123)
                 .setErrorCode(Errors.NONE.code()));
+    }
+
+    private SetClassicPrefixInRemoteStorageRequest createSetClassicPrefixInRemoteStorageRequest(short version) {
+        SetClassicPrefixInRemoteStorageRequestData data = new SetClassicPrefixInRemoteStorageRequestData()
+                .setBrokerId(1)
+                .setBrokerEpoch(123L)
+                .setTopics(singletonList(
+                        new SetClassicPrefixInRemoteStorageRequestData.TopicData()
+                                .setTopicId(Uuid.fromString("qo0Pcp70TdGnAa7YKMKCqw"))
+                                .setPartitions(singletonList(
+                                        new SetClassicPrefixInRemoteStorageRequestData.PartitionData()
+                                                .setPartitionId(0)
+                                                .setClassicToDisklessStartOffset(100L)
+                                                .setLeaderEpoch(5)
+                                ))
+                ));
+        return new SetClassicPrefixInRemoteStorageRequest.Builder(data).build(version);
+    }
+
+    private SetClassicPrefixInRemoteStorageResponse createSetClassicPrefixInRemoteStorageResponse() {
+        SetClassicPrefixInRemoteStorageResponseData data = new SetClassicPrefixInRemoteStorageResponseData()
+                .setThrottleTimeMs(123)
+                .setTopics(singletonList(
+                        new SetClassicPrefixInRemoteStorageResponseData.TopicResponse()
+                                .setTopicId(Uuid.fromString("qo0Pcp70TdGnAa7YKMKCqw"))
+                                .setPartitions(singletonList(
+                                        new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+                                                .setPartitionId(0)
+                                                .setErrorCode(Errors.NONE.code())
+                                ))
+                ));
+        return new SetClassicPrefixInRemoteStorageResponse(data);
     }
 
     private DescribeTopicPartitionsRequest createDescribeTopicPartitionsRequest(short version) {

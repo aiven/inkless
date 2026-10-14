@@ -18,6 +18,7 @@
 package org.apache.kafka.controller;
 
 import org.apache.kafka.clients.admin.AlterConfigOp;
+import org.apache.kafka.common.DirectoryId;
 import org.apache.kafka.common.ElectionType;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
@@ -49,6 +50,8 @@ import org.apache.kafka.common.message.ElectLeadersResponseData.ReplicaElectionR
 import org.apache.kafka.common.message.InitDisklessLogRequestData;
 import org.apache.kafka.common.message.InitDisklessLogResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData.ListPartitionReassignmentsTopics;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageRequestData;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageResponseData;
 import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
@@ -5158,6 +5161,367 @@ public class ReplicationControlManagerInklessTest {
             assertEquals(ApiError.NONE, error);
         }
 
+    }
+
+    @Nested
+    class SetClassicPrefixInRemoteStorageTests {
+        private static final long SEAL = 100L;
+
+        private void commitSeal(ReplicationControlTestContext ctx, Uuid topicId, int partitionId, long seal) {
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, partitionId);
+            PartitionChangeRecord sealRecord = new PartitionChangeRecord()
+                .setTopicId(topicId)
+                .setPartitionId(partitionId);
+            sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(seal));
+            sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessLeaderEpoch(partition.leaderEpoch));
+            ctx.replay(List.of(new ApiMessageAndVersion(sealRecord, (short) 0)));
+        }
+
+        private Uuid createSealedTopic(ReplicationControlTestContext ctx) {
+            Uuid topicId = createSwitchingTestTopic(ctx);
+            commitSeal(ctx, topicId, 0, SEAL);
+            return topicId;
+        }
+
+        private SetClassicPrefixInRemoteStorageRequestData.TopicData topicData(
+            Uuid topicId,
+            int partitionId,
+            long seal,
+            int leaderEpoch
+        ) {
+            SetClassicPrefixInRemoteStorageRequestData.TopicData topicData =
+                new SetClassicPrefixInRemoteStorageRequestData.TopicData().setTopicId(topicId);
+            topicData.partitions().add(new SetClassicPrefixInRemoteStorageRequestData.PartitionData()
+                .setPartitionId(partitionId)
+                .setClassicToDisklessStartOffset(seal)
+                .setLeaderEpoch(leaderEpoch));
+            return topicData;
+        }
+
+        private SetClassicPrefixInRemoteStorageRequestData request(
+            int brokerId,
+            Uuid topicId,
+            int partitionId,
+            long seal,
+            int leaderEpoch
+        ) {
+            SetClassicPrefixInRemoteStorageRequestData request = new SetClassicPrefixInRemoteStorageRequestData()
+                .setBrokerId(brokerId)
+                .setBrokerEpoch(defaultBrokerEpoch(brokerId));
+            request.topics().add(topicData(topicId, partitionId, seal, leaderEpoch));
+            return request;
+        }
+
+        private ControllerResult<SetClassicPrefixInRemoteStorageResponseData> send(
+            ReplicationControlTestContext ctx,
+            SetClassicPrefixInRemoteStorageRequestData request
+        ) {
+            return ctx.replicationControl.setClassicPrefixInRemoteStorage(
+                anonymousContextFor(ApiKeys.ALTER_PARTITION), request);
+        }
+
+        private short errorCode(ControllerResult<SetClassicPrefixInRemoteStorageResponseData> result) {
+            return result.response().topics().get(0).partitions().get(0).errorCode();
+        }
+
+        private void assertRejected(ControllerResult<SetClassicPrefixInRemoteStorageResponseData> result, Errors error) {
+            assertEquals(0, result.records().size());
+            assertEquals(error.code(), errorCode(result));
+        }
+
+        private void assertIsrAndElrDisjoint(PartitionRegistration partition) {
+            for (int replica : partition.isr) {
+                assertFalse(Replicas.contains(partition.elr, replica),
+                    "Replica " + replica + " is in both ISR and ELR: " + partition);
+            }
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageSuccess() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+
+            ControllerResult<SetClassicPrefixInRemoteStorageResponseData> result =
+                send(ctx, request(before.leader, topicId, 0, SEAL, before.leaderEpoch));
+
+            assertEquals(NONE.code(), errorCode(result));
+            assertEquals(1, result.records().size());
+            assertInstanceOf(PartitionChangeRecord.class, result.records().get(0).message());
+            ctx.replay(result.records());
+
+            PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+            assertTrue(after.classicPrefixInRemoteStorage);
+            assertEquals(SEAL, after.classicToDisklessStartOffset);
+            assertEquals(before.leader, after.leader);
+            assertEquals(before.leaderEpoch + 1, after.leaderEpoch);
+            assertEquals(after.leaderEpoch, after.disklessLeaderEpoch);
+            assertIsrAndElrDisjoint(after);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageRetryAfterCommitSucceedsWithoutRecord() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+            SetClassicPrefixInRemoteStorageRequestData request =
+                request(before.leader, topicId, 0, SEAL, before.leaderEpoch);
+            ctx.replay(send(ctx, request).records());
+
+            // The retry carries the leader epoch from before the commit.
+            ControllerResult<SetClassicPrefixInRemoteStorageResponseData> retry = send(ctx, request);
+
+            assertRejected(retry, NONE);
+            assertEquals(before.leaderEpoch + 1, ctx.replicationControl.getPartition(topicId, 0).leaderEpoch);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageDifferentSealAfterCommitRejected() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+            ctx.replay(send(ctx, request(before.leader, topicId, 0, SEAL, before.leaderEpoch)).records());
+            PartitionRegistration committed = ctx.replicationControl.getPartition(topicId, 0);
+
+            assertRejected(send(ctx, request(committed.leader, topicId, 0, SEAL + 1, committed.leaderEpoch)),
+                INVALID_REQUEST);
+            assertEquals(committed, ctx.replicationControl.getPartition(topicId, 0));
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageSealMismatchRejected() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+
+            assertRejected(send(ctx, request(partition.leader, topicId, 0, SEAL - 1, partition.leaderEpoch)),
+                INVALID_REQUEST);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStoragePendingSealRejected() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSwitchingTestTopic(ctx);
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING, partition.classicToDisklessStartOffset);
+
+            assertRejected(send(ctx, request(partition.leader, topicId, 0, SEAL, partition.leaderEpoch)),
+                INVALID_REQUEST);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageNoSealRejected() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid topicId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, partition.classicToDisklessStartOffset);
+
+            assertRejected(send(ctx, request(partition.leader, topicId, 0, SEAL, partition.leaderEpoch)),
+                INVALID_REQUEST);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageHigherLeaderEpoch() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+
+            assertRejected(send(ctx, request(partition.leader, topicId, 0, SEAL, partition.leaderEpoch + 1)),
+                NOT_CONTROLLER);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageLowerLeaderEpoch() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+
+            assertRejected(send(ctx, request(partition.leader, topicId, 0, SEAL, partition.leaderEpoch - 1)),
+                FENCED_LEADER_EPOCH);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageNotLeader() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+            int notLeader = partition.leader == 0 ? 1 : 0;
+
+            assertRejected(send(ctx, request(notLeader, topicId, 0, SEAL, partition.leaderEpoch)),
+                INVALID_REQUEST);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageFencedLeaderRejected() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+
+            ctx.fenceBrokers(before.leader);
+            PartitionRegistration fenced = ctx.replicationControl.getPartition(topicId, 0);
+            assertNotEquals(before.leader, fenced.leader);
+            assertTrue(fenced.leaderEpoch > before.leaderEpoch);
+
+            assertRejected(send(ctx, request(before.leader, topicId, 0, SEAL, before.leaderEpoch)),
+                FENCED_LEADER_EPOCH);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageLeaderInControlledShutdownRejected() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+
+            List<ApiMessageAndVersion> shutdownRecords = new ArrayList<>();
+            ctx.replicationControl.handleBrokerInControlledShutdown(
+                before.leader, defaultBrokerEpoch(before.leader), shutdownRecords);
+            ctx.replay(shutdownRecords);
+            PartitionRegistration moved = ctx.replicationControl.getPartition(topicId, 0);
+            assertNotEquals(before.leader, moved.leader);
+            assertTrue(moved.leaderEpoch > before.leaderEpoch);
+
+            assertRejected(send(ctx, request(before.leader, topicId, 0, SEAL, before.leaderEpoch)),
+                FENCED_LEADER_EPOCH);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageLeaderlessPartitionRejected() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+
+            ctx.fenceBrokers(0, 1, 2);
+            PartitionRegistration leaderless = ctx.replicationControl.getPartition(topicId, 0);
+            assertFalse(leaderless.hasLeader());
+
+            assertRejected(send(ctx, request(before.leader, topicId, 0, SEAL, before.leaderEpoch)),
+                FENCED_LEADER_EPOCH);
+            assertRejected(send(ctx, request(before.leader, topicId, 0, SEAL, leaderless.leaderEpoch)),
+                INVALID_REQUEST);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageAddsActiveReplicasToIsr() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            ctx.fenceBrokers(2);
+            ctx.unfenceBrokers(2);
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+            assertFalse(Replicas.contains(before.isr, 2), "Expected broker 2 out of the ISR: " + before);
+
+            ControllerResult<SetClassicPrefixInRemoteStorageResponseData> result =
+                send(ctx, request(before.leader, topicId, 0, SEAL, before.leaderEpoch));
+            assertEquals(NONE.code(), errorCode(result));
+            ctx.replay(result.records());
+
+            PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(Set.of(0, 1, 2), new HashSet<>(Replicas.toList(after.isr)));
+            assertIsrAndElrDisjoint(after);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageKeepsInactiveReplicasOutOfIsr() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            ctx.fenceBrokers(2);
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+
+            ControllerResult<SetClassicPrefixInRemoteStorageResponseData> result =
+                send(ctx, request(before.leader, topicId, 0, SEAL, before.leaderEpoch));
+            assertEquals(NONE.code(), errorCode(result));
+            ctx.replay(result.records());
+
+            PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+            assertFalse(Replicas.contains(after.isr, 2), "Expected fenced broker 2 out of the ISR: " + after);
+            assertIsrAndElrDisjoint(after);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageCompletesReassignmentAndElectsNewLeader() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            ctx.registerBrokers(3);
+            ctx.unfenceBrokers(3);
+            Uuid topicId = createSealedTopic(ctx);
+            // A switching topic takes the diskless reassignment path, which completes at once.
+            // Replay the in-flight state that the classic reassignment path produces: 0 -> 3.
+            ctx.replay(List.of(new ApiMessageAndVersion(new PartitionChangeRecord()
+                .setTopicId(topicId)
+                .setPartitionId(0)
+                .setReplicas(List.of(1, 2, 3, 0))
+                .setDirectories(List.of(DirectoryId.UNASSIGNED, DirectoryId.UNASSIGNED,
+                    DirectoryId.UNASSIGNED, DirectoryId.UNASSIGNED))
+                .setRemovingReplicas(List.of(0))
+                .setAddingReplicas(List.of(3)), (short) 1)));
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+            assertArrayEquals(new int[] {0}, before.removingReplicas, "Expected a reassignment in flight: " + before);
+            assertEquals(0, before.leader);
+
+            ControllerResult<SetClassicPrefixInRemoteStorageResponseData> result =
+                send(ctx, request(before.leader, topicId, 0, SEAL, before.leaderEpoch));
+            assertEquals(NONE.code(), errorCode(result));
+            ctx.replay(result.records());
+
+            PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(List.of(1, 2, 3), Replicas.toList(after.replicas));
+            assertEquals(0, after.removingReplicas.length);
+            assertEquals(0, after.addingReplicas.length);
+            assertTrue(Replicas.contains(after.replicas, after.leader), "Expected a new leader: " + after);
+            assertEquals(before.leaderEpoch + 1, after.leaderEpoch);
+            assertEquals(after.leaderEpoch, after.disklessLeaderEpoch);
+            assertTrue(after.classicPrefixInRemoteStorage);
+            assertIsrAndElrDisjoint(after);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageOneBadPartitionDoesNotFailOthers() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid fooId = createSealedTopic(ctx);
+            Uuid barId = ctx.createTestTopic("bar", new int[][] {new int[] {0, 1, 2}}).topicId();
+            PartitionRegistration foo = ctx.replicationControl.getPartition(fooId, 0);
+            PartitionRegistration bar = ctx.replicationControl.getPartition(barId, 0);
+            SetClassicPrefixInRemoteStorageRequestData request = request(foo.leader, fooId, 0, SEAL, foo.leaderEpoch);
+            request.topics().add(topicData(barId, 0, SEAL, bar.leaderEpoch));
+
+            ControllerResult<SetClassicPrefixInRemoteStorageResponseData> result = send(ctx, request);
+
+            assertEquals(1, result.records().size());
+            assertEquals(fooId, ((PartitionChangeRecord) result.records().get(0).message()).topicId());
+            assertEquals(2, result.response().topics().size());
+            assertEquals(fooId, result.response().topics().get(0).topicId());
+            assertEquals(NONE.code(), result.response().topics().get(0).partitions().get(0).errorCode());
+            assertEquals(barId, result.response().topics().get(1).topicId());
+            assertEquals(INVALID_REQUEST.code(), result.response().topics().get(1).partitions().get(0).errorCode());
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageUnknownTopicId() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            createSealedTopic(ctx);
+
+            assertRejected(send(ctx, request(0, Uuid.randomUuid(), 0, SEAL, 0)), UNKNOWN_TOPIC_ID);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageUnknownPartition() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+
+            assertRejected(send(ctx, request(0, topicId, 99, SEAL, 0)), UNKNOWN_TOPIC_OR_PARTITION);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageStaleBrokerEpoch() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+            SetClassicPrefixInRemoteStorageRequestData request =
+                request(partition.leader, topicId, 0, SEAL, partition.leaderEpoch)
+                    .setBrokerEpoch(defaultBrokerEpoch(partition.leader) - 1);
+
+            assertThrows(StaleBrokerEpochException.class, () -> send(ctx, request));
+        }
     }
 
     @Test

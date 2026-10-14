@@ -173,6 +173,8 @@ import org.apache.kafka.common.message.SaslAuthenticateRequestDataJsonConverter;
 import org.apache.kafka.common.message.SaslAuthenticateResponseDataJsonConverter;
 import org.apache.kafka.common.message.SaslHandshakeRequestDataJsonConverter;
 import org.apache.kafka.common.message.SaslHandshakeResponseDataJsonConverter;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageRequestDataJsonConverter;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageResponseDataJsonConverter;
 import org.apache.kafka.common.message.ShareAcknowledgeRequestDataJsonConverter;
 import org.apache.kafka.common.message.ShareAcknowledgeResponseDataJsonConverter;
 import org.apache.kafka.common.message.ShareFetchRequestDataJsonConverter;
@@ -362,6 +364,8 @@ import org.apache.kafka.common.requests.SaslAuthenticateRequest;
 import org.apache.kafka.common.requests.SaslAuthenticateResponse;
 import org.apache.kafka.common.requests.SaslHandshakeRequest;
 import org.apache.kafka.common.requests.SaslHandshakeResponse;
+import org.apache.kafka.common.requests.SetClassicPrefixInRemoteStorageRequest;
+import org.apache.kafka.common.requests.SetClassicPrefixInRemoteStorageResponse;
 import org.apache.kafka.common.requests.ShareAcknowledgeRequest;
 import org.apache.kafka.common.requests.ShareAcknowledgeResponse;
 import org.apache.kafka.common.requests.ShareFetchRequest;
@@ -515,6 +519,8 @@ public class RequestConvertToJson {
                 AlterDisklessSwitchRequestDataJsonConverter.write(((AlterDisklessSwitchRequest) request).data(), request.version());
             case REPAIR_DISKLESS_LOG ->
                 RepairDisklessLogRequestDataJsonConverter.write(((RepairDisklessLogRequest) request).data(), request.version());
+            case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE ->
+                SetClassicPrefixInRemoteStorageRequestDataJsonConverter.write(((SetClassicPrefixInRemoteStorageRequest) request).data(), request.version());
             case INITIALIZE_SHARE_GROUP_STATE ->
                 InitializeShareGroupStateRequestDataJsonConverter.write(((InitializeShareGroupStateRequest) request).data(), request.version());
             case INIT_PRODUCER_ID ->
@@ -702,6 +708,8 @@ public class RequestConvertToJson {
                 AlterDisklessSwitchResponseDataJsonConverter.write(((AlterDisklessSwitchResponse) response).data(), version);
             case REPAIR_DISKLESS_LOG ->
                 RepairDisklessLogResponseDataJsonConverter.write(((RepairDisklessLogResponse) response).data(), version);
+            case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE ->
+                SetClassicPrefixInRemoteStorageResponseDataJsonConverter.write(((SetClassicPrefixInRemoteStorageResponse) response).data(), version);
             case INITIALIZE_SHARE_GROUP_STATE ->
                 InitializeShareGroupStateResponseDataJsonConverter.write(((InitializeShareGroupStateResponse) response).data(), version);
             case INIT_PRODUCER_ID ->

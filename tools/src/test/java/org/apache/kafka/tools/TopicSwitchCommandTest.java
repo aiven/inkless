@@ -110,6 +110,7 @@ public class TopicSwitchCommandTest {
         String output = runStateCommand();
         assertTrue(output.contains("classicToDisklessStartOffset=-1 (not switched)"));
         assertTrue(output.contains("disklessLeaderEpoch=-1 (none)"));
+        assertTrue(output.contains("  classicPrefixInRemoteStorage=false" + System.lineSeparator()));
     }
 
     @Test
@@ -126,6 +127,44 @@ public class TopicSwitchCommandTest {
         String output = runStateCommand();
 
         assertTrue(output.contains("classicToDisklessStartOffset=-2 (switch pending)"));
+        assertTrue(output.contains("  classicPrefixInRemoteStorage=false" + System.lineSeparator()));
+    }
+
+    @Test
+    public void testStateCommandShowsPhase1WhenSealCommitted() throws Exception {
+        DescribeTopicPartitionsResponseData responseData = buildResponseData(
+            List.of(buildPartition(0, 1, 5, 100L, 5, false))
+        );
+        mockAdminCalls(responseData, Map.of(
+            new TopicPartition(TOPIC, 0), new ListOffsetsResult.ListOffsetsResultInfo(150, -1, java.util.Optional.empty())
+        ), Map.of(
+            new TopicPartition(TOPIC, 0), new ListOffsetsResult.ListOffsetsResultInfo(0, -1, java.util.Optional.empty())
+        ));
+
+        String output = runStateCommand();
+
+        assertTrue(output.contains("classicPrefixInRemoteStorage=false (phase 1)"));
+    }
+
+    @Test
+    public void testStateCommandShowsPhase2WhenFlagSet() throws Exception {
+        DescribeTopicPartitionsResponseData responseData = buildResponseData(
+            List.of(buildPartition(0, 1, 6, 100L, 6, true), buildPartition(1, 2, 5, 200L, 5, false))
+        );
+        mockAdminCalls(responseData, Map.of(
+            new TopicPartition(TOPIC, 0), new ListOffsetsResult.ListOffsetsResultInfo(150, -1, java.util.Optional.empty()),
+            new TopicPartition(TOPIC, 1), new ListOffsetsResult.ListOffsetsResultInfo(250, -1, java.util.Optional.empty())
+        ), Map.of(
+            new TopicPartition(TOPIC, 0), new ListOffsetsResult.ListOffsetsResultInfo(0, -1, java.util.Optional.empty()),
+            new TopicPartition(TOPIC, 1), new ListOffsetsResult.ListOffsetsResultInfo(0, -1, java.util.Optional.empty())
+        ));
+
+        String output = runStateCommand();
+
+        int partition1 = output.indexOf("Partition 1:");
+        assertTrue(partition1 > 0, output);
+        assertTrue(output.substring(0, partition1).contains("classicPrefixInRemoteStorage=true (phase 2)"), output);
+        assertTrue(output.substring(partition1).contains("classicPrefixInRemoteStorage=false (phase 1)"), output);
     }
 
     @Test
@@ -430,6 +469,12 @@ public class TopicSwitchCommandTest {
     private DescribeTopicPartitionsResponsePartition buildPartition(
             int partitionIndex, int leaderId, int leaderEpoch,
             long classicToDisklessStartOffset, int disklessLeaderEpoch) {
+        return buildPartition(partitionIndex, leaderId, leaderEpoch, classicToDisklessStartOffset, disklessLeaderEpoch, false);
+    }
+
+    private DescribeTopicPartitionsResponsePartition buildPartition(
+            int partitionIndex, int leaderId, int leaderEpoch,
+            long classicToDisklessStartOffset, int disklessLeaderEpoch, boolean classicPrefixInRemoteStorage) {
         DescribeTopicPartitionsResponsePartition partition = new DescribeTopicPartitionsResponsePartition()
             .setPartitionIndex(partitionIndex)
             .setLeaderId(leaderId)
@@ -444,6 +489,9 @@ public class TopicSwitchCommandTest {
         if (disklessLeaderEpoch >= 0) {
             partition.unknownTaggedFields().add(
                 InitDisklessLogFields.encodeDisklessLeaderEpoch(disklessLeaderEpoch));
+        }
+        if (classicPrefixInRemoteStorage) {
+            partition.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
         }
 
         return partition;

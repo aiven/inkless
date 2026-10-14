@@ -141,6 +141,7 @@ class ControllerApis(
         case ApiKeys.REMOVE_RAFT_VOTER => handleRemoveRaftVoter(request)
         case ApiKeys.UPDATE_RAFT_VOTER => handleUpdateRaftVoter(request)
         case ApiKeys.INIT_DISKLESS_LOG => handleInitDisklessLogRequest(request)
+        case ApiKeys.SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE => handleSetClassicPrefixInRemoteStorageRequest(request)
         case ApiKeys.ALTER_DISKLESS_SWITCH => handleAlterDisklessSwitchRequest(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
       }
@@ -684,6 +685,21 @@ class ControllerApis(
         initDisklessLogRequest.getErrorResponse(exception)
       } else {
         new InitDisklessLogResponse(result)
+      }
+      requestHelper.sendResponseExemptThrottle(request, response)
+    }
+  }
+
+  def handleSetClassicPrefixInRemoteStorageRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    val setClassicPrefixInRemoteStorageRequest = request.body[SetClassicPrefixInRemoteStorageRequest]
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal, OptionalLong.empty())
+    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    val future = controller.setClassicPrefixInRemoteStorage(context, setClassicPrefixInRemoteStorageRequest.data())
+    future.handle[Unit] { (result, exception) =>
+      val response = if (exception != null) {
+        setClassicPrefixInRemoteStorageRequest.getErrorResponse(exception)
+      } else {
+        new SetClassicPrefixInRemoteStorageResponse(result)
       }
       requestHelper.sendResponseExemptThrottle(request, response)
     }
