@@ -198,6 +198,10 @@ New JMX metrics are available on the active controller (`kafka.controller:type=K
 
 These metrics are tracked separately from classic partition metrics to avoid false alerts — diskless topics may show offline replicas in KRaft metadata while remaining fully available via the metadata transformer.
 
+### App info metric
+
+Brokers and clients register an `inkless-tag` gauge in the `app-info` metric group, next to `version`, `commit-id`, and `start-time-ms`. The value is the `git describe` output of the nearest `inkless-*` tag, such as `inkless-4.2.1-0.45`. A build can set the value with `-PinklessTag`, which takes precedence over git. Without `-PinklessTag`, the value is `unknown` when the build has no git checkout or git can't describe it. On a checkout with no matching `inkless-*` tag, the value is the abbreviated commit hash, such as `9c3cf45`. The `kafka-version` gauge in the same group reports the upstream Kafka version without the `-inkless` qualifier, such as `4.3.1` for `4.3.1-inkless`. The `app-info` MBean exposes the same values as the `InklessTag` and `KafkaVersion` attributes.
+
 
 # Roadmap
 
