@@ -1,6 +1,6 @@
 -- Copyright (c) 2026 Aiven, Helsinki, Finland. https://aiven.io/
 
--- Bound the cost of the list_offsets_v1 timestamp lookups to the batches at or after the target.
+-- Bound the cost of the list_offsets_v1 timestamp lookups to the batches of one partition.
 --
 -- Both lookups used `ORDER BY batch_id LIMIT 1`. The planner can satisfy that order by walking
 -- batches_pkey from the smallest batch_id in the table, with the partition and timestamp as filters.
@@ -9,22 +9,46 @@
 -- partitions' rows.
 --
 -- Each lookup is now MIN(base_offset) over the timestamp predicate, followed by a point lookup of that
--- batch through batches_by_last_offset_covering_idx. No index orders base_offset, so the aggregate uses
--- batches_by_timestamp_idx (V30) and reads one entry per batch at or after the target. Batches do not
--- overlap within a partition, so the batch with the minimum base_offset is the one with the smallest
--- last_offset >= that minimum.
+-- batch through batches_by_last_offset_covering_idx. No index orders base_offset, so the aggregate has no
+-- ordered-walk plan. It reads the partition's entries of batches_by_last_offset_covering_idx, which
+-- stores the timestamp columns, so the scan is index-only on pages the visibility map marks all-visible and
+-- its cost follows the partition, not the table. Batches do not overlap within a partition, so the batch with the minimum base_offset is the one
+-- with the smallest last_offset >= that minimum.
 --
 -- The result is unchanged: within a partition, commit_file_v1 and commit_file_v2 assign offsets and
 -- insert batches under the same logs row lock, so batch_id order is offset order. The new query does not
 -- depend on that order.
 --
--- A request at or before the oldest retained batch would otherwise read every index entry of the
--- partition, so the oldest batch is checked first.
+-- A request at or before the oldest retained batch would otherwise read every entry of the partition,
+-- so the oldest batch is checked first.
+--
+-- Do not add an index with the (topic_id, partition) prefix of batches_by_last_offset_covering_idx for
+-- these lookups: the retention DELETEs can pick it and cannot filter on last_offset with it.
+-- BatchesPlanRegressionTest checks this.
+--
+-- batch_timestamp is redefined in SQL, so the planner inlines it into a CASE over the index columns. The
+-- scans above evaluate it for every entry of a partition, and a PL/pgSQL call per entry costs several times
+-- more than the CASE. The result is the same.
 --
 -- Function replace only. CREATE OR REPLACE FUNCTION takes no table lock.
 --
 -- The body is the V28 one and reads logs.deleted_at. A hand-applied hotfix for a schema older than V28
--- needs the V17 body without the `deleted_at IS NULL` predicate.
+-- needs the V17 body without the `deleted_at IS NULL` predicate. On such a schema the function is created
+-- and every call fails, including EARLIEST and LATEST, because PL/pgSQL resolves columns at the first run.
+
+CREATE OR REPLACE FUNCTION batch_timestamp(
+    arg_timestamp_type timestamp_type_t,
+    arg_batch_max_timestamp timestamp_t,
+    arg_log_append_timestamp timestamp_t
+)
+RETURNS timestamp_t LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    -- See how timestamps are assigned in
+    -- https://github.com/aiven/inkless/blob/e124d3975bdb3a9ec85eee2fba7a1b0a6967d3a6/storage/src/main/java/org/apache/kafka/storage/internals/log/LogValidator.java#L271-L276
+    SELECT CASE arg_timestamp_type
+        WHEN 1 THEN arg_log_append_timestamp  -- org.apache.kafka.common.record.TimestampType.LOG_APPEND_TIME
+        ELSE arg_batch_max_timestamp
+    END
+$$;
 
 CREATE OR REPLACE FUNCTION list_offsets_v1(
     arg_requests list_offsets_request_v1[]
