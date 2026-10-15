@@ -65,6 +65,7 @@
   <subpackage name="server">
     <allow pkg="kafka" />
     <allow pkg="org.apache.kafka" />
+    <allow pkg="org.apache.logging.log4j" />
     <allow pkg="io.aiven.inkless" />
     <allow pkg="org.testcontainers" />
     <allow pkg="software.amazon.awssdk" />

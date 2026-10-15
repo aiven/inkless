@@ -71,9 +71,11 @@ class FileCleanerMockedTest {
         final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
         when(controlPlane.getFilesToDelete(any(), anyInt())).thenReturn(List.of());
 
+        final long beforeMs = time.milliseconds();
         cleaner.run();
 
         verify(storageBackend, times(0)).delete(Set.of());
+        assertEquals(beforeMs, time.milliseconds());
     }
 
     @Test
@@ -181,20 +183,34 @@ class FileCleanerMockedTest {
 
         assertEquals(-1, cleaner.metrics.lastSuccessfulCleanupTimeMs.get());
 
+        final long beforeMs = time.milliseconds();
         cleaner.run();
 
         // A cycle with no work still counts: the gauge answers "is the cleaner running", not "is it deleting".
         assertEquals(time.milliseconds(), cleaner.metrics.lastSuccessfulCleanupTimeMs.get());
+        assertEquals(beforeMs, time.milliseconds());
     }
 
     @Test
-    void doesNotTrackFailedCycleAsSuccessful() throws Exception {
+    void errorBackoffSkipsTicksUntilEligible() throws Exception {
         final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD, MAX_FILES_PER_CYCLE);
-        when(controlPlane.getFilesToDelete(any(), anyInt())).thenThrow(new RuntimeException("boom"));
+        when(controlPlane.getFilesToDelete(any(), anyInt()))
+            .thenThrow(new RuntimeException("boom"))
+            .thenReturn(List.of());
 
         cleaner.run();
-
         assertEquals(-1, cleaner.metrics.lastSuccessfulCleanupTimeMs.get());
+        verify(controlPlane, times(1)).getFilesToDelete(any(), anyInt());
+
+        cleaner.run();
+        assertEquals(-1, cleaner.metrics.lastSuccessfulCleanupTimeMs.get());
+        verify(controlPlane, times(1)).getFilesToDelete(any(), anyInt());
+
+        // First error backoff is 100 * 2^1 * [0.8, 1.2] ms. Jump past the max.
+        time.sleep(1_000);
+        cleaner.run();
+        assertEquals(time.milliseconds(), cleaner.metrics.lastSuccessfulCleanupTimeMs.get());
+        verify(controlPlane, times(2)).getFilesToDelete(any(), anyInt());
     }
 
     @Test
