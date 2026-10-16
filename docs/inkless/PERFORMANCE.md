@@ -337,29 +337,32 @@ Four metrics track hot/cold path behavior:
 
 #### Troubleshoot high PostgreSQL read-replica CPU
 
-Every diskless fetch asks the batch coordinator for batch coordinates through `find_batches_v2`.
+Every diskless fetch retrieves batch coordinates from the batch coordinator through `find_batches_v3`.
 Tiered storage consolidation uses the same query: each consolidation fetcher continuously copies
 the diskless WAL into local logs while it has lag to drain. Consolidation can therefore expose
 planning overhead that normal consumer traffic does not.
 
 Treat high PostgreSQL CPU as one of three different problems:
 
-- **Query volume:** Brokers call `find_batches_v2` more often.
-- **Partition fan-out:** Each function call contains more partitions, and the function runs its
-  inner `batches` query once per partition.
+- **Query volume:** brokers call `find_batches_v3` more often.
+- **Partition fan-out:** each function call contains more partitions. Consumer fetches run the
+  inner `batches` query once per partition. Consolidation fetches add a high-watermark lookup,
+  and they add a start lookup when the loop doesn't admit a batch. That is up to three statements
+  per partition.
 - **Per-query cost:** PostgreSQL spends more time planning or executing each inner query.
 
-For consolidation, approximate the per-broker inner-query rate as:
+For consolidation, approximate the per-broker statement rate as:
 
 ```text
 per-broker consolidation fetches/second
     × average partitions/fetch
+    × up to 3 statements per partition
 ```
 
 Sum this product across brokers to estimate the cluster-wide rate. Do not multiply the observed
 fetch rate by the replication factor: each broker's metric already includes fetches for the
 consolidating replicas assigned to that broker. This value can be much higher than the outer
-`find_batches_v2` call rate. Consumer fetches and consumer-side consolidation supplements add to
+`find_batches_v3` call rate. Consumer fetches and consumer-side consolidation supplements add to
 the same PostgreSQL workload.
 
 Start with the following broker and PostgreSQL signals:
@@ -410,7 +413,7 @@ SELECT
     temp_blks_written,
     query
 FROM pg_stat_statements
-WHERE query ILIKE '%find_batches_v2%'
+WHERE query ILIKE '%find_batches_v3%'
    OR query ILIKE '%FROM batches b%'
 ORDER BY total_plan_time DESC;
 ```
@@ -466,11 +469,11 @@ To opt in after that validation, apply the function setting on the writable Post
 through the normal schema-management process:
 
 ```sql
-ALTER FUNCTION find_batches_v2(find_batches_request_v1[], integer, integer)
+ALTER FUNCTION find_batches_v3(find_batches_request_v2[], integer, integer)
     SET plan_cache_mode = force_generic_plan;
 ```
 
-This setting applies only while `find_batches_v2` runs, but it affects every SQL statement inside
+This setting applies only while `find_batches_v3` runs, but it affects every SQL statement inside
 the function, not only the inner batch scan. A generic plan ignores actual parameter values, so it
 can regress execution when data distribution or request shapes differ from the test workload.
 PostgreSQL rebuilds invalidated cached plans after relevant schema or statistics changes, but the
@@ -479,7 +482,7 @@ replacement remains generic.
 To return to PostgreSQL's automatic generic-versus-custom decision:
 
 ```sql
-ALTER FUNCTION find_batches_v2(find_batches_request_v1[], integer, integer)
+ALTER FUNCTION find_batches_v3(find_batches_request_v2[], integer, integer)
     RESET plan_cache_mode;
 ```
 

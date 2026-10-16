@@ -2731,6 +2731,7 @@ project(':storage:inkless') {
       }
 
       usingJavaConfig {
+        database.withExcludes("batch_timestamp_boundaries")
         // Docs: https://www.jooq.org/doc/latest/manual/code-generation/codegen-advanced/codegen-config-database/codegen-database-forced-types/codegen-database-forced-types-converter/
         database.withForcedTypes(
                 new ForcedType()

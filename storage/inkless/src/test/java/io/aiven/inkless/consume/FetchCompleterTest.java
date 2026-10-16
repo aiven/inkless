@@ -136,6 +136,32 @@ public class FetchCompleterTest {
         assertThat(data.records).isEqualTo(MemoryRecords.EMPTY);
         assertThat(data.logStartOffset).isEqualTo(logStartOffset);
         assertThat(data.highWatermark).isEqualTo(highWatermark);
+        assertThat(data).isInstanceOf(InklessFetchPartitionData.class);
+    }
+
+    @Test
+    public void testSuccessfulEmptyFetchCarriesBothBoundaryTimestamps() {
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(
+                Collections.emptyList(), 0, 10, OptionalLong.of(1000L), OptionalLong.of(1234L))
+        );
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(),
+            OBJECT_KEY_CREATOR,
+            fetchInfos,
+            coordinates,
+            Collections.emptyList(),
+            durationMs -> {}, metrics
+        );
+
+        FetchPartitionData data = job.get().get(partition0);
+
+        assertThat(data).isInstanceOf(InklessFetchPartitionData.class);
+        assertThat(((InklessFetchPartitionData) data).startingOffsetTimestamp).hasValue(1000L);
+        assertThat(((InklessFetchPartitionData) data).highWatermarkTimestamp).hasValue(1234L);
     }
 
     @Test
@@ -1310,6 +1336,9 @@ public class FetchCompleterTest {
 
         assertThat(result.get(partition0).error).isEqualTo(Errors.NONE);
         assertThat(result.get(partition0).records.sizeInBytes()).isEqualTo(recordsA.sizeInBytes());
+        assertThat(result.get(partition0)).isInstanceOf(InklessFetchPartitionData.class);
+        assertThat(((InklessFetchPartitionData) result.get(partition0)).startingOffsetTimestamp).isEmpty();
+        assertThat(((InklessFetchPartitionData) result.get(partition0)).highWatermarkTimestamp).isEmpty();
         verify(metrics, times(1)).recordPartitionPartialFetch();
         verify(metrics, never()).recordPartitionStorageError();
         verify(metrics, never()).recordPartitionCorruptRecord();
@@ -1448,10 +1477,10 @@ public class FetchCompleterTest {
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
             partition0, FindBatchResponse.success(List.of(
                 new BatchInfo(1L, OBJECT_KEY_A.value(),
-                    BatchMetadata.of(partition0, 0, recordsA.sizeInBytes(), 0, 0, 10L, 20L, TimestampType.CREATE_TIME)),
+                    BatchMetadata.of(partition0, 0, recordsA.sizeInBytes(), 0, 0, 10L, 10L, TimestampType.CREATE_TIME)),
                 new BatchInfo(2L, OBJECT_KEY_B.value(),
-                    BatchMetadata.of(partition0, 0, 50, 1, 1, 10L, 20L, TimestampType.CREATE_TIME))
-            ), 0, 2)
+                    BatchMetadata.of(partition0, 0, 50, 1, 1, 20L, 20L, TimestampType.CREATE_TIME))
+            ), 0, 2, OptionalLong.of(100L), OptionalLong.of(300L))
         );
         final ByteRange rangeA = new ByteRange(0, recordsA.sizeInBytes());
         List<FileExtentResult> files = List.of(
@@ -1466,6 +1495,9 @@ public class FetchCompleterTest {
 
         assertThat(result.get(partition0).error).isEqualTo(Errors.NONE);
         assertThat(result.get(partition0).records.sizeInBytes()).isEqualTo(recordsA.sizeInBytes());
+        assertThat(result.get(partition0)).isInstanceOf(InklessFetchPartitionData.class);
+        assertThat(((InklessFetchPartitionData) result.get(partition0)).startingOffsetTimestamp).hasValue(20L);
+        assertThat(((InklessFetchPartitionData) result.get(partition0)).highWatermarkTimestamp).hasValue(300L);
         verify(metrics, times(1)).recordPartitionPartialFetch();
         verify(metrics, never()).recordPartitionStorageError();
         verify(metrics, times(1)).recordFetchResponseSize(recordsA.sizeInBytes());
