@@ -371,7 +371,7 @@ Start with the following broker and PostgreSQL signals:
 - Consumer `InklessFetchMetrics.FetchRate` and `FetchPartitionsPerFetchCount`.
 - Consolidation `ConsolidationFetchMetrics.FetchRate` and
   `FetchPartitionsPerFetchCount`.
-- `ConsolidationTotalLag`, `ConsolidationLocalLag`, and
+- `ConsolidationTotalLag`, `ConsolidationLocalLag`, `ConsolidationLocalTimeLag`, and
   `ConsolidationSupplementRate`.
 - PostgreSQL CPU, active sessions, and read latency.
 - Control-plane read-pool active, idle, and pending connection counts.
