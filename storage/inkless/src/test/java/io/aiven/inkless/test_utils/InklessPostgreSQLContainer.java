@@ -110,6 +110,9 @@ public class InklessPostgreSQLContainer extends PostgreSQLContainer<InklessPostg
     }
 
     private void setupConnectionPool() {
+        if (hikariDataSource != null) {
+            hikariDataSource.close();
+        }
         final HikariConfig config = new HikariConfig();
         config.setJdbcUrl(getUserJdbcUrl());
         config.setUsername(PostgreSQLTestContainer.USERNAME);
