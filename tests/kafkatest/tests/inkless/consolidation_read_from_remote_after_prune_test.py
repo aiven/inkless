@@ -135,11 +135,8 @@ class ReadFromRemoteAfterPruneTest(Test):
         # Confirm the consolidation gauges were exported/scraped (diagnostic).
         self.kafka.read_jmx_output_all_nodes()
         jmx_keys = self.kafka.maximum_jmx_value
-        local_lag_key = ConsolidationVerifier.find_aggregate_key(jmx_keys, ConsolidationVerifier.LOCAL_LAG)
-        assert local_lag_key is not None, \
-            ("ConsolidationLocalLag was not exported/scraped via JMX. Expected a "
-             "%s 'name=ConsolidationLocalLag' Value column; got keys: %s"
-             % (ConsolidationVerifier.JMX_PACKAGE, sorted(jmx_keys)))
+        ConsolidationVerifier.assert_aggregate_exported(jmx_keys, ConsolidationVerifier.LOCAL_LAG)
+        ConsolidationVerifier.assert_aggregate_exported(jmx_keys, ConsolidationVerifier.LOCAL_TIME_LAG)
 
         # --- Durability test: destroy every local copy, then read remote ---
 

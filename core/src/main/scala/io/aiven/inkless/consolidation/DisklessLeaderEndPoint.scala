@@ -18,7 +18,7 @@
 
 package io.aiven.inkless.consolidation
 
-import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
+import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler, InklessFetchPartitionData}
 import kafka.server.{KafkaConfig, ReplicaManager, ReplicaQuota}
 import kafka.utils.Logging
 import org.apache.kafka.common.errors.{KafkaStorageException, UnknownTopicOrPartitionException}
@@ -46,7 +46,19 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
+import scala.jdk.OptionConverters.RichOptionalLong
 import scala.util.Try
+
+private[consolidation] final case class TimeLagSample(
+  startingOffsetTimestamp: Option[Long],
+  highWatermarkTimestamp: Option[Long],
+  backlogConsumed: Boolean = false
+)
+
+private[consolidation] final case class RecordsWithinSegmentBudget(
+  records: Records,
+  firstUnreturnedBatchTimestamp: Option[Long]
+)
 
 /**
  * Leader endpoint for consolidation fetching from Inkless (object storage) on this broker.
@@ -76,6 +88,8 @@ class DisklessLeaderEndPoint(
   // Carried into fetch() so a removeFetcher bump after the lock drops cannot be
   // adopted by this request's overlay.
   private val pendingRemotePrefixGenerations = new ConcurrentHashMap[TopicPartition, java.lang.Long]()
+  private case class PendingTimeLagSample(fetchOffset: Long, sample: TimeLagSample)
+  private val timeLagSamples = new ConcurrentHashMap[TopicPartition, PendingTimeLagSample]()
 
   override def isTruncationOnFetchSupported: Boolean = false
 
@@ -85,7 +99,13 @@ class DisklessLeaderEndPoint(
 
   override def brokerEndPoint(): BrokerEndPoint = brokerEndPoint
 
+  def takeTimeLagSample(topicPartition: TopicPartition, fetchOffset: Long): Option[TimeLagSample] = {
+    val sample = timeLagSamples.remove(topicPartition)
+    if (sample != null && sample.fetchOffset == fetchOffset) Some(sample.sample) else None
+  }
+
   override def fetch(fetchRequest: FetchRequest.Builder): util.Map[TopicPartition, FetchResponseData.PartitionData] = {
+    timeLagSamples.clear()
     val request = fetchRequest.build()
     val topicNames = new mutable.HashMap[Uuid, String]()
     request.data.topics.forEach { topic =>
@@ -119,18 +139,38 @@ class DisklessLeaderEndPoint(
       val lastStableOffset: Long = data.lastStableOffset.orElse(FetchResponse.INVALID_LAST_STABLE_OFFSET)
       // Enforce the segment-safe budget reserved in buildFetch, at physical-batch granularity.
       val partitionData = fetchInfos.get(tp)
-      val records =
+      val recordsWithinSegmentBudget =
         if (data.error == Errors.NONE && partitionData != null)
-          clampRecordsToSegment(data.records, partitionData.fetchOffset, partitionData.maxBytes)
+          selectRecordsWithinSegmentBudget(data.records, partitionData.fetchOffset, partitionData.maxBytes)
         else
-          data.records
+          RecordsWithinSegmentBudget(data.records, None)
+      if (data.error == Errors.NONE && partitionData != null) {
+        data match {
+          case inklessData: InklessFetchPartitionData =>
+            val startingOffsetTimestamp =
+              recordsWithinSegmentBudget.firstUnreturnedBatchTimestamp
+                .orElse(inklessData.startingOffsetTimestamp.toScala)
+            val highWatermarkTimestamp = inklessData.highWatermarkTimestamp.toScala
+            if (startingOffsetTimestamp.isDefined || highWatermarkTimestamp.isDefined) {
+              timeLagSamples.put(
+                tp.topicPartition,
+                PendingTimeLagSample(
+                  partitionData.fetchOffset,
+                  TimeLagSample(
+                    startingOffsetTimestamp,
+                    highWatermarkTimestamp,
+                    hasConsumedBacklog(recordsWithinSegmentBudget.records, data.highWatermark))))
+            }
+          case _ =>
+        }
+      }
       val fetchResponseData = new FetchResponseData.PartitionData()
         .setPartitionIndex(tp.topicPartition.partition)
         .setErrorCode(data.error.code)
         .setHighWatermark(data.highWatermark)
         .setLastStableOffset(lastStableOffset)
         .setAbortedTransactions(abortedTransactions)
-        .setRecords(records)
+        .setRecords(recordsWithinSegmentBudget.records)
       // set local LSO if possible instead of the diskless start offset that is data.logStartOffset
       replicaManager.getPartitionOrError(tp.topicPartition) match {
         case Left(error) =>
@@ -256,11 +296,16 @@ class DisklessLeaderEndPoint(
    * (parks + retries, self-heals once `segment.bytes` is raised);
    * letting such a batch land without operator action is the outstanding fix (KC-345).
    */
-  private def clampRecordsToSegment(records: Records, fetchOffset: Long, maxBytes: Int): Records = {
+  private def selectRecordsWithinSegmentBudget(
+    records: Records,
+    fetchOffset: Long,
+    maxBytes: Int
+  ): RecordsWithinSegmentBudget = {
     val selected = new util.ArrayList[MutableRecordBatch]()
     var accumulated = 0
     var skippedPrefix = false
     var stoppedEarly = false
+    var firstUnreturnedBatchTimestamp: Option[Long] = None
     val it = records.batches().iterator()
     while (it.hasNext && !stoppedEarly) {
       it.next() match {
@@ -273,20 +318,31 @@ class DisklessLeaderEndPoint(
             selected.add(batch)
             accumulated += batch.sizeInBytes()
           } else {
+            firstUnreturnedBatchTimestamp = Some(batch.maxTimestamp())
             stoppedEarly = true
           }
         case _ =>
           // Non-MutableRecordBatch is not expected for diskless; serve untrimmed rather than drop data.
-          return records
+          return RecordsWithinSegmentBudget(records, None)
       }
     }
     // Nothing trimmed: keep the original to preserve the ConcatenatedRecords zero-copy path.
-    if (!skippedPrefix && !stoppedEarly) return records
-    if (selected.isEmpty) return records
+    if (!skippedPrefix && !stoppedEarly) return RecordsWithinSegmentBudget(records, None)
+    if (selected.isEmpty) return RecordsWithinSegmentBudget(records, None)
     val buffer = ByteBuffer.allocate(accumulated)
     selected.forEach(batch => batch.writeTo(buffer))
     buffer.flip()
-    MemoryRecords.readableRecords(buffer)
+    RecordsWithinSegmentBudget(MemoryRecords.readableRecords(buffer), firstUnreturnedBatchTimestamp)
+  }
+
+  private def hasConsumedBacklog(records: Records, disklessLeo: Long): Boolean = {
+    if (disklessLeo <= 0) return false
+    val batches = records.batches().iterator()
+    var lastOffset: Option[Long] = None
+    while (batches.hasNext) {
+      lastOffset = Some(batches.next().lastOffset())
+    }
+    lastOffset.exists(_ >= disklessLeo - 1)
   }
 
   /**
@@ -511,9 +567,9 @@ class DisklessLeaderEndPoint(
             val localLog = replicaManager.localLogOrException(topicPartition)
             val logStartOffset = localLog.logStartOffset
             val logConfig = localLog.config
-            // Reserve headroom for the follower append; clampRecordsToSegment enforces it per batch in
-            // fetch() (find_batches limits at coordinate granularity and a coalesced coordinate can
-            // overshoot by more than one batch). See clampRecordsToSegment.
+            // Reserve headroom for the follower append. `selectRecordsWithinSegmentBudget` enforces it per batch in
+            // `fetch`. `find_batches` applies its byte limit per coordinate, and a coalesced coordinate can
+            // overshoot by more than one batch. See `selectRecordsWithinSegmentBudget`.
             val maxOvershootBytes = math.min(logConfig.maxMessageSize, logConfig.segmentSize - 1)
             val segmentSafeFetchSize = math.max(1, logConfig.segmentSize - maxOvershootBytes)
             val partitionFetchSize = math.min(fetchSize, segmentSafeFetchSize)

@@ -18,7 +18,7 @@
 
 package io.aiven.inkless.consolidation
 
-import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
+import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, InklessFetchPartitionData}
 import kafka.cluster.Partition
 import kafka.server.{KafkaConfig, QuotaFactory, ReplicaManager, ReplicaQuota, ReplicationQuotaManager}
 import kafka.utils.TestUtils
@@ -276,6 +276,68 @@ class DisklessLeaderEndPointTest {
     assertEquals(55L, pd.logStartOffset)
     assertEquals(aborted, pd.abortedTransactions)
     assertEquals(MemoryRecords.EMPTY, pd.records)
+  }
+
+  @Test
+  def testTimeLagSampleTakeIsDestructiveAndFetchRoundsClearStaleSamples(): Unit = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val replicaManager = replicaManagerMock()
+    val partition = mock(classOf[Partition])
+    val localLog = mock(classOf[UnifiedLog])
+    when(partition.localLogOrException).thenReturn(localLog)
+    when(localLog.logStartOffset).thenReturn(0L)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+
+    def successful(
+      startingOffsetTimestamp: OptionalLong,
+      highWatermarkTimestamp: OptionalLong,
+      records: MemoryRecords = MemoryRecords.EMPTY
+    ): FetchPartitionData =
+      new InklessFetchPartitionData(
+        Errors.NONE,
+        10L,
+        0L,
+        records,
+        Optional.empty(),
+        OptionalLong.empty(),
+        Optional.empty(),
+        OptionalInt.empty(),
+        false,
+        startingOffsetTimestamp,
+        highWatermarkTimestamp
+      )
+
+    when(fetchHandler.handle(any(), any())).thenReturn(
+      CompletableFuture.completedFuture(
+        Map(topicIdPartition -> successful(OptionalLong.of(100L), OptionalLong.of(111L))).asJava),
+      CompletableFuture.completedFuture(
+        Map(topicIdPartition -> successful(
+          OptionalLong.of(200L),
+          OptionalLong.of(222L),
+          MemoryRecords.withRecords(9L, Compression.NONE, new SimpleRecord("last".getBytes))
+        )).asJava),
+      CompletableFuture.completedFuture(
+        Map(topicIdPartition -> successful(OptionalLong.empty(), OptionalLong.empty())).asJava),
+      CompletableFuture.completedFuture(
+        Map.empty[TopicIdPartition, FetchPartitionData].asJava)
+    )
+
+    val endpoint = newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+    endpoint.fetch(fetchBuilderForOffset(7L))
+    assertEquals(None, endpoint.takeTimeLagSample(topicPartition, 8L))
+    assertEquals(None, endpoint.takeTimeLagSample(topicPartition, 7L))
+
+    endpoint.fetch(fetchBuilderForOffset(8L))
+    assertEquals(
+      Some(TimeLagSample(Some(200L), Some(222L), backlogConsumed = true)),
+      endpoint.takeTimeLagSample(topicPartition, 8L))
+
+    endpoint.fetch(fetchBuilderForOffset(9L))
+    assertEquals(None, endpoint.takeTimeLagSample(topicPartition, 9L))
+
+    endpoint.fetch(fetchBuilderForOffset(10L))
+    assertEquals(None, endpoint.takeTimeLagSample(topicPartition, 8L))
   }
 
   @Test

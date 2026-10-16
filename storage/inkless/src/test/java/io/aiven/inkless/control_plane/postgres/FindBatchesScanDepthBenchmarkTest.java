@@ -51,7 +51,7 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import static org.jooq.generated.Tables.BATCHES;
 
 /**
- * Measures how {@code find_batches_v2} query latency scales with the <em>scan depth</em> of a partition
+ * Measures how {@code find_batches_v3} query latency scales with the <em>scan depth</em> of a partition
  * (the offset distance from {@code log_start} to {@code high_watermark}) while the <em>result</em> -- a
  * fixed-byte fetch from {@code log_start} -- is held constant.
  *
@@ -109,7 +109,7 @@ class FindBatchesScanDepthBenchmarkTest {
         final TopicIdPartition partition = createSinglePartitionTopic();
 
         final StringBuilder out = new StringBuilder();
-        out.append(String.format("%n== READ PATH: find_batches_v2 latency vs scan depth (fixed %d-byte fetch from log_start) ==%n",
+        out.append(String.format("%n== READ PATH: find_batches_v3 latency vs scan depth (fixed %d-byte fetch from log_start) ==%n",
             FETCH_BUDGET_BYTES));
         out.append(String.format("Gap signature (V15): batches-returned flat, us/find grows ~linearly with depth (O(depth)).%n"));
         out.append(String.format("A bounded rewrite should keep us/find flat (O(result)).%n%n"));
@@ -146,7 +146,7 @@ class FindBatchesScanDepthBenchmarkTest {
         final int[] resultTargets = {1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 64_000, 128_000};
 
         final StringBuilder out = new StringBuilder();
-        out.append(String.format("%n== RESULT-SIZE SWEEP: find_batches_v2 latency vs batches returned (depth fixed at %d) ==%n", depth));
+        out.append(String.format("%n== RESULT-SIZE SWEEP: find_batches_v3 latency vs batches returned (depth fixed at %d) ==%n", depth));
         out.append(String.format("us/batch flat => O(k) build; rising with k => O(k^2) array append.%n%n"));
         out.append(String.format("%12s | %14s | %12s | %12s%n", "budget bytes", "batches ret'd", "us/find", "us/batch"));
         out.append("-".repeat(60)).append(String.format("%n"));

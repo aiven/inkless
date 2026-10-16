@@ -175,8 +175,21 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
             } else {
                 lastStableOffset = OptionalLong.of(metadata.highWatermark());
             }
-            return new FetchPartitionData(
-                metadata.errors(),
+            if (metadata.errors() != Errors.NONE) {
+                return new FetchPartitionData(
+                    metadata.errors(),
+                    metadata.highWatermark(),
+                    metadata.logStartOffset(),
+                    MemoryRecords.EMPTY,
+                    Optional.empty(),
+                    lastStableOffset,
+                    Optional.empty(),
+                    OptionalInt.empty(),
+                    false
+                );
+            }
+            return new InklessFetchPartitionData(
+                Errors.NONE,
                 metadata.highWatermark(),
                 metadata.logStartOffset(),
                 MemoryRecords.EMPTY,
@@ -184,7 +197,9 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
                 lastStableOffset,
                 Optional.empty(),
                 OptionalInt.empty(),
-                false
+                false,
+                metadata.startingOffsetTimestamp(),
+                metadata.highWatermarkTimestamp()
             );
         }
         final ExtractionResult extraction;
@@ -216,8 +231,15 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
         if (foundRecords.size() < metadata.batches().size()) {
             metrics.recordPartitionPartialFetch();
         }
+        final OptionalLong startingOffsetTimestamp;
+        if (foundRecords.size() < metadata.batches().size()
+            && (metadata.startingOffsetTimestamp().isPresent() || metadata.highWatermarkTimestamp().isPresent())) {
+            startingOffsetTimestamp = OptionalLong.of(metadata.batches().get(foundRecords.size()).metadata().timestamp());
+        } else {
+            startingOffsetTimestamp = metadata.startingOffsetTimestamp();
+        }
 
-        return new FetchPartitionData(
+        return new InklessFetchPartitionData(
             Errors.NONE,
             metadata.highWatermark(),
             metadata.logStartOffset(),
@@ -226,7 +248,9 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
             OptionalLong.of(metadata.highWatermark()),
             Optional.empty(),
             OptionalInt.empty(),
-            false
+            false,
+            startingOffsetTimestamp,
+            metadata.highWatermarkTimestamp()
         );
     }
 
