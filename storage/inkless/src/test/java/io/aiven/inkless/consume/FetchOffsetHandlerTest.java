@@ -20,6 +20,7 @@ package io.aiven.inkless.consume;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.errors.KafkaStorageException;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.errors.UnknownServerException;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
@@ -55,6 +56,7 @@ import io.aiven.inkless.cache.CrossTierLogStartCache;
 import io.aiven.inkless.cache.NullCrossTierLogStartCache;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MetadataView;
@@ -195,6 +197,30 @@ class FetchOffsetHandlerTest {
             assertThat(future.get().exception().get()).message().isEqualTo("error");
             assertThat(future.get().timestampAndOffset()).isEmpty();
         }
+    }
+
+    @Test
+    void unavailableControlPlaneFailsRetriably() throws ExecutionException, InterruptedException {
+        // AvailabilityGatedControlPlane fast-fails without opening a connection, so there is no
+        // pre-check here: the job always calls the control plane and this is the only place
+        // unavailability is discovered.
+        when(metadataView.getTopicId(TOPIC_0)).thenReturn(TOPIC_ID_0);
+        when(controlPlane.listOffsets(any())).thenThrow(
+            new ControlPlaneUnavailableException("No diskless control plane is configured"));
+
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, crossTierLogStartCache, executor, time, metrics);
+        final var future = job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(-1));
+
+        job.start();
+
+        verify(executor).submit(runnableCaptor.capture());
+        runnableCaptor.getValue().run();
+
+        verify(controlPlane).listOffsets(any());
+        assertThat(future.isDone()).isTrue();
+        assertThat(future.get().exception()).isNotEmpty();
+        assertThat(future.get().exception().get()).isInstanceOf(KafkaStorageException.class);
+        assertThat(future.get().timestampAndOffset()).isEmpty();
     }
 
     @Test

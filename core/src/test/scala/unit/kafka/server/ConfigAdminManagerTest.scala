@@ -40,10 +40,15 @@ import org.apache.kafka.common.message.IncrementalAlterConfigsResponseData.{Alte
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.protocol.Errors.{INVALID_REQUEST, NONE}
 import org.apache.kafka.common.requests.ApiError
+import org.apache.kafka.common.utils.LogCaptureAppender
 import org.apache.kafka.metadata.MockConfigRepository
+import org.apache.kafka.server.config.ServerConfigs
+import org.apache.logging.log4j.Level
 import org.junit.jupiter.api.Assertions.{assertEquals, assertFalse, assertTrue}
 import org.junit.jupiter.api.{Assertions, Test}
 import org.slf4j.LoggerFactory
+
+import scala.util.Using
 
 class ConfigAdminManagerTest {
   val logger = LoggerFactory.getLogger(classOf[ConfigAdminManagerTest])
@@ -308,6 +313,43 @@ class ConfigAdminManagerTest {
         setResources(new IAlterConfigsResourceCollection(util.Arrays.asList(
           brokerLogger1).iterator())),
         (_, _) => true))
+  }
+
+  @Test
+  def testPreprocessIncrementalWithSecretUrlDoesNotLogRawConfigProps(): Unit = {
+    val manager = newConfigAdminManager(0)
+    val secretConnectionString = "jdbc:postgresql://host/db?user=admin&password=s3cr3tpassword"
+    val brokerWithSecretAndInvalidConfig = new IAlterConfigsResource().
+      setResourceName("").
+      setResourceType(BROKER.id()).
+      setConfigs(new IAlterableConfigCollection(
+        util.Arrays.asList(
+          new IAlterableConfig().setName("inkless.control.plane.connection.string").
+            setValue(secretConnectionString).
+            setConfigOperation(OpType.SET.id()),
+          // An unrelated invalid broker property fails validation before the connection
+          // string is ever forwarded to the controller for its own credential check.
+          new IAlterableConfig().setName(ServerConfigs.NUM_IO_THREADS_CONFIG).
+            setValue("not-a-number").
+            setConfigOperation(OpType.SET.id())).iterator()))
+
+    Using.resource(LogCaptureAppender.createAndRegister()) { appender =>
+      appender.setClassLogger(classOf[ConfigAdminManager], Level.ERROR)
+
+      val output = manager.preprocess(new IncrementalAlterConfigsRequestData().
+        setResources(new IAlterConfigsResourceCollection(util.Arrays.asList(
+          brokerWithSecretAndInvalidConfig).iterator())),
+        (_, _) => true)
+      assertEquals(1, output.size())
+      assertEquals(INVALID_REQUEST, output.get(brokerWithSecretAndInvalidConfig).error())
+
+      val logged = appender.getMessages
+      assertFalse(logged.isEmpty, "expected the failed validation to be logged")
+      logged.forEach { message =>
+        assertFalse(message.contains(secretConnectionString), s"logged the raw connection string: $message")
+        assertFalse(message.contains("s3cr3tpassword"), s"logged the embedded password: $message")
+      }
+    }
   }
 
   @Test

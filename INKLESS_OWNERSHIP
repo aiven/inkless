@@ -29,6 +29,8 @@ core/src/main/scala/io/aiven/inkless/**                  @aiven/inkless  # Scala
 core/src/test/scala/io/aiven/inkless/**                  @aiven/inkless  # tests for the above
 core/src/main/scala/kafka/server/*Diskless*.scala        @aiven/inkless  # net-new diskless files in the upstream package (e.g. DisklessFetchOffsetRouter)
 core/src/main/scala/kafka/server/InitDisklessLog*.scala  @aiven/inkless  # net-new: InitDisklessLogManager / State / BatchQueue
+core/src/main/scala/kafka/server/Inkless*.scala          @aiven/inkless  # net-new inkless files in the upstream package (e.g. control-plane config validation)
+core/src/test/scala/unit/kafka/server/Inkless*.scala     @aiven/inkless  # tests for the above
 core/src/test/java/kafka/server/Inkless*.java            @aiven/inkless
 core/src/test/scala/kafka/server/metadata/Inkless*.scala @aiven/inkless
 docs/inkless/**                                          @aiven/inkless

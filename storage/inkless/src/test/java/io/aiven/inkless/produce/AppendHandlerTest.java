@@ -32,14 +32,18 @@ import org.apache.kafka.storage.internals.log.LogConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
+
+import io.aiven.inkless.control_plane.ControlPlaneAvailability;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -47,12 +51,22 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class AppendHandlerTest {
     static final Function<String, LogConfig> GET_LOG_CONFIG = (topicName) -> new LogConfig(Map.of());
+    private static final ControlPlaneAvailability AVAILABLE = availableAvailability();
+
+    private static ControlPlaneAvailability availableAvailability() {
+        final ControlPlaneAvailability availability = new ControlPlaneAvailability();
+        availability.markAvailable();
+        return availability;
+    }
+    private static final TopicIdPartition T0P0 =
+        new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("topic0", 0));
 
     RequestLocal requestLocal = RequestLocal.noCaching();
     @Mock
@@ -80,7 +94,7 @@ public class AppendHandlerTest {
 
     @Test
     public void rejectTransactionalProduce() throws Exception {
-        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG)) {
+        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG, AVAILABLE)) {
 
             final TopicIdPartition topicIdPartition1 = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless1");
             final TopicIdPartition topicIdPartition2 = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless2");
@@ -102,7 +116,7 @@ public class AppendHandlerTest {
 
     @Test
     public void emptyRequests() throws Exception {
-        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG)) {
+        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG, AVAILABLE)) {
 
             final Map<TopicIdPartition, MemoryRecords> entriesPerPartition = Map.of();
 
@@ -127,7 +141,7 @@ public class AppendHandlerTest {
             CompletableFuture.completedFuture(writeResult)
         );
 
-        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG)) {
+        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG, AVAILABLE)) {
             final var result = interceptor.handle(entriesPerPartition, requestLocal).get();
             assertThat(result).isEqualTo(writeResult);
         }
@@ -146,17 +160,49 @@ public class AppendHandlerTest {
             CompletableFuture.failedFuture(exception)
         );
 
-        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG)) {
+        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG, AVAILABLE)) {
             assertThatThrownBy(() -> interceptor.handle(entriesPerPartition, requestLocal).get()).hasCause(exception);
         }
     }
 
     @Test
     public void close() throws IOException {
-        final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG);
+        final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG, AVAILABLE);
 
         interceptor.close();
 
         verify(writer).close();
+    }
+
+    @Test
+    void unavailableAppendFailsWithoutWriting() throws Exception {
+        final Writer writer = Mockito.mock(Writer.class);
+        final ControlPlaneAvailability unavailable = new ControlPlaneAvailability();
+        unavailable.markUnavailable(ControlPlaneAvailability.UnavailableReason.NOT_CONFIGURED);
+        try (final AppendHandler appendHandler = new AppendHandler(
+            writer, topic -> new LogConfig(Map.of()), unavailable)) {
+
+            final Map<TopicIdPartition, MemoryRecords> entries = Map.of(T0P0, MemoryRecords.EMPTY);
+            final Map<TopicIdPartition, PartitionResponse> result =
+                appendHandler.handle(entries, RequestLocal.noCaching()).get();
+
+            assertThat(result.keySet()).isEqualTo(Set.of(T0P0));
+            assertThat(result.get(T0P0).error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+            verifyNoInteractions(writer);
+        }
+    }
+
+    @Test
+    void availableAppendDelegatesToWriter() throws IOException {
+        final Writer writer = Mockito.mock(Writer.class);
+        Mockito.when(writer.write(Mockito.any(), Mockito.any(), Mockito.any()))
+            .thenReturn(CompletableFuture.completedFuture(Map.of()));
+        try (final AppendHandler appendHandler = new AppendHandler(
+            writer, topic -> new LogConfig(Map.of()), AVAILABLE)) {
+
+            appendHandler.handle(Map.of(T0P0, MemoryRecords.EMPTY), RequestLocal.noCaching());
+
+            Mockito.verify(writer).write(Mockito.any(), Mockito.any(), Mockito.any());
+        }
     }
 }

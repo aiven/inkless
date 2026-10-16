@@ -20,6 +20,7 @@ package io.aiven.inkless.consume;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.ApiException;
+import org.apache.kafka.common.errors.KafkaStorageException;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.record.internal.FileRecords;
@@ -58,6 +59,7 @@ import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.common.TopicIdEnricher;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneUnavailableException;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MetadataView;
@@ -242,8 +244,15 @@ public class FetchOffsetHandler implements Closeable {
             final List<ListOffsetsResponse> controlPlaneResponses;
             try {
                 controlPlaneResponses = controlPlane.listOffsets(controlPlaneRequests);
+            } catch (final ControlPlaneUnavailableException unavailableException) {
+                // KAFKA_STORAGE_ERROR is retriable, unlike the UNKNOWN_SERVER_ERROR the raw
+                // exception would map to below.
+                LOGGER.debug("Rejecting diskless list offsets: {}", unavailableException.getMessage());
+                completeFuturesWithError(new KafkaStorageException(unavailableException.getMessage()));
+                metrics.fetchOffsetFailed();
+                return;
             } catch (final Exception exception) {
-                // Handle global errors (e.g. control plane not available).
+                // Handle other global errors.
                 completeFuturesWithError(exception);
                 metrics.fetchOffsetFailed();
                 return;
