@@ -232,6 +232,10 @@ public class KRaftMetadataCache implements MetadataCache {
                 responsePartition.unknownTaggedFields().add(
                     InitDisklessLogFields.encodeDisklessLeaderEpoch(partition.disklessLeaderEpoch));
             }
+            if (partition.classicPrefixInRemoteStorage) {
+                responsePartition.unknownTaggedFields().add(
+                    InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+            }
             result.add(responsePartition);
         }
         return Map.entry(Optional.of(result), (upperIndex < partitions.size()) ? upperIndex : -1);

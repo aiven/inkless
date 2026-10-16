@@ -51,6 +51,8 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageRequestData;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
@@ -435,6 +437,21 @@ public interface Controller extends AclMutator, AutoCloseable {
     CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
         ControllerRequestContext context,
         InitDisklessLogRequestData request
+    );
+
+    /**
+     * Commits the flag that the classic prefix below the committed seal is in remote storage,
+     * which starts phase 2 of the classic-to-diskless switch.
+     * A partition that already has the flag with the same seal succeeds without a change.
+     *
+     * @param context       The controller request context.
+     * @param request       The SetClassicPrefixInRemoteStorage request data.
+     *
+     * @return              A future yielding the response with per-partition error codes.
+     */
+    CompletableFuture<SetClassicPrefixInRemoteStorageResponseData> setClassicPrefixInRemoteStorage(
+        ControllerRequestContext context,
+        SetClassicPrefixInRemoteStorageRequestData request
     );
 
     /**

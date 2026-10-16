@@ -47,12 +47,15 @@ import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.RequestHeaderData;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageRequestData;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageResponseData;
 import org.apache.kafka.common.metadata.AbortTransactionRecord;
 import org.apache.kafka.common.metadata.BeginTransactionRecord;
 import org.apache.kafka.common.metadata.BrokerRegistrationChangeRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.metadata.EndTransactionRecord;
 import org.apache.kafka.common.metadata.FeatureLevelRecord;
+import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.ProducerIdsRecord;
 import org.apache.kafka.common.metadata.RegisterBrokerRecord;
@@ -93,6 +96,7 @@ import org.apache.kafka.metadata.BrokerHeartbeatReply;
 import org.apache.kafka.metadata.BrokerRegistrationFencingChange;
 import org.apache.kafka.metadata.BrokerRegistrationReply;
 import org.apache.kafka.metadata.FinalizedControllerFeatures;
+import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.metadata.RecordTestUtils;
 import org.apache.kafka.metadata.RecordTestUtils.ImageDeltaPair;
@@ -1429,6 +1433,60 @@ public class QuorumControllerTest {
             // Unregistered node should throw exception
             assertThrows(BrokerIdNotRegisteredException.class,
                 () -> checker.accept(new ConfigResource(BROKER, "999")));
+        }
+    }
+
+    @Test
+    public void testSetClassicPrefixInRemoteStorageCommitsFlag() throws Throwable {
+        try (
+            MockRaftClientTestEnv clientEnv = new MockRaftClientTestEnv.Builder(1).build();
+            QuorumControllerTestEnv controlEnv = new QuorumControllerTestEnv.Builder(clientEnv).build()
+        ) {
+            QuorumController active = controlEnv.activeController();
+            Map<Integer, Long> brokerEpochs = registerBrokersAndUnfence(active, 3);
+            CreateTopicsResponseData createTopicsResponse = active.createTopics(ANONYMOUS_CONTEXT,
+                new CreateTopicsRequestData().setTopics(new CreatableTopicCollection(List.of(
+                    new CreatableTopic().setName("foo").setNumPartitions(1).setReplicationFactor((short) 3)
+                ).iterator())), Set.of("foo")).get();
+            Uuid topicId = createTopicsResponse.topics().find("foo").topicId();
+
+            long seal = 100L;
+            PartitionRegistration beforeSeal = active.replicationControl().getPartition(topicId, 0);
+            PartitionChangeRecord sealRecord = new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0);
+            sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(seal));
+            sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessLeaderEpoch(beforeSeal.leaderEpoch));
+            active.appendWriteEvent("commitSeal", OptionalLong.empty(),
+                () -> ControllerResult.of(List.of(new ApiMessageAndVersion(sealRecord, (short) 0)), null)).get();
+
+            PartitionRegistration sealed = active.replicationControl().getPartition(topicId, 0);
+            assertEquals(seal, sealed.classicToDisklessStartOffset);
+            SetClassicPrefixInRemoteStorageRequestData request = new SetClassicPrefixInRemoteStorageRequestData()
+                .setBrokerId(sealed.leader)
+                .setBrokerEpoch(brokerEpochs.get(sealed.leader));
+            request.topics().add(new SetClassicPrefixInRemoteStorageRequestData.TopicData()
+                .setTopicId(topicId)
+                .setPartitions(List.of(new SetClassicPrefixInRemoteStorageRequestData.PartitionData()
+                    .setPartitionId(0)
+                    .setClassicToDisklessStartOffset(seal)
+                    .setLeaderEpoch(sealed.leaderEpoch))));
+
+            SetClassicPrefixInRemoteStorageResponseData response =
+                active.setClassicPrefixInRemoteStorage(ANONYMOUS_CONTEXT, request).get();
+
+            assertEquals(Errors.NONE.code(), response.topics().get(0).partitions().get(0).errorCode());
+            PartitionRegistration committed = active.replicationControl().getPartition(topicId, 0);
+            assertTrue(committed.classicPrefixInRemoteStorage);
+            assertEquals(seal, committed.classicToDisklessStartOffset);
+            assertEquals(sealed.leader, committed.leader);
+            assertEquals(sealed.leaderEpoch + 1, committed.leaderEpoch);
+            assertEquals(committed.leaderEpoch, committed.disklessLeaderEpoch);
+
+            // A retry with the leader epoch from before the commit succeeds and changes nothing.
+            SetClassicPrefixInRemoteStorageResponseData retry =
+                active.setClassicPrefixInRemoteStorage(ANONYMOUS_CONTEXT, request).get();
+
+            assertEquals(Errors.NONE.code(), retry.topics().get(0).partitions().get(0).errorCode());
+            assertEquals(committed, active.replicationControl().getPartition(topicId, 0));
         }
     }
 

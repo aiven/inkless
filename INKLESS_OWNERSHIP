@@ -64,3 +64,5 @@ core/src/main/scala/kafka/server/DynamicBrokerConfig.scala @aiven/inkless @apach
 core/src/main/scala/kafka/server/ConfigHandler.scala       @aiven/inkless @apache/kafka  # topic-config propagation
 core/src/main/scala/kafka/server/ControllerServer.scala    @aiven/inkless @apache/kafka  # controller-side diskless wiring
 core/src/main/scala/kafka/server/AbstractFetcherThread.scala @aiven/inkless @apache/kafka  # consolidation fetcher skips ConsumerLag JMX registration
+metadata/src/main/java/org/apache/kafka/controller/ReplicationControlManager.java @aiven/inkless @apache/kafka  # diskless placement, election, and classic-to-diskless switch commits
+metadata/src/main/java/org/apache/kafka/controller/PartitionChangeBuilder.java @aiven/inkless @apache/kafka  # classic-to-diskless switch flag commit

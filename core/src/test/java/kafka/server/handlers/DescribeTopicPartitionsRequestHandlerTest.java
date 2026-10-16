@@ -84,6 +84,7 @@ import java.util.Properties;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -513,6 +514,8 @@ class DescribeTopicPartitionsRequestHandlerTest {
         switchedPartition.unknownTaggedFields().add(
             InitDisklessLogFields.encodeDisklessLeaderEpoch(7));
         switchedPartition.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+        switchedPartition.unknownTaggedFields().add(
             InitDisklessLogFields.encodeProducerStates(List.of(
                 new ProducerStateEntry(1001L, (short) 2, 0, 5, 40L, 1700000000000L)
             )));
@@ -571,6 +574,7 @@ class DescribeTopicPartitionsRequestHandlerTest {
         assertEquals(0, p0.partitionIndex());
         assertEquals(42L, InitDisklessLogFields.decodeClassicToDisklessStartOffset(p0.unknownTaggedFields()));
         assertEquals(7, InitDisklessLogFields.decodeDisklessLeaderEpoch(p0.unknownTaggedFields()));
+        assertTrue(InitDisklessLogFields.decodeClassicPrefixInRemoteStorage(p0.unknownTaggedFields()));
         List<ProducerStateEntry> producerStates = InitDisklessLogFields.decodeProducerStates(p0.unknownTaggedFields());
         assertEquals(1, producerStates.size());
         assertEquals(1001L, producerStates.get(0).producerId());
@@ -586,6 +590,7 @@ class DescribeTopicPartitionsRequestHandlerTest {
         assertEquals(-1L, InitDisklessLogFields.decodeClassicToDisklessStartOffset(p1.unknownTaggedFields()));
         assertEquals(-1, InitDisklessLogFields.decodeDisklessLeaderEpoch(p1.unknownTaggedFields()));
         assertEquals(List.of(), InitDisklessLogFields.decodeProducerStates(p1.unknownTaggedFields()));
+        assertTrue(InitDisklessLogFields.decodeClassicPrefixInRemoteStorageIfPresent(p1.unknownTaggedFields()).isEmpty());
     }
 
     void updateKraftMetadataCache(KRaftMetadataCache kRaftMetadataCache, List<ApiMessage> records) {

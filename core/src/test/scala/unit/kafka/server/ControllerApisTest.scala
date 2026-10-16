@@ -1638,6 +1638,51 @@ class ControllerApisTest {
     assertTrue(exception.getMessage.contains("needs ALTER permission"))
   }
 
+  @Test
+  def testUnauthorizedHandleSetClassicPrefixInRemoteStorageRequest(): Unit = {
+    assertThrows(classOf[ClusterAuthorizationException], () => {
+      controllerApis = createControllerApis(Some(createDenyAllAuthorizer()), new MockController.Builder().build())
+      controllerApis.handleSetClassicPrefixInRemoteStorageRequest(buildRequest(
+        new SetClassicPrefixInRemoteStorageRequest.Builder(new SetClassicPrefixInRemoteStorageRequestData()).build()))
+    })
+  }
+
+  @Test
+  def testSetClassicPrefixInRemoteStorageReturnsNotController(): Unit = {
+    val controller = mock(classOf[Controller])
+    controllerApis = createControllerApis(None, controller)
+    val fooId = Uuid.fromString("qo0Pcp70TdGnAa7YKMKCqw")
+    val barId = Uuid.fromString("JgxuGe9URy-E-ceaL04lEw")
+    val requestData = new SetClassicPrefixInRemoteStorageRequestData()
+      .setBrokerId(1)
+      .setBrokerEpoch(123L)
+    Seq(fooId -> Seq(0, 1), barId -> Seq(0)).foreach { case (topicId, partitionIds) =>
+      val topicData = new SetClassicPrefixInRemoteStorageRequestData.TopicData().setTopicId(topicId)
+      partitionIds.foreach { partitionId =>
+        topicData.partitions().add(new SetClassicPrefixInRemoteStorageRequestData.PartitionData()
+          .setPartitionId(partitionId)
+          .setClassicToDisklessStartOffset(100L)
+          .setLeaderEpoch(5))
+      }
+      requestData.topics().add(topicData)
+    }
+    val request = new SetClassicPrefixInRemoteStorageRequest.Builder(requestData).build()
+    when(controller.setClassicPrefixInRemoteStorage(
+      any[ControllerRequestContext],
+      ArgumentMatchers.eq(request.data)
+    )).thenReturn(CompletableFuture.failedFuture(new NotControllerException("Controller has moved")))
+
+    val response = handleRequest[SetClassicPrefixInRemoteStorageResponse](request, controllerApis)
+
+    val errors = response.data.topics.asScala.map { topic =>
+      topic.topicId -> topic.partitions.asScala.map(p => p.partitionId -> Errors.forCode(p.errorCode)).toMap
+    }.toMap
+    assertEquals(Map(
+      fooId -> Map(0 -> Errors.NOT_CONTROLLER, 1 -> Errors.NOT_CONTROLLER),
+      barId -> Map(0 -> Errors.NOT_CONTROLLER)
+    ), errors)
+  }
+
   @AfterEach
   def tearDown(): Unit = {
     quotasNeverThrottleControllerMutations.shutdown()

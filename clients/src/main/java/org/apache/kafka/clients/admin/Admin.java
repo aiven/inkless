@@ -346,7 +346,8 @@ public interface Admin extends AutoCloseable {
     /**
      * Describe topic partitions in the cluster, returning raw response data including unknown tagged fields.
      * This is useful for accessing Inkless-specific metadata (classicToDisklessStartOffset, disklessLeaderEpoch,
-     * producerStates) that are encoded as tagged fields on the DescribeTopicPartitions response.
+     * producerStates, classicPrefixInRemoteStorage) that are encoded as tagged fields on the DescribeTopicPartitions
+     * response.
      *
      * @param topics  The topics to describe.
      * @param options The options to use when describing the topics.

@@ -72,6 +72,8 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData.Lis
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.OngoingPartitionReassignment;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.OngoingTopicReassignment;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageRequestData;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageResponseData;
 import org.apache.kafka.common.metadata.BrokerRegistrationChangeRecord;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
@@ -149,6 +151,7 @@ import static org.apache.kafka.common.protocol.Errors.NONE;
 import static org.apache.kafka.common.protocol.Errors.NOT_CONTROLLER;
 import static org.apache.kafka.common.protocol.Errors.NO_REASSIGNMENT_IN_PROGRESS;
 import static org.apache.kafka.common.protocol.Errors.TOPIC_AUTHORIZATION_FAILED;
+import static org.apache.kafka.common.protocol.Errors.UNKNOWN_SERVER_ERROR;
 import static org.apache.kafka.common.protocol.Errors.UNKNOWN_TOPIC_ID;
 import static org.apache.kafka.common.protocol.Errors.UNKNOWN_TOPIC_OR_PARTITION;
 import static org.apache.kafka.controller.PartitionReassignmentReplicas.isReassignmentInProgress;
@@ -1238,7 +1241,7 @@ public class ReplicationControlManager {
             } catch (Throwable e) {
                 // return the corresponding API error, but emit the stack trace first if it is an unknown server error
                 ApiError apiError = ApiError.fromThrowable(e);
-                if (apiError.error() == Errors.UNKNOWN_SERVER_ERROR) {
+                if (apiError.error() == UNKNOWN_SERVER_ERROR) {
                     log.error("Unknown server error validating Create Topic", e);
                 }
                 return apiError;
@@ -1706,6 +1709,155 @@ public class ReplicationControlManager {
         }
 
         return ControllerResult.of(records, new InitDisklessLogResponseData().setTopics(topicResponses));
+    }
+
+    ControllerResult<SetClassicPrefixInRemoteStorageResponseData> setClassicPrefixInRemoteStorage(
+        ControllerRequestContext context,
+        SetClassicPrefixInRemoteStorageRequestData request
+    ) {
+        clusterControl.checkBrokerEpoch(request.brokerId(), request.brokerEpoch());
+        List<ApiMessageAndVersion> records = new ArrayList<>();
+        List<SetClassicPrefixInRemoteStorageResponseData.TopicResponse> topicResponses = new ArrayList<>();
+
+        for (SetClassicPrefixInRemoteStorageRequestData.TopicData topicData : request.topics()) {
+            Uuid topicId = topicData.topicId();
+            List<SetClassicPrefixInRemoteStorageResponseData.PartitionResponse> partitionResponses = new ArrayList<>();
+
+            if (!topics.containsKey(topicId)) {
+                for (SetClassicPrefixInRemoteStorageRequestData.PartitionData partitionData : topicData.partitions()) {
+                    partitionResponses.add(new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+                        .setPartitionId(partitionData.partitionId())
+                        .setErrorCode(UNKNOWN_TOPIC_ID.code()));
+                }
+                log.info("Rejecting SetClassicPrefixInRemoteStorage request for unknown topic ID {}.", topicId);
+                topicResponses.add(new SetClassicPrefixInRemoteStorageResponseData.TopicResponse()
+                    .setTopicId(topicId)
+                    .setPartitions(partitionResponses));
+                continue;
+            }
+
+            TopicControlInfo topic = topics.get(topicId);
+
+            for (SetClassicPrefixInRemoteStorageRequestData.PartitionData partitionData : topicData.partitions()) {
+                int partitionId = partitionData.partitionId();
+                PartitionRegistration partition = topic.parts.get(partitionId);
+
+                if (partition == null) {
+                    log.info("Rejecting SetClassicPrefixInRemoteStorage request for unknown partition {}-{}.",
+                        topic.name, partitionId);
+                    partitionResponses.add(new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(UNKNOWN_TOPIC_OR_PARTITION.code()));
+                    continue;
+                }
+
+                if (partition.classicPrefixInRemoteStorage) {
+                    // The commit increased the leader epoch, so a retry after a lost response carries the old one.
+                    if (partitionData.classicToDisklessStartOffset() != partition.classicToDisklessStartOffset) {
+                        log.info("Rejecting SetClassicPrefixInRemoteStorage request from node {} for {}-{} because " +
+                                "the flag is set with seal {}, not {}.",
+                            request.brokerId(), topic.name, partitionId,
+                            partition.classicToDisklessStartOffset, partitionData.classicToDisklessStartOffset());
+                        partitionResponses.add(new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+                            .setPartitionId(partitionId)
+                            .setErrorCode(INVALID_REQUEST.code()));
+                    } else {
+                        log.debug("Replying with no record for SetClassicPrefixInRemoteStorage request from node {} " +
+                                "for {}-{} because the flag is set with seal {}",
+                            request.brokerId(), topic.name, partitionId, partition.classicToDisklessStartOffset);
+                        partitionResponses.add(new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+                            .setPartitionId(partitionId)
+                            .setErrorCode(NONE.code()));
+                    }
+                    continue;
+                }
+
+                // If the partition leader has a higher leader/partition epoch, then it is likely
+                // that this node is no longer the active controller. We return NOT_CONTROLLER in
+                // this case to give the leader an opportunity to find the new controller.
+                if (partitionData.leaderEpoch() > partition.leaderEpoch) {
+                    log.debug("Rejecting SetClassicPrefixInRemoteStorage request from node {} for {}-{} because " +
+                            "the current leader epoch is {}, which is less than the provided value {}.",
+                        request.brokerId(), topic.name, partitionId,
+                        partition.leaderEpoch, partitionData.leaderEpoch());
+                    partitionResponses.add(new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(NOT_CONTROLLER.code()));
+                    continue;
+                }
+
+                if (partitionData.leaderEpoch() < partition.leaderEpoch) {
+                    log.debug("Rejecting SetClassicPrefixInRemoteStorage request from node {} for {}-{} because " +
+                            "the current leader epoch is {}, not {}.",
+                        request.brokerId(), topic.name, partitionId,
+                        partition.leaderEpoch, partitionData.leaderEpoch());
+                    partitionResponses.add(new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(FENCED_LEADER_EPOCH.code()));
+                    continue;
+                }
+
+                if (request.brokerId() != partition.leader) {
+                    log.info("Rejecting SetClassicPrefixInRemoteStorage request from node {} for {}-{} because " +
+                            "the current leader is {}.",
+                        request.brokerId(), topic.name, partitionId, partition.leader);
+                    partitionResponses.add(new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(INVALID_REQUEST.code()));
+                    continue;
+                }
+
+                long seal = partition.classicToDisklessStartOffset;
+                if (seal < 0 || seal != partitionData.classicToDisklessStartOffset()) {
+                    log.info("Rejecting SetClassicPrefixInRemoteStorage request from node {} for {}-{} because " +
+                            "the committed seal is {}, not {}.",
+                        request.brokerId(), topic.name, partitionId, seal, partitionData.classicToDisklessStartOffset());
+                    partitionResponses.add(new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(INVALID_REQUEST.code()));
+                    continue;
+                }
+
+                List<Integer> targetIsr = Arrays.stream(partition.replicas)
+                    .filter(clusterControl::isActive)
+                    .boxed()
+                    .toList();
+                Optional<ApiMessageAndVersion> partitionChange = new PartitionChangeBuilder(
+                    partition,
+                    topicId,
+                    partitionId,
+                    leaderAcceptorFor(topic.name, partition),
+                    featureControl.metadataVersionOrThrow(),
+                    getTopicEffectiveMinIsr(topic.name),
+                    featureControl.isElrFeatureEnabled()
+                )
+                    .setTargetIsr(targetIsr)
+                    .setClassicPrefixInRemoteStorage()
+                    .setDefaultDirProvider(clusterDescriber)
+                    .build();
+                if (partitionChange.isEmpty()) {
+                    // The flag sets the leader field, so build() always returns a record.
+                    log.error("SetClassicPrefixInRemoteStorage built no record for {}-{}: {}",
+                        topic.name, partitionId, partition);
+                    partitionResponses.add(new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(UNKNOWN_SERVER_ERROR.code()));
+                    continue;
+                }
+
+                records.add(partitionChange.get());
+
+                partitionResponses.add(new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+                    .setPartitionId(partitionId)
+                    .setErrorCode(NONE.code()));
+            }
+
+            topicResponses.add(new SetClassicPrefixInRemoteStorageResponseData.TopicResponse()
+                .setTopicId(topicId)
+                .setPartitions(partitionResponses));
+        }
+
+        return ControllerResult.of(records, new SetClassicPrefixInRemoteStorageResponseData().setTopics(topicResponses));
     }
 
     /**

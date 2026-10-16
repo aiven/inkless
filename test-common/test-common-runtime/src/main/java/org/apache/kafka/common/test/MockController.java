@@ -57,6 +57,8 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageRequestData;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData;
 import org.apache.kafka.common.protocol.Errors;
@@ -530,6 +532,14 @@ public class MockController implements Controller {
     public CompletableFuture<InitDisklessLogResponseData> initDisklessLog(
         ControllerRequestContext context,
         InitDisklessLogRequestData request
+    ) {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
+    @Override
+    public CompletableFuture<SetClassicPrefixInRemoteStorageResponseData> setClassicPrefixInRemoteStorage(
+        ControllerRequestContext context,
+        SetClassicPrefixInRemoteStorageRequestData request
     ) {
         throw new UnsupportedOperationException("not implemented");
     }

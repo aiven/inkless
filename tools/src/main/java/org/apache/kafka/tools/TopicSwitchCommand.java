@@ -210,6 +210,8 @@ public abstract class TopicSwitchCommand {
                 partition.unknownTaggedFields());
             List<ProducerStateEntry> producerStates = InitDisklessLogFields.decodeProducerStates(
                 partition.unknownTaggedFields());
+            boolean classicPrefixInRemoteStorage = InitDisklessLogFields.decodeClassicPrefixInRemoteStorage(
+                partition.unknownTaggedFields());
 
             ListOffsetsResult.ListOffsetsResultInfo latestInfo = latest.get(tp);
             ListOffsetsResult.ListOffsetsResultInfo earliestInfo = earliest.get(tp);
@@ -221,6 +223,8 @@ public abstract class TopicSwitchCommand {
                 formatStartOffset(classicToDisklessStartOffset));
             stream.printf("  disklessLeaderEpoch=%s%n",
                 formatDisklessLeaderEpoch(disklessLeaderEpoch));
+            stream.printf("  classicPrefixInRemoteStorage=%s%n",
+                formatClassicPrefixInRemoteStorage(classicPrefixInRemoteStorage, classicToDisklessStartOffset));
             stream.printf("  logStartOffset=%d logEndOffset=%d%n",
                 earliestInfo != null ? earliestInfo.offset() : -1,
                 latestInfo != null ? latestInfo.offset() : -1);
@@ -376,5 +380,12 @@ public abstract class TopicSwitchCommand {
         } else {
             return String.valueOf(epoch);
         }
+    }
+
+    private static String formatClassicPrefixInRemoteStorage(boolean flag, long classicToDisklessStartOffset) {
+        if (classicToDisklessStartOffset < 0) {
+            return String.valueOf(flag);
+        }
+        return flag ? "true (phase 2)" : "false (phase 1)";
     }
 }

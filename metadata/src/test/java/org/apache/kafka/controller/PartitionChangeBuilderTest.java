@@ -20,9 +20,11 @@ package org.apache.kafka.controller;
 import org.apache.kafka.common.DirectoryId;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
+import org.apache.kafka.common.protocol.MessageUtil;
 import org.apache.kafka.common.protocol.types.TaggedFields;
 import org.apache.kafka.common.requests.AlterPartitionRequest;
 import org.apache.kafka.controller.PartitionChangeBuilder.ElectionResult;
+import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.LeaderRecoveryState;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.metadata.Replicas;
@@ -471,6 +473,110 @@ public class PartitionChangeBuilderTest {
         assertEquals(Optional.of(new ApiMessageAndVersion(expectedRecord, version)),
             createBarBuilder(version).setTargetIsrWithBrokerStates(AlterPartitionRequest.
                 newIsrToSimpleNewIsrWithBrokerEpochs(List.of(1, 2, 3, 4))).build());
+    }
+
+    private static PartitionChangeRecord buildClassicPrefixFlagRecord(PartitionChangeBuilder builder) {
+        Optional<ApiMessageAndVersion> built = builder.setClassicPrefixInRemoteStorage().build();
+        assertTrue(built.isPresent());
+        PartitionChangeRecord record = (PartitionChangeRecord) built.get().message();
+        short version = built.get().version();
+        PartitionChangeRecord decoded = new PartitionChangeRecord(MessageUtil.toByteBufferAccessor(record, version), version);
+        assertEquals(record, decoded);
+        return decoded;
+    }
+
+    private static long countTag(PartitionChangeRecord record, int tag) {
+        return record.unknownTaggedFields().stream().filter(field -> field.tag() == tag).count();
+    }
+
+    /**
+     * Checks that the record sets the flag and records its own leader epoch as the diskless leader epoch.
+     */
+    private static PartitionRegistration assertClassicPrefixFlagCommit(
+        PartitionRegistration partition,
+        PartitionChangeRecord record
+    ) {
+        assertEquals(1, countTag(record, InitDisklessLogFields.CLASSIC_PREFIX_IN_REMOTE_STORAGE_TAG));
+        assertEquals(1, countTag(record, InitDisklessLogFields.DISKLESS_LEADER_EPOCH_TAG));
+        assertTrue(InitDisklessLogFields.decodeClassicPrefixInRemoteStorage(record.unknownTaggedFields()));
+
+        PartitionRegistration merged = partition.merge(record);
+        assertTrue(merged.classicPrefixInRemoteStorage);
+        assertEquals(partition.leaderEpoch + 1, merged.leaderEpoch);
+        assertEquals(merged.leaderEpoch, merged.disklessLeaderEpoch);
+        return merged;
+    }
+
+    @ParameterizedTest
+    @MethodSource("partitionChangeRecordVersions")
+    public void testClassicPrefixFlagForcesLeaderEpochBump(short version) {
+        PartitionChangeRecord record = buildClassicPrefixFlagRecord(createFooBuilder(version));
+
+        assertEquals(FOO.leader, record.leader());
+        assertNull(record.isr());
+        assertNull(record.replicas());
+        PartitionRegistration merged = assertClassicPrefixFlagCommit(FOO, record);
+        assertEquals(FOO.leader, merged.leader);
+    }
+
+    @ParameterizedTest
+    @MethodSource("partitionChangeRecordVersions")
+    public void testClassicPrefixFlagKeepsElectedLeader(short version) {
+        PartitionChangeRecord record = buildClassicPrefixFlagRecord(
+            createFooBuilder(version).setTargetIsr(List.of(2, 3)));
+
+        assertEquals(2, record.leader());
+        assertEquals(List.of(2, 3), record.isr());
+        PartitionRegistration merged = assertClassicPrefixFlagCommit(FOO, record);
+        assertEquals(2, merged.leader);
+    }
+
+    // Version 0 records carry no directories, so merge cannot shrink the replica list.
+    @ParameterizedTest
+    @ValueSource(shorts = {1, 2})
+    public void testClassicPrefixFlagCompletesReassignmentThatRemovesLeader(short version) {
+        PartitionChangeRecord record = buildClassicPrefixFlagRecord(
+            createBarBuilder(version).setTargetIsr(List.of(1, 2, 3, 4)));
+
+        assertEquals(2, record.leader());
+        assertEquals(List.of(2, 3, 4), record.replicas());
+        assertEquals(List.of(2, 3, 4), record.isr());
+        assertEquals(List.of(), record.removingReplicas());
+        assertEquals(List.of(), record.addingReplicas());
+        PartitionRegistration merged = assertClassicPrefixFlagCommit(BAR, record);
+        assertEquals(2, merged.leader);
+    }
+
+    @ParameterizedTest
+    @MethodSource("partitionChangeRecordVersions")
+    public void testClassicPrefixFlagReplacesDisklessLeaderEpochAndKeepsSeal(short version) {
+        PartitionRegistration sealed = new PartitionRegistration.Builder().
+            setReplicas(FOO.replicas).
+            setDirectories(FOO.directories).
+            setIsr(FOO.isr).
+            setLeader(FOO.leader).
+            setLeaderRecoveryState(FOO.leaderRecoveryState).
+            setLeaderEpoch(FOO.leaderEpoch).
+            setPartitionEpoch(FOO.partitionEpoch).
+            setClassicToDisklessStartOffset(1000L).
+            setDisklessLeaderEpoch(90).
+            build();
+        PartitionChangeBuilder builder = new PartitionChangeBuilder(sealed,
+                FOO_ID,
+                0,
+                r -> r != 3,
+                metadataVersionForPartitionChangeRecordVersion(version),
+                2,
+                isElrEnabled(version)).
+                setDefaultDirProvider(DEFAULT_DIR_PROVIDER);
+
+        PartitionChangeRecord record = buildClassicPrefixFlagRecord(builder);
+
+        assertEquals(0, countTag(record, InitDisklessLogFields.CLASSIC_TO_DISKLESS_START_OFFSET_TAG));
+        assertEquals(0, countTag(record, InitDisklessLogFields.PRODUCER_STATES_TAG));
+        PartitionRegistration merged = assertClassicPrefixFlagCommit(sealed, record);
+        assertEquals(1000L, merged.classicToDisklessStartOffset);
+        assertEquals(sealed.leaderEpoch + 1, merged.disklessLeaderEpoch);
     }
 
     @ParameterizedTest

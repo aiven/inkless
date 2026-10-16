@@ -59,6 +59,8 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageRequestData;
+import org.apache.kafka.common.message.SetClassicPrefixInRemoteStorageResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData;
 import org.apache.kafka.common.metadata.AbortTransactionRecord;
@@ -1833,6 +1835,16 @@ public final class QuorumController implements Controller {
         }
         return appendWriteEvent("initDisklessLog", context.deadlineNs(),
             () -> replicationControl.initDisklessLog(context, request));
+    }
+
+    @Override
+    public CompletableFuture<SetClassicPrefixInRemoteStorageResponseData> setClassicPrefixInRemoteStorage(
+        ControllerRequestContext context, SetClassicPrefixInRemoteStorageRequestData request) {
+        if (request.topics().isEmpty()) {
+            return CompletableFuture.completedFuture(new SetClassicPrefixInRemoteStorageResponseData());
+        }
+        return appendWriteEvent("setClassicPrefixInRemoteStorage", context.deadlineNs(),
+            () -> replicationControl.setClassicPrefixInRemoteStorage(context, request));
     }
 
     @Override

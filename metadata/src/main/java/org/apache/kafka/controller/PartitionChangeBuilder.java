@@ -21,6 +21,7 @@ import org.apache.kafka.common.DirectoryId;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.message.AlterPartitionRequestData.BrokerState;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
+import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.LeaderRecoveryState;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.metadata.Replicas;
@@ -102,6 +103,11 @@ public class PartitionChangeBuilder {
     // Whether allow electing last known leader in a Balanced recovery. Note, the last known leader will be stored in the
     // lastKnownElr field if enabled.
     private boolean useLastKnownLeaderInBalancedRecovery = true;
+
+    // Inkless: the classic-to-diskless switch flag. Unlike the seal, which the controller writes as a raw
+    // record, the flag commit also sets the ISR and can complete a reassignment and elect a leader.
+    // The flag and those changes must be in one record, so the leader epoch moves once and tag 102 matches it.
+    private boolean classicPrefixInRemoteStorage = false;
 
     public PartitionChangeBuilder(
         PartitionRegistration partition,
@@ -189,6 +195,11 @@ public class PartitionChangeBuilder {
 
     public PartitionChangeBuilder setDefaultDirProvider(DefaultDirProvider defaultDirProvider) {
         this.defaultDirProvider = defaultDirProvider;
+        return this;
+    }
+
+    public PartitionChangeBuilder setClassicPrefixInRemoteStorage() {
+        this.classicPrefixInRemoteStorage = true;
         return this;
     }
 
@@ -436,6 +447,9 @@ public class PartitionChangeBuilder {
 
         triggerLeaderEpochBumpForReplicaReassignmentIfNeeded(record);
 
+        // Inkless: after the election and the reassignment step, so the flag never replaces a new leader.
+        maybeSetClassicPrefixInRemoteStorage(record);
+
         maybeUpdateRecordElr(record);
 
         // If ELR is enabled, the ISR is allowed to be empty.
@@ -462,6 +476,19 @@ public class PartitionChangeBuilder {
             return Optional.empty();
         } else {
             return Optional.of(new ApiMessageAndVersion(record, metadataVersion.partitionChangeRecordVersion()));
+        }
+    }
+
+    private void maybeSetClassicPrefixInRemoteStorage(PartitionChangeRecord record) {
+        if (classicPrefixInRemoteStorage) {
+            if (record.leader() == NO_LEADER_CHANGE) {
+                record.setLeader(partition.leader);  // forces the leader epoch bump
+            }
+            // The diskless leader epoch is the leader epoch that this record produces.
+            // The leader field is set at this point, and merge() increments the leader epoch once per record.
+            // Raw tags must be in increasing tag order for serialization: tag 102 before tag 103.
+            record.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessLeaderEpoch(partition.leaderEpoch + 1));
+            record.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
         }
     }
 
