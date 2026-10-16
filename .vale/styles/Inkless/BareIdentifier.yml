@@ -1,0 +1,12 @@
+extends: existence
+message: "Put '%s' in backticks. It looks like an identifier."
+level: warning
+scope: [text, comment]
+nonword: true
+tokens:
+  - '\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b'
+  - '\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b'
+  - '\b[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)+\b'
+exceptions:
+  - e.g
+  - i.e
