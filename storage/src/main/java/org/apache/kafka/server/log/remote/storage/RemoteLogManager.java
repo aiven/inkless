@@ -931,7 +931,7 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                 logger.debug("Encountered a retryable error while executing current task for partition {}", topicIdPartition, ex);
             } catch (Exception ex) {
                 if (!isCancelled()) {
-                    logger.warn("Current task for partition {} received error but it will be scheduled", topicIdPartition, ex);
+                    logger.warn("Current task for partition {} received error but it will be scheduled: {}", topicIdPartition, ex.toString());
                 }
             }
         }
