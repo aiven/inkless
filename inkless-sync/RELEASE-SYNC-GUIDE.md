@@ -129,11 +129,14 @@ git fetch apache --tags
    mv .inkless-sync/RELEASE-SESSION-*.md inkless-sync/sessions/
    ```
 
-9. **Push for review**:
+9. **Push for review**, with the `upstream` label on the PR:
    ```bash
    git push origin inkless-4.0-sync-4.0.1
-   # Create PR to merge into inkless-4.0
+   gh pr create --base inkless-4.0 --label upstream --title "chore(inkless): sync inkless-4.0 with upstream Apache Kafka 4.0.1"
    ```
+   The `Inkless PR labels` workflow adds the label on its own for `inkless-*-sync-*` branches
+   and for PRs whose merge commit has an `apache/kafka` parent, as long as the workflow file
+   exists on the release branch.
 
 ## Handling Conflicts
 

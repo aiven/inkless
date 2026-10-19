@@ -116,7 +116,19 @@ git commit -m "sync(test): [description]"
 - Complete session file
 - Note any learnings
 
-#### Step 10: Merge the sync PR (10 min)
+#### Step 10: open and merge the sync PR (10 min)
+
+Open the PR against `main` with the `upstream` label:
+
+```bash
+git push -u origin sync/upstream-YYYYMMDD
+gh pr create --base main --label upstream --title "chore(inkless:sync): upstream Apache Kafka YYYY-MM-DD"
+```
+
+The `upstream` label marks every PR that brings `apache/kafka` commits. The `Inkless PR labels`
+workflow (`.github/workflows/inkless-pr-labels.yml`) adds it on its own when the branch is named
+`sync/upstream-*` or a merge commit in the PR has an `apache/kafka` parent; passing `--label` keeps
+the PR correct if that workflow doesn't run.
 
 **A repository admin has to merge a sync PR.** Both settings this step changes, the `main` ruleset
 and the repository's merge options, are admin-only. The `maintain` role can't reach them. If you

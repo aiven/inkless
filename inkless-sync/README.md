@@ -300,7 +300,9 @@ This script is designed to be run by an automated agent (e.g., Claude):
 2. If manual conflicts: Agent reports to human via PR/issue
 3. If compilation errors: Agent attempts fixes, commits separately
 4. If test failures: Agent analyzes and fixes or reports
-5. Agent creates PR with sync report
+5. Agent creates PR with sync report and the `upstream` label (`gh pr create --label upstream`);
+   `.github/workflows/inkless-pr-labels.yml` also adds the label when it detects `apache/kafka`
+   commits in the PR
 
 The structured commit approach makes it easy to:
 - Review what changed and why

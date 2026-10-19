@@ -1,0 +1,70 @@
+# Labels pull requests that bring apache/kafka commits into Inkless with `upstream`.
+#
+# pull_request_target runs with write access to the base repository, so this workflow
+# never checks out or executes anything from the pull request. It fetches commit
+# objects only (no trees, no blobs) to walk the merge parents.
+name: Inkless PR labels
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+    branches:
+      - 'main'
+      - 'inkless-4.*'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  upstream-label:
+    name: Label upstream sync PRs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect apache/kafka commits in the pull request
+        id: detect
+        env:
+          REPO:     ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          upstream=false
+          # Sync branches follow inkless-sync/ naming; detect them without any fetch.
+          case "$HEAD_REF" in
+            sync/upstream-*|inkless-*-sync-*) upstream=true ;;
+          esac
+
+          if [ "$upstream" = false ]; then
+            git init -q repo
+            cd repo
+            # tree:0 fetches commit objects only. Enough to walk parents, and no PR
+            # content lands on disk.
+            git fetch -q --filter=tree:0 --no-tags "https://github.com/${REPO}.git" \
+              "$BASE_SHA" "$HEAD_SHA"
+            merges=$(git rev-list --merges --first-parent "${BASE_SHA}..${HEAD_SHA}")
+            # Most PRs have no merge commit, so skip the apache/kafka fetch for them.
+            if [ -n "$merges" ]; then
+              git fetch -q --filter=tree:0 --no-tags https://github.com/apache/kafka.git \
+                '+refs/heads/*:refs/remotes/apache/*'
+              # A sync merges an apache/kafka commit as the second parent. A merge of
+              # origin/main into a feature branch has an Inkless commit there instead.
+              for merge in $merges; do
+                if [ -n "$(git for-each-ref refs/remotes/apache --contains "${merge}^2")" ]; then
+                  echo "Merge ${merge} brings apache/kafka commit $(git rev-parse --short "${merge}^2")"
+                  upstream=true
+                  break
+                fi
+              done
+            fi
+          fi
+          echo "upstream=${upstream}" >> "$GITHUB_OUTPUT"
+
+      - name: Add the upstream label
+        if: steps.detect.outputs.upstream == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO:     ${{ github.repository }}
+          PR:       ${{ github.event.number }}
+        run: gh pr edit "$PR" --repo "$REPO" --add-label upstream

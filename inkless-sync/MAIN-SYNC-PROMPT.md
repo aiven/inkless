@@ -189,7 +189,8 @@ Complete verification and generate report.
 4. Archive the session file:
    mv .inkless-sync/SESSION-*.md inkless-sync/sessions/
 
-5. If successful, provide PR description draft.
+5. If successful, provide PR description draft. The PR carries the `upstream` label
+   (`gh pr create --label upstream ...`).
 ```
 
 ## Error Recovery Prompts
