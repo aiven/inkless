@@ -41,6 +41,61 @@ Regenerate a draft with the `inkless-changelog` skill (or run it directly):
 
 ---
 
+## 0.50 (Kafka 4.1.2, 4.2.2, 4.3.1)
+
+### Features
+- (inkless:controller) add the SetClassicPrefixInRemoteStorage RPC [KC-582] (#827)
+- (inkless:metadata) add classicPrefixInRemoteStorage flag [KC-580] (#824)
+- (inkless:control_plane) let operators change the control plane connection at runtime (#759)
+- (inkless:metrics) add inkless-tag and kafka-version to app-info (#821)
+- (inkless:ai) support Cursor in the Vale gate hook (#817)
+
+### Fixes
+- (inkless:control-plane) drop the batches timestamp index before release (#828)
+- (inkless:config) require consolidation for the classic-to-diskless switch (#822)
+- (inkless:consume) stop a slow ListOffsets from hanging the broker [KC-537] (#798)
+- (inkless:consolidation) exclude consolidation from ConsumerLag [KC-546] (#816)
+- (inkless:test) raise S3 timeouts and avoid the isolated broker in switch systests (#813)
+- (inkless:build) enable Zip64 for the JMH shadow jar (#810)
+- (inkless:test) replace removed minio images with pgsty fork (#811)
+
+### Tests
+- (inkless) pin ListOffsets answers on born-diskless topics before consolidation [KC-537] (#820)
+
+### Docs
+- (inkless) list only maintained branches in RELEASES (#819)
+- (inkless:release) add 0.49 changelog entry (#818)
+
+### Chores
+- (inkless:ai) instruct agents to use Assisted-by AI attribution (#815)
+- (inkless) introduce vale for linting AI-generated prose (#807)
+
+### Other
+- (inkless:control-plane) rewrite the timestamp lookups of list_offsets_v1 (#799)
+- (inkless) add workflow for linting AI-attributed prose (#814)
+
+### Config & metric changes
+- config added: `inkless.fetch.offset.thread.pool.size` (default 8). It sets the pool that resolves ListOffsets requests. The queue holds 100 requests per thread. A request that finds the queue full fails with a retriable `REQUEST_TIMED_OUT` (#798).
+- config added: `inkless.control.plane.migration.timeout.ms` (default 300000). It bounds schema migration waits on the database, separately from `socket.timeout.ms` (#759).
+- config changed: `diskless.allow.from.classic.enable=true` now requires `diskless.remote.storage.consolidation.enable=true`. A node with the switch on and consolidation off fails at startup. Consolidation without the switch is still valid (#822).
+- config changed: the connection strings of the control plane are broker configs that operators can change at runtime. Setting one to an empty value takes the control plane out of service. Diskless calls then fail fast with a retriable error (#759).
+- metric mbean added: `io.aiven.inkless.control_plane:type=ControlPlaneAvailability,reason="{reason}"`, attribute `ControlPlaneGatedCallRate` (#759)
+- metric mbean added: `io.aiven.inkless.control_plane:type=ControlPlaneAvailability,state="{state}",reason="{reason}"`, attribute `ControlPlaneAvailability` (#759)
+- metric attr added: `io.aiven.inkless.consume:type=InklessFetchOffsetMetrics :: FetchOffsetRejectedRate` (#798)
+- metric attr added: app-info `inkless-tag` and `kafka-version` next to `version` and `commit-id` (#821). `kafka-version` is the Kafka version without the `-inkless` qualifier. On `inkless-4.1` the metrics are registered without the `client-id` tagged duplicates, because Kafka 4.1 does not tag app-info metrics with the client ID.
+- behavior changed: the consolidation fetcher no longer registers `FetcherLagMetrics.ConsumerLag`. `MaxLag` and `ConsolidationLocalLag` still report. Dashboards that sum `ConsumerLag` no longer count consolidation backlog as replica lag (#816).
+
+### Postgres schema changes
+- `V30__List_offsets_min_offset_lookup.sql`: `CREATE OR REPLACE FUNCTION batch_timestamp` and `list_offsets_v1`. Both statements only replace function bodies. The migration takes no table lock and doesn't need a `CONCURRENTLY` step. The new lookup is `MIN(base_offset)` over the timestamp predicate, followed by a point lookup through `batches_by_last_offset_covering_idx`. Its cost follows the partition and not the table. #799 first added an index on `batches`. #828 removed it before release, so no released version has that index (#799, #828).
+
+### Upgrade notes
+- `SetClassicPrefixInRemoteStorage` is a new controller RPC. No broker sends it in this release (#827).
+- The `PartitionRecord` and `PartitionChangeRecord` tag 103 is written only when the flag is true, so a cluster that never sets it writes the same records as before (#824).
+- Set `diskless.remote.storage.consolidation.enable=true` on every node that sets `diskless.allow.from.classic.enable=true` before the upgrade. The check runs per node and does not cover a controller and a broker that disagree (#822).
+- `inkless-4.1` stays in this release. Aiven supports Kafka 4.1 until 2027-01-27. The 4.1 port of #759 and #827 uses the Scala `DynamicBrokerConfig`, `KRaftMetadataCache` and `RequestConvertToJson`, and the behavior matches 4.2 and 4.3. The 4.1 test for ListOffsets on born-diskless topics does not cover `OffsetSpec.earliestPendingUpload`, which Kafka 4.1 does not have. Local builds of 4.1 need a JDK below 25.
+
+---
+
 ## 0.49 (Kafka 4.1.2, 4.2.1, 4.3.1)
 
 ### Fixes
