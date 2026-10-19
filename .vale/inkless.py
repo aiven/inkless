@@ -28,6 +28,7 @@ AI_AGENT_EMAILS: Final = (
 )
 BLAME_HEADER: Final = re.compile(r"^([0-9a-f]{40}) \d+ (\d+)")
 EXCLUDE_GENERATED: Final = ":(exclude,attr:linguist-generated=true)"
+SQL_AS_EXT: Final = ".lua"
 
 
 class Alert(TypedDict, total=False):
@@ -38,8 +39,10 @@ class Alert(TypedDict, total=False):
     Span: list[int]
 
 
-def _run(cmd: str, *args: str) -> str:
-    result = subprocess.run([cmd, *args], capture_output=True, text=True, check=True)
+def _run(cmd: str, *args: str, stdin: str | None = None) -> str:
+    result = subprocess.run(
+        [cmd, *args], input=stdin, capture_output=True, text=True, check=True
+    )
     return result.stdout
 
 
@@ -47,8 +50,8 @@ def git(*args: str) -> str:
     return _run("git", *args)
 
 
-def vale(*args: str) -> str:
-    return _run("vale", *args)
+def vale(*args: str, stdin: str | None = None) -> str:
+    return _run("vale", *args, stdin=stdin)
 
 
 def owned_pathspecs() -> list[str]:
@@ -176,9 +179,9 @@ def ai_attributed_lines(
     return lines_by_file
 
 
-def run_vale(files: list[str]) -> dict[str, list[Alert]]:
+def vale_alerts(*args: str, stdin: str | None = None) -> dict[str, list[Alert]]:
     try:
-        output = vale("--output=JSON", *files)
+        output = vale("--output=JSON", *args, stdin=stdin)
     except subprocess.CalledProcessError as error:
         if error.returncode != VALE_ALERTS_FOUND_EXIT_CODE:
             sys.exit(f"vale failed:\n{error.stderr}")
@@ -188,6 +191,20 @@ def run_vale(files: list[str]) -> dict[str, list[Alert]]:
         sys.exit("vale produced no output")
 
     alerts: dict[str, list[Alert]] = json.loads(output)
+    return alerts
+
+
+def run_vale(files: list[str]) -> dict[str, list[Alert]]:
+    sql_files = [path for path in files if path.endswith(".sql")]
+    other_files = [path for path in files if not path.endswith(".sql")]
+
+    alerts = vale_alerts(*other_files) if other_files else {}
+    for path in sql_files:
+        with open(path, encoding="utf-8") as sql:
+            stdin_alerts = vale_alerts(f"--ext={SQL_AS_EXT}", stdin=sql.read())
+        alerts[path] = [
+            alert for file_alerts in stdin_alerts.values() for alert in file_alerts
+        ]
     return alerts
 
 
