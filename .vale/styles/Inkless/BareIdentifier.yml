@@ -8,5 +8,6 @@ tokens:
   - '\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b'
   - '\b[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)+\b'
 exceptions:
+  - '[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|io|org|net|dev|fi)'
   - e.g
   - i.e
