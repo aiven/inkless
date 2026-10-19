@@ -25,6 +25,15 @@ The runner (`.vale/inkless.py`) limits alerts to:
 License headers (AGPL and Apache) are exempt through `BlockIgnores` in
 `.vale.ini`. Don't reword them.
 
+Besides the Google and ai-tells packages, local `Inkless` rules check:
+
+- `Inkless.BareIdentifier`: names that contain `_` or `.` outside backticks,
+  such as `log_start_offset`, `NO_TIMESTAMP`, or `diskless.enable`.
+- `Inkless.Contractions`: negations and `you are` without a contraction.
+  Uppercase `MUST NOT` and `SHOULD NOT` keywords are exempt.
+- `Inkless.Passive`: negated passive voice, such as `aren't measured`.
+  `Google.Passive` covers only the plain form.
+
 ## Run it
 
 ```sh
@@ -40,8 +49,8 @@ it finds an alert on an added line. Useful variants:
   diff.
 - `python3 .vale/inkless.py --ai-attributed`: lint only the added lines that
   `git blame` attributes to an AI-attributed commit. The `Inkless Vale` workflow
-  runs this mode on pull requests, so human-written prose isn't held to these
-  rules.
+  runs this mode on pull requests, so it doesn't hold human-written prose to
+  these rules.
 
 ## Fix alerts
 
