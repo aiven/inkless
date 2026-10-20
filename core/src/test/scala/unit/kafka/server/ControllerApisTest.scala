@@ -1046,6 +1046,37 @@ class ControllerApisTest {
   }
 
   @Test
+  def testCreateClassicTopicsDoesNotCallControlPlane(): Unit = {
+    val controller = new MockController.Builder().build()
+    val controlPlane = mock(classOf[ControlPlane])
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+    val request = new CreateTopicsRequestData().setTopics(new CreatableTopicCollection(
+      singletonList(new CreatableTopic().setName("foo").setNumPartitions(1).setReplicationFactor(1)).iterator()))
+
+    val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
+      hasClusterAuth = true, _ => Set("foo"), _ => Set("foo")).get()
+
+    assertEquals(NONE.code(), response.topics().find("foo").errorCode())
+    verifyNoInteractions(controlPlane)
+  }
+
+  @Test
+  def testDeleteClassicTopicsDoesNotCallControlPlane(): Unit = {
+    val fooId = Uuid.randomUuid()
+    val controller = new MockController.Builder().newInitialTopic("foo", fooId).build()
+    val controlPlane = mock(classOf[ControlPlane])
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+    val request = new DeleteTopicsRequestData().setTopicNames(singletonList("foo"))
+
+    val response = controllerApis.deleteTopics(ANONYMOUS_CONTEXT, request,
+      ApiKeys.DELETE_TOPICS.latestVersion().toInt,
+      hasClusterAuth = true, _ => Set.empty, _ => Set.empty).get()
+
+    assertEquals(Set(new DeletableTopicResult().setName("foo").setTopicId(fooId)), response.asScala.toSet)
+    verifyNoInteractions(controlPlane)
+  }
+
+  @Test
   def testCreateDisklessPartitionsUsesPriorRangeForSameTopic(): Unit = {
     val topicName = "foo"
     val topicId = Uuid.randomUuid()

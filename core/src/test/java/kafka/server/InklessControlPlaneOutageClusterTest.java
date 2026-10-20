@@ -69,12 +69,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * Cluster coverage for taking the control plane out of service at runtime. Emptying the connection
  * string at runtime makes a diskless produce fail with {@code KAFKA_STORAGE_ERROR}
  * without uploading an object. Restoring the connection string brings produce back without a
- * restart.
+ * restart. Classic topics stay manageable throughout.
  */
 @Testcontainers
 public class InklessControlPlaneOutageClusterTest {
     private static final String OBJECT_KEY_PREFIX = "control-plane-outage-wal";
     private static final String TOPIC_NAME = "control-plane-outage-topic";
+    private static final String CLASSIC_TOPIC_NAME = "control-plane-outage-classic-topic";
     private static final String CONNECTION_STRING_KEY = InklessConfig.PREFIX
         + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG;
 
@@ -161,6 +162,27 @@ public class InklessControlPlaneOutageClusterTest {
                 }
             }, 60_000, "Produce must succeed again after the connection string is restored");
             assertEquals(objectsAfterFirstProduce + 1, countObjects(s3));
+        }
+    }
+
+    @Test
+    @Timeout(value = 300, unit = TimeUnit.SECONDS)
+    void classicTopicCreationAndDeletionSucceedWhileConnectionStringIsEmpty() throws Exception {
+        final ControllerServer controller = cluster.controllers().values().iterator().next();
+        final ControlPlaneAvailability availability = controller.sharedServer().inklessControlPlaneAvailability().get();
+        final ConfigResource brokerResource = new ConfigResource(ConfigResource.Type.BROKER, "");
+
+        try (Admin admin = Admin.create(Map.of(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers()))) {
+            TestUtils.waitForCondition(availability::isAvailable, 30_000, "Control plane must be available after startup");
+
+            setConnectionString(admin, brokerResource, "");
+            TestUtils.waitForCondition(() -> !availability.isAvailable(), 30_000,
+                "The controller's control plane must go out of service after the connection string is emptied");
+
+            admin.createTopics(List.of(new NewTopic(CLASSIC_TOPIC_NAME, 1, (short) 1))).all().get(30, TimeUnit.SECONDS);
+            admin.deleteTopics(List.of(CLASSIC_TOPIC_NAME)).all().get(30, TimeUnit.SECONDS);
+            TestUtils.waitForCondition(() -> !admin.listTopics().names().get().contains(CLASSIC_TOPIC_NAME), 30_000,
+                "The classic topic must be deleted");
         }
     }
 
