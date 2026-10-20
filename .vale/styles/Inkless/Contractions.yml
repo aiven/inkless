@@ -1,0 +1,22 @@
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: warning
+ignorecase: false
+action:
+  name: replace
+swap:
+  '[Aa]re not': aren't
+  '[Cc]annot': can't
+  '[Cc]ould not': couldn't
+  '[Dd]id not': didn't
+  '[Dd]o not': don't
+  '[Dd]oes not': doesn't
+  '[Hh]as not': hasn't
+  '[Hh]ave not': haven't
+  '[Ii]s not': isn't
+  '[Ss]hould not': shouldn't
+  '[Ww]as not': wasn't
+  '[Ww]ere not': weren't
+  '[Ww]ill not': won't
+  '[Ww]ould not': wouldn't
+  '[Yy]ou are': you're
