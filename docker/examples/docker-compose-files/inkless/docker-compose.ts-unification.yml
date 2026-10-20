@@ -11,6 +11,9 @@
 #   - diskless.allow.from.classic.enable=true (migration bridge)
 #   - classic.remote.storage.force.enable=true (all classic topics get remote.storage.enable=true)
 #   - Managed replicas with rack-aware placement (az1, az2)
+#   - log.local.retention.ms/bytes: bound the local log of every topic with remote storage.
+#     A topic with remote storage on needs retention.ms >= 600000 and retention.bytes >= 104857600
+#     (or -1), or a topic-level local.retention.* override at or below its retention.
 
 services:
   broker:
@@ -50,6 +53,10 @@ services:
       # --- Faster segment rolling + retention for testing ---
       KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: "10000"
       KAFKA_LOG_SEGMENT_BYTES: "1048576"
+
+      # --- Bound the local log of every topic with remote storage ---
+      KAFKA_LOG_LOCAL_RETENTION_MS: "600000"
+      KAFKA_LOG_LOCAL_RETENTION_BYTES: "104857600"
 
   broker2:
     environment:
