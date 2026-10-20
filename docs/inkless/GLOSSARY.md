@@ -165,6 +165,13 @@ Internal umbrella name for [Managed Replicas](#managed-replicas), the [Classic-t
 
 ---
 
+## U
+
+**Untiered Diskless Topic**
+A diskless topic created on a cluster with [TS Unification](#ts-unification--tiered-storage-unification) consolidation off. It has `diskless.enable=true` and `remote.storage.enable` set to `false` or unset, so it has no local log and no remote tier. With consolidation on, the controller doesn't create new untiered topics, but routine alters on existing ones pass. To consolidate one, set `remote.storage.enable=true`. Contrast with a [CDT](#consolidated-diskless-topic-cdt). See [Migrate untiered diskless topics](./DISKLESS_CONSOLIDATION.md#migrate-untiered-diskless-topics).
+
+---
+
 ## W
 
 **WAL** / **Write Ahead Log**
