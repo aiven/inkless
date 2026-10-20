@@ -1,0 +1,7 @@
+extends: sequence
+message: "Use active voice instead of negated passive voice."
+level: warning
+tokens:
+  - pattern: '(?i)(?:am|are|is|was|were|be|been|being)'
+  - pattern: "(?i)(?:not|n't|n’t)"
+  - tag: VBN
