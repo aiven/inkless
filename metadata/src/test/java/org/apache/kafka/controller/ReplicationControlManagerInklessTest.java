@@ -2295,6 +2295,82 @@ public class ReplicationControlManagerInklessTest {
         }
 
         @Test
+        public void testLeaderElectionRequiresOnlineDirectoryUntilClassicPrefixIsInRemoteStorage() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            Uuid dir0 = Uuid.fromString("suitdzfTTdqoWcy8VqmkUg");
+            Uuid dir1 = Uuid.fromString("yh3acnzGSeurSTj8aIhOjw");
+            Uuid dir2 = Uuid.fromString("OmpmJ8RjQliQlEFht56DwQ");
+            ctx.registerBrokersWithDirs(0, List.of(dir0), 1, List.of(dir1), 2, List.of(dir2));
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Phase 1 (committed seal, no flag): broker 1's replica directory is LOST, so fencing
+            // leader 0 must skip broker 1 and elect broker 2, and preferred election to broker 1
+            // must fail even when broker 1 is the preferred replica.
+            Uuid phase1Id = ctx.createTestTopic("phase1",
+                new int[][] {new int[] {0, 1, 2}}, Map.of(), (short) 0).topicId();
+            ctx.alterTopicConfig("phase1", DISKLESS_ENABLE_CONFIG, "true");
+            ctx.replay(List.of(new ApiMessageAndVersion(new PartitionChangeRecord()
+                .setTopicId(phase1Id)
+                .setPartitionId(0)
+                .setDirectories(List.of(dir0, DirectoryId.LOST, dir2)), (short) 1)));
+            setClassicToDisklessStartOffset(ctx, phase1Id, 100L);
+
+            // Switch pending (-2, no flag): also requires an online directory.
+            Uuid pendingId = ctx.createTestTopic("pending",
+                new int[][] {new int[] {0, 1}}, Map.of(), (short) 0).topicId();
+            ctx.alterTopicConfig("pending", DISKLESS_ENABLE_CONFIG, "true");
+            ctx.replay(List.of(new ApiMessageAndVersion(new PartitionChangeRecord()
+                .setTopicId(pendingId)
+                .setPartitionId(0)
+                .setDirectories(List.of(dir0, DirectoryId.LOST)), (short) 1)));
+            setClassicToDisklessStartOffset(ctx, pendingId,
+                PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING);
+
+            // Phase 2 (committed seal + flag): skips the directory check like a born-diskless topic,
+            // so broker 1 can win election despite DirectoryId.LOST.
+            Uuid phase2Id = ctx.createTestTopic("phase2",
+                new int[][] {new int[] {0, 1}}, Map.of(), (short) 0).topicId();
+            ctx.alterTopicConfig("phase2", DISKLESS_ENABLE_CONFIG, "true");
+            PartitionChangeRecord phase2Setup = new PartitionChangeRecord()
+                .setTopicId(phase2Id)
+                .setPartitionId(0)
+                .setDirectories(List.of(dir0, DirectoryId.LOST));
+            phase2Setup.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L));
+            phase2Setup.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+            ctx.replay(List.of(new ApiMessageAndVersion(phase2Setup, (short) 1)));
+
+            List<ApiMessageAndVersion> fenceRecords = new ArrayList<>();
+            replication.handleBrokerFenced(0, fenceRecords);
+            ctx.replay(fenceRecords);
+
+            assertEquals(2, replication.getPartition(phase1Id, 0).leader,
+                "Phase-1 election must skip broker 1 with a LOST directory and elect broker 2");
+            assertEquals(-1, replication.getPartition(pendingId, 0).leader,
+                "Pending-switch election must reject the only remaining ISR member when its directory is LOST");
+            assertEquals(1, replication.getPartition(phase2Id, 0).leader,
+                "Phase-2 election uses isActive-only and elects broker 1 even with a LOST directory");
+
+            // Check the 2-arg leaderAcceptorFor overload via electLeader: make broker 1 the
+            // preferred replica of phase1 while its directory is still LOST.
+            ctx.replay(List.of(new ApiMessageAndVersion(new PartitionChangeRecord()
+                .setTopicId(phase1Id)
+                .setPartitionId(0)
+                .setReplicas(List.of(1, 2))
+                .setIsr(List.of(1, 2))
+                .setDirectories(List.of(DirectoryId.LOST, dir2)), (short) 1)));
+            List<ApiMessageAndVersion> electRecords = new ArrayList<>();
+            ApiError electError = replication.electLeader(
+                "phase1", 0, ElectionType.PREFERRED, electRecords);
+            assertEquals(Errors.PREFERRED_LEADER_NOT_AVAILABLE, electError.error());
+            assertTrue(electRecords.isEmpty());
+        }
+
+        @Test
         public void testNoReplicaChangeOnShutdown_noRacks() {
             // With RF=1 (no racks), when the single replica is shutdown, the leader goes offline
             // and no new leader can be elected since there are no other replicas.
@@ -5472,6 +5548,37 @@ public class ReplicationControlManagerInklessTest {
             assertEquals(after.leaderEpoch, after.disklessLeaderEpoch);
             assertTrue(after.classicPrefixInRemoteStorage);
             assertIsrAndElrDisjoint(after);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageElectsLeaderWithLostDirectoryWhenCompletingReassignment() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            ctx.registerBrokers(3);
+            ctx.unfenceBrokers(3);
+            Uuid topicId = createSealedTopic(ctx);
+            // Phase-1 reassignment 0 -> 3 in flight. Every replica that stays has a lost directory,
+            // which a phase-1 election rejects but a phase-2 election accepts.
+            ctx.replay(List.of(new ApiMessageAndVersion(new PartitionChangeRecord()
+                .setTopicId(topicId)
+                .setPartitionId(0)
+                .setReplicas(List.of(1, 2, 3, 0))
+                .setDirectories(List.of(DirectoryId.LOST, DirectoryId.LOST, DirectoryId.LOST,
+                    DirectoryId.UNASSIGNED))
+                .setRemovingReplicas(List.of(0))
+                .setAddingReplicas(List.of(3)), (short) 1)));
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(0, before.leader);
+
+            ControllerResult<SetClassicPrefixInRemoteStorageResponseData> result =
+                send(ctx, request(before.leader, topicId, 0, SEAL, before.leaderEpoch));
+            assertEquals(NONE.code(), errorCode(result));
+            ctx.replay(result.records());
+
+            PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(List.of(1, 2, 3), Replicas.toList(after.replicas));
+            assertTrue(after.hasLeader(), "The flag commit must elect a leader among the target replicas: " + after);
+            assertTrue(Replicas.contains(after.replicas, after.leader));
+            assertTrue(after.classicPrefixInRemoteStorage);
         }
 
         @Test
