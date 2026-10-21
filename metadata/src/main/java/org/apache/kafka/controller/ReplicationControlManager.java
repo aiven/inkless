@@ -1826,7 +1826,9 @@ public class ReplicationControlManager {
                     partition,
                     topicId,
                     partitionId,
-                    leaderAcceptorFor(topic.name, partition),
+                    // The partition is still in phase 1 here, but this record moves it to phase 2.
+                    // Elect the leader by phase-2 rules: any active replica, whatever its directory.
+                    clusterControl::isActive,
                     featureControl.metadataVersionOrThrow(),
                     getTopicEffectiveMinIsr(topic.name),
                     featureControl.isElrFeatureEnabled()
@@ -2685,6 +2687,11 @@ public class ReplicationControlManager {
 
     private static boolean hasClassicToDisklessSwitchPending(PartitionRegistration partition) {
         return partition.classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING;
+    }
+
+    private static boolean isSwitchedWithLocalClassicPrefix(PartitionRegistration partition) {
+        return partition.classicToDisklessStartOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
+            && !partition.classicPrefixInRemoteStorage;
     }
 
     private static boolean hasAnyPartitionWithPendingSwitch(TopicControlInfo topicInfo) {
@@ -3809,17 +3816,18 @@ public class ReplicationControlManager {
     }
 
     /**
-     * Returns the appropriate leader acceptor for the given topic. Diskless topics skip the
-     * directory-liveness check since they don't use local storage.
+     * Returns the leader acceptor for the partition. Born-diskless partitions and switched
+     * partitions whose classic prefix is in remote storage skip the directory-liveness check
+     * because they don't rely on local storage.
      */
     private IntPredicate leaderAcceptorFor(String topicName, PartitionRegistration partition) {
-        return isDisklessTopic(topicName)
+        return isDisklessTopic(topicName) && !isSwitchedWithLocalClassicPrefix(partition)
             ? clusterControl::isActive
             : new LeaderAcceptor(clusterControl, partition);
     }
 
     private IntPredicate leaderAcceptorFor(String topicName, PartitionRegistration partition, IntPredicate isAcceptableLeader) {
-        return isDisklessTopic(topicName)
+        return isDisklessTopic(topicName) && !isSwitchedWithLocalClassicPrefix(partition)
             ? isAcceptableLeader
             : new LeaderAcceptor(clusterControl, partition, isAcceptableLeader);
     }
