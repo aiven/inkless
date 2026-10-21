@@ -2996,6 +2996,9 @@ public class ReplicationControlManager {
             // replica set with rack-aware placement, and because the data lives in object storage a
             // replica-set resize is immediate and safe (no inter-broker catch-up). Honor the
             // KIP-860 allow-RF-change flag for managed diskless topics, exactly like classic topics.
+            // The resize is immediate only for born-diskless and phase-2 partitions; a phase-1
+            // partition still has a classic prefix to replicate, so it stages the change (see
+            // changePartitionReassignment).
             boolean rfChangeAllowedForTopic =
                 !isDisklessTopic(topic.name()) || isDisklessManagedReplicasEnabled;
             boolean effectiveRFChange = allowRFChange && rfChangeAllowedForTopic;
@@ -3135,7 +3138,11 @@ public class ReplicationControlManager {
             new PartitionReassignmentReplicas(currentAssignment, targetAssignment);
 
         String topicName = topics.get(tp.topicId()).name;
-        boolean isDiskless = isDisklessTopic(topicName);
+        // Only born-diskless and phase-2 partitions (classicPrefixInRemoteStorage set) take the
+        // one-step path. In phase 1, records below classicToDisklessStartOffset still live only on
+        // the replicas' local disks, so a target replica is not interchangeable and earns ISR
+        // through the staged path.
+        boolean useOneStepReassignment = isDisklessTopic(topicName) && !isSwitchedWithLocalClassicPrefix(part);
 
         PartitionChangeBuilder builder = new PartitionChangeBuilder(
             part,
@@ -3147,7 +3154,7 @@ public class ReplicationControlManager {
             featureControl.isElrFeatureEnabled()
         );
 
-        if (isDiskless) {
+        if (useOneStepReassignment) {
             // Diskless: data is in object storage, no replica sync needed.
             // Apply target replicas directly — skip the staged adding/removing process
             // (no addingReplicas/removingReplicas). This is safe because:
@@ -3163,7 +3170,9 @@ public class ReplicationControlManager {
             //    already assumes brokers are interchangeable since all data lives in object
             //    storage. A future optimization could pre-warm target brokers' caches before
             //    completing the reassignment.
-            if (!target.replicas().equals(currentReplicas)) {
+            // A reassignment already in progress must be cleared even when the target equals the
+            // current replicas, which include the replicas that reassignment was removing.
+            if (!target.replicas().equals(currentReplicas) || PartitionReassignmentReplicas.isReassignmentInProgress(part)) {
                 // Reject if no target broker is active (can't elect a leader).
                 boolean anyActive = target.replicas().stream()
                     .anyMatch(clusterControl::isActive);
@@ -3174,16 +3183,34 @@ public class ReplicationControlManager {
                 // ISR = all replicas: data is in object storage, fencing doesn't affect availability.
                 builder.setTargetReplicas(target.replicas());
                 builder.setTargetIsr(target.replicas());
+                // A phase-1 reassignment can survive the flag commit when an adding replica is fenced.
+                // Drop its adding and removing replicas, or they would override the requested replicas.
+                builder.setTargetAdding(List.of());
+                builder.setTargetRemoving(List.of());
             }
         } else {
             if (!reassignment.replicas().equals(currentReplicas)) {
                 builder.setTargetReplicas(reassignment.replicas());
             }
-            if (!reassignment.removing().isEmpty()) {
+            if (isDisklessTopic(topicName)) {
+                // Phase-1 partition retargeted while a reassignment is in flight. Reconcile the
+                // inherited lists against the new target: a replica that is no longer requested must
+                // leave adding, and a requested replica that hasn't caught up must stay in adding.
+                List<Integer> adding = new ArrayList<>(reassignment.adding());
+                for (int replica : part.addingReplicas) {
+                    if (target.replicas().contains(replica) && !adding.contains(replica)) {
+                        adding.add(replica);
+                    }
+                }
                 builder.setTargetRemoving(reassignment.removing());
-            }
-            if (!reassignment.adding().isEmpty()) {
-                builder.setTargetAdding(reassignment.adding());
+                builder.setTargetAdding(adding);
+            } else {
+                if (!reassignment.removing().isEmpty()) {
+                    builder.setTargetRemoving(reassignment.removing());
+                }
+                if (!reassignment.adding().isEmpty()) {
+                    builder.setTargetAdding(reassignment.adding());
+                }
             }
         }
         return builder.setDefaultDirProvider(clusterDescriber).build();
