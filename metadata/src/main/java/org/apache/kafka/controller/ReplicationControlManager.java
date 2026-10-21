@@ -1904,6 +1904,11 @@ public class ReplicationControlManager {
                 request.partitionIndex() + " is not part of a classic-to-diskless switch; there is " +
                 "nothing to override.");
         }
+        if (partition.classicPrefixInRemoteStorage) {
+            throw new InvalidRequestException("Cannot alter the classic-to-diskless switch for " +
+                request.topicName() + "-" + request.partitionIndex() + ": the classic prefix is already " +
+                "in remote storage.");
+        }
         if (sealOffset < 0 && partition.classicToDisklessStartOffset >= 0) {
             throw new InvalidRequestException("Cannot abort or re-arm the classic-to-diskless switch for " +
                 request.topicName() + "-" + request.partitionIndex() + ": it has already committed a seal " +

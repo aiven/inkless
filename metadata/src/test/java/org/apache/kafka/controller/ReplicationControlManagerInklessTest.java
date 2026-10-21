@@ -5634,6 +5634,29 @@ public class ReplicationControlManagerInklessTest {
     }
 
     @Test
+    public void testAlterDisklessSwitchRejectedAfterClassicPrefixInRemoteStorage() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        Uuid topicId = createSwitchingTestTopic(ctx);
+
+        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+            .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L)).records());
+        PartitionChangeRecord flagRecord = new PartitionChangeRecord()
+            .setTopicId(topicId)
+            .setPartitionId(0);
+        flagRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+        ctx.replay(List.of(new ApiMessageAndVersion(flagRecord, (short) 0)));
+
+        for (long candidateSeal : List.of(0L, 50L, 100L, 150L, -1L, -2L)) {
+            InvalidRequestException exception = assertThrows(InvalidRequestException.class, () ->
+                replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
+                    .setTopicName("foo").setPartitionIndex(0).setSealOffset(candidateSeal)));
+            assertTrue(exception.getMessage().contains("classic prefix is already in remote storage"),
+                "Unexpected error for seal " + candidateSeal + ": " + exception.getMessage());
+        }
+    }
+
+    @Test
     public void testAlterDisklessSwitchRejectsInvalidOffset() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
