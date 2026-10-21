@@ -368,7 +368,9 @@ class ControllerApis(
           warn(s"Attempting to delete diskless topics $topicIdsToDeleteFromControlPlane " +
             "from the control plane, but the diskless storage system is not enabled. " +
             "Topic will only be removed from KRaft metadata as no control plane is available.")
-        inklessControlPlane.foreach { cp => cp.deleteTopics(topicIdsToDeleteFromControlPlane) }
+
+        if (!topicIdsToDeleteFromControlPlane.isEmpty)
+          inklessControlPlane.foreach { cp => cp.deleteTopics(topicIdsToDeleteFromControlPlane) }
 
         // Finally, the idToName map contains all the topics that we are authorized to delete.
         // Perform the deletion and create responses for each one.
@@ -510,7 +512,9 @@ class ControllerApis(
         .filter(t => inklessMetadataView.isDisklessTopic(t.name()))
         .map(t => new CreateTopicAndPartitionsRequest(t.topicId(), t.name(), t.numPartitions()))
         .toSet.asJava
-      cp.createTopicAndPartitions(createTopicRequests)
+
+      if (!createTopicRequests.isEmpty)
+        cp.createTopicAndPartitions(createTopicRequests)
     }
   }
 
