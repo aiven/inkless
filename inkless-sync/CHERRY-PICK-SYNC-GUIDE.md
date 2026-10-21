@@ -307,6 +307,18 @@ Fix compilation errors, then either amend the cherry-pick or create a separate `
 | `producerStateManager()` not a member        | Scala val on release branch, not a method                                                    | Remove parens                                 |
 | `String cannot be converted to Uuid`         | `createTestTopic` takes `Uuid` first on release branch                                       | Add `Uuid.randomUuid()`                       |
 
+### Known adaptations by branch
+
+Main is at the Kafka 4.3 branch point. Each release branch differs from main in a few places that recur on every round. The full conflict history is in `inkless-sync/sessions/`.
+
+- **All branches**: build and test 4.1 with JDK 17. Gradle 8.14 does not run on Java 25. Do not commit the jOOQ sources that the 4.1 build rewrites.
+- **4.3**: `QuorumController#createTopics` takes a `boolean forwarded` argument, and `MetadataDelta` has only `MetadataDelta.Builder`. Tests written on main use the old forms.
+- **4.2 and 4.1**: the reconfigurable broker config sets live in the Scala `DynamicBrokerConfig`. A change to the Java `DynamicBrokerConfig` on main needs a port. `BrokerReconfigurable#reconfigurableConfigs` returns a Scala `Set`.
+- **4.2 and 4.1**: the metadata cache is the Scala `KRaftMetadataCache`. A change to the Java `KRaftMetadataCache` on main needs a port.
+- **4.2 and 4.1**: `PartitionChangeBuilder` takes the ELR flag through `setEligibleLeaderReplicasEnabled`. `RecordBatch` is in `org.apache.kafka.common.record`.
+- **4.1**: app-info metrics have no client-id tag. `OffsetSpec.earliestPendingUpload` does not exist. Controller tests use `LocalLogManagerTestEnv`. `RequestConvertToJson` uses the old `switch` style.
+- **Test conflicts**: a conflict hunk in a large test file can pull in an unrelated main-only test. Keep only the tests the commit adds.
+
 ### Too Many Conflicts
 
 If a commit has extensive conflicts, consider:
